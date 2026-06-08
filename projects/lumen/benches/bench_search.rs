@@ -224,6 +224,9 @@ fn bench_search(c: &mut Criterion) {
                 }),
                 limit: 20,
                 cursor: None,
+                sort: None,
+                track_total: false,
+                collapse: None,
             },
             |req| {
                 engine.search("c", req).expect("search");
@@ -242,6 +245,9 @@ fn bench_search(c: &mut Criterion) {
                 }),
                 limit: 20,
                 cursor: None,
+                sort: None,
+                track_total: false,
+                collapse: None,
             },
             |req| {
                 engine.search("c", req).expect("search");
@@ -259,6 +265,9 @@ fn bench_search(c: &mut Criterion) {
                 }),
                 limit: 20,
                 cursor: None,
+                sort: None,
+                track_total: false,
+                collapse: None,
             },
             |req| {
                 engine.search("c", req).expect("search");
