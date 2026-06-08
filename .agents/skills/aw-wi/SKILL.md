@@ -9,7 +9,11 @@ aliases: [aw:issue, aw:issues]
 
 # /aw:wi
 
-Intent router for work-item management. Every CLI verb emits a JSON envelope — the **envelope protocol** in `CLAUDE.md § AW envelope (mainthread protocol)` owns the loop. This skill chooses the verb, relays stdout, and runs the **mainthread-only** orchestration spelled out below.
+Intent router for work-item management. CLI stdout is the protocol: mutating and
+workflow verbs emit structured envelopes, while list-style verbs may emit short
+summaries. The **envelope protocol** in `CLAUDE.md § AW envelope (mainthread
+protocol)` owns CRRR loops. This skill chooses the verb, relays stdout, and runs
+the **mainthread-only** orchestration spelled out below.
 
 > **Mainthread-only model (post Phase-2).** Every dispatch envelope now
 > carries `agent: null`. There is no `aw-issue-author` /
@@ -54,7 +58,7 @@ Unknown `--project` / `--agent` names → error envelope on stdout, exit 2.
    ```bash
    aw wi create --title "<t>" --type <kind> --project <name> [--priority <pN>] [--agent <name>]
    ```
-3. Read the JSON envelope from stdout. The CLI returns a `dispatch`
+3. Read the stdout envelope. The CLI returns a `dispatch`
    envelope with `agent: null` and
    `invoke.args.sections: ["all"]`. Mainthread fills the full structured
    body directly, including capability alignment, scope, acceptance criteria,
@@ -143,11 +147,11 @@ roadmap-sized request. Large work must stay as `type=epic` or a local planning
 artifact until atomized into bounded WI candidates.
 
 ```bash
-aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"] [--json]
-aw wi epicize --project <name> [--title "<phase>"] [--json]
-aw wi atomize --project <name> [--title "<plan>"] [--json]
-aw wi prioritize --project <name> [--title "<plan>"] [--json]
-aw run --project <name> --max-ticks 1 --json
+aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"]
+aw wi epicize --project <name> [--title "<phase>"]
+aw wi atomize --project <name> [--title "<plan>"]
+aw wi prioritize --project <name> [--title "<plan>"]
+aw run --project <name> --max-ticks 1
 ```
 
 - `plan` reads the confirmed capability table from `--cap-path`, `[[projects]].cap_path`,

@@ -2,11 +2,12 @@
 // CODEGEN-BEGIN
 use crate::models::{SddConfig, SddInterface};
 use crate::Result;
+use clap::Args;
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, Select};
 use std::env;
 use std::io::{self, IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 // Current version for tracking upgrades
@@ -41,6 +42,7 @@ const SKILL_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/SKILL.md");
 const SKILL_CHAT_LISTEN: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-chat-listen/SKILL.md");
+const SKILL_HEALTH: &str = include_str!("../../templates/cli/mainthread/skills/aw-health/SKILL.md");
 const SCRIPT_BUILD_RELEASE: &str =
     include_str!("../../templates/cli/mainthread/skills/aw-build-release/scripts/release.sh");
 // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R15
@@ -65,6 +67,134 @@ pub async fn run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> 
     // CLI invocations, but is ignored. Agentic Workflow uses a fixed executor mapping
     // (Claude Code subagent + mainthread hybrid) — there is no mode to select.
     let project_root = env::current_dir()?;
+    run_at_project_root(name, force, &project_root, true)
+}
+
+/// Arguments for `aw new`.
+///
+/// `aw new` creates the project directory first, then delegates to the same
+/// in-place installer used by `aw init`.
+// @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#CLI
+#[derive(Debug, Args)]
+pub struct NewArgs {
+    /// Project directory name when --path is not supplied
+    pub name: String,
+
+    /// Explicit target directory. When omitted, target is ./<name>.
+    #[arg(long, value_name = "PATH")]
+    pub path: Option<PathBuf>,
+
+    /// Allow reusing an existing non-empty directory and force-refresh init assets.
+    #[arg(short, long)]
+    pub force: bool,
+
+    /// Create the target directory without running aw init.
+    #[arg(long)]
+    pub no_init: bool,
+}
+
+// @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#Logic
+pub async fn run_new(args: NewArgs) -> Result<()> {
+    let current_dir = env::current_dir()?;
+    let outcome = run_new_with_current_dir(args, &current_dir)?;
+
+    println!();
+    println!(
+        "{}",
+        format!("✅ Project ready at {}", outcome.target.display())
+            .green()
+            .bold()
+    );
+    println!();
+    println!("{}", "⏭️  Next Steps:".yellow().bold());
+    println!("   {}", format!("cd {}", outcome.target.display()).cyan());
+    if !outcome.init_ran {
+        println!("   {}", "aw init".cyan());
+    }
+
+    Ok(())
+}
+
+struct NewProjectOutcome {
+    target: PathBuf,
+    init_ran: bool,
+}
+
+fn run_new_with_current_dir(args: NewArgs, current_dir: &Path) -> Result<NewProjectOutcome> {
+    let target = resolve_new_target(current_dir, &args.name, args.path.as_deref())?;
+    prepare_new_target(&target, args.force)?;
+
+    if args.no_init {
+        println!(
+            "{}",
+            format!("📁 Created project directory {}", target.display()).cyan()
+        );
+        println!("   ℹ Skipped aw init because --no-init was supplied");
+        return Ok(NewProjectOutcome {
+            target,
+            init_ran: false,
+        });
+    }
+
+    run_at_project_root(Some(&args.name), args.force, &target, false)?;
+
+    Ok(NewProjectOutcome {
+        target,
+        init_ran: true,
+    })
+}
+
+fn resolve_new_target(current_dir: &Path, name: &str, path: Option<&Path>) -> Result<PathBuf> {
+    if name.trim().is_empty() {
+        anyhow::bail!("project name must not be empty");
+    }
+
+    let raw_target = path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(name));
+
+    if raw_target.as_os_str().is_empty() {
+        anyhow::bail!("target path must not be empty");
+    }
+
+    if raw_target.is_absolute() {
+        Ok(raw_target)
+    } else {
+        Ok(current_dir.join(raw_target))
+    }
+}
+
+fn prepare_new_target(target: &Path, force: bool) -> Result<()> {
+    if target.exists() {
+        if !target.is_dir() {
+            anyhow::bail!(
+                "target path exists and is not a directory: {}",
+                target.display()
+            );
+        }
+        if !force && !is_directory_empty(target)? {
+            anyhow::bail!(
+                "target directory is not empty: {} (rerun with --force to run aw init there)",
+                target.display()
+            );
+        }
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(target)?;
+    Ok(())
+}
+
+fn is_directory_empty(path: &Path) -> Result<bool> {
+    Ok(std::fs::read_dir(path)?.next().is_none())
+}
+
+fn run_at_project_root(
+    name: Option<&str>,
+    force: bool,
+    project_root: &Path,
+    print_fresh_success: bool,
+) -> Result<()> {
     let legacy_score_dir = project_root.join(concat!(".", "score"));
     let legacy_cclab_dir = project_root.join("cclab");
     let sdd_dir = project_root.join(crate::shared::workspace::WORKSPACE_DIR);
@@ -163,6 +293,7 @@ pub async fn run(name: Option<&str>, force: bool, _agent_mode: Option<&str>) -> 
             &claude_dir,
             interface,
             platform_toml,
+            print_fresh_success,
         )?;
     }
 
@@ -610,6 +741,7 @@ fn run_fresh_install(
     claude_dir: &Path,
     interface: SddInterface,
     platform_toml: Option<String>,
+    print_success_message: bool,
 ) -> Result<()> {
     // Create directory structure
     println!("{}", "📁 Creating directory structure...".cyan());
@@ -654,8 +786,9 @@ fn run_fresh_install(
     // Generate CLAUDE.md with project context
     generate_claude_md(project_root, sdd_dir)?;
 
-    // Print success message
-    print_init_success();
+    if print_success_message {
+        print_init_success();
+    }
 
     Ok(())
 }
@@ -1183,6 +1316,7 @@ fn install_claude_skills(skills_dir: &Path) -> Result<()> {
         ("aw-standardize", SKILL_STANDARDIZE),
         ("aw-build-release", SKILL_BUILD_RELEASE),
         ("aw-chat-listen", SKILL_CHAT_LISTEN),
+        ("aw-health", SKILL_HEALTH),
     ];
 
     for (name, content) in skills {
@@ -1727,6 +1861,91 @@ mod tests {
         );
     }
 
+    // REQ: aw-greenfield-project-bootstrap UT1, UT2 — target resolution.
+    #[test]
+    fn test_new_resolves_default_and_explicit_targets() {
+        let tmp = TempDir::new().unwrap();
+
+        let default_target = resolve_new_target(tmp.path(), "ai-studio", None).unwrap();
+        assert_eq!(default_target, tmp.path().join("ai-studio"));
+
+        let relative_target =
+            resolve_new_target(tmp.path(), "ignored", Some(Path::new("custom/path"))).unwrap();
+        assert_eq!(relative_target, tmp.path().join("custom/path"));
+
+        let absolute = tmp.path().join("explicit");
+        let absolute_target = resolve_new_target(tmp.path(), "ignored", Some(&absolute)).unwrap();
+        assert_eq!(absolute_target, absolute);
+    }
+
+    // REQ: aw-greenfield-project-bootstrap UT3, UT4 — safe target preparation.
+    #[test]
+    fn test_new_prepares_targets_and_rejects_unsafe_paths() {
+        let tmp = TempDir::new().unwrap();
+
+        let missing = tmp.path().join("missing");
+        prepare_new_target(&missing, false).unwrap();
+        assert!(missing.is_dir());
+
+        let empty = tmp.path().join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        prepare_new_target(&empty, false).unwrap();
+
+        let non_empty = tmp.path().join("non-empty");
+        fs::create_dir_all(&non_empty).unwrap();
+        fs::write(non_empty.join("README.md"), "# existing").unwrap();
+        assert!(prepare_new_target(&non_empty, false).is_err());
+        prepare_new_target(&non_empty, true).unwrap();
+
+        let file_target = tmp.path().join("file");
+        fs::write(&file_target, "not a dir").unwrap();
+        assert!(prepare_new_target(&file_target, true).is_err());
+    }
+
+    // REQ: aw-greenfield-project-bootstrap UT3 — --no-init creates only the target directory.
+    #[test]
+    fn test_new_no_init_creates_target_directory_only() {
+        let tmp = TempDir::new().unwrap();
+        let args = NewArgs {
+            name: "ai-studio".to_string(),
+            path: None,
+            force: false,
+            no_init: true,
+        };
+
+        let outcome = run_new_with_current_dir(args, tmp.path()).unwrap();
+
+        assert_eq!(outcome.target, tmp.path().join("ai-studio"));
+        assert!(!outcome.init_ran);
+        assert!(outcome.target.is_dir());
+        assert!(!outcome.target.join(".aw").exists());
+    }
+
+    // REQ: aw-greenfield-project-bootstrap UT5 — aw new delegates to the shared init installer.
+    #[test]
+    fn test_new_runs_shared_init_installer() {
+        let tmp = TempDir::new().unwrap();
+        let target = tmp.path().join("ai-studio");
+        let args = NewArgs {
+            name: "ai-studio".to_string(),
+            path: Some(target.clone()),
+            force: false,
+            no_init: false,
+        };
+
+        let outcome = run_new_with_current_dir(args, tmp.path()).unwrap();
+
+        assert_eq!(outcome.target, target);
+        assert!(outcome.init_ran);
+        assert!(target.join(".aw/config.toml").exists());
+        assert!(target.join(".aw/tech-design").is_dir());
+        assert!(target.join("CLAUDE.md").exists());
+        assert!(
+            target.join(".claude/skills/aw-health/SKILL.md").exists(),
+            "aw new should install the same current skills as aw init"
+        );
+    }
+
     #[test]
     fn test_refresh_existing_config_preserves_projects_on_force_refresh() {
         let existing = r#"
@@ -1807,6 +2026,7 @@ auth_method = "cli"
             "aw-capability",
             "aw-wi",
             "aw-standardize",
+            "aw-health",
             // REQ: R12 — active support skills
             "aw-build-debug",
             "aw-release-patch",

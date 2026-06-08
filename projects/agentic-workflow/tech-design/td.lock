@@ -1,8 +1,8 @@
 version = 1
 project = "agentic-workflow"
 td_path = "projects/agentic-workflow/tech-design"
-generated_at = "2026-06-06T16:39:45.961024+00:00"
-digest = "sha256:3b471f81b6ecf28764c0017b72b4b47f1f940042263fe8bc417bff3fe1187c7a"
+generated_at = "2026-06-07T22:48:04.994841+00:00"
+digest = "sha256:9ea5ed88ff470943d930db4ce21bedf46f388b9b39c8ebd262e22f94390f3705"
 
 [[files]]
 path = "core/README.md"
@@ -406,7 +406,7 @@ digest = "sha256:731163f375a41588a44895879b8f154964ef90baca1f7b567f5479f72385eb5
 
 [[files]]
 path = "core/generate/from-td-ast.md"
-digest = "sha256:3acaa1f24fc261ed99d2076ea6b28677c587971450c5f0befc3fff0fb036374d"
+digest = "sha256:4425819a60bc188c275c1822b6bc70812a6059392931d4fc68ca7215393dc5ba"
 
 [[files]]
 path = "core/generate/frontmatter.md"
@@ -702,7 +702,7 @@ digest = "sha256:d275332c5e3bf8b85b66a9051510bdaae340c9a17069cad4fa5085ad0f7d653
 
 [[files]]
 path = "core/generate/generators/module-facade.md"
-digest = "sha256:30e9fc7c25ae78f72060d792181bb9e16379d2574b970e4c8a18df2647f7e1c0"
+digest = "sha256:8a40d706e440c4a7f0db7aaa08ed6157851178b5b3022a7191d3e5ea9b85a44b"
 
 [[files]]
 path = "core/generate/generators/module_registry.md"
@@ -3270,7 +3270,7 @@ digest = "sha256:f9aaeaf61b7b69a4da259bc475b19f5c269aced5e4e88871d664ad8c51eac11
 
 [[files]]
 path = "semantic/agentic-workflow-cli.md"
-digest = "sha256:baae5b3e06e232b0bee44ae5ebac747f2307cd15f6969d49376d44b67298481f"
+digest = "sha256:a3b50ca377fb13e73f72c493ddb9dd99d570f5267af36b325240ed8837e88bbe"
 
 [[files]]
 path = "semantic/agentic-workflow-context-builder.md"
@@ -3361,6 +3361,10 @@ path = "semantic/agentic-workflow-parser.md"
 digest = "sha256:de057f17dca57801e8c5cf65a12cd8478d8a453a615e30300bbafff2a0c13c1b"
 
 [[files]]
+path = "semantic/agentic-workflow-projects-agentic-workflow.md"
+digest = "sha256:f71cd511f470c04042765d3f38da8d55dc2f736c35cfd50affa020141bbec7b4"
+
+[[files]]
 path = "semantic/agentic-workflow-runtime.md"
 digest = "sha256:7601bd4911e226ef7b08ea7af4756dee4f89cf37b4e71eda2452977c19c0848d"
 
@@ -3438,11 +3442,11 @@ digest = "sha256:55e4ef2c2482f612b7cf203e71f712520973d4c3da9e8597eebdad73faee98f
 
 [[files]]
 path = "surface/generate/project-health-source.md"
-digest = "sha256:0bf909d16d5eecf0160716b91db0c4a73ec21ca89c04cd6e8b07abfd61b2b967"
+digest = "sha256:f0d1ef945c57a6d8491e14626ddd09e38a4cdb552bfaab6343f3b67943051df9"
 
 [[files]]
 path = "surface/generate/project-health-test-source.md"
-digest = "sha256:0af98f0911d7247525deb9e250ea9a902e8a29cbaad98474e04ac4300d8f592c"
+digest = "sha256:f4b0667f1687930dec5b259e32fd805425aadc00bb1dc5b5d0d16e485ca8ad64"
 
 [[files]]
 path = "surface/interfaces/src/cb.md"
@@ -3494,7 +3498,7 @@ digest = "sha256:b8d53f7d7f2e0a4abe00834b73c0aa98a1464b8911b02c4e4b3a98dfb616f1b
 
 [[files]]
 path = "surface/interfaces/src/generator.md"
-digest = "sha256:ad2338a668f5e51e5ab66f37bbae32c952c447a8fcac76a7ee34a78c14a95240"
+digest = "sha256:7eb8495393c0ab0c97db49e843d4c8b61cc39b609bc717df5480db4830ca8402"
 
 [[files]]
 path = "surface/interfaces/src/hook.md"
@@ -3682,7 +3686,7 @@ digest = "sha256:22defd54e0d9cc88f9df7374a8d8a06f9381d6a021c92a2b2930e02f8da2219
 
 [[files]]
 path = "surface/specs/project-health-governance-report.md"
-digest = "sha256:88c52ff37390feb28bb8afdfdacf626e8ef251a74fd5d094146515a160d706dc"
+digest = "sha256:7cb0bf1099d5942c61efa9804e5a33f00a0e20ffececc957b49ded836de58168"
 
 [[files]]
 path = "surface/specs/project-health-incremental-index.md"

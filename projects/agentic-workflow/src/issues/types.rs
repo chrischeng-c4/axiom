@@ -351,7 +351,7 @@ pub mod td_phase {
     pub fn is_mergeable(phase: &str) -> bool {
         matches!(
             phase,
-            CB_GENNED | LEGACY_TD_GEN_CODED | CB_FILLED | CB_REVIEWED | CB_REVISED
+            CB_GENNED | LEGACY_TD_GEN_CODED | CB_FILLED | CB_REVIEWED | CB_REVISED | CB_ARBITRATED
         )
     }
 }

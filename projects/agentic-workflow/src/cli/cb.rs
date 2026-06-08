@@ -597,6 +597,7 @@ fn force_regen_verify_cold_summary_at(
     let verify_result = (|| {
         let (_, _, _, changed_paths) =
             run_force_regen_specs(&temp_root, &temp_scope, &temp_specs, false, true)?;
+        write_project_root_llms_targets(cwd, &temp_root, &specs, false)?;
         format_rust_files(&changed_paths)?;
         let generated_files =
             count_existing_or_snapshot_targets(&temp_root, &expected_targets, &snapshot_targets);
@@ -859,6 +860,10 @@ fn run_force_regen_specs(
         updated_files += report.files.iter().filter(|f| f.updated).count();
         created_files += report.files_created();
         blocks_updated += report.total_blocks_updated();
+        let (llms_updated, llms_created, llms_paths) =
+            write_project_root_llms_targets(root, root, &[spec_path], dry_run)?;
+        updated_files += llms_updated;
+        created_files += llms_created;
         if !dry_run {
             changed_paths.extend(
                 report
@@ -867,12 +872,84 @@ fn run_force_regen_specs(
                     .filter(|file| file.updated || file.created)
                     .map(|file| root.join(&file.path)),
             );
+            changed_paths.extend(llms_paths);
         }
     }
 
     changed_paths.sort();
     changed_paths.dedup();
     Ok((updated_files, created_files, blocks_updated, changed_paths))
+}
+
+fn write_project_root_llms_targets(
+    render_root: &std::path::Path,
+    output_root: &std::path::Path,
+    specs: &[std::path::PathBuf],
+    dry_run: bool,
+) -> Result<(usize, usize, Vec<std::path::PathBuf>)> {
+    let mut targets = BTreeSet::new();
+    for spec in specs {
+        let content = std::fs::read_to_string(spec)
+            .with_context(|| format!("failed to read {}", spec.display()))?;
+        targets.extend(extract_project_root_llms_target_paths(&content));
+    }
+
+    let mut updated = 0usize;
+    let mut created = 0usize;
+    let mut changed_paths = Vec::new();
+    for target in targets {
+        let target_rel = target.to_string_lossy().replace('\\', "/");
+        let Some(project) =
+            crate::cli::standardize::configured_project_name_for_path(render_root, &target_rel)?
+        else {
+            continue;
+        };
+        let content = crate::cli::standardize::render_project_llms_txt(render_root, &project)?;
+        let path = output_root.join(&target);
+        let existed = path.exists();
+        let changed = std::fs::read_to_string(&path)
+            .map(|existing| existing != content)
+            .unwrap_or(true);
+        if !changed {
+            continue;
+        }
+        if existed {
+            updated += 1;
+        } else {
+            created += 1;
+        }
+        if !dry_run {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("failed to create {}", parent.display()))?;
+            }
+            std::fs::write(&path, content)
+                .with_context(|| format!("failed to write {}", path.display()))?;
+            changed_paths.push(path);
+        }
+    }
+    changed_paths.sort();
+    changed_paths.dedup();
+    Ok((updated, created, changed_paths))
+}
+
+fn extract_project_root_llms_target_paths(spec_content: &str) -> Vec<std::path::PathBuf> {
+    if !spec_content.contains("project_root_llms") {
+        return Vec::new();
+    }
+    let mut targets = crate::generate::apply::extract_change_entries(spec_content)
+        .into_iter()
+        .filter(|entry| entry.impl_mode != crate::generate::apply::ImplMode::HandWritten)
+        .map(|entry| std::path::PathBuf::from(entry.path))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "llms.txt")
+        })
+        .collect::<Vec<_>>();
+    targets.sort();
+    targets.dedup();
+    targets
 }
 
 fn format_rust_files(paths: &[std::path::PathBuf]) -> Result<()> {
@@ -2641,13 +2718,14 @@ mod tests {
     use super::{
         cb_verify_summary_from_report, classify_codegen_origin_spec, collect_force_regen_specs,
         commit_force_regen, compare_source_roots, extract_cold_rebuild_target_paths,
-        extract_spec_managed_ref, extract_spec_managed_refs, format_rust_files,
-        is_minified_asset_file, resolve_project_force_regen_scope, run_force_regen_specs,
-        sample_count, sample_semantic_review_units, td_public_symbol_semantic_coverage,
-        upsert_public_api_overview, upsert_public_api_overview_targets, CbCodegenOriginClass,
-        CbCommand, CbGenArgs, ForceRegenConformanceReport, ForceRegenScope,
-        PublicApiManifestSymbol, PublicApiManifestTarget, PublicSymbolSemanticCoverage,
-        SemanticReviewUnit,
+        extract_project_root_llms_target_paths, extract_spec_managed_ref,
+        extract_spec_managed_refs, format_rust_files, is_minified_asset_file,
+        resolve_project_force_regen_scope, run_force_regen_specs, sample_count,
+        sample_semantic_review_units, td_public_symbol_semantic_coverage,
+        upsert_public_api_overview, upsert_public_api_overview_targets,
+        write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs,
+        ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
+        PublicApiManifestTarget, PublicSymbolSemanticCoverage, SemanticReviewUnit,
     };
     use crate::fillback::ast::{Symbol, SymbolKind};
     use clap::Parser;
@@ -3168,6 +3246,105 @@ changes:
                 "projects/agentic-workflow/src/cli/workflow_guard.rs"
             )]
         );
+    }
+
+    #[test]
+    fn cb_gen_project_root_llms_targets_require_primitive() {
+        let spec = "\
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+semantic_domain:
+  evidence:
+    source_units:
+      - path: projects/tool/llms.txt
+        generator_primitives: [project_root_llms]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/tool/llms.txt
+    action: modify
+    impl_mode: codegen
+```
+";
+        assert_eq!(
+            extract_project_root_llms_target_paths(spec),
+            vec![std::path::PathBuf::from("projects/tool/llms.txt")]
+        );
+
+        let without_primitive = spec.replace("project_root_llms", "source_unit");
+        assert!(extract_project_root_llms_target_paths(&without_primitive).is_empty());
+    }
+
+    #[test]
+    fn cb_gen_project_root_llms_emitter_writes_codegen_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+test_cmd = "cargo test -p tool"
+"#;
+        std::fs::create_dir_all(tmp.path().join(".aw")).unwrap();
+        std::fs::write(tmp.path().join(".aw/config.toml"), config).unwrap();
+        std::fs::create_dir_all(tmp.path().join("projects/tool")).unwrap();
+        std::fs::write(
+            tmp.path().join("projects/tool/Cargo.toml"),
+            "[package]\nname = \"tool\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n",
+        )
+        .unwrap();
+        let spec_path = tmp
+            .path()
+            .join("projects/tool/tech-design/semantic/tool-projects-tool.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            "\
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+semantic_domain:
+  evidence:
+    source_units:
+      - path: projects/tool/llms.txt
+        generator_primitives: [project_root_llms]
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/tool/llms.txt
+    action: modify
+    impl_mode: codegen
+```
+",
+        )
+        .unwrap();
+
+        let (updated, created, changed) =
+            write_project_root_llms_targets(tmp.path(), tmp.path(), &[spec_path], false).unwrap();
+
+        assert_eq!(updated, 0);
+        assert_eq!(created, 1);
+        assert_eq!(changed.len(), 1);
+        let generated = std::fs::read_to_string(tmp.path().join("projects/tool/llms.txt")).unwrap();
+        assert!(generated.contains("<!-- CODEGEN-BEGIN -->"));
+        assert!(generated.contains("## Tech Design"));
+        assert!(generated.contains("`cargo test -p tool`"));
     }
 
     #[test]

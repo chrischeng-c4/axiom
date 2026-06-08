@@ -445,6 +445,39 @@ pub(crate) fn td_activate_inplace_if_present(
     Ok(())
 }
 
+pub(crate) fn td_activate_inplace_allowing_dirty_lifecycle_paths(
+    project_root: &std::path::Path,
+    slug: &str,
+    allowed_rel: &[&str],
+) -> Result<()> {
+    ensure_clean_or_only_dirty_paths(project_root, allowed_rel).map_err(|e| {
+        anyhow::anyhow!(
+            "in-place td verb requires clean tree or only matching lifecycle-state files \
+             (allowed: {:?}): {}",
+            allowed_rel
+                .iter()
+                .map(|p| normalize_checkout_rel_path(p))
+                .collect::<Vec<_>>(),
+            e
+        )
+    })?;
+    let current = crate::branch_switch::current_branch(project_root)?;
+    if !should_use_td_branch(&current) {
+        return Ok(());
+    }
+
+    let branch = td_branch_name(slug);
+    if !crate::branch_switch::branch_exists_local(project_root, &branch).unwrap_or(false) {
+        anyhow::bail!(
+            "workspace not found: branch '{}' does not exist (run `aw td create {}` first to provision)",
+            branch,
+            slug,
+        );
+    }
+    crate::branch_switch::switch_or_create_branch(project_root, &branch, &current)?;
+    Ok(())
+}
+
 /// @spec .aw/tech-design/projects/score/specs/aw-td-extend-dirty-allow-issue-file.md#logic
 pub(crate) fn td_activate_inplace_allowing_dirty_spec_path(
     project_root: &std::path::Path,
@@ -1033,7 +1066,7 @@ fn merge_spec_section(base_body: &str, section_type: &str, payload_body: &str) -
     } else {
         // No existing section — append. Ensure a blank line between
         // the previous block and the new section for readability.
-        let mut out = base_body.to_string();
+        let mut out = ensure_fill_sections_has_section(base_body, section_type);
         if !out.ends_with("\n\n") {
             if !out.ends_with('\n') {
                 out.push('\n');
@@ -1043,7 +1076,57 @@ fn merge_spec_section(base_body: &str, section_type: &str, payload_body: &str) -
         out.push_str(&payload_norm);
         out
     };
-    Ok(merged)
+    Ok(ensure_fill_sections_has_section(&merged, section_type))
+}
+
+fn ensure_fill_sections_has_section(content: &str, section_type: &str) -> String {
+    let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+    if lines.first().map(|line| line.trim()) != Some("---") {
+        return content.to_string();
+    }
+    let Some(frontmatter_end) = lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find_map(|(idx, line)| (line.trim() == "---").then_some(idx))
+    else {
+        return content.to_string();
+    };
+
+    for idx in 1..frontmatter_end {
+        let trimmed = lines[idx].trim_start();
+        let Some(rest) = trimmed.strip_prefix("fill_sections:") else {
+            continue;
+        };
+        let indent_len = lines[idx].len() - trimmed.len();
+        let indent = &lines[idx][..indent_len];
+        let rest = rest.trim();
+        if let Some(inner) = rest.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            let mut sections: Vec<String> = inner
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(ToOwned::to_owned)
+                .collect();
+            if !sections.iter().any(|section| section == section_type) {
+                sections.push(section_type.to_string());
+                lines[idx] = format!("{indent}fill_sections: [{}]", sections.join(", "));
+            }
+            return finish_lines(lines, content.ends_with('\n'));
+        }
+        return content.to_string();
+    }
+
+    lines.insert(frontmatter_end, format!("fill_sections: [{section_type}]"));
+    finish_lines(lines, content.ends_with('\n'))
+}
+
+fn finish_lines(lines: Vec<String>, trailing_newline: bool) -> String {
+    let mut out = lines.join("\n");
+    if trailing_newline {
+        out.push('\n');
+    }
+    out
 }
 
 /// Parse `<!-- type: X lang: Y -->` annotation line.
@@ -1152,6 +1235,61 @@ fn validate_td_content(
 
     report.extend(crate::validate::run_rules(&[spec_path.to_path_buf()]));
     Ok(report)
+}
+
+fn validate_new_td_authoring_content(
+    spec_path: &std::path::Path,
+    content: &str,
+    scope: TdContentValidationScope<'_>,
+) -> Result<crate::validate::RuleReport> {
+    let mut report = validate_td_content(spec_path, content, scope)?;
+    for error in new_td_forbidden_section_errors(content) {
+        report.push(crate::validate::Finding::error(
+            crate::validate::RuleId::SectionFormat,
+            spec_path,
+            error,
+        ));
+    }
+    Ok(report)
+}
+
+fn validate_new_td_authoring_file(
+    spec_path: &std::path::Path,
+    scope: TdContentValidationScope<'_>,
+) -> Result<crate::validate::RuleReport> {
+    let content = std::fs::read_to_string(spec_path)
+        .with_context(|| format!("failed to read spec file: {}", spec_path.display()))?;
+    validate_new_td_authoring_content(spec_path, &content, scope)
+}
+
+fn new_td_forbidden_section_errors(spec_content: &str) -> Vec<String> {
+    let mut errors = Vec::new();
+    let Some((fm_str, body)) = split_frontmatter(spec_content) else {
+        return errors;
+    };
+    if let Ok(fm) = serde_yaml::from_str::<serde_yaml::Value>(fm_str) {
+        if let Some(seq) = fm.get("fill_sections").and_then(|v| v.as_sequence()) {
+            for value in seq {
+                if value.as_str() == Some("scenarios") {
+                    errors.push(
+                        "new TDs must not include legacy prose section type 'scenarios'; encode behavior as logic/unit-test/e2e-test artifacts"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+    }
+    for (_heading, ann, _content) in extract_sections(body) {
+        if ann.section_type == "scenarios" {
+            errors.push(
+                "new TDs must not author section type 'scenarios'; legacy specs may retain it, but new specs must use artifact-driving sections"
+                    .to_string(),
+            );
+        }
+    }
+    errors.sort();
+    errors.dedup();
+    errors
 }
 
 fn td_content_error_messages(report: &crate::validate::RuleReport) -> Vec<String> {
@@ -1692,12 +1830,22 @@ fn is_deprecated_td_section_type(st: crate::models::spec_rules::SectionType) -> 
     )
 }
 
-fn active_td_section_types() -> Vec<crate::models::spec_rules::SectionType> {
+fn is_active_td_authoring_section_type(st: crate::models::spec_rules::SectionType) -> bool {
     use crate::models::spec_rules::SectionType;
+    !is_deprecated_td_section_type(st)
+        && !crate::generate::generators::primitive_registry::is_prose_section(st)
+        && st != SectionType::Changes
+}
+
+fn is_supported_td_payload_section_type(st: crate::models::spec_rules::SectionType) -> bool {
+    !is_deprecated_td_section_type(st)
+        && !matches!(st, crate::models::spec_rules::SectionType::Scenarios)
+}
+
+fn active_td_section_types() -> Vec<crate::models::spec_rules::SectionType> {
     crate::models::spec_rules::SectionType::all_in_fill_order()
         .into_iter()
-        .filter(|st| !is_deprecated_td_section_type(*st))
-        .filter(|st| *st != SectionType::Changes)
+        .filter(|st| is_active_td_authoring_section_type(*st))
         .collect()
 }
 
@@ -1707,6 +1855,13 @@ fn derive_spec_dir(labels: &[String]) -> String {
 
 fn derive_spec_dir_for_issue(issue: &Issue) -> String {
     derive_spec_dir_from_parts(&issue.labels, Some(&issue.title))
+}
+
+fn project_label_for_issue(issue: &Issue) -> Option<&str> {
+    issue.labels.iter().find_map(|label| {
+        let project = label.strip_prefix("project:")?.trim();
+        (!project.is_empty()).then_some(project)
+    })
 }
 
 fn derive_spec_dir_from_parts(labels: &[String], title: Option<&str>) -> String {
@@ -1815,24 +1970,80 @@ fn td_authoring_pass(raw: Option<&str>) -> &str {
 }
 
 fn td_section_queue(_pass: &str) -> Vec<String> {
-    active_td_section_types()
-        .into_iter()
-        .map(|st| st.as_str().to_string())
-        .collect()
+    vec!["logic".to_string(), "unit-test".to_string()]
 }
 
-fn active_td_fill_sections_example() -> String {
-    active_td_section_types()
-        .iter()
-        .map(|st| st.as_str())
-        .collect::<Vec<_>>()
-        .join(", ")
+fn td_fill_sections_from_content(content: &str) -> Option<Vec<String>> {
+    let (fm_str, _) = split_frontmatter(content)?;
+    let fm = serde_yaml::from_str::<serde_yaml::Value>(fm_str).ok()?;
+    let sections = fm.get("fill_sections")?.as_sequence()?;
+    Some(
+        sections
+            .iter()
+            .filter_map(|value| value.as_str())
+            .filter_map(|section| {
+                section
+                    .parse::<crate::models::spec_rules::SectionType>()
+                    .ok()
+                    .filter(|st| is_supported_td_payload_section_type(*st))
+                    .map(|st| st.as_str().to_string())
+            })
+            .collect(),
+    )
+}
+
+fn td_section_queue_for_content(content: &str, pass: &str) -> Vec<String> {
+    td_fill_sections_from_content(content)
+        .filter(|sections| !sections.is_empty())
+        .unwrap_or_else(|| td_section_queue(pass))
+}
+
+fn td_section_queue_for_spec(
+    worktree_abs: &std::path::Path,
+    spec_path: &str,
+    pass: &str,
+) -> Vec<String> {
+    let spec_abs = worktree_abs.join(spec_path);
+    std::fs::read_to_string(spec_abs)
+        .ok()
+        .map(|content| td_section_queue_for_content(&content, pass))
+        .unwrap_or_else(|| td_section_queue(pass))
 }
 
 fn default_spec_path_for_issue(issue: &Issue, fallback_slug: &str, target_dir: &str) -> String {
     let filename =
         td_spec_filename_for_issue(issue).unwrap_or_else(|| format!("issue-{fallback_slug}"));
     format!(".aw/tech-design/{}{}.md", target_dir, filename)
+}
+
+fn default_spec_path_for_issue_in_project(
+    project_root: &std::path::Path,
+    issue: &Issue,
+    fallback_slug: &str,
+) -> String {
+    let filename =
+        td_spec_filename_for_issue(issue).unwrap_or_else(|| format!("issue-{fallback_slug}"));
+    if let Some(project) = project_label_for_issue(issue) {
+        if let Ok(resolved) =
+            crate::services::project_registry::resolve_td_root_from_config(project_root, project)
+        {
+            let root = std::path::PathBuf::from(resolved.root);
+            if let Ok(rel_root) = root.strip_prefix(project_root) {
+                return slash_path(
+                    rel_root
+                        .join(derive_td_concern(&issue.labels, Some(&issue.title)))
+                        .join(format!("{filename}.md")),
+                );
+            }
+        }
+    }
+
+    let target_dir = derive_spec_dir_for_issue(issue);
+    default_spec_path_for_issue(issue, fallback_slug, &target_dir)
+}
+
+fn slash_path(path: std::path::PathBuf) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn td_spec_filename_for_issue(issue: &Issue) -> Option<String> {
@@ -1916,8 +2127,8 @@ fn initialize_td_payload_file(
 fn td_section_payload_template(section: &str) -> Result<String> {
     let st = <crate::models::spec_rules::SectionType as std::str::FromStr>::from_str(section)
         .map_err(|e| anyhow::anyhow!(e))?;
-    if !active_td_section_types().contains(&st) {
-        anyhow::bail!("section '{}' is not active in the TD fill queue", section);
+    if !is_supported_td_payload_section_type(st) {
+        anyhow::bail!("section '{}' is not supported for new TD payloads", section);
     }
     let lang = st.default_lang();
     let body = match lang {
@@ -1967,9 +2178,30 @@ fn td_review_payload_template(round: u8) -> String {
 }
 
 fn remaining_after_section(pass: &str, section: &str) -> Vec<String> {
+    remaining_after_section_in_queue(td_section_queue(pass), section)
+}
+
+fn remaining_after_section_in_content(content: &str, pass: &str, section: &str) -> Vec<String> {
+    remaining_after_section_in_queue(td_section_queue_for_content(content, pass), section)
+}
+
+fn remaining_after_section_in_spec(
+    worktree_abs: &std::path::Path,
+    spec_path: &str,
+    pass: &str,
+    section: &str,
+) -> Vec<String> {
+    let spec_abs = worktree_abs.join(spec_path);
+    std::fs::read_to_string(spec_abs)
+        .ok()
+        .map(|content| remaining_after_section_in_content(&content, pass, section))
+        .unwrap_or_else(|| remaining_after_section(pass, section))
+}
+
+fn remaining_after_section_in_queue(queue: Vec<String>, section: &str) -> Vec<String> {
     let mut seen = false;
     let mut out = Vec::new();
-    for item in td_section_queue(pass) {
+    for item in queue {
         if seen {
             out.push(item);
         } else if item == section {
@@ -2188,12 +2420,11 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         );
     }
 
-    let target_dir = derive_spec_dir_for_issue(&issue);
     let pass = td_authoring_pass(args.phase.as_deref());
     let spec_path = args
         .spec_path
         .clone()
-        .unwrap_or_else(|| default_spec_path_for_issue(&issue, &slug, &target_dir));
+        .unwrap_or_else(|| default_spec_path_for_issue_in_project(&project_root, &issue, &slug));
     let queue = td_section_queue(pass);
     let mut first_payload_created = None;
     if let Some(first_section) = queue.first() {
@@ -2310,9 +2541,11 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!("---");
     println!("id: <spec-id>");
     println!("summary: <short non-contract summary>");
-    println!("fill_sections: [{}]", active_td_fill_sections_example());
+    println!("fill_sections: [<chosen leaf section types>]");
     println!("---");
     println!("```");
+    println!();
+    println!("Example: `fill_sections: [logic, unit-test]`.");
     println!();
     println!("Each section uses an H2 heading with type annotation:");
     println!();
@@ -2321,14 +2554,14 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
     println!("<!-- type: <section-type> lang: <lang> -->");
     println!("```");
     println!();
-    println!("## Available section types");
+    println!("## Available structural section types");
     println!();
     println!("| type | lang | use for |");
     println!("|------|------|---------|");
     // Dynamically enumerate from the single SectionType source of truth so new
     // variants (e.g. `manifest`, `tests`) show up here without a second edit.
-    // Deprecated non-contract types are intentionally omitted because the
-    // validator rejects them in new TD specs.
+    // Prose sections are intentionally omitted from new-TD authoring; legacy
+    // specs may still parse them, but they are not artifact-driving queue items.
     for st in active_td_section_types() {
         println!(
             "| {} | {} | {} |",
@@ -2338,7 +2571,7 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
         );
     }
     println!();
-    println!("## Fill order");
+    println!("## Suggested order for chosen sections");
     println!();
     println!(
         "{}",
@@ -2349,8 +2582,10 @@ async fn run_create_brief(args: &CreateArgs) -> Result<()> {
             .join(" → "),
     );
     println!();
+    println!("Only sections listed in `fill_sections` are required. Before the skeleton exists, the workflow seeds `logic` then `unit-test` as the minimal default.");
+    println!();
     println!(
-        "Use frontmatter `summary:` for overview text; requirements stay in the WI body. Do not add legacy `changes` unless migrating an older TD."
+        "Use frontmatter `summary:` for overview text; requirements stay in the WI body. Do not add legacy prose sections such as `scenarios` unless migrating an older TD."
     );
     println!();
     println!("## Mermaid Plus (CODEGEN-READY — required for state-machine, logic, interaction)");
@@ -2482,7 +2717,7 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
             }
         };
 
-        let report = validate_td_content(
+        let report = validate_new_td_authoring_content(
             &spec_abs,
             &merged,
             TdContentValidationScope::RequireThrough(section),
@@ -2521,7 +2756,7 @@ async fn run_create_apply(args: &CreateArgs) -> Result<()> {
         .as_deref()
         .map(TdContentValidationScope::RequireThrough)
         .unwrap_or(TdContentValidationScope::Complete);
-    let report = validate_td_content_file(&spec_abs, validation_scope)?;
+    let report = validate_new_td_authoring_file(&spec_abs, validation_scope)?;
     if report.has_errors() {
         let errors = td_content_error_messages(&report);
         print_td_content_errors("TD content validation errors", &report);
@@ -2577,7 +2812,7 @@ async fn complete_section_apply(
         .section
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("section apply requires --section"))?;
-    let remaining = remaining_after_section(pass, section);
+    let remaining = remaining_after_section_in_spec(&worktree_abs, spec_path, pass, section);
     let active_branch = crate::branch_switch::current_branch(&worktree_abs).unwrap_or_default();
 
     let next = if let Some(next_section) = remaining.first() {
@@ -2957,7 +3192,7 @@ async fn handle_create_milestone(
         return Ok(());
     }
 
-    let report = validate_td_content_file(&spec_abs, TdContentValidationScope::Complete)?;
+    let report = validate_new_td_authoring_file(&spec_abs, TdContentValidationScope::Complete)?;
     if report.has_errors() {
         let errors = td_content_error_messages(&report);
         let prev = issue.fill_retry_count.unwrap_or(0);
@@ -3371,7 +3606,7 @@ async fn run_review_brief(args: &ReviewArgs) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("--spec-path is required"))?;
 
-    td_activate_inplace_if_present(&project_root, slug)?;
+    td_activate_inplace_allowing_dirty_spec_path(&project_root, slug, spec_path)?;
     let worktree_abs = td_workspace_path(&project_root, slug);
     if !worktree_abs.exists() {
         anyhow::bail!("workspace not found: {}", worktree_abs.display());
@@ -3699,7 +3934,7 @@ async fn complete_phase_review_apply(
     match (pass, verdict) {
         ("applicability", ReviewVerdict::Approved) => {
             let contract = "contract";
-            let contract_queue = td_section_queue(contract);
+            let contract_queue = td_section_queue_for_spec(worktree_abs, spec_path, contract);
             let next_section = contract_queue
                 .first()
                 .ok_or_else(|| anyhow::anyhow!("contract section queue is empty"))?;
@@ -3966,7 +4201,7 @@ async fn complete_phase_review_apply(
 }
 
 fn first_flagged_or_first_section(content: &str, pass: &str) -> Option<String> {
-    let queue = td_section_queue(pass);
+    let queue = td_section_queue_for_content(content, pass);
     let reviews_start = content.find("# Reviews").unwrap_or(0);
     let flagged = extract_flagged_sections(&content[reviews_start..]);
     flagged
@@ -3989,7 +4224,7 @@ async fn create_section_revision_lock(
         "aw td create {} --apply --phase {} --section {} --spec-path {}",
         slug, pass, section, spec_path
     );
-    let remaining = remaining_after_section(pass, section);
+    let remaining = remaining_after_section_in_spec(worktree_abs, spec_path, pass, section);
     super::workflow_guard::create_issue_lock(
         worktree_abs,
         &super::workflow_guard::TransitionLock::new(slug, "td", expected_command)
@@ -4159,7 +4394,7 @@ async fn run_revise_apply(args: &ReviseArgs) -> Result<()> {
         .as_deref()
         .ok_or_else(|| anyhow::anyhow!("--spec-path is required with --apply"))?;
 
-    td_activate_inplace_if_present(&project_root, slug)?;
+    td_activate_inplace_allowing_dirty_spec_path(&project_root, slug, spec_path)?;
     let worktree_abs = td_workspace_path(&project_root, slug);
     if !worktree_abs.exists() {
         anyhow::bail!("workspace not found: {}", worktree_abs.display());
@@ -4436,14 +4671,14 @@ async fn run_merge(args: MergeArgs) -> Result<()> {
     // (no-codegen path), or td_merged (retry).
     // @spec .aw/tech-design/projects/score/specs/score-cb-fill-workflow.md#logic (R10)
     // @spec .aw/tech-design/projects/score/specs/aw-td-merge-accepts-cb-reviewed.md#schema (R1, R3)
-    if phase != "cb_genned"
-        && phase != "cb_filled"
-        && phase != "cb_reviewed"
-        && phase != "td_gen_coded"
-        && phase != "td_reviewed"
-        && phase != "td_merged"
+    if !crate::issues::types::td_phase::is_mergeable(phase)
+        && phase != crate::issues::types::td_phase::TD_REVIEWED
+        && phase != crate::issues::types::td_phase::TD_MERGED
     {
-        let msg = format!("cannot merge: phase is '{}', expected 'td_reviewed'", phase);
+        let msg = format!(
+            "cannot merge: phase is '{}', expected a mergeable TD/CB phase",
+            phase
+        );
         print_envelope(&TdEnvelope::Error {
             slug,
             message: &msg,
@@ -5520,6 +5755,32 @@ mod tests {
     }
 
     #[test]
+    fn default_td_spec_path_uses_project_td_path_from_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".aw")).unwrap();
+        std::fs::write(
+            tmp.path().join(".aw/config.toml"),
+            r#"
+[[projects]]
+name = "agentic-workflow"
+aliases = ["aw"]
+path = "projects/agentic-workflow"
+td_path = "projects/agentic-workflow/tech-design"
+label = "project:agentic-workflow"
+"#,
+        )
+        .unwrap();
+
+        let mut issue = issue_with_title("Manage AW init templates as greenfield-ready artifacts");
+        issue.labels = vec!["project:agentic-workflow".to_string()];
+
+        assert_eq!(
+            default_spec_path_for_issue_in_project(tmp.path(), &issue, "4162"),
+            "projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md"
+        );
+    }
+
+    #[test]
     fn td_lifecycle_commit_helper_preserves_validate_stage_trailer() {
         if !git_available() {
             return;
@@ -5547,6 +5808,41 @@ mod tests {
         assert!(log.contains("Lifecycle-Slug: 123"));
         assert!(log.contains("Lifecycle-Stage: Td-Lock-Complete"));
         assert!(log.contains("Lifecycle-Phase: td_created"));
+    }
+
+    #[test]
+    fn dirty_payload_prefix_is_allowed_for_td_revise_apply() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        let payload = root.join(".aw/payloads/1/changes.md");
+        std::fs::create_dir_all(payload.parent().unwrap()).unwrap();
+        std::fs::write(&payload, "## Changes\n").unwrap();
+
+        ensure_clean_or_only_dirty_paths(root, &["tech-design/spec.md", ".aw/payloads/1/"])
+            .expect("td revise apply should allow matching payload fragments");
+    }
+
+    #[test]
+    fn dirty_marker_payload_file_is_allowed_for_cb_fill_apply() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        let payload = root.join(".aw/payloads/1/missing-generator:component:e4ee6075.md");
+        std::fs::create_dir_all(payload.parent().unwrap()).unwrap();
+        std::fs::write(&payload, "fill\n").unwrap();
+
+        ensure_clean_or_only_dirty_paths(
+            root,
+            &[".aw/payloads/1/missing-generator:component:e4ee6075.md"],
+        )
+        .expect("cb fill apply should allow the expected marker payload");
     }
 
     #[test]
@@ -5630,6 +5926,73 @@ mod tests {
             logic_idx > ov_idx,
             "Logic should be appended after Overview"
         );
+    }
+
+    #[test]
+    fn merge_spec_section_appends_missing_type_to_fill_sections() {
+        let base = concat!(
+            "---\n",
+            "id: x\n",
+            "fill_sections: [logic]\n",
+            "---\n\n",
+            "#",
+            "# Logic\n",
+            "<",
+            "!-- type: logic lang: mermaid -->\n\n",
+            "logic\n",
+        );
+        let payload = concat!(
+            "#",
+            "# Changes\n",
+            "<",
+            "!-- type: changes lang: yaml -->\n\n",
+            "```yaml\n",
+            "changes: []\n",
+            "```\n",
+        );
+        let merged = merge_spec_section(base, "changes", payload).unwrap();
+
+        assert!(merged.contains("fill_sections: [logic, changes]"));
+        assert!(merged.contains("## Changes"));
+    }
+
+    #[test]
+    fn merge_spec_section_repairs_fill_sections_for_existing_type() {
+        let base = concat!(
+            "---\n",
+            "id: x\n",
+            "fill_sections: [logic]\n",
+            "---\n\n",
+            "#",
+            "# Logic\n",
+            "<",
+            "!-- type: logic lang: mermaid -->\n\n",
+            "logic\n\n",
+            "#",
+            "# Changes\n",
+            "<",
+            "!-- type: changes lang: yaml -->\n\n",
+            "```yaml\n",
+            "changes: []\n",
+            "```\n",
+        );
+        let payload = concat!(
+            "#",
+            "# Changes\n",
+            "<",
+            "!-- type: changes lang: yaml -->\n\n",
+            "```yaml\n",
+            "changes:\n",
+            "  - path: src/lib.rs\n",
+            "    action: create\n",
+            "    section: logic\n",
+            "    impl_mode: hand-written\n",
+            "```\n",
+        );
+        let merged = merge_spec_section(base, "changes", payload).unwrap();
+
+        assert!(merged.contains("fill_sections: [logic, changes]"));
+        assert!(merged.contains("path: src/lib.rs"));
     }
 
     #[test]
@@ -5860,21 +6223,23 @@ mod tests {
     #[test]
     fn td_section_queue_excludes_deprecated_and_legacy_metadata_types() {
         let queue = td_section_queue("applicability");
+        assert_eq!(queue, vec!["logic".to_string(), "unit-test".to_string()]);
         assert!(!queue.contains(&"overview".to_string()));
         assert!(!queue.contains(&"requirements".to_string()));
         assert!(!queue.contains(&"doc".to_string()));
+        assert!(!queue.contains(&"scenarios".to_string()));
         assert!(!queue.contains(&"changes".to_string()));
-        assert!(queue.contains(&"scenarios".to_string()));
-    }
-
-    #[test]
-    fn td_author_brief_fill_sections_example_matches_actual_queue() {
-        let example = active_td_fill_sections_example();
-        let from_example = example
-            .split(", ")
-            .map(|section| section.to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(from_example, td_section_queue("applicability"));
+        assert!(queue.contains(&"unit-test".to_string()));
+        assert!(queue.contains(&"logic".to_string()));
+        for section in &queue {
+            let section_type = section
+                .parse::<crate::models::spec_rules::SectionType>()
+                .unwrap();
+            assert!(
+                !crate::generate::generators::primitive_registry::is_prose_section(section_type),
+                "{section} should not be in the active new-TD queue"
+            );
+        }
     }
 
     #[test]
@@ -5884,6 +6249,41 @@ mod tests {
         assert!(template.contains("<!-- type: logic lang: mermaid -->"));
         assert!(template.contains("```mermaid"));
         assert!(template.contains("(fill)"));
+    }
+
+    #[test]
+    fn td_section_payload_template_rejects_new_scenarios() {
+        let err = td_section_payload_template("scenarios").unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("section 'scenarios' is not supported for new TD payloads"));
+    }
+
+    #[test]
+    fn remaining_after_section_uses_spec_fill_sections_when_present() {
+        let spec = concat!(
+            "---\n",
+            "id: selected-sections\n",
+            "fill_sections: [logic, cli, unit-test]\n",
+            "---\n\n",
+            "## Logic\n",
+            "<!-- type: logic lang: mermaid -->\n\n",
+            "```mermaid\n",
+            "---\n",
+            "id: selected_sections\n",
+            "entry: start\n",
+            "nodes:\n",
+            "  start: { kind: start }\n",
+            "edges: []\n",
+            "---\n",
+            "flowchart TD\n",
+            "```\n",
+        );
+
+        assert_eq!(
+            remaining_after_section_in_content(spec, "applicability", "logic"),
+            vec!["cli".to_string(), "unit-test".to_string()]
+        );
     }
 
     #[test]
@@ -6034,6 +6434,73 @@ mod tests {
     }
 
     #[test]
+    fn shared_td_content_gate_tolerates_legacy_scenarios_section() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let spec_path = dir.path().join("legacy-scenarios.md");
+        let spec = concat!(
+            "---\n",
+            "id: legacy-scenarios\n",
+            "fill_sections: [scenarios]\n",
+            "---\n\n",
+            "# Legacy Scenarios\n\n",
+            "#",
+            "# Scenarios\n",
+            "<",
+            "!-- type: scenarios lang: yaml -->\n\n",
+            "```yaml\n",
+            "scenarios:\n",
+            "  - id: S1\n",
+            "    given: old TD prose scenario exists\n",
+            "    when: shared validation scans it\n",
+            "    then: it remains tolerated\n",
+            "```\n",
+        );
+        std::fs::write(&spec_path, spec).unwrap();
+
+        let report =
+            validate_td_content_file(&spec_path, TdContentValidationScope::Complete).unwrap();
+        assert!(
+            !report.has_errors(),
+            "legacy scenarios should be tolerated by shared validation: {:?}",
+            report.findings
+        );
+    }
+
+    #[test]
+    fn new_td_authoring_gate_rejects_scenarios_section() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let spec_path = dir.path().join("new-scenarios.md");
+        let spec = concat!(
+            "---\n",
+            "id: new-scenarios\n",
+            "fill_sections: [scenarios]\n",
+            "---\n\n",
+            "# New Scenarios\n\n",
+            "#",
+            "# Scenarios\n",
+            "<",
+            "!-- type: scenarios lang: yaml -->\n\n",
+            "```yaml\n",
+            "scenarios:\n",
+            "  - id: S1\n",
+            "    given: new TD authoring starts\n",
+            "    when: it includes scenarios\n",
+            "    then: the lifecycle rejects it\n",
+            "```\n",
+        );
+        std::fs::write(&spec_path, spec).unwrap();
+
+        let report =
+            validate_new_td_authoring_file(&spec_path, TdContentValidationScope::Complete).unwrap();
+        let errors = td_content_error_messages(&report);
+        assert!(
+            errors.iter().any(|error| error
+                .contains("new TDs must not include legacy prose section type 'scenarios'")),
+            "new TD authoring should reject scenarios: {errors:?}"
+        );
+    }
+
+    #[test]
     fn shared_td_content_gate_supports_section_apply_partial_specs() {
         let dir = tempfile::TempDir::new().unwrap();
         let spec_path = dir.path().join("partial.md");
@@ -6169,9 +6636,10 @@ mod tests {
             merged.starts_with(
                 "---
 id: x
+fill_sections: [schema]
 ---"
             ),
-            "frontmatter preserved"
+            "frontmatter id should be preserved and fill_sections should be repaired"
         );
         assert!(merged.contains("new"));
         assert!(!merged.contains("old"));

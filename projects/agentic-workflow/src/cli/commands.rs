@@ -33,6 +33,10 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Create a greenfield project directory and bootstrap Agentic Workflow.
+    // @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#CLI
+    New(init::NewArgs),
+
     /// Aggregate project readiness, production gates, and blocker status.
     Health(project::ProjectHealthArgs),
 
@@ -77,6 +81,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R2
         Commands::Init { name, force } => {
             init::run(name.as_deref(), force, None).await?;
+        }
+        Commands::New(args) => {
+            init::run_new(args).await?;
         }
 
         Commands::Health(args) => {

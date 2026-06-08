@@ -55,7 +55,12 @@ pub async fn run_review(args: CbReviewArgs) -> Result<()> {
 
 fn worktree_path(slug: &str) -> Result<std::path::PathBuf> {
     let project_root = crate::find_project_root()?;
-    crate::cli::td::td_activate_inplace_if_present(&project_root, slug)?;
+    let payload_rel = cb_review_payload_rel(slug);
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
+        &project_root,
+        slug,
+        &[payload_rel.as_str()],
+    )?;
     let path = crate::cli::td::td_workspace_path(&project_root, slug);
     if !path.exists() {
         anyhow::bail!("workspace not found: {}", path.display());

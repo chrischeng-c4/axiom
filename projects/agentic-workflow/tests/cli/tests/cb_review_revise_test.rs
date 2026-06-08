@@ -40,9 +40,12 @@ fn smoke_lifecycle_trailers_compile() {
 
 #[test]
 fn smoke_is_mergeable_includes_new_phases() {
-    use agentic_workflow::issues::types::td_phase::{is_mergeable, CB_REVIEWED, CB_REVISED};
+    use agentic_workflow::issues::types::td_phase::{
+        is_mergeable, CB_ARBITRATED, CB_REVIEWED, CB_REVISED,
+    };
     assert!(is_mergeable(CB_REVIEWED));
     assert!(is_mergeable(CB_REVISED));
+    assert!(is_mergeable(CB_ARBITRATED));
 }
 
 // CODEGEN-END

@@ -28,11 +28,12 @@ No public AST symbols.
 ```rust
 use std::collections::BTreeMap;
 
-use agentic_workflow::cli::cb::{CbColdVerifySummary, CbGeneratorMaturitySummary, CbVerifySummary};
+use agentic_workflow::cli::cb::{CbCodegenOriginSummary, CbColdVerifySummary, CbVerifySummary};
 use agentic_workflow::cli::project::{ProjectHealthReport, ProjectHealthStatus};
 use agentic_workflow::cli::standardize::{
-    DependencyPolicyFinding, MarkerCounts, RegenerabilityCoverage, SemanticCoverage,
-    StackMigrationCoverage, StandardizationCoverage, WorkspaceStackMigration,
+    DependencyPolicyFinding, GeneratorPrimitiveGap, MarkerCounts, RegenerabilityCoverage,
+    SemanticCoverage, SemanticGap, StackMigrationCoverage, StandardizationCoverage,
+    WorkspaceStackMigration,
 };
 
 fn managed(percent: f64, uncovered_files: Vec<String>) -> StandardizationCoverage {
@@ -99,6 +100,23 @@ fn semantic(percent: f64, uncovered_files: Vec<String>) -> SemanticCoverage {
     }
 }
 
+fn semantic_with_next_gap(primitive: &str) -> SemanticCoverage {
+    let mut coverage = semantic(100.0, Vec::new());
+    coverage.generator_primitive_gaps = vec![GeneratorPrimitiveGap {
+        target: "projects/demo/build.sh".to_string(),
+        primitive: primitive.to_string(),
+        reason: "fixture gap".to_string(),
+        human_decision_required: false,
+    }];
+    coverage.next_gap = Some(SemanticGap {
+        target: "projects/demo/build.sh".to_string(),
+        primitive: primitive.to_string(),
+        reason: "fixture gap".to_string(),
+        action: "extend_generator_primitive_or_keep_tracked_handwrite".to_string(),
+    });
+    coverage
+}
+
 fn cb_summary(clean: bool) -> CbVerifySummary {
     CbVerifySummary {
         clean,
@@ -121,11 +139,11 @@ fn cold_summary(clean: bool) -> Vec<CbColdVerifySummary> {
         source_root_count: 1,
         generated_files: if clean { 2 } else { 1 },
         expected_files: 2,
-        generator_maturity: CbGeneratorMaturitySummary {
+        codegen_origin: CbCodegenOriginSummary {
             target_files: 2,
+            td_ast_files: 2,
             artifact_replay_files: 0,
             source_template_files: 0,
-            generator_primitive_files: 2,
         },
         failures: if clean {
             Vec::new()
@@ -260,6 +278,28 @@ fn regenerability_gaps_are_advisory_when_production_gates_clean() {
         .optional_regenerability_gaps
         .iter()
         .any(|b| b.contains("HANDWRITE")));
+}
+
+#[test]
+fn tracked_handwrite_generator_gap_does_not_block_semantic_readiness() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic_with_next_gap("source_unit"),
+        regenerable(90.0, 1, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Healthy);
+    assert!(report.semantic_ready);
+    assert!(report.production_ready);
+    assert!(report.blockers.is_empty());
+    assert!(report
+        .optional_regenerability_gaps
+        .iter()
+        .any(|gap| gap.contains("HANDWRITE")));
 }
 
 #[test]

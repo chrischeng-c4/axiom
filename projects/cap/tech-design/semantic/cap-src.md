@@ -258,6 +258,12 @@ semantic_domain:
         ownership_state: "handwrite"
         generator_primitives: ["source_unit"]
         symbols:
+          - name: "is_running"
+            kind: "function"
+            public: true
+          - name: "client"
+            kind: "module"
+            public: true
           - name: "cli"
             kind: "module"
             public: true
@@ -276,15 +282,187 @@ semantic_domain:
           - name: "hook_install"
             kind: "module"
             public: true
+          - name: "managed_run"
+            kind: "module"
+            public: true
+          - name: "paths"
+            kind: "module"
+            public: true
+          - name: "protocol"
+            kind: "module"
+            public: true
           - name: "reap"
             kind: "module"
             public: true
           - name: "sampler"
             kind: "module"
             public: true
+          - name: "supervisor"
+            kind: "module"
+            public: true
           - name: "throttle"
             kind: "module"
             public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/cap/src"
+      - path: "projects/cap/src/client.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "Client"
+            kind: "struct"
+            public: true
+          - name: "connect"
+            kind: "function"
+            public: true
+          - name: "connect_or_launch"
+            kind: "function"
+            public: true
+          - name: "send"
+            kind: "function"
+            public: true
+          - name: "recv"
+            kind: "function"
+            public: true
+          - name: "request"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/cap/src"
+      - path: "projects/cap/src/managed_run.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "ManagedOutcome"
+            kind: "struct"
+            public: true
+          - name: "managed_run"
+            kind: "function"
+            public: true
+          - name: "spawn_signal_forwarder"
+            kind: "function"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/cap/src"
+      - path: "projects/cap/src/paths.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["service_method"]
+        symbols:
+          - name: "home"
+            kind: "function"
+            public: true
+          - name: "ensure_home"
+            kind: "function"
+            public: true
+          - name: "socket_path"
+            kind: "function"
+            public: true
+          - name: "pid_path"
+            kind: "function"
+            public: true
+          - name: "log_path"
+            kind: "function"
+            public: true
+          - name: "logs_dir"
+            kind: "function"
+            public: true
+          - name: "lock_path"
+            kind: "function"
+            public: true
+          - name: "config_path"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/cap/src"
+      - path: "projects/cap/src/protocol.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "enum_model"]
+        symbols:
+          - name: "LeaseId"
+            kind: "type"
+            public: true
+          - name: "Request"
+            kind: "enum"
+            public: true
+          - name: "AcquireRequest"
+            kind: "struct"
+            public: true
+          - name: "Response"
+            kind: "enum"
+            public: true
+          - name: "StatusSnapshot"
+            kind: "struct"
+            public: true
+          - name: "LeaseState"
+            kind: "enum"
+            public: true
+          - name: "KillClassification"
+            kind: "enum"
+            public: true
+          - name: "LeaseSnapshot"
+            kind: "struct"
+            public: true
+          - name: "LeaseBrief"
+            kind: "struct"
+            public: true
+          - name: "Action"
+            kind: "enum"
+            public: true
+          - name: "KillEnvelope"
+            kind: "struct"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/cap/src"
+      - path: "projects/cap/src/supervisor.rs"
+        language: "rust"
+        ownership_state: "handwrite"
+        generator_primitives: ["data_model", "service_method"]
+        symbols:
+          - name: "SpawnOpts"
+            kind: "struct"
+            public: true
+          - name: "SpawnSpec"
+            kind: "struct"
+            public: true
+          - name: "new"
+            kind: "function"
+            public: true
+          - name: "RunningChild"
+            kind: "struct"
+            public: true
+          - name: "wait"
+            kind: "function"
+            public: true
+          - name: "spawn"
+            kind: "function"
+            public: true
+          - name: "apply_priority"
+            kind: "function"
+            public: false
         source_evidence_node:
           layer: "backend"
           ecosystem: "rust"
@@ -1932,7 +2110,7 @@ changes:
     section: exports
     description: |
       Generate the cap crate facade from this aggregate TD AST source group:
-      module docs, cap-core re-exports, and public submodule declarations.
+      module docs and public submodule declarations.
     impl_mode: codegen
     replaces:
       - "<module-preamble>"
@@ -1964,20 +2142,25 @@ changes:
       //! No declared budgets. No per-command estimates. The OS's idea of
       //! "free memory" is the only input.
 
-      // Client-side primitives now live in `cap-core` (shared with vat and other
-      // tools that register leases). Re-exported so `crate::{paths,protocol,client,
-      // supervisor}` keep resolving across this crate's daemon/CLI code.
+      // Client-side primitives live in this crate so the daemon, CLI, and any cap
+      // library consumers share the same wire protocol, state paths, and supervised
+      // run helper.
     pub_uses:
-      - "cap_core::{client, paths, protocol, supervisor}"
+      - "daemon::is_running"
     exports:
       - { module: "cli", symbols: [] }
+      - { module: "client", symbols: [] }
       - { module: "config", symbols: [] }
       - { module: "daemon", symbols: [] }
       - { module: "eventlog", symbols: [] }
       - { module: "hook", symbols: [] }
       - { module: "hook_install", symbols: [] }
+      - { module: "managed_run", symbols: [] }
+      - { module: "paths", symbols: [] }
+      - { module: "protocol", symbols: [] }
       - { module: "reap", symbols: [] }
       - { module: "sampler", symbols: [] }
+      - { module: "supervisor", symbols: [] }
       - { module: "throttle", symbols: [] }
   - path: "projects/cap/src/hook_install.rs"
     action: modify
@@ -4756,13 +4939,12 @@ changes:
       use anyhow::{Context, Result};
       use clap::{Parser, Subcommand, ValueEnum};
       
-      use cap_core::supervisor::SpawnSpec;
-      
       use crate::client::Client;
       use crate::config::Config;
       use crate::daemon;
       use crate::hook_install;
       use crate::protocol::{LeaseState, Request, Response};
+      use crate::supervisor::SpawnSpec;
       
       #[derive(Parser, Debug)]
       #[command(
@@ -5152,10 +5334,11 @@ changes:
               };
       
           // The lease dance (Acquire → spawn → Spawned → wait → Release) lives in
-          // cap-core::managed_run, shared with vat. If the daemon killed the child,
-          // surface the reason on stderr so the agent knows it wasn't a real failure.
+          // managed_run. If the daemon killed the child, surface the reason on stderr
+          // so the agent knows it wasn't a real failure.
           let outcome =
-              cap_core::managed_run(&mut client, SpawnSpec::new(program, rest), args.label).await?;
+              crate::managed_run::managed_run(&mut client, SpawnSpec::new(program, rest), args.label)
+                  .await?;
           if let Some(envelope) = &outcome.kill_envelope {
               // `human_message` is pre-formatted multi-line — `eprint!` (not
               // `eprintln!`) so we don't add a trailing blank line.

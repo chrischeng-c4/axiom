@@ -31,11 +31,13 @@ sandbox, and request escalation when GitHub/network-backed commands need it.
 
 Agentic Workflow is the workflow protocol. Agents should use the CLI verbs
 below, run `aw <verb> --help` when an argument shape matters, and treat stdout
-as the live prompt for the current binary and repository state. If stdout
-contains a JSON envelope, payload path, `invoke.command`, validation error, or
-next command, follow it exactly. For `aw run` JSON, do not declare the workflow
-complete unless `completion.workflow_complete=true`; `action=done` can mean only
-the current child root is complete and the envelope is asking you to inspect the
+as the live prompt for the current binary and repository state. Prefer the
+shortest agent-facing invocation; do not add compatibility/no-op flags such as
+`--json` when stdout already is the protocol. If stdout contains a JSON
+envelope, payload path, `invoke.command`, validation error, or next command,
+follow it exactly. For `aw run` output, do not declare the workflow complete
+unless `completion.workflow_complete=true`; `action=done` can mean only the
+current child root is complete and the envelope is asking you to inspect the
 parent.
 
 Codex should translate Claude slash-command references such as `/aw:td` or
@@ -50,9 +52,9 @@ explicitly asks for Claude-specific behavior.
 | `aw wi` | Work-item inventory, planning, and CRRR: `draft`, `list`, `show`, `create`, `update`, `close`, `find`, `epicize`, `atomize`, `prioritize`, `enrich`, `validate`, `fill-section`, `review`, `arbitrate`. Planning commands write local artifacts under `/tmp/aw/{project}/...` and do not publish tracker changes. |
 | `aw td` | Tech-design lifecycle and checks: `create`, `validate`, `review`, `revise`, `merge`, `arbitrate`, plus read-only/utility verbs `check`, `ast`, `migrate-mermaid`, `claim`. |
 | `aw cb` | Code-artifact lifecycle: `gen`, `check`, `claim`, `fill`, `review`, `revise`, `arbitrate`. |
-| `aw standardize` | Existing-project takeover workflow and remediation guidance. `capability`, `managed`, `semantic`, `traceability`, and `regenerable` expose `report`, `next`, and `run` to drive bounded repair work; readiness metrics live in `aw health`. |
+| `aw standardize` | Existing-project takeover workflow and remediation guidance. Run `aw standardize <project>` first and follow its `next.command`; targeted layer commands are `audit`, `managed`, `semantic`, and `traceability`. Capability remediation routes through `aw capability`; readiness and regenerability metrics live in `aw health`. |
 | `aw capability` | Product capability completion loop. Verbs are `report`, `next`, `run`, and `check`; use `check --verify` when capability proof should include configured test gates. README is the default `cap_path` and uses Markdown H1-Hn capability headings plus contract/work-root tables. YAML `## Capability:` sections and legacy capability tables are migration input only. |
-| `aw health` | Aggregate project readiness metrics: capability readiness, managed/semantic/traceability coverage, command traceability, regenerable maturity, cb verify, cold verify, configured test gates, and HITL status. Use `--verify-traceability --verify-cb --verify-cold --verify-tests` when production readiness must be evaluated. |
+| `aw health` | Aggregate project readiness metrics: capability readiness, managed/semantic/traceability coverage, command traceability, regenerable maturity, cb verify, cold verify, configured test gates, and HITL status. Run `aw health <project>` for production readiness; add targeted `--verify-*` flags only when intentionally debugging a subset. |
 
 ### Support CLI
 
@@ -127,7 +129,7 @@ templates, and skills should not create them. Product explanation belongs in
 README capabilities or external docs; TD sections should exist only when they
 drive codegen, handwrite, or verification artifacts.
 
-`aw run` JSON may include `artifact_quality_profile` and the stdout prompt may
+`aw run` output may include `artifact_quality_profile` and the stdout prompt may
 include an `Artifact Quality Gate`. Treat that gate as part of the lifecycle
 contract, not optional advice. Frontend/UI artifacts require machine-verifiable
 desktop and mobile viewport evidence, interaction smoke proof,
@@ -142,7 +144,7 @@ trailers, and next command.
 Existing-project takeover uses `aw standardize` for bounded workflow guidance
 and `aw health` for the project-readiness metric surface.
 
-Standardize workflow layers:
+Standardize readiness layers and maturity signal:
 
 - `capability`: README capability roots are Markdown-table runnable.
 - `managed`: every in-scope file is marked `CODEGEN` or `HANDWRITE`.
@@ -150,7 +152,7 @@ Standardize workflow layers:
   gaps.
 - `traceability`: active commands, TDs, source refs, and CB blocks close back to
   README capabilities.
-- `regenerable`: automation maturity by default; convert as much `HANDWRITE`
+- `regenerable`: automation maturity signal; convert as much `HANDWRITE`
   to `CODEGEN` as deterministic generator primitives allow. Regenerability
   gaps block production only when the project is generator-authoritative
   (for example Agentic Workflow itself) or when a capability explicitly

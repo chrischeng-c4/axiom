@@ -58,6 +58,14 @@ impl GitLabBackend {
         args
     }
 
+    fn push_issue_list_state_args(args: &mut Vec<String>, state: Option<IssueState>) {
+        match state {
+            Some(IssueState::Open) => {}
+            Some(IssueState::Closed) => args.push("--closed".into()),
+            Some(IssueState::Draft) | None => args.push("--all".into()),
+        }
+    }
+
     /// Resolve a legacy slug alias to a GitLab issue iid by querying the
     /// `slug:<slug>` label.
     fn resolve_slug(&self, slug: &str) -> Result<Option<u64>> {
@@ -66,11 +74,10 @@ impl GitLabBackend {
             "list".to_string(),
             "--label".to_string(),
             format!("{}{}", labels::SLUG_PREFIX, slug),
-            "--state".to_string(),
-            "all".to_string(),
             "--output".to_string(),
             "json".to_string(),
         ];
+        Self::push_issue_list_state_args(&mut args, None);
         args.extend(self.glab_repo_args());
 
         let output = run_glab(&args)?;
@@ -108,20 +115,7 @@ impl IssueBackend for GitLabBackend {
         ];
 
         // Server-side filters
-        match filter.state {
-            Some(IssueState::Open) => {
-                args.push("--state".into());
-                args.push("opened".into());
-            }
-            Some(IssueState::Closed) => {
-                args.push("--state".into());
-                args.push("closed".into());
-            }
-            Some(IssueState::Draft) | None => {
-                args.push("--state".into());
-                args.push("all".into());
-            }
-        }
+        Self::push_issue_list_state_args(&mut args, filter.state);
         if let Some(label) = &filter.label {
             args.push("--label".into());
             args.push(label.clone());
@@ -281,24 +275,19 @@ impl IssueBackend for GitLabBackend {
             args.push(desired.join(","));
         }
 
-        args.push("--output".into());
-        args.push("json".into());
+        args.push("--yes".into());
         args.extend(self.glab_repo_args());
 
         let output = run_glab(&args)?;
-        let json: Value =
-            serde_json::from_str(&output).context("Failed to parse glab issue create JSON")?;
+        let (iid, url) = parse_iid_from_create_output(&output).ok_or_else(|| {
+            anyhow!("glab issue create did not return a parseable issue URL: {output:?}")
+        })?;
 
-        let iid = json["iid"].as_u64();
-        let url = json["web_url"].as_str().map(String::from);
-
-        staged.gitlab_id = iid;
-        staged.url = url;
+        staged.gitlab_id = Some(iid);
+        staged.url = Some(url);
         staged.state = IssueState::Open;
-        if let Some(n) = iid {
-            staged.slug = n.to_string();
-            self.write(&staged).await?;
-        }
+        staged.slug = iid.to_string();
+        self.write(&staged).await?;
         Ok(staged)
     }
 
@@ -362,9 +351,8 @@ impl IssueBackend for GitLabBackend {
             query.to_string(),
             "--output".to_string(),
             "json".to_string(),
-            "--state".to_string(),
-            "all".to_string(),
         ];
+        Self::push_issue_list_state_args(&mut args, None);
         args.extend(self.glab_repo_args());
 
         let output = run_glab(&args)?;
@@ -450,6 +438,23 @@ fn parse_glab_issue(v: &Value) -> Result<Issue> {
     })
 }
 
+fn parse_iid_from_create_output(output: &str) -> Option<(u64, String)> {
+    for token in output.split_whitespace() {
+        let trimmed = token
+            .trim_matches(|c: char| matches!(c, '"' | '\'' | ',' | '.' | ')' | '(' | '[' | ']'));
+        if !trimmed.contains("/-/issues/") && !trimmed.contains("/-/work_items/") {
+            continue;
+        }
+        let iid = trimmed
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .and_then(|value| value.parse::<u64>().ok())?;
+        return Some((iid, trimmed.to_string()));
+    }
+    None
+}
+
 fn run_glab(args: &[String]) -> Result<String> {
     let output = Command::new("glab")
         .args(args)
@@ -492,6 +497,48 @@ mod tests {
         assert_eq!(issue.gitlab_id, Some(1887));
         assert_eq!(issue.slug, "1887");
         assert_eq!(issue.phase.as_deref(), Some("created"));
+    }
+
+    #[test]
+    fn issue_list_state_args_match_glab_cli() {
+        let mut open = Vec::new();
+        GitLabBackend::push_issue_list_state_args(&mut open, Some(IssueState::Open));
+        assert!(open.is_empty());
+
+        let mut closed = Vec::new();
+        GitLabBackend::push_issue_list_state_args(&mut closed, Some(IssueState::Closed));
+        assert_eq!(closed, vec!["--closed"]);
+
+        let mut all = Vec::new();
+        GitLabBackend::push_issue_list_state_args(&mut all, None);
+        assert_eq!(all, vec!["--all"]);
+    }
+
+    #[test]
+    fn parse_iid_from_create_output_accepts_gitlab_issue_url() {
+        let parsed = parse_iid_from_create_output(
+            "Created issue: https://gitlab.com/owner/repo/-/issues/1887\n",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.0, 1887);
+        assert_eq!(
+            parsed.1,
+            "https://gitlab.com/owner/repo/-/issues/1887".to_string()
+        );
+    }
+
+    #[test]
+    fn parse_iid_from_create_output_accepts_gitlab_work_item_url() {
+        let parsed =
+            parse_iid_from_create_output("https://gitlab.com/owner/repo/-/work_items/1887\n")
+                .unwrap();
+
+        assert_eq!(parsed.0, 1887);
+        assert_eq!(
+            parsed.1,
+            "https://gitlab.com/owner/repo/-/work_items/1887".to_string()
+        );
     }
 }
 // CODEGEN-END

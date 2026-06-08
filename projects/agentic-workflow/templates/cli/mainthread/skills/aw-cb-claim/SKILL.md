@@ -16,7 +16,7 @@ This is the canonical Phase 2 recovery verb for adopting existing source.
 ## Invocation
 
 ```bash
-aw cb claim <code-path> [--init] [--issue-stub] [--group <name>] [--json]
+aw cb claim <code-path> [--init] [--issue-stub] [--group <name>]
 ```
 
 | Flag | Effect |
@@ -24,7 +24,6 @@ aw cb claim <code-path> [--init] [--issue-stub] [--group <name>] [--json]
 | `--init` | Create `.aw/` workspace when absent (otherwise exits 1). |
 | `--issue-stub` | Create a minimal issue stub in the `/tmp/aw` issue working copy. |
 | `--group <name>` | Override the tech-design group dir. Inferred from the code path otherwise. |
-| `--json` | Emit the result envelope as JSON. |
 
 ## Flow
 

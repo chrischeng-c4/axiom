@@ -1,9 +1,11 @@
+// SPEC-MANAGED: projects/cap/tech-design/semantic/cap-src.md#schema
+// CODEGEN-BEGIN
 //! The supervised-run helper: run a child as a cap *lease* so the daemon can
 //! throttle it under memory pressure, and hand back the structured outcome.
 //!
-//! This is the reusable core of what was `cap run`'s `handle_run`. The cap CLI
-//! and vat both call it; neither re-implements the Acquire → Spawned → wait →
-//! Release dance, the process-group spawn, or the terminal-signal forwarding.
+//! This is the reusable core of `cap run`'s process supervision. Callers do not
+//! re-implement the Acquire → Spawned → wait → Release dance, the process-group
+//! spawn, or the terminal-signal forwarding.
 //!
 //! The daemon stays the single arbiter: callers register here as clients, they
 //! do **not** embed throttling logic of their own.
@@ -15,6 +17,7 @@ use crate::protocol::{AcquireRequest, KillEnvelope, Request, Response};
 use crate::supervisor::{self, SpawnOpts, SpawnSpec};
 
 /// Result of a supervised run.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 pub struct ManagedOutcome {
     /// The child's final exit status.
     pub status: std::process::ExitStatus,
@@ -26,13 +29,14 @@ pub struct ManagedOutcome {
 /// Run `spec` under daemon protection on an already-connected `client`.
 ///
 /// `label` is the human/agent-facing name recorded in the lease (e.g. the
-/// original command line, or `vat:<id>`). The full lease dance:
+/// original command line, or another tool's workload id). The full lease dance:
 ///
 /// 1. `Acquire` — register intent, receive a lease id + suggested `nice`.
 /// 2. spawn the child in its own process group.
 /// 3. `Spawned` — tell the daemon the PID so it can target it.
 /// 4. wait (the daemon may pause/resume/kill behind our back).
 /// 5. `Release` — report exit; receive a kill envelope iff we were killed.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 pub async fn managed_run(
     client: &mut Client,
     spec: SpawnSpec,
@@ -100,6 +104,7 @@ pub async fn managed_run(
         kill_envelope,
     })
 }
+// CODEGEN-END
 
 /// Forward SIGINT/SIGTERM/SIGHUP to the child's process group so an
 /// interactive Ctrl-C still reaches it despite the process-group remap.

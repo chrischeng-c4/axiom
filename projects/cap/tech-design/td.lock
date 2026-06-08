@@ -1,20 +1,24 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-07T08:09:54.708056+00:00"
-digest = "sha256:cf29a38b02439457c64a41e68cc0d0eb765666cc549ed6af9fa09472537fe2ba"
+generated_at = "2026-06-07T22:48:03.849232+00:00"
+digest = "sha256:802ad02fa01812320e59b9859bb9478c62fe06e3a028090d4c648352dcc2dd70"
 
 [[files]]
 path = "logic/external-contracts.md"
 digest = "sha256:599dd2dbb9e3aca539a57ab7d4dfe8023ae2b8febc57a0b0485d163703498075"
 
 [[files]]
+path = "semantic/cap-projects-cap.md"
+digest = "sha256:2fec1e14f065fe4b91393c537377a408d6fa9b1bc86b8862e695ee92957c3580"
+
+[[files]]
 path = "semantic/cap-src.md"
-digest = "sha256:c7dcb6457c1a37e7d6d4f3895a4926e09a440222ae33dec98ecee993b40f165d"
+digest = "sha256:f36698b5018618019ae5f533a1b5b5f7be34b1558a3469a38511fa807f41fe88"
 
 [[files]]
 path = "semantic/source/cli.md"
-digest = "sha256:f8c26a18c5195720a9be813fab00debc63fed15a862e0203ba7b3f7784919d3b"
+digest = "sha256:59b56ee87b4058a9b7f98897514113a45055ce918ac787a65063fdfc080af3e3"
 
 [[files]]
 path = "semantic/source/config.md"
@@ -38,7 +42,7 @@ digest = "sha256:33d1908aa95f27f24fe2abc71235acf9102781c3aed18f84923389937020728
 
 [[files]]
 path = "semantic/source/lib.md"
-digest = "sha256:e96493c9bfcf22a97a055a79a902405177f25cbd3dd7ba40fb3e1fa1c5a44d4d"
+digest = "sha256:e5ce7480ca1a445023e7d03d8fcdfd9bb01037b5f29af3b52b3f8af090aa4a8b"
 
 [[files]]
 path = "semantic/source/main.md"

@@ -15,8 +15,8 @@ promises from inference alone.
 
 - Human API: `/aw:capability <prompt>`.
 - Agent API: use `aw run`, `aw capability report|next|run|check`,
-  `aw standardize capability ...`, `aw wi list/show`, `aw td ...`, and
-  `aw cb ...` as needed to gather evidence.
+  `aw standardize <project>`, `aw wi list/show`, `aw td ...`, and `aw cb ...`
+  as needed to gather evidence.
 - Artifact: `cap_path`, defaulting to the project README when configured or
   implied by `[[projects]].path`.
 - Canonical CLI namespace: `aw capability`. Do not use the old shorthand;
@@ -25,16 +25,16 @@ promises from inference alone.
 ## Flow
 
 1. Resolve the project from the prompt, current branch, or `.aw/config.toml`.
-2. Run `aw capability report <project> --json` to inspect README capability
+2. Run `aw capability report <project>` to inspect README capability
    sections, WI inventory, TD refs, and evidence.
-3. Run `aw capability next <project> --json` when deciding the next bounded
+3. Run `aw capability next <project>` when deciding the next bounded
    action. Follow the single `next_action` unless it requires HITL.
-4. For root-driven execution, run `aw run --project <project> --max-ticks 1
-   --json` and follow `invoke.command` plus `agent_prompt` until
+4. For root-driven execution, run `aw run --project <project> --max-ticks 1`
+   and follow `invoke.command` plus `agent_prompt` until
    `completion.workflow_complete=true` or `requires_hitl=true`. Do not stop on
    `action=done` alone; a child root can be done while the parent still needs
    rollup.
-5. Use `aw capability check <project> --json --verify` after README or TD linkage edits when production proof matters; omit `--verify` only for a fast structural check.
+5. Use `aw capability check <project> --verify` after README or TD linkage edits when production proof matters; omit `--verify` only for a fast structural check.
 6. Only after explicit confirmation, propose edits that create or materially
    change capability promises.
 
@@ -119,7 +119,7 @@ and claim IDs.
 - 100% means every non-retired capability is `verified`, all non-deferred gaps
   are closed, every required claim is linked to TD/WI evidence, required gates
   pass under `aw capability report --verify`, and TD/WI refs resolve.
-- JSON envelope completion is authoritative for automation. If
+- Stdout envelope completion is authoritative for automation. If
   `completion.workflow_complete=false`, run the envelope `invoke.command` or
   resolve the listed `completion.missing` items before reporting completion.
 - Prefer one bounded tick at a time: `report -> next -> run --max-ticks 1`.

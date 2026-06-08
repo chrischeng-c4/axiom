@@ -1,15 +1,19 @@
+// SPEC-MANAGED: projects/cap/tech-design/semantic/cap-src.md#schema
+// CODEGEN-BEGIN
 //! IPC protocol between cap clients and the cap daemon.
 //!
 //! Wire format: newline-delimited JSON over a Unix domain socket.
 //!
-//! Moved into `cap-core` so any tool (the cap CLI, vat, …) can speak it
-//! without re-declaring the wire types.
+//! Kept in the cap library so every client speaks the daemon protocol without
+//! re-declaring the wire types.
 
 use serde::{Deserialize, Serialize};
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 pub type LeaseId = u64;
 
 /// Client → Daemon.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Request {
@@ -41,6 +45,7 @@ pub enum Request {
     WaitForCapacity { timeout_secs: Option<u64> },
 }
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcquireRequest {
     pub program: String,
@@ -51,6 +56,7 @@ pub struct AcquireRequest {
 }
 
 /// Daemon → Client.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Response {
@@ -85,6 +91,7 @@ pub enum Response {
     Error { message: String },
 }
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusSnapshot {
     pub free_mem_gb: f64,
@@ -105,6 +112,7 @@ pub struct StatusSnapshot {
     pub leases: Vec<LeaseSnapshot>,
 }
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LeaseState {
@@ -125,6 +133,7 @@ pub enum LeaseState {
 /// decide whether to wait-and-retry, change strategy, or wait for
 /// external pressure to clear. Computed at the tick site where lease
 /// count and victim RSS are both known.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KillClassification {
@@ -142,6 +151,7 @@ pub enum KillClassification {
     External,
 }
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseSnapshot {
     pub lease: LeaseId,
@@ -155,6 +165,7 @@ pub struct LeaseSnapshot {
 /// One-line summary of another lease that was active at the moment a
 /// kill happened. Useful for the agent to understand whether it was
 /// competing with its own siblings or with non-cap work.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LeaseBrief {
     pub lease: LeaseId,
@@ -166,6 +177,7 @@ pub struct LeaseBrief {
 /// Actionable suggestion attached to a kill, derived from the
 /// classification. Phrased as a hint — agents may choose to apply it,
 /// fall back to their own strategy, or escalate to a human.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
@@ -190,6 +202,7 @@ pub enum Action {
 /// Structured kill report — superseded the old `killed_reason: String`.
 /// Surfaced to clients on `Response::Released` and rendered as a
 /// multi-line stderr message via `human_message`.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KillEnvelope {
     pub classification: KillClassification,
@@ -204,3 +217,4 @@ pub struct KillEnvelope {
     /// Agents that want structure should read the typed fields instead.
     pub human_message: String,
 }
+// CODEGEN-END

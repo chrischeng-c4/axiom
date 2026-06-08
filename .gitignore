@@ -6,6 +6,10 @@
 # verb runs in (often the repo root); process output, never source.
 .qc/
 
+# meter per-run report cache (.meter/last-report.json) — written under the cwd a
+# meter verb runs in (often the repo root); process output, never source.
+.meter/
+
 # ctx_inf_db autonomous loop runtime state (transitional — not versioned)
 .ctx_inf_db.state
 .ctx_inf_db/

@@ -27,19 +27,24 @@
 //! No declared budgets. No per-command estimates. The OS's idea of
 //! "free memory" is the only input.
 
-// Client-side primitives now live in `cap-core` (shared with vat and other
-// tools that register leases). Re-exported so `crate::{paths,protocol,client,
-// supervisor}` keep resolving across this crate's daemon/CLI code.
+// Client-side primitives live in this crate so the daemon, CLI, and any cap
+// library consumers share the same wire protocol, state paths, and supervised
+// run helper.
 
-pub use cap_core::{client, paths, protocol, supervisor};
+pub use daemon::is_running;
 
 pub mod cli;
+pub mod client;
 pub mod config;
 pub mod daemon;
 pub mod eventlog;
 pub mod hook;
 pub mod hook_install;
+pub mod managed_run;
+pub mod paths;
+pub mod protocol;
 pub mod reap;
 pub mod sampler;
+pub mod supervisor;
 pub mod throttle;
 // CODEGEN-END

@@ -1,10 +1,11 @@
+// SPEC-MANAGED: projects/cap/tech-design/semantic/cap-src.md#schema
+// CODEGEN-BEGIN
 //! Client-side: connect to the cap daemon, send Request, parse Response.
 //!
 //! `connect()` is pure. `connect_or_launch()` takes a caller-supplied closure
-//! to *start* a daemon when none is up — because how the daemon is launched is
-//! binary-specific (the cap CLI re-execs itself as `cap daemon run`; another
-//! tool might shell out to `cap`, or simply decline and degrade). cap-core
-//! must not assume it lives inside the cap binary.
+//! to *start* a daemon when none is up. Keeping daemon launch caller-supplied
+//! lets library consumers decide whether to spawn `cap daemon run`, shell out
+//! to `cap`, or degrade without a daemon.
 
 use anyhow::{anyhow, Context, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -13,10 +14,12 @@ use tokio::net::UnixStream;
 use crate::paths;
 use crate::protocol::{Request, Response};
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 pub struct Client {
     stream: BufReader<UnixStream>,
 }
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 impl Client {
     /// Connect to an already-running daemon. Errors if none is listening.
     pub async fn connect() -> Result<Self> {
@@ -77,3 +80,4 @@ impl Client {
         self.recv().await
     }
 }
+// CODEGEN-END

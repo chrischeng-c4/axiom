@@ -15,7 +15,6 @@ name = "cap"
 path = "src/main.rs"
 
 [dependencies]
-cap-core = { path = "../cap-core" }
 clap = { version = "4", features = ["derive", "color"] }
 tokio = { workspace = true, features = ["full"] }
 serde.workspace = true

@@ -30,6 +30,21 @@ fn write_mock_glab(tempdir: &TempDir, stdout_text: &str) -> PathBuf {
     path
 }
 
+fn write_recording_mock_glab(tempdir: &TempDir, stdout_text: &str) -> (PathBuf, PathBuf) {
+    let path = tempdir.path().join("glab");
+    let args_path = tempdir.path().join("glab.args");
+    let script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\ncat <<'__EOF__'\n{}\n__EOF__\n",
+        args_path.display(),
+        stdout_text
+    );
+    fs::write(&path, script).expect("write recording mock glab");
+    let mut perms = fs::metadata(&path).unwrap().permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&path, perms).expect("chmod recording mock glab");
+    (path, args_path)
+}
+
 #[tokio::test]
 async fn create_happy_path() {
     let _g = env_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -72,12 +87,15 @@ async fn list_open_issues_maps_state_and_labels() {
         { "iid": 1, "title": "first",  "state": "opened", "labels": ["bug", "p0"] },
         { "iid": 2, "title": "second", "state": "closed", "labels": [] },
     ]);
-    let mock = write_mock_glab(&tmp, &mock_value.to_string());
+    let (mock, args_path) = write_recording_mock_glab(&tmp, &mock_value.to_string());
     let backend = GitLabIssueBackend::from_env(None)
         .unwrap()
         .with_binary(mock.to_string_lossy());
 
     let refs = backend.list(&ListFilter::default()).await.expect("list");
+    let args = fs::read_to_string(args_path).expect("read glab args");
+    assert!(args.contains("--output\njson\n"), "got args:\n{args}");
+    assert!(!args.contains("--state\n"), "got args:\n{args}");
     assert_eq!(refs.len(), 2);
     assert_eq!(refs[0].id, IssueId::new("1"));
     assert_eq!(refs[0].state, IssueState::Open);

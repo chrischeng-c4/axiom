@@ -1311,7 +1311,6 @@ name = "cap"
 version = "0.3.61"
 dependencies = [
  "anyhow",
- "cap-core",
  "chrono",
  "clap",
  "dirs",
@@ -1325,18 +1324,6 @@ dependencies = [
  "toml 0.8.23",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "cap-core"
-version = "0.3.61"
-dependencies = [
- "anyhow",
- "dirs",
- "libc",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

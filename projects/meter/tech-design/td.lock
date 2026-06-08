@@ -1,8 +1,8 @@
 version = 1
 project = "meter"
 td_path = "projects/meter/tech-design"
-generated_at = "2026-06-07T11:51:38.331300+00:00"
-digest = "sha256:59b806d83689ab90f18ca103215eba940e931e3c854e38c7c8a85f45e977cf25"
+generated_at = "2026-06-07T22:48:03.931311+00:00"
+digest = "sha256:fbe7463f6c5b0eae5cc96dafa578b572ed9e98a400544c357252932990e8ff29"
 
 [[files]]
 path = ".gitkeep"
@@ -11,6 +11,10 @@ digest = "sha256:c99c4ccde305d3e049351d8f5099d5a1c9dbca0fff3cea6bdf1c79f8794b490
 [[files]]
 path = "logic/external-contracts.md"
 digest = "sha256:2f0b65b4f4d1349faab5a3120f6d431f8e3a7ab90ade77cb7fe0236f412cb795"
+
+[[files]]
+path = "semantic/meter-projects-meter.md"
+digest = "sha256:f7bdc8d956c683ff19663827f31c16d3541d00904b43a7fe1bfb5572fd687243"
 
 [[files]]
 path = "semantic/source/projects-meter-benches-discovery-benchmark-rs.md"

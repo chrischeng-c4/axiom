@@ -99,13 +99,12 @@ use std::process::ExitCode;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
-use cap_core::supervisor::SpawnSpec;
-
 use crate::client::Client;
 use crate::config::Config;
 use crate::daemon;
 use crate::hook_install;
 use crate::protocol::{LeaseState, Request, Response};
+use crate::supervisor::SpawnSpec;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -495,10 +494,11 @@ async fn handle_run(args: RunArgs) -> Result<ExitCode> {
         };
 
     // The lease dance (Acquire → spawn → Spawned → wait → Release) lives in
-    // cap-core::managed_run, shared with vat. If the daemon killed the child,
-    // surface the reason on stderr so the agent knows it wasn't a real failure.
+    // managed_run. If the daemon killed the child, surface the reason on stderr
+    // so the agent knows it wasn't a real failure.
     let outcome =
-        cap_core::managed_run(&mut client, SpawnSpec::new(program, rest), args.label).await?;
+        crate::managed_run::managed_run(&mut client, SpawnSpec::new(program, rest), args.label)
+            .await?;
     if let Some(envelope) = &outcome.kill_envelope {
         // `human_message` is pre-formatted multi-line — `eprint!` (not
         // `eprintln!`) so we don't add a trailing blank line.

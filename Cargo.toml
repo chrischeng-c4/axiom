@@ -24,7 +24,6 @@ members = [
     "projects/agentic-workflow",
     "projects/compass",
     "projects/cap",
-    "projects/cap-core",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",
     "projects/mamba/mambalibs/httpkit/binding",

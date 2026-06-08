@@ -18,6 +18,8 @@ mod standardize_audit;
 const SOURCE_EXTS: &[&str] = &[
     "rs", "py", "js", "jsx", "mjs", "cjs", "ts", "tsx", "go", "json", "css", "scss",
 ];
+const PROJECT_CONTEXT_ARTIFACTS: &[&str] = &["llms.txt"];
+const RUST_BINARY_ARTIFACTS: &[&str] = &["build.sh", "install.sh"];
 const EXCLUDED_DIRS: &[&str] = &[
     ".git",
     ".aw",
@@ -807,6 +809,7 @@ pub struct StandardizeAction {
 pub enum StandardizeActionKind {
     AuditRequired,
     RegenDrift,
+    ProjectRootArtifact,
     PromoteHandwrite,
     SemanticGap,
     GeneratorPrimitiveGap,
@@ -877,6 +880,7 @@ struct Inventory {
     coverage: StandardizationCoverage,
     files: Vec<SourceFile>,
     rust_findings: Vec<RustAuditFinding>,
+    project_root_artifact_findings: Vec<ProjectRootArtifactFinding>,
     spec_violation: Option<SpecViolation>,
 }
 
@@ -914,6 +918,13 @@ struct HandwriteGap {
 struct RustAuditFinding {
     kind: StandardizeActionKind,
     target: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectRootArtifactFinding {
+    target: String,
+    project: String,
     reason: String,
 }
 
@@ -2020,9 +2031,31 @@ fn build_inventory(
     all: bool,
 ) -> Result<Inventory> {
     let scope = resolve_scopes(project_root, explicit_scopes, project, all)?;
-    let files = collect_source_files(project_root, &scope)?;
+    let mut files = collect_source_files(project_root, &scope)?;
+    if let Some(project_name) = project {
+        extend_project_root_artifact_files(project_root, project_name, &mut files)?;
+    }
     let rust_findings = collect_rust_audit_findings(project_root, &files);
     let spec_violation = find_spec_violation(project_root, &scope)?;
+    let root_artifact_gaps = if project.is_some() && explicit_scopes.is_empty() && !all {
+        project
+            .map(|project_name| missing_project_root_artifacts(project_root, project_name))
+            .transpose()?
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let project_root_artifact_findings =
+        if let Some(project_name) = project.filter(|_| explicit_scopes.is_empty() && !all) {
+            collect_project_root_artifact_findings(
+                project_root,
+                project_name,
+                &files,
+                &root_artifact_gaps,
+            )?
+        } else {
+            Vec::new()
+        };
 
     let mut by_language = BTreeMap::new();
     let mut by_marker = MarkerCounts::default();
@@ -2043,8 +2076,12 @@ fn build_inventory(
             uncovered_files.push(file.rel.clone());
         }
     }
+    for rel in &root_artifact_gaps {
+        *by_language.entry("root-artifact".to_string()).or_insert(0) += 1;
+        uncovered_files.push(rel.clone());
+    }
 
-    let total_files = files.len();
+    let total_files = files.len() + root_artifact_gaps.len();
     let percent = if total_files == 0 {
         100.0
     } else {
@@ -2063,6 +2100,7 @@ fn build_inventory(
         },
         files,
         rust_findings,
+        project_root_artifact_findings,
         spec_violation,
     })
 }
@@ -4744,6 +4782,7 @@ struct ConfiguredScope {
     project_path: Option<String>,
     scope: String,
     td_path: Option<String>,
+    cap_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4752,6 +4791,7 @@ struct ConfiguredWorkspace {
     name: Option<String>,
     paths: Vec<String>,
     target: Option<String>,
+    test_cmd: Option<String>,
 }
 
 fn read_config_workspace_scopes(project_root: &Path) -> Result<Vec<ConfiguredScope>> {
@@ -4790,6 +4830,10 @@ fn read_config_workspace_scopes(project_root: &Path) -> Result<Vec<ConfiguredSco
             .get("td_path")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let cap_path = project
+            .get("cap_path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let Some(workspaces) = project.get("workspaces").and_then(|v| v.as_array()) else {
             continue;
         };
@@ -4805,6 +4849,7 @@ fn read_config_workspace_scopes(project_root: &Path) -> Result<Vec<ConfiguredSco
                         project_path: project_path.clone(),
                         scope: s.to_string(),
                         td_path: td_path.clone(),
+                        cap_path: cap_path.clone(),
                     });
                 }
             }
@@ -4868,6 +4913,10 @@ fn read_config_workspaces(project_root: &Path) -> Result<Vec<ConfiguredWorkspace
                 paths,
                 target: workspace
                     .get("target")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                test_cmd: workspace
+                    .get("test_cmd")
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
             });
@@ -5806,6 +5855,432 @@ fn collect_source_files(project_root: &Path, scopes: &[String]) -> Result<Vec<So
     Ok(out)
 }
 
+fn extend_project_root_artifact_files(
+    project_root: &Path,
+    project: &str,
+    files: &mut Vec<SourceFile>,
+) -> Result<()> {
+    let Some(project_rel) = configured_project_path(project_root, project)? else {
+        return Ok(());
+    };
+    let mut rels = files
+        .iter()
+        .map(|file| file.rel.clone())
+        .collect::<BTreeSet<_>>();
+    for name in required_project_root_artifact_names(project_root, project, &project_rel)? {
+        let rel = format!("{}/{}", project_rel.trim_end_matches('/'), name);
+        if !rels.insert(rel.clone()) {
+            continue;
+        }
+        let abs = project_root.join(&rel);
+        if !abs.is_file() {
+            continue;
+        }
+        let content = fs::read_to_string(&abs).unwrap_or_default();
+        files.push(SourceFile {
+            rel,
+            abs,
+            language: project_root_artifact_language(name).to_string(),
+            markers: detect_markers(&content),
+            handwrite_gaps: detect_handwrite_gaps(&content),
+        });
+    }
+    Ok(())
+}
+
+fn missing_project_root_artifacts(project_root: &Path, project: &str) -> Result<Vec<String>> {
+    let Some(project_rel) = configured_project_path(project_root, project)? else {
+        return Ok(Vec::new());
+    };
+    Ok(
+        required_project_root_artifact_names(project_root, project, &project_rel)?
+            .into_iter()
+            .map(|name| format!("{}/{}", project_rel.trim_end_matches('/'), name))
+            .filter(|rel| !project_root.join(rel).is_file())
+            .collect(),
+    )
+}
+
+fn collect_project_root_artifact_findings(
+    project_root: &Path,
+    project: &str,
+    files: &[SourceFile],
+    root_artifact_gaps: &[String],
+) -> Result<Vec<ProjectRootArtifactFinding>> {
+    let project = resolve_standardize_project_name(project_root, project)?;
+    let Some(project_rel) = configured_project_path(project_root, &project)? else {
+        return Ok(Vec::new());
+    };
+    if !required_project_root_artifact_names(project_root, &project, &project_rel)?
+        .contains(&"llms.txt")
+    {
+        return Ok(Vec::new());
+    }
+
+    let target = format!("{}/llms.txt", project_rel.trim_end_matches('/'));
+    if root_artifact_gaps.iter().any(|gap| gap == &target) {
+        return Ok(vec![ProjectRootArtifactFinding {
+            target,
+            project,
+            reason: "project root artifact `llms.txt` is missing; AW can generate the TD-first agent context map"
+                .to_string(),
+        }]);
+    }
+
+    let abs = project_root.join(&target);
+    if !abs.is_file() {
+        return Ok(vec![ProjectRootArtifactFinding {
+            target,
+            project,
+            reason: "project root artifact `llms.txt` is missing; AW can generate the TD-first agent context map"
+                .to_string(),
+        }]);
+    }
+
+    let content = fs::read_to_string(&abs).unwrap_or_default();
+    let expected = render_project_llms_txt(project_root, &project)?;
+    let markers = files
+        .iter()
+        .find(|file| file.rel == target)
+        .map(|file| file.markers.clone())
+        .unwrap_or_else(|| detect_markers(&content));
+    if !markers.codegen {
+        return Ok(vec![ProjectRootArtifactFinding {
+            target,
+            project,
+            reason:
+                "project root artifact `llms.txt` must be CODEGEN from TD-first project context"
+                    .to_string(),
+        }]);
+    }
+    if content != expected {
+        return Ok(vec![ProjectRootArtifactFinding {
+            target,
+            project,
+            reason:
+                "project root artifact `llms.txt` is stale versus the TD-first generator output"
+                    .to_string(),
+        }]);
+    }
+
+    Ok(Vec::new())
+}
+
+/// Return production blockers for the project-root artifacts that AW itself
+/// expects agents and build skills to consume.
+/// @spec .aw/tech-design/projects/agentic-workflow/logic/manage-project-root-llms-and-build-install-artifacts.md#logic
+pub(crate) fn project_root_artifact_blockers(project: &str) -> Result<Vec<String>> {
+    let project_root = crate::find_project_root()?;
+    project_root_artifact_blockers_at(&project_root, project)
+}
+
+fn project_root_artifact_blockers_at(project_root: &Path, project: &str) -> Result<Vec<String>> {
+    let project = resolve_standardize_project_name(project_root, project)?;
+    let Some(project_rel) = configured_project_path(project_root, &project)? else {
+        return Ok(Vec::new());
+    };
+    let mut blockers = Vec::new();
+    for name in required_project_root_artifact_names(project_root, &project, &project_rel)? {
+        let rel = format!("{}/{}", project_rel.trim_end_matches('/'), name);
+        let abs = project_root.join(&rel);
+        if !abs.is_file() {
+            blockers.push(format!("missing project root artifact `{rel}`"));
+            continue;
+        }
+        if name == "llms.txt" {
+            let content = fs::read_to_string(&abs).unwrap_or_default();
+            let expected = render_project_llms_txt(project_root, &project)?;
+            let markers = detect_markers(&content);
+            if !markers.codegen {
+                blockers.push(format!(
+                    "project root artifact `{rel}` must be generated by AW from TD-first project context"
+                ));
+            } else if content != expected {
+                blockers.push(format!(
+                    "project root artifact `{rel}` is stale; run `aw standardize managed run {} --non-interactive --max-ticks 1`",
+                    shell_quote(&project)
+                ));
+            }
+        }
+        if matches!(name, "build.sh" | "install.sh") && !is_executable_file(&abs) {
+            blockers.push(format!("project root artifact `{rel}` is not executable"));
+        }
+        if name == "build.sh" {
+            let content = fs::read_to_string(&abs).unwrap_or_default();
+            if !content.contains("debug") || !content.contains("release") {
+                blockers.push(format!(
+                    "project root artifact `{rel}` must expose debug and release build modes"
+                ));
+            }
+            if project_has_rust_binary(project_root, &project, &project_rel)?
+                && !content.contains("--release")
+                && !content.contains("target/release")
+            {
+                blockers.push(format!(
+                    "project root artifact `{rel}` release mode must build or install the release profile"
+                ));
+            }
+        }
+    }
+    Ok(blockers)
+}
+
+fn required_project_root_artifact_names(
+    project_root: &Path,
+    project: &str,
+    project_rel: &str,
+) -> Result<Vec<&'static str>> {
+    let mut names = PROJECT_CONTEXT_ARTIFACTS.to_vec();
+    if project_has_rust_binary(project_root, project, project_rel)? {
+        names.extend(RUST_BINARY_ARTIFACTS.iter().copied());
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn configured_project_path(project_root: &Path, project: &str) -> Result<Option<String>> {
+    let configured = read_config_workspace_scopes(project_root)?;
+    Ok(configured
+        .iter()
+        .find(|scope| configured_scope_matches_project(scope, project))
+        .and_then(|scope| scope.project_path.clone()))
+}
+
+fn configured_project_scope(project_root: &Path, project: &str) -> Result<Option<ConfiguredScope>> {
+    let configured = read_config_workspace_scopes(project_root)?;
+    Ok(configured
+        .into_iter()
+        .find(|scope| configured_scope_matches_project(scope, project)))
+}
+
+pub(crate) fn configured_project_name_for_path(
+    project_root: &Path,
+    target: &str,
+) -> Result<Option<String>> {
+    let configured = read_config_workspace_scopes(project_root)?;
+    let target = target.replace('\\', "/");
+    Ok(configured
+        .into_iter()
+        .filter_map(|scope| {
+            let project_name = scope.project_name?;
+            let project_path = scope.project_path?;
+            if path_prefix_of(&project_path, &target) {
+                Some((project_name, project_path.len()))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|(_, len)| *len)
+        .map(|(project_name, _)| project_name))
+}
+
+pub(crate) fn render_project_llms_txt(project_root: &Path, project: &str) -> Result<String> {
+    let project = resolve_standardize_project_name(project_root, project)?;
+    let scope = configured_project_scope(project_root, &project)?
+        .with_context(|| format!("project `{project}` is not configured"))?;
+    let project_rel = scope
+        .project_path
+        .clone()
+        .with_context(|| format!("project `{project}` has no configured path"))?;
+    let td_path = configured_td_path(&scope).unwrap_or_else(|| {
+        crate::services::project_registry::default_project_td_path(&project_rel)
+            .to_string_lossy()
+            .into_owned()
+    });
+    let cap_path = scope
+        .cap_path
+        .clone()
+        .unwrap_or_else(|| format!("{}/README.md", project_rel.trim_end_matches('/')));
+    let spec_ref = project_llms_semantic_spec_ref(&project, &project_rel, &td_path);
+    let title = project_agent_context_title(&project);
+    let required_artifacts =
+        required_project_root_artifact_names(project_root, &project, &project_rel)?;
+    let has_build = required_artifacts.contains(&"build.sh");
+    let has_install = required_artifacts.contains(&"install.sh");
+    let mut test_cmds = read_config_workspaces(project_root)?
+        .into_iter()
+        .filter(|workspace| workspace.project_name.as_deref() == Some(project.as_str()))
+        .filter_map(|workspace| workspace.test_cmd)
+        .filter(|cmd| cmd != "true")
+        .collect::<Vec<_>>();
+    test_cmds.sort();
+    test_cmds.dedup();
+
+    let mut out = String::new();
+    out.push_str(&format!("<!-- SPEC-MANAGED: {spec_ref}#schema -->\n"));
+    out.push_str("<!-- CODEGEN-BEGIN -->\n");
+    out.push_str(&format!("# {title} Agent Context\n\n"));
+    out.push_str(
+        "> TD-first map for agents. Start from tech design and capability intent before implementation files.\n\n",
+    );
+    out.push_str("## Tech Design\n\n");
+    out.push_str(&format!(
+        "- [Tech Design]({}): implementation source of truth.\n",
+        project_relative_link(&project_rel, &td_path)
+    ));
+    out.push_str(&format!("- Validate: `aw td check {td_path}`.\n\n"));
+    out.push_str("## Capability Map\n\n");
+    out.push_str(&format!(
+        "- [README]({}): capability source of truth and product contract.\n\n",
+        project_relative_link(&project_rel, &cap_path)
+    ));
+    out.push_str("## Agent Workflow\n\n");
+    out.push_str(&format!(
+        "- Continue: `aw run --project {}`.\n",
+        shell_quote(&project)
+    ));
+    out.push_str(&format!(
+        "- Next managed step: `aw standardize managed next {}`.\n",
+        shell_quote(&project)
+    ));
+    out.push_str(&format!(
+        "- Readiness: `aw health {}`.\n\n",
+        shell_quote(&project)
+    ));
+    out.push_str("## Commands\n\n");
+    if has_build {
+        out.push_str("- Build debug: `./build.sh debug`.\n");
+        out.push_str("- Build release: `./build.sh release`.\n");
+    }
+    if has_install {
+        out.push_str(&format!(
+            "- Install: repo root `install.sh --project={}` dispatches to `./install.sh`.\n",
+            project
+        ));
+    }
+    for cmd in &test_cmds {
+        out.push_str(&format!("- Test: `{cmd}`.\n"));
+    }
+    out.push('\n');
+    out.push_str("## Root Artifacts\n\n");
+    out.push_str("- [llms.txt](llms.txt): generated by `aw standardize managed run`.\n");
+    if has_build {
+        out.push_str("- [build.sh](build.sh): debug/release build entrypoint.\n");
+    }
+    if has_install {
+        out.push_str("- [install.sh](install.sh): project-local install entrypoint.\n");
+    }
+    out.push_str("<!-- CODEGEN-END -->\n");
+    Ok(out)
+}
+
+fn project_llms_semantic_spec_ref(project: &str, project_rel: &str, td_path: &str) -> String {
+    format!(
+        "{}/semantic/{}-{}.md",
+        td_path.trim_end_matches('/'),
+        slug_for_path(project),
+        slug_for_path(project_rel)
+    )
+}
+
+fn project_agent_context_title(project: &str) -> String {
+    if project.contains('-') {
+        project
+            .split('-')
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        project.to_string()
+    }
+}
+
+fn project_relative_link(project_rel: &str, target_rel: &str) -> String {
+    let project_rel = project_rel.trim_matches('/');
+    let target_rel = target_rel.trim_start_matches("./").trim_matches('/');
+    if target_rel.is_empty() || target_rel == project_rel {
+        return ".".to_string();
+    }
+    let prefix = format!("{project_rel}/");
+    if let Some(stripped) = target_rel.strip_prefix(&prefix) {
+        return stripped.to_string();
+    }
+    let upward = project_rel
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .map(|_| "..")
+        .collect::<Vec<_>>()
+        .join("/");
+    if upward.is_empty() {
+        target_rel.to_string()
+    } else {
+        format!("{upward}/{target_rel}")
+    }
+}
+
+fn project_has_rust_binary(project_root: &Path, project: &str, project_rel: &str) -> Result<bool> {
+    let has_rust_workspace = read_config_workspaces(project_root)?
+        .into_iter()
+        .any(|workspace| {
+            workspace.project_name.as_deref() == Some(project)
+                && workspace.target.as_deref() == Some("rust")
+        });
+    if !has_rust_workspace {
+        return Ok(false);
+    }
+    let root = project_root.join(project_rel);
+    if !root.is_dir() {
+        return Ok(false);
+    }
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        if is_excluded_path(&dir) {
+            continue;
+        }
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml") {
+                let manifest = fs::read_to_string(&path).unwrap_or_default();
+                if manifest.contains("[[bin]]")
+                    || path
+                        .parent()
+                        .is_some_and(|p| p.join("src/main.rs").is_file())
+                {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn project_root_artifact_language(name: &str) -> &'static str {
+    match name {
+        "build.sh" | "install.sh" => "shell",
+        "llms.txt" => "llms",
+        _ => "root-artifact",
+    }
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path)
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
 fn build_scope_matcher(scopes: &[String]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for scope in scopes {
@@ -6253,6 +6728,10 @@ fn scope_static_prefix(scope: &str) -> String {
 }
 
 fn choose_action(inventory: &Inventory) -> StandardizeAction {
+    if let Some(finding) = inventory.project_root_artifact_findings.first() {
+        return project_root_artifact_action(finding);
+    }
+
     if let Some(file) = inventory
         .files
         .iter()
@@ -6373,6 +6852,20 @@ fn choose_action(inventory: &Inventory) -> StandardizeAction {
         "none",
         "",
         "all in-scope source files are managed and no blocking findings remain",
+        false,
+    )
+}
+
+fn project_root_artifact_action(finding: &ProjectRootArtifactFinding) -> StandardizeAction {
+    action(
+        StandardizeActionKind::ProjectRootArtifact,
+        &finding.target,
+        "cli",
+        &format!(
+            "aw standardize managed run {} --non-interactive --max-ticks 1",
+            shell_quote(&finding.project)
+        ),
+        &finding.reason,
         false,
     )
 }
@@ -7070,12 +7563,36 @@ fn action(
     }
 }
 
+fn write_project_root_artifact(
+    project_root: &Path,
+    action: &StandardizeAction,
+) -> Result<ActionOutcome> {
+    if !action.target.ends_with("/llms.txt") {
+        bail!(
+            "project root artifact action only supports llms.txt, got `{}`",
+            action.target
+        );
+    }
+    let project = configured_project_name_for_path(project_root, &action.target)?
+        .with_context(|| format!("no configured project owns `{}`", action.target))?;
+    let content = render_project_llms_txt(project_root, &project)?;
+    let path = project_root.join(&action.target);
+    fs::write(&path, content).with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(ActionOutcome {
+        changed_paths: vec![path],
+        message: format!("generated TD-first project root artifact {}", action.target),
+    })
+}
+
 fn execute_action(
     project_root: &Path,
     action: &StandardizeAction,
     inventory: &Inventory,
 ) -> Result<ActionOutcome> {
     match action.kind {
+        StandardizeActionKind::ProjectRootArtifact => {
+            write_project_root_artifact(project_root, action)
+        }
         StandardizeActionKind::ClaimCode => {
             let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
             claim_code(project_root, action, &configured)
@@ -9810,6 +10327,18 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
+    #[cfg(unix)]
+    fn make_executable(root: &Path, rel: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = root.join(rel);
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(_root: &Path, _rel: &str) {}
+
     fn write_traceability_config(root: &Path, workspace_scope: &str) {
         write(
             root,
@@ -10121,6 +10650,271 @@ changes:
     }
 
     #[test]
+    fn managed_inventory_includes_project_root_artifacts() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/Cargo.toml",
+            "[package]\nname = \"tool\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/src/main.rs",
+            "// <HANDWRITE gap=\"g\" tracker=\"#4158\" reason=\"fixture\">\nfn main() {}\n// </HANDWRITE>\n",
+        );
+        let llms = render_project_llms_txt(tmp.path(), "tool").unwrap();
+        write(tmp.path(), "projects/tool/llms.txt", &llms);
+        write(
+            tmp.path(),
+            "projects/tool/build.sh",
+            "# <HANDWRITE gap=\"project-root-build\" tracker=\"#4158\" reason=\"fixture\">\ncase \"${1:-}\" in debug) cargo build -p tool ;; release) cargo build --release -p tool ;; esac\n# </HANDWRITE>\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/install.sh",
+            "# <HANDWRITE gap=\"project-root-install\" tracker=\"#4158\" reason=\"fixture\">\ninstall -m 755 target/release/tool \"$HOME/.cargo/bin/tool\"\n# </HANDWRITE>\n",
+        );
+        make_executable(tmp.path(), "projects/tool/build.sh");
+        make_executable(tmp.path(), "projects/tool/install.sh");
+
+        let inventory = build_inventory(tmp.path(), &[], Some("tool"), false).unwrap();
+        let rels = inventory
+            .files
+            .iter()
+            .map(|file| file.rel.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(rels.contains("projects/tool/llms.txt"));
+        assert!(rels.contains("projects/tool/build.sh"));
+        assert!(rels.contains("projects/tool/install.sh"));
+        assert!(inventory.coverage.uncovered_files.is_empty());
+        assert_eq!(inventory.coverage.percent, 100.0);
+        assert!(project_root_artifact_blockers_at(tmp.path(), "tool")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn project_root_llms_generator_is_td_first() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+td_path = "projects/tool/tech-design"
+cap_path = "projects/tool/README.md"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+test_cmd = "cargo test -p tool"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/Cargo.toml",
+            "[package]\nname = \"tool\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n",
+        );
+
+        let llms = render_project_llms_txt(tmp.path(), "tool").unwrap();
+
+        let td_pos = llms.find("## Tech Design").unwrap();
+        let cap_pos = llms.find("## Capability Map").unwrap();
+        assert!(td_pos < cap_pos);
+        assert!(llms.contains("<!-- CODEGEN-BEGIN -->"));
+        assert!(llms.contains("[Tech Design](tech-design)"));
+        assert!(llms.contains("`aw td check projects/tool/tech-design`"));
+        assert!(llms.contains("`aw run --project tool`"));
+        assert!(llms.contains("`aw health tool`"));
+        assert!(llms.contains("`./build.sh debug`"));
+        assert!(llms.contains("`./build.sh release`"));
+        assert!(llms.contains("`cargo test -p tool`"));
+        assert!(!llms.contains("src/"));
+        assert!(!llms.contains("managed_percent"));
+        assert!(!llms.contains("open WI"));
+        assert!(!llms.contains("CB"));
+        assert!(!llms.contains("HANDWRITE"));
+    }
+
+    #[test]
+    fn project_root_llms_action_generates_missing_artifact() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+test_cmd = "cargo test -p tool"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/Cargo.toml",
+            "[package]\nname = \"tool\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/src/main.rs",
+            "// <HANDWRITE gap=\"g\" tracker=\"#4158\" reason=\"fixture\">\nfn main() {}\n// </HANDWRITE>\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/build.sh",
+            "# <HANDWRITE gap=\"project-root-build\" tracker=\"#4158\" reason=\"fixture\">\ncase \"${1:-}\" in debug) cargo build -p tool ;; release) cargo build --release -p tool ;; esac\n# </HANDWRITE>\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/install.sh",
+            "# <HANDWRITE gap=\"project-root-install\" tracker=\"#4158\" reason=\"fixture\">\ninstall -m 755 target/release/tool \"$HOME/.cargo/bin/tool\"\n# </HANDWRITE>\n",
+        );
+        make_executable(tmp.path(), "projects/tool/build.sh");
+        make_executable(tmp.path(), "projects/tool/install.sh");
+
+        let inventory = build_inventory(tmp.path(), &[], Some("tool"), false).unwrap();
+        let action = choose_action(&inventory);
+
+        assert_eq!(action.kind, StandardizeActionKind::ProjectRootArtifact);
+        assert_eq!(action.target, "projects/tool/llms.txt");
+        assert_eq!(
+            action.command,
+            "aw standardize managed run tool --non-interactive --max-ticks 1"
+        );
+
+        let outcome = execute_action(tmp.path(), &action, &inventory).unwrap();
+        assert_eq!(outcome.changed_paths.len(), 1);
+        let generated = fs::read_to_string(tmp.path().join("projects/tool/llms.txt")).unwrap();
+        assert!(generated.contains("<!-- CODEGEN-BEGIN -->"));
+        assert!(generated.contains("## Tech Design"));
+        assert!(project_root_artifact_blockers_at(tmp.path(), "tool")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn project_root_llms_blocker_rejects_handwrite_and_stale_content() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "python"
+test_cmd = "true"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/llms.txt",
+            "<!-- <HANDWRITE gap=\"project-root-llms\" tracker=\"#4158\" reason=\"fixture\"> -->\n# tool\n<!-- </HANDWRITE> -->\n",
+        );
+
+        let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
+        assert!(blockers
+            .iter()
+            .any(|blocker| blocker.contains("must be generated")));
+
+        let mut generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
+        generated.push_str("\n");
+        write(tmp.path(), "projects/tool/llms.txt", &generated);
+        let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
+        assert!(blockers.iter().any(|blocker| blocker.contains("is stale")));
+
+        let generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
+        write(tmp.path(), "projects/tool/llms.txt", &generated);
+        assert!(project_root_artifact_blockers_at(tmp.path(), "tool")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn rust_binary_project_missing_root_artifacts_blocks_managed_coverage() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/Cargo.toml",
+            "[package]\nname = \"tool\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/src/main.rs",
+            "// <HANDWRITE gap=\"g\" tracker=\"#4158\" reason=\"fixture\">\nfn main() {}\n// </HANDWRITE>\n",
+        );
+
+        let inventory = build_inventory(tmp.path(), &[], Some("tool"), false).unwrap();
+
+        assert_eq!(inventory.coverage.total_files, 4);
+        assert_eq!(inventory.coverage.managed_files, 1);
+        assert_eq!(
+            inventory.coverage.uncovered_files,
+            vec![
+                "projects/tool/build.sh".to_string(),
+                "projects/tool/install.sh".to_string(),
+                "projects/tool/llms.txt".to_string(),
+            ]
+        );
+        let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
+        assert!(blockers
+            .iter()
+            .any(|blocker| blocker.contains("projects/tool/build.sh")));
+        assert!(blockers
+            .iter()
+            .any(|blocker| blocker.contains("projects/tool/install.sh")));
+        assert!(blockers
+            .iter()
+            .any(|blocker| blocker.contains("projects/tool/llms.txt")));
+    }
+
+    #[test]
     fn deployment_facet_detection_classifies_kustomize_and_ml_constraints() {
         let mut facets = BTreeSet::new();
         let mut unsupported = BTreeSet::new();
@@ -10317,6 +11111,7 @@ paths = ["projects/cap/**"]
             project_path: Some("projects/cap".into()),
             scope: "projects/cap/**".into(),
             td_path: None,
+            cap_path: None,
         }];
 
         let spec_rel = semantic_spec_rel_with_config("projects/cap/src/cli.rs", &configured);
@@ -10421,6 +11216,7 @@ test_cmd = "cargo test -p jet"
                 handwrite_gaps: vec![],
             }],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
 
@@ -10460,6 +11256,7 @@ test_cmd = "cargo test -p jet"
                 target: "src/generated.rs".into(),
                 reason: "CODEGEN block differs after replay".into(),
             }],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
 
@@ -10506,6 +11303,7 @@ test_cmd = "cargo test -p jet"
                 },
             ],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
         let action = choose_action(&inv);
@@ -10564,6 +11362,7 @@ test_cmd = "cargo test -p jet"
                 },
             ],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
 
@@ -10634,6 +11433,7 @@ changes:
                 handwrite_gaps: vec![],
             }],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
 
@@ -10678,6 +11478,7 @@ changes:
                 handwrite_gaps: vec![],
             }],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
 
@@ -10719,6 +11520,7 @@ changes:
                 handwrite_gaps: vec![],
             }],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
         let mut semantic = empty_semantic(inv.coverage.scope.clone());
@@ -11950,6 +12752,7 @@ target = "python"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/backend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -12083,6 +12886,7 @@ target = "typescript"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/frontend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -12300,6 +13104,7 @@ target = "typescript"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/frontend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -12623,6 +13428,7 @@ target = "rust"
                 handwrite_gaps: vec![],
             }],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
         let mut semantic = empty_semantic(inv.coverage.scope.clone());
@@ -12815,6 +13621,7 @@ target = "rust"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/backend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -12883,6 +13690,7 @@ target = "python"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/backend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -12975,6 +13783,7 @@ target = "python"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let action = action(
             StandardizeActionKind::ClaimCode,

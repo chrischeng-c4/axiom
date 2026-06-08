@@ -16,65 +16,52 @@ adoptable by Agentic Workflow. Project readiness metrics live in
 `aw health`; standardize commands should tell the agent what bounded
 work to do next.
 
-AW standardization has five workflow layers plus one optional
-automation-maturity workflow:
+The parent workflow coordinates these readiness layers and maturity signals:
 
-- `capability`: product-control layer. README capability roots use Markdown tables and can feed `aw run --project`.
+- `capability`: product-control layer routed through `aw capability`. README capability roots use Markdown tables and can feed `aw run --project`.
 - `managed`: adoption layer. Every in-scope source file has `CODEGEN` or `HANDWRITE`.
 - `semantic`: coverage layer. Source IR is mapped to semantic TD sections and generator primitive gaps.
 - `traceability`: closure workflow. Active commands, TDs, source refs, and CB blocks must close to README capabilities through TD refs.
-- `regenerable`: automation-maturity workflow. `HANDWRITE` shrinks as generator primitives mature, but this is not a production-readiness gate unless a capability explicitly declares it.
+- `regenerable`: automation-maturity signal reported by `aw health`. `HANDWRITE` shrinks as generator primitives mature, but this is not a production-readiness gate unless a capability explicitly declares it.
 
 ## Workflow
 
 1. Resolve the project from the prompt, current branch, or `.aw/config.toml`.
-2. Run:
+2. Run the parent workflow first:
    ```bash
-   aw standardize capability run <project> --max-ticks 1 --json
+   aw standardize <project>
    ```
-3. If `completion.complete=false`, inspect `completion.missing` and
-   `next_action.command`, do one bounded tick, and rerun `capability run`. Do
-   not proceed to managed standardization until capability completion is true.
-4. When capability has no deterministic next action, run:
+3. Follow stdout exactly. If `completion.workflow_complete=true`, stop. If
+   `next.kind=run_command`, run the exact `next.command`, perform one bounded
+   tick, then rerun `aw standardize <project>` for rollup.
+4. Capability remediation is routed through `aw capability run <project>
+   --non-interactive --max-ticks 1` when the parent emits that command.
+5. For targeted layer debugging, use the layer command without compatibility
+   flags:
    ```bash
-   aw standardize managed run <project> --non-interactive --json
+   aw standardize managed run <project> --non-interactive --max-ticks 1
+   aw standardize semantic run <project> --non-interactive --max-ticks 1
+   aw standardize traceability run <project> --non-interactive --max-ticks 1
    ```
-5. If managed reports a deterministic next action, perform one bounded tick
-   and rerun `managed run`.
-6. When managed has no deterministic next action, run:
-   ```bash
-   aw standardize semantic run <project> --non-interactive --json
-   ```
-7. If semantic reports a deterministic next action, perform one bounded tick
-   and rerun `semantic run`.
-8. When semantic has no deterministic next action, run:
-   ```bash
-   aw standardize traceability run <project> --non-interactive --json
-   ```
-9. If traceability reports a blocker, do one bounded classification tick:
+6. If traceability reports a blocker, do one bounded classification tick:
    - For command blockers, decide `promote` by mapping command -> TD `command_refs` -> README `capability_refs`, or `delete` by removing the command from runtime, active docs, skills, templates, tests, and support code.
    - For TD/source/CB blockers, attach the edge to a capability-owned TD, mark TDs `capability_scope: internal` only when no production source/CB edge exists, or delete dead material.
    - Do not bulk backfill unrelated TDs or commands.
-   Then rerun `aw standardize traceability run <project> --non-interactive --json`.
-10. When traceability has no deterministic next action, run the project-health
-   metric and gate report:
+   Then rerun `aw standardize <project>`.
+7. When standardization layers are ready, run the project-health metric and gate
+   report:
    ```bash
-   aw health <project> --verify-traceability --verify-cb --verify-cold --verify-tests --json
+   aw health <project>
    ```
-11. If health reports `production_ready=false` or blockers, fix the reported
+8. If health reports `production_ready=false` or blockers, fix the reported
    managed, semantic, traceability, cb verify, cold rebuild, configured test,
    stack, or workflow-lock gate and rerun the workflow layer that produced the
    blocker.
-12. When health reports `production_ready=true`, the standardize remediation
+9. When health reports `production_ready=true`, the standardize remediation
    workflow can stop for the current scope even if `regenerable_percent < 100`.
-   Run regenerability only as optional
-   automation-maturity work:
-   ```bash
-   aw standardize regenerable run <project> --non-interactive --json
-   ```
-13. If regenerable reports a deterministic next action, perform one bounded
-   maturity tick only when the user or capability asks for CODEGEN promotion.
-14. If any required layer reports a blocker, read `next_action` and do the mainthread
+   Treat regenerability as optional automation-maturity work unless the user or
+   capability asks for CODEGEN promotion.
+10. If any required layer reports a blocker, read `next_action` and do the mainthread
    work directly:
    - `capability-format-migration`: migrate YAML/legacy capability maps into Markdown tables.
    - `fix_spec_rule`: edit the target TD spec until `aw td check <target>` passes.
@@ -83,7 +70,7 @@ automation-maturity workflow:
    - `generator_primitive_gap`: improve the generator primitive or open/update the work item that owns that gap.
    - `command_no_td_ref`: classify one command as promote/delete; promote by adding a TD `command_refs` claim with valid `capability_refs`, or delete it from the active surface.
    - other blocked actions: answer the question in the envelope or make the indicated targeted edit.
-15. After each mainthread edit, rerun the layer that produced the blocker.
+11. After each mainthread edit, rerun `aw standardize <project>`.
 
 ## Rules
 
@@ -91,7 +78,7 @@ automation-maturity workflow:
 - Do not skip verification after a mainthread edit.
 - Capability completion only means README root structure is runnable; it does
   not imply source ownership or production readiness.
-- Capability standardize JSON completion is authoritative for this layer. A
+- Capability completion in the stdout envelope is authoritative for this layer. A
   `next_action.kind=none` without `completion.complete=true` is a blocker, not
   a finished standardization layer.
 - Generated, vendored, or explicitly out-of-scope files still need binary
@@ -106,10 +93,11 @@ automation-maturity workflow:
   traceability, cb verify, cold verify, configured test gates, and unresolved blocker/HITL state.
   Regenerability percentage is an automation-maturity signal, not a required
   100% gate.
-- Regenerable completion means no next deterministic `HANDWRITE` -> `CODEGEN`
-  promotion remains; partial regenerability is acceptable when remaining gaps
-  are tracked or require generator design work.
-- Use `aw health <project> --verify-traceability --verify-cb --verify-cold --verify-tests --json`
+- Regenerability maturity means deterministic `HANDWRITE` -> `CODEGEN`
+  promotions have been exhausted for the current generator surface; partial
+  regenerability is acceptable when remaining gaps are tracked or require
+  generator design work.
+- Use `aw health <project>`
   for the full metric surface: capability readiness, `managed_percent`,
   `semantic_percent`, `traceability_percent`, `command_traceability_percent`,
   `regenerable_percent`, cb verify, cold verify, test gates, `production_ready`,

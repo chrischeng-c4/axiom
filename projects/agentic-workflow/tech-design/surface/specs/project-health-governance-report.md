@@ -120,7 +120,7 @@ commands:
           - name: json
             type: boolean
             default: false
-            description: "Deprecated compatibility no-op; health emits JSON by default."
+            description: "Deprecated compatibility no-op; agents should invoke `aw health <project>`."
           - name: human
             type: boolean
             default: false
@@ -135,48 +135,47 @@ commands:
           2: "Invocation error, including unknown project."
 output:
   json:
+    contract: "stdout is a bounded agent-control summary; full gate evidence is written to payload_path."
     fields:
+      schema_version: string
+      event: "result"
       project: string
-      status: "healthy|blocked"
-      managed_percent: number
-      semantic_percent: number
-      production_ready: boolean
-      capability:
-        evaluated: boolean
-        production_evaluated: boolean
-        note: string?
-        cap_path: string
-        format: string
-        format_version: number
-        capability_count: number
-        release_scope_count: number
-        root_runner_ready: boolean
-        production_ready_count: number
-        production_scope_count: number
-        production_percent: number
-        blocker_count: number
-        blockers: array
-      regenerable_percent: number
-      traceability_evaluated: boolean
-      traceability_note: string?
-      traceability_percent: number
-      regenerability_authority:
-        authority: "generator_authoritative|external_advisory"
-        required_for_production: boolean
-        gap_count: number
+      completion:
+        workflow_complete: boolean
+        requires_hitl: boolean
+        missing: array
+      next:
+        kind: "done|run_command|hitl|blocked"
+        command: string?
         reason: string
-        blockers: array
-        advisory_gaps: array
-      optional_regenerability_gaps: array
-      handwrite_files: number
-      unmarked_files: number
-      cb_verify_evaluated: boolean
-      cb_verify_note: string?
-      cb_verify_clean: boolean
-      public_api_covered: number
-      public_api_total: number
-      semantic_review_required: number
-      blockers: array
+      readiness:
+        production_ready: boolean
+        production_status: string
+        managed_ready: boolean
+        semantic_ready: boolean
+        traceability_ready: boolean
+        managed_percent: number
+        semantic_percent: number
+        traceability_percent: number
+        test_gate_status: string
+        ec_status: string
+        cb_verify_clean: boolean
+        cold_rebuild_clean: boolean
+      report:
+        production_blocker_count: number
+        production_blockers_preview: array
+        global_blocker_count: number
+        global_blockers_preview: array
+        capability: "summary with counts and blockers_preview"
+        test_gates: "summary with status/counts and failed_commands_preview"
+        ec: "summary with status/counts, findings_preview, and failed_commands_preview"
+        td_lock: "summary with status/counts and changed/added/removed previews"
+      payload_path: string
+    evidence_rules:
+      - "stdout JSON must not include full test_gates.commands or ec.commands arrays."
+      - "stdout JSON must not include stdout_tail or stderr_tail fields."
+      - "failed command previews may include command, status, exit_code, and duration_ms only."
+      - "payload_path must point at the complete ProjectHealthReport including command evidence and stdout/stderr tails."
   human:
     sections:
       - summary
@@ -199,11 +198,10 @@ regenerability as part of its verification contract. External advisory projects
 keep remaining generator gaps in `optional_regenerability_gaps`. Standard
 production readiness is otherwise gated by capability readiness, managed
 ownership, semantic coverage, traceability closure, cb verify, cold verify,
-unresolved blocker state, and HITL decisions. Interactive `aw health`
-keeps full traceability closure behind `--verify-traceability` and
-deterministic CB replay/drift verification behind `--verify-cb`; when either
-flag is absent the report must mark that gate as not evaluated and must not
-claim production readiness from a skipped gate.
+unresolved blocker state, and HITL decisions. Interactive `aw health <project>`
+evaluates the full production readiness surface by default. Targeted
+`--verify-*` flags exist only for focused debugging; they must not become the
+agent-facing happy path.
 
 ## Test Plan
 <!-- type: test-plan lang: mermaid -->
@@ -221,9 +219,13 @@ requirements:
   R7: { id: R7, text: "Cover clean, drift, advisory regenerability, unmarked, and unknown-project cases", kind: functional, risk: medium, verify: test }
   R8: { id: R8, text: "Treat regenerability gaps as advisory automation maturity when production gates are clean and authority is external_advisory", kind: functional, risk: high, verify: test }
   R9: { id: R9, text: "Treat regenerability gaps as blockers when the project or capability requires full regenerability", kind: functional, risk: high, verify: test }
+  R10: { id: R10, text: "Keep JSON stdout bounded for agents while preserving full command evidence in payload_path", kind: functional, risk: medium, verify: test }
 tests:
   clean_project_health_json:
     verifies: [R1, R2, R4, R6]
+    kind: unit
+  bounded_project_health_json:
+    verifies: [R4, R10]
     kind: unit
   blocked_project_health_exit:
     verifies: [R2, R3, R7]
@@ -311,7 +313,16 @@ requirementDiagram
       risk: high
       verifymethod: test
     }
+    requirement R10 {
+      id: R10
+      text: "Bound JSON stdout and preserve payload evidence"
+      risk: medium
+      verifymethod: test
+    }
     element regenerability_authoritative {
+      type: test
+    }
+    element bounded_project_health_json {
       type: test
     }
     element unknown_project_rejected {
@@ -324,6 +335,8 @@ requirementDiagram
     clean_project_health_json - verifies -> R2
     clean_project_health_json - verifies -> R4
     clean_project_health_json - verifies -> R6
+    bounded_project_health_json - verifies -> R4
+    bounded_project_health_json - verifies -> R10
     blocked_project_health_exit - verifies -> R2
     blocked_project_health_exit - verifies -> R3
     blocked_project_health_exit - verifies -> R7
@@ -350,7 +363,7 @@ changes:
     action: create
     impl_mode: hand-written
     section: source
-    description: "Add project command namespace and health aggregation runner with explicit capability readiness metrics, keeping traceability closure behind --verify-traceability and CB replay/drift verification behind --verify-cb for fast interactive health; generator gap: project-health aggregation over multiple existing reports is not yet expressible as a codegen primitive."
+    description: "Add project command namespace and health aggregation runner with explicit capability readiness metrics. Default `aw health <project>` evaluates the full agent-facing production readiness surface; targeted --verify-* flags are reserved for focused debugging. Generator gap: project-health aggregation over multiple existing reports is not yet expressible as a codegen primitive."
   - path: projects/agentic-workflow/src/cli/regenerability_policy.rs
     action: create
     impl_mode: hand-written

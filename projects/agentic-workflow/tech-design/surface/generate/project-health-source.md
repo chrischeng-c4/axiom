@@ -367,10 +367,12 @@ impl ProjectHealthReport {
             ));
         }
         if let Some(gap) = &semantic.next_gap {
-            blockers.push(format!(
-                "next semantic gap: {} {}",
-                gap.target, gap.primitive
-            ));
+            if semantic_gap_blocks_readiness(&gap.primitive) {
+                blockers.push(format!(
+                    "next semantic gap: {} {}",
+                    gap.target, gap.primitive
+                ));
+            }
         }
         if !cb.clean {
             blockers.push(format!("cb verify has {} finding(s)", cb.failures.len()));
@@ -835,6 +837,10 @@ fn percent_of(part: usize, total: usize) -> f64 {
     } else {
         (part as f64 / total as f64) * 100.0
     }
+}
+
+fn semantic_gap_blocks_readiness(primitive: &str) -> bool {
+    matches!(primitive, "semantic_td_missing" | "semantic_td_legacy")
 }
 ````
 

@@ -335,14 +335,14 @@ tests:
       let report = dispatch_from_tdast(&td_ast, &ctx);
       assert_eq!(report.outcomes.len(), 2, "one DispatchOutcome per section");
 
-      // Schema -> rust-schema generator (currently LegacyFallback in Stage 2).
+      // Schema -> rust-schema typed generator.
       let schema_outcome = report
           .outcomes
           .iter()
           .find(|o| o.section_type == "schema")
           .expect("schema outcome");
       assert_eq!(schema_outcome.generator, "rust-schema");
-      assert_eq!(schema_outcome.status, DispatchStatus::LegacyFallback);
+      assert_eq!(schema_outcome.status, DispatchStatus::Emitted);
   - name: empty_spec_yields_empty_report
     body: |
       let tmpdir = tempfile::tempdir().expect("tempdir");

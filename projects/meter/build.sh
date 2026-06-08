@@ -4,10 +4,10 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: projects/vat/build.sh <debug|release>
+Usage: projects/meter/build.sh <debug|release>
 
-debug    Build vat and install target/debug/vat to ~/.cargo/bin/vat.
-release  Bump patch version, build/install vat, commit version files, and tag vat@<version>.
+debug    Build meter-cli and install target/debug/meter to ~/.cargo/bin/meter.
+release  Bump patch version, build/install meter, commit version files, and tag meter@<version>.
 EOF
 }
 
@@ -15,8 +15,8 @@ fail_hint() {
   local mode="$1"
   echo ""
   echo "Build failed."
-  echo "Retry with: projects/vat/build.sh ${mode}"
-  echo "Verify with: ~/.cargo/bin/vat --version"
+  echo "Retry with: projects/meter/build.sh ${mode}"
+  echo "Verify with: ~/.cargo/bin/meter --version"
 }
 
 MODE="${1:-}"
@@ -46,17 +46,17 @@ cd "$ROOT"
 
 trap 'fail_hint "$MODE"' ERR
 
-install_vat() {
+install_meter() {
   local profile="$1"
-  install -m 755 "target/${profile}/vat" "$HOME/.cargo/bin/vat"
-  codesign -s - -f "$HOME/.cargo/bin/vat" 2>/dev/null || true
-  echo "Installed: $("$HOME/.cargo/bin/vat" --version 2>/dev/null || echo 'vat')"
-  echo "Verify with: ~/.cargo/bin/vat --version"
+  install -m 755 "target/${profile}/meter" "$HOME/.cargo/bin/meter"
+  codesign -s - -f "$HOME/.cargo/bin/meter" 2>/dev/null || true
+  echo "Installed: $("$HOME/.cargo/bin/meter" --version 2>/dev/null || echo 'meter')"
+  echo "Verify with: ~/.cargo/bin/meter --version"
 }
 
 if [[ "$MODE" == "debug" ]]; then
-  cargo build -p vat
-  install_vat debug
+  cargo build -p meter-cli
+  install_meter debug
   echo ""
   echo "Build complete."
   exit 0
@@ -82,14 +82,14 @@ echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
 sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
-cargo build --release -p vat
-install_vat release
+cargo build --release -p meter-cli
+install_meter release
 
-TAG="vat@${NEW_VERSION}"
-git add Cargo.toml Cargo.lock projects/vat
-git commit -m "release(vat): ${TAG}"
+TAG="meter@${NEW_VERSION}"
+git add Cargo.toml Cargo.lock projects/meter
+git commit -m "release(meter): ${TAG}"
 git tag -a "$TAG" -m "Release ${TAG}"
 
 echo ""
-echo "Build complete. vat ${TAG} installed and tagged."
+echo "Build complete. meter ${TAG} installed and tagged."
 # </HANDWRITE>

@@ -55,7 +55,7 @@ pub struct ProjectHealthArgs {
     // Run TD-derived external contract commands from tests/aw-ec.toml.
     #[arg(long)]
     pub verify_ec: bool,
-    // DEPRECATED compatibility no-op. Health emits JSON by default.
+    // DEPRECATED compatibility no-op. Agents should invoke `aw health <project>`.
     #[arg(long, hide = true)]
     pub json: bool,
     // Emit the legacy human-readable health report.
@@ -541,6 +541,11 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
     );
     report.traceability_evaluated = verify_traceability;
     report.traceability_note = traceability_note.clone();
+    report
+        .blockers
+        .extend(crate::cli::standardize::project_root_artifact_blockers(
+            &project,
+        )?);
     if let Some(note) = traceability_note {
         report.blockers.push(note);
     }
@@ -891,14 +896,19 @@ impl ProjectHealthReport {
             ));
         }
         if let Some(gap) = &semantic.next_gap {
-            blockers.push(format!(
-                "next semantic gap: {} {}",
-                gap.target, gap.primitive
-            ));
+            if semantic_gap_blocks_readiness(&gap.primitive) {
+                blockers.push(format!(
+                    "next semantic gap: {} {}",
+                    gap.target, gap.primitive
+                ));
+            }
         }
         let semantic_ready = semantic.percent >= 100.0
             && semantic.uncovered_files.is_empty()
-            && semantic.next_gap.is_none()
+            && semantic
+                .next_gap
+                .as_ref()
+                .is_none_or(|gap| !semantic_gap_blocks_readiness(&gap.primitive))
             && semantic.blocked_gap_count == 0
             && semantic.human_decision_required_count == 0;
         if traceability.blocker_count > 0 {
@@ -1485,6 +1495,8 @@ fn tail_lossy(bytes: &[u8], max_chars: usize) -> String {
     }
 }
 
+const HEALTH_SUMMARY_PREVIEW_LIMIT: usize = 20;
+
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value {
@@ -1524,12 +1536,12 @@ fn project_health_report_summary(report: &ProjectHealthReport) -> serde_json::Va
         "production_status": &report.production_status,
         "production_scope": &report.production_scope,
         "production_blocker_count": report.production_blockers.len(),
-        "production_blockers_preview": report.production_blockers.iter().take(20).collect::<Vec<_>>(),
+        "production_blockers_preview": preview_strings(&report.production_blockers),
         "global_blocker_count": report.global_blockers.len(),
-        "global_blockers_preview": report.global_blockers.iter().take(20).collect::<Vec<_>>(),
-        "capability": &report.capability,
-        "test_gates": &report.test_gates,
-        "ec": &report.ec,
+        "global_blockers_preview": preview_strings(&report.global_blockers),
+        "capability": project_health_capability_summary(&report.capability),
+        "test_gates": project_test_gate_summary(&report.test_gates),
+        "ec": project_ec_gate_summary(&report.ec),
         "managed_percent": report.managed_percent,
         "semantic_percent": report.semantic_percent,
         "traceability_evaluated": report.traceability_evaluated,
@@ -1552,14 +1564,123 @@ fn project_health_report_summary(report: &ProjectHealthReport) -> serde_json::Va
         "cold_rebuild_clean": report.cold_rebuild_clean,
         "stack_migration_percent": report.stack_migration_percent,
         "workflow_lock_count": report.workflow_lock_count,
-        "td_lock": &report.td_lock,
+        "td_lock": project_td_lock_summary(&report.td_lock),
         "ec_status": &report.ec.status,
         "ec_check_clean": report.ec.check_clean,
         "ec_verify_evaluated": report.ec.verify_evaluated,
         "next_gap": &report.next_gap,
         "blocker_count": report.blockers.len(),
-        "blockers_preview": report.blockers.iter().take(20).collect::<Vec<_>>(),
+        "blockers_preview": preview_strings(&report.blockers),
     })
+}
+
+fn project_health_capability_summary(report: &CapabilityHealthReport) -> serde_json::Value {
+    serde_json::json!({
+        "evaluated": report.evaluated,
+        "production_evaluated": report.production_evaluated,
+        "note": &report.note,
+        "cap_path": &report.cap_path,
+        "format": &report.format,
+        "format_version": report.format_version,
+        "capability_count": report.capability_count,
+        "release_scope_count": report.release_scope_count,
+        "root_runner_ready": report.root_runner_ready,
+        "production_ready_count": report.production_ready_count,
+        "production_scope_count": report.production_scope_count,
+        "production_percent": report.production_percent,
+        "blocker_count": report.blocker_count,
+        "blockers_preview": preview_strings(&report.blockers),
+    })
+}
+
+fn project_test_gate_summary(report: &ProjectTestGateReport) -> serde_json::Value {
+    serde_json::json!({
+        "evaluated": report.evaluated,
+        "status": &report.status,
+        "note": &report.note,
+        "command_count": report.command_count,
+        "passed_count": report.passed_count,
+        "failed_count": report.failed_count,
+        "skipped_count": report.skipped_count,
+        "failed_commands_preview": report
+            .commands
+            .iter()
+            .filter(|command| command.status == ProjectTestCommandStatus::Failed)
+            .take(HEALTH_SUMMARY_PREVIEW_LIMIT)
+            .map(project_test_command_summary)
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn project_test_command_summary(command: &ProjectTestCommandReport) -> serde_json::Value {
+    serde_json::json!({
+        "workspace": &command.workspace,
+        "command": &command.command,
+        "status": &command.status,
+        "exit_code": command.exit_code,
+        "duration_ms": command.duration_ms,
+    })
+}
+
+fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
+    serde_json::json!({
+        "evaluated": report.evaluated,
+        "check_clean": report.check_clean,
+        "verify_evaluated": report.verify_evaluated,
+        "status": &report.status,
+        "note": &report.note,
+        "manifest_path": &report.manifest_path,
+        "expected_case_count": report.expected_case_count,
+        "case_count": report.case_count,
+        "command_count": report.command_count,
+        "passed_count": report.passed_count,
+        "failed_count": report.failed_count,
+        "finding_count": report.findings.len(),
+        "findings_preview": preview_strings(&report.findings),
+        "failed_commands_preview": report
+            .commands
+            .iter()
+            .filter(|command| command.status == ProjectTestCommandStatus::Failed)
+            .take(HEALTH_SUMMARY_PREVIEW_LIMIT)
+            .map(project_ec_command_summary)
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn project_ec_command_summary(command: &ProjectEcCommandReport) -> serde_json::Value {
+    serde_json::json!({
+        "case_id": &command.case_id,
+        "command": &command.command,
+        "status": &command.status,
+        "exit_code": command.exit_code,
+        "duration_ms": command.duration_ms,
+    })
+}
+
+fn project_td_lock_summary(lock: &crate::cli::td_lock::TdLockStatus) -> serde_json::Value {
+    serde_json::json!({
+        "project": &lock.project,
+        "td_path": &lock.td_path,
+        "lock_path": &lock.lock_path,
+        "status": &lock.status,
+        "clean": lock.clean,
+        "file_count": lock.file_count,
+        "changed_count": lock.changed.len(),
+        "changed_preview": preview_strings(&lock.changed),
+        "added_count": lock.added.len(),
+        "added_preview": preview_strings(&lock.added),
+        "removed_count": lock.removed.len(),
+        "removed_preview": preview_strings(&lock.removed),
+        "message": &lock.message,
+    })
+}
+
+fn preview_strings(values: &[String]) -> Vec<&str> {
+    values
+        .iter()
+        .take(HEALTH_SUMMARY_PREVIEW_LIMIT)
+        .map(String::as_str)
+        .collect()
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -2487,6 +2608,10 @@ fn percent_of(part: usize, total: usize) -> f64 {
     } else {
         (part as f64 / total as f64) * 100.0
     }
+}
+
+fn semantic_gap_blocks_readiness(primitive: &str) -> bool {
+    matches!(primitive, "semantic_td_missing" | "semantic_td_legacy")
 }
 
 fn aggregate_codegen_origin(cold_rebuilds: &[CbColdVerifySummary]) -> CbCodegenOriginSummary {

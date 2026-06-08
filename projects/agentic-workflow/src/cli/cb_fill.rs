@@ -76,7 +76,12 @@ pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> 
             }
             let path = entry.path();
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-            if !matches!(ext, "rs" | "py" | "ts" | "tsx" | "md") {
+            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !matches!(
+                ext,
+                "rs" | "py" | "ts" | "tsx" | "md" | "toml" | "json" | "yaml" | "yml"
+            ) && file_name != "Dockerfile"
+            {
                 continue;
             }
             let Ok(content) = std::fs::read_to_string(path) else {
@@ -88,6 +93,9 @@ pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> 
             let path_str = path.to_string_lossy().to_string();
             if let Ok(markers) = parse_handwrite_markers(&content, &path_str) {
                 for m in markers {
+                    if !marker_body_is_unfilled(&content, m.line_start, m.line_end) {
+                        continue;
+                    }
                     let rel = path
                         .strip_prefix(worktree)
                         .unwrap_or(path)
@@ -107,6 +115,9 @@ pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> 
             // Form 2: comment-style begin/end markers emitted by
             // `crate::generate::apply::scaffold_handwrite_file`.
             for m in parse_handwrite_begin_end(&content) {
+                if !marker_body_is_unfilled(&content, m.start_line, m.end_line) {
+                    continue;
+                }
                 let rel = path
                     .strip_prefix(worktree)
                     .unwrap_or(path)
@@ -125,6 +136,25 @@ pub fn enumerate_worktree_markers(worktree: &Path) -> Vec<HandwriteMarkerEntry> 
     }
 
     out
+}
+
+fn marker_body_is_unfilled(content: &str, start_line: usize, end_line: usize) -> bool {
+    if start_line == 0 || end_line <= start_line {
+        return true;
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    if end_line > lines.len() {
+        return true;
+    }
+    let body = lines[start_line..end_line - 1].join("\n");
+    let body = body.trim();
+    if body.is_empty() {
+        return true;
+    }
+    let lower = body.to_ascii_lowercase();
+    lower.contains("todo: hand-write content")
+        || lower.contains("todo hand-write content")
+        || lower == "(fill)"
 }
 
 // Lightweight count of HANDWRITE markers in the worktree. Used by
@@ -344,7 +374,12 @@ pub async fn run(args: CbFillArgs) -> Result<()> {
 async fn run_brief(args: CbFillArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let slug = args.slug.clone();
-    crate::cli::td::td_activate_inplace_if_present(&project_root, &slug)?;
+    let payload_prefix = format!(".aw/payloads/{}/", slug);
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
+        &project_root,
+        &slug,
+        &[payload_prefix.as_str()],
+    )?;
     let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
     if !worktree_abs.exists() {
         emit_error(
@@ -617,10 +652,6 @@ fn normalize_rel_path(path: &str) -> String {
 // (partial-progress envelope) or run the cb check gate.
 async fn run_apply(args: CbFillArgs) -> Result<()> {
     let slug = args.slug.clone();
-    let project_root = crate::find_project_root()?;
-    crate::cli::td::td_activate_inplace_if_present(&project_root, &slug)?;
-    let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
-
     let marker_id = match args.marker.as_deref() {
         Some(m) if !m.is_empty() => m.to_string(),
         _ => {
@@ -628,6 +659,14 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
             std::process::exit(2);
         }
     };
+    let payload_rel = format!(".aw/payloads/{}/{}.md", slug, marker_id);
+    let project_root = crate::find_project_root()?;
+    crate::cli::td::td_activate_inplace_allowing_dirty_lifecycle_paths(
+        &project_root,
+        &slug,
+        &[payload_rel.as_str()],
+    )?;
+    let worktree_abs = crate::cli::td::td_workspace_path(&project_root, &slug);
 
     if !worktree_abs.exists() {
         emit_error(
@@ -674,7 +713,6 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     };
 
     // Read the payload.
-    let payload_rel = format!(".aw/payloads/{}/{}.md", slug, marker_id);
     let payload_abs = worktree_abs.join(&payload_rel);
     let payload_body = match std::fs::read_to_string(&payload_abs) {
         Ok(s) => s,
@@ -691,16 +729,21 @@ async fn run_apply(args: CbFillArgs) -> Result<()> {
     let source_abs = worktree_abs.join(&target.source_path);
     let original = std::fs::read_to_string(&source_abs)
         .with_context(|| format!("reading source {}", source_abs.display()))?;
-    let new_content =
-        replace_block_body(&original, target.start_line, target.end_line, &payload_body)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "could not locate marker block at lines {}..{} in {}",
-                    target.start_line,
-                    target.end_line,
-                    source_abs.display()
-                )
-            })?;
+    let new_content = replace_block_body_for_path(
+        &original,
+        target.start_line,
+        target.end_line,
+        &payload_body,
+        &target.source_path,
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "could not locate marker block at lines {}..{} in {}",
+            target.start_line,
+            target.end_line,
+            source_abs.display()
+        )
+    })?;
     std::fs::write(&source_abs, &new_content)
         .with_context(|| format!("writing source {}", source_abs.display()))?;
     // Re-enumerate.
@@ -856,6 +899,61 @@ fn replace_block_body(
 
     let before = &lines[..start_line]; // includes the BEGIN line
     let after = &lines[end_line - 1..]; // starts at the END line (1-indexed → idx end_line-1)
+    let mut out = String::new();
+    for l in before {
+        out.push_str(l);
+        out.push('\n');
+    }
+    out.push_str(payload.trim_end_matches('\n'));
+    out.push('\n');
+    for l in after {
+        out.push_str(l);
+        out.push('\n');
+    }
+    Some(out)
+}
+
+fn replace_block_body_for_path(
+    src: &str,
+    start_line: usize,
+    end_line: usize,
+    payload: &str,
+    source_path: &str,
+) -> Option<String> {
+    if should_preserve_handwrite_markers(source_path) {
+        return replace_block_body(src, start_line, end_line, payload);
+    }
+    replace_block_and_markers(src, start_line, end_line, payload)
+}
+
+fn should_preserve_handwrite_markers(source_path: &str) -> bool {
+    let path = Path::new(source_path);
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if file_name == "Dockerfile" {
+        return false;
+    }
+    !matches!(
+        path.extension().and_then(|e| e.to_str()).unwrap_or(""),
+        "json" | "toml" | "yaml" | "yml"
+    )
+}
+
+fn replace_block_and_markers(
+    src: &str,
+    start_line: usize,
+    end_line: usize,
+    payload: &str,
+) -> Option<String> {
+    if start_line == 0 || end_line < start_line {
+        return None;
+    }
+    let lines: Vec<&str> = src.lines().collect();
+    if end_line > lines.len() {
+        return None;
+    }
+
+    let before = &lines[..start_line - 1];
+    let after = &lines[end_line..];
     let mut out = String::new();
     for l in before {
         out.push_str(l);
@@ -1173,6 +1271,60 @@ mod tests {
     }
 
     #[test]
+    fn enumerate_worktree_markers_skips_filled_handwrite_blocks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        let filled = format!(
+            "{}\nexport function App() {{ return null; }}\n{}\n",
+            handwrite_begin("gap=\"missing-generator:component\" reason=\"fill app\""),
+            handwrite_end(),
+        );
+        std::fs::write(src_dir.join("App.tsx"), filled).unwrap();
+
+        assert!(enumerate_worktree_markers(tmp.path()).is_empty());
+
+        let unfilled = format!(
+            "{}\n// TODO: hand-write content for `src/App.tsx`.\n{}\n",
+            handwrite_begin("gap=\"missing-generator:component\" reason=\"fill app\""),
+            handwrite_end(),
+        );
+        std::fs::write(src_dir.join("App.tsx"), unfilled).unwrap();
+        let markers = enumerate_worktree_markers(tmp.path());
+        assert_eq!(markers.len(), 1);
+        assert_eq!(markers[0].id, "missing-generator:component");
+    }
+
+    #[test]
+    fn enumerate_worktree_markers_includes_config_artifact_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let files = [
+            "frontend/package.json",
+            "backend/pyproject.toml",
+            "k8s/base/backend-deployment.yaml",
+            "backend/Dockerfile",
+        ];
+        for file in files {
+            let path = tmp.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let body = format!(
+                "{}\n// TODO: hand-write content for `{}`.\n{}\n",
+                handwrite_begin("gap=\"missing-generator:config\" reason=\"fill config\""),
+                file,
+                handwrite_end(),
+            );
+            std::fs::write(path, body).unwrap();
+        }
+
+        let markers = enumerate_worktree_markers(tmp.path());
+        let paths: HashSet<String> = markers.into_iter().map(|m| m.source_path).collect();
+        assert_eq!(paths.len(), files.len());
+        for file in files {
+            assert!(paths.contains(file), "missing marker for {file}");
+        }
+    }
+
+    #[test]
     fn cb_fill_next_command_omits_legacy_json() {
         let marker = marker("missing-generator-cli");
         let next = next_for_marker(
@@ -1234,6 +1386,44 @@ mod tests {
         assert!(!out.contains("stub"));
         assert!(out.contains("fn before"));
         assert!(out.contains("fn after"));
+    }
+
+    #[test]
+    fn replace_block_body_for_config_paths_removes_invalid_markers() {
+        let src = format!(
+            "{{\n{}\n// TODO: hand-write content for `frontend/package.json`.\n{}\n}}\n",
+            handwrite_begin("gap=\"missing-generator:config\" reason=\"package metadata\""),
+            handwrite_end(),
+        );
+        let out =
+            replace_block_body_for_path(&src, 2, 4, "\"scripts\": {}", "frontend/package.json")
+                .unwrap();
+        assert!(!out.contains(HANDWRITE_BEGIN_TOKEN));
+        assert!(!out.contains(HANDWRITE_END_TOKEN));
+        assert!(out.contains("\"scripts\": {}"));
+        assert!(out.starts_with("{\n"));
+        assert!(out.ends_with("}\n"));
+    }
+
+    #[test]
+    fn replace_block_body_for_source_paths_preserves_markers() {
+        let src = format!(
+            "{}\nstub\n{}\n",
+            handwrite_begin("gap=\"missing-generator:component\" reason=\"component\""),
+            handwrite_end(),
+        );
+        let out = replace_block_body_for_path(
+            &src,
+            1,
+            3,
+            "export const value = 1;",
+            "frontend/src/demo.tsx",
+        )
+        .unwrap();
+        assert!(out.contains(HANDWRITE_BEGIN_TOKEN));
+        assert!(out.contains(HANDWRITE_END_TOKEN));
+        assert!(out.contains("export const value = 1;"));
+        assert!(!out.contains("stub"));
     }
 }
 

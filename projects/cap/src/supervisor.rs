@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/cap/tech-design/semantic/cap-src.md#schema
+// CODEGEN-BEGIN
 //! Spawn a child command and report its PID before waiting.
 //!
 //! The only resource knob applied here is `nice` — memory pressure is handled
@@ -12,13 +14,14 @@ use std::process::Stdio;
 use anyhow::{anyhow, Context, Result};
 use tokio::process::{Child, Command};
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 pub struct SpawnOpts {
     pub nice: i32,
 }
 
 /// Everything needed to launch the child. Generalized from "(program, args)"
-/// so callers that wrap the command (vat's seatbelt backend) or need a cwd /
-/// extra env (vat's per-vat workspace) can express it.
+/// so callers that wrap the command or need a cwd / extra env can express it.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 #[derive(Debug, Clone, Default)]
 pub struct SpawnSpec {
     pub program: String,
@@ -29,6 +32,7 @@ pub struct SpawnSpec {
     pub env: BTreeMap<String, String>,
 }
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 impl SpawnSpec {
     pub fn new(program: impl Into<String>, args: Vec<String>) -> Self {
         SpawnSpec {
@@ -42,11 +46,13 @@ impl SpawnSpec {
 
 /// A spawned-but-not-yet-waited child. Callers must read `pid` first
 /// (to register it with the daemon), then call `wait()`.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 pub struct RunningChild {
     pub pid: i32,
     child: Child,
 }
 
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 impl RunningChild {
     pub async fn wait(mut self) -> Result<std::process::ExitStatus> {
         self.child.wait().await.context("waiting for child to exit")
@@ -54,6 +60,7 @@ impl RunningChild {
 }
 
 /// Spawn from a [`SpawnSpec`], inheriting stdio, in its own process group.
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
 pub fn spawn(spec: &SpawnSpec, opts: SpawnOpts) -> Result<RunningChild> {
     let mut cmd = Command::new(&spec.program);
     cmd.args(&spec.args)
@@ -99,3 +106,4 @@ fn apply_priority(nice: i32) -> std::io::Result<()> {
     }
     Ok(())
 }
+// CODEGEN-END

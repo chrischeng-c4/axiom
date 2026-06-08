@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# <HANDWRITE gap="project-root-build-script" tracker="#4158" reason="project-specific aw:build dispatch contract">
 set -euo pipefail
 
 usage() {
@@ -46,7 +47,8 @@ cd "$ROOT"
 trap 'fail_hint "$MODE"' ERR
 
 install_aw() {
-  install -m 755 target/debug/aw "$HOME/.cargo/bin/aw"
+  local profile="$1"
+  install -m 755 "target/${profile}/aw" "$HOME/.cargo/bin/aw"
   codesign -s - -f "$HOME/.cargo/bin/aw" 2>/dev/null || true
   echo "Installed: $("$HOME/.cargo/bin/aw" --version 2>/dev/null || echo 'aw')"
   echo "Verify with: ~/.cargo/bin/aw --version"
@@ -54,7 +56,7 @@ install_aw() {
 
 if [[ "$MODE" == "debug" ]]; then
   cargo build -p agentic-workflow
-  install_aw
+  install_aw debug
   echo ""
   echo "Build complete."
   exit 0
@@ -83,8 +85,8 @@ if [[ -f pyproject.toml ]]; then
 fi
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
-cargo build -p agentic-workflow
-install_aw
+cargo build --release -p agentic-workflow
+install_aw release
 
 TAG="v${NEW_VERSION}"
 git add Cargo.toml Cargo.lock
@@ -96,3 +98,4 @@ git tag -a "$TAG" -m "Release ${TAG}"
 
 echo ""
 echo "Build complete. aw ${TAG} installed and tagged."
+# </HANDWRITE>

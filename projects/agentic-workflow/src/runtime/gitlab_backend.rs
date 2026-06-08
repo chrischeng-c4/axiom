@@ -131,11 +131,10 @@ impl IssueBackend for GitLabIssueBackend {
     }
 
     async fn list(&self, filter: &ListFilter) -> Result<Vec<IssueRef>, BackendError> {
-        let state = match filter.state {
-            IssueState::Open => "opened",
-            IssueState::Closed => "closed",
-        };
-        let mut args: Vec<&str> = vec!["issue", "list", "-F", "json", "--state", state];
+        let mut args: Vec<&str> = vec!["issue", "list", "--output", "json"];
+        if matches!(filter.state, IssueState::Closed) {
+            args.push("--closed");
+        }
         for label in &filter.labels {
             args.push("--label");
             args.push(label);
