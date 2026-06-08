@@ -780,8 +780,9 @@ monitoring, `/metrics` carries the same numbers as gauges.
 
 The client API speaks **HTTP/1.1 and HTTP/2 cleartext (h2c) on the same
 port** (`auto`). For a REST/JSON API, **HTTP/1.1 needs nothing special**
-— `requests`, `httpx` (default), `fetch`, `curl`, the Rust client all
-just work. HTTP/2 is an opt-in throughput optimization:
+— `requests`, `httpx` (default), `fetch`, `curl`, and any REST client
+just work (lumen ships no client SDK — it's pure REST/OpenAPI; see `lumen llm`).
+HTTP/2 is an opt-in throughput optimization:
 
 | Client | HTTP/1.1 (default) | h2c (cleartext) opt-in | h2 over TLS (prod) |
 |--------|--------------------|------------------------|--------------------|
