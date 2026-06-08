@@ -7,4 +7,6 @@ mod ode;
 mod quad;
 
 pub use ode::{euler, rk4, solve_ivp, OdeResult, OdeSolver};
-pub use quad::{cumulative_trapezoid, fixed_quad, quad, simps, trapezoid, QuadResult};
+pub use quad::{
+    cumulative_trapezoid, fixed_quad, quad, simps, trapezoid, QuadResult,
+};

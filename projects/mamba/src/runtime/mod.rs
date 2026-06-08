@@ -1,33 +1,33 @@
+pub mod value;
+pub mod rc;
+pub mod integer_handle_registry;
+pub mod output;
+pub mod builtins;
+pub mod bigint_ops;
+pub mod string_ops;
+pub mod list_ops;
+pub mod dict_ops;
+pub mod tuple_ops;
+pub mod set_ops;
+pub mod bytes_ops;
+pub mod exception;
+pub mod class;
+pub mod iter;
+pub mod generator;
+pub mod closure;
+pub mod module;
+pub mod registry_bridge;
 pub mod async_rt;
 pub mod async_task;
-pub mod bigint_ops;
-pub mod builtins;
-pub mod bytes_ops;
-pub mod class;
-pub mod closure;
-pub mod dict_ops;
-pub mod exception;
-pub mod file_io;
+pub mod tokio_exec;
 pub mod gc;
-pub mod generator;
-pub mod integer_handle_registry;
-pub mod iter;
-pub mod list_ops;
-pub mod module;
-pub mod output;
-pub mod rc;
-pub mod registry_bridge;
-pub mod set_ops;
 #[allow(non_snake_case)]
 pub mod stdlib;
-pub mod string_ops;
+pub mod file_io;
 pub mod symbols;
-pub mod tokio_exec;
-pub mod tuple_ops;
-pub mod value;
 
-pub use rc::{MbObject, MbObjectHeader};
 pub use value::MbValue;
+pub use rc::{MbObject, MbObjectHeader};
 
 /// Centralized runtime cleanup: reset all thread_local state in dependency order.
 ///
@@ -91,25 +91,20 @@ mod cleanup_tests {
 
         // After cleanup, closure handle should resolve to none
         let bad = MbValue::from_int(1); // the ID that was allocated
-        assert!(
-            closure::mb_closure_get_func(bad).is_none(),
-            "CLOSURES should be empty after cleanup"
-        );
+        assert!(closure::mb_closure_get_func(bad).is_none(),
+            "CLOSURES should be empty after cleanup");
 
         // Global should be gone
         let gname2 = MbValue::from_ptr(rc::MbObject::new_str("my_global".into()));
-        assert!(
-            closure::mb_global_get(gname2).is_none(),
-            "GLOBAL_NAMESPACE should be empty after cleanup"
-        );
+        assert!(closure::mb_global_get(gname2).is_none(),
+            "GLOBAL_NAMESPACE should be empty after cleanup");
     }
 
     #[test]
     fn test_cleanup_all_runtime_state_resets_iterators() {
         // Create an iterator
         let list = MbValue::from_ptr(rc::MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(2),
+            MbValue::from_int(1), MbValue::from_int(2),
         ]));
         let it = iter::mb_iter(list);
         assert!(it.is_int(), "should get a valid iterator handle");
@@ -125,10 +120,7 @@ mod cleanup_tests {
     fn test_cleanup_all_runtime_state_discards_generator_handles() {
         let name = MbValue::from_ptr(rc::MbObject::new_str("cleanup_gen".into()));
         let gen = generator::mb_generator_create(name, MbValue::none());
-        assert!(
-            generator::is_known_generator(gen),
-            "generator should be registered"
-        );
+        assert!(generator::is_known_generator(gen), "generator should be registered");
 
         cleanup_all_runtime_state();
 
@@ -158,10 +150,7 @@ mod cleanup_tests {
         // The instance is created but class registry is empty, so isinstance
         // against a non-registered class yields false for non-matching type
         let check_type = MbValue::from_ptr(rc::MbObject::new_str("SomeOtherClass".into()));
-        assert_eq!(
-            class::mb_isinstance(inst, check_type).as_bool(),
-            Some(false)
-        );
+        assert_eq!(class::mb_isinstance(inst, check_type).as_bool(), Some(false));
     }
 
     #[test]
@@ -173,11 +162,8 @@ mod cleanup_tests {
 
         cleanup_all_runtime_state();
 
-        assert_eq!(
-            exception::mb_has_exception().as_bool(),
-            Some(false),
-            "CURRENT_EXCEPTION should be None after cleanup"
-        );
+        assert_eq!(exception::mb_has_exception().as_bool(), Some(false),
+            "CURRENT_EXCEPTION should be None after cleanup");
     }
 
     #[test]
@@ -254,16 +240,11 @@ mod cleanup_tests {
         cleanup_all_runtime_state();
 
         // Both should be cleared
-        assert_eq!(
-            exception::mb_has_exception().as_bool(),
-            Some(false),
-            "exceptions should be cleaned regardless of other modules"
-        );
+        assert_eq!(exception::mb_has_exception().as_bool(), Some(false),
+            "exceptions should be cleaned regardless of other modules");
         let name = MbValue::from_ptr(rc::MbObject::new_str("panic_safe_mod".into()));
-        assert!(
-            module::mb_import(name).is_none(),
-            "modules should be cleaned regardless of other modules"
-        );
+        assert!(module::mb_import(name).is_none(),
+            "modules should be cleaned regardless of other modules");
     }
 
     // ── S5: Conformance runner uses cleanup_all_runtime_state (structural) ──
@@ -300,14 +281,11 @@ mod cleanup_tests {
             closure::mb_global_set(name, MbValue::from_int(111));
             b1.wait(); // sync: both threads have set state
             b1.wait(); // sync: wait for t2 to cleanup
-                       // Thread 1's state should still be present (t2's cleanup is independent)
+            // Thread 1's state should still be present (t2's cleanup is independent)
             let name2 = MbValue::from_ptr(rc::MbObject::new_str("t1_global".into()));
             let val = closure::mb_global_get(name2);
-            assert_eq!(
-                val.as_int(),
-                Some(111),
-                "thread 1's state should survive thread 2's cleanup"
-            );
+            assert_eq!(val.as_int(), Some(111),
+                "thread 1's state should survive thread 2's cleanup");
         });
 
         let t2 = std::thread::spawn(move || {
@@ -317,12 +295,10 @@ mod cleanup_tests {
             b2.wait(); // sync: both threads have set state
             cleanup_all_runtime_state();
             b2.wait(); // sync: signal t1 that cleanup is done
-                       // Thread 2's state should be gone
+            // Thread 2's state should be gone
             let name2 = MbValue::from_ptr(rc::MbObject::new_str("t2_global".into()));
-            assert!(
-                closure::mb_global_get(name2).is_none(),
-                "thread 2's state should be cleared after its own cleanup"
-            );
+            assert!(closure::mb_global_get(name2).is_none(),
+                "thread 2's state should be cleared after its own cleanup");
         });
 
         t1.join().unwrap();

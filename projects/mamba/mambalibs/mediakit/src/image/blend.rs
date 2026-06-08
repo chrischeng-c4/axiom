@@ -101,7 +101,8 @@ pub fn composite(base: &Image, overlay: &Image, x: i32, y: i32, opacity: f64) ->
             let bx = bx as usize;
             let by = by as usize;
             let base_idx = (by * base.width as usize + bx) * b_ch;
-            let over_idx = (oy as usize * overlay.width as usize + ox as usize) * o_ch;
+            let over_idx =
+                (oy as usize * overlay.width as usize + ox as usize) * o_ch;
 
             // Determine per-pixel alpha
             let px_alpha = if overlay.format == PixelFormat::Rgba {
@@ -116,7 +117,8 @@ pub fn composite(base: &Image, overlay: &Image, x: i32, y: i32, opacity: f64) ->
             for c in 0..ch {
                 let bv = out.data[base_idx + c] as f64;
                 let ov = overlay.data[over_idx + c] as f64;
-                out.data[base_idx + c] = (bv * inv + ov * px_alpha).round().clamp(0.0, 255.0) as u8;
+                out.data[base_idx + c] =
+                    (bv * inv + ov * px_alpha).round().clamp(0.0, 255.0) as u8;
             }
         }
     }

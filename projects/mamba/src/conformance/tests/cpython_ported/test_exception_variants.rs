@@ -27,10 +27,7 @@ except RuntimeError as e:
     print("RuntimeError:", e)
 "#,
     );
-    assert_output(
-        &out,
-        "ValueError caught\ndiv by zero caught\nRuntimeError: boom\n",
-    );
+    assert_output(&out, "ValueError caught\ndiv by zero caught\nRuntimeError: boom\n");
 }
 
 #[test]

@@ -20,8 +20,8 @@ pub enum Ty {
     Never,
     None,
     Bool,
-    Int,   // i64
-    Float, // f64
+    Int,    // i64
+    Float,  // f64
     Str,
     /// Dynamic type — compatible with all types (#240).
     Any,
@@ -29,22 +29,11 @@ pub enum Ty {
     Dict(TypeId, TypeId),
     Tuple(Vec<TypeId>),
     Union(Vec<TypeId>),
-    Fn {
-        params: Vec<TypeId>,
-        ret: TypeId,
-        variadic: bool,
-    },
+    Fn { params: Vec<TypeId>, ret: TypeId, variadic: bool },
     /// `match_args: None` = no explicit `__match_args__`; callers fall back to field order.
     /// `match_args: Some(names)` = explicit (even `Some(vec![])` means no positional matching).
-    Class {
-        name: String,
-        fields: Vec<(String, TypeId)>,
-        match_args: Option<Vec<String>>,
-    },
-    Enum {
-        name: String,
-        variants: Vec<(String, Vec<TypeId>)>,
-    },
+    Class { name: String, fields: Vec<(String, TypeId)>, match_args: Option<Vec<String>> },
+    Enum { name: String, variants: Vec<(String, Vec<TypeId>)> },
     /// Type variable with optional bound and constraints (#242).
     TypeVar(TypeVarId),
     /// Literal type: `Literal[42]`, `Literal["a", "b"]` (#243).
@@ -172,28 +161,10 @@ mod tests {
 
     #[test]
     fn test_ty_fn() {
-        let f = Ty::Fn {
-            params: vec![TypeId(3)],
-            ret: TypeId(5),
-            variadic: false,
-        };
+        let f = Ty::Fn { params: vec![TypeId(3)], ret: TypeId(5), variadic: false };
         assert!(!f.is_numeric());
-        assert_eq!(
-            f,
-            Ty::Fn {
-                params: vec![TypeId(3)],
-                ret: TypeId(5),
-                variadic: false
-            }
-        );
-        assert_ne!(
-            f,
-            Ty::Fn {
-                params: vec![TypeId(3)],
-                ret: TypeId(3),
-                variadic: false
-            }
-        );
+        assert_eq!(f, Ty::Fn { params: vec![TypeId(3)], ret: TypeId(5), variadic: false });
+        assert_ne!(f, Ty::Fn { params: vec![TypeId(3)], ret: TypeId(3), variadic: false });
     }
 
     #[test]

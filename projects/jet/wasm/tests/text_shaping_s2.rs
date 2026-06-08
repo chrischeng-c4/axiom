@@ -4,12 +4,13 @@
 //!
 //! @spec .aw/tech-design/projects/jet/wasm-renderer/text-shaping.md#scenarios
 //!
-//! L0 pure-Rust tier. The cache-key contract (font_id + text +
-//! size_bits) is exercisable without a real font using a synthesized
-//! ShapedRun; the end-to-end test that re-shapes through a font and
-//! verifies cache hit is `#[ignore]`'d pending an embedded font.
+//! L0 pure-Rust tier. The cache-key contract is exercised both with a
+//! synthesized ShapedRun and with the vendored Tuffy face used by
+//! the WebGPU glyph atlas bridge.
 
-use jet_wasm::text::{ShapeCache, ShapeCacheKey, ShapedRun};
+use jet_wasm::text::{shape_text, ShapeCache, ShapeCacheKey, ShapedRun};
+
+mod common;
 
 fn synth_run(advance: f32) -> ShapedRun {
     ShapedRun {
@@ -50,10 +51,20 @@ fn s2_distinct_size_distinct_key() {
 }
 
 #[test]
-#[ignore = "S2 end-to-end cache hit — needs an embedded TEST_FONT_BYTES asset"]
 fn s2_end_to_end_cache_hit_skips_re_shape() {
-    // GIVEN a FontFace + ShapeCache + key for ("Hello", 16.0)
-    // WHEN  shape once → insert → lookup → second call short-circuits
-    // THEN  cache.get(key).is_some() AND cached.advance_width matches.
+    let font = common::tuffy_regular();
+    let key = ShapeCacheKey::new(&font, "Hello", 16.0);
+    let shaped = shape_text(&font, "Hello", 16.0).expect("Hello shapes through Tuffy");
+    assert_eq!(shaped.glyphs.len(), 5);
+
+    let mut cache = ShapeCache::new();
+    assert!(cache.get(&key).is_none());
+    cache.insert(key.clone(), shaped.clone());
+
+    let hit = cache
+        .get(&key)
+        .expect("shape cache should return the inserted real-font run");
+    assert_eq!(hit.glyphs, shaped.glyphs);
+    assert_eq!(hit.advance_width, shaped.advance_width);
 }
 // CODEGEN-END

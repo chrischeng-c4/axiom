@@ -2,7 +2,7 @@
 # conformance corpus.
 #
 # One [[case]] per fixture. `fixture_gen.py` turns this into the files under
-# tests/cpython/fixtures/pep/572/<dimension>/<case>.py:
+# tests/cpython/pep/572/<dimension>/<case>.py:
 #   - mechanical errors come out complete (status="filled")
 #   - semantic cases come out as fillable skeletons (status="generated")
 #

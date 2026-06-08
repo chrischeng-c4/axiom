@@ -10,17 +10,17 @@
 //!
 //! Requires a PostgreSQL database to be available.
 
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use cclab_pg::{
     Connection, ExtractedValue, JoinCondition, JoinType, Operator, OrderDirection, PoolConfig,
     QueryBuilder, Row,
 };
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::time::Duration;
 
 /// Setup test database connection
 async fn setup_connection() -> Connection {
-    let uri = std::env::var("POSTGRES_URL")
-        .unwrap_or_else(|_| "postgresql://localhost/bench_db".to_string());
+    let uri =
+        std::env::var("POSTGRES_URL").unwrap_or_else(|_| "postgresql://localhost/bench_db".to_string());
 
     Connection::new(&uri, PoolConfig::default())
         .await
@@ -89,24 +89,15 @@ async fn setup_test_tables(conn: &Connection) {
     // Pre-populate customers and products for join queries
     for i in 1..=100 {
         let values = vec![
-            (
-                "name".to_string(),
-                ExtractedValue::String(format!("Customer {}", i)),
-            ),
-            (
-                "email".to_string(),
-                ExtractedValue::String(format!("customer{}@example.com", i)),
-            ),
+            ("name".to_string(), ExtractedValue::String(format!("Customer {}", i))),
+            ("email".to_string(), ExtractedValue::String(format!("customer{}@example.com", i))),
         ];
         Row::insert(pool, "customers", &values).await.unwrap();
     }
 
     for i in 1..=50 {
         let values = vec![
-            (
-                "name".to_string(),
-                ExtractedValue::String(format!("Product {}", i)),
-            ),
+            ("name".to_string(), ExtractedValue::String(format!("Product {}", i))),
             ("price".to_string(), ExtractedValue::Int(100 * i)),
             ("stock".to_string(), ExtractedValue::Int(1000)),
         ];
@@ -156,10 +147,7 @@ fn bench_bulk_insert(c: &mut Criterion) {
                     let quantity = ((i % 10) + 1) as i32;
                     let total_price = 100 * quantity;
                     let values = vec![
-                        (
-                            "customer_id".to_string(),
-                            ExtractedValue::BigInt(customer_id),
-                        ),
+                        ("customer_id".to_string(), ExtractedValue::BigInt(customer_id)),
                         ("product_id".to_string(), ExtractedValue::BigInt(product_id)),
                         ("quantity".to_string(), ExtractedValue::Int(quantity)),
                         ("total_price".to_string(), ExtractedValue::Int(total_price)),
@@ -190,10 +178,7 @@ fn bench_complex_query(c: &mut Criterion) {
             let quantity = ((i % 10) + 1) as i32;
             let total_price = 100 * quantity;
             let values = vec![
-                (
-                    "customer_id".to_string(),
-                    ExtractedValue::BigInt(customer_id),
-                ),
+                ("customer_id".to_string(), ExtractedValue::BigInt(customer_id)),
                 ("product_id".to_string(), ExtractedValue::BigInt(product_id)),
                 ("quantity".to_string(), ExtractedValue::Int(quantity)),
                 ("total_price".to_string(), ExtractedValue::Int(total_price)),
@@ -205,29 +190,25 @@ fn bench_complex_query(c: &mut Criterion) {
     c.bench_function("complex_query_join_filter", |b: &mut criterion::Bencher| {
         b.iter(|| {
             runtime.block_on(async {
-                // Complex query: Join orders with customers and products, filter by price
-                let join_cond = JoinCondition::new("id", "orders", "customer_id").unwrap();
-                let query = QueryBuilder::new("customers")
-                    .unwrap()
-                    .select(vec![
-                        "customers.name".to_string(),
-                        "customers.email".to_string(),
-                        "orders.total_price".to_string(),
-                    ])
-                    .unwrap()
-                    .join(JoinType::Inner, "orders", None, join_cond)
-                    .unwrap()
-                    .where_clause("total_price", Operator::Gte, ExtractedValue::Int(500))
-                    .unwrap()
-                    .order_by("total_price", OrderDirection::Desc)
-                    .unwrap()
-                    .limit(100);
+            // Complex query: Join orders with customers and products, filter by price
+            let join_cond = JoinCondition::new("id", "orders", "customer_id").unwrap();
+            let query = QueryBuilder::new("customers")
+                .unwrap()
+                .select(vec![
+                    "customers.name".to_string(),
+                    "customers.email".to_string(),
+                    "orders.total_price".to_string(),
+                ])
+                .unwrap()
+                .join(JoinType::Inner, "orders", None, join_cond)
+                .unwrap()
+                .where_clause("total_price", Operator::Gte, ExtractedValue::Int(500))
+                .unwrap()
+                .order_by("total_price", OrderDirection::Desc)
+                .unwrap()
+                .limit(100);
 
-                let results = black_box(
-                    Row::find_many(pool, "customers", Some(&query))
-                        .await
-                        .unwrap(),
-                );
+                let results = black_box(Row::find_many(pool, "customers", Some(&query)).await.unwrap());
                 assert!(results.len() > 0, "Query should return results");
             })
         });
@@ -253,10 +234,7 @@ fn bench_serialization_overhead(c: &mut Criterion) {
             let quantity = ((i % 10) + 1) as i32;
             let total_price = 100 * quantity;
             let values = vec![
-                (
-                    "customer_id".to_string(),
-                    ExtractedValue::BigInt(customer_id),
-                ),
+                ("customer_id".to_string(), ExtractedValue::BigInt(customer_id)),
                 ("product_id".to_string(), ExtractedValue::BigInt(product_id)),
                 ("quantity".to_string(), ExtractedValue::Int(quantity)),
                 ("total_price".to_string(), ExtractedValue::Int(total_price)),
@@ -268,20 +246,19 @@ fn bench_serialization_overhead(c: &mut Criterion) {
     c.bench_function("serialization_10k_rows", |b: &mut criterion::Bencher| {
         b.iter(|| {
             runtime.block_on(async {
-                // Fetch all 10k rows and measure serialization time
-                let query = QueryBuilder::new("orders")
-                    .unwrap()
-                    .select(vec![
-                        "id".to_string(),
-                        "customer_id".to_string(),
-                        "product_id".to_string(),
-                        "quantity".to_string(),
-                        "total_price".to_string(),
-                    ])
-                    .unwrap();
+            // Fetch all 10k rows and measure serialization time
+            let query = QueryBuilder::new("orders")
+                .unwrap()
+                .select(vec![
+                    "id".to_string(),
+                    "customer_id".to_string(),
+                    "product_id".to_string(),
+                    "quantity".to_string(),
+                    "total_price".to_string(),
+                ])
+                .unwrap();
 
-                let results =
-                    black_box(Row::find_many(pool, "orders", Some(&query)).await.unwrap());
+                let results = black_box(Row::find_many(pool, "orders", Some(&query)).await.unwrap());
                 assert_eq!(results.len(), 10_000, "Should fetch all 10k rows");
             })
         });
@@ -312,11 +289,7 @@ fn bench_query_builder_construction(c: &mut Criterion) {
             black_box(
                 QueryBuilder::new("users")
                     .unwrap()
-                    .select(vec![
-                        "users.id".to_string(),
-                        "users.name".to_string(),
-                        "orders.total".to_string(),
-                    ])
+                    .select(vec!["users.id".to_string(), "users.name".to_string(), "orders.total".to_string()])
                     .unwrap()
                     .join(JoinType::Left, "orders", None, join_cond)
                     .unwrap()

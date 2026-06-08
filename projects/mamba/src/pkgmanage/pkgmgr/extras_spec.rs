@@ -55,7 +55,9 @@ impl ExtrasSpec {
         if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
             return Err(IndexError::ParseError {
                 url: String::new(),
-                detail: format!("extras qualifier must be wrapped in [...], got: {trimmed:?}"),
+                detail: format!(
+                    "extras qualifier must be wrapped in [...], got: {trimmed:?}"
+                ),
             });
         }
         let body = &trimmed[1..trimmed.len() - 1];
@@ -145,7 +147,9 @@ fn validate_extra_name(name: &str) -> Result<(), IndexError> {
     if !is_ident_char(bytes[0]) {
         return Err(IndexError::ParseError {
             url: String::new(),
-            detail: format!("extras name {name:?} must start with a letter or digit (PEP 508)"),
+            detail: format!(
+                "extras name {name:?} must start with a letter or digit (PEP 508)"
+            ),
         });
     }
     for &b in &bytes[1..] {
@@ -313,8 +317,8 @@ mod tests {
     fn contains_uses_normalized_lookup() {
         let s = ExtrasSpec::parse_body("dev, test-utils").unwrap();
         assert!(s.contains("dev"));
-        assert!(s.contains("Test_Utils")); // normalized match
-        assert!(s.contains("test.utils")); // normalized match
+        assert!(s.contains("Test_Utils"));   // normalized match
+        assert!(s.contains("test.utils"));   // normalized match
         assert!(!s.contains("docs"));
     }
 

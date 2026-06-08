@@ -63,11 +63,12 @@ pub struct WheelJws {
 /// Parse a RECORD.jws JSON document. Accepts both the flattened
 /// (single signature) and general (multi-signature) serializations.
 pub fn parse_wheel_jws(src: &str) -> Result<WheelJws, IndexError> {
-    let root: serde_json::Value =
-        serde_json::from_str(src).map_err(|e| IndexError::ParseError {
+    let root: serde_json::Value = serde_json::from_str(src).map_err(|e| {
+        IndexError::ParseError {
             url: String::new(),
             detail: format!("RECORD.jws is not valid JSON: {e}"),
-        })?;
+        }
+    })?;
 
     let obj = root.as_object().ok_or_else(|| IndexError::ParseError {
         url: String::new(),
@@ -107,7 +108,8 @@ pub fn parse_wheel_jws(src: &str) -> Result<WheelJws, IndexError> {
     } else {
         return Err(IndexError::ParseError {
             url: String::new(),
-            detail: "RECORD.jws missing 'signature' (flattened) or 'signatures' (general)".into(),
+            detail: "RECORD.jws missing 'signature' (flattened) or 'signatures' (general)"
+                .into(),
         });
     };
 
@@ -124,19 +126,17 @@ fn parse_signature_entry(v: &serde_json::Value) -> Result<JwsSignature, IndexErr
         detail: "JWS signature entry must be a JSON object".into(),
     })?;
 
-    let protected_b64 = obj
-        .get("protected")
-        .and_then(|v| v.as_str())
-        .map(String::from);
+    let protected_b64 = obj.get("protected").and_then(|v| v.as_str()).map(String::from);
     let protected_json = match &protected_b64 {
         Some(b64) if b64.is_empty() => None,
         Some(b64) => {
             let bytes = decode_b64url(b64, "protected")?;
-            let parsed: serde_json::Value =
-                serde_json::from_slice(&bytes).map_err(|e| IndexError::ParseError {
+            let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+                IndexError::ParseError {
                     url: String::new(),
                     detail: format!("JWS 'protected' header is not valid JSON: {e}"),
-                })?;
+                }
+            })?;
             Some(parsed)
         }
         None => None,
@@ -177,12 +177,10 @@ fn parse_signature_entry(v: &serde_json::Value) -> Result<JwsSignature, IndexErr
 
 fn decode_b64url(s: &str, field: &str) -> Result<Vec<u8>, IndexError> {
     let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    engine
-        .decode(s.as_bytes())
-        .map_err(|e| IndexError::ParseError {
-            url: String::new(),
-            detail: format!("JWS '{field}' base64url decode failed: {e}"),
-        })
+    engine.decode(s.as_bytes()).map_err(|e| IndexError::ParseError {
+        url: String::new(),
+        detail: format!("JWS '{field}' base64url decode failed: {e}"),
+    })
 }
 
 #[cfg(test)]

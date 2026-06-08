@@ -1,18 +1,3 @@
-use crate::codegen::cranelift::jit::CraneliftJitBackend;
-use crate::codegen::CodegenBackend;
-use crate::codegen::CodegenOutput;
-use crate::diagnostic;
-use crate::error::MambaError;
-use crate::hir::HirFunction;
-use crate::lower;
-use crate::lower::ReplSymInfo;
-use crate::parser;
-use crate::runtime::MbValue;
-use crate::source::SourceMap;
-use crate::types::TypeChecker;
-use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
-use std::collections::HashSet;
 /// REPL (Read-Eval-Print Loop) for Mamba (#316).
 ///
 /// Provides an interactive Python-like interpreter shell with:
@@ -21,7 +6,23 @@ use std::collections::HashSet;
 /// - Incremental JIT compilation per iteration (R2)
 /// - Persistent global state: variables, functions, classes (R3)
 /// - Error recovery (don't exit on errors)
+
 use std::io;
+use std::collections::HashSet;
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
+use crate::error::MambaError;
+use crate::hir::HirFunction;
+use crate::source::SourceMap;
+use crate::parser;
+use crate::types::TypeChecker;
+use crate::lower;
+use crate::lower::ReplSymInfo;
+use crate::codegen::CodegenOutput;
+use crate::codegen::cranelift::jit::CraneliftJitBackend;
+use crate::codegen::CodegenBackend;
+use crate::diagnostic;
+use crate::runtime::MbValue;
 
 /// REPL state.
 pub struct Repl {
@@ -169,33 +170,28 @@ impl Repl {
         // Type check (checker persists across iterations)
         let errors = self.checker.check_module(&module);
         if !errors.is_empty() {
-            let msgs: Vec<String> = errors
-                .iter()
+            let msgs: Vec<String> = errors.iter()
                 .map(|e| format!("TypeError: {}", self.format_error(e)))
                 .collect();
             return Err(msgs.join("\n"));
         }
 
         // Lower AST → HIR (REPL-aware: pre-seed known globals from prev iterations)
-        let hir = lower::lower_module_repl(&module, &self.checker, &self.accumulated_syms)
-            .map_err(|errs| {
-                errs.iter()
-                    .map(|e| format!("LowerError: {}", self.format_error(e)))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })?;
+        let hir = lower::lower_module_repl(
+            &module, &self.checker, &self.accumulated_syms,
+        ).map_err(|errs| {
+            errs.iter()
+                .map(|e| format!("LowerError: {}", self.format_error(e)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })?;
 
         // Save new definitions for cross-iteration persistence (R3)
         let new_functions = hir.functions.clone();
         // Build ReplSymInfo: merge sym_names with sym_types
-        let new_syms: ReplSymInfo = hir
-            .sym_names
-            .iter()
+        let new_syms: ReplSymInfo = hir.sym_names.iter()
             .map(|(&id, name)| {
-                let ty = hir
-                    .sym_types
-                    .get(&id)
-                    .copied()
+                let ty = hir.sym_types.get(&id).copied()
                     .unwrap_or_else(|| self.checker.tcx.any());
                 (id, (name.clone(), ty))
             })
@@ -215,10 +211,10 @@ impl Repl {
         }
 
         // JIT compile and execute
-        let mut backend = CraneliftJitBackend::new().map_err(|e| format!("JIT error: {e}"))?;
+        let mut backend = CraneliftJitBackend::new()
+            .map_err(|e| format!("JIT error: {e}"))?;
 
-        let output = backend
-            .codegen(&mir_module, &self.checker.tcx)
+        let output = backend.codegen(&mir_module, &self.checker.tcx)
             .map_err(|e| format!("CodegenError: {}", self.format_error(&e)))?;
 
         match output {
@@ -249,7 +245,10 @@ impl Repl {
         match cmd {
             "%verbose" => {
                 self.verbose = !self.verbose;
-                println!("verbose mode: {}", if self.verbose { "on" } else { "off" });
+                println!(
+                    "verbose mode: {}",
+                    if self.verbose { "on" } else { "off" }
+                );
             }
             "%help" => {
                 println!("Mamba REPL commands:");
@@ -272,7 +271,8 @@ impl Repl {
 /// Return the path to `~/.mamba_history`, or `None` if the home directory
 /// cannot be determined.
 fn dirs_history_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".mamba_history"))
+    std::env::var_os("HOME")
+        .map(|h| std::path::PathBuf::from(h).join(".mamba_history"))
 }
 
 /// Check if the input needs more lines (incomplete block).
@@ -383,20 +383,11 @@ mod tests {
         // Iteration 2: syntax error — state should not change
         let r = repl.eval_raw("def bad(\n");
         assert!(r.is_err(), "should fail on syntax error");
-        assert_eq!(
-            repl.known_globals, globals_before,
-            "ghost globals after failure"
-        );
-        assert_eq!(
-            repl.accumulated_functions.len(),
-            funcs_before,
-            "ghost functions after failure"
-        );
-        assert_eq!(
-            repl.accumulated_syms.len(),
-            syms_before,
-            "ghost sym_names after failure"
-        );
+        assert_eq!(repl.known_globals, globals_before, "ghost globals after failure");
+        assert_eq!(repl.accumulated_functions.len(), funcs_before,
+            "ghost functions after failure");
+        assert_eq!(repl.accumulated_syms.len(), syms_before,
+            "ghost sym_names after failure");
         // Iteration 3: original variable still accessible
         let (val, echo) = repl.eval_raw("x\n").unwrap();
         assert!(echo, "x should echo after failed iteration");
@@ -444,10 +435,7 @@ mod tests {
         let mut repl = Repl::new();
         // print() is an expression statement, so has_echo must be true
         let (val, has_echo) = repl.eval_raw("print(42)\n").unwrap();
-        assert!(
-            has_echo,
-            "print() call expression should have has_echo = true"
-        );
+        assert!(has_echo, "print() call expression should have has_echo = true");
         // print() returns MbValue::none() — the None-guard in eval must suppress it
         assert!(
             MbValue::from_bits(val as u64).is_none(),

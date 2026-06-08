@@ -4,7 +4,7 @@ use anyhow::Result;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Component, PathBuf};
 use std::sync::Arc;
 
 use crate::css::{CssPipeline, TailwindConfig};
@@ -30,6 +30,35 @@ pub use graph::{EdgeKind, ModuleGraph, ModuleNode};
 pub use imports::{ImportDeclaration, ImportKind, ModuleImports};
 pub use splitting::SplitResult;
 pub use types::{BundleOptions, BundleOutput, ModuleId, PreloadHint};
+
+const SCOPE_HOIST_POST_OPT_MAX_BYTES: usize = 1_000_000;
+const CSS_PROJECT_ROOT_MARKERS: &[&str] = &[
+    "tailwind.config.js",
+    "jet.config.toml",
+    "package.json",
+    "index.html",
+];
+
+fn should_run_scope_hoist_post_opts(raw_len: usize) -> bool {
+    raw_len <= SCOPE_HOIST_POST_OPT_MAX_BYTES
+}
+
+fn infer_css_project_root(js_entry: &std::path::Path) -> PathBuf {
+    let start = js_entry
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    for dir in start.ancestors() {
+        if CSS_PROJECT_ROOT_MARKERS
+            .iter()
+            .any(|marker| dir.join(marker).exists())
+        {
+            return dir.to_path_buf();
+        }
+    }
+
+    start.to_path_buf()
+}
 
 /// Determine module kind from file extension
 /// GH #3821 — fallback extension string used when a resolved-module
@@ -128,6 +157,32 @@ fn calculate_hash(content: &str) -> String {
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
     format!("{:x}", hasher.finish())
+}
+
+fn normalize_lexical_path(path: PathBuf) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let can_pop = matches!(
+                    normalized.components().next_back(),
+                    Some(Component::Normal(_))
+                );
+                if can_pop {
+                    normalized.pop();
+                } else if !path.is_absolute() {
+                    normalized.push(component.as_os_str());
+                }
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+
+    normalized
 }
 
 /// Generate WASM glue code that fetches and instantiates a .wasm module
@@ -296,6 +351,9 @@ pub struct Bundler {
     /// prefixed names to 1-2 byte identifiers, yielding Webpack-level bundle
     /// size (≤ 196 KB for react-bench vs 215 KB with Phase 1 IIFE wrappers).
     minify: bool,
+    /// When true, CSS modules are represented by linked CSS assets instead of
+    /// runtime `<style>` injection inside the JavaScript bundle.
+    css_bundle: bool,
     /// Compile-time define map applied to every transformed module.
     ///
     /// Entries map expression strings to their replacement values, e.g.
@@ -327,6 +385,7 @@ impl Bundler {
     /// Create a new bundler instance
     pub fn new(options: BundleOptions) -> Result<Self> {
         let minify = options.minify;
+        let css_bundle = options.css_bundle;
         let defines = options.defines.clone();
         let mut resolve_options = options.resolve_options;
         // Forward externalize_all_packages to the resolver
@@ -346,6 +405,7 @@ impl Bundler {
             graph: Arc::new(RwLock::new(ModuleGraph::new())),
             cache: Arc::new(CompilationCache::new()),
             minify,
+            css_bundle,
             defines,
             unresolved_deps: Mutex::new(Vec::new()),
         })
@@ -378,8 +438,10 @@ impl Bundler {
 
         // Detect sibling CSS entry file and run it through the CSS pipeline.
         // Convention: if entry is `src/index.tsx`, look for `src/index.css`.
-        if let Some(css_asset) = self.try_process_css_entry(&entry) {
-            output.assets.push(css_asset);
+        if self.css_bundle {
+            if let Some(css_asset) = self.try_process_css_entry(&entry) {
+                output.assets.push(css_asset);
+            }
         }
 
         Ok(output)
@@ -400,7 +462,7 @@ impl Bundler {
 
         tracing::info!("CSS entry detected: {:?}", css_entry);
 
-        let root = dir.to_path_buf();
+        let root = infer_css_project_root(js_entry);
         // GH #3086 — surface tailwind.config.js / [css.tailwind] parse errors
         // instead of silently falling back to defaults during production builds.
         let config = match TailwindConfig::load(&root) {
@@ -643,7 +705,7 @@ impl Bundler {
             std::env::current_dir()?.join(&resolved.path)
         };
 
-        Ok(abs)
+        Ok(normalize_lexical_path(abs))
     }
 
     async fn transform_modules(&self) -> Result<(Vec<CompiledModule>, bool)> {
@@ -736,6 +798,12 @@ impl Bundler {
                     graph::ModuleKind::Script => {
                         self.transformer
                             .transform_js_with_context(&source, &node.path, &module_map)
+                    }
+                    graph::ModuleKind::Css if self.css_bundle => {
+                        Ok(crate::transform::TransformResult {
+                            code: String::new(),
+                            source_map: None,
+                        })
                     }
                     graph::ModuleKind::Css => self.transformer.transform_css(&source),
                     graph::ModuleKind::Wasm => {
@@ -888,9 +956,18 @@ impl Bundler {
                      (minify=true, no eval/with/arguments[)"
                 );
                 let raw = scope_hoist::generate_flattened_bundle(&modules);
-                // R4: Cross-module constant inlining → R5: DCE
-                let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
-                scope_hoist::eliminate_unused_exports(&after_r4)
+                if should_run_scope_hoist_post_opts(raw.len()) {
+                    // R4: Cross-module constant inlining → R5: DCE.
+                    let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
+                    scope_hoist::eliminate_unused_exports(&after_r4)
+                } else {
+                    tracing::debug!(
+                        raw_bytes = raw.len(),
+                        max_bytes = SCOPE_HOIST_POST_OPT_MAX_BYTES,
+                        "Skipping quadratic scope-hoist post-opts for large bundle"
+                    );
+                    raw
+                }
             } else {
                 tracing::debug!("Using Phase 1 scope hoisting (no dynamic imports)");
                 scope_hoist::generate_scope_hoisted_bundle(&modules)
@@ -1009,6 +1086,40 @@ mod tests {
         assert_eq!(cache.module_cache.len(), 0);
     }
 
+    #[test]
+    fn lexical_path_normalization_collapses_dot_and_parent_segments() {
+        let raw =
+            PathBuf::from("/fixture/node_modules/antd/es/alert/./style/../../theme/internal.js");
+
+        assert_eq!(
+            normalize_lexical_path(raw),
+            PathBuf::from("/fixture/node_modules/antd/es/theme/internal.js")
+        );
+    }
+
+    #[tokio::test]
+    async fn build_graph_deduplicates_lexical_path_variants() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("nested")).unwrap();
+        let entry = src.join("main.js");
+        std::fs::write(
+            &entry,
+            "import './shared.js';\nimport './nested/../shared.js';\n",
+        )
+        .unwrap();
+        std::fs::write(src.join("shared.js"), "export const shared = 1;\n").unwrap();
+
+        let bundler = Bundler::new(BundleOptions::default()).unwrap();
+        bundler.build_graph(&entry).await.unwrap();
+
+        assert_eq!(
+            bundler.graph.read().module_count(),
+            2,
+            "entry plus one shared module; ./nested/../shared.js must not duplicate shared.js"
+        );
+    }
+
     // ──────────────────────────────────────────────────────────────────
     // Preload hints tests (R8 / T12)
     // ──────────────────────────────────────────────────────────────────
@@ -1074,6 +1185,16 @@ mod tests {
         let hints: Vec<PreloadHint> = Vec::new();
         let result = inject_preload_hints(html, &hints);
         assert_eq!(result, html, "Empty hints should not modify HTML");
+    }
+
+    #[test]
+    fn test_scope_hoist_post_opts_size_gate() {
+        assert!(should_run_scope_hoist_post_opts(
+            SCOPE_HOIST_POST_OPT_MAX_BYTES
+        ));
+        assert!(!should_run_scope_hoist_post_opts(
+            SCOPE_HOIST_POST_OPT_MAX_BYTES + 1
+        ));
     }
 
     // ──────────────────────────────────────────────────────────────────
@@ -1314,6 +1435,128 @@ mod unresolved_deps_tests {
             msg.contains("`react`"),
             "diagnostic should name the unresolved specifier, got: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn css_bundle_extracts_css_without_js_injection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = write_fixture(
+            tmp.path(),
+            &[
+                (
+                    "entry.js",
+                    "import './entry.css';\nwindow.__jet_css_ready = true;\n",
+                ),
+                ("entry.css", ".shell { color: red; }\n"),
+            ],
+        );
+
+        let opts = BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().to_path_buf(),
+            css_bundle: true,
+            ..Default::default()
+        };
+        let bundler = Bundler::new(opts).unwrap();
+        let output = bundler.bundle(entry).await.unwrap();
+
+        assert!(
+            output
+                .assets
+                .iter()
+                .any(|asset| asset.asset_type == types::AssetType::Css
+                    && String::from_utf8_lossy(&asset.content).contains(".shell")),
+            "css_bundle should emit the stylesheet as an asset"
+        );
+        assert!(
+            !output.code.contains("CSS Module Injection"),
+            "css_bundle must not duplicate CSS through runtime injection"
+        );
+        assert!(
+            !output.code.contains("color: red"),
+            "css_bundle must keep stylesheet bytes out of JS"
+        );
+    }
+
+    #[test]
+    fn css_bundle_tailwind_scans_content_from_project_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = write_fixture(
+            tmp.path(),
+            &[
+                (
+                    "src/main.tsx",
+                    r#"export function App() {
+  return <section className="component-matrix grid">ready</section>;
+}
+"#,
+                ),
+                ("src/main.css", "@tailwind utilities;\n"),
+                (
+                    "tailwind.config.js",
+                    r#"module.exports = {
+  content: ["./src/**/*.{ts,tsx,js,jsx}"],
+  plugins: [],
+};
+"#,
+                ),
+            ],
+        );
+
+        let opts = BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().join("dist"),
+            css_bundle: true,
+            ..Default::default()
+        };
+        let bundler = Bundler::new(opts).unwrap();
+        let asset = bundler
+            .try_process_css_entry(&entry)
+            .expect("sibling Tailwind CSS entry should be emitted");
+        let css = String::from_utf8(asset.content).unwrap();
+
+        assert!(
+            css.contains(".grid"),
+            "Tailwind utilities from src/main.tsx should be emitted, got: {css}"
+        );
+        assert!(
+            css.contains("display: grid") || css.contains("display:grid"),
+            "grid utility should set display:grid, got: {css}"
+        );
+    }
+
+    #[tokio::test]
+    async fn css_imports_inject_styles_when_css_bundle_disabled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = write_fixture(
+            tmp.path(),
+            &[
+                (
+                    "entry.js",
+                    "import './entry.css';\nwindow.__jet_css_ready = true;\n",
+                ),
+                ("entry.css", ".shell { color: red; }\n"),
+            ],
+        );
+
+        let opts = BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().to_path_buf(),
+            css_bundle: false,
+            ..Default::default()
+        };
+        let bundler = Bundler::new(opts).unwrap();
+        let output = bundler.bundle(entry).await.unwrap();
+
+        assert!(
+            !output
+                .assets
+                .iter()
+                .any(|asset| asset.asset_type == types::AssetType::Css),
+            "non-extract CSS imports should stay in JS"
+        );
+        assert!(output.code.contains("CSS Module Injection"));
+        assert!(output.code.contains("color: red"));
     }
 
     #[tokio::test]

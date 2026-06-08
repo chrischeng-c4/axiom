@@ -85,7 +85,10 @@ fn mambalibs_version_pin_conflict_dependency_names_both_incompatible_versions() 
         .get("name")
         .and_then(|v| v.as_str())
         .expect("`[dependency].name` must be set");
-    assert!(!name.is_empty(), "`[dependency].name` must be non-empty");
+    assert!(
+        !name.is_empty(),
+        "`[dependency].name` must be non-empty"
+    );
 
     let va = dep
         .get("version_a")
@@ -170,8 +173,7 @@ fn mambalibs_version_pin_conflict_case_cross_checks_dependency_block() {
         .and_then(|v| v.as_str())
         .expect("`[dependency].name` must be set");
     assert_eq!(
-        case.get("diagnostic_must_name_dependency_value")
-            .and_then(|v| v.as_str()),
+        case.get("diagnostic_must_name_dependency_value").and_then(|v| v.as_str()),
         Some(dep_name),
         "`[conflict_case].diagnostic_must_name_dependency_value` must equal \
          `[dependency].name`"
@@ -226,9 +228,7 @@ fn mambalibs_version_pin_conflict_crash_guard_blocks_import_attempt() {
     }
 
     assert_eq!(
-        guard
-            .get("pinned_fail_exit_code")
-            .and_then(|v| v.as_integer()),
+        guard.get("pinned_fail_exit_code").and_then(|v| v.as_integer()),
         Some(1),
         "`[crash_guard].pinned_fail_exit_code` must be 1"
     );
@@ -237,13 +237,10 @@ fn mambalibs_version_pin_conflict_crash_guard_blocks_import_attempt() {
 #[test]
 fn mambalibs_version_pin_conflict_lockfile_integrity_blocks_partial_writes() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("lockfile_integrity")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[lockfile_integrity]` block \
+    let block = doc.get("lockfile_integrity").and_then(|v| v.as_table()).expect(
+        "missing `[lockfile_integrity]` block \
          (acceptance: \"Error does not mutate lockfile into a partial success state.\")",
-        );
+    );
 
     let lockfile = block
         .get("lockfile_relative_path")
@@ -298,18 +295,13 @@ fn mambalibs_version_pin_conflict_lockfile_integrity_blocks_partial_writes() {
 #[test]
 fn mambalibs_version_pin_conflict_isolates_positive_baseline() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("isolation_from_positive_cases")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[isolation_from_positive_cases]` block \
+    let block = doc.get("isolation_from_positive_cases").and_then(|v| v.as_table()).expect(
+        "missing `[isolation_from_positive_cases]` block \
          (acceptance: \"Positive single-version fixture still passes.\")",
-        );
+    );
 
     assert_eq!(
-        block
-            .get("positive_baseline_fixture_issue")
-            .and_then(|v| v.as_integer()),
+        block.get("positive_baseline_fixture_issue").and_then(|v| v.as_integer()),
         Some(2666),
         "`positive_baseline_fixture_issue` must record #2666"
     );
@@ -440,8 +432,7 @@ fn mambalibs_version_pin_conflict_pins_out_of_scope_per_issue_2675() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("full_semver_resolver_implementation")
-            .and_then(|v| v.as_bool()),
+        oos.get("full_semver_resolver_implementation").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].full_semver_resolver_implementation` must be true \
          (issue text: \"Out of scope: full semver resolver implementation.\")"

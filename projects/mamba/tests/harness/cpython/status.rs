@@ -8,13 +8,15 @@
 //!     cargo test -p mamba --test cpython_status -- --json
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::{json, Value as JsonValue};
-use sha2::{Digest, Sha256};
 use toml::Value as TomlValue;
+
+#[path = "harness_common.rs"]
+mod common;
+use common::{collect_files, fixture_sha256_opt as fixture_sha256};
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -26,28 +28,6 @@ fn cpython_dir() -> PathBuf {
 
 fn cpython_harness_dir() -> PathBuf {
     manifest_dir().join("tests/harness/cpython")
-}
-
-fn collect_files(root: &Path, suffix: &str) -> Vec<PathBuf> {
-    fn walk(out: &mut Vec<PathBuf>, dir: &Path, suffix: &str) {
-        let entries = std::fs::read_dir(dir)
-            .unwrap_or_else(|err| panic!("cannot read {}: {err}", dir.display()));
-        for entry in entries {
-            let path = entry.expect("read_dir entry").path();
-            if path.is_dir() {
-                walk(out, &path, suffix);
-            } else if path.to_string_lossy().ends_with(suffix) {
-                out.push(path);
-            }
-        }
-    }
-
-    let mut out = Vec::new();
-    if root.exists() {
-        walk(&mut out, root, suffix);
-    }
-    out.sort();
-    out
 }
 
 fn extract_script_toml(text: &str) -> Option<String> {
@@ -96,7 +76,7 @@ struct FixtureSummary {
 
 fn fixture_summary() -> FixtureSummary {
     let mut summary = FixtureSummary::default();
-    for path in collect_files(&cpython_dir().join("fixtures"), ".py") {
+    for path in collect_files(&cpython_dir(), ".py") {
         if path
             .file_name()
             .and_then(|name| name.to_str())
@@ -153,20 +133,6 @@ fn baseline_db() -> PathBuf {
     std::env::var("MAMBA_CPYTHON_PERF_BASELINE_DB")
         .map(PathBuf::from)
         .unwrap_or_else(|_| cpython_dir().join(".cache/perf/cpython_baseline.sqlite"))
-}
-
-fn fixture_sha256(path: &Path) -> Option<String> {
-    let mut file = std::fs::File::open(path).ok()?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0_u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf).ok()?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Some(format!("{:x}", hasher.finalize()))
 }
 
 #[derive(Clone)]
@@ -415,7 +381,11 @@ fn first_import_module(text: &str) -> Option<String> {
             }
         }
         if let Some(rest) = line.strip_prefix("from ") {
-            let module = rest.split(" import ").next().unwrap_or(rest).trim();
+            let module = rest
+                .split(" import ")
+                .next()
+                .unwrap_or(rest)
+                .trim();
             if !module.is_empty() && !module.starts_with('.') {
                 return Some(module.to_string());
             }
@@ -457,7 +427,7 @@ for module in sys.argv[1:]:
 }
 
 fn missing_third_party_imports() -> Vec<(String, String)> {
-    let root = cpython_dir().join("fixtures/3rd-libs");
+    let root = cpython_dir().join("3rd-libs");
     let mut checked = BTreeSet::new();
     let mut modules_by_lib = Vec::new();
     if !root.exists() {
@@ -607,10 +577,7 @@ fn main() {
     println!("  invalid metadata: {}", fixtures.invalid_metadata);
     println!("  xfail empty/pass-intended: {}", fixtures.xfail_empty);
     println!("  xfail nonempty/mamba-gap: {}", fixtures.xfail_nonempty);
-    println!(
-        "  stale CPython subjects: {}",
-        fixtures.stale_cpython_subjects
-    );
+    println!("  stale CPython subjects: {}", fixtures.stale_cpython_subjects);
     println!("  by bucket: {:?}", fixtures.by_bucket);
     println!("  by dimension: {:?}", fixtures.by_dimension);
     println!("  perf pins: {}", perf.pins);

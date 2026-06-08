@@ -210,4 +210,4 @@ fn run_fixture(path: &std::path::Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-harness!(run_fixture, "tests/cpython/fixtures", r".*\.py$");
+harness!(run_fixture, "tests/cpython", r".*\.py$");

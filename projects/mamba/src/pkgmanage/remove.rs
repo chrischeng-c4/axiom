@@ -11,11 +11,11 @@
 // Removing a dep that isn't recorded is a soft no-op success (idempotent
 // re-removal), matching uv's behavior.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use std::fs;
 
-use crate::pkgmanage::add::{atomic_write, render_lockfile_from_deps, ManifestState};
+use crate::pkgmanage::add::{ManifestState, atomic_write, render_lockfile_from_deps};
 
 const MANIFEST_FILE: &str = "mamba.toml";
 const LOCKFILE_FILE: &str = "mamba.lock";

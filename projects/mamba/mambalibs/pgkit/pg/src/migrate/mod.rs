@@ -8,8 +8,8 @@ pub mod history_vis;
 pub mod migration;
 
 pub use history_vis::{
-    AsciiConfig, AsciiRenderer, ExportFormat, HistoryExporter, HistoryVisualizer, MigrationNode,
-    MigrationTree,
+    AsciiConfig, AsciiRenderer, ExportFormat, HistoryExporter, HistoryVisualizer,
+    MigrationNode, MigrationTree,
 };
 pub use migration::{
     Migration, MigrationEntry, MigrationRunner, MigrationSource, MigrationStatus,

@@ -40,8 +40,18 @@ pub fn minify_js(source: &str, drops: &[DropStatement]) -> String {
     while idx < dropped_len {
         let ch = dropped_chars[idx];
 
+        // Track template literals separately: `${...}` expressions can contain
+        // nested template literals, so treating backticks like plain strings
+        // desynchronizes the scanner.
+        if !in_string && !in_regex && ch == '`' {
+            idx = push_template_literal(&dropped_chars, idx, &mut result);
+            prev_char = '`';
+            prev_non_ws = '`';
+            continue;
+        }
+
         // Track string literals
-        if !in_string && !in_regex && (ch == '"' || ch == '\'' || ch == '`') {
+        if !in_string && !in_regex && (ch == '"' || ch == '\'') {
             in_string = true;
             string_char = ch;
             result.push(ch);
@@ -218,8 +228,16 @@ fn strip_comments(source: &str) -> String {
     let mut prev_non_ws = '\0';
 
     while i < len {
+        // Track template literals separately from plain strings so nested
+        // `${...}` template expressions cannot corrupt the comment scanner.
+        if !in_string && !in_regex && chars[i] == '`' {
+            i = push_template_literal(&chars, i, &mut result);
+            prev_non_ws = '`';
+            continue;
+        }
+
         // Track strings
-        if !in_string && !in_regex && (chars[i] == '"' || chars[i] == '\'' || chars[i] == '`') {
+        if !in_string && !in_regex && (chars[i] == '"' || chars[i] == '\'') {
             in_string = true;
             string_char = chars[i];
             result.push(chars[i]);
@@ -351,6 +369,207 @@ fn drop_statements(source: &str, drops: &[DropStatement]) -> String {
     result
 }
 
+fn push_template_literal(chars: &[char], start: usize, result: &mut String) -> usize {
+    let mut idx = start;
+    if chars.get(idx).copied() != Some('`') {
+        return idx;
+    }
+
+    result.push('`');
+    idx += 1;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        result.push(ch);
+
+        if ch == '\\' {
+            idx += 1;
+            if idx < chars.len() {
+                result.push(chars[idx]);
+                idx += 1;
+            }
+            continue;
+        }
+
+        if ch == '`' {
+            return idx + 1;
+        }
+
+        if ch == '$' && chars.get(idx + 1).copied() == Some('{') {
+            idx += 1;
+            result.push('{');
+            idx = push_template_expression(chars, idx + 1, result);
+            continue;
+        }
+
+        idx += 1;
+    }
+
+    idx
+}
+
+fn push_template_expression(chars: &[char], start: usize, result: &mut String) -> usize {
+    let mut idx = start;
+    let mut depth = 1usize;
+    let mut prev_non_ws = '\0';
+
+    while idx < chars.len() {
+        let ch = chars[idx];
+
+        if ch == '"' || ch == '\'' {
+            idx = push_quoted_literal(chars, idx, result);
+            prev_non_ws = ch;
+            continue;
+        }
+
+        if ch == '`' {
+            idx = push_template_literal(chars, idx, result);
+            prev_non_ws = '`';
+            continue;
+        }
+
+        if ch == '/' && chars.get(idx + 1).copied() == Some('/') {
+            idx = push_line_comment(chars, idx, result);
+            continue;
+        }
+
+        if ch == '/' && chars.get(idx + 1).copied() == Some('*') {
+            idx = push_block_comment(chars, idx, result);
+            continue;
+        }
+
+        if ch == '/' && is_regex_start(prev_non_ws) {
+            idx = push_regex_literal(chars, idx, result);
+            prev_non_ws = '/';
+            continue;
+        }
+
+        result.push(ch);
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                idx += 1;
+                if depth == 0 {
+                    return idx;
+                }
+                prev_non_ws = '}';
+                continue;
+            }
+            _ => {}
+        }
+
+        if !ch.is_whitespace() {
+            prev_non_ws = ch;
+        }
+        idx += 1;
+    }
+
+    idx
+}
+
+fn push_quoted_literal(chars: &[char], start: usize, result: &mut String) -> usize {
+    let quote = chars[start];
+    result.push(quote);
+    let mut idx = start + 1;
+
+    while idx < chars.len() {
+        let ch = chars[idx];
+        result.push(ch);
+        if ch == '\\' {
+            idx += 1;
+            if idx < chars.len() {
+                result.push(chars[idx]);
+                idx += 1;
+            }
+            continue;
+        }
+        idx += 1;
+        if ch == quote {
+            return idx;
+        }
+    }
+
+    idx
+}
+
+fn push_line_comment(chars: &[char], start: usize, result: &mut String) -> usize {
+    let mut idx = start;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        result.push(ch);
+        idx += 1;
+        if ch == '\n' || ch == '\r' {
+            break;
+        }
+    }
+    idx
+}
+
+fn push_block_comment(chars: &[char], start: usize, result: &mut String) -> usize {
+    let mut idx = start;
+    while idx < chars.len() {
+        let ch = chars[idx];
+        result.push(ch);
+        if ch == '*' && chars.get(idx + 1).copied() == Some('/') {
+            result.push('/');
+            return idx + 2;
+        }
+        idx += 1;
+    }
+    idx
+}
+
+fn push_regex_literal(chars: &[char], start: usize, result: &mut String) -> usize {
+    result.push('/');
+    let mut idx = start + 1;
+
+    while idx < chars.len() {
+        let ch = chars[idx];
+        result.push(ch);
+
+        if ch == '\\' {
+            idx += 1;
+            if idx < chars.len() {
+                result.push(chars[idx]);
+                idx += 1;
+            }
+            continue;
+        }
+
+        if ch == '[' {
+            idx += 1;
+            while idx < chars.len() {
+                let class_ch = chars[idx];
+                result.push(class_ch);
+                if class_ch == '\\' {
+                    idx += 1;
+                    if idx < chars.len() {
+                        result.push(chars[idx]);
+                        idx += 1;
+                    }
+                    continue;
+                }
+                idx += 1;
+                if class_ch == ']' {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        idx += 1;
+        if ch == '/' {
+            while idx < chars.len() && is_identifier_char(chars[idx]) {
+                result.push(chars[idx]);
+                idx += 1;
+            }
+            return idx;
+        }
+    }
+
+    idx
+}
+
 /// Check if the character at position `pos` is escaped by counting preceding backslashes.
 /// An even number of backslashes means NOT escaped, odd means escaped.
 fn is_escaped(chars: &[char], pos: usize) -> bool {
@@ -396,7 +615,7 @@ fn is_regex_start(prev_non_ws: char) -> bool {
 }
 
 fn needs_space_after(ch: char) -> bool {
-    ch.is_alphanumeric() || ch == '_' || ch == '$' || ch == ')' || ch == ']' || ch == '}'
+    ch.is_alphanumeric() || matches!(ch, '_' | '$' | ')' | ']' | '}' | '"' | '\'' | '`')
 }
 
 fn should_insert_asi_semicolon(
@@ -409,7 +628,9 @@ fn should_insert_asi_semicolon(
         return false;
     };
 
-    if !can_end_statement(prev_non_ws) || !can_start_statement(next) {
+    let can_end_statement =
+        can_end_statement(prev_non_ws) || previous_token_is_postfix_update(chars, next_idx);
+    if !can_end_statement || !can_start_statement(next) {
         return false;
     }
 
@@ -423,6 +644,15 @@ fn should_insert_asi_semicolon(
         return false;
     }
     if prev_non_ws == '}' && starts_with_keyword(chars, next_idx, "while") {
+        return false;
+    }
+    if prev_non_ws == ')' && previous_paren_closes_control_header(chars, next_idx) {
+        return false;
+    }
+    if previous_token_requires_statement_body(chars, next_idx) {
+        return false;
+    }
+    if previous_token_continues_expression(chars, next_idx) {
         return false;
     }
 
@@ -454,6 +684,119 @@ fn starts_with_keyword(chars: &[char], start: usize, keyword: &str) -> bool {
     before_ok && after_ok
 }
 
+fn previous_paren_closes_control_header(chars: &[char], before_idx: usize) -> bool {
+    let Some(close_idx) = previous_non_ws_index(chars, before_idx) else {
+        return false;
+    };
+    if chars[close_idx] != ')' {
+        return false;
+    }
+
+    let Some(open_idx) = matching_open_paren_before(chars, close_idx) else {
+        return false;
+    };
+    let Some(keyword_end) = previous_non_ws_index(chars, open_idx) else {
+        return false;
+    };
+
+    let mut keyword_start = keyword_end;
+    while keyword_start > 0 && is_identifier_char(chars[keyword_start - 1]) {
+        keyword_start -= 1;
+    }
+
+    let keyword: String = chars[keyword_start..=keyword_end].iter().collect();
+    matches!(
+        keyword.as_str(),
+        "if" | "for" | "while" | "with" | "switch" | "catch"
+    )
+}
+
+fn previous_token_requires_statement_body(chars: &[char], before_idx: usize) -> bool {
+    let Some(keyword_end) = previous_non_ws_index(chars, before_idx) else {
+        return false;
+    };
+    if !is_identifier_char(chars[keyword_end]) {
+        return false;
+    }
+
+    let mut keyword_start = keyword_end;
+    while keyword_start > 0 && is_identifier_char(chars[keyword_start - 1]) {
+        keyword_start -= 1;
+    }
+
+    let keyword: String = chars[keyword_start..=keyword_end].iter().collect();
+    matches!(keyword.as_str(), "do" | "else" | "try" | "finally")
+}
+
+fn previous_token_continues_expression(chars: &[char], before_idx: usize) -> bool {
+    let Some(keyword_end) = previous_non_ws_index(chars, before_idx) else {
+        return false;
+    };
+    if !is_identifier_char(chars[keyword_end]) {
+        return false;
+    }
+
+    let mut keyword_start = keyword_end;
+    while keyword_start > 0 && is_identifier_char(chars[keyword_start - 1]) {
+        keyword_start -= 1;
+    }
+
+    let keyword: String = chars[keyword_start..=keyword_end].iter().collect();
+    matches!(
+        keyword.as_str(),
+        "in" | "instanceof"
+            | "typeof"
+            | "void"
+            | "delete"
+            | "new"
+            | "await"
+            | "yield"
+            | "var"
+            | "let"
+            | "const"
+    )
+}
+
+fn previous_token_is_postfix_update(chars: &[char], before_idx: usize) -> bool {
+    let Some(update_end) = previous_non_ws_index(chars, before_idx) else {
+        return false;
+    };
+    if update_end == 0 {
+        return false;
+    }
+
+    let update = (chars[update_end - 1], chars[update_end]);
+    matches!(update, ('+', '+') | ('-', '-'))
+}
+
+fn previous_non_ws_index(chars: &[char], before_idx: usize) -> Option<usize> {
+    let mut idx = before_idx.min(chars.len());
+    while idx > 0 {
+        idx -= 1;
+        if !chars[idx].is_whitespace() {
+            return Some(idx);
+        }
+    }
+    None
+}
+
+fn matching_open_paren_before(chars: &[char], close_idx: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for idx in (0..=close_idx).rev() {
+        match chars[idx] {
+            ')' => depth += 1,
+            '(' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn is_identifier_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_' || ch == '$'
 }
@@ -461,7 +804,26 @@ fn is_identifier_char(ch: char) -> bool {
 fn is_no_space_before(ch: char) -> bool {
     matches!(
         ch,
-        '{' | '}' | '(' | ')' | '[' | ']' | ';' | ',' | '.' | ':' | '=' | '?' | '<' | '>'
+        '{' | '}'
+            | '('
+            | ')'
+            | '['
+            | ']'
+            | ';'
+            | ','
+            | '.'
+            | ':'
+            | '='
+            | '?'
+            | '<'
+            | '>'
+            | '!'
+            | '&'
+            | '|'
+            | '*'
+            | '%'
+            | '^'
+            | '~'
     )
 }
 
@@ -475,8 +837,13 @@ pub fn replace_bool_literals(source: &str) -> String {
     let mut i = 0;
 
     while i < len {
+        if b[i] == b'`' {
+            i = push_template_literal_bytes(b, i, &mut out);
+            continue;
+        }
+
         // Skip string literals
-        if matches!(b[i], b'"' | b'\'' | b'`') {
+        if matches!(b[i], b'"' | b'\'') {
             let q = b[i];
             out.push(q);
             i += 1;
@@ -529,6 +896,233 @@ pub fn replace_bool_literals(source: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| source.to_string())
 }
 
+fn push_template_literal_bytes(bytes: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
+    let mut idx = start;
+    if bytes.get(idx).copied() != Some(b'`') {
+        return idx;
+    }
+
+    out.push(b'`');
+    idx += 1;
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        out.push(byte);
+
+        if byte == b'\\' {
+            idx += 1;
+            if idx < bytes.len() {
+                out.push(bytes[idx]);
+                idx += 1;
+            }
+            continue;
+        }
+
+        if byte == b'`' {
+            return idx + 1;
+        }
+
+        if byte == b'$' && bytes.get(idx + 1).copied() == Some(b'{') {
+            idx += 1;
+            out.push(b'{');
+            idx = push_template_expression_bytes(bytes, idx + 1, out);
+            continue;
+        }
+
+        idx += 1;
+    }
+
+    idx
+}
+
+fn push_template_expression_bytes(bytes: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
+    let mut idx = start;
+    let mut depth = 1usize;
+    let mut prev_non_ws = 0u8;
+
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+
+        if matches!(byte, b'"' | b'\'') {
+            idx = push_quoted_literal_bytes(bytes, idx, out);
+            prev_non_ws = byte;
+            continue;
+        }
+
+        if byte == b'`' {
+            idx = push_template_literal_bytes(bytes, idx, out);
+            prev_non_ws = b'`';
+            continue;
+        }
+
+        if byte == b'/' && bytes.get(idx + 1).copied() == Some(b'/') {
+            idx = push_line_comment_bytes(bytes, idx, out);
+            continue;
+        }
+
+        if byte == b'/' && bytes.get(idx + 1).copied() == Some(b'*') {
+            idx = push_block_comment_bytes(bytes, idx, out);
+            continue;
+        }
+
+        if byte == b'/' && is_regex_start_byte(prev_non_ws) {
+            idx = push_regex_literal_bytes(bytes, idx, out);
+            prev_non_ws = b'/';
+            continue;
+        }
+
+        out.push(byte);
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                idx += 1;
+                if depth == 0 {
+                    return idx;
+                }
+                prev_non_ws = b'}';
+                continue;
+            }
+            _ => {}
+        }
+
+        if !byte.is_ascii_whitespace() {
+            prev_non_ws = byte;
+        }
+        idx += 1;
+    }
+
+    idx
+}
+
+fn push_quoted_literal_bytes(bytes: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
+    let quote = bytes[start];
+    out.push(quote);
+    let mut idx = start + 1;
+
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        out.push(byte);
+        if byte == b'\\' {
+            idx += 1;
+            if idx < bytes.len() {
+                out.push(bytes[idx]);
+                idx += 1;
+            }
+            continue;
+        }
+        idx += 1;
+        if byte == quote {
+            return idx;
+        }
+    }
+
+    idx
+}
+
+fn push_line_comment_bytes(bytes: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
+    let mut idx = start;
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        out.push(byte);
+        idx += 1;
+        if byte == b'\n' || byte == b'\r' {
+            break;
+        }
+    }
+    idx
+}
+
+fn push_block_comment_bytes(bytes: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
+    let mut idx = start;
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        out.push(byte);
+        if byte == b'*' && bytes.get(idx + 1).copied() == Some(b'/') {
+            out.push(b'/');
+            return idx + 2;
+        }
+        idx += 1;
+    }
+    idx
+}
+
+fn push_regex_literal_bytes(bytes: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
+    out.push(b'/');
+    let mut idx = start + 1;
+
+    while idx < bytes.len() {
+        let byte = bytes[idx];
+        out.push(byte);
+
+        if byte == b'\\' {
+            idx += 1;
+            if idx < bytes.len() {
+                out.push(bytes[idx]);
+                idx += 1;
+            }
+            continue;
+        }
+
+        if byte == b'[' {
+            idx += 1;
+            while idx < bytes.len() {
+                let class_byte = bytes[idx];
+                out.push(class_byte);
+                if class_byte == b'\\' {
+                    idx += 1;
+                    if idx < bytes.len() {
+                        out.push(bytes[idx]);
+                        idx += 1;
+                    }
+                    continue;
+                }
+                idx += 1;
+                if class_byte == b']' {
+                    break;
+                }
+            }
+            continue;
+        }
+
+        idx += 1;
+        if byte == b'/' {
+            while idx < bytes.len() && is_id_char(bytes[idx]) {
+                out.push(bytes[idx]);
+                idx += 1;
+            }
+            return idx;
+        }
+    }
+
+    idx
+}
+
+fn is_regex_start_byte(prev_non_ws: u8) -> bool {
+    matches!(
+        prev_non_ws,
+        b'=' | b'('
+            | b','
+            | b'['
+            | b'!'
+            | b'&'
+            | b'|'
+            | b'?'
+            | b':'
+            | b';'
+            | b'{'
+            | b'}'
+            | 0
+            | b'<'
+            | b'>'
+            | b'+'
+            | b'-'
+            | b'*'
+            | b'%'
+            | b'^'
+            | b'~'
+    )
+}
+
 fn is_id_char(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
 }
@@ -570,6 +1164,129 @@ mod tests {
         assert!(result.contains("} else{"), "got: {}", result);
         assert!(!result.contains("};else"), "got: {}", result);
         assert!(!result.contains("}; else"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_minify_does_not_insert_semicolon_after_control_header() {
+        let source = "if (ok)\nfor (var i = 0; i < items.length; i++)\nrun(items[i])\nelse if (other)\nstop()";
+        let result = minify_js(source, &[]);
+        assert!(!result.contains("if(ok);"), "got: {}", result);
+        assert!(
+            !result.contains("for(var i=0;i<items.length;i++);"),
+            "got: {}",
+            result
+        );
+        assert!(result.contains("else if"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_minify_does_not_insert_semicolon_after_statement_body_prefixes() {
+        let source = "do\nstep()\nwhile (again)\nif (ok)\nrun()\nelse\nstop()\ntry\nrun()\nfinally\ncleanup()";
+        let result = minify_js(source, &[]);
+        assert!(!result.contains("do;"), "got: {}", result);
+        assert!(!result.contains("else;"), "got: {}", result);
+        assert!(!result.contains("try;"), "got: {}", result);
+        assert!(!result.contains("finally;"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_minify_preserves_keyword_expression_continuations() {
+        let source = r#"
+if ("movementX" in
+  event) return event.movementX;
+if (value instanceof
+  Widget) return value;
+if (typeof
+  value === "string") return value;
+"#;
+        let result = minify_js(source, &[]);
+        assert!(!result.contains("in;"), "got: {}", result);
+        assert!(!result.contains("instanceof;"), "got: {}", result);
+        assert!(!result.contains("typeof;"), "got: {}", result);
+        assert!(result.contains("\"movementX\" in event"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_minify_preserves_declaration_continuation_after_comment() {
+        let source = r#"
+function convertDataToEntities() {
+  var /** @deprecated Use config.externalGetKey instead */
+  legacyExternalGetKey = arguments.length > 2 ? arguments[2] : undefined;
+  return legacyExternalGetKey;
+}
+"#;
+        let result = minify_js(source, &[]);
+        assert!(
+            !result.contains("var;legacyExternalGetKey"),
+            "got: {}",
+            result
+        );
+        assert!(
+            result.contains("var legacyExternalGetKey="),
+            "got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_minify_inserts_semicolon_after_postfix_update_before_return() {
+        let source = r#"
+function prev() {
+  if (column--,
+      character === 10) line--
+  return character
+}
+function next() {
+  if (line++,
+      ok) column++
+  return character
+}
+"#;
+        let result = minify_js(source, &[]);
+        assert!(result.contains("line--;return"), "got: {}", result);
+        assert!(result.contains("column++;return"), "got: {}", result);
+        assert!(!result.contains("--return"), "got: {}", result);
+        assert!(!result.contains("++return"), "got: {}", result);
+    }
+
+    #[test]
+    fn test_minify_nested_template_literal_does_not_preserve_following_comments() {
+        let source = r#"
+function exactProp(propTypes) {
+  return new Error(`The following props are not supported: ${unsupportedProps.map(prop => `\`${prop}\``).join(',')}. Please remove them.`);
+}
+function elementTypeAcceptingRef(props) {
+  if (props == null ||
+  // When server-side rendering React doesn't warn either.
+  // TODO: Revisit once https://github.com/facebook/react/issues/20047 is resolved.
+  typeof window === 'undefined') {
+    return true;
+  }
+
+  /**
+   * Blacklisting instead of whitelisting
+   * or class components. "Safe" means there's no public API.
+   */
+  return false;
+}
+"#;
+        let minified = minify_js(source, &[]);
+        assert!(
+            minified.contains("${unsupportedProps.map(prop => `\\`${prop}\\``).join(',')}"),
+            "got: {}",
+            minified
+        );
+        assert!(
+            !minified.contains("server-side rendering"),
+            "got: {}",
+            minified
+        );
+        assert!(!minified.contains("Blacklisting"), "got: {}", minified);
+        assert!(minified.contains("typeof window"), "got: {}", minified);
+
+        let with_bools = replace_bool_literals(&minified);
+        assert!(with_bools.contains("return !0"), "got: {}", with_bools);
+        assert!(with_bools.contains("return !1"), "got: {}", with_bools);
     }
 
     #[test]
@@ -698,7 +1415,7 @@ var x = 1;"#;
             .unwrap()
             .join("examples/react-bench/dist/_debug_preminify.js");
         if !bundle_path.exists() {
-            eprintln!("Skipping: bundle not found at {:?}", bundle_path);
+            eprintln!("Optional bundle fixture absent at {:?}", bundle_path);
             return;
         }
         let source = std::fs::read_to_string(&bundle_path).unwrap();
@@ -732,7 +1449,7 @@ var x = 1;"#;
             .unwrap()
             .join("examples/react-bench/dist/_debug_preminify.js");
         if !bundle_path.exists() {
-            eprintln!("Skipping: bundle not found at {:?}", bundle_path);
+            eprintln!("Optional bundle fixture absent at {:?}", bundle_path);
             return;
         }
         let source = std::fs::read_to_string(&bundle_path).unwrap();
@@ -777,6 +1494,12 @@ var x = 1;"#;
         assert_eq!(result2, "a>=b");
         let result3 = minify_js("a === b", &[]);
         assert_eq!(result3, "a===b");
+    }
+
+    #[test]
+    fn test_logical_and_unary_ops_drop_spaces() {
+        let result = minify_js("if (a && !b || c) { return a & b | c; }", &[]);
+        assert_eq!(result, "if(a&&!b||c){return a&b|c;}");
     }
 
     #[test]

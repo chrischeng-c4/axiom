@@ -5,7 +5,7 @@
 use crate::testing::{a, b, get, i, load_manifest, s};
 use toml::Value;
 
-const FIXTURE: &str = "tests/cpython/perf/pymalloc_equivalent_freelist_gate/manifest.toml";
+const FIXTURE: &str = "tests/harness/cpython/config/perf/pymalloc_equivalent_freelist_gate/manifest.toml";
 fn m() -> Value {
     load_manifest(FIXTURE)
 }
@@ -60,10 +60,7 @@ fn r1_small_string_interning_added() {
     let r = get(&m, "r1_small_string_interning_added_contract");
     assert_eq!(s(r, "requirement_id"), "R1");
     assert!(b(r, "must_add_intern_runtime_api"));
-    assert!(b(
-        r,
-        "must_make_codegen_emit_intern_handle_for_literal_constants"
-    ));
+    assert!(b(r, "must_make_codegen_emit_intern_handle_for_literal_constants"));
     assert!(b(r, "must_keep_intern_threshold_at_64_bytes"));
     assert_eq!(s(r, "expected_intern_runtime_api"), "mb_str_intern");
     assert_eq!(i(r, "expected_intern_threshold_bytes"), 64);
@@ -74,10 +71,7 @@ fn r1_small_string_interning_added() {
     assert!(names.contains(&"refcount_immortal_handle"));
     assert!(names.contains(&"refcounted_handle"));
     assert!(names.contains(&"per_call_alloc"));
-    assert_eq!(
-        s(r, "expected_intern_handle_kind"),
-        "refcount_immortal_handle"
-    );
+    assert_eq!(s(r, "expected_intern_handle_kind"), "refcount_immortal_handle");
     assert_eq!(i(r, "per_call_alloc_for_intern_exit_code"), 511);
     assert_eq!(i(r, "intern_threshold_widened_exit_code"), 512);
     assert_eq!(i(r, "intern_api_missing_exit_code"), 513);
@@ -93,10 +87,7 @@ fn r2_small_object_freelist_added() {
     let r = get(&m, "r2_small_object_freelist_added_contract");
     assert_eq!(s(r, "requirement_id"), "R2");
     assert!(b(r, "must_add_per_thread_arena"));
-    assert!(b(
-        r,
-        "must_cover_tiny_list_short_string_small_tuple_size_classes"
-    ));
+    assert!(b(r, "must_cover_tiny_list_short_string_small_tuple_size_classes"));
     assert!(b(r, "must_recycle_frees_into_freelist"));
     assert!(b(r, "must_keep_small_object_threshold_at_512_bytes"));
     assert_eq!(i(r, "expected_small_object_threshold_bytes"), 512);
@@ -138,10 +129,7 @@ fn r3_string_concat_meets_1x_floor() {
     assert_eq!(s(r, "expected_post_fix_compliance_floor"), "6_of_8");
     assert_eq!(i(r, "floor_not_met_exit_code"), 517);
     assert_eq!(i(r, "compliance_did_not_move_exit_code"), 518);
-    assert!(b(
-        r,
-        "must_distinguish_floor_not_met_from_compliance_did_not_move"
-    ));
+    assert!(b(r, "must_distinguish_floor_not_met_from_compliance_did_not_move"));
 }
 
 #[test]

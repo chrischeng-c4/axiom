@@ -2,7 +2,7 @@
 # tracked under the `union_types` lib alias.
 #
 # One [[case]] per fixture. `fixture_gen.py` turns this into the files under
-# tests/cpython/fixtures/pep/union_types/<dimension>/<case>.py:
+# tests/cpython/pep/union_types/<dimension>/<case>.py:
 #   - mechanical surface/errors come out complete (status="filled")
 #   - semantic behavior cases come out as fillable skeletons (status="generated")
 #

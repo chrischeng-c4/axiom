@@ -301,6 +301,8 @@ mod tests {
                 path: PathBuf::from("trace.zip"),
                 label: Some("trace zip".to_string()),
             }],
+            serve_session: None,
+            browser_sessions: vec![],
             open_control: None,
         }
     }
@@ -389,6 +391,57 @@ mod tests {
     }
 
     #[test]
+    fn package_copies_managed_serve_log_artifact() {
+        // Managed `jet e2e run --serve ...` bundles expose the detached
+        // server log as a top-level artifact. Packaging must keep that
+        // log with the static report, otherwise post-run trace evidence
+        // loses the server-side half of the request timeline.
+        let src = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(src.path().join(".jet")).unwrap();
+        std::fs::write(
+            src.path().join(".jet/serve.log"),
+            b"GET / 200\nPOST /__jet_shutdown 204\n",
+        )
+        .unwrap();
+
+        let mut bundle = bundle_with_screenshots();
+        bundle.run_id = "serve-log-run".to_string();
+        bundle.cases.clear();
+        bundle.artifacts = vec![E2eArtifactRef {
+            kind: "serve-log".to_string(),
+            path: PathBuf::from(".jet/serve.log"),
+            label: Some("jet serve dom log".to_string()),
+        }];
+
+        let out = tempfile::tempdir().unwrap();
+        let pkg = package_static_report(&bundle, src.path(), out.path()).expect("package");
+
+        assert!(pkg.missing_artifacts.is_empty());
+        assert_eq!(pkg.copied_artifacts.len(), 1);
+        let copied = &pkg.copied_artifacts[0];
+        assert_eq!(copied.original.kind, "serve-log");
+        assert_eq!(copied.original.label.as_deref(), Some("jet serve dom log"));
+        assert_eq!(copied.relative, PathBuf::from("artifacts/serve.log"));
+        assert_eq!(
+            std::fs::read_to_string(&copied.absolute).unwrap(),
+            "GET / 200\nPOST /__jet_shutdown 204\n"
+        );
+
+        let packaged: E2eEvidenceBundle =
+            serde_json::from_slice(&std::fs::read(&pkg.bundle_json).unwrap()).unwrap();
+        assert_eq!(packaged.artifacts.len(), 1);
+        assert_eq!(packaged.artifacts[0].kind, "serve-log");
+        assert_eq!(
+            packaged.artifacts[0].label.as_deref(),
+            Some("jet serve dom log")
+        );
+        assert_eq!(
+            packaged.artifacts[0].path,
+            PathBuf::from("artifacts/serve.log")
+        );
+    }
+
+    #[test]
     fn package_index_html_uses_pm_report_review_ui() {
         // @spec #2620, #2622 — packaged index.html embeds the PM-facing
         // flavor of the review UI; it does NOT require jet e2e open
@@ -449,6 +502,8 @@ mod tests {
                     label: None,
                 },
             ],
+            serve_session: None,
+            browser_sessions: vec![],
             open_control: None,
         };
 

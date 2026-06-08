@@ -1,15 +1,15 @@
-pub mod c_parser;
 pub mod c_types;
-pub mod cbindgen;
-pub mod memory;
-pub mod safety;
-pub mod stub_gen;
+pub mod c_parser;
 pub mod type_map;
+pub mod stub_gen;
+pub mod cbindgen;
+pub mod safety;
+pub mod memory;
 
-pub use c_types::{CEnum, CField, CFunction, CParam, CStruct, CType};
-pub use memory::MemoryBridge;
-pub use safety::{ResultConvention, SafeWrapper};
+pub use c_types::{CType, CFunction, CStruct, CEnum, CParam, CField};
 pub use type_map::c_type_to_mamba;
+pub use safety::{SafeWrapper, ResultConvention};
+pub use memory::MemoryBridge;
 
 #[cfg(test)]
 #[path = "tests"]

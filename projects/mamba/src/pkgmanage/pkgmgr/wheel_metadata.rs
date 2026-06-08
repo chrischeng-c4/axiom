@@ -109,12 +109,12 @@ pub fn parse_wheel_metadata(src: &str) -> Result<WheelMetadata, WheelMetadataErr
         if line.trim().is_empty() {
             continue;
         }
-        let (key, value) = line
-            .split_once(':')
-            .ok_or_else(|| WheelMetadataError::InvalidLine {
+        let (key, value) = line.split_once(':').ok_or_else(|| {
+            WheelMetadataError::InvalidLine {
                 lineno,
                 detail: format!("missing ':' in {line:?}"),
-            })?;
+            }
+        })?;
         let key = key.trim();
         let value = value.trim();
         if key.is_empty() {
@@ -142,12 +142,14 @@ pub fn parse_wheel_metadata(src: &str) -> Result<WheelMetadata, WheelMetadataErr
         }
     }
 
-    let wheel_version =
-        wheel_version.ok_or_else(|| WheelMetadataError::MissingField("Wheel-Version".into()))?;
+    let wheel_version = wheel_version.ok_or_else(|| {
+        WheelMetadataError::MissingField("Wheel-Version".into())
+    })?;
     let generator =
         generator.ok_or_else(|| WheelMetadataError::MissingField("Generator".into()))?;
-    let root_is_purelib = root_is_purelib
-        .ok_or_else(|| WheelMetadataError::MissingField("Root-Is-Purelib".into()))?;
+    let root_is_purelib = root_is_purelib.ok_or_else(|| {
+        WheelMetadataError::MissingField("Root-Is-Purelib".into())
+    })?;
     if tags.is_empty() {
         return Err(WheelMetadataError::NoTags);
     }
@@ -265,8 +267,7 @@ mod tests {
 
     #[test]
     fn trailing_whitespace_is_trimmed() {
-        let src =
-            "Wheel-Version: 1.0   \nGenerator: g\t\nRoot-Is-Purelib: true \nTag: py3-none-any\n";
+        let src = "Wheel-Version: 1.0   \nGenerator: g\t\nRoot-Is-Purelib: true \nTag: py3-none-any\n";
         let m = parse_wheel_metadata(src).unwrap();
         assert_eq!(m.wheel_version, "1.0");
         assert_eq!(m.generator, "g");
@@ -342,8 +343,7 @@ mod tests {
 
     #[test]
     fn empty_header_name_is_an_error() {
-        let src =
-            "Wheel-Version: 1.0\n: value\nGenerator: g\nRoot-Is-Purelib: true\nTag: py3-none-any\n";
+        let src = "Wheel-Version: 1.0\n: value\nGenerator: g\nRoot-Is-Purelib: true\nTag: py3-none-any\n";
         let err = parse_wheel_metadata(src).unwrap_err();
         match err {
             WheelMetadataError::InvalidLine { lineno, detail } => {

@@ -49,7 +49,7 @@
 //!   18 hit at least one of the above blockers — so the headline
 //!   `Lib/test_glob` pass-rate against the unmodified suite is 0/18
 //!   until items 1+2+3 land. Mamba's own conformance fixture
-//!   (`projects/mamba/tests/cpython/fixtures/std-libs/glob/`)
+//!   (`projects/mamba/tests/cpython/std-libs/glob/`)
 //!   covers the supported slice (literal, `*`, `?`, glob0/1,
 //!   has_magic, escape, iglob alias) at 100%.
 //! HANDWRITE-END
@@ -80,9 +80,9 @@
 //!     that does `import glob; glob.os` is rare enough to defer to a
 //!     proper module-aliasing pass.
 
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
@@ -122,8 +122,21 @@ macro_rules! disp_binary {
     };
 }
 
-disp_unary!(dispatch_glob, mb_glob_glob);
-disp_unary!(dispatch_iglob, mb_glob_glob);
+// `glob` / `iglob` accept keyword args (`recursive=`, `root_dir=`). The HIR
+// lowering for an attribute call with keywords (`glob.glob(p, recursive=True)`)
+// appends the keyword bundle as a trailing positional dict, so the native
+// `(args_ptr, nargs)` dispatcher receives `[pattern, {"recursive": True, ...}]`.
+// These dispatchers forward the full slice so the impl can recover the kwargs.
+unsafe extern "C" fn dispatch_glob(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let _ = core::hint::black_box(stringify!(dispatch_glob));
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    mb_glob_glob_args(a)
+}
+unsafe extern "C" fn dispatch_iglob(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let _ = core::hint::black_box(stringify!(dispatch_iglob));
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    mb_glob_iglob_args(a)
+}
 disp_unary!(dispatch_has_magic, mb_glob_has_magic);
 disp_unary!(dispatch_escape, mb_glob_escape);
 disp_binary!(dispatch_glob0, mb_glob_glob0);
@@ -137,12 +150,12 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("glob", dispatch_glob as *const () as usize),
-        ("iglob", dispatch_iglob as *const () as usize),
-        ("has_magic", dispatch_has_magic as *const () as usize),
-        ("escape", dispatch_escape as *const () as usize),
-        ("glob0", dispatch_glob0 as *const () as usize),
-        ("glob1", dispatch_glob1 as *const () as usize),
+        ("glob",       dispatch_glob       as *const () as usize),
+        ("iglob",      dispatch_iglob      as *const () as usize),
+        ("has_magic",  dispatch_has_magic  as *const () as usize),
+        ("escape",     dispatch_escape     as *const () as usize),
+        ("glob0",      dispatch_glob0      as *const () as usize),
+        ("glob1",      dispatch_glob1      as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -160,15 +173,7 @@ pub fn register() {
         MbValue::from_ptr(MbObject::new_bytes(MAGIC_CHECK_PATTERN.as_bytes().to_vec())),
     );
 
-    for sub in [
-        "contextlib",
-        "fnmatch",
-        "itertools",
-        "os",
-        "re",
-        "stat",
-        "sys",
-    ] {
+    for sub in ["contextlib", "fnmatch", "itertools", "os", "re", "stat", "sys"] {
         attrs.insert(sub.to_string(), MbValue::none());
     }
 
@@ -179,21 +184,72 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data {
-            Some(s.clone())
-        } else {
-            None
-        }
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
     })
 }
 
 // -- Glob pattern matching --
 
-/// Match a pattern against text. Supports `*` (any sequence) and `?` (single char).
+/// Match a pattern against text. Supports `*` (any sequence), `?` (single
+/// char), and `[...]` character classes (`[abc]`, ranges `[a-z]`, negation
+/// `[!abc]`) per CPython's `fnmatch.translate` semantics.
 fn glob_match(pattern: &str, text: &str) -> bool {
     let pat: Vec<char> = pattern.chars().collect();
     let txt: Vec<char> = text.chars().collect();
     glob_match_inner(&pat, &txt)
+}
+
+/// Try to parse a `[...]` character class starting at `pat[pi]` (which must be
+/// `'['`). On success returns `(matched, next_pi)` where `matched` says whether
+/// `ch` is in the class and `next_pi` points just past the closing `']'`.
+///
+/// Mirrors CPython's `fnmatch.translate`: an unterminated `[` (no closing `]`)
+/// is treated as a literal `'['`, signalled here by returning `None`.
+fn match_char_class(pat: &[char], pi: usize, ch: char) -> Option<(bool, usize)> {
+    // pat[pi] == '['
+    let mut j = pi + 1;
+    // Leading '!' negates the class.
+    let negate = j < pat.len() && pat[j] == '!';
+    if negate {
+        j += 1;
+    }
+    // A ']' immediately after '[' or '[!' is a literal member, not the
+    // terminator (CPython/fnmatch behaviour).
+    let class_start = j;
+    if j < pat.len() && pat[j] == ']' {
+        j += 1;
+    }
+    // Find the closing ']'.
+    while j < pat.len() && pat[j] != ']' {
+        j += 1;
+    }
+    if j >= pat.len() {
+        // Unterminated class → treat '[' literally.
+        return None;
+    }
+    let class_end = j; // index of closing ']'
+    // Evaluate membership over pat[class_start..class_end].
+    let mut matched = false;
+    let members = &pat[class_start..class_end];
+    let mut k = 0;
+    while k < members.len() {
+        // Range like a-z: members[k+1] == '-' and there's a char after it,
+        // and '-' is not the trailing char of the class.
+        if k + 2 < members.len() && members[k + 1] == '-' {
+            let lo = members[k];
+            let hi = members[k + 2];
+            if lo <= ch && ch <= hi {
+                matched = true;
+            }
+            k += 3;
+        } else {
+            if members[k] == ch {
+                matched = true;
+            }
+            k += 1;
+        }
+    }
+    Some((matched ^ negate, class_end + 1))
 }
 
 fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
@@ -203,6 +259,29 @@ fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
     let mut star_ti: usize = 0;
 
     while ti < txt.len() {
+        if pi < pat.len() && pat[pi] == '[' {
+            // Character class: attempt to match pat[pi..] against txt[ti].
+            match match_char_class(pat, pi, txt[ti]) {
+                Some((true, next_pi)) => {
+                    pi = next_pi;
+                    ti += 1;
+                    continue;
+                }
+                Some((false, _)) => {
+                    // Class present but no member matched → backtrack to star.
+                    if let Some(sp) = star_pi {
+                        pi = sp + 1;
+                        star_ti += 1;
+                        ti = star_ti;
+                        continue;
+                    }
+                    return false;
+                }
+                None => {
+                    // Unterminated '[' → fall through to literal matching of '['.
+                }
+            }
+        }
         if pi < pat.len() && (pat[pi] == '?' || pat[pi] == txt[ti]) {
             pi += 1;
             ti += 1;
@@ -219,75 +298,336 @@ fn glob_match_inner(pat: &[char], txt: &[char]) -> bool {
         }
     }
 
-    while pi < pat.len() && pat[pi] == '*' {
-        pi += 1;
+    // Consume any trailing '*' and matching empty character classes.
+    while pi < pat.len() {
+        if pat[pi] == '*' {
+            pi += 1;
+        } else {
+            break;
+        }
     }
 
     pi == pat.len()
 }
 
-/// Split a glob pattern into (directory_prefix, file_pattern).
-fn split_pattern(pattern: &str) -> (String, String) {
-    let p = std::path::Path::new(pattern);
+/// Whether a string contains a glob wildcard (`*`, `?`, or `[`) — the same
+/// magic-char set as `glob.has_magic` / CPython's `magic_check` regex.
+fn has_glob_magic(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
+}
 
-    if let (Some(parent), Some(file_pat)) = (p.parent(), p.file_name()) {
-        let parent_str = parent.to_str().unwrap_or(".").to_string();
-        let file_str = file_pat.to_str().unwrap_or("").to_string();
-        if file_str.contains('*') || file_str.contains('?') {
-            let dir = if parent_str.is_empty() {
-                ".".to_string()
-            } else {
-                parent_str
+// -- CPython glob algorithm (Lib/glob.py port) --
+//
+// Mirrors CPython 3.12 `glob._iglob` / `_glob0` / `_glob1` / `_glob2`
+// (without `root_dir`/`dir_fd`/`bytes`/`include_hidden`, which the conformance
+// fixtures do not exercise). `root_dir` is threaded as an optional join prefix
+// for filesystem probes only — the yielded paths stay relative to it, exactly
+// as CPython does.
+
+/// `os.path.split(pathname)` for POSIX: split at the last `/`. The head keeps a
+/// trailing slash only when it is all slashes (the filesystem root).
+fn posix_split(p: &str) -> (String, String) {
+    match p.rfind('/') {
+        Some(i) => {
+            let head = &p[..i + 1];
+            let tail = &p[i + 1..];
+            // Strip trailing slashes from head unless it is all slashes.
+            let stripped = head.trim_end_matches('/');
+            let head_out = if stripped.is_empty() { head } else { stripped };
+            (head_out.to_string(), tail.to_string())
+        }
+        None => (String::new(), p.to_string()),
+    }
+}
+
+/// `os.path.join(a, b)` for POSIX. Matches CPython `posixpath.join` exactly,
+/// including `join("gtree", "")` -> `"gtree/"` (the trailing slash that makes
+/// recursive-`**` and trailing-slash patterns surface directory paths with a
+/// terminal separator). `b` is never absolute in our callers.
+fn posix_join(a: &str, b: &str) -> String {
+    if a.is_empty() || a.ends_with('/') {
+        format!("{}{}", a, b)
+    } else {
+        format!("{}/{}", a, b)
+    }
+}
+
+/// glob's `_join`: if either side is empty, return the other untouched.
+fn glob_join(dirname: &str, basename: &str) -> String {
+    if dirname.is_empty() || basename.is_empty() {
+        if dirname.is_empty() { basename.to_string() } else { dirname.to_string() }
+    } else {
+        posix_join(dirname, basename)
+    }
+}
+
+fn is_recursive(pattern: &str) -> bool {
+    pattern == "**"
+}
+
+fn is_hidden(name: &str) -> bool {
+    name.starts_with('.')
+}
+
+/// Join `root_dir` (the optional probe prefix) in front of a path for fs probes.
+fn probe_path(root_dir: &str, pathname: &str) -> String {
+    glob_join(root_dir, pathname)
+}
+
+fn lexists(path: &str) -> bool {
+    // os.path.lexists: true for any existing entry, including broken symlinks.
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+fn is_dir(path: &str) -> bool {
+    // os.path.isdir: follows symlinks. Empty path means the current directory.
+    let probe = if path.is_empty() { "." } else { path };
+    std::fs::metadata(probe).map(|m| m.is_dir()).unwrap_or(false)
+}
+
+/// `_listdir`: filenames inside `dirname`. `dironly` keeps directories only.
+/// Empty `dirname` means the current directory.
+fn list_dir(dirname: &str, dironly: bool) -> Vec<String> {
+    let probe = if dirname.is_empty() { ".".to_string() } else { dirname.to_string() };
+    let rd = match std::fs::read_dir(&probe) {
+        Ok(rd) => rd,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        if dironly {
+            // entry.is_dir() follows symlinks via file_type fallback to metadata.
+            let is_d = match entry.file_type() {
+                Ok(ft) if ft.is_dir() => true,
+                Ok(ft) if ft.is_symlink() => {
+                    std::fs::metadata(entry.path()).map(|m| m.is_dir()).unwrap_or(false)
+                }
+                _ => false,
             };
-            return (dir, file_str);
+            if !is_d {
+                continue;
+            }
+        }
+        out.push(name);
+    }
+    out
+}
+
+/// `_glob1`: basenames in `dirname` matching `pattern`, with hidden-file rule.
+fn glob1(root_dir: &str, dirname: &str, pattern: &str, dironly: bool) -> Vec<String> {
+    let full = probe_path(root_dir, dirname);
+    let names = list_dir(&full, dironly);
+    let pattern_hidden = is_hidden(pattern);
+    let mut out = Vec::new();
+    for name in names {
+        if !pattern_hidden && is_hidden(&name) {
+            continue;
+        }
+        if glob_match(pattern, &name) {
+            out.push(name);
         }
     }
+    out
+}
 
-    if pattern.contains('*') || pattern.contains('?') {
-        return (".".to_string(), pattern.to_string());
+/// `_glob0`: literal basename existence check.
+fn glob0(root_dir: &str, dirname: &str, basename: &str, _dironly: bool) -> Vec<String> {
+    if !basename.is_empty() {
+        let probe = probe_path(root_dir, &glob_join(dirname, basename));
+        if lexists(&probe) {
+            return vec![basename.to_string()];
+        }
+    } else {
+        // Trailing-slash patterns ('dir/') match only directories.
+        let probe = probe_path(root_dir, dirname);
+        if is_dir(&probe) {
+            return vec![basename.to_string()];
+        }
+    }
+    Vec::new()
+}
+
+/// `_rlistdir`: relative pathnames recursively under `dirname`.
+fn rlistdir(root_dir: &str, dirname: &str, dironly: bool, out: &mut Vec<String>) {
+    let full = probe_path(root_dir, dirname);
+    let names = list_dir(&full, dironly);
+    for x in names {
+        if is_hidden(&x) {
+            continue;
+        }
+        out.push(x.clone());
+        let path = if dirname.is_empty() { x.clone() } else { glob_join(dirname, &x) };
+        let mut sub = Vec::new();
+        rlistdir(root_dir, &path, dironly, &mut sub);
+        for y in sub {
+            out.push(glob_join(&x, &y));
+        }
+    }
+}
+
+/// `_glob2`: recursive `**` segment — yields `""` for the base dir, then all
+/// recursive relative pathnames.
+fn glob2(root_dir: &str, dirname: &str, dironly: bool) -> Vec<String> {
+    let mut out = Vec::new();
+    let probe = probe_path(root_dir, dirname);
+    if dirname.is_empty() || is_dir(&probe) {
+        out.push(String::new());
+    }
+    rlistdir(root_dir, dirname, dironly, &mut out);
+    out
+}
+
+/// `_iglob`: the recursive core. Yields path strings relative to `root_dir`.
+fn iglob_core(pathname: &str, root_dir: &str, recursive: bool, dironly: bool) -> Vec<String> {
+    let (dirname, basename) = posix_split(pathname);
+
+    if !has_glob_magic(pathname) {
+        // No magic anywhere → literal existence check.
+        if !basename.is_empty() {
+            if lexists(&probe_path(root_dir, pathname)) {
+                return vec![pathname.to_string()];
+            }
+        } else {
+            // Trailing-slash pattern: match only directories.
+            if is_dir(&probe_path(root_dir, &dirname)) {
+                return vec![pathname.to_string()];
+            }
+        }
+        return Vec::new();
     }
 
-    (pattern.to_string(), String::new())
+    if dirname.is_empty() {
+        if recursive && is_recursive(&basename) {
+            return glob2(root_dir, "", dironly);
+        }
+        return glob1(root_dir, "", &basename, dironly);
+    }
+
+    // Resolve the directory component (which may itself contain magic).
+    let dirs: Vec<String> = if dirname != pathname && has_glob_magic(&dirname) {
+        iglob_core(&dirname, root_dir, recursive, true)
+    } else {
+        vec![dirname.clone()]
+    };
+
+    let mut out = Vec::new();
+    for d in dirs {
+        let names: Vec<String> = if has_glob_magic(&basename) {
+            if recursive && is_recursive(&basename) {
+                glob2(root_dir, &d, dironly)
+            } else {
+                glob1(root_dir, &d, &basename, dironly)
+            }
+        } else {
+            glob0(root_dir, &d, &basename, dironly)
+        };
+        for name in names {
+            out.push(posix_join(&d, &name));
+        }
+    }
+    out
+}
+
+/// `iglob`: wraps `_iglob` and skips a leading empty result for a recursive
+/// `**`-prefixed pattern (CPython's `next(it)  # skip empty string`).
+fn iglob_results(pathname: &str, root_dir: &str, recursive: bool) -> Vec<String> {
+    let mut results = iglob_core(pathname, root_dir, recursive, false);
+    // CPython: `if not pathname or recursive and _isrecursive(pathname[:2])`
+    // → skip a single leading empty string yielded by a bare/leading `**`.
+    let leading_recursive = recursive && pathname.starts_with("**");
+    if pathname.is_empty() || leading_recursive {
+        if !results.is_empty() && results[0].is_empty() {
+            results.remove(0);
+        }
+    }
+    results
 }
 
 // -- Runtime functions --
 
-/// glob.glob(pattern) -> list of matching paths
-pub fn mb_glob_glob(pattern: MbValue) -> MbValue {
-    let pat_str = match extract_str(pattern) {
+/// Extract `recursive` / `root_dir` from a trailing kwargs dict appended by the
+/// HIR call lowering for `glob.glob(p, recursive=True, root_dir=...)`.
+fn kwargs_from_args(args: &[MbValue]) -> (bool, Option<String>) {
+    let mut recursive = false;
+    let mut root_dir = None;
+    // The pattern is args[0]; any trailing dict carries keyword args.
+    for v in args.iter().skip(1) {
+        if let Some(ptr) = v.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let map = lock.read().unwrap();
+                    if let Some(rv) = map.get(&super::super::dict_ops::DictKey::Str("recursive".to_string())) {
+                        recursive = mb_truthy(*rv);
+                    }
+                    if let Some(rd) = map.get(&super::super::dict_ops::DictKey::Str("root_dir".to_string())) {
+                        if let Some(s) = extract_str(*rd) {
+                            root_dir = Some(s);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    (recursive, root_dir)
+}
+
+/// Truthiness for a kwarg value (bool / int / None).
+fn mb_truthy(v: MbValue) -> bool {
+    if let Some(b) = v.as_bool() {
+        return b;
+    }
+    if let Some(i) = v.as_int() {
+        return i != 0;
+    }
+    !v.is_none()
+}
+
+fn glob_list(args: &[MbValue]) -> MbValue {
+    let pat_str = match args.first().copied().and_then(extract_str) {
         Some(s) => s,
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
     };
+    let (recursive, root_dir) = kwargs_from_args(args);
+    let root = root_dir.unwrap_or_default();
+    let results = iglob_results(&pat_str, &root, recursive);
+    let items: Vec<MbValue> = results
+        .into_iter()
+        .map(|p| MbValue::from_ptr(MbObject::new_str(p)))
+        .collect();
+    MbValue::from_ptr(MbObject::new_list(items))
+}
 
-    let (dir, file_pattern) = split_pattern(&pat_str);
+/// glob.glob(pattern, *, recursive=False, root_dir=None) -> list of paths.
+fn mb_glob_glob_args(args: &[MbValue]) -> MbValue {
+    glob_list(args)
+}
 
-    if file_pattern.is_empty() {
-        if std::path::Path::new(&dir).exists() {
-            let item = MbValue::from_ptr(MbObject::new_str(dir));
-            return MbValue::from_ptr(MbObject::new_list(vec![item]));
-        }
-        return MbValue::from_ptr(MbObject::new_list(vec![]));
-    }
+/// glob.iglob(pattern, *, recursive=False, root_dir=None) -> iterator of paths.
+fn mb_glob_iglob_args(args: &[MbValue]) -> MbValue {
+    let list = glob_list(args);
+    super::super::iter::mb_iter(list)
+}
 
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(rd) => rd,
-        Err(_) => return MbValue::from_ptr(MbObject::new_list(vec![])),
-    };
+/// glob.glob(pattern) -> list of matching paths (single-arg entry, used by the
+/// in-crate tests). The dispatcher uses `mb_glob_glob_args` directly to recover
+/// keyword arguments.
+pub fn mb_glob_glob(pattern: MbValue) -> MbValue {
+    glob_list(&[pattern])
+}
 
-    let mut results = Vec::new();
-    for entry in entries.flatten() {
-        let name = match entry.file_name().to_str() {
-            Some(n) => n.to_string(),
-            None => continue,
-        };
-        if glob_match(&file_pattern, &name) {
-            let full_path = entry.path();
-            let path_str = full_path.to_str().unwrap_or("").to_string();
-            results.push(MbValue::from_ptr(MbObject::new_str(path_str)));
-        }
-    }
-
-    MbValue::from_ptr(MbObject::new_list(results))
+/// glob.iglob(pattern) -> iterator of matching paths.
+///
+/// CPython's `iglob` returns a lazy generator exposing `__iter__`/`__next__`.
+/// Mamba materialises the same results as `glob.glob` and wraps the list in a
+/// real `list_iterator` (via the runtime's `mb_iter`) so callers that probe
+/// `hasattr(it, "__next__")` or call `next(it)` behave like CPython.
+pub fn mb_glob_iglob(pattern: MbValue) -> MbValue {
+    let list = glob_list(&[pattern]);
+    super::super::iter::mb_iter(list)
 }
 
 /// glob.has_magic(s) -> bool
@@ -412,14 +752,15 @@ mod tests {
     }
 
     #[test]
-    fn test_split_pattern() {
-        let (dir, pat) = split_pattern("/home/user/*.txt");
-        assert_eq!(dir, "/home/user");
-        assert_eq!(pat, "*.txt");
-
-        let (dir2, pat2) = split_pattern("*.rs");
-        assert_eq!(dir2, ".");
-        assert_eq!(pat2, "*.rs");
+    fn test_posix_split() {
+        // Mirrors os.path.split: rightmost '/', head keeps a trailing slash
+        // only when it is all slashes (the root).
+        assert_eq!(posix_split("/home/user/*.txt"), ("/home/user".into(), "*.txt".into()));
+        assert_eq!(posix_split("*.rs"), ("".into(), "*.rs".into()));
+        assert_eq!(posix_split("gtree/**/*.txt"), ("gtree/**".into(), "*.txt".into()));
+        assert_eq!(posix_split("gtree//sub"), ("gtree".into(), "sub".into()));
+        assert_eq!(posix_split("gtree/sub/"), ("gtree/sub".into(), "".into()));
+        assert_eq!(posix_split("/"), ("/".into(), "".into()));
     }
 
     #[test]
@@ -443,14 +784,14 @@ mod tests {
     #[test]
     fn test_has_magic_truth_table() {
         let cases: &[(&str, bool)] = &[
-            ("", false),
-            ("plain.txt", false),
-            ("a*", true),
-            ("a?b", true),
-            ("[abc]", true),
-            ("path/to/x", false),
-            ("path/to/*", true),
-            ("trailing[", true),
+            ("",            false),
+            ("plain.txt",   false),
+            ("a*",          true),
+            ("a?b",         true),
+            ("[abc]",       true),
+            ("path/to/x",   false),
+            ("path/to/*",   true),
+            ("trailing[",   true),
         ];
         for (input, want) in cases {
             let got = mb_glob_has_magic(s(input)).as_bool();
@@ -460,10 +801,7 @@ mod tests {
 
     #[test]
     fn test_has_magic_non_str_is_false() {
-        assert_eq!(
-            mb_glob_has_magic(MbValue::from_int(7)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_glob_has_magic(MbValue::from_int(7)).as_bool(), Some(false));
         assert_eq!(mb_glob_has_magic(MbValue::none()).as_bool(), Some(false));
     }
 
@@ -471,17 +809,11 @@ mod tests {
 
     #[test]
     fn test_escape_wraps_magic_chars() {
-        assert_eq!(
-            get_str(mb_glob_escape(s("plain"))),
-            Some("plain".to_string())
-        );
+        assert_eq!(get_str(mb_glob_escape(s("plain"))), Some("plain".to_string()));
         assert_eq!(get_str(mb_glob_escape(s("a*"))), Some("a[*]".to_string()));
         assert_eq!(get_str(mb_glob_escape(s("a?b"))), Some("a[?]b".to_string()));
         assert_eq!(get_str(mb_glob_escape(s("["))), Some("[[]".to_string()));
-        assert_eq!(
-            get_str(mb_glob_escape(s("*?["))),
-            Some("[*][?][[]".to_string())
-        );
+        assert_eq!(get_str(mb_glob_escape(s("*?["))), Some("[*][?][[]".to_string()));
     }
 
     #[test]
@@ -570,13 +902,11 @@ mod tests {
     #[test]
     fn test_register_wires_full_surface() {
         register();
-        let snap = super::super::super::module::NATIVE_FUNC_ADDRS.with(|s| s.borrow().len());
+        let snap = super::super::super::module::NATIVE_FUNC_ADDRS
+            .with(|s| s.borrow().len());
         // 6 dispatchers should each be registered; snapshot is monotonic
         // across the test process so we only assert presence is non-zero.
-        assert!(
-            snap >= 6,
-            "expected at least 6 native func addrs registered"
-        );
+        assert!(snap >= 6, "expected at least 6 native func addrs registered");
     }
 
     #[test]

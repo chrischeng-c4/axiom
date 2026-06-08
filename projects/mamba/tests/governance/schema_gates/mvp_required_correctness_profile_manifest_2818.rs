@@ -25,9 +25,14 @@ use std::path::{Path, PathBuf};
 
 const EXPECTED_BUCKETS: &[&str] = &["required", "optional", "xfail", "blocker"];
 
-const REQUIRED_FAMILIES: &[&str] = &["language_semantics", "cpython_seeds", "stdlib_behavior"];
+const REQUIRED_FAMILIES: &[&str] = &[
+    "language_semantics",
+    "cpython_seeds",
+    "stdlib_behavior",
+];
 
-const REQUIRED_EXCLUDED_OUTCOMES: &[&str] = &["ImportPass", "Stub", "skip", "xfail"];
+const REQUIRED_EXCLUDED_OUTCOMES: &[&str] =
+    &["ImportPass", "Stub", "skip", "xfail"];
 
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -46,16 +51,9 @@ fn crate_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn correctness_profile_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("profile").and_then(|v| v.as_str()),
@@ -82,7 +80,7 @@ fn correctness_profile_manifest_header_is_well_formed() {
 
 #[test]
 fn correctness_profile_policy_fails_on_required_skip() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let policy = doc
         .get("policy")
         .and_then(|v| v.as_table())
@@ -140,7 +138,7 @@ fn correctness_profile_policy_fails_on_required_skip() {
 
 #[test]
 fn correctness_profile_summary_names_failures_and_missing() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let summary = doc
         .get("summary")
         .and_then(|v| v.as_table())
@@ -182,7 +180,7 @@ fn correctness_profile_summary_names_failures_and_missing() {
 
 #[test]
 fn correctness_profile_families_are_declared_and_consumable() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let families = doc
         .get("families")
         .and_then(|v| v.as_table())
@@ -226,7 +224,7 @@ fn correctness_profile_families_are_declared_and_consumable() {
 
 #[test]
 fn correctness_profile_runner_contract_covers_every_family() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -252,7 +250,7 @@ fn correctness_profile_runner_contract_covers_every_family() {
 
 #[test]
 fn mvp_umbrella_links_to_correctness_manifest() {
-    let doc = load_toml(&umbrella_path());
+    let doc = crate::common::load_toml(&umbrella_path());
     let entry = doc
         .get("profiles")
         .and_then(|v| v.get("correctness"))

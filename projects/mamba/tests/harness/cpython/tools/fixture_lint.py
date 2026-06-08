@@ -24,8 +24,12 @@ import tomllib
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
-FIXTURES_DIR = TOOLS_DIR.parents[2] / "cpython" / "fixtures"
+FIXTURES_DIR = TOOLS_DIR.parents[2] / "cpython"
 REQUIRED = ("bucket", "lib", "dimension", "case", "subject", "kind")
+# Non-per-lib flat walls + relocated regression fixtures are exempt from the
+# path==record invariant (their physical layout is intentionally not
+# {dimension}/{bucket}/{lib}/{case}.py).
+PATH_INVARIANT_EXEMPT_TOPS = ("perf", "security-matrix", "_regression")
 
 
 def extract_record(text: str) -> dict:
@@ -63,6 +67,24 @@ def lint_file(path: Path) -> tuple[bool, list[str]]:
             problems.append(f"missing required key: {key}")
     if mamba.get("case") != path.stem:
         problems.append(f"case={mamba.get('case')!r} != filename stem {path.stem!r}")
+
+    # Dimension-first invariant (STRUCTURE.md §1): a recorded fixture's physical
+    # path MUST equal {dimension}/{bucket}/{lib}/{case}.py. Path and record can
+    # never disagree. Flat walls + _regression/ are exempt.
+    try:
+        rel = path.relative_to(FIXTURES_DIR)
+    except ValueError:
+        rel = path
+    if rel.parts and rel.parts[0] not in PATH_INVARIANT_EXEMPT_TOPS:
+        if all(k in mamba for k in ("dimension", "bucket", "lib", "case")):
+            expected = Path(
+                str(mamba["dimension"]),
+                str(mamba["bucket"]),
+                str(mamba["lib"]),
+                f"{mamba['case']}.py",
+            )
+            if rel != expected:
+                problems.append(f"path {rel} != record path {expected}")
     return True, problems
 
 

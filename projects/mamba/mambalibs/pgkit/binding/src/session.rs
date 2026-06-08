@@ -37,8 +37,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use cclab_mamba_registry::convert::mb_wrap_native;
 use cclab_mamba_registry::MbValue;
+use cclab_mamba_registry::convert::mb_wrap_native;
 
 use cclab_pg::driver::ExtractedValue;
 

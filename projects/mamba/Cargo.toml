@@ -99,6 +99,7 @@ sha2 = { version = "0.10", features = ["asm"] }
 md-5 = { version = "0.10", features = ["asm"] }
 sha1 = { version = "0.10" }
 sha3 = { version = "0.10", features = ["asm"] }
+blake2 = "0.10"
 hmac = "0.12"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 # Sdist (`.tar.gz`) unpack for PEP 517 build path (Tick 18). Pure-Rust tar

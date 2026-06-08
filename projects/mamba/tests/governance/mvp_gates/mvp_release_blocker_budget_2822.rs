@@ -28,20 +28,12 @@ use serde_json::{json, Value};
 
 // ─── Path helpers ───────────────────────────────────────────────────
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn policy_path() -> PathBuf {
-    project_root()
-        .join("validation")
-        .join("blocker_budget.toml")
+    crate::common::project_root().join("validation").join("blocker_budget.toml")
 }
 
 fn reporter_script() -> PathBuf {
-    project_root()
-        .join("scripts")
-        .join("release_blocker_report.py")
+    crate::common::project_root().join("scripts").join("release_blocker_report.py")
 }
 
 fn unique_dir(tag: &str) -> PathBuf {
@@ -55,7 +47,8 @@ fn unique_dir(tag: &str) -> PathBuf {
 }
 
 fn read_policy() -> String {
-    std::fs::read_to_string(policy_path()).unwrap_or_else(|e| panic!("read policy: {e}"))
+    std::fs::read_to_string(policy_path())
+        .unwrap_or_else(|e| panic!("read policy: {e}"))
 }
 
 fn write_summary(dir: &Path, name: &str, value: &Value) -> PathBuf {
@@ -68,7 +61,7 @@ fn run_reporter(args: &[&str]) -> (i32, String, String) {
     let output = Command::new("python3")
         .arg(reporter_script())
         .args(args)
-        .current_dir(project_root())
+        .current_dir(crate::common::project_root())
         .output()
         .expect("invoke release_blocker_report.py");
     (
@@ -95,8 +88,7 @@ fn build_summary(release_id: &str, blockers: &[(&str, &str, &str, &str, Option<&
             "reason": "test fixture",
             "tracking_issue": tracker,
         });
-        by_obj
-            .entry(objective.to_string())
+        by_obj.entry(objective.to_string())
             .or_insert_with(|| Value::Array(vec![]))
             .as_array_mut()
             .expect("array")
@@ -141,10 +133,7 @@ fn policy_lives_alongside_profile_manifests() {
 #[test]
 fn policy_declares_budget_for_every_mvp_objective() {
     let body = read_policy();
-    assert!(
-        body.contains("[budgets]"),
-        "policy must declare [budgets] table"
-    );
+    assert!(body.contains("[budgets]"), "policy must declare [budgets] table");
     for obj in [
         "smoke",
         "correctness",
@@ -198,40 +187,22 @@ fn policy_caps_human_summary_for_conciseness() {
 #[test]
 fn json_report_lists_one_row_per_budgeted_objective() {
     let dir = unique_dir("rows");
-    let summary = build_summary(
-        "rel-rows",
-        &[("performance", "performance", "fib", "failed", Some("#2096"))],
-    );
+    let summary = build_summary("rel-rows", &[("performance", "performance", "fib", "failed", Some("#2096"))]);
     let summary_path = write_summary(&dir, "summary.json", &summary);
 
     let (code, stdout, _) = run_reporter(&[
-        "--summary",
-        summary_path.to_str().unwrap(),
-        "--format",
-        "json",
+        "--summary", summary_path.to_str().unwrap(),
+        "--format", "json",
     ]);
-    assert_eq!(
-        code, 1,
-        "one blocker over budget=0 must exit 1 (budget_overrun)"
-    );
+    assert_eq!(code, 1, "one blocker over budget=0 must exit 1 (budget_overrun)");
 
     let payload = parse_json(&stdout);
-    let objectives = payload["objectives"]
-        .as_array()
-        .expect("objectives is array");
+    let objectives = payload["objectives"].as_array().expect("objectives is array");
     let names: Vec<String> = objectives
         .iter()
         .map(|o| o["objective"].as_str().unwrap().to_string())
         .collect();
-    for required in [
-        "smoke",
-        "correctness",
-        "performance",
-        "ecosystem",
-        "package_manager",
-        "mambalibs",
-        "release_gate",
-    ] {
+    for required in ["smoke", "correctness", "performance", "ecosystem", "package_manager", "mambalibs", "release_gate"] {
         assert!(
             names.iter().any(|n| n == required),
             "objectives list must include {required}: {names:?}",
@@ -252,10 +223,8 @@ fn clean_summary_reports_zero_overrun_and_exits_zero() {
     let summary = build_summary("rel-clean", &[]);
     let summary_path = write_summary(&dir, "summary.json", &summary);
     let (code, stdout, _) = run_reporter(&[
-        "--summary",
-        summary_path.to_str().unwrap(),
-        "--format",
-        "json",
+        "--summary", summary_path.to_str().unwrap(),
+        "--format", "json",
     ]);
     assert_eq!(code, 0, "clean summary must exit 0");
     let payload = parse_json(&stdout);
@@ -271,17 +240,12 @@ fn required_blocker_missing_tracker_exits_nonzero_under_fail_policy() {
     let dir = unique_dir("missing-tracker");
     // Required objective (performance) blocker with no tracker — policy
     // is "fail" in blocker_budget.toml, so reporter MUST exit 2.
-    let summary = build_summary(
-        "rel-missing",
-        &[("performance", "performance", "fib", "failed", None)],
-    );
+    let summary = build_summary("rel-missing", &[("performance", "performance", "fib", "failed", None)]);
     let summary_path = write_summary(&dir, "summary.json", &summary);
 
     let (code, stdout, _) = run_reporter(&[
-        "--summary",
-        summary_path.to_str().unwrap(),
-        "--format",
-        "json",
+        "--summary", summary_path.to_str().unwrap(),
+        "--format", "json",
     ]);
     assert_eq!(
         code, 2,
@@ -295,21 +259,13 @@ fn required_blocker_missing_tracker_exits_nonzero_under_fail_policy() {
 #[test]
 fn tracked_required_blocker_does_not_trigger_missing_tracker_exit() {
     let dir = unique_dir("tracked");
-    let summary = build_summary(
-        "rel-tracked",
-        &[("performance", "performance", "fib", "failed", Some("#2096"))],
-    );
+    let summary = build_summary("rel-tracked", &[("performance", "performance", "fib", "failed", Some("#2096"))]);
     let summary_path = write_summary(&dir, "summary.json", &summary);
     let (code, stdout, _) = run_reporter(&[
-        "--summary",
-        summary_path.to_str().unwrap(),
-        "--format",
-        "json",
+        "--summary", summary_path.to_str().unwrap(),
+        "--format", "json",
     ]);
-    assert_eq!(
-        code, 1,
-        "tracked blocker still over budget — must be budget_overrun, not missing_tracker"
-    );
+    assert_eq!(code, 1, "tracked blocker still over budget — must be budget_overrun, not missing_tracker");
     let payload = parse_json(&stdout);
     assert_eq!(payload["exit_reason"], json!("budget_overrun"));
 }
@@ -323,14 +279,7 @@ fn human_report_respects_max_lines_cap() {
     // exceed any sane cap without the trim logic.
     let mut blockers: Vec<(&str, &str, &str, &str, Option<&str>)> = Vec::new();
     for i in 0..50 {
-        let obj = [
-            "smoke",
-            "correctness",
-            "performance",
-            "ecosystem",
-            "package_manager",
-            "mambalibs",
-        ][i % 6];
+        let obj = ["smoke", "correctness", "performance", "ecosystem", "package_manager", "mambalibs"][i % 6];
         // Leak so the &str lifetime is 'static; this is a test, blast radius is tiny.
         let fixture: &'static str = Box::leak(format!("fx-{i}").into_boxed_str());
         blockers.push((obj, obj, fixture, "failed", Some("#1")));
@@ -339,10 +288,8 @@ fn human_report_respects_max_lines_cap() {
     let summary_path = write_summary(&dir, "summary.json", &summary);
 
     let (_code, stdout, _) = run_reporter(&[
-        "--summary",
-        summary_path.to_str().unwrap(),
-        "--format",
-        "human",
+        "--summary", summary_path.to_str().unwrap(),
+        "--format", "human",
     ]);
     let line_count = stdout.lines().count();
     let policy_body = read_policy();
@@ -365,29 +312,15 @@ fn human_report_respects_max_lines_cap() {
 #[test]
 fn human_report_marks_overrun_and_includes_release_id() {
     let dir = unique_dir("human-overrun");
-    let summary = build_summary(
-        "rel-name",
-        &[("performance", "performance", "fib", "failed", Some("#2096"))],
-    );
+    let summary = build_summary("rel-name", &[("performance", "performance", "fib", "failed", Some("#2096"))]);
     let summary_path = write_summary(&dir, "summary.json", &summary);
     let (_code, stdout, _) = run_reporter(&[
-        "--summary",
-        summary_path.to_str().unwrap(),
-        "--format",
-        "human",
+        "--summary", summary_path.to_str().unwrap(),
+        "--format", "human",
     ]);
-    assert!(
-        stdout.contains("rel-name"),
-        "human report must include release_id"
-    );
-    assert!(
-        stdout.contains("performance"),
-        "human report must include overrun objective"
-    );
-    assert!(
-        stdout.contains("OVER"),
-        "human report must mark overrun rows"
-    );
+    assert!(stdout.contains("rel-name"), "human report must include release_id");
+    assert!(stdout.contains("performance"), "human report must include overrun objective");
+    assert!(stdout.contains("OVER"), "human report must mark overrun rows");
 }
 
 // ─── Reporter contract — script discoverability ─────────────────────
@@ -404,10 +337,8 @@ fn reporter_help_documents_format_options() {
 #[test]
 fn reporter_exits_101_when_summary_missing() {
     let (code, _, _) = run_reporter(&[
-        "--summary",
-        "/nonexistent/path/missing.json",
-        "--format",
-        "json",
+        "--summary", "/nonexistent/path/missing.json",
+        "--format", "json",
     ]);
     assert_eq!(code, 101, "missing summary must exit 101");
 }

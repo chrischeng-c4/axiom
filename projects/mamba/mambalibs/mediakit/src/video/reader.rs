@@ -49,7 +49,12 @@ impl VideoReader {
     /// Create a video reader from raw RGB frame data.
     ///
     /// `data` contains all frames packed sequentially (each frame = width * height * 3 bytes).
-    pub fn from_raw(data: Vec<u8>, width: usize, height: usize, fps: f64) -> Result<Self> {
+    pub fn from_raw(
+        data: Vec<u8>,
+        width: usize,
+        height: usize,
+        fps: f64,
+    ) -> Result<Self> {
         if width == 0 || height == 0 {
             return Err(VideoError::InvalidParameter(
                 "width and height must be > 0".into(),
@@ -141,13 +146,7 @@ impl VideoReader {
         let timestamp = self.current_frame as f64 / self.meta.fps;
         let index = self.current_frame;
 
-        let mut frame = Frame::new(
-            frame_data,
-            self.meta.width,
-            self.meta.height,
-            timestamp,
-            index,
-        );
+        let mut frame = Frame::new(frame_data, self.meta.width, self.meta.height, timestamp, index);
 
         // Apply resize if configured
         if let (Some(w), Some(h)) = (self.config.resize_width, self.config.resize_height) {
@@ -171,7 +170,8 @@ impl VideoReader {
                 Err(e) => return Err(e),
             }
             // Adjust for step (next_frame already advances by frame_step)
-            self.current_frame = self.current_frame.saturating_sub(self.config.frame_step) + step;
+            self.current_frame =
+                self.current_frame.saturating_sub(self.config.frame_step) + step;
         }
 
         Ok(frames)

@@ -69,9 +69,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-fn mamba_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_mamba"))
-}
+#[path = "harness_common.rs"]
+mod common;
+use common::{mamba_bin, wait_with_timeout, TimeoutPolicy, WaitOutcome};
 
 fn fixture_root() -> PathBuf {
     // Seed corpus lives under the harness config (config/seeds/), moved out of
@@ -133,34 +133,24 @@ const STUB_MARKERS: &[&str] = &["unittest.main() called", "is not implemented in
 const ASSERTION_PASS_MARKERS: &[&str] = &["MAMBA_ASSERTION_PASS", "[mamba-assertion-pass]"];
 
 fn run_seed(path: &Path) -> Outcome {
-    let output = Command::new(mamba_bin())
+    let child = Command::new(mamba_bin())
         .args(["run", path.to_str().expect("seed path is utf8")])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .and_then(|mut child| {
-            let timeout = SEED_TIMEOUT;
-            let start = std::time::Instant::now();
-            loop {
-                match child.try_wait()? {
-                    Some(_status) => return child.wait_with_output(),
-                    None => {
-                        if start.elapsed() > timeout {
-                            let _ = child.kill();
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::TimedOut,
-                                "seed exceeded 60s budget",
-                            ));
-                        }
-                        std::thread::sleep(Duration::from_millis(50));
-                    }
-                }
-            }
-        });
+        .spawn();
 
-    let output = match output {
-        Ok(o) => o,
-        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => return Outcome::Timeout,
+    // Preserve the seed runner's historical budget exactly: a fixed 60s
+    // wall-clock budget (no env lookup) polled every 50ms. The shared
+    // wait_with_timeout drives the same try_wait/kill loop; the outcome
+    // mapping below is unchanged (finished → classify, timed out → Timeout,
+    // any IO/spawn error → Fail).
+    let policy = TimeoutPolicy::fixed(SEED_TIMEOUT).with_poll_interval(Duration::from_millis(50));
+    let output = match child {
+        Ok(child) => match wait_with_timeout(child, policy) {
+            Ok(WaitOutcome::Finished(o)) => o,
+            Ok(WaitOutcome::TimedOut(_)) => return Outcome::Timeout,
+            Err(_) => return Outcome::Fail,
+        },
         Err(_) => return Outcome::Fail,
     };
 

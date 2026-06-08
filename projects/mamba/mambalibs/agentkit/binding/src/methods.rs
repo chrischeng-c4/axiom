@@ -29,8 +29,8 @@
 //! | `mb_agent_tool_registry_new`      | `ToolRegistry() -> registry`                  |
 //! | `mb_agent_tool_registry_register` | `registry.register(name, func) -> None`       |
 
-use cclab_mamba_registry::convert::mb_wrap_native;
 use cclab_mamba_registry::MbValue;
+use cclab_mamba_registry::convert::mb_wrap_native;
 
 use crate::types::{
     MbAgentBuilder, MbAgentTeam, MbLlmAgent, MbMessage, MbProvider, MbSchema, MbSchemaBuilder,
@@ -41,11 +41,7 @@ use crate::types::{
 
 #[inline]
 unsafe fn arg(args: *const MbValue, nargs: usize, idx: usize) -> MbValue {
-    if idx < nargs {
-        unsafe { *args.add(idx) }
-    } else {
-        MbValue::none()
-    }
+    if idx < nargs { unsafe { *args.add(idx) } } else { MbValue::none() }
 }
 
 fn read_str(v: MbValue) -> Option<String> {
@@ -68,7 +64,10 @@ fn wrap_str(s: String) -> MbValue {
 /// ```
 /// Returns an opaque PTR to [`MbAgentBuilder`].
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_builder_new(_args: *const MbValue, _nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_builder_new(
+    _args: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_wrap_native(MbAgentBuilder::new())
 }
 
@@ -83,7 +82,10 @@ pub unsafe extern "C" fn mb_agent_builder_new(_args: *const MbValue, _nargs: usi
 /// ```
 /// Returns `MbValue::none()`.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_builder_provider(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_builder_provider(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let builder_val = unsafe { arg(args, nargs, 0) };
     let provider_val = unsafe { arg(args, nargs, 1) };
 
@@ -143,18 +145,19 @@ pub unsafe extern "C" fn mb_agent_builder_system_prompt(
 /// ```
 /// Returns an opaque PTR to [`MbLlmAgent`].
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_builder_build(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_builder_build(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let builder_val = unsafe { arg(args, nargs, 0) };
 
     let addr = match builder_val.as_ptr() {
         Some(a) if a != 0 => a,
-        _ => {
-            return mb_wrap_native(MbLlmAgent {
-                provider_name: String::new(),
-                api_key: String::new(),
-                system_prompt: String::new(),
-            })
-        }
+        _ => return mb_wrap_native(MbLlmAgent {
+            provider_name: String::new(),
+            api_key: String::new(),
+            system_prompt: String::new(),
+        }),
     };
     let builder = unsafe { &*(addr as *const MbAgentBuilder) };
     mb_wrap_native(MbLlmAgent {
@@ -182,7 +185,10 @@ pub unsafe extern "C" fn mb_agent_builder_build(args: *const MbValue, nargs: usi
 /// ```
 /// Returns `MbValue::Ptr → heap String` (response text).
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_run(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_run(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let agent_val = unsafe { arg(args, nargs, 0) };
     let prompt_val = unsafe { arg(args, nargs, 1) };
 
@@ -212,7 +218,10 @@ pub unsafe extern "C" fn mb_agent_run(args: *const MbValue, nargs: usize) -> MbV
 /// ```
 /// Returns an opaque PTR to [`MbAgentTeam`].
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_team_new(_args: *const MbValue, _nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_team_new(
+    _args: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_wrap_native(MbAgentTeam::new())
 }
 
@@ -230,7 +239,10 @@ pub unsafe extern "C" fn mb_agent_team_new(_args: *const MbValue, _nargs: usize)
 /// ```
 /// Returns `MbValue::none()`.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_team_add_role(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_team_add_role(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let team_val = unsafe { arg(args, nargs, 0) };
     let role_val = unsafe { arg(args, nargs, 1) };
 
@@ -259,7 +271,10 @@ pub unsafe extern "C" fn mb_agent_team_add_role(args: *const MbValue, nargs: usi
 /// ```
 /// Returns `MbValue::Ptr → heap String` (JSON-encoded artifact).
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_team_run(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_team_run(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let team_val = unsafe { arg(args, nargs, 0) };
     let prompt_val = unsafe { arg(args, nargs, 1) };
 
@@ -298,7 +313,10 @@ pub unsafe extern "C" fn mb_agent_team_run(args: *const MbValue, nargs: usize) -
 /// ```
 /// Returns an opaque PTR to [`MbProvider`].
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_claude_provider(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_claude_provider(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let key_val = unsafe { arg(args, nargs, 0) };
     let api_key = read_str(key_val).unwrap_or_default();
     mb_wrap_native(MbProvider::new("claude", api_key))
@@ -314,7 +332,10 @@ pub unsafe extern "C" fn mb_agent_claude_provider(args: *const MbValue, nargs: u
 /// ```
 /// Returns an opaque PTR to [`MbProvider`].
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_gemini_provider(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_gemini_provider(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let key_val = unsafe { arg(args, nargs, 0) };
     let api_key = read_str(key_val).unwrap_or_default();
     mb_wrap_native(MbProvider::new("gemini", api_key))
@@ -330,7 +351,10 @@ pub unsafe extern "C" fn mb_agent_gemini_provider(args: *const MbValue, nargs: u
 /// ```
 /// Returns an opaque PTR to [`MbProvider`].
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_openai_provider(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_openai_provider(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let key_val = unsafe { arg(args, nargs, 0) };
     let api_key = read_str(key_val).unwrap_or_default();
     mb_wrap_native(MbProvider::new("openai", api_key))
@@ -347,7 +371,10 @@ pub unsafe extern "C" fn mb_agent_openai_provider(args: *const MbValue, nargs: u
 /// ```
 /// Returns an opaque PTR to [`MbMessage`].
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_message_new(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_message_new(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let role_val = unsafe { arg(args, nargs, 0) };
     let content_val = unsafe { arg(args, nargs, 1) };
 
@@ -366,7 +393,10 @@ pub unsafe extern "C" fn mb_agent_message_new(args: *const MbValue, nargs: usize
 /// ```
 /// Returns `MbValue::Ptr → heap String`.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_message_role(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_message_role(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let msg_val = unsafe { arg(args, nargs, 0) };
 
     let addr = match msg_val.as_ptr() {
@@ -387,7 +417,10 @@ pub unsafe extern "C" fn mb_agent_message_role(args: *const MbValue, nargs: usiz
 /// ```
 /// Returns `MbValue::Ptr → heap String`.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_message_content(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_message_content(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let msg_val = unsafe { arg(args, nargs, 0) };
 
     let addr = match msg_val.as_ptr() {
@@ -455,37 +488,55 @@ pub unsafe extern "C" fn mb_agent_tool_registry_register(
 /// Build a fresh object-schema builder. Used by the mamba surface as the
 /// entry point for `Schema.object()`. Returns an opaque PTR.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_object(_args: *const MbValue, _nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_object(
+    _args: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_wrap_native(MbSchemaBuilder::new())
 }
 
 /// `Schema.string()` → primitive schema handle.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_string(_args: *const MbValue, _nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_string(
+    _args: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_wrap_native(MbSchema(agent::Schema::String))
 }
 
 /// `Schema.integer()`.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_integer(_args: *const MbValue, _nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_integer(
+    _args: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_wrap_native(MbSchema(agent::Schema::Integer))
 }
 
 /// `Schema.number()`.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_number(_args: *const MbValue, _nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_number(
+    _args: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_wrap_native(MbSchema(agent::Schema::Number))
 }
 
 /// `Schema.boolean()`.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_boolean(_args: *const MbValue, _nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_boolean(
+    _args: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_wrap_native(MbSchema(agent::Schema::Boolean))
 }
 
 /// `Schema.null()`.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_null(_args: *const MbValue, _nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_null(
+    _args: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     mb_wrap_native(MbSchema(agent::Schema::Null))
 }
 
@@ -496,15 +547,14 @@ pub unsafe extern "C" fn mb_agent_schema_null(_args: *const MbValue, _nargs: usi
 /// args[0] = item  (MbValue::Ptr → MbSchema)
 /// ```
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_array(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_array(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let item_val = unsafe { arg(args, nargs, 0) };
     let addr = match item_val.as_ptr() {
         Some(a) if a != 0 => a,
-        _ => {
-            return mb_wrap_native(MbSchema(agent::Schema::Array(Box::new(
-                agent::Schema::Null,
-            ))))
-        }
+        _ => return mb_wrap_native(MbSchema(agent::Schema::Array(Box::new(agent::Schema::Null)))),
     };
     let item = unsafe { &*(addr as *const MbSchema) };
     mb_wrap_native(MbSchema(agent::Schema::Array(Box::new(item.0.clone()))))
@@ -517,15 +567,14 @@ pub unsafe extern "C" fn mb_agent_schema_array(args: *const MbValue, nargs: usiz
 /// args[0] = inner  (MbValue::Ptr → MbSchema)
 /// ```
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_optional(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_optional(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let inner_val = unsafe { arg(args, nargs, 0) };
     let addr = match inner_val.as_ptr() {
         Some(a) if a != 0 => a,
-        _ => {
-            return mb_wrap_native(MbSchema(agent::Schema::Optional(Box::new(
-                agent::Schema::Null,
-            ))))
-        }
+        _ => return mb_wrap_native(MbSchema(agent::Schema::Optional(Box::new(agent::Schema::Null)))),
     };
     let inner = unsafe { &*(addr as *const MbSchema) };
     mb_wrap_native(MbSchema(agent::Schema::Optional(Box::new(inner.0.clone()))))
@@ -542,7 +591,10 @@ pub unsafe extern "C" fn mb_agent_schema_optional(args: *const MbValue, nargs: u
 /// args[2] = sub_schema (MbValue::Ptr → MbSchema)
 /// ```
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_field(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_field(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let builder_val = unsafe { arg(args, nargs, 0) };
     let name_val = unsafe { arg(args, nargs, 1) };
     let sub_val = unsafe { arg(args, nargs, 2) };
@@ -573,7 +625,10 @@ pub unsafe extern "C" fn mb_agent_schema_field(args: *const MbValue, nargs: usiz
 /// args[1..]     = name_i  (MbValue::Ptr → heap String)
 /// ```
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_required(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_required(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let builder_val = unsafe { arg(args, nargs, 0) };
     let builder_addr = match builder_val.as_ptr() {
         Some(a) if a != 0 => a,
@@ -597,16 +652,17 @@ pub unsafe extern "C" fn mb_agent_schema_required(args: *const MbValue, nargs: u
 /// args[0] = builder  (MbValue::Ptr → MbSchemaBuilder)
 /// ```
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_build(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_build(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let builder_val = unsafe { arg(args, nargs, 0) };
     let addr = match builder_val.as_ptr() {
         Some(a) if a != 0 => a,
-        _ => {
-            return mb_wrap_native(MbSchema(agent::Schema::Object {
-                properties: Vec::new(),
-                required: Vec::new(),
-            }))
-        }
+        _ => return mb_wrap_native(MbSchema(agent::Schema::Object {
+            properties: Vec::new(),
+            required: Vec::new(),
+        })),
     };
     let builder = unsafe { &*(addr as *const MbSchemaBuilder) };
     mb_wrap_native(builder.clone().into_object())
@@ -622,7 +678,10 @@ pub unsafe extern "C" fn mb_agent_schema_build(args: *const MbValue, nargs: usiz
 /// ```
 /// Returns `MbValue::Ptr → heap String`. Empty string ↔ valid.
 #[no_mangle]
-pub unsafe extern "C" fn mb_agent_schema_validate(args: *const MbValue, nargs: usize) -> MbValue {
+pub unsafe extern "C" fn mb_agent_schema_validate(
+    args: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     let schema_val = unsafe { arg(args, nargs, 0) };
     let json_val = unsafe { arg(args, nargs, 1) };
 
@@ -797,9 +856,6 @@ mod tests {
         assert!(response_val.is_ptr());
 
         let response = unsafe { response_val.as_obj_str() }.unwrap();
-        assert!(
-            response.contains("stub"),
-            "should return a stub response: {response}"
-        );
+        assert!(response.contains("stub"), "should return a stub response: {response}");
     }
 }

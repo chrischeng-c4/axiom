@@ -116,7 +116,9 @@ fn store(
     // Only the `[externally-managed]` section carries Error keys.
     // Other sections are silently dropped to stay forward-compatible.
     let Some(sec) = section else {
-        return Err(pe(&format!("key {key:?} appears outside any [section]")));
+        return Err(pe(&format!(
+            "key {key:?} appears outside any [section]"
+        )));
     };
     if sec != "externally-managed" {
         return Ok(());
@@ -188,10 +190,7 @@ Error-zh_CN=APT
 
     #[test]
     fn empty_file_yields_default() {
-        assert_eq!(
-            parse_externally_managed("").unwrap(),
-            ExternallyManaged::default()
-        );
+        assert_eq!(parse_externally_managed("").unwrap(), ExternallyManaged::default());
     }
 
     #[test]
@@ -312,10 +311,7 @@ Error=line 1
     #[test]
     fn value_can_contain_equals_signs() {
         let src = "[externally-managed]\nError=a=b=c\n";
-        assert_eq!(
-            parse_externally_managed(src).unwrap(),
-            em(Some("a=b=c"), &[])
-        );
+        assert_eq!(parse_externally_managed(src).unwrap(), em(Some("a=b=c"), &[]));
     }
 
     #[test]

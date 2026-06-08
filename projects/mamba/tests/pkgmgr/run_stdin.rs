@@ -3,6 +3,7 @@
 /// REQ: R1 — reading source from stdin when argument is "-".
 /// REQ: R2 — exit behaviour mirrors `mamba run <file.py>`.
 /// REQ: R5 — CLI integration test exercising the stdin path.
+
 use std::io::Write as _;
 use std::process::{Command, Stdio};
 

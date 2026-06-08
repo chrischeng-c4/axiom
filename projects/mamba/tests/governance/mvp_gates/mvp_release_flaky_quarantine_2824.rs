@@ -14,22 +14,17 @@
 //!     3. No flaky item is silently dropped.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde_json::Value;
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn policy_path() -> PathBuf {
-    project_root()
+    crate::common::project_root()
         .join("validation")
         .join("flaky_quarantine_policy.toml")
 }
 
 fn checker_script() -> PathBuf {
-    project_root()
+    crate::common::project_root()
         .join("scripts")
         .join("flaky_quarantine_check.py")
 }
@@ -45,12 +40,7 @@ fn unique_dir(tag: &str) -> PathBuf {
 }
 
 fn run_checker(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new("python3")
-        .arg(checker_script())
-        .args(args)
-        .current_dir(project_root())
-        .output()
-        .expect("invoke flaky_quarantine_check.py");
+    let output = crate::common::run_python_script(&checker_script(), args);
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -130,9 +120,7 @@ fn policy_declares_four_status_enum_with_visible_subset() {
         vec!["active", "investigating", "fixed", "released"],
         "status.enum locked: active, investigating, fixed, released",
     );
-    let visible = v["status"]["blocker_visible"]
-        .as_array()
-        .expect("blocker_visible");
+    let visible = v["status"]["blocker_visible"].as_array().expect("blocker_visible");
     let visible: Vec<&str> = visible.iter().filter_map(|x| x.as_str()).collect();
     assert_eq!(
         visible,
@@ -261,7 +249,12 @@ owner_profile = "performance"
 summary = "demo flaky bench"
 "##;
     let path = write_test_policy(&dir, "policy.toml", entry);
-    let (code, _, stderr) = run_checker(&["--policy", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, stderr) = run_checker(&[
+        "--policy",
+        path.to_str().unwrap(),
+        "--format",
+        "text",
+    ]);
     assert_eq!(code, 1, "required entry missing tracking_issue must fail");
     assert!(
         stderr.contains("tracking_issue"),
@@ -281,7 +274,12 @@ owner_profile = "performance"
 tracking_issue = "totally-not-a-link"
 "##;
     let path = write_test_policy(&dir, "policy.toml", entry);
-    let (code, _, stderr) = run_checker(&["--policy", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, stderr) = run_checker(&[
+        "--policy",
+        path.to_str().unwrap(),
+        "--format",
+        "text",
+    ]);
     assert_eq!(code, 1, "malformed tracking_issue must fail validation");
     assert!(
         stderr.contains("does not match policy regex"),
@@ -302,7 +300,12 @@ tracking_issue = "#2096"
 summary = "demo"
 "##;
     let path = write_test_policy(&dir, "policy.toml", entry);
-    let (code, _, stderr) = run_checker(&["--policy", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, stderr) = run_checker(&[
+        "--policy",
+        path.to_str().unwrap(),
+        "--format",
+        "text",
+    ]);
     assert_eq!(code, 0, "valid entry must pass (stderr={stderr})");
 }
 
@@ -318,7 +321,12 @@ owner_profile = "performance"
 tracking_issue = "https://github.com/example/repo/issues/42"
 "##;
     let path = write_test_policy(&dir, "policy.toml", entry);
-    let (code, _, _) = run_checker(&["--policy", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, _) = run_checker(&[
+        "--policy",
+        path.to_str().unwrap(),
+        "--format",
+        "text",
+    ]);
     assert_eq!(code, 0, "URL form must satisfy issue_link_regex");
 }
 
@@ -347,11 +355,7 @@ summary = "blake2 occasionally dips below 1.0x under thermal load"
     assert_eq!(code, 0);
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
     let blockers = v["blockers"].as_array().expect("blockers array");
-    assert_eq!(
-        blockers.len(),
-        1,
-        "visible entry must produce 1 blocker row"
-    );
+    assert_eq!(blockers.len(), 1, "visible entry must produce 1 blocker row");
     let row = &blockers[0];
     assert_eq!(row["kind"], serde_json::json!("flaky_quarantine"));
     assert_eq!(row["profile"], serde_json::json!("performance"));
@@ -414,7 +418,12 @@ owner_profile = "performance"
 tracking_issue = "#2096"
 "##;
     let path = write_test_policy(&dir, "policy.toml", entry);
-    let (code, _, stderr) = run_checker(&["--policy", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, stderr) = run_checker(&[
+        "--policy",
+        path.to_str().unwrap(),
+        "--format",
+        "text",
+    ]);
     assert_eq!(code, 1);
     assert!(
         stderr.contains("bucket") && stderr.contains("fictional"),
@@ -434,7 +443,12 @@ owner_profile = "performance"
 tracking_issue = "#2096"
 "##;
     let path = write_test_policy(&dir, "policy.toml", entry);
-    let (code, _, stderr) = run_checker(&["--policy", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, stderr) = run_checker(&[
+        "--policy",
+        path.to_str().unwrap(),
+        "--format",
+        "text",
+    ]);
     assert_eq!(code, 1);
     assert!(
         stderr.contains("status") && stderr.contains("almost-fixed"),
@@ -460,7 +474,12 @@ status = "active"
 owner_profile = "performance"
 "##;
     let path = write_test_policy(&dir, "policy.toml", entry);
-    let (code, _, stderr) = run_checker(&["--policy", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, stderr) = run_checker(&[
+        "--policy",
+        path.to_str().unwrap(),
+        "--format",
+        "text",
+    ]);
     assert_eq!(code, 1);
     assert!(
         stderr.contains("duplicate"),
@@ -475,7 +494,12 @@ fn empty_quarantine_list_passes_without_silent_drop() {
     // through and surface counts.
     let dir = unique_dir("empty-list");
     let path = write_test_policy(&dir, "policy.toml", "");
-    let (code, stdout, _) = run_checker(&["--policy", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_checker(&[
+        "--policy",
+        path.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
     assert_eq!(code, 0);
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
     assert_eq!(v["entry_count"].as_i64(), Some(0));
@@ -495,7 +519,12 @@ status = "investigating"
 owner_profile = "performance"
 "##;
     let path = write_test_policy(&dir, "policy.toml", entry);
-    let (code, stdout, _) = run_checker(&["--policy", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_checker(&[
+        "--policy",
+        path.to_str().unwrap(),
+        "--format",
+        "json",
+    ]);
     assert_eq!(code, 1);
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
     let errors = v["errors"].as_array().expect("errors array");

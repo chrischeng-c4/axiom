@@ -165,6 +165,14 @@ impl Page {
         Ok(bytes)
     }
 
+    /// Bring this page's target to the foreground before visual capture or input.
+    pub async fn bring_to_front(&self) -> Result<()> {
+        self.session
+            .send("Page.bringToFront", serde_json::json!({}))
+            .await?;
+        Ok(())
+    }
+
     /// Get the page title.
     pub async fn title(&self) -> Result<String> {
         let val = self.evaluate("document.title").await?;

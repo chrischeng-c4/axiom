@@ -16,8 +16,9 @@
 //! 4. Scaffold a temporary Cargo project (`.jet/wasm-build/`) that:
 //!    - depends on `jet-wasm` (path dep) + `wasm-bindgen` + `web-sys`
 //!    - contains the transpiled Rust module + a small `lib.rs` that
-//!      mounts the root component, constructs a Renderer with the
-//!      CanvasBackend, and schedules a rAF render loop.
+//!      mounts the root component through the configured `jet-wasm`
+//!      browser app renderer. WebGPU is the default; DOM remains
+//!      available for compatibility/parity gates.
 //!    - exports `#[wasm_bindgen(start)]` so the browser kicks it.
 //! 5. Invoke `cargo build --target wasm32-unknown-unknown --release`.
 //! 6. Post-process with `wasm-bindgen` to emit the JS glue + cleaned
@@ -109,30 +110,30 @@ pub fn build_with_profile(
         Profile::Dev => cfg.entry.clone(),
         Profile::Release => String::new(),
     };
-    let transpiled = crate::tsx_to_rust::transpile_with_source(
+    let source_label_for_annotations = if matches!(profile, Profile::Dev) {
+        &component_source.source_label
+    } else {
+        &annotate_source
+    };
+    let (transpiled, tsx_lowering) = match crate::tsx_to_rust::transpile_with_source(
         &component_source.source,
-        if matches!(profile, Profile::Dev) {
-            &component_source.source_label
-        } else {
-            &annotate_source
-        },
-    )
-    .or_else(|strict_err| {
-        eprintln!(
-            "[jet build --wasm] strict TSX lowering is incomplete for {}; using Rust/WASM compatibility lowering: {strict_err:#}",
-            component_source.source_label
-        );
-        crate::tsx_to_rust::transpile_compat_with_source(
-            &component_source.source,
-            if matches!(profile, Profile::Dev) {
-                &component_source.source_label
-            } else {
-                &annotate_source
-            },
-            &cfg.root_component,
-        )
-    })
-    .with_context(|| format!("transpiling {}", component_source.path.display()))?;
+        source_label_for_annotations,
+    ) {
+        Ok(transpiled) => (transpiled, manifest::TSX_LOWERING_STRICT),
+        Err(strict_err) => {
+            eprintln!(
+                "[jet build --wasm] strict TSX lowering is incomplete for {}; using Rust/WASM compatibility lowering: {strict_err:#}",
+                component_source.source_label
+            );
+            let transpiled = crate::tsx_to_rust::transpile_compat_with_source(
+                &component_source.source,
+                source_label_for_annotations,
+                &cfg.root_component,
+            )
+            .with_context(|| format!("transpiling {}", component_source.path.display()))?;
+            (transpiled, manifest::TSX_LOWERING_COMPATIBILITY)
+        }
+    };
     let mut component_style_imports = component_source.css_side_effect_imports.clone();
     for import in &transpiled.style_imports {
         if !component_style_imports.contains(import) {
@@ -159,6 +160,8 @@ pub fn build_with_profile(
 
     eprintln!("[jet build --wasm] writing dist/");
     let dist = root_dir.join(output_dir);
+    crate::build_clean::empty_out_dir(&dist, root_dir, false)
+        .context("cleaning WASM output directory")?;
     fs::create_dir_all(&dist).context("creating dist/")?;
     copy_pkg_outputs(&work_dir.join("pkg"), &dist).context("copying wasm-pack outputs")?;
     let style_groups = [
@@ -192,7 +195,15 @@ pub fn build_with_profile(
     // verifiers consume this to confirm the build target + cargo
     // feature set the bundle was produced with.
     let cargo_features = manifest_cargo_features(target, profile, cfg.renderer);
-    write_target_manifest(root_dir, &dist, &cfg, target, profile, cargo_features)?;
+    write_target_manifest(
+        root_dir,
+        &dist,
+        &cfg,
+        target,
+        profile,
+        cargo_features,
+        tsx_lowering,
+    )?;
 
     eprintln!(
         "[jet build --wasm] done → open {} in a static file server",
@@ -331,6 +342,7 @@ fn write_target_manifest(
     target: crate::build_target::BuildTarget,
     profile: Profile,
     cargo_features: Vec<String>,
+    tsx_lowering: &'static str,
 ) -> Result<()> {
     let jet_config_path = root_dir.join("jet.config.toml");
     let m = manifest::Manifest::build(manifest::ManifestInputs {
@@ -343,48 +355,44 @@ fn write_target_manifest(
         root_component: &cfg.root_component,
         jet_config_path: &jet_config_path,
         cargo_features,
+        tsx_lowering,
     })?;
     manifest::write(dist, &m)
 }
 
 /// The exact feature set passed to cargo for this `(target, profile)`
-/// combo. The current flattened Jet layout builds the WASM app from
-/// `jet-wasm` directly; the removed `jet-multi-target` crate is no
-/// longer part of the scaffold. Recorded in `jet-target.json` so a CI
-/// verifier can reproduce the build.
+/// combo. `jet build --wasm` emits the WebGPU app surface by default, while
+/// `renderer = "dom"` keeps the browser-native compatibility/parity target
+/// available for form-control gates.
+/// Recorded in `jet-target.json` so a CI verifier can reproduce the build.
 fn manifest_cargo_features(
     _target: crate::build_target::BuildTarget,
     profile: Profile,
     renderer: config::WasmRenderer,
 ) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut jw: Vec<String> = match renderer {
-        config::WasmRenderer::Canvas => vec![
-            "jet-wasm/react".into(),
-            "jet-wasm/canvas".into(),
-            "jet-wasm/canvas-app".into(),
-        ],
-        config::WasmRenderer::Dom => vec!["jet-wasm/react".into(), "jet-wasm/dom-app".into()],
+    let mut out = match renderer {
+        config::WasmRenderer::Dom => {
+            vec!["jet-wasm/react".to_string(), "jet-wasm/dom-app".to_string()]
+        }
         config::WasmRenderer::WebGpu => vec![
-            "jet-wasm/react".into(),
-            "jet-wasm/webgpu".into(),
-            "jet-wasm/webgpu-app".into(),
+            "jet-wasm/react".to_string(),
+            "jet-wasm/webgpu".to_string(),
+            "jet-wasm/webgpu-app".to_string(),
         ],
     };
     if matches!(
         (profile, renderer),
-        (Profile::Dev, config::WasmRenderer::Canvas)
+        (Profile::Dev, config::WasmRenderer::WebGpu)
     ) {
-        jw.push("jet-wasm/debug".into());
+        out.push("jet-wasm/debug".to_string());
     }
-    out.extend(jw);
     out
 }
 
 fn emit_wasm_entry(cfg: &config::WasmConfig) -> String {
     // The transpiled module exposes `pub fn <snake>(args) -> Component`.
-    // All renderer + event-loop wiring lives inside a jet-wasm app
-    // helper, so the generated entry remains one line.
+    // Renderer + event-loop wiring lives inside a `jet-wasm` app helper, so
+    // the generated entry remains one line.
     //
     // snake-case name matches `to_snake` in tsx_to_rust/emit.rs.
     let factory = snake(&cfg.root_component);
@@ -394,11 +402,7 @@ fn emit_wasm_entry(cfg: &config::WasmConfig) -> String {
         .map(|v| v.to_string())
         .collect::<Vec<_>>()
         .join(", ");
-
     let run_expr = match cfg.renderer {
-        config::WasmRenderer::Canvas => {
-            format!(r#"jet_wasm::react::canvas_app::run("jet-canvas", {factory}({args}))"#)
-        }
         config::WasmRenderer::Dom => {
             format!(r#"jet_wasm::react::dom_app::run("jet-root", {factory}({args}))"#)
         }
@@ -428,7 +432,6 @@ pub fn __jet_start() -> Result<(), JsValue> {{
         run_expr = run_expr,
     )
 }
-
 fn snake(camel: &str) -> String {
     let mut out = String::new();
     for (i, ch) in camel.chars().enumerate() {
@@ -462,18 +465,23 @@ fn scaffold_cargo_project(
         .canonicalize()
         .context("resolving jet-wasm path")?;
 
-    // Feature list the scaffolded crate asks jet-wasm for. Canvas dev
-    // keeps the JetDebug bridge + window.__jet_debug. WebGPU uses the
-    // grid wasm renderer bridge, which does not expose the canvas debug
-    // bridge yet.
-    let features = match (profile, renderer) {
-        (Profile::Release, config::WasmRenderer::Canvas) => r#""react", "canvas", "canvas-app""#,
-        (Profile::Dev, config::WasmRenderer::Canvas) => {
-            r#""react", "canvas", "canvas-app", "debug""#
-        }
-        (_, config::WasmRenderer::Dom) => r#""react", "dom-app""#,
-        (_, config::WasmRenderer::WebGpu) => r#""react", "webgpu", "webgpu-app""#,
+    // Feature list the scaffolded crate asks jet-wasm for. WebGPU remains the
+    // default app surface; DOM is still selectable for compatibility gates.
+    let mut features = match renderer {
+        config::WasmRenderer::Dom => vec!["react", "dom-app"],
+        config::WasmRenderer::WebGpu => vec!["react", "webgpu", "webgpu-app"],
     };
+    if matches!(
+        (profile, renderer),
+        (Profile::Dev, config::WasmRenderer::WebGpu)
+    ) {
+        features.push("debug");
+    }
+    let features = features
+        .into_iter()
+        .map(|feature| format!("{feature:?}"))
+        .collect::<Vec<_>>()
+        .join(", ");
 
     if matches!(target, crate::build_target::BuildTarget::Tui) {
         unreachable!("TUI target rejected at build_with_profile entry");
@@ -740,10 +748,18 @@ fn host_bridge_js() -> String {
 function ensureJetHost() {
   if (globalThis.__JET_HOST__) return globalThis.__JET_HOST__;
 
-  const adapter = Object.freeze({
+    const adapter = Object.freeze({
     fetch(input, init) {
       return globalThis.fetch(input, init);
     },
+    clipboard: Object.freeze({
+      writeText(text) {
+        if (!globalThis.navigator?.clipboard?.writeText) {
+          return Promise.reject(new Error('navigator.clipboard.writeText is unavailable'));
+        }
+        return globalThis.navigator.clipboard.writeText(String(text));
+      },
+    }),
     console: Object.freeze({
       log(...args) {
         globalThis.console?.log?.(...args);
@@ -787,6 +803,10 @@ export function installJetHost() {
 
 export function jet_bridge_fetch(input, init) {
   return ensureJetHost().fetch(input, init);
+}
+
+export function jet_bridge_clipboard_write_text(text) {
+  return ensureJetHost().clipboard.writeText(text);
 }
 
 export function jet_bridge_console_log(...args) {
@@ -856,51 +876,58 @@ mod tests {
     }
 
     #[test]
-    fn manifest_features_default_to_canvas_app() {
-        let features = manifest_cargo_features(
-            crate::build_target::BuildTarget::Web,
-            Profile::Dev,
-            config::WasmRenderer::Canvas,
-        );
-
-        assert!(features.contains(&"jet-wasm/canvas".to_string()));
-        assert!(features.contains(&"jet-wasm/canvas-app".to_string()));
-        assert!(features.contains(&"jet-wasm/debug".to_string()));
-        assert!(!features.contains(&"jet-wasm/webgpu-app".to_string()));
-    }
-
-    #[test]
-    fn manifest_features_select_webgpu_app() {
+    fn manifest_features_default_to_webgpu_app() {
         let features = manifest_cargo_features(
             crate::build_target::BuildTarget::Web,
             Profile::Dev,
             config::WasmRenderer::WebGpu,
         );
 
-        assert!(features.contains(&"jet-wasm/webgpu".to_string()));
-        assert!(features.contains(&"jet-wasm/webgpu-app".to_string()));
-        assert!(!features.contains(&"jet-wasm/canvas-app".to_string()));
-        assert!(!features.contains(&"jet-wasm/debug".to_string()));
+        assert_eq!(
+            features,
+            vec![
+                "jet-wasm/react".to_string(),
+                "jet-wasm/webgpu".to_string(),
+                "jet-wasm/webgpu-app".to_string(),
+                "jet-wasm/debug".to_string(),
+            ]
+        );
     }
 
     #[test]
-    fn emitted_entry_defaults_to_canvas_app() {
-        let cfg = wasm_config(
-            r#"
-            [wasm]
-            entry = "src/App.tsx"
-            root_component = "App"
-            "#,
+    fn manifest_features_release_omit_debug() {
+        let features = manifest_cargo_features(
+            crate::build_target::BuildTarget::Web,
+            Profile::Release,
+            config::WasmRenderer::WebGpu,
         );
 
-        let entry = emit_wasm_entry(&cfg);
-
-        assert!(entry.contains("jet_wasm::react::canvas_app::run"));
-        assert!(!entry.contains("jet_wasm::react::webgpu_app::run"));
+        assert_eq!(
+            features,
+            vec![
+                "jet-wasm/react".to_string(),
+                "jet-wasm/webgpu".to_string(),
+                "jet-wasm/webgpu-app".to_string(),
+            ]
+        );
     }
 
     #[test]
-    fn emitted_entry_selects_webgpu_app() {
+    fn manifest_features_dom_renderer_selects_dom_app() {
+        let features = manifest_cargo_features(
+            crate::build_target::BuildTarget::Web,
+            Profile::Dev,
+            config::WasmRenderer::Dom,
+        );
+
+        assert_eq!(
+            features,
+            vec!["jet-wasm/react".to_string(), "jet-wasm/dom-app".to_string()]
+        );
+    }
+
+    #[test]
+    fn emitted_entry_defaults_to_webgpu_app() {
         let cfg = wasm_config(
             r#"
             [wasm]
@@ -912,9 +939,25 @@ mod tests {
 
         let entry = emit_wasm_entry(&cfg);
 
-        assert!(entry.contains("jet_wasm::react::webgpu_app::run"));
+        assert_eq!(entry.matches("jet_wasm::react::webgpu_app::run").count(), 1);
         assert!(entry.contains(".map(|_| ())"));
-        assert!(!entry.contains("jet_wasm::react::canvas_app::run"));
+    }
+
+    #[test]
+    fn emitted_entry_uses_dom_app_when_requested() {
+        let cfg = wasm_config(
+            r#"
+            [wasm]
+            entry = "src/App.tsx"
+            root_component = "App"
+            renderer = "dom"
+            "#,
+        );
+
+        let entry = emit_wasm_entry(&cfg);
+
+        assert_eq!(entry.matches("jet_wasm::react::dom_app::run").count(), 1);
+        assert!(entry.contains(r#""jet-root""#));
     }
 
     #[test]
@@ -940,12 +983,14 @@ mod tests {
         for symbol in [
             "installJetHost",
             "jet_bridge_fetch",
+            "jet_bridge_clipboard_write_text",
             "jet_bridge_console",
             "jet_bridge_local_storage",
         ] {
             assert!(host.contains(symbol), "missing {symbol}");
         }
         assert!(host.contains("globalThis.fetch(input, init)"));
+        assert!(host.contains("globalThis.navigator.clipboard.writeText(String(text))"));
         assert!(!host.contains("ReactDOM"));
         assert!(!host.contains("createRoot"));
         assert!(!host.contains("document.createElement('div')"));

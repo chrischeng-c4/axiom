@@ -9,7 +9,8 @@ use cclab_pg::{Connection, PoolConfig};
 
 /// Helper to get database URL from environment
 fn get_database_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
+    std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
 }
 
 /// Helper to cleanup test tables
@@ -254,10 +255,12 @@ async fn test_cascade_set_null() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     // Verify child still exists with NULL parent_id
-    let row: (Option<i32>, String) =
-        sqlx::query_as(&format!("SELECT parent_id, data FROM {}", child_table))
-            .fetch_one(pool)
-            .await?;
+    let row: (Option<i32>, String) = sqlx::query_as(&format!(
+        "SELECT parent_id, data FROM {}",
+        child_table
+    ))
+    .fetch_one(pool)
+    .await?;
 
     assert!(row.0.is_none());
     assert_eq!(row.1, "Child data");
@@ -372,14 +375,11 @@ async fn test_update_cascade() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     // Insert parent and child
-    sqlx::query(&format!(
-        "INSERT INTO {} (id, name) VALUES ($1, $2)",
-        parent_table
-    ))
-    .bind(100)
-    .bind("Parent")
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (id, name) VALUES ($1, $2)", parent_table))
+        .bind(100)
+        .bind("Parent")
+        .execute(pool)
+        .await?;
 
     sqlx::query(&format!(
         "INSERT INTO {} (parent_id, data) VALUES ($1, $2)",
@@ -391,14 +391,11 @@ async fn test_update_cascade() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     // Update parent's id - should cascade to child
-    sqlx::query(&format!(
-        "UPDATE {} SET id = $1 WHERE id = $2",
-        parent_table
-    ))
-    .bind(200)
-    .bind(100)
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("UPDATE {} SET id = $1 WHERE id = $2", parent_table))
+        .bind(200)
+        .bind(100)
+        .execute(pool)
+        .await?;
 
     // Verify child's parent_id was updated
     let row: (i32,) = sqlx::query_as(&format!("SELECT parent_id FROM {}", child_table))
@@ -441,14 +438,11 @@ async fn test_update_set_null() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     // Insert parent and child
-    sqlx::query(&format!(
-        "INSERT INTO {} (id, name) VALUES ($1, $2)",
-        parent_table
-    ))
-    .bind(100)
-    .bind("Parent")
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (id, name) VALUES ($1, $2)", parent_table))
+        .bind(100)
+        .bind("Parent")
+        .execute(pool)
+        .await?;
 
     sqlx::query(&format!(
         "INSERT INTO {} (parent_id, data) VALUES ($1, $2)",
@@ -460,14 +454,11 @@ async fn test_update_set_null() -> Result<(), Box<dyn std::error::Error>> {
     .await?;
 
     // Update parent's id - child's parent_id should become NULL
-    sqlx::query(&format!(
-        "UPDATE {} SET id = $1 WHERE id = $2",
-        parent_table
-    ))
-    .bind(200)
-    .bind(100)
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("UPDATE {} SET id = $1 WHERE id = $2", parent_table))
+        .bind(200)
+        .bind(100)
+        .execute(pool)
+        .await?;
 
     // Verify child's parent_id is now NULL
     let row: (Option<i32>,) = sqlx::query_as(&format!("SELECT parent_id FROM {}", child_table))
@@ -866,9 +857,10 @@ async fn test_partial_cascade_delete() -> Result<(), Box<dyn std::error::Error>>
         .await?;
 
     // Verify only parent1's children were deleted
-    let children: Vec<(String,)> = sqlx::query_as(&format!("SELECT data FROM {}", child_table))
-        .fetch_all(pool)
-        .await?;
+    let children: Vec<(String,)> =
+        sqlx::query_as(&format!("SELECT data FROM {}", child_table))
+            .fetch_all(pool)
+            .await?;
 
     assert_eq!(children.len(), 1);
     assert_eq!(children[0].0, "P2 Child 1");
@@ -912,14 +904,11 @@ async fn test_update_restrict_violation() -> Result<(), Box<dyn std::error::Erro
     .await?;
 
     // Insert parent and child
-    sqlx::query(&format!(
-        "INSERT INTO {} (id, name) VALUES ($1, $2)",
-        parent_table
-    ))
-    .bind(100)
-    .bind("Parent")
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (id, name) VALUES ($1, $2)", parent_table))
+        .bind(100)
+        .bind("Parent")
+        .execute(pool)
+        .await?;
 
     sqlx::query(&format!(
         "INSERT INTO {} (parent_id, data) VALUES ($1, $2)",
@@ -990,8 +979,7 @@ async fn test_deep_cascade_chain() -> Result<(), Box<dyn std::error::Error>> {
                 parent_id INTEGER NOT NULL REFERENCES {}(id) ON DELETE CASCADE,
                 name TEXT NOT NULL
             )",
-            tables[i],
-            tables[i - 1]
+            tables[i], tables[i - 1]
         ))
         .execute(pool)
         .await?;
@@ -1527,10 +1515,12 @@ async fn test_circular_reference_cascade() -> Result<(), Box<dyn std::error::Err
     assert_eq!(count.0, 2);
 
     // C's next_id should be NULL (was pointing to A which is deleted)
-    let c_row: (Option<i32>,) =
-        sqlx::query_as(&format!("SELECT next_id FROM {} WHERE name = 'C'", table))
-            .fetch_one(pool)
-            .await?;
+    let c_row: (Option<i32>,) = sqlx::query_as(&format!(
+        "SELECT next_id FROM {} WHERE name = 'C'",
+        table
+    ))
+    .fetch_one(pool)
+    .await?;
     assert!(c_row.0.is_none());
 
     cleanup_tables(pool, &[table]).await?;

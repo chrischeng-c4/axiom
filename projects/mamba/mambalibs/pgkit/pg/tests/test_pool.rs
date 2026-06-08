@@ -10,7 +10,8 @@ use std::time::Duration;
 
 /// Helper to get database URL from environment
 fn get_database_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
+    std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
 }
 
 // =============================================================================
@@ -124,9 +125,12 @@ async fn test_pool_connection_timeout() -> Result<(), Box<dyn std::error::Error>
     let pool_clone = pool.clone();
     let _result = tokio::time::timeout(
         Duration::from_secs(2),
-        tokio::spawn(async move { sqlx::query("SELECT 1").execute(&pool_clone).await }),
-    )
-    .await;
+        tokio::spawn(async move {
+            sqlx::query("SELECT 1")
+                .execute(&pool_clone)
+                .await
+        })
+    ).await;
 
     // Should either timeout or fail to acquire
     // (behavior depends on sqlx version)
@@ -182,7 +186,9 @@ async fn test_pool_graceful_shutdown() -> Result<(), Box<dyn std::error::Error>>
     let pool = conn.pool();
 
     // Execute a query
-    let _: (i32,) = sqlx::query_as("SELECT 1").fetch_one(pool).await?;
+    let _: (i32,) = sqlx::query_as("SELECT 1")
+        .fetch_one(pool)
+        .await?;
 
     // Close should complete without error
     conn.close().await?;
@@ -355,7 +361,9 @@ async fn test_pool_idle_connection_cleanup() -> Result<(), Box<dyn std::error::E
     let _size_after = pool.size();
 
     // At minimum, verify pool is still functional
-    let _: (i32,) = sqlx::query_as("SELECT 1").fetch_one(pool).await?;
+    let _: (i32,) = sqlx::query_as("SELECT 1")
+        .fetch_one(pool)
+        .await?;
 
     conn.close().await?;
     Ok(())
@@ -486,8 +494,7 @@ async fn test_pool_invalid_connection_string() {
             retry: RetryConfig::no_retry(),
             ..PoolConfig::default()
         },
-    )
-    .await;
+    ).await;
 
     assert!(result.is_err());
 }
@@ -575,7 +582,11 @@ async fn test_pool_refused_connection() {
 async fn test_pool_invalid_database_name() {
     let uri = get_database_url();
     // Extract host from valid URI and use invalid database
-    let base = uri.split('/').take(3).collect::<Vec<_>>().join("/");
+    let base = uri
+        .split('/')
+        .take(3)
+        .collect::<Vec<_>>()
+        .join("/");
     let invalid_uri = format!("{}/nonexistent_db_12345", base);
 
     let result = Connection::new(

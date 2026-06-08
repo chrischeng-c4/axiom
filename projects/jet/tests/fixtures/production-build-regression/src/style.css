@@ -1,6 +1,7 @@
-/* SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures.md#component */
-/* CODEGEN-BEGIN tracker="#4125" reason="Static production build regression stylesheet is covered by the Jet tests fixture semantic TD." */
 :root {
+  aw_spec_marker: "SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures-production-build-regression.md#design-token";
+  aw_spec: ".aw/tech-design/projects/jet/semantic/jet-tests-fixtures-production-build-regression.md#design-token";
+  aw_ownership: "CODEGEN-BEGIN tracker=jet-readme-capabilities reason=Production build regression stylesheet fixture is preserved as generated fixture output.";
   color: #18202f;
   background: #f6f8fb;
   font-family:
@@ -33,7 +34,3 @@ h1 {
   line-height: 1.1;
   margin: 0;
 }
-/* CODEGEN-END */
-// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures.md#component
-// CODEGEN-BEGIN tracker="#4125" reason="Scanner ownership marker for the static production build regression stylesheet."
-// CODEGEN-END

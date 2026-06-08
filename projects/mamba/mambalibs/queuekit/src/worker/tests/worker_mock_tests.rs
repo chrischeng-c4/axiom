@@ -23,24 +23,12 @@ struct MockPullBroker;
 
 #[async_trait]
 impl Broker for MockPullBroker {
-    async fn connect(&self) -> Result<(), TaskError> {
-        Ok(())
-    }
-    async fn disconnect(&self) -> Result<(), TaskError> {
-        Ok(())
-    }
-    async fn publish(&self, _queue: &str, _message: TaskMessage) -> Result<(), TaskError> {
-        Ok(())
-    }
-    async fn health_check(&self) -> Result<(), TaskError> {
-        Ok(())
-    }
-    fn delivery_model(&self) -> DeliveryModel {
-        DeliveryModel::Pull
-    }
-    fn capabilities(&self) -> BrokerCapabilities {
-        BrokerCapabilities::default()
-    }
+    async fn connect(&self) -> Result<(), TaskError> { Ok(()) }
+    async fn disconnect(&self) -> Result<(), TaskError> { Ok(()) }
+    async fn publish(&self, _queue: &str, _message: TaskMessage) -> Result<(), TaskError> { Ok(()) }
+    async fn health_check(&self) -> Result<(), TaskError> { Ok(()) }
+    fn delivery_model(&self) -> DeliveryModel { DeliveryModel::Pull }
+    fn capabilities(&self) -> BrokerCapabilities { BrokerCapabilities::default() }
 }
 
 #[async_trait]
@@ -50,17 +38,10 @@ impl PullBroker for MockPullBroker {
         _queue: &str,
         _handler: Arc<H>,
     ) -> Result<SubscriptionHandle, TaskError> {
-        Ok(SubscriptionHandle::new(
-            "mock".to_string(),
-            CancellationToken::new(),
-        ))
+        Ok(SubscriptionHandle::new("mock".to_string(), CancellationToken::new()))
     }
-    async fn ack(&self, _delivery_tag: &str) -> Result<(), TaskError> {
-        Ok(())
-    }
-    async fn nack(&self, _delivery_tag: &str, _requeue: bool) -> Result<(), TaskError> {
-        Ok(())
-    }
+    async fn ack(&self, _delivery_tag: &str) -> Result<(), TaskError> { Ok(()) }
+    async fn nack(&self, _delivery_tag: &str, _requeue: bool) -> Result<(), TaskError> { Ok(()) }
 }
 
 // ── MockResultBackend ─────────────────────────────────────────────────
@@ -119,9 +100,7 @@ impl ResultBackend for MockResultBackend {
             }
             if let Some(dl) = deadline {
                 if std::time::Instant::now() >= dl {
-                    return Err(TaskError::Internal(
-                        "Timeout waiting for result".to_string(),
-                    ));
+                    return Err(TaskError::Internal("Timeout waiting for result".to_string()));
                 }
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -135,10 +114,7 @@ impl ResultBackend for MockResultBackend {
     }
 
     async fn get_many(&self, task_ids: &[TaskId]) -> Result<Vec<Option<TaskResult>>, TaskError> {
-        Ok(task_ids
-            .iter()
-            .map(|id| self.results.get(id).map(|r| r.clone()))
-            .collect())
+        Ok(task_ids.iter().map(|id| self.results.get(id).map(|r| r.clone())).collect())
     }
 
     async fn health_check(&self) -> Result<(), TaskError> {
@@ -171,9 +147,7 @@ struct SuccessTask;
 
 #[async_trait]
 impl Task for SuccessTask {
-    fn name(&self) -> &'static str {
-        "success_task"
-    }
+    fn name(&self) -> &'static str { "success_task" }
     async fn execute(&self, _ctx: TaskContext, _args: serde_json::Value) -> TaskOutcome {
         TaskOutcome::Success(serde_json::json!(42))
     }
@@ -185,9 +159,7 @@ struct FailingTask {
 
 #[async_trait]
 impl Task for FailingTask {
-    fn name(&self) -> &'static str {
-        "failing_task"
-    }
+    fn name(&self) -> &'static str { "failing_task" }
     async fn execute(&self, _ctx: TaskContext, _args: serde_json::Value) -> TaskOutcome {
         TaskOutcome::Failure {
             error: "test failure".to_string(),
@@ -200,9 +172,7 @@ struct RetryTask;
 
 #[async_trait]
 impl Task for RetryTask {
-    fn name(&self) -> &'static str {
-        "retry_task"
-    }
+    fn name(&self) -> &'static str { "retry_task" }
     async fn execute(&self, _ctx: TaskContext, _args: serde_json::Value) -> TaskOutcome {
         TaskOutcome::Retry {
             reason: "need retry".to_string(),
@@ -215,12 +185,8 @@ struct SlowTask;
 
 #[async_trait]
 impl Task for SlowTask {
-    fn name(&self) -> &'static str {
-        "slow_task"
-    }
-    fn hard_time_limit(&self) -> Option<Duration> {
-        Some(Duration::from_millis(100))
-    }
+    fn name(&self) -> &'static str { "slow_task" }
+    fn hard_time_limit(&self) -> Option<Duration> { Some(Duration::from_millis(100)) }
     async fn execute(&self, _ctx: TaskContext, _args: serde_json::Value) -> TaskOutcome {
         tokio::time::sleep(Duration::from_secs(2)).await;
         TaskOutcome::Success(serde_json::json!("should not reach"))
@@ -277,9 +243,7 @@ fn make_executor_redis(
 #[cfg(feature = "redis")]
 #[tokio::test]
 async fn handle_success_task() {
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     registry.register(SuccessTask);
@@ -289,10 +253,7 @@ async fn handle_success_task() {
     let task_id = msg.payload.id.clone();
     let result = executor.handle(msg).await;
     assert!(result.is_ok());
-    assert_eq!(
-        backend.get_state(&task_id).await.unwrap(),
-        Some(TaskState::Success)
-    );
+    assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Success));
     assert!(backend.get_result(&task_id).await.unwrap().is_some());
     backend.delete(&task_id).await.ok();
 }
@@ -300,9 +261,7 @@ async fn handle_success_task() {
 #[cfg(feature = "redis")]
 #[tokio::test]
 async fn handle_success_result_fields() {
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     registry.register(SuccessTask);
@@ -326,9 +285,7 @@ async fn handle_success_result_fields() {
 #[cfg(feature = "redis")]
 #[tokio::test]
 async fn handle_non_retryable_failure() {
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     registry.register(FailingTask { retryable: false });
@@ -338,19 +295,14 @@ async fn handle_non_retryable_failure() {
     let task_id = msg.payload.id.clone();
     let result = executor.handle(msg).await;
     assert!(result.is_ok());
-    assert_eq!(
-        backend.get_state(&task_id).await.unwrap(),
-        Some(TaskState::Failure)
-    );
+    assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Failure));
     backend.delete(&task_id).await.ok();
 }
 
 #[cfg(feature = "redis")]
 #[tokio::test]
 async fn handle_retryable_failure() {
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     registry.register(FailingTask { retryable: true });
@@ -361,19 +313,14 @@ async fn handle_retryable_failure() {
     let result = executor.handle(msg).await;
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), TaskError::Internal(_)));
-    assert_eq!(
-        backend.get_state(&task_id).await.unwrap(),
-        Some(TaskState::Failure)
-    );
+    assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Failure));
     backend.delete(&task_id).await.ok();
 }
 
 #[cfg(feature = "redis")]
 #[tokio::test]
 async fn handle_retry_outcome() {
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     registry.register(RetryTask);
@@ -383,19 +330,14 @@ async fn handle_retry_outcome() {
     let task_id = msg.payload.id.clone();
     let result = executor.handle(msg).await;
     assert!(result.is_err());
-    assert_eq!(
-        backend.get_state(&task_id).await.unwrap(),
-        Some(TaskState::Retry)
-    );
+    assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Retry));
     backend.delete(&task_id).await.ok();
 }
 
 #[cfg(feature = "redis")]
 #[tokio::test]
 async fn handle_unknown_task() {
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     let executor = make_executor_redis(registry, backend.clone());
@@ -405,19 +347,14 @@ async fn handle_unknown_task() {
     let result = executor.handle(msg).await;
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), TaskError::TaskNotFound(_)));
-    assert_eq!(
-        backend.get_state(&task_id).await.unwrap(),
-        Some(TaskState::Rejected)
-    );
+    assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Rejected));
     backend.delete(&task_id).await.ok();
 }
 
 #[cfg(feature = "redis")]
 #[tokio::test]
 async fn handle_expired_message() {
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     registry.register(SuccessTask);
@@ -428,10 +365,7 @@ async fn handle_expired_message() {
     msg.payload.expires = Some(Utc::now() - chrono::Duration::hours(1));
     let result = executor.handle(msg).await;
     assert!(result.is_ok());
-    assert_eq!(
-        backend.get_state(&task_id).await.unwrap(),
-        Some(TaskState::Revoked)
-    );
+    assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Revoked));
     backend.delete(&task_id).await.ok();
 }
 
@@ -439,9 +373,7 @@ async fn handle_expired_message() {
 #[tokio::test]
 async fn handle_revoked_task() {
     use crate::revocation::InMemoryRevocationStore;
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     registry.register(SuccessTask);
@@ -452,83 +384,52 @@ async fn handle_revoked_task() {
     store.revoke(&task_id, false).await.unwrap();
 
     let executor = TaskExecutor::new(
-        registry,
-        backend.clone(),
-        Arc::new(Semaphore::new(10)),
-        "test-worker".to_string(),
-        None,
-        None,
+        registry, backend.clone(), Arc::new(Semaphore::new(10)),
+        "test-worker".to_string(), None, None,
         Some(store as Arc<dyn RevocationStore>),
     );
     let result = executor.handle(msg).await;
     assert!(result.is_ok());
-    assert_eq!(
-        backend.get_state(&task_id).await.unwrap(),
-        Some(TaskState::Revoked)
-    );
+    assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Revoked));
     backend.delete(&task_id).await.ok();
 }
 
 #[cfg(feature = "redis")]
 #[tokio::test]
 async fn execute_no_timeout() {
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     registry.register(SuccessTask);
     let executor = make_executor_redis(registry.clone(), backend);
     let task = registry.get("success_task").unwrap();
     let ctx = TaskContext {
-        task_id: TaskId::new(),
-        task_name: "success_task".to_string(),
-        queue: "default".to_string(),
-        retry_count: 0,
-        max_retries: 3,
-        correlation_id: None,
-        parent_id: None,
-        root_id: None,
+        task_id: TaskId::new(), task_name: "success_task".to_string(),
+        queue: "default".to_string(), retry_count: 0, max_retries: 3,
+        correlation_id: None, parent_id: None, root_id: None,
     };
-    let outcome = executor
-        .execute_with_timeout(task, ctx, serde_json::json!([]))
-        .await
-        .unwrap();
+    let outcome = executor.execute_with_timeout(task, ctx, serde_json::json!([])).await.unwrap();
     assert!(matches!(outcome, TaskOutcome::Success(v) if v == serde_json::json!(42)));
 }
 
 #[cfg(feature = "redis")]
 #[tokio::test]
 async fn execute_exceeds_timeout() {
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let registry = Arc::new(TaskRegistry::new());
     registry.register(SlowTask);
     let executor = make_executor_redis(registry.clone(), backend);
     let task = registry.get("slow_task").unwrap();
     let ctx = TaskContext {
-        task_id: TaskId::new(),
-        task_name: "slow_task".to_string(),
-        queue: "default".to_string(),
-        retry_count: 0,
-        max_retries: 3,
-        correlation_id: None,
-        parent_id: None,
-        root_id: None,
+        task_id: TaskId::new(), task_name: "slow_task".to_string(),
+        queue: "default".to_string(), retry_count: 0, max_retries: 3,
+        correlation_id: None, parent_id: None, root_id: None,
     };
-    let outcome = executor
-        .execute_with_timeout(task, ctx, serde_json::json!([]))
-        .await
-        .unwrap();
+    let outcome = executor.execute_with_timeout(task, ctx, serde_json::json!([])).await.unwrap();
     match outcome {
         TaskOutcome::Failure { error, retryable } => {
-            assert!(
-                error.contains("exceeded hard time limit"),
-                "error was: {}",
-                error
-            );
+            assert!(error.contains("exceeded hard time limit"), "error was: {}", error);
             assert!(!retryable);
         }
         other => panic!("Expected Failure with timeout, got: {:?}", other),
@@ -540,35 +441,22 @@ async fn execute_exceeds_timeout() {
 async fn handle_with_signal_dispatcher() {
     use crate::signals::{SignalDispatcher, SignalHandler};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    struct CountHandler {
-        count: Arc<AtomicUsize>,
-    }
+    struct CountHandler { count: Arc<AtomicUsize> }
     #[async_trait]
     impl SignalHandler for CountHandler {
-        async fn handle(&self, _signal: &Signal) {
-            self.count.fetch_add(1, Ordering::SeqCst);
-        }
+        async fn handle(&self, _signal: &Signal) { self.count.fetch_add(1, Ordering::SeqCst); }
     }
 
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let count = Arc::new(AtomicUsize::new(0));
-    let dispatcher = SignalDispatcher::new().on_all(CountHandler {
-        count: count.clone(),
-    });
+    let dispatcher = SignalDispatcher::new().on_all(CountHandler { count: count.clone() });
     let registry = Arc::new(TaskRegistry::new());
     registry.register(SuccessTask);
 
     let executor = TaskExecutor::new(
-        registry,
-        backend.clone(),
-        Arc::new(Semaphore::new(10)),
-        "test-worker".to_string(),
-        None,
-        Some(Arc::new(dispatcher)),
-        None,
+        registry, backend.clone(), Arc::new(Semaphore::new(10)),
+        "test-worker".to_string(), None, Some(Arc::new(dispatcher)), None,
     );
     let msg = make_broker_message("success_task");
     let task_id = msg.payload.id.clone();
@@ -584,24 +472,16 @@ async fn handle_revoked_emits_signal() {
     use crate::revocation::InMemoryRevocationStore;
     use crate::signals::{SignalDispatcher, SignalHandler};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    struct CountHandler {
-        count: Arc<AtomicUsize>,
-    }
+    struct CountHandler { count: Arc<AtomicUsize> }
     #[async_trait]
     impl SignalHandler for CountHandler {
-        async fn handle(&self, _signal: &Signal) {
-            self.count.fetch_add(1, Ordering::SeqCst);
-        }
+        async fn handle(&self, _signal: &Signal) { self.count.fetch_add(1, Ordering::SeqCst); }
     }
 
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
     let count = Arc::new(AtomicUsize::new(0));
-    let dispatcher = SignalDispatcher::new().on_all(CountHandler {
-        count: count.clone(),
-    });
+    let dispatcher = SignalDispatcher::new().on_all(CountHandler { count: count.clone() });
     let registry = Arc::new(TaskRegistry::new());
     registry.register(SuccessTask);
     let store = Arc::new(InMemoryRevocationStore::new());
@@ -611,20 +491,13 @@ async fn handle_revoked_emits_signal() {
     store.revoke(&task_id, false).await.unwrap();
 
     let executor = TaskExecutor::new(
-        registry,
-        backend.clone(),
-        Arc::new(Semaphore::new(10)),
-        "test-worker".to_string(),
-        None,
-        Some(Arc::new(dispatcher)),
+        registry, backend.clone(), Arc::new(Semaphore::new(10)),
+        "test-worker".to_string(), None, Some(Arc::new(dispatcher)),
         Some(store as Arc<dyn RevocationStore>),
     );
     let result = executor.handle(msg).await;
     assert!(result.is_ok());
-    assert_eq!(
-        backend.get_state(&task_id).await.unwrap(),
-        Some(TaskState::Revoked)
-    );
+    assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Revoked));
     tokio::time::sleep(Duration::from_millis(50)).await;
     backend.delete(&task_id).await.ok();
 }
@@ -633,32 +506,22 @@ async fn handle_revoked_emits_signal() {
 #[tokio::test]
 async fn handle_with_rate_limiter() {
     use crate::ratelimit::TokenBucket;
-    let Some(rb) = make_redis_backend().await else {
-        return;
-    };
+    let Some(rb) = make_redis_backend().await else { return };
     let backend = Arc::new(rb);
-    let rate_limiter =
-        RateLimitManager::new().task_limit("success_task", TokenBucket::per_second(100));
+    let rate_limiter = RateLimitManager::new()
+        .task_limit("success_task", TokenBucket::per_second(100));
     let registry = Arc::new(TaskRegistry::new());
     registry.register(SuccessTask);
 
     let executor = TaskExecutor::new(
-        registry,
-        backend.clone(),
-        Arc::new(Semaphore::new(10)),
-        "test-worker".to_string(),
-        Some(Arc::new(rate_limiter)),
-        None,
-        None,
+        registry, backend.clone(), Arc::new(Semaphore::new(10)),
+        "test-worker".to_string(), Some(Arc::new(rate_limiter)), None, None,
     );
     let msg = make_broker_message("success_task");
     let task_id = msg.payload.id.clone();
     let result = executor.handle(msg).await;
     assert!(result.is_ok());
-    assert_eq!(
-        backend.get_state(&task_id).await.unwrap(),
-        Some(TaskState::Success)
-    );
+    assert_eq!(backend.get_state(&task_id).await.unwrap(), Some(TaskState::Success));
     backend.delete(&task_id).await.ok();
 }
 
@@ -689,14 +552,15 @@ async fn worker_new_with_mocks() {
 
 #[tokio::test]
 async fn worker_builder_chain_with_mocks() {
-    use crate::ratelimit::TokenBucket;
     use crate::revocation::InMemoryRevocationStore;
+    use crate::ratelimit::TokenBucket;
     use crate::signals::SignalDispatcher;
 
     let config = WorkerConfig::default();
     let registry = Arc::new(TaskRegistry::new());
 
-    let rate_limiter = RateLimitManager::new().task_limit("t", TokenBucket::per_second(10));
+    let rate_limiter = RateLimitManager::new()
+        .task_limit("t", TokenBucket::per_second(10));
     let dispatcher = SignalDispatcher::new();
     let store = InMemoryRevocationStore::new();
 

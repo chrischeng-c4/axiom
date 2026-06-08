@@ -122,14 +122,11 @@ fn mambalibs_rebuild_binding_block_pins_distinct_sentinels() {
 #[test]
 fn mambalibs_rebuild_cache_isolation_pins_temp_root_and_forbids_globals() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("cache_isolation")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[cache_isolation]` block \
+    let block = doc.get("cache_isolation").and_then(|v| v.as_table()).expect(
+        "missing `[cache_isolation]` block \
          (acceptance: \"Build cache paths are isolated to the temp \
          fixture project.\")",
-        );
+    );
 
     let cache_root = block
         .get("cache_root")
@@ -141,16 +138,12 @@ fn mambalibs_rebuild_cache_isolation_pins_temp_root_and_forbids_globals() {
     );
 
     assert_eq!(
-        block
-            .get("must_be_under_fixture_tmpdir")
-            .and_then(|v| v.as_bool()),
+        block.get("must_be_under_fixture_tmpdir").and_then(|v| v.as_bool()),
         Some(true),
         "`[cache_isolation].must_be_under_fixture_tmpdir` must be true"
     );
     assert_eq!(
-        block
-            .get("must_not_persist_across_fixture_runs")
-            .and_then(|v| v.as_bool()),
+        block.get("must_not_persist_across_fixture_runs").and_then(|v| v.as_bool()),
         Some(true),
         "`[cache_isolation].must_not_persist_across_fixture_runs` must be true"
     );
@@ -168,9 +161,7 @@ fn mambalibs_rebuild_cache_isolation_pins_temp_root_and_forbids_globals() {
         );
     }
     assert!(
-        forbidden
-            .iter()
-            .any(|p| p.contains("${HOME}") || p.contains("${XDG_CACHE_HOME}")),
+        forbidden.iter().any(|p| p.contains("${HOME}") || p.contains("${XDG_CACHE_HOME}")),
         "`[cache_isolation].forbid_global_cache_paths` must include at \
          least one ${{HOME}} or ${{XDG_CACHE_HOME}} path; got {forbidden:?}"
     );
@@ -205,9 +196,7 @@ fn mambalibs_rebuild_initial_build_case_populates_cache() {
         "`[initial_build_case].must_populate_cache` must be true"
     );
     assert_eq!(
-        block
-            .get("expected_cache_decision")
-            .and_then(|v| v.as_str()),
+        block.get("expected_cache_decision").and_then(|v| v.as_str()),
         Some("cache_miss"),
         "`[initial_build_case].expected_cache_decision` must be \"cache_miss\""
     );
@@ -243,7 +232,10 @@ fn mambalibs_rebuild_mutation_step_flips_sentinel() {
         .get("new_value")
         .and_then(|v| v.as_str())
         .expect("`[mutation_step].new_value` must be set");
-    assert_ne!(old, new_val, "mutation step old/new values must differ");
+    assert_ne!(
+        old, new_val,
+        "mutation step old/new values must differ"
+    );
 
     let initial = doc
         .get("binding")
@@ -303,9 +295,7 @@ fn mambalibs_rebuild_case_reflects_mutated_source() {
         "`[rebuild_case].expected_outcome` must be \"pass\""
     );
     assert_eq!(
-        block
-            .get("expected_cache_decision")
-            .and_then(|v| v.as_str()),
+        block.get("expected_cache_decision").and_then(|v| v.as_str()),
         Some("rebuild"),
         "`[rebuild_case].expected_cache_decision` must be \"rebuild\" \
          (cache MUST be invalidated by the mutation)"
@@ -330,17 +320,13 @@ fn mambalibs_rebuild_case_reflects_mutated_source() {
         .expect("`[binding].initial_sentinel_value` must be set");
 
     assert_eq!(
-        block
-            .get("import_probe_value_must_be")
-            .and_then(|v| v.as_str()),
+        block.get("import_probe_value_must_be").and_then(|v| v.as_str()),
         Some(mutated),
         "`[rebuild_case].import_probe_value_must_be` must equal \
          `[binding].mutated_sentinel_value`"
     );
     assert_eq!(
-        block
-            .get("import_probe_must_not_be")
-            .and_then(|v| v.as_str()),
+        block.get("import_probe_must_not_be").and_then(|v| v.as_str()),
         Some(initial),
         "`[rebuild_case].import_probe_must_not_be` must equal \
          `[binding].initial_sentinel_value`"
@@ -350,13 +336,10 @@ fn mambalibs_rebuild_case_reflects_mutated_source() {
 #[test]
 fn mambalibs_rebuild_stale_artifact_guard_pins_all_fail_flags() {
     let doc = load_toml(&manifest_path());
-    let guard = doc
-        .get("stale_artifact_guard")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[stale_artifact_guard]` block \
+    let guard = doc.get("stale_artifact_guard").and_then(|v| v.as_table()).expect(
+        "missing `[stale_artifact_guard]` block \
          (acceptance: \"Stale artifact reuse fails the test.\")",
-        );
+    );
 
     for flag in &[
         "fail_if_cache_decision_is_cache_hit_after_mutation",
@@ -376,18 +359,13 @@ fn mambalibs_rebuild_stale_artifact_guard_pins_all_fail_flags() {
 #[test]
 fn mambalibs_rebuild_summary_assertion_names_cache_decision() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("summary_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[summary_assertion]` block \
+    let block = doc.get("summary_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[summary_assertion]` block \
          (acceptance: \"Summary names cache hit or rebuild decision.\")",
-        );
+    );
 
     assert_eq!(
-        block
-            .get("must_name_cache_decision")
-            .and_then(|v| v.as_bool()),
+        block.get("must_name_cache_decision").and_then(|v| v.as_bool()),
         Some(true),
         "`[summary_assertion].must_name_cache_decision` must be true"
     );
@@ -494,8 +472,7 @@ fn mambalibs_rebuild_pins_out_of_scope_per_issue_2669() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("optimizing_rebuild_performance")
-            .and_then(|v| v.as_bool()),
+        oos.get("optimizing_rebuild_performance").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].optimizing_rebuild_performance` must be true \
          (issue text: \"Out of scope: optimizing rebuild performance.\")"

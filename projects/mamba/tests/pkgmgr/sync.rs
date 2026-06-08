@@ -76,20 +76,19 @@ fn build_index() -> tempfile::TempDir {
 
 fn setup_locked_project(proj: &Path, index: &Path) {
     assert!(run(proj, &["init"]).status.success());
-    assert!(run(
-        proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
-    assert!(run(proj, &["lock", "--index", index.to_str().unwrap()])
+    assert!(
+        run(
+            proj,
+            &["add", "frozen_demo_pkg==0.1.0", "--index", index.to_str().unwrap()]
+        )
         .status
-        .success());
+        .success()
+    );
+    assert!(
+        run(proj, &["lock", "--index", index.to_str().unwrap()])
+            .status
+            .success()
+    );
 }
 
 #[test]
@@ -109,17 +108,11 @@ fn sync_first_run_creates_env_and_installs_locked_deps() {
 
     let venv = proj.join(".venv");
     assert!(venv.exists(), ".venv must be created");
-    assert!(
-        venv.join("pyvenv.cfg").exists(),
-        "pyvenv.cfg must be written"
-    );
+    assert!(venv.join("pyvenv.cfg").exists(), "pyvenv.cfg must be written");
     let site = venv.join("site-packages");
     for pkg in ["frozen_demo_pkg", "frozen_demo_transitive"] {
         let dir = site.join(pkg);
-        assert!(
-            dir.join("__init__.py").exists(),
-            "{pkg} __init__.py missing"
-        );
+        assert!(dir.join("__init__.py").exists(), "{pkg} __init__.py missing");
         assert!(dir.join("INSTALLER").exists(), "{pkg} INSTALLER missing");
         assert!(dir.join("VERSION").exists(), "{pkg} VERSION missing");
     }
@@ -135,8 +128,10 @@ fn sync_second_run_is_a_clean_noop() {
 
     assert!(run(&proj, &["sync"]).status.success());
     let lock_a = std::fs::read(proj.join("mamba.lock")).unwrap();
-    let init_a =
-        std::fs::read(proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py")).unwrap();
+    let init_a = std::fs::read(
+        proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py"),
+    )
+    .unwrap();
 
     let out = run(&proj, &["sync"]);
     assert!(out.status.success(), "second sync must succeed");
@@ -150,8 +145,10 @@ fn sync_second_run_is_a_clean_noop() {
     );
 
     let lock_b = std::fs::read(proj.join("mamba.lock")).unwrap();
-    let init_b =
-        std::fs::read(proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py")).unwrap();
+    let init_b = std::fs::read(
+        proj.join(".venv/site-packages/frozen_demo_pkg/__init__.py"),
+    )
+    .unwrap();
     assert_eq!(lock_a, lock_b, "lockfile byte-identical across syncs");
     assert_eq!(init_a, init_b, "package init.py untouched on no-op");
 }
@@ -218,7 +215,9 @@ fn sync_downloads_and_verifies_wheel_when_url_and_sha_present() {
         let digest = format!("{:x}", hasher.finalize());
         Mock::given(method("GET"))
             .and(path("/files/tick15_sync_pkg-1.0.0-py3-none-any.whl"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(body.to_vec()),
+            )
             .mount(&server)
             .await;
         let url = server.uri();
@@ -234,7 +233,8 @@ fn sync_downloads_and_verifies_wheel_when_url_and_sha_present() {
     assert!(run(&proj, &["init"]).status.success());
 
     // Stake a lockfile by hand so the test is scoped to `mamba sync`.
-    let wheel_url = format!("{server_url}/files/tick15_sync_pkg-1.0.0-py3-none-any.whl");
+    let wheel_url =
+        format!("{server_url}/files/tick15_sync_pkg-1.0.0-py3-none-any.whl");
     let lock = format!(
         "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"tick15_sync_pkg\"\nversion = \"1.0.0\"\nsha256 = \"{body_sha}\"\nurl = \"{wheel_url}\"\nsource = \"pypi://tick15_sync_pkg/1.0.0\"\ndependencies = []\n"
     );
@@ -299,7 +299,9 @@ fn sync_downloads_many_packages_in_parallel() {
             let digest = format!("{:x}", h.finalize());
             Mock::given(method("GET"))
                 .and(path(format!("/files/{filename}")))
-                .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_bytes(body),
+                )
                 .mount(&server)
                 .await;
             pkgs.push((name, version, digest));
@@ -368,17 +370,14 @@ fn sync_jobs_one_runs_sequentially_but_still_completes() {
         let digest = format!("{:x}", h.finalize());
         Mock::given(method("GET"))
             .and(path("/files/tick16_serial-1.0.0-py3-none-any.whl"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(body.to_vec()))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(body.to_vec()),
+            )
             .mount(&server)
             .await;
         let url = server.uri();
         std::mem::forget(server);
-        (
-            url,
-            "tick16_serial".to_string(),
-            "1.0.0".to_string(),
-            digest,
-        )
+        (url, "tick16_serial".to_string(), "1.0.0".to_string(), digest)
     });
 
     let tmp = tempfile::tempdir().unwrap();
@@ -388,7 +387,9 @@ fn sync_jobs_one_runs_sequentially_but_still_completes() {
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
 
-    let wheel_url = format!("{server_url}/files/tick16_serial-1.0.0-py3-none-any.whl");
+    let wheel_url = format!(
+        "{server_url}/files/tick16_serial-1.0.0-py3-none-any.whl"
+    );
     let lock = format!(
         "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\nsha256 = \"{digest}\"\nurl = \"{wheel_url}\"\nsource = \"pypi://{name}/{version}\"\ndependencies = []\n"
     );
@@ -426,7 +427,9 @@ fn sync_fails_on_sha256_mismatch() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/files/tick15_sync_bad-1.0.0-py3-none-any.whl"))
-            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"different-bytes".to_vec()))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(b"different-bytes".to_vec()),
+            )
             .mount(&server)
             .await;
         let url = server.uri();
@@ -442,7 +445,8 @@ fn sync_fails_on_sha256_mismatch() {
     assert!(run(&proj, &["init"]).status.success());
 
     let wrong_sha = "0".repeat(64);
-    let wheel_url = format!("{server_url}/files/tick15_sync_bad-1.0.0-py3-none-any.whl");
+    let wheel_url =
+        format!("{server_url}/files/tick15_sync_bad-1.0.0-py3-none-any.whl");
     let lock = format!(
         "format_version = 1\ninput_hash = \"x\"\n\n[[package]]\nname = \"tick15_sync_bad\"\nversion = \"1.0.0\"\nsha256 = \"{wrong_sha}\"\nurl = \"{wheel_url}\"\nsource = \"pypi://tick15_sync_bad/1.0.0\"\ndependencies = []\n"
     );
@@ -504,9 +508,7 @@ fn sync_reuses_content_addressed_cache_across_package_names() {
         // CAS bypass regresses.
         Mock::given(method("GET"))
             .and(path("/files/tick17_pkgb-1.0.0-py3-none-any.whl"))
-            .respond_with(
-                ResponseTemplate::new(500).set_body_bytes(b"must-not-be-fetched".to_vec()),
-            )
+            .respond_with(ResponseTemplate::new(500).set_body_bytes(b"must-not-be-fetched".to_vec()))
             .expect(0)
             .mount(&server)
             .await;

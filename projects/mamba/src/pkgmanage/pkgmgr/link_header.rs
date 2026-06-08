@@ -162,10 +162,8 @@ pub fn parse_link_header(header: &str) -> Result<Vec<LinkValue>, IndexError> {
 /// equals `wanted` case-insensitively.
 pub fn find_rel<'a>(links: &'a [LinkValue], wanted: &str) -> Option<&'a LinkValue> {
     links.iter().find(|lv| {
-        lv.rel().is_some_and(|r| {
-            r.split_whitespace()
-                .any(|tok| tok.eq_ignore_ascii_case(wanted))
-        })
+        lv.rel()
+            .is_some_and(|r| r.split_whitespace().any(|tok| tok.eq_ignore_ascii_case(wanted)))
     })
 }
 
@@ -200,22 +198,9 @@ fn read_quoted(s: &str, i: &mut usize) -> Result<String, IndexError> {
 }
 
 fn is_tchar(b: u8) -> bool {
-    matches!(
-        b,
-        b'!' | b'#'
-            | b'$'
-            | b'%'
-            | b'&'
-            | b'\''
-            | b'*'
-            | b'+'
-            | b'-'
-            | b'.'
-            | b'^'
-            | b'_'
-            | b'`'
-            | b'|'
-            | b'~'
+    matches!(b,
+        b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.'
+        | b'^' | b'_' | b'`' | b'|' | b'~'
     ) || b.is_ascii_alphanumeric()
 }
 
@@ -396,8 +381,7 @@ mod tests {
     fn pep691_metadata_link_shape() {
         // PEP 658 / 691 emit `rel=metadata` to point at the wheel's
         // METADATA twin without downloading the wheel.
-        let h =
-            "<https://files.pythonhosted.org/abc.metadata>; rel=\"metadata\"; type=\"text/plain\"";
+        let h = "<https://files.pythonhosted.org/abc.metadata>; rel=\"metadata\"; type=\"text/plain\"";
         let l = parse_link_header(h).unwrap();
         assert_eq!(l[0].rel(), Some("metadata"));
         assert_eq!(l[0].uri, "https://files.pythonhosted.org/abc.metadata");
@@ -408,14 +392,8 @@ mod tests {
         let h = "<https://api.github.com/x?page=2>; rel=\"next\", <https://api.github.com/x?page=10>; rel=\"last\"";
         let l = parse_link_header(h).unwrap();
         assert_eq!(l.len(), 2);
-        assert_eq!(
-            find_rel(&l, "next").unwrap().uri,
-            "https://api.github.com/x?page=2"
-        );
-        assert_eq!(
-            find_rel(&l, "last").unwrap().uri,
-            "https://api.github.com/x?page=10"
-        );
+        assert_eq!(find_rel(&l, "next").unwrap().uri, "https://api.github.com/x?page=2");
+        assert_eq!(find_rel(&l, "last").unwrap().uri, "https://api.github.com/x?page=10");
     }
 
     #[test]

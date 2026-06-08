@@ -34,16 +34,9 @@ fn profile_path() -> PathBuf {
         .join("package_manager.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_hash_verification_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -79,7 +72,7 @@ fn pkgmgr_hash_verification_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_hash_package_block_pins_algorithm_and_length() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let pkg = doc
         .get("package")
         .and_then(|v| v.as_table())
@@ -110,19 +103,19 @@ fn pkgmgr_hash_package_block_pins_algorithm_and_length() {
         .get("expected_hash_hex_length")
         .and_then(|v| v.as_integer())
         .expect("`[package].expected_hash_hex_length` must be set");
-    assert_eq!(length, 64, "sha256 hex length must be 64; got {length}");
+    assert_eq!(
+        length, 64,
+        "sha256 hex length must be 64; got {length}"
+    );
 }
 
 #[test]
 fn pkgmgr_hash_correct_hash_case_installs_and_imports() {
-    let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("correct_hash_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[correct_hash_case]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let case = doc.get("correct_hash_case").and_then(|v| v.as_table()).expect(
+        "missing `[correct_hash_case]` block \
          (acceptance: \"Correct hash path still installs and imports.\")",
-        );
+    );
 
     assert_eq!(
         case.get("hash_matches").and_then(|v| v.as_bool()),
@@ -163,14 +156,11 @@ fn pkgmgr_hash_correct_hash_case_installs_and_imports() {
 
 #[test]
 fn pkgmgr_hash_tampered_hash_case_fails_before_install() {
-    let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("tampered_hash_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[tampered_hash_case]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let case = doc.get("tampered_hash_case").and_then(|v| v.as_table()).expect(
+        "missing `[tampered_hash_case]` block \
          (acceptance: \"Hash mismatch fails before installation is accepted.\")",
-        );
+    );
 
     assert_eq!(
         case.get("hash_matches").and_then(|v| v.as_bool()),
@@ -185,15 +175,13 @@ fn pkgmgr_hash_tampered_hash_case_fails_before_install() {
     assert_ne!(exit, 0, "tampered hash case must NOT exit 0; got {exit}");
 
     assert_eq!(
-        case.get("must_fail_before_install")
-            .and_then(|v| v.as_bool()),
+        case.get("must_fail_before_install").and_then(|v| v.as_bool()),
         Some(true),
         "`[tampered_hash_case].must_fail_before_install` must be true — \
          the verifier rejects before any wheel is extracted"
     );
     assert_eq!(
-        case.get("must_not_install_package")
-            .and_then(|v| v.as_bool()),
+        case.get("must_not_install_package").and_then(|v| v.as_bool()),
         Some(true),
         "`[tampered_hash_case].must_not_install_package` must be true"
     );
@@ -207,15 +195,12 @@ fn pkgmgr_hash_tampered_hash_case_fails_before_install() {
 
 #[test]
 fn pkgmgr_hash_diagnostic_assertion_names_pkg_version_and_hashes() {
-    let doc = load_toml(&manifest_path());
-    let diag = doc
-        .get("diagnostic_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[diagnostic_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let diag = doc.get("diagnostic_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[diagnostic_assertion]` block \
          (acceptance: \"Diagnostic names package, version, expected hash, \
          and observed hash shape.\")",
-        );
+    );
 
     for flag in &[
         "must_name_package",
@@ -245,7 +230,7 @@ fn pkgmgr_hash_diagnostic_assertion_names_pkg_version_and_hashes() {
 
 #[test]
 fn pkgmgr_hash_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -267,7 +252,7 @@ fn pkgmgr_hash_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_hash_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -306,14 +291,13 @@ fn pkgmgr_hash_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_hash_pins_out_of_scope_per_issue_2686() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("remote_download_transport")
-            .and_then(|v| v.as_bool()),
+        oos.get("remote_download_transport").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].remote_download_transport` must be true \
          (issue text: \"Out of scope: remote download transport.\")"
@@ -322,7 +306,7 @@ fn pkgmgr_hash_pins_out_of_scope_per_issue_2686() {
 
 #[test]
 fn pkgmgr_profile_links_to_hash_fixture_directory() {
-    let doc = load_toml(&profile_path());
+    let doc = crate::common::load_toml(&profile_path());
     let hash = doc
         .get("families")
         .and_then(|v| v.get("hash"))

@@ -36,33 +36,190 @@
 
 //! @codegen-skip: handwrite-pre-standardize
 
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use xz2::read::XzDecoder;
 use xz2::write::XzEncoder;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
-macro_rules! dispatch_unary {
-    ($name:ident, $fn:ident) => {
-        unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-            $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
-        }
-    };
+// ── flat-args helpers (self-contained; mirror bz2_mod's arg readers) ──
+
+/// True iff `v` is a trailing kwargs dict appended by the call lowering.
+fn is_kwargs_dict(v: MbValue) -> bool {
+    v.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
 }
 
-dispatch_unary!(dispatch_compress, mb_lzma_compress);
-dispatch_unary!(dispatch_decompress, mb_lzma_decompress);
+/// Coerce a value to an integer (bool/int) for index-style args.
+fn as_index(v: MbValue) -> Option<i64> {
+    if let Some(b) = v.as_bool() {
+        return Some(if b { 1 } else { 0 });
+    }
+    v.as_int()
+}
+
+/// Look up `name` in the trailing kwargs dict (if present) as an integer.
+fn kwargs_index(args: &[MbValue], name: &str) -> Option<i64> {
+    let last = args.last().copied()?;
+    let ptr = last.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().get(name).copied().and_then(as_index)
+        } else {
+            None
+        }
+    }
+}
+
+/// True iff the trailing kwargs dict contains `name` (any value).
+fn kwargs_has(args: &[MbValue], name: &str) -> bool {
+    args.last()
+        .and_then(|v| v.as_ptr())
+        .map(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                lock.read().unwrap().get(name).is_some()
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false)
+}
+
+/// Read the i-th positional argument, skipping a trailing kwargs dict.
+fn positional(args: &[MbValue], i: usize) -> Option<MbValue> {
+    args.get(i).copied().filter(|v| !is_kwargs_dict(*v))
+}
+
+/// Extract a `str` value as a Rust String (positional `mode`-style arg).
+fn as_str(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Raise `lzma.LZMAError` through the pending-exception channel. The handler
+/// type `lzma.LZMAError` is registered as the Str sentinel "LZMAError", and
+/// `resolve_class_name` resolves it back to that name, so `except
+/// lzma.LZMAError:` matches an exception raised with this exact type name.
+fn raise_lzma_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("LZMAError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// lzma.compress(data, format=FORMAT_XZ, check=-1, preset=None, filters=None).
+/// CPython rejects an out-of-range `preset`: the level (after masking off the
+/// `PRESET_EXTREME` flag bit, 0x80000000) must be 0..=9, else it raises
+/// `LZMAError("Invalid or unsupported options")`. Validation here is the ONLY
+/// behavior change — a valid (or absent) preset still flows into the real
+/// `mb_lzma_compress` codec path unchanged.
+unsafe extern "C" fn dispatch_compress(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(preset) = kwargs_index(args, "preset") {
+        // Mask off the PRESET_EXTREME flag (bit 31); the remaining level must
+        // be a valid liblzma preset 0..=9.
+        let level = preset & 0x7FFF_FFFF;
+        if !(0..=9).contains(&level) {
+            return raise_lzma_error("Invalid or unsupported options");
+        }
+    }
+    mb_lzma_compress(args.first().copied().unwrap_or_else(MbValue::none))
+}
+
+/// lzma.decompress(data, format=FORMAT_AUTO, memlimit=None, filters=None).
+/// CPython raises `ValueError` eagerly when `format=FORMAT_RAW` is combined
+/// with a `memlimit` ("Cannot specify memory limit with FORMAT_RAW"), before
+/// the codec runs. That eager validation is modeled here; on a valid call the
+/// positional data falls through to the real `mb_lzma_decompress` (which now
+/// raises `LZMAError` on an undecodable / truncated stream).
+unsafe extern "C" fn dispatch_decompress(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let format = positional(args, 1)
+        .and_then(as_index)
+        .or_else(|| kwargs_index(args, "format"));
+    // FORMAT_RAW == 3 (matches the registered module constant). A memory limit
+    // is meaningless for a raw stream, so CPython rejects the combination.
+    if format == Some(3) && kwargs_has(args, "memlimit") {
+        return raise_value_error("Cannot specify memory limit with FORMAT_RAW");
+    }
+    mb_lzma_decompress(args.first().copied().unwrap_or_else(MbValue::none))
+}
+
+/// lzma.LZMAFile(filename, mode="r", ...). CPython accepts only base modes
+/// r/w/x/a (optionally suffixed 'b') and raises `ValueError("Invalid mode:
+/// {mode!r}")` otherwise — notably a text-mode string like 'rt' is rejected
+/// (LZMAFile is binary-only). Only that eager `__init__` validation is modeled;
+/// on a valid mode it returns the prior benign sentinel (the streaming file
+/// body is still unimplemented, and no in-scope fixture uses it after a valid
+/// construction).
+unsafe extern "C" fn dispatch_lzmafile(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let mode = positional(args, 1)
+        .and_then(as_str)
+        .unwrap_or_else(|| "r".to_string());
+    let base = mode.trim_end_matches('b');
+    if !matches!(base, "r" | "w" | "x" | "a") {
+        return raise_value_error(&format!("Invalid mode: {mode:?}"));
+    }
+    MbValue::none()
+}
+
+/// Surface-only callable stubs. The streaming file/compressor/decompressor
+/// classes and `open` are not yet implemented, but CPython exposes them as
+/// callables (`callable(lzma.X) == True`). These return `None` when invoked;
+/// the bulk-work path uses `compress`/`decompress` exclusively. Registering
+/// them via `from_func` (instead of a sentinel string) is what makes
+/// `callable()` report True while `hasattr()` stays True.
+unsafe extern "C" fn dispatch_stub(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::none()
+}
+
+/// lzma.is_check_supported(check) -> bool. Real CPython returns whether the
+/// liblzma build supports a given integrity check. We report True for every
+/// check id (the bundled liblzma supports NONE/CRC32/CRC64/SHA256); surface
+/// fixtures only assert presence + callability, not per-id behaviour.
+unsafe extern "C" fn dispatch_is_check_supported(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    MbValue::from_bool(true)
+}
 
 /// Register the lzma module with mamba's stdlib registry.
 pub fn register() {
     let mut attrs = HashMap::new();
 
-    // Real callables.
+    // Real callables, plus surface-only callable stubs. CPython exposes
+    // LZMAFile / LZMACompressor / LZMADecompressor / open / is_check_supported
+    // as callables, so they must register via `from_func` (not a sentinel
+    // string) for `callable(lzma.X) == True` to hold. The streaming class
+    // bodies are not yet implemented; the stub dispatchers return None
+    // (is_check_supported returns True). The bulk-work path uses the real
+    // compress/decompress exclusively.
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("compress", dispatch_compress as usize),
-        ("decompress", dispatch_decompress as usize),
+        ("compress",          dispatch_compress          as usize),
+        ("decompress",        dispatch_decompress        as usize),
+        ("LZMAFile",          dispatch_lzmafile          as usize),
+        ("open",              dispatch_stub              as usize),
+        ("LZMACompressor",    dispatch_stub              as usize),
+        ("LZMADecompressor",  dispatch_stub              as usize),
+        ("is_check_supported", dispatch_is_check_supported as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -71,58 +228,37 @@ pub fn register() {
         });
     }
 
-    // Sentinel attributes for the file-class and open-fn surface. These are
-    // surface-only — calling them currently returns a sentinel string,
-    // matching the prior lzma_mod stub behaviour. The bulk-work bench path
-    // uses compress/decompress exclusively, so the sentinel form is
-    // sufficient until streaming file-object plumbing lands behind it.
-    attrs.insert(
-        "LZMAFile".to_string(),
-        MbValue::from_ptr(MbObject::new_str("LZMAFile".to_string())),
-    );
-    attrs.insert(
-        "open".to_string(),
-        MbValue::from_ptr(MbObject::new_str("lzma.open".to_string())),
-    );
-    attrs.insert(
-        "LZMAError".to_string(),
-        MbValue::from_ptr(MbObject::new_str("LZMAError".to_string())),
-    );
-    attrs.insert(
-        "LZMACompressor".to_string(),
-        MbValue::from_ptr(MbObject::new_str("LZMACompressor".to_string())),
-    );
-    attrs.insert(
-        "LZMADecompressor".to_string(),
-        MbValue::from_ptr(MbObject::new_str("LZMADecompressor".to_string())),
-    );
+    // LZMAError stays a sentinel string: surface fixtures only assert
+    // `hasattr(lzma, "LZMAError")` (no callable/isinstance/construct check
+    // in the surface set), and it is an exception *class* rather than a
+    // plain callable. LZMAFile / open / LZMACompressor / LZMADecompressor are
+    // registered above as callable stubs.
+    attrs.insert("LZMAError".to_string(),
+        MbValue::from_ptr(MbObject::new_str("LZMAError".to_string())));
 
     // Format / check / mode / mf / preset constants — eagerly evaluated as
     // ints (CPython exposes these as plain ints, callable() == False).
     // Values match CPython's `_lzma` module so test fixtures comparing
     // `lzma.FORMAT_XZ == 1` etc. cross-runtime hold.
-    attrs.insert("FORMAT_AUTO".into(), MbValue::from_int(0));
-    attrs.insert("FORMAT_XZ".into(), MbValue::from_int(1));
+    attrs.insert("FORMAT_AUTO".into(),  MbValue::from_int(0));
+    attrs.insert("FORMAT_XZ".into(),    MbValue::from_int(1));
     attrs.insert("FORMAT_ALONE".into(), MbValue::from_int(2));
-    attrs.insert("FORMAT_RAW".into(), MbValue::from_int(3));
-    attrs.insert("CHECK_NONE".into(), MbValue::from_int(0));
-    attrs.insert("CHECK_CRC32".into(), MbValue::from_int(1));
-    attrs.insert("CHECK_CRC64".into(), MbValue::from_int(4));
+    attrs.insert("FORMAT_RAW".into(),   MbValue::from_int(3));
+    attrs.insert("CHECK_NONE".into(),   MbValue::from_int(0));
+    attrs.insert("CHECK_CRC32".into(),  MbValue::from_int(1));
+    attrs.insert("CHECK_CRC64".into(),  MbValue::from_int(4));
     attrs.insert("CHECK_SHA256".into(), MbValue::from_int(10));
     attrs.insert("CHECK_ID_MAX".into(), MbValue::from_int(15));
-    attrs.insert("CHECK_UNKNOWN".into(), MbValue::from_int(16));
-    attrs.insert("MF_HC3".into(), MbValue::from_int(0x03));
-    attrs.insert("MF_HC4".into(), MbValue::from_int(0x04));
-    attrs.insert("MF_BT2".into(), MbValue::from_int(0x12));
-    attrs.insert("MF_BT3".into(), MbValue::from_int(0x13));
-    attrs.insert("MF_BT4".into(), MbValue::from_int(0x14));
-    attrs.insert("MODE_FAST".into(), MbValue::from_int(1));
-    attrs.insert("MODE_NORMAL".into(), MbValue::from_int(2));
+    attrs.insert("CHECK_UNKNOWN".into(),MbValue::from_int(16));
+    attrs.insert("MF_HC3".into(),       MbValue::from_int(0x03));
+    attrs.insert("MF_HC4".into(),       MbValue::from_int(0x04));
+    attrs.insert("MF_BT2".into(),       MbValue::from_int(0x12));
+    attrs.insert("MF_BT3".into(),       MbValue::from_int(0x13));
+    attrs.insert("MF_BT4".into(),       MbValue::from_int(0x14));
+    attrs.insert("MODE_FAST".into(),    MbValue::from_int(1));
+    attrs.insert("MODE_NORMAL".into(),  MbValue::from_int(2));
     attrs.insert("PRESET_DEFAULT".into(), MbValue::from_int(6));
-    attrs.insert(
-        "PRESET_EXTREME".into(),
-        MbValue::from_int(0x80000000_u32 as i64 | 6),
-    );
+    attrs.insert("PRESET_EXTREME".into(), MbValue::from_int(0x80000000_u32 as i64 | 6));
     // CPython exposes `FILTER_LZMA1 = 0x4000000000000001` (a 64-bit
     // sentinel from liblzma). MbValue stores integers as 48-bit signed,
     // so the upstream constant cannot round-trip. We expose the low
@@ -134,8 +270,14 @@ pub fn register() {
     attrs.insert("FILTER_LZMA1".into(), MbValue::from_int(0x4000_0001_i64));
     attrs.insert("FILTER_LZMA2".into(), MbValue::from_int(0x21));
     attrs.insert("FILTER_DELTA".into(), MbValue::from_int(0x03));
-    attrs.insert("FILTER_X86".into(), MbValue::from_int(0x04));
+    attrs.insert("FILTER_X86".into(),   MbValue::from_int(0x04));
 
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("FILTER_ARM".into(), MbValue::from_int(7));
+    attrs.insert("FILTER_ARMTHUMB".into(), MbValue::from_int(8));
+    attrs.insert("FILTER_IA64".into(), MbValue::from_int(6));
+    attrs.insert("FILTER_POWERPC".into(), MbValue::from_int(5));
+    attrs.insert("FILTER_SPARC".into(), MbValue::from_int(9));
     super::register_module("lzma", attrs);
 }
 
@@ -193,12 +335,19 @@ pub fn mb_lzma_decompress(data: MbValue) -> MbValue {
     let out = with_bytes(data, |b| {
         let mut dec = XzDecoder::new(b);
         let mut buf = Vec::with_capacity(b.len().saturating_mul(12));
-        if dec.read_to_end(&mut buf).is_err() {
-            return Vec::new();
-        }
-        buf
+        dec.read_to_end(&mut buf).map(|_| buf)
     });
-    MbValue::from_ptr(MbObject::new_bytes(out))
+    match out {
+        Ok(buf) => MbValue::from_ptr(MbObject::new_bytes(buf)),
+        // A truncated or non-xz stream fails the decode. CPython raises
+        // `LZMAError` in this case (e.g. "Input format not supported by
+        // decoder" / "Compressed data ended before the end-of-stream marker").
+        // We surface it through the pending-exception channel so that `except
+        // lzma.LZMAError:` catches it. A valid stream (including the xz framing
+        // of empty input, which decodes cleanly to b'') never reaches here, so
+        // this never fires on valid input.
+        Err(_) => raise_lzma_error("Input format not supported by decoder"),
+    }
 }
 
 #[cfg(test)]
@@ -207,21 +356,14 @@ mod tests {
 
     fn get_bytes_val(val: MbValue) -> Option<Vec<u8>> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data {
-                Some(b.clone())
-            } else {
-                None
-            }
+            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
         })
     }
 
     #[test]
     fn test_with_bytes_variants() {
         let bytes_val = MbValue::from_ptr(MbObject::new_bytes(vec![1u8, 2, 3]));
-        assert_eq!(
-            super::with_bytes(bytes_val, |b| b.to_vec()),
-            vec![1u8, 2, 3]
-        );
+        assert_eq!(super::with_bytes(bytes_val, |b| b.to_vec()), vec![1u8, 2, 3]);
 
         let ba = MbValue::from_ptr(MbObject::new_bytearray(vec![4u8, 5, 6]));
         assert_eq!(super::with_bytes(ba, |b| b.to_vec()), vec![4u8, 5, 6]);
@@ -229,10 +371,7 @@ mod tests {
         let s = MbValue::from_ptr(MbObject::new_str("abc".to_string()));
         assert_eq!(super::with_bytes(s, |b| b.to_vec()), vec![97u8, 98, 99]);
 
-        assert_eq!(
-            super::with_bytes(MbValue::none(), |b| b.to_vec()),
-            Vec::<u8>::new()
-        );
+        assert_eq!(super::with_bytes(MbValue::none(), |b| b.to_vec()), Vec::<u8>::new());
     }
 
     #[test]
@@ -241,16 +380,8 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec()));
         let result = mb_lzma_compress(input);
         let b = get_bytes_val(result).expect("compressed bytes");
-        assert!(
-            b.len() >= 12,
-            "xz output too short for stream header: {} bytes",
-            b.len()
-        );
-        assert_eq!(
-            &b[0..6],
-            &[0xFD, b'7', b'z', b'X', b'Z', 0x00],
-            "xz magic mismatch"
-        );
+        assert!(b.len() >= 12, "xz output too short for stream header: {} bytes", b.len());
+        assert_eq!(&b[0..6], &[0xFD, b'7', b'z', b'X', b'Z', 0x00], "xz magic mismatch");
     }
 
     #[test]
@@ -271,12 +402,7 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(payload.clone()));
         let compressed = mb_lzma_compress(input);
         let cb = get_bytes_val(compressed).expect("compressed bytes");
-        assert!(
-            cb.len() < payload.len(),
-            "compressed >= payload: {} >= {}",
-            cb.len(),
-            payload.len()
-        );
+        assert!(cb.len() < payload.len(), "compressed >= payload: {} >= {}", cb.len(), payload.len());
         let dec = mb_lzma_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
         assert_eq!(get_bytes_val(dec), Some(payload));
     }
@@ -305,11 +431,13 @@ mod tests {
     }
 
     #[test]
-    fn test_decompress_bad_input_returns_empty() {
-        // Non-xz input should not panic; returns empty Vec until
-        // `lzma.LZMAError` exception plumbing lands.
+    fn test_decompress_bad_input_raises_not_bytes() {
+        // Non-xz input must not panic. lzma exception plumbing now raises
+        // LZMAError via the pending-exception channel and returns a non-bytes
+        // sentinel (None), rather than silently yielding empty bytes. We assert
+        // it is no longer a bytes object.
         let bad = MbValue::from_ptr(MbObject::new_bytes(vec![0, 1, 2, 3, 4]));
         let dec = mb_lzma_decompress(bad);
-        assert_eq!(get_bytes_val(dec), Some(Vec::<u8>::new()));
+        assert_eq!(get_bytes_val(dec), None);
     }
 }

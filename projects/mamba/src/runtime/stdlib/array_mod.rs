@@ -27,10 +27,10 @@
 //!
 //! @codegen-skip: handwrite-pre-standardize
 
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 /// Soft cap on resident array handles per thread. When the table exceeds
 /// this size, `make_handle` evicts the oldest entries (FIFO) until back
@@ -144,39 +144,19 @@ impl ArrayStore {
 
     fn get_as_value(&self, idx: usize) -> MbValue {
         match self {
-            Self::I8(v) => v
+            Self::I8(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
+            Self::U8(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
+            Self::Unicode(v) => v
                 .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
-            Self::U8(v) => v
-                .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
-            Self::Unicode(v) => v.get(idx).map_or(MbValue::none(), |x| {
-                MbValue::from_ptr(MbObject::new_str(x.to_string()))
-            }),
-            Self::I16(v) => v
-                .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
-            Self::U16(v) => v
-                .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
-            Self::I32(v) => v
-                .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
-            Self::U32(v) => v
-                .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
-            Self::I64(v) => v
-                .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_int(*x)),
-            Self::U64(v) => v
-                .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
-            Self::F32(v) => v
-                .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_float(*x as f64)),
-            Self::F64(v) => v
-                .get(idx)
-                .map_or(MbValue::none(), |x| MbValue::from_float(*x)),
+                .map_or(MbValue::none(), |x| MbValue::from_ptr(MbObject::new_str(x.to_string()))),
+            Self::I16(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
+            Self::U16(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
+            Self::I32(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
+            Self::U32(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
+            Self::I64(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_int(*x)),
+            Self::U64(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_int(*x as i64)),
+            Self::F32(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_float(*x as f64)),
+            Self::F64(v) => v.get(idx).map_or(MbValue::none(), |x| MbValue::from_float(*x)),
         }
     }
 
@@ -219,100 +199,46 @@ impl ArrayStore {
         match self {
             Self::I8(v) => v.extend(b.iter().take(n).map(|&x| x as i8)),
             Self::U8(v) => v.extend_from_slice(&b[..n]),
-            Self::Unicode(v) => {
-                for i in 0..n {
-                    let s = i * 4;
-                    let code = u32::from_le_bytes([b[s], b[s + 1], b[s + 2], b[s + 3]]);
-                    if let Some(ch) = char::from_u32(code) {
-                        v.push(ch);
-                    }
+            Self::Unicode(v) => for i in 0..n {
+                let s = i*4;
+                let code = u32::from_le_bytes([b[s], b[s+1], b[s+2], b[s+3]]);
+                if let Some(ch) = char::from_u32(code) {
+                    v.push(ch);
                 }
-            }
-            Self::I16(v) => {
-                for i in 0..n {
-                    v.push(i16::from_le_bytes([b[i * 2], b[i * 2 + 1]]));
-                }
-            }
-            Self::U16(v) => {
-                for i in 0..n {
-                    v.push(u16::from_le_bytes([b[i * 2], b[i * 2 + 1]]));
-                }
-            }
-            Self::I32(v) => {
-                for i in 0..n {
-                    v.push(i32::from_le_bytes([
-                        b[i * 4],
-                        b[i * 4 + 1],
-                        b[i * 4 + 2],
-                        b[i * 4 + 3],
-                    ]));
-                }
-            }
-            Self::U32(v) => {
-                for i in 0..n {
-                    v.push(u32::from_le_bytes([
-                        b[i * 4],
-                        b[i * 4 + 1],
-                        b[i * 4 + 2],
-                        b[i * 4 + 3],
-                    ]));
-                }
-            }
-            Self::I64(v) => {
-                for i in 0..n {
-                    let s = i * 8;
-                    v.push(i64::from_le_bytes([
-                        b[s],
-                        b[s + 1],
-                        b[s + 2],
-                        b[s + 3],
-                        b[s + 4],
-                        b[s + 5],
-                        b[s + 6],
-                        b[s + 7],
-                    ]));
-                }
-            }
-            Self::U64(v) => {
-                for i in 0..n {
-                    let s = i * 8;
-                    v.push(u64::from_le_bytes([
-                        b[s],
-                        b[s + 1],
-                        b[s + 2],
-                        b[s + 3],
-                        b[s + 4],
-                        b[s + 5],
-                        b[s + 6],
-                        b[s + 7],
-                    ]));
-                }
-            }
-            Self::F32(v) => {
-                for i in 0..n {
-                    v.push(f32::from_le_bytes([
-                        b[i * 4],
-                        b[i * 4 + 1],
-                        b[i * 4 + 2],
-                        b[i * 4 + 3],
-                    ]));
-                }
-            }
-            Self::F64(v) => {
-                for i in 0..n {
-                    let s = i * 8;
-                    v.push(f64::from_le_bytes([
-                        b[s],
-                        b[s + 1],
-                        b[s + 2],
-                        b[s + 3],
-                        b[s + 4],
-                        b[s + 5],
-                        b[s + 6],
-                        b[s + 7],
-                    ]));
-                }
-            }
+            },
+            Self::I16(v) => for i in 0..n {
+                v.push(i16::from_le_bytes([b[i*2], b[i*2+1]]));
+            },
+            Self::U16(v) => for i in 0..n {
+                v.push(u16::from_le_bytes([b[i*2], b[i*2+1]]));
+            },
+            Self::I32(v) => for i in 0..n {
+                v.push(i32::from_le_bytes([b[i*4], b[i*4+1], b[i*4+2], b[i*4+3]]));
+            },
+            Self::U32(v) => for i in 0..n {
+                v.push(u32::from_le_bytes([b[i*4], b[i*4+1], b[i*4+2], b[i*4+3]]));
+            },
+            Self::I64(v) => for i in 0..n {
+                let s = i*8;
+                v.push(i64::from_le_bytes([
+                    b[s], b[s+1], b[s+2], b[s+3], b[s+4], b[s+5], b[s+6], b[s+7],
+                ]));
+            },
+            Self::U64(v) => for i in 0..n {
+                let s = i*8;
+                v.push(u64::from_le_bytes([
+                    b[s], b[s+1], b[s+2], b[s+3], b[s+4], b[s+5], b[s+6], b[s+7],
+                ]));
+            },
+            Self::F32(v) => for i in 0..n {
+                v.push(f32::from_le_bytes([b[i*4], b[i*4+1], b[i*4+2], b[i*4+3]]));
+            },
+            Self::F64(v) => for i in 0..n {
+                let s = i*8;
+                v.push(f64::from_le_bytes([
+                    b[s], b[s+1], b[s+2], b[s+3], b[s+4], b[s+5], b[s+6], b[s+7],
+                ]));
+            },
         }
     }
 
@@ -326,46 +252,18 @@ impl ArrayStore {
                     }
                 }
             }
-            Self::I16(v) => {
-                for x in v.iter_mut() {
-                    *x = x.swap_bytes();
-                }
-            }
-            Self::U16(v) => {
-                for x in v.iter_mut() {
-                    *x = x.swap_bytes();
-                }
-            }
-            Self::I32(v) => {
-                for x in v.iter_mut() {
-                    *x = x.swap_bytes();
-                }
-            }
-            Self::U32(v) => {
-                for x in v.iter_mut() {
-                    *x = x.swap_bytes();
-                }
-            }
-            Self::I64(v) => {
-                for x in v.iter_mut() {
-                    *x = x.swap_bytes();
-                }
-            }
-            Self::U64(v) => {
-                for x in v.iter_mut() {
-                    *x = x.swap_bytes();
-                }
-            }
-            Self::F32(v) => {
-                for x in v.iter_mut() {
-                    *x = f32::from_bits(x.to_bits().swap_bytes());
-                }
-            }
-            Self::F64(v) => {
-                for x in v.iter_mut() {
-                    *x = f64::from_bits(x.to_bits().swap_bytes());
-                }
-            }
+            Self::I16(v) => for x in v.iter_mut() { *x = x.swap_bytes(); },
+            Self::U16(v) => for x in v.iter_mut() { *x = x.swap_bytes(); },
+            Self::I32(v) => for x in v.iter_mut() { *x = x.swap_bytes(); },
+            Self::U32(v) => for x in v.iter_mut() { *x = x.swap_bytes(); },
+            Self::I64(v) => for x in v.iter_mut() { *x = x.swap_bytes(); },
+            Self::U64(v) => for x in v.iter_mut() { *x = x.swap_bytes(); },
+            Self::F32(v) => for x in v.iter_mut() {
+                *x = f32::from_bits(x.to_bits().swap_bytes());
+            },
+            Self::F64(v) => for x in v.iter_mut() {
+                *x = f64::from_bits(x.to_bits().swap_bytes());
+            },
         }
     }
 }
@@ -389,7 +287,11 @@ fn push_int_checked<T>(
     true
 }
 
-fn push_float_checked<T>(out: &mut Vec<T>, value: MbValue, cast: impl FnOnce(f64) -> T) -> bool {
+fn push_float_checked<T>(
+    out: &mut Vec<T>,
+    value: MbValue,
+    cast: impl FnOnce(f64) -> T,
+) -> bool {
     let f = if let Some(f) = value.as_float() {
         f
     } else if let Some(i) = value.as_int_pyint() {
@@ -494,12 +396,8 @@ pub fn is_array_handle(id: u64) -> bool {
 pub fn drop_handle(id: u64) {
     let removed_from_map = ARRAYS.with(|m| m.borrow_mut().remove(&id).is_some());
     let removed_from_ids = ARRAY_IDS.with(|s| s.borrow_mut().remove(&id));
-    ARRAY_TYPECODES.with(|m| {
-        m.borrow_mut().remove(&id);
-    });
-    ARRAY_REFCOUNTS.with(|r| {
-        r.borrow_mut().remove(&id);
-    });
+    ARRAY_TYPECODES.with(|m| { m.borrow_mut().remove(&id); });
+    ARRAY_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
     if removed_from_map || removed_from_ids {
         ARRAY_ORDER.with(|q| {
             let mut q = q.borrow_mut();
@@ -566,15 +464,9 @@ fn evict_until_under_cap() {
         let victim = ARRAY_ORDER.with(|q| q.borrow_mut().pop_front());
         match victim {
             Some(id) => {
-                ARRAYS.with(|m| {
-                    m.borrow_mut().remove(&id);
-                });
-                ARRAY_IDS.with(|s| {
-                    s.borrow_mut().remove(&id);
-                });
-                ARRAY_TYPECODES.with(|m| {
-                    m.borrow_mut().remove(&id);
-                });
+                ARRAYS.with(|m| { m.borrow_mut().remove(&id); });
+                ARRAY_IDS.with(|s| { s.borrow_mut().remove(&id); });
+                ARRAY_TYPECODES.with(|m| { m.borrow_mut().remove(&id); });
             }
             None => break, // queue empty but map non-empty — desync; bail
         }
@@ -584,18 +476,10 @@ fn evict_until_under_cap() {
 fn make_handle_from_store(typecode: char, store: ArrayStore) -> MbValue {
     evict_until_under_cap();
     let id = alloc_id();
-    ARRAYS.with(|m| {
-        m.borrow_mut().insert(id, store);
-    });
-    ARRAY_IDS.with(|s| {
-        s.borrow_mut().insert(id);
-    });
-    ARRAY_TYPECODES.with(|m| {
-        m.borrow_mut().insert(id, typecode);
-    });
-    ARRAY_ORDER.with(|q| {
-        q.borrow_mut().push_back(id);
-    });
+    ARRAYS.with(|m| { m.borrow_mut().insert(id, store); });
+    ARRAY_IDS.with(|s| { s.borrow_mut().insert(id); });
+    ARRAY_TYPECODES.with(|m| { m.borrow_mut().insert(id, typecode); });
+    ARRAY_ORDER.with(|q| { q.borrow_mut().push_back(id); });
     MbValue::from_int(id as i64)
 }
 
@@ -632,10 +516,8 @@ pub fn register() {
     });
     // typecodes constant — eagerly evaluated as str (CPython exposes this
     // as a plain str under py<3.15, tuple under >=3.15). Mamba targets 3.12.
-    attrs.insert(
-        "typecodes".to_string(),
-        MbValue::from_ptr(MbObject::new_str("bBuhHiIlLqQfd".to_string())),
-    );
+    attrs.insert("typecodes".to_string(),
+        MbValue::from_ptr(MbObject::new_str("bBuhHiIlLqQfd".to_string())));
     // ArrayType alias (typeshed line 108).
     attrs.insert("ArrayType".to_string(), MbValue::from_func(addr));
     super::register_module("array", attrs);
@@ -693,9 +575,7 @@ fn mb_array_init_extend(handle: MbValue, init: MbValue) {
                     if handle_typecode(handle) == Some('u') {
                         extend_unicode_from_str(handle, s);
                     } else {
-                        raise_type_error(
-                            "cannot use a str to initialize an array with typecode other than 'u'",
-                        );
+                        raise_type_error("cannot use a str to initialize an array with typecode other than 'u'");
                     }
                 }
                 ObjData::List(lock) => {
@@ -718,9 +598,7 @@ fn mb_array_init_extend(handle: MbValue, init: MbValue) {
 fn with_str<R>(val: MbValue, f: impl FnOnce(&str) -> R) -> R {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                return f(s.as_str());
-            }
+            if let ObjData::Str(ref s) = (*ptr).data { return f(s.as_str()); }
         }
     }
     f("")
@@ -730,9 +608,7 @@ fn mutate_store(handle: MbValue, f: impl FnOnce(&mut ArrayStore)) {
     if let Some(id) = handle.as_int() {
         let id = id as u64;
         ARRAYS.with(|m| {
-            if let Some(s) = m.borrow_mut().get_mut(&id) {
-                f(s);
-            }
+            if let Some(s) = m.borrow_mut().get_mut(&id) { f(s); }
         });
     }
 }
@@ -740,21 +616,23 @@ fn mutate_store(handle: MbValue, f: impl FnOnce(&mut ArrayStore)) {
 fn read_store<R>(handle: MbValue, default: R, f: impl FnOnce(&ArrayStore) -> R) -> R {
     if let Some(id) = handle.as_int() {
         let id = id as u64;
-        return ARRAYS.with(|m| m.borrow().get(&id).map(f).unwrap_or(default));
+        return ARRAYS.with(|m| {
+            m.borrow().get(&id).map(f).unwrap_or(default)
+        });
     }
     default
 }
 
 fn handle_typecode(handle: MbValue) -> Option<char> {
-    handle
-        .as_int()
-        .and_then(|id| ARRAY_TYPECODES.with(|m| m.borrow().get(&(id as u64)).copied()))
+    handle.as_int().and_then(|id| {
+        ARRAY_TYPECODES.with(|m| m.borrow().get(&(id as u64)).copied())
+    })
 }
 
 fn cloned_store(handle: MbValue) -> Option<ArrayStore> {
-    handle
-        .as_int()
-        .and_then(|id| ARRAYS.with(|m| m.borrow().get(&(id as u64)).cloned()))
+    handle.as_int().and_then(|id| {
+        ARRAYS.with(|m| m.borrow().get(&(id as u64)).cloned())
+    })
 }
 
 fn concat_stores(lhs: &ArrayStore, rhs: &ArrayStore) -> Option<ArrayStore> {
@@ -904,10 +782,7 @@ pub fn mb_array_extend(handle: MbValue, iterable: MbValue) -> MbValue {
         let other = id as u64;
         if is_array_handle(other) {
             let items: Vec<MbValue> = ARRAYS.with(|m| {
-                m.borrow()
-                    .get(&other)
-                    .map(|s| s.to_list())
-                    .unwrap_or_default()
+                m.borrow().get(&other).map(|s| s.to_list()).unwrap_or_default()
             });
             mutate_store(handle, |s| {
                 for v in items {
@@ -1074,11 +949,7 @@ pub fn mb_array_insert(handle: MbValue, idx: MbValue, val: MbValue) -> MbValue {
     let raw_i = idx.as_int_pyint().unwrap_or(0);
     mutate_store(handle, |s| {
         let len = s.len() as i64;
-        let i = if raw_i < 0 {
-            (len + raw_i).max(0)
-        } else {
-            raw_i.min(len)
-        };
+        let i = if raw_i < 0 { (len + raw_i).max(0) } else { raw_i.min(len) };
         insert_value(s, i as usize, val);
     });
     MbValue::none()
@@ -1092,9 +963,7 @@ fn insert_value(s: &mut ArrayStore, i: usize, v: MbValue) {
         return;
     }
     let n = s.len();
-    if i >= n {
-        return;
-    }
+    if i >= n { return; }
     match s {
         ArrayStore::I8(v) => v[i..].rotate_right(1),
         ArrayStore::U8(v) => v[i..].rotate_right(1),
@@ -1121,11 +990,7 @@ pub fn mb_array_pop(handle: MbValue, idx: MbValue) -> MbValue {
             *invalid.borrow_mut() = true;
             return;
         }
-        let i = if raw_i < 0 {
-            (n as i64 + raw_i) as usize
-        } else {
-            raw_i as usize
-        };
+        let i = if raw_i < 0 { (n as i64 + raw_i) as usize } else { raw_i as usize };
         if i >= n {
             *invalid.borrow_mut() = true;
             return;
@@ -1142,39 +1007,17 @@ pub fn mb_array_pop(handle: MbValue, idx: MbValue) -> MbValue {
 
 fn remove_at(s: &mut ArrayStore, i: usize) {
     match s {
-        ArrayStore::I8(v) => {
-            v.remove(i);
-        }
-        ArrayStore::U8(v) => {
-            v.remove(i);
-        }
-        ArrayStore::Unicode(v) => {
-            v.remove(i);
-        }
-        ArrayStore::I16(v) => {
-            v.remove(i);
-        }
-        ArrayStore::U16(v) => {
-            v.remove(i);
-        }
-        ArrayStore::I32(v) => {
-            v.remove(i);
-        }
-        ArrayStore::U32(v) => {
-            v.remove(i);
-        }
-        ArrayStore::I64(v) => {
-            v.remove(i);
-        }
-        ArrayStore::U64(v) => {
-            v.remove(i);
-        }
-        ArrayStore::F32(v) => {
-            v.remove(i);
-        }
-        ArrayStore::F64(v) => {
-            v.remove(i);
-        }
+        ArrayStore::I8(v) => { v.remove(i); }
+        ArrayStore::U8(v) => { v.remove(i); }
+        ArrayStore::Unicode(v) => { v.remove(i); }
+        ArrayStore::I16(v) => { v.remove(i); }
+        ArrayStore::U16(v) => { v.remove(i); }
+        ArrayStore::I32(v) => { v.remove(i); }
+        ArrayStore::U32(v) => { v.remove(i); }
+        ArrayStore::I64(v) => { v.remove(i); }
+        ArrayStore::U64(v) => { v.remove(i); }
+        ArrayStore::F32(v) => { v.remove(i); }
+        ArrayStore::F64(v) => { v.remove(i); }
     }
 }
 
@@ -1247,23 +1090,13 @@ fn clamp_slice_index(i: i64, len: i64) -> i64 {
 fn slice_indices(len: i64, start: MbValue, stop: MbValue, step: i64) -> Vec<usize> {
     let (start, stop) = if step > 0 {
         (
-            start
-                .as_int_pyint()
-                .map(|i| clamp_slice_index(i, len))
-                .unwrap_or(0),
-            stop.as_int_pyint()
-                .map(|i| clamp_slice_index(i, len))
-                .unwrap_or(len),
+            start.as_int_pyint().map(|i| clamp_slice_index(i, len)).unwrap_or(0),
+            stop.as_int_pyint().map(|i| clamp_slice_index(i, len)).unwrap_or(len),
         )
     } else {
         (
-            start
-                .as_int_pyint()
-                .map(|i| clamp_slice_index(i, len))
-                .unwrap_or(len - 1),
-            stop.as_int_pyint()
-                .map(|i| clamp_slice_index(i, len))
-                .unwrap_or(-1),
+            start.as_int_pyint().map(|i| clamp_slice_index(i, len)).unwrap_or(len - 1),
+            stop.as_int_pyint().map(|i| clamp_slice_index(i, len)).unwrap_or(-1),
         )
     };
     let mut out = Vec::new();
@@ -1307,12 +1140,7 @@ fn slice_store(store: &ArrayStore, indices: &[usize]) -> ArrayStore {
     }
 }
 
-fn replace_store_range(
-    target: &mut ArrayStore,
-    start: usize,
-    end: usize,
-    replacement: &ArrayStore,
-) -> bool {
+fn replace_store_range(target: &mut ArrayStore, start: usize, end: usize, replacement: &ArrayStore) -> bool {
     macro_rules! replace_variant {
         ($target:ident, $replacement:ident) => {{
             $target.splice(start..end, $replacement.iter().copied());
@@ -1320,78 +1148,34 @@ fn replace_store_range(
         }};
     }
     match (target, replacement) {
-        (ArrayStore::I8(target), ArrayStore::I8(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::U8(target), ArrayStore::U8(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::Unicode(target), ArrayStore::Unicode(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::I16(target), ArrayStore::I16(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::U16(target), ArrayStore::U16(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::I32(target), ArrayStore::I32(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::U32(target), ArrayStore::U32(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::I64(target), ArrayStore::I64(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::U64(target), ArrayStore::U64(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::F32(target), ArrayStore::F32(replacement)) => {
-            replace_variant!(target, replacement)
-        }
-        (ArrayStore::F64(target), ArrayStore::F64(replacement)) => {
-            replace_variant!(target, replacement)
-        }
+        (ArrayStore::I8(target), ArrayStore::I8(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::U8(target), ArrayStore::U8(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::Unicode(target), ArrayStore::Unicode(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::I16(target), ArrayStore::I16(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::U16(target), ArrayStore::U16(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::I32(target), ArrayStore::I32(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::U32(target), ArrayStore::U32(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::I64(target), ArrayStore::I64(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::U64(target), ArrayStore::U64(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::F32(target), ArrayStore::F32(replacement)) => replace_variant!(target, replacement),
+        (ArrayStore::F64(target), ArrayStore::F64(replacement)) => replace_variant!(target, replacement),
         _ => false,
     }
 }
 
 fn delete_store_range(store: &mut ArrayStore, start: usize, end: usize) {
     match store {
-        ArrayStore::I8(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::U8(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::Unicode(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::I16(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::U16(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::I32(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::U32(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::I64(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::U64(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::F32(items) => {
-            items.drain(start..end);
-        }
-        ArrayStore::F64(items) => {
-            items.drain(start..end);
-        }
+        ArrayStore::I8(items) => { items.drain(start..end); }
+        ArrayStore::U8(items) => { items.drain(start..end); }
+        ArrayStore::Unicode(items) => { items.drain(start..end); }
+        ArrayStore::I16(items) => { items.drain(start..end); }
+        ArrayStore::U16(items) => { items.drain(start..end); }
+        ArrayStore::I32(items) => { items.drain(start..end); }
+        ArrayStore::U32(items) => { items.drain(start..end); }
+        ArrayStore::I64(items) => { items.drain(start..end); }
+        ArrayStore::U64(items) => { items.drain(start..end); }
+        ArrayStore::F32(items) => { items.drain(start..end); }
+        ArrayStore::F64(items) => { items.drain(start..end); }
     }
 }
 
@@ -1455,14 +1239,8 @@ pub fn mb_array_setitem(handle: MbValue, key: MbValue, value: MbValue) -> MbValu
         let replaced = RefCell::new(true);
         mutate_store(handle, |s| {
             let len = s.len() as i64;
-            let s_idx = start
-                .as_int_pyint()
-                .map(|i| clamp_slice_index(i, len))
-                .unwrap_or(0) as usize;
-            let e_idx = stop
-                .as_int_pyint()
-                .map(|i| clamp_slice_index(i, len))
-                .unwrap_or(len) as usize;
+            let s_idx = start.as_int_pyint().map(|i| clamp_slice_index(i, len)).unwrap_or(0) as usize;
+            let e_idx = stop.as_int_pyint().map(|i| clamp_slice_index(i, len)).unwrap_or(len) as usize;
             let s_idx = s_idx.min(s.len());
             let e_idx = e_idx.min(s.len()).max(s_idx);
             if !replace_store_range(s, s_idx, e_idx, &replacement) {
@@ -1485,14 +1263,8 @@ pub fn mb_array_delitem(handle: MbValue, key: MbValue) -> MbValue {
         mutate_store(handle, |s| {
             if st == 1 {
                 let len = s.len() as i64;
-                let s_idx = start
-                    .as_int_pyint()
-                    .map(|i| clamp_slice_index(i, len))
-                    .unwrap_or(0) as usize;
-                let e_idx = stop
-                    .as_int_pyint()
-                    .map(|i| clamp_slice_index(i, len))
-                    .unwrap_or(len) as usize;
+                let s_idx = start.as_int_pyint().map(|i| clamp_slice_index(i, len)).unwrap_or(0) as usize;
+                let e_idx = stop.as_int_pyint().map(|i| clamp_slice_index(i, len)).unwrap_or(len) as usize;
                 let s_idx = s_idx.min(s.len());
                 let e_idx = e_idx.min(s.len()).max(s_idx);
                 delete_store_range(s, s_idx, e_idx);
@@ -1537,10 +1309,7 @@ pub fn mb_array_eq_bool(lhs: MbValue, rhs: MbValue) -> Option<bool> {
     if lhs_store.len() != rhs_store.len() {
         return Some(false);
     }
-    Some(
-        (0..lhs_store.len())
-            .all(|i| values_equal(lhs_store.get_as_value(i), rhs_store.get_as_value(i))),
-    )
+    Some((0..lhs_store.len()).all(|i| values_equal(lhs_store.get_as_value(i), rhs_store.get_as_value(i))))
 }
 
 pub fn mb_array_lt_bool(lhs: MbValue, rhs: MbValue) -> Option<bool> {
@@ -1618,9 +1387,7 @@ mod tests {
     fn bytes_data(val: MbValue) -> Vec<u8> {
         if let Some(ptr) = val.as_ptr() {
             unsafe {
-                if let ObjData::Bytes(ref b) = (*ptr).data {
-                    return b.clone();
-                }
+                if let ObjData::Bytes(ref b) = (*ptr).data { return b.clone(); }
             }
         }
         vec![]
@@ -1650,18 +1417,9 @@ mod tests {
         let h = mb_array_new(s("i"), MbValue::none());
         assert_eq!(mb_array_itemsize_attr(h).as_int(), Some(4));
         let tc = mb_array_typecode_attr(h);
-        assert_eq!(
-            unsafe {
-                tc.as_ptr().map(|p| {
-                    if let ObjData::Str(ref s) = (*p).data {
-                        s.clone()
-                    } else {
-                        String::new()
-                    }
-                })
-            },
-            Some("i".to_string())
-        );
+        assert_eq!(unsafe {
+            tc.as_ptr().map(|p| if let ObjData::Str(ref s) = (*p).data { s.clone() } else { String::new() })
+        }, Some("i".to_string()));
 
         let hd = mb_array_new(s("d"), MbValue::none());
         assert_eq!(mb_array_itemsize_attr(hd).as_int(), Some(8));
@@ -1675,8 +1433,10 @@ mod tests {
         let h = mb_array_new(s("i"), MbValue::none());
         // 4 int32 elements: 1, -2, 3, -4 → 16 bytes little-endian
         let src_bytes: Vec<u8> = vec![
-            1, 0, 0, 0, 254, 255, 255, 255, // -2 as i32 LE
-            3, 0, 0, 0, 252, 255, 255, 255, // -4 as i32 LE
+            1, 0, 0, 0,
+            254, 255, 255, 255, // -2 as i32 LE
+            3, 0, 0, 0,
+            252, 255, 255, 255, // -4 as i32 LE
         ];
         let buf = MbValue::from_ptr(MbObject::new_bytes(src_bytes.clone()));
         mb_array_frombytes(h, buf);
@@ -1722,10 +1482,7 @@ mod tests {
         mb_array_frombytes(h, buf);
         // After byteswap: 0x0201 → 0x0102, 0x0403 → 0x0304
         mb_array_byteswap(h);
-        assert_eq!(
-            bytes_data(mb_array_tobytes(h)),
-            vec![0x02, 0x01, 0x04, 0x03]
-        );
+        assert_eq!(bytes_data(mb_array_tobytes(h)), vec![0x02, 0x01, 0x04, 0x03]);
     }
 
     #[test]
@@ -1751,70 +1508,37 @@ mod tests {
     #[test]
     fn test_insert_pop_remove_reverse() {
         let h = mb_array_new(s("i"), MbValue::none());
-        mb_array_extend(
-            h,
-            MbValue::from_ptr(MbObject::new_list(vec![
-                MbValue::from_int(1),
-                MbValue::from_int(2),
-                MbValue::from_int(3),
-            ])),
-        );
+        mb_array_extend(h, MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
+        ])));
         mb_array_insert(h, MbValue::from_int(1), MbValue::from_int(99));
         let items = list_items(mb_array_tolist(h));
-        assert_eq!(
-            items
-                .iter()
-                .map(|v| v.as_int().unwrap())
-                .collect::<Vec<_>>(),
-            vec![1, 99, 2, 3]
-        );
+        assert_eq!(items.iter().map(|v| v.as_int().unwrap()).collect::<Vec<_>>(), vec![1, 99, 2, 3]);
 
         let popped = mb_array_pop(h, MbValue::from_int(-1));
         assert_eq!(popped.as_int(), Some(3));
 
         mb_array_remove(h, MbValue::from_int(99));
         let items = list_items(mb_array_tolist(h));
-        assert_eq!(
-            items
-                .iter()
-                .map(|v| v.as_int().unwrap())
-                .collect::<Vec<_>>(),
-            vec![1, 2]
-        );
+        assert_eq!(items.iter().map(|v| v.as_int().unwrap()).collect::<Vec<_>>(), vec![1, 2]);
 
         mb_array_reverse(h);
         let items = list_items(mb_array_tolist(h));
-        assert_eq!(
-            items
-                .iter()
-                .map(|v| v.as_int().unwrap())
-                .collect::<Vec<_>>(),
-            vec![2, 1]
-        );
+        assert_eq!(items.iter().map(|v| v.as_int().unwrap()).collect::<Vec<_>>(), vec![2, 1]);
     }
 
     #[test]
     fn test_buffer_info_returns_handle_and_len() {
         let h = mb_array_new(s("i"), MbValue::none());
-        mb_array_extend(
-            h,
-            MbValue::from_ptr(MbObject::new_list(vec![
-                MbValue::from_int(1),
-                MbValue::from_int(2),
-            ])),
-        );
+        mb_array_extend(h, MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(1), MbValue::from_int(2),
+        ])));
         let info = mb_array_buffer_info(h);
         let items = if let Some(ptr) = info.as_ptr() {
             unsafe {
-                if let ObjData::Tuple(ref v) = (*ptr).data {
-                    v.clone()
-                } else {
-                    vec![]
-                }
+                if let ObjData::Tuple(ref v) = (*ptr).data { v.clone() } else { vec![] }
             }
-        } else {
-            vec![]
-        };
+        } else { vec![] };
         assert_eq!(items.len(), 2);
         assert_eq!(items[1].as_int(), Some(2));
     }
@@ -1822,23 +1546,13 @@ mod tests {
     #[test]
     fn test_extend_from_array_handle() {
         let src = mb_array_new(s("i"), MbValue::none());
-        mb_array_extend(
-            src,
-            MbValue::from_ptr(MbObject::new_list(vec![
-                MbValue::from_int(10),
-                MbValue::from_int(20),
-            ])),
-        );
+        mb_array_extend(src, MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(10), MbValue::from_int(20),
+        ])));
         let dst = mb_array_new(s("i"), MbValue::none());
         mb_array_extend(dst, src);
         let items = list_items(mb_array_tolist(dst));
-        assert_eq!(
-            items
-                .iter()
-                .map(|v| v.as_int().unwrap())
-                .collect::<Vec<_>>(),
-            vec![10, 20]
-        );
+        assert_eq!(items.iter().map(|v| v.as_int().unwrap()).collect::<Vec<_>>(), vec![10, 20]);
     }
 
     #[test]
@@ -1854,8 +1568,7 @@ mod tests {
     #[test]
     fn test_initializer_from_list() {
         let init = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(5),
-            MbValue::from_int(6),
+            MbValue::from_int(5), MbValue::from_int(6),
         ]));
         let h = mb_array_new(s("i"), init);
         assert_eq!(mb_array_len(h).as_int(), Some(2));
@@ -1865,8 +1578,7 @@ mod tests {
     fn test_fromlist_appends() {
         let h = mb_array_new(s("i"), MbValue::none());
         let lst = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(11),
-            MbValue::from_int(22),
+            MbValue::from_int(11), MbValue::from_int(22),
         ]));
         mb_array_fromlist(h, lst);
         assert_eq!(mb_array_len(h).as_int(), Some(2));

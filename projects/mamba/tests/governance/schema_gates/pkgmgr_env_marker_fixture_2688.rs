@@ -27,16 +27,9 @@ fn manifest_path() -> PathBuf {
         .join("manifest.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_env_marker_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -67,7 +60,7 @@ fn pkgmgr_env_marker_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_env_marker_block_pins_python_version_expression() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let marker = doc
         .get("marker")
         .and_then(|v| v.as_table())
@@ -96,7 +89,7 @@ fn pkgmgr_env_marker_block_pins_python_version_expression() {
 
 #[test]
 fn pkgmgr_env_marker_candidates_split_included_vs_excluded() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let cand = doc
         .get("candidates")
         .and_then(|v| v.as_table())
@@ -135,14 +128,11 @@ fn pkgmgr_env_marker_candidates_split_included_vs_excluded() {
 
 #[test]
 fn pkgmgr_env_marker_record_assertion_pins_lockfile_and_summary() {
-    let doc = load_toml(&manifest_path());
-    let rec = doc
-        .get("marker_record_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[marker_record_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let rec = doc.get("marker_record_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[marker_record_assertion]` block \
          (acceptance: \"Marker result is recorded in lockfile or resolver summary.\")",
-        );
+    );
 
     assert_eq!(
         rec.get("recorded_in_lockfile").and_then(|v| v.as_bool()),
@@ -150,8 +140,7 @@ fn pkgmgr_env_marker_record_assertion_pins_lockfile_and_summary() {
         "`[marker_record_assertion].recorded_in_lockfile` must be true"
     );
     assert_eq!(
-        rec.get("recorded_in_resolver_summary")
-            .and_then(|v| v.as_bool()),
+        rec.get("recorded_in_resolver_summary").and_then(|v| v.as_bool()),
         Some(true),
         "`[marker_record_assertion].recorded_in_resolver_summary` must be true"
     );
@@ -176,7 +165,7 @@ fn pkgmgr_env_marker_record_assertion_pins_lockfile_and_summary() {
 
 #[test]
 fn pkgmgr_env_marker_lockfile_includes_modern_excludes_legacy() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let lock = doc
         .get("lockfile_assertion")
         .and_then(|v| v.as_table())
@@ -199,8 +188,7 @@ fn pkgmgr_env_marker_lockfile_includes_modern_excludes_legacy() {
         "`[lockfile_assertion].must_contain_dependency` must equal the included candidate"
     );
     assert_eq!(
-        lock.get("must_not_contain_dependency")
-            .and_then(|v| v.as_str()),
+        lock.get("must_not_contain_dependency").and_then(|v| v.as_str()),
         Some(excluded),
         "`[lockfile_assertion].must_not_contain_dependency` must equal the excluded candidate"
     );
@@ -208,14 +196,11 @@ fn pkgmgr_env_marker_lockfile_includes_modern_excludes_legacy() {
 
 #[test]
 fn pkgmgr_env_marker_wrong_inclusion_guard_fails_loud() {
-    let doc = load_toml(&manifest_path());
-    let guard = doc
-        .get("wrong_inclusion_guard")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[wrong_inclusion_guard]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let guard = doc.get("wrong_inclusion_guard").and_then(|v| v.as_table()).expect(
+        "missing `[wrong_inclusion_guard]` block \
          (acceptance: \"Wrong marker inclusion fails the test.\")",
-        );
+    );
 
     for flag in &[
         "fail_if_excluded_present_in_lockfile",
@@ -232,14 +217,11 @@ fn pkgmgr_env_marker_wrong_inclusion_guard_fails_loud() {
 
 #[test]
 fn pkgmgr_env_marker_runtime_visibility_names_pyver_impl_platform() {
-    let doc = load_toml(&manifest_path());
-    let vis = doc
-        .get("runtime_visibility")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[runtime_visibility]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let vis = doc.get("runtime_visibility").and_then(|v| v.as_table()).expect(
+        "missing `[runtime_visibility]` block \
          (acceptance: \"Current runtime metadata used for marker evaluation is visible.\")",
-        );
+    );
 
     for flag in &[
         "summary_must_name_python_version",
@@ -256,7 +238,7 @@ fn pkgmgr_env_marker_runtime_visibility_names_pyver_impl_platform() {
 
 #[test]
 fn pkgmgr_env_marker_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -278,7 +260,7 @@ fn pkgmgr_env_marker_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_env_marker_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -309,14 +291,13 @@ fn pkgmgr_env_marker_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_env_marker_pins_out_of_scope_per_issue_2688() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("every_pep508_marker_expression")
-            .and_then(|v| v.as_bool()),
+        oos.get("every_pep508_marker_expression").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].every_pep508_marker_expression` must be true \
          (issue text: \"Out of scope: every PEP 508 marker expression.\")"

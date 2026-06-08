@@ -35,6 +35,9 @@ impl StoreManager {
         if !pkg_dir.exists() {
             return false;
         }
+        if !pkg_dir.join("package.json").exists() {
+            return false;
+        }
         let integrity_file = pkg_dir.join(".jet-integrity");
         // GH #3445 — split silent NotFound (legitimate missing-cache;
         // mirrors the !pkg_dir.exists() early-out above) from any other
@@ -102,6 +105,9 @@ impl StoreManager {
         // Extract tarball
         extract_tarball(tarball, &package_dir)
             .with_context(|| format!("Failed to extract tarball for {}@{}", name, version))?;
+        normalize_extracted_package_root(&package_dir).with_context(|| {
+            format!("Failed to normalize package root for {}@{}", name, version)
+        })?;
 
         // GH #3568 — the .jet-integrity marker is what `is_package_installed`
         // uses to short-circuit re-installs. If this write silently fails the
@@ -221,17 +227,8 @@ impl StoreManager {
             }
 
             #[cfg(unix)]
-            {
-                std::os::unix::fs::symlink(&target, &link)
-                    .with_context(|| format!("Failed to symlink bin '{}'", cmd))?;
-                // Ensure the target is executable
-                use std::os::unix::fs::PermissionsExt;
-                if target.exists() {
-                    let mut perms = std::fs::metadata(&target)?.permissions();
-                    perms.set_mode(perms.mode() | 0o111);
-                    std::fs::set_permissions(&target, perms)?;
-                }
-            }
+            write_unix_bin_shim(&link, name, rel_path, &target)
+                .with_context(|| format!("Failed to write bin shim '{}'", cmd))?;
             #[cfg(not(unix))]
             {
                 // On Windows, copy the file instead
@@ -812,6 +809,46 @@ fn extract_tarball(tarball: &[u8], dest: &Path) -> Result<()> {
     Ok(())
 }
 
+fn normalize_extracted_package_root(dest: &Path) -> Result<()> {
+    if dest.join("package.json").exists() {
+        return Ok(());
+    }
+
+    let mut dirs = Vec::new();
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dest)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            dirs.push(path);
+        } else {
+            files.push(path);
+        }
+    }
+
+    if dirs.len() == 1 && files.is_empty() && dirs[0].join("package.json").exists() {
+        for child in std::fs::read_dir(&dirs[0])? {
+            let child = child?;
+            let target = dest.join(child.file_name());
+            if target.exists() {
+                anyhow::bail!(
+                    "cannot normalize extracted package root {}; target already exists: {}",
+                    dirs[0].display(),
+                    target.display()
+                );
+            }
+            std::fs::rename(child.path(), target)?;
+        }
+        std::fs::remove_dir(&dirs[0])?;
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "extracted package is missing package.json at store root {}",
+        dest.display()
+    )
+}
+
 /// Recursively hardlink all files from `src` into `dest`.
 /// Directories are created; regular files are hardlinked.
 #[allow(dead_code)]
@@ -837,6 +874,56 @@ fn hardlink_dir(src: &Path, dest: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn write_unix_bin_shim(
+    link: &Path,
+    package_name: &str,
+    rel_path: &str,
+    target: &Path,
+) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let target_from_bin_dir = format!("../{}/{}", package_name, rel_path);
+    let node_bin = is_node_bin_target(target);
+    let exec_line = if node_bin {
+        format!("exec node --preserve-symlinks-main \"$basedir/$target\" \"$@\"\n",)
+    } else {
+        "exec \"$basedir/$target\" \"$@\"\n".to_string()
+    };
+    let shim = format!(
+        "#!/bin/sh\n\
+         basedir=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n\
+         target={}\n\
+         {}",
+        shell_single_quote(&target_from_bin_dir),
+        exec_line
+    );
+
+    std::fs::write(link, shim)?;
+    let mut perms = std::fs::metadata(link)?.permissions();
+    perms.set_mode(perms.mode() | 0o111);
+    std::fs::set_permissions(link, perms)?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_node_bin_target(target: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(target) else {
+        return false;
+    };
+    let first_line = bytes
+        .split(|byte| *byte == b'\n')
+        .next()
+        .unwrap_or(&[])
+        .to_ascii_lowercase();
+    first_line.starts_with(b"#!") && first_line.windows(4).any(|window| window == b"node")
+}
+
+#[cfg(unix)]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
@@ -866,10 +953,35 @@ mod tests {
         // Manually create the package dir + integrity file
         let pkg_dir = store.get_package_path("bar", "2.0.0");
         std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"bar","version":"2.0.0"}"#,
+        )
+        .unwrap();
         std::fs::write(pkg_dir.join(".jet-integrity"), "sha1hash").unwrap();
 
         assert!(store.has_package("bar", "2.0.0", "sha1hash"));
         assert!(!store.has_package("bar", "2.0.0", "wrong"));
+    }
+
+    #[test]
+    fn gh4160_has_package_rejects_integrity_without_root_package_json() {
+        let dir = tempdir().unwrap();
+        let store = StoreManager::new(dir.path().to_path_buf()).unwrap();
+
+        let pkg_dir = store.get_package_path("@types/react", "19.2.17");
+        std::fs::create_dir_all(pkg_dir.join("react")).unwrap();
+        std::fs::write(
+            pkg_dir.join("react/package.json"),
+            r#"{"name":"@types/react"}"#,
+        )
+        .unwrap();
+        std::fs::write(pkg_dir.join(".jet-integrity"), "sha1hash").unwrap();
+
+        assert!(
+            !store.has_package("@types/react", "19.2.17", "sha1hash"),
+            "a stale scoped-package store entry with package.json under a nested top-level dir must reinstall"
+        );
     }
 
     #[test]
@@ -907,6 +1019,118 @@ mod tests {
         assert!(extracted.exists());
         let text = std::fs::read_to_string(extracted).unwrap();
         assert_eq!(text, "console.log('hello');");
+    }
+
+    #[test]
+    fn gh4160_install_package_normalizes_single_top_level_tarball_dir() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+
+        let dir = tempdir().unwrap();
+        let store = StoreManager::new(dir.path().to_path_buf()).unwrap();
+
+        let mut builder = tar::Builder::new(Vec::new());
+        let package_json = br#"{"name":"@types/react","version":"19.2.17"}"#;
+        let mut header = tar::Header::new_gnu();
+        header.set_size(package_json.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "react/package.json", &package_json[..])
+            .unwrap();
+        let tar_bytes = builder.into_inner().unwrap();
+
+        let mut gz = GzEncoder::new(Vec::new(), Compression::fast());
+        gz.write_all(&tar_bytes).unwrap();
+        let tgz_bytes = gz.finish().unwrap();
+
+        store
+            .install_package(
+                "@types/react",
+                "19.2.17",
+                &tgz_bytes,
+                "0000000000000000000000000000000000000000",
+            )
+            .unwrap();
+
+        let pkg_dir = store.get_package_path("@types/react", "19.2.17");
+        assert!(pkg_dir.join("package.json").exists());
+        assert!(!pkg_dir.join("react/package.json").exists());
+        assert!(store.has_package(
+            "@types/react",
+            "19.2.17",
+            "0000000000000000000000000000000000000000"
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gh4160_node_bin_shim_preserves_fixture_node_modules_resolution() {
+        if !std::process::Command::new("node")
+            .arg("--version")
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let store = StoreManager::new(dir.path().join("store")).unwrap();
+        let node_modules = dir.path().join("project/node_modules");
+        std::fs::create_dir_all(&node_modules).unwrap();
+
+        let webpack_dir = store.get_package_path("webpack", "1.0.0");
+        std::fs::create_dir_all(webpack_dir.join("bin")).unwrap();
+        std::fs::write(
+            webpack_dir.join("package.json"),
+            r#"{"name":"webpack","version":"1.0.0","bin":{"webpack":"bin/webpack.js"}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            webpack_dir.join("bin/webpack.js"),
+            r#"#!/usr/bin/env node
+const fs = require("fs");
+const path = require("path");
+let dir = __dirname;
+while (true) {
+  if (fs.existsSync(path.join(dir, "node_modules", "webpack-cli"))) {
+    console.log("found fixture-local cli");
+    process.exit(0);
+  }
+  const next = path.dirname(dir);
+  if (next === dir) break;
+  dir = next;
+}
+console.error(`missing fixture-local cli from ${__dirname}`);
+process.exit(1);
+"#,
+        )
+        .unwrap();
+        store
+            .link_package("webpack", "1.0.0", &node_modules)
+            .unwrap();
+        std::fs::create_dir_all(node_modules.join("webpack-cli")).unwrap();
+
+        let mut bins = std::collections::HashMap::new();
+        bins.insert("webpack".to_string(), "bin/webpack.js".to_string());
+        store.link_bins("webpack", &bins, &node_modules).unwrap();
+
+        let output = std::process::Command::new(node_modules.join(".bin/webpack"))
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "node bin shim must preserve fixture-local resolution; stdout={}; stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("found fixture-local cli"),
+            "expected the bin script to find the fixture-local peer"
+        );
     }
 
     // ── T47–T54: Store Nested Node Modules ──────────────────────────────────
@@ -1241,6 +1465,11 @@ mod tests {
         let store = StoreManager::new(dir.path().to_path_buf()).unwrap();
         let pkg_dir = store.get_package_path("ok", "1.0.0");
         std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"ok","version":"1.0.0"}"#,
+        )
+        .unwrap();
         std::fs::write(pkg_dir.join(".jet-integrity"), "sha1abc\n").unwrap();
         assert!(store.has_package("ok", "1.0.0", "sha1abc"));
     }

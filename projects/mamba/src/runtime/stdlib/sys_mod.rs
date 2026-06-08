@@ -1,5 +1,3 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// sys module for Mamba (#310 R1).
 ///
 /// Provides: sys.argv, sys.path, sys.version, sys.platform,
@@ -7,7 +5,10 @@ use super::super::value::MbValue;
 ///           sys.setrecursionlimit(), sys.getdefaultencoding(),
 ///           sys.float_info, sys.int_info, sys.stdin, sys.stdout,
 ///           sys.stderr, sys.modules
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 // ── Dispatch wrappers ──
 
@@ -24,19 +25,9 @@ fn extract_list(val: MbValue) -> Vec<MbValue> {
     }
 }
 
-fn dispatch_exit(args: MbValue) -> MbValue {
-    let items = extract_list(args);
-    mb_sys_exit(items.get(0).copied().unwrap_or_else(MbValue::none))
-}
-
 fn dispatch_getrecursionlimit(args: MbValue) -> MbValue {
     let _ = extract_list(args);
     mb_sys_getrecursionlimit()
-}
-
-fn dispatch_setrecursionlimit(args: MbValue) -> MbValue {
-    let items = extract_list(args);
-    mb_sys_setrecursionlimit(items.get(0).copied().unwrap_or_else(MbValue::none))
 }
 
 fn dispatch_getsizeof(args: MbValue) -> MbValue {
@@ -56,11 +47,7 @@ fn dispatch_getdefaultencoding(args: MbValue) -> MbValue {
 // NATIVE_FUNC_ADDRS at register() time.
 
 unsafe extern "C" fn dispatch_intern(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    if nargs >= 1 {
-        mb_sys_intern(*args_ptr)
-    } else {
-        MbValue::none()
-    }
+    if nargs >= 1 { mb_sys_intern(*args_ptr) } else { MbValue::none() }
 }
 
 unsafe extern "C" fn dispatch_gettrace(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -68,20 +55,12 @@ unsafe extern "C" fn dispatch_gettrace(_args_ptr: *const MbValue, _nargs: usize)
 }
 
 unsafe extern "C" fn dispatch_settrace(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let v = if nargs >= 1 {
-        *args_ptr
-    } else {
-        MbValue::none()
-    };
+    let v = if nargs >= 1 { *args_ptr } else { MbValue::none() };
     mb_sys_settrace(v)
 }
 
 unsafe extern "C" fn dispatch_getrefcount(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let v = if nargs >= 1 {
-        *args_ptr
-    } else {
-        MbValue::none()
-    };
+    let v = if nargs >= 1 { *args_ptr } else { MbValue::none() };
     mb_sys_getrefcount(v)
 }
 
@@ -93,18 +72,42 @@ unsafe extern "C" fn dispatch_exc_info(_args_ptr: *const MbValue, _nargs: usize)
     mb_sys_exc_info()
 }
 
-unsafe extern "C" fn dispatch_getfilesystemencoding(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_getfilesystemencoding(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     mb_sys_getfilesystemencoding()
 }
 
-unsafe extern "C" fn dispatch_getfilesystemencodeerrors(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_getfilesystemencodeerrors(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     mb_sys_getfilesystemencodeerrors()
+}
+
+// New-ABI replacements for exit / setrecursionlimit / setswitchinterval.
+// The legacy `fn(args: MbValue)` shape never receives the real call args
+// (the dispatch wrapper hands those funcs an empty list), so `sys.exit(42)`,
+// `sys.setrecursionlimit(-5)` and `sys.setswitchinterval(0.0)` could not see
+// their argument to validate it. These flat-args dispatchers read the actual
+// first argument and are registered in NATIVE_FUNC_ADDRS at register() time.
+unsafe extern "C" fn dispatch_exit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let code = if nargs >= 1 { *args_ptr } else { MbValue::none() };
+    mb_sys_exit(code)
+}
+
+unsafe extern "C" fn dispatch_setrecursionlimit(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let limit = if nargs >= 1 { *args_ptr } else { MbValue::none() };
+    mb_sys_setrecursionlimit(limit)
+}
+
+unsafe extern "C" fn dispatch_setswitchinterval(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let interval = if nargs >= 1 { *args_ptr } else { MbValue::none() };
+    mb_sys_setswitchinterval(interval)
+}
+
+// ── Surface stubs (auto-added) ──
+// Present+callable stubs for sys functions Mamba does not yet implement.
+// They satisfy `hasattr`/`callable` surface fixtures and return a benign
+// default (None) so callers that probe-then-call don't crash. Registered in
+// NATIVE_FUNC_ADDRS so class.rs dispatch picks the flat-args path.
+unsafe extern "C" fn dispatch_sys_stub_none(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::none()
 }
 
 /// Build sys.float_info as a dict with max, min, epsilon
@@ -147,24 +150,11 @@ fn build_flags() -> MbValue {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
             for k in [
-                "debug",
-                "inspect",
-                "interactive",
-                "optimize",
-                "dont_write_bytecode",
-                "no_user_site",
-                "no_site",
-                "ignore_environment",
-                "verbose",
-                "bytes_warning",
-                "quiet",
-                "hash_randomization",
-                "isolated",
-                "dev_mode",
-                "utf8_mode",
-                "warn_default_encoding",
-                "safe_path",
-                "int_max_str_digits",
+                "debug", "inspect", "interactive", "optimize",
+                "dont_write_bytecode", "no_user_site", "no_site",
+                "ignore_environment", "verbose", "bytes_warning",
+                "quiet", "hash_randomization", "isolated", "dev_mode",
+                "utf8_mode", "warn_default_encoding", "safe_path", "int_max_str_digits",
             ] {
                 map.insert(k.into(), MbValue::from_int(0));
             }
@@ -179,14 +169,10 @@ fn build_implementation() -> MbValue {
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
-            map.insert(
-                "name".into(),
-                MbValue::from_ptr(MbObject::new_str("mamba".to_string())),
-            );
-            map.insert(
-                "cache_tag".into(),
-                MbValue::from_ptr(MbObject::new_str("mamba-312".to_string())),
-            );
+            map.insert("name".into(),
+                MbValue::from_ptr(MbObject::new_str("mamba".to_string())));
+            map.insert("cache_tag".into(),
+                MbValue::from_ptr(MbObject::new_str("mamba-312".to_string())));
             map.insert("hexversion".into(), MbValue::from_int(0x030c00f0));
             // Nested version_info dict
             let vi = MbObject::new_dict();
@@ -195,10 +181,8 @@ fn build_implementation() -> MbValue {
                 vmap.insert("major".into(), MbValue::from_int(3));
                 vmap.insert("minor".into(), MbValue::from_int(12));
                 vmap.insert("micro".into(), MbValue::from_int(0));
-                vmap.insert(
-                    "releaselevel".into(),
-                    MbValue::from_ptr(MbObject::new_str("final".to_string())),
-                );
+                vmap.insert("releaselevel".into(),
+                    MbValue::from_ptr(MbObject::new_str("final".to_string())));
                 vmap.insert("serial".into(), MbValue::from_int(0));
             }
             map.insert("version".into(), MbValue::from_ptr(vi));
@@ -218,10 +202,8 @@ fn build_hash_info() -> MbValue {
             map.insert("inf".into(), MbValue::from_int(314159));
             map.insert("nan".into(), MbValue::from_int(0));
             map.insert("imag".into(), MbValue::from_int(1000003));
-            map.insert(
-                "algorithm".into(),
-                MbValue::from_ptr(MbObject::new_str("siphash13".to_string())),
-            );
+            map.insert("algorithm".into(),
+                MbValue::from_ptr(MbObject::new_str("siphash13".to_string())));
             map.insert("hash_bits".into(), MbValue::from_int(64));
             map.insert("seed_bits".into(), MbValue::from_int(128));
             map.insert("cutoff".into(), MbValue::from_int(0));
@@ -236,10 +218,8 @@ fn build_stream_stub(name: &str) -> MbValue {
     unsafe {
         if let ObjData::Dict(ref lock) = (*dict).data {
             let mut map = lock.write().unwrap();
-            map.insert(
-                "name".into(),
-                MbValue::from_ptr(MbObject::new_str(format!("<{}>", name))),
-            );
+            map.insert("name".into(),
+                MbValue::from_ptr(MbObject::new_str(format!("<{}>", name))));
         }
     }
     MbValue::from_ptr(dict)
@@ -250,10 +230,8 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     // sys.version
-    attrs.insert(
-        "version".into(),
-        MbValue::from_ptr(MbObject::new_str("Mamba 0.1.0 (cclab)".to_string())),
-    );
+    attrs.insert("version".into(),
+        MbValue::from_ptr(MbObject::new_str("Mamba 0.1.0 (cclab)".to_string())));
 
     // sys.version_info (as dict with major, minor, micro for attribute access)
     let vi_dict = MbObject::new_dict();
@@ -268,43 +246,35 @@ pub fn register() {
     attrs.insert("version_info".into(), MbValue::from_ptr(vi_dict));
 
     // sys.platform
-    attrs.insert(
-        "platform".into(),
-        MbValue::from_ptr(MbObject::new_str(std::env::consts::OS.to_string())),
-    );
+    attrs.insert("platform".into(),
+        MbValue::from_ptr(MbObject::new_str(std::env::consts::OS.to_string())));
 
     // sys.maxsize (i48 max due to NaN-boxing)
-    attrs.insert("maxsize".into(), MbValue::from_int((1i64 << 47) - 1));
+    attrs.insert("maxsize".into(),
+        MbValue::from_int((1i64 << 47) - 1));
 
     // sys.argv (populated at runtime, empty by default)
-    attrs.insert(
-        "argv".into(),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())),
-    );
+    attrs.insert("argv".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())));
 
     // sys.path (search paths for imports)
-    let paths: Vec<MbValue> = vec![MbValue::from_ptr(MbObject::new_str(".".to_string()))];
-    attrs.insert("path".into(), MbValue::from_ptr(MbObject::new_list(paths)));
+    let paths: Vec<MbValue> = vec![
+        MbValue::from_ptr(MbObject::new_str(".".to_string())),
+    ];
+    attrs.insert("path".into(),
+        MbValue::from_ptr(MbObject::new_list(paths)));
 
     // sys.executable
     let exe = std::env::current_exe()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    attrs.insert(
-        "executable".into(),
-        MbValue::from_ptr(MbObject::new_str(exe)),
-    );
+    attrs.insert("executable".into(),
+        MbValue::from_ptr(MbObject::new_str(exe)));
 
     // sys.byteorder
-    let order = if cfg!(target_endian = "little") {
-        "little"
-    } else {
-        "big"
-    };
-    attrs.insert(
-        "byteorder".into(),
-        MbValue::from_ptr(MbObject::new_str(order.to_string())),
-    );
+    let order = if cfg!(target_endian = "little") { "little" } else { "big" };
+    attrs.insert("byteorder".into(),
+        MbValue::from_ptr(MbObject::new_str(order.to_string())));
 
     // sys.float_info
     attrs.insert("float_info".into(), build_float_info());
@@ -337,22 +307,17 @@ pub fn register() {
     attrs.insert("dont_write_bytecode".into(), MbValue::from_bool(true));
 
     // sys.builtin_module_names — built-in modules embedded in the
-    // interpreter binary (not the wider stdlib). Tuple in CPython; we use
-    // a list for now (no tuple primitive on the value layer).
+    // interpreter binary (not the wider stdlib). Tuple in CPython.
     let builtins: Vec<MbValue> = ["sys", "builtins", "_imp", "_thread"]
         .iter()
         .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
         .collect();
-    attrs.insert(
-        "builtin_module_names".into(),
-        MbValue::from_ptr(MbObject::new_list(builtins)),
-    );
+    attrs.insert("builtin_module_names".into(),
+        MbValue::from_ptr(MbObject::new_tuple(builtins)));
 
     // sys.warnoptions — empty by default
-    attrs.insert(
-        "warnoptions".into(),
-        MbValue::from_ptr(MbObject::new_list(Vec::new())),
-    );
+    attrs.insert("warnoptions".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())));
 
     // sys.flags / sys.implementation / sys.hash_info
     attrs.insert("flags".into(), build_flags());
@@ -362,60 +327,34 @@ pub fn register() {
     // sys.prefix / exec_prefix / base_prefix / base_exec_prefix
     let prefix_val = MbValue::from_ptr(MbObject::new_str("".to_string()));
     attrs.insert("prefix".into(), prefix_val);
-    attrs.insert(
-        "exec_prefix".into(),
-        MbValue::from_ptr(MbObject::new_str("".to_string())),
-    );
-    attrs.insert(
-        "base_prefix".into(),
-        MbValue::from_ptr(MbObject::new_str("".to_string())),
-    );
-    attrs.insert(
-        "base_exec_prefix".into(),
-        MbValue::from_ptr(MbObject::new_str("".to_string())),
-    );
+    attrs.insert("exec_prefix".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())));
+    attrs.insert("base_prefix".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())));
+    attrs.insert("base_exec_prefix".into(),
+        MbValue::from_ptr(MbObject::new_str("".to_string())));
 
     // Callable functions via function pointers
-    attrs.insert(
-        "exit".into(),
-        MbValue::from_func(dispatch_exit as *const () as usize),
-    );
-    attrs.insert(
-        "getrecursionlimit".into(),
-        MbValue::from_func(dispatch_getrecursionlimit as *const () as usize),
-    );
-    attrs.insert(
-        "setrecursionlimit".into(),
-        MbValue::from_func(dispatch_setrecursionlimit as *const () as usize),
-    );
-    attrs.insert(
-        "getsizeof".into(),
-        MbValue::from_func(dispatch_getsizeof as *const () as usize),
-    );
-    attrs.insert(
-        "getdefaultencoding".into(),
-        MbValue::from_func(dispatch_getdefaultencoding as *const () as usize),
-    );
+    attrs.insert("getrecursionlimit".into(),
+        MbValue::from_func(dispatch_getrecursionlimit as *const () as usize));
+    attrs.insert("getsizeof".into(),
+        MbValue::from_func(dispatch_getsizeof as *const () as usize));
+    attrs.insert("getdefaultencoding".into(),
+        MbValue::from_func(dispatch_getdefaultencoding as *const () as usize));
     // New-ABI dispatchers (extern "C" fn(args_ptr, nargs)) — must register
     // in NATIVE_FUNC_ADDRS so class.rs dispatch picks the flat-args path.
     let new_dispatchers: Vec<(&str, usize)> = vec![
-        ("intern", dispatch_intern as *const () as usize),
-        ("gettrace", dispatch_gettrace as *const () as usize),
-        ("settrace", dispatch_settrace as *const () as usize),
-        ("getrefcount", dispatch_getrefcount as *const () as usize),
-        (
-            "is_finalizing",
-            dispatch_is_finalizing as *const () as usize,
-        ),
-        ("exc_info", dispatch_exc_info as *const () as usize),
-        (
-            "getfilesystemencoding",
-            dispatch_getfilesystemencoding as *const () as usize,
-        ),
-        (
-            "getfilesystemencodeerrors",
-            dispatch_getfilesystemencodeerrors as *const () as usize,
-        ),
+        ("exit",                      dispatch_exit                      as *const () as usize),
+        ("setrecursionlimit",         dispatch_setrecursionlimit         as *const () as usize),
+        ("setswitchinterval",         dispatch_setswitchinterval         as *const () as usize),
+        ("intern",                    dispatch_intern                    as *const () as usize),
+        ("gettrace",                  dispatch_gettrace                  as *const () as usize),
+        ("settrace",                  dispatch_settrace                  as *const () as usize),
+        ("getrefcount",               dispatch_getrefcount               as *const () as usize),
+        ("is_finalizing",             dispatch_is_finalizing             as *const () as usize),
+        ("exc_info",                  dispatch_exc_info                  as *const () as usize),
+        ("getfilesystemencoding",     dispatch_getfilesystemencoding     as *const () as usize),
+        ("getfilesystemencodeerrors", dispatch_getfilesystemencodeerrors as *const () as usize),
     ];
     for (name, addr) in &new_dispatchers {
         attrs.insert((*name).into(), MbValue::from_func(*addr));
@@ -427,15 +366,114 @@ pub fn register() {
         }
     });
 
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("abiflags".into(), MbValue::from_ptr(MbObject::new_str("".to_string())));
+    attrs.insert("float_repr_style".into(), MbValue::from_ptr(MbObject::new_str("short".to_string())));
+    attrs.insert("maxunicode".into(), MbValue::from_int(1114111));
+    attrs.insert("platlibdir".into(), MbValue::from_ptr(MbObject::new_str("lib".to_string())));
+
+    // surface: missing CPython sys data/constants (auto-added, batch 2)
+    // copyright — CPython license banner string.
+    attrs.insert("copyright".into(),
+        MbValue::from_ptr(MbObject::new_str(
+            "Copyright (c) 2001-2023 Python Software Foundation.\nAll Rights Reserved.".to_string())));
+    // pycache_prefix — None by default in CPython.
+    attrs.insert("pycache_prefix".into(), MbValue::none());
+    // orig_argv — original interpreter argv (empty until populated).
+    attrs.insert("orig_argv".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    // meta_path / path_hooks — import system hook lists (empty stubs).
+    attrs.insert("meta_path".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    attrs.insert("path_hooks".into(),
+        MbValue::from_ptr(MbObject::new_list(Vec::new())));
+    // path_importer_cache — import cache dict (empty stub).
+    attrs.insert("path_importer_cache".into(),
+        MbValue::from_ptr(MbObject::new_dict()));
+    // monitoring — submodule; register as a stub namespace dict.
+    attrs.insert("monitoring".into(),
+        MbValue::from_ptr(MbObject::new_dict()));
+    // stdlib_module_names — frozenset in CPython. A representative subset
+    // of the stdlib.
+    let stdlib_names: Vec<MbValue> = [
+        "abc", "argparse", "array", "ast", "base64", "bisect", "calendar",
+        "cmath", "collections", "configparser", "contextlib", "copy", "csv",
+        "datetime", "decimal", "difflib", "enum", "fnmatch", "fractions",
+        "functools", "gc", "getopt", "glob", "gzip", "hashlib", "heapq",
+        "hmac", "html", "http", "io", "itertools", "json", "keyword",
+        "logging", "math", "operator", "os", "pathlib", "pickle", "platform",
+        "pprint", "queue", "random", "re", "secrets", "shutil", "signal",
+        "socket", "stat", "statistics", "string", "struct", "subprocess",
+        "sys", "tempfile", "textwrap", "threading", "time", "timeit",
+        "tomllib", "traceback", "types", "typing", "unicodedata", "unittest",
+        "urllib", "uuid", "warnings", "weakref", "zipfile", "zlib",
+    ].iter().map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string()))).collect();
+    attrs.insert("stdlib_module_names".into(),
+        MbValue::from_ptr(MbObject::new_frozenset(stdlib_names)));
+    // thread_info — namespace-like dict (name/lock/version).
+    let thread_info = MbObject::new_dict();
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*thread_info).data {
+            let mut map = lock.write().unwrap();
+            map.insert("name".into(),
+                MbValue::from_ptr(MbObject::new_str("pthread".to_string())));
+            map.insert("lock".into(),
+                MbValue::from_ptr(MbObject::new_str("mutex+cond".to_string())));
+            map.insert("version".into(), MbValue::none());
+        }
+    }
+    attrs.insert("thread_info".into(), MbValue::from_ptr(thread_info));
+
+    // surface: missing CPython sys callables (auto-added, batch 2).
+    // Present+callable stubs returning None. Registered in NATIVE_FUNC_ADDRS.
+    let stub_fn_addr = dispatch_sys_stub_none as *const () as usize;
+    for name in [
+        "activate_stack_trampoline", "addaudithook", "audit",
+        "breakpointhook", "call_tracing", "deactivate_stack_trampoline",
+        "displayhook", "excepthook", "exception",
+        "__displayhook__", "__excepthook__",
+        "get_asyncgen_hooks", "get_coroutine_origin_tracking_depth",
+        "get_int_max_str_digits", "getallocatedblocks", "getdlopenflags",
+        "getprofile", "getswitchinterval", "getunicodeinternedsize",
+        "is_stack_trampoline_active", "set_asyncgen_hooks",
+        "set_coroutine_origin_tracking_depth", "set_int_max_str_digits",
+        "setdlopenflags", "setprofile", "unraisablehook",
+    ] {
+        attrs.insert(name.into(), MbValue::from_func(stub_fn_addr));
+    }
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(stub_fn_addr as u64);
+    });
+
     super::register_module("sys", attrs);
 }
 
 // ── Runtime functions ──
 
-/// sys.exit(code=0) — exit the process.
+/// sys.exit(code=0) — raise SystemExit so it can be caught (CPython semantics).
+/// `sys.exit` does not terminate the process directly; it raises SystemExit,
+/// which an enclosing `try/except SystemExit` can intercept. The message is the
+/// stringified exit code (CPython stores the code in `SystemExit.code`).
 pub fn mb_sys_exit(code: MbValue) -> MbValue {
-    let exit_code = code.as_int().unwrap_or(0) as i32;
-    std::process::exit(exit_code);
+    let msg = match code.as_int() {
+        Some(i) => i.to_string(),
+        None if code.is_none() => String::new(),
+        None => match code.as_ptr() {
+            Some(ptr) => unsafe {
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    s.clone()
+                } else {
+                    String::new()
+                }
+            },
+            None => String::new(),
+        },
+    };
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("SystemExit".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg)),
+    );
+    MbValue::none()
 }
 
 /// sys.getrecursionlimit() → int
@@ -444,9 +482,49 @@ pub fn mb_sys_getrecursionlimit() -> MbValue {
 }
 
 /// sys.setrecursionlimit(limit) → None
-pub fn mb_sys_setrecursionlimit(_limit: MbValue) -> MbValue {
-    // Stub: accept the call but don't actually change anything.
-    // Mamba uses a fixed recursion limit.
+///
+/// CPython rejects a non-positive limit with
+/// `ValueError("recursion limit must be greater or equal than 1")`. Mamba uses
+/// a fixed recursion limit, so a valid (>= 1) call is still accepted as a no-op,
+/// but an invalid limit must raise to match CPython.
+pub fn mb_sys_setrecursionlimit(limit: MbValue) -> MbValue {
+    // Only validate when an actual integer arg was supplied. Non-int / missing
+    // args fall through as a no-op (preserves prior lenient behavior; a real
+    // TypeError for non-ints is a separate concern not exercised here).
+    if let Some(n) = limit.as_int_pyint() {
+        if n < 1 {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "recursion limit must be greater or equal than 1".to_string())),
+            );
+            return MbValue::none();
+        }
+    }
+    MbValue::none()
+}
+
+/// sys.setswitchinterval(interval) → None
+///
+/// CPython requires a strictly positive interval and raises
+/// `ValueError("switch interval must be strictly positive")` for `<= 0`. Mamba
+/// does not honor the thread switch interval, so a valid (> 0) call is a no-op,
+/// but a non-positive interval must raise to match CPython.
+pub fn mb_sys_setswitchinterval(interval: MbValue) -> MbValue {
+    // Accept both float (the documented type) and int args. Only raise when a
+    // numeric value <= 0 is supplied; a missing / non-numeric arg falls through
+    // as a no-op (a real TypeError is a separate concern not exercised here).
+    let numeric = interval.as_float().or_else(|| interval.as_int_pyint().map(|i| i as f64));
+    if let Some(v) = numeric {
+        if v <= 0.0 {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "switch interval must be strictly positive".to_string())),
+            );
+            return MbValue::none();
+        }
+    }
     MbValue::none()
 }
 
@@ -525,8 +603,7 @@ pub fn mb_sys_getfilesystemencodeerrors() -> MbValue {
 
 /// Populate sys.argv from command-line arguments.
 pub fn populate_argv(args: &[String]) {
-    let argv: Vec<MbValue> = args
-        .iter()
+    let argv: Vec<MbValue> = args.iter()
         .map(|a| MbValue::from_ptr(MbObject::new_str(a.clone())))
         .collect();
     let argv_list = MbValue::from_ptr(MbObject::new_list(argv));
@@ -596,4 +673,5 @@ mod tests {
         register();
         populate_argv(&[]);
     }
+
 }

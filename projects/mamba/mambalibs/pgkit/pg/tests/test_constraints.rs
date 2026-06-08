@@ -9,7 +9,8 @@ use cclab_pg::{Connection, PoolConfig};
 
 /// Helper to get database URL from environment
 fn get_database_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
+    std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
 }
 
 /// Helper to cleanup test table
@@ -90,21 +91,17 @@ async fn test_serial_pk_auto_increment() -> Result<(), Box<dyn std::error::Error
     .await?;
 
     // Insert records without specifying id
-    let row1: (i32,) = sqlx::query_as(&format!(
-        "INSERT INTO {} (name) VALUES ($1) RETURNING id",
-        table
-    ))
-    .bind("Alice")
-    .fetch_one(pool)
-    .await?;
+    let row1: (i32,) =
+        sqlx::query_as(&format!("INSERT INTO {} (name) VALUES ($1) RETURNING id", table))
+            .bind("Alice")
+            .fetch_one(pool)
+            .await?;
 
-    let row2: (i32,) = sqlx::query_as(&format!(
-        "INSERT INTO {} (name) VALUES ($1) RETURNING id",
-        table
-    ))
-    .bind("Bob")
-    .fetch_one(pool)
-    .await?;
+    let row2: (i32,) =
+        sqlx::query_as(&format!("INSERT INTO {} (name) VALUES ($1) RETURNING id", table))
+            .bind("Bob")
+            .fetch_one(pool)
+            .await?;
 
     assert!(row2.0 > row1.0);
 
@@ -491,24 +488,18 @@ async fn test_check_constraint_violation() -> Result<(), Box<dyn std::error::Err
     .await?;
 
     // Valid insert
-    sqlx::query(&format!(
-        "INSERT INTO {} (age, price) VALUES ($1, $2)",
-        table
-    ))
-    .bind(25)
-    .bind(19.99f64)
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (age, price) VALUES ($1, $2)", table))
+        .bind(25)
+        .bind(19.99f64)
+        .execute(pool)
+        .await?;
 
     // Violate age check (negative)
-    let result = sqlx::query(&format!(
-        "INSERT INTO {} (age, price) VALUES ($1, $2)",
-        table
-    ))
-    .bind(-5)
-    .bind(19.99f64)
-    .execute(pool)
-    .await;
+    let result = sqlx::query(&format!("INSERT INTO {} (age, price) VALUES ($1, $2)", table))
+        .bind(-5)
+        .bind(19.99f64)
+        .execute(pool)
+        .await;
 
     assert!(result.is_err());
     let err_str = result.unwrap_err().to_string();
@@ -519,26 +510,20 @@ async fn test_check_constraint_violation() -> Result<(), Box<dyn std::error::Err
     );
 
     // Violate age check (too high)
-    let result = sqlx::query(&format!(
-        "INSERT INTO {} (age, price) VALUES ($1, $2)",
-        table
-    ))
-    .bind(200)
-    .bind(19.99f64)
-    .execute(pool)
-    .await;
+    let result = sqlx::query(&format!("INSERT INTO {} (age, price) VALUES ($1, $2)", table))
+        .bind(200)
+        .bind(19.99f64)
+        .execute(pool)
+        .await;
 
     assert!(result.is_err());
 
     // Violate price check (zero)
-    let result = sqlx::query(&format!(
-        "INSERT INTO {} (age, price) VALUES ($1, $2)",
-        table
-    ))
-    .bind(25)
-    .bind(0.0f64)
-    .execute(pool)
-    .await;
+    let result = sqlx::query(&format!("INSERT INTO {} (age, price) VALUES ($1, $2)", table))
+        .bind(25)
+        .bind(0.0f64)
+        .execute(pool)
+        .await;
 
     assert!(result.is_err());
 
@@ -971,14 +956,11 @@ async fn test_fk_update_parent_without_cascade() -> Result<(), Box<dyn std::erro
     .await?;
 
     // Insert parent and child
-    sqlx::query(&format!(
-        "INSERT INTO {} (id, name) VALUES ($1, $2)",
-        parent_table
-    ))
-    .bind(100)
-    .bind("Parent")
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (id, name) VALUES ($1, $2)", parent_table))
+        .bind(100)
+        .bind("Parent")
+        .execute(pool)
+        .await?;
 
     sqlx::query(&format!(
         "INSERT INTO {} (parent_id, data) VALUES ($1, $2)",
@@ -1031,87 +1013,63 @@ async fn test_check_constraint_boundary_values() -> Result<(), Box<dyn std::erro
     .await?;
 
     // Test boundary: age = 0 (valid minimum)
-    sqlx::query(&format!(
-        "INSERT INTO {} (age, score) VALUES ($1, $2)",
-        table
-    ))
-    .bind(0)
-    .bind(50.0f64)
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (age, score) VALUES ($1, $2)", table))
+        .bind(0)
+        .bind(50.0f64)
+        .execute(pool)
+        .await?;
 
     // Test boundary: age = 150 (valid maximum)
-    sqlx::query(&format!(
-        "INSERT INTO {} (age, score) VALUES ($1, $2)",
-        table
-    ))
-    .bind(150)
-    .bind(50.0f64)
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (age, score) VALUES ($1, $2)", table))
+        .bind(150)
+        .bind(50.0f64)
+        .execute(pool)
+        .await?;
 
     // Test boundary: score = 0 (valid minimum)
-    sqlx::query(&format!(
-        "INSERT INTO {} (age, score) VALUES ($1, $2)",
-        table
-    ))
-    .bind(25)
-    .bind(0.0f64)
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (age, score) VALUES ($1, $2)", table))
+        .bind(25)
+        .bind(0.0f64)
+        .execute(pool)
+        .await?;
 
     // Test boundary: score = 100 (valid maximum)
-    sqlx::query(&format!(
-        "INSERT INTO {} (age, score) VALUES ($1, $2)",
-        table
-    ))
-    .bind(25)
-    .bind(100.0f64)
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (age, score) VALUES ($1, $2)", table))
+        .bind(25)
+        .bind(100.0f64)
+        .execute(pool)
+        .await?;
 
     // Test just outside boundary: age = -1
-    let result = sqlx::query(&format!(
-        "INSERT INTO {} (age, score) VALUES ($1, $2)",
-        table
-    ))
-    .bind(-1)
-    .bind(50.0f64)
-    .execute(pool)
-    .await;
+    let result = sqlx::query(&format!("INSERT INTO {} (age, score) VALUES ($1, $2)", table))
+        .bind(-1)
+        .bind(50.0f64)
+        .execute(pool)
+        .await;
     assert!(result.is_err());
 
     // Test just outside boundary: age = 151
-    let result = sqlx::query(&format!(
-        "INSERT INTO {} (age, score) VALUES ($1, $2)",
-        table
-    ))
-    .bind(151)
-    .bind(50.0f64)
-    .execute(pool)
-    .await;
+    let result = sqlx::query(&format!("INSERT INTO {} (age, score) VALUES ($1, $2)", table))
+        .bind(151)
+        .bind(50.0f64)
+        .execute(pool)
+        .await;
     assert!(result.is_err());
 
     // Test just outside boundary: score = -0.01
-    let result = sqlx::query(&format!(
-        "INSERT INTO {} (age, score) VALUES ($1, $2)",
-        table
-    ))
-    .bind(25)
-    .bind(-0.01f64)
-    .execute(pool)
-    .await;
+    let result = sqlx::query(&format!("INSERT INTO {} (age, score) VALUES ($1, $2)", table))
+        .bind(25)
+        .bind(-0.01f64)
+        .execute(pool)
+        .await;
     assert!(result.is_err());
 
     // Test just outside boundary: score = 100.01
-    let result = sqlx::query(&format!(
-        "INSERT INTO {} (age, score) VALUES ($1, $2)",
-        table
-    ))
-    .bind(25)
-    .bind(100.01f64)
-    .execute(pool)
-    .await;
+    let result = sqlx::query(&format!("INSERT INTO {} (age, score) VALUES ($1, $2)", table))
+        .bind(25)
+        .bind(100.01f64)
+        .execute(pool)
+        .await;
     assert!(result.is_err());
 
     cleanup_table(pool, table).await?;
@@ -1289,24 +1247,18 @@ async fn test_multiple_constraint_violations() -> Result<(), Box<dyn std::error:
     .await?;
 
     // Insert valid record
-    sqlx::query(&format!(
-        "INSERT INTO {} (email, age) VALUES ($1, $2)",
-        table
-    ))
-    .bind("test@example.com")
-    .bind(25)
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (email, age) VALUES ($1, $2)", table))
+        .bind("test@example.com")
+        .bind(25)
+        .execute(pool)
+        .await?;
 
     // Violate both UNIQUE and CHECK - which error surfaces?
-    let result = sqlx::query(&format!(
-        "INSERT INTO {} (email, age) VALUES ($1, $2)",
-        table
-    ))
-    .bind("test@example.com") // Duplicate
-    .bind(-5) // Negative age
-    .execute(pool)
-    .await;
+    let result = sqlx::query(&format!("INSERT INTO {} (email, age) VALUES ($1, $2)", table))
+        .bind("test@example.com") // Duplicate
+        .bind(-5)                 // Negative age
+        .execute(pool)
+        .await;
 
     // Should fail with one of the errors
     assert!(result.is_err());
@@ -1507,9 +1459,10 @@ async fn test_invalid_table_name() -> Result<(), Box<dyn std::error::Error>> {
     let pool = conn.pool();
 
     // Query non-existent table
-    let result: Result<(i32,), _> = sqlx::query_as("SELECT 1 FROM nonexistent_table_xyz_123")
-        .fetch_one(pool)
-        .await;
+    let result: Result<(i32,), _> =
+        sqlx::query_as("SELECT 1 FROM nonexistent_table_xyz_123")
+            .fetch_one(pool)
+            .await;
 
     assert!(result.is_err());
     let err_str = result.unwrap_err().to_string().to_lowercase();

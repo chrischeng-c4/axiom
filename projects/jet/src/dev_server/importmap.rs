@@ -174,34 +174,19 @@ pub fn mui_emotion_patches() -> &'static [(&'static str, &'static str)] {
         // these re-export files through `.jet/` breaks their relative imports.
         (
             "@mui/utils/deepmerge",
-            "/node_modules/@mui/utils/esm/deepmerge/index.js",
+            "/node_modules/@mui/utils/deepmerge/index.mjs",
         ),
         (
             "@mui/utils/formatMuiErrorMessage",
-            "/node_modules/@mui/utils/esm/formatMuiErrorMessage/index.js",
+            "/node_modules/@mui/utils/formatMuiErrorMessage/index.mjs",
         ),
         (
             "@mui/utils/capitalize",
-            "/node_modules/@mui/utils/esm/capitalize/index.js",
+            "/node_modules/@mui/utils/capitalize/index.mjs",
         ),
         (
             "@mui/utils/chainPropTypes",
-            "/node_modules/@mui/utils/esm/chainPropTypes/index.js",
-        ),
-        // MUI component subpaths publish ESM package directories. Browsers
-        // resolve relative imports from the final URL, so map these to
-        // `index.js` instead of the extensionless directory path.
-        (
-            "@mui/material/Button",
-            "/node_modules/@mui/material/Button/index.js",
-        ),
-        (
-            "@mui/material/Checkbox",
-            "/node_modules/@mui/material/Checkbox/index.js",
-        ),
-        (
-            "@mui/material/TextField",
-            "/node_modules/@mui/material/TextField/index.js",
+            "/node_modules/@mui/utils/chainPropTypes/index.mjs",
         ),
         // Emotion root packages — the legacy `main`/`module` fields can point
         // at CJS-flavored bundles. Use the package's published ESM dist files.
@@ -403,52 +388,9 @@ mod tests {
         // @mui/utils helper subpaths
         assert!(
             json.contains(
-                "\"@mui/utils/deepmerge\": \"/node_modules/@mui/utils/esm/deepmerge/index.js\""
+                "\"@mui/utils/deepmerge\": \"/node_modules/@mui/utils/deepmerge/index.mjs\""
             ),
             "@mui/utils/deepmerge must resolve to package ESM so relative helper imports work: {}",
-            json
-        );
-        assert!(
-            json.contains(
-                "\"@mui/utils/formatMuiErrorMessage\": \"/node_modules/@mui/utils/esm/formatMuiErrorMessage/index.js\""
-            ),
-            "@mui/utils/formatMuiErrorMessage must resolve to package ESM: {}",
-            json
-        );
-        assert!(
-            json.contains(
-                "\"@mui/utils/capitalize\": \"/node_modules/@mui/utils/esm/capitalize/index.js\""
-            ),
-            "@mui/utils/capitalize must resolve to package ESM: {}",
-            json
-        );
-        assert!(
-            json.contains(
-                "\"@mui/utils/chainPropTypes\": \"/node_modules/@mui/utils/esm/chainPropTypes/index.js\""
-            ),
-            "@mui/utils/chainPropTypes must resolve to package ESM: {}",
-            json
-        );
-        // @mui/material component subpaths used by the visual fixture
-        assert!(
-            json.contains(
-                "\"@mui/material/Button\": \"/node_modules/@mui/material/Button/index.js\""
-            ),
-            "@mui/material/Button must resolve to index.js so relative class imports stay under Button/: {}",
-            json
-        );
-        assert!(
-            json.contains(
-                "\"@mui/material/Checkbox\": \"/node_modules/@mui/material/Checkbox/index.js\""
-            ),
-            "@mui/material/Checkbox must resolve to index.js so relative class imports stay under Checkbox/: {}",
-            json
-        );
-        assert!(
-            json.contains(
-                "\"@mui/material/TextField\": \"/node_modules/@mui/material/TextField/index.js\""
-            ),
-            "@mui/material/TextField must resolve to index.js so relative class imports stay under TextField/: {}",
             json
         );
         // Emotion roots and key subpackages

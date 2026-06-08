@@ -47,7 +47,10 @@ print(describe((0, 5)))
 print(describe((1, 2)))
 "#,
     );
-    assert_output(&out, "origin\nx-axis at 3\ny-axis at 5\npoint (1, 2)\n");
+    assert_output(
+        &out,
+        "origin\nx-axis at 3\ny-axis at 5\npoint (1, 2)\n",
+    );
 }
 
 #[test]
@@ -69,7 +72,10 @@ print(classify([1, 2]))
 print(classify([1, 2, 3, 4]))
 "#,
     );
-    assert_output(&out, "empty\nsingle 5\npair 1,2\nhead 1 rest_len 3\n");
+    assert_output(
+        &out,
+        "empty\nsingle 5\npair 1,2\nhead 1 rest_len 3\n",
+    );
 }
 
 #[test]

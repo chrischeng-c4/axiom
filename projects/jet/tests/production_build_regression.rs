@@ -1,4 +1,4 @@
-// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests.md#tests
+// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests.md#unit-test
 // CODEGEN-BEGIN
 //! Production-build regression gate for the representative React/MUI fixture.
 //!
@@ -26,6 +26,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::Duration;
 use tokio::sync::oneshot;
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("projects/")
+        .parent()
+        .expect("workspace root")
+        .to_path_buf()
+}
 
 fn fixture_source() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -99,7 +108,7 @@ struct StaticDistServer {
     shutdown: Option<oneshot::Sender<()>>,
 }
 
-/// @spec .aw/tech-design/projects/jet/semantic/jet-tests.md#tests
+/// @spec .aw/tech-design/projects/jet/semantic/jet-tests.md#unit-test
 impl StaticDistServer {
     async fn spawn(fixture: &Path) -> Result<Self> {
         let dist = fixture.join("dist");
@@ -133,7 +142,7 @@ impl StaticDistServer {
     }
 }
 
-/// @spec .aw/tech-design/projects/jet/semantic/jet-tests.md#tests
+/// @spec .aw/tech-design/projects/jet/semantic/jet-tests.md#unit-test
 impl Drop for StaticDistServer {
     fn drop(&mut self) {
         if let Some(shutdown) = self.shutdown.take() {
@@ -280,6 +289,167 @@ fn dist_file_summary(fixture: &Path) -> Result<Value> {
     Ok(json!(files))
 }
 
+fn production_bundle_text(fixture: &Path) -> Result<String> {
+    let mut scripts = Vec::new();
+    scripts.extend(dist_js_files(fixture)?);
+    if scripts.is_empty() {
+        return Err(anyhow!(
+            "production build did not emit any JS bundle under {}",
+            fixture.join("dist").display()
+        ));
+    }
+
+    let mut text = String::new();
+    for script in scripts {
+        text.push_str(
+            &fs::read_to_string(&script)
+                .with_context(|| format!("read production JS bundle {}", script.display()))?,
+        );
+        text.push('\n');
+    }
+    Ok(text)
+}
+
+fn dist_js_files(fixture: &Path) -> Result<Vec<PathBuf>> {
+    let dist = fixture.join("dist");
+    let mut scripts = Vec::new();
+    for entry in fs::read_dir(&dist).with_context(|| format!("read {}", dist.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("js") {
+            scripts.push(path);
+        }
+    }
+    scripts.sort();
+    Ok(scripts)
+}
+
+fn assert_dist_js_parseable_with_node(fixture: &Path, artifact_dir: &Path) -> Result<()> {
+    let scripts = dist_js_files(fixture)?;
+    if scripts.is_empty() {
+        return Err(anyhow!(
+            "production build did not emit any JS bundle under {}",
+            fixture.join("dist").display()
+        ));
+    }
+
+    let mut report = Vec::new();
+    for script in scripts {
+        let output = Command::new("node")
+            .arg("--check")
+            .arg(&script)
+            .output()
+            .with_context(|| format!("node --check {}", script.display()))?;
+        report.push(json!({
+            "file": script.file_name().and_then(|name| name.to_str()).unwrap_or(""),
+            "status": output.status.to_string(),
+            "stdout": String::from_utf8_lossy(&output.stdout),
+            "stderr": String::from_utf8_lossy(&output.stderr),
+        }));
+        if !output.status.success() {
+            fs::write(
+                artifact_dir.join("dist-js-syntax.json"),
+                serde_json::to_vec_pretty(&report).unwrap(),
+            )
+            .context("write dist JS syntax report")?;
+            return Err(anyhow!(
+                "production JS bundle failed syntax check; artifacts={}",
+                artifact_dir.display()
+            ));
+        }
+    }
+
+    fs::write(
+        artifact_dir.join("dist-js-syntax.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .context("write dist JS syntax report")?;
+    Ok(())
+}
+
+fn assert_no_react_refresh_in_production_bundle(fixture: &Path, artifact_dir: &Path) -> Result<()> {
+    let bundle_text = production_bundle_text(fixture)?;
+    fs::write(
+        artifact_dir.join("dist-bundle-refresh-scan.txt"),
+        format!(
+            "bytes={}\ncontains_react_refresh={}\ncontains_refresh_reg={}\ncontains_refresh_sig={}\ncontains_enqueue_update={}\n",
+            bundle_text.len(),
+            bundle_text.contains("/@react-refresh") || bundle_text.contains("react-refresh"),
+            bundle_text.contains("RefreshReg"),
+            bundle_text.contains("RefreshSig"),
+            bundle_text.contains("enqueueUpdate"),
+        ),
+    )
+    .context("write production refresh scan artifact")?;
+
+    for marker in [
+        "/@react-refresh",
+        "react-refresh",
+        "RefreshReg",
+        "RefreshSig",
+        "enqueueUpdate",
+    ] {
+        assert!(
+            !bundle_text.contains(marker),
+            "production jet build must not ship dev React Refresh marker {marker:?}; artifacts={}",
+            artifact_dir.display()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn production_build_minify_emits_parseable_js_bundle() -> Result<()> {
+    if !common::node_available() {
+        common::fail_missing_prerequisite(format!(
+            "need node for production minify syntax gate (node={})",
+            common::node_available(),
+        ));
+    }
+
+    let artifact_dir = std::env::temp_dir().join("jet-production-build-minify-syntax");
+    let _ = fs::remove_dir_all(&artifact_dir);
+    fs::create_dir_all(&artifact_dir).expect("create production minify artifact dir");
+
+    let temp = tempfile::tempdir().expect("temp fixture");
+    let fixture = temp.path().join("production-build-regression");
+    copy_dir_all(&fixture_source(), &fixture).expect("copy production build fixture");
+    fs::copy(
+        workspace_root()
+            .join("examples")
+            .join("mui-visual-demo")
+            .join("jet-lock.yaml"),
+        fixture.join("jet-lock.yaml"),
+    )
+    .expect("copy frozen fixture lockfile");
+
+    require_success(
+        run_jet(&fixture, ["install", "--frozen-lockfile"])?,
+        "install",
+        &artifact_dir,
+    )
+    .expect("jet install --frozen-lockfile");
+
+    require_success(
+        run_jet(&fixture, ["build", "--minify", "--sourcemap", "none"])?,
+        "build-minify",
+        &artifact_dir,
+    )
+    .expect("jet build --minify");
+
+    fs::write(
+        artifact_dir.join("dist-files.json"),
+        serde_json::to_vec_pretty(&dist_file_summary(&fixture).unwrap()).unwrap(),
+    )
+    .expect("write dist summary");
+    assert_dist_js_parseable_with_node(&fixture, &artifact_dir)
+        .expect("minified production JS must parse");
+    assert_no_react_refresh_in_production_bundle(&fixture, &artifact_dir)
+        .expect("minified production bundle must not include React Refresh runtime");
+
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn production_build_regression_fixture_boots_in_browser() -> Result<()> {
     if !common::node_available() || !common::chromium_available() {
@@ -297,6 +467,15 @@ async fn production_build_regression_fixture_boots_in_browser() -> Result<()> {
     let temp = tempfile::tempdir().expect("temp fixture");
     let fixture = temp.path().join("production-build-regression");
     copy_dir_all(&fixture_source(), &fixture).expect("copy production build fixture");
+    fs::copy(
+        workspace_root()
+            .join("examples")
+            .join("mui-visual-demo")
+            .join("jet-lock.yaml"),
+        fixture.join("jet-lock.yaml"),
+    )
+    .expect("copy frozen fixture lockfile");
+
     require_success(
         run_jet(&fixture, ["install", "--frozen-lockfile"])?,
         "install",
@@ -323,6 +502,8 @@ async fn production_build_regression_fixture_boots_in_browser() -> Result<()> {
         serde_json::to_vec_pretty(&dist_file_summary(&fixture).unwrap()).unwrap(),
     )
     .expect("write dist summary");
+    assert_no_react_refresh_in_production_bundle(&fixture, &artifact_dir)
+        .expect("production bundle must not include React Refresh runtime");
 
     let server = StaticDistServer::spawn(&fixture)
         .await

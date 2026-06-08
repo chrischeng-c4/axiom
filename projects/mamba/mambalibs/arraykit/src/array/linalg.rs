@@ -240,7 +240,11 @@ impl NdArray<f64> {
             }
         }
 
-        Ok((NdArray::new(lu, vec![n, n])?, piv, sign))
+        Ok((
+            NdArray::new(lu, vec![n, n])?,
+            piv,
+            sign,
+        ))
     }
 
     /// Matrix inverse.
@@ -356,11 +360,7 @@ impl NdArray<f64> {
         } else if ord == 2.0 {
             self.data.iter().map(|&x| x * x).sum::<f64>().sqrt()
         } else {
-            self.data
-                .iter()
-                .map(|&x| x.abs().powf(ord))
-                .sum::<f64>()
-                .powf(1.0 / ord)
+            self.data.iter().map(|&x| x.abs().powf(ord)).sum::<f64>().powf(1.0 / ord)
         }
     }
 }

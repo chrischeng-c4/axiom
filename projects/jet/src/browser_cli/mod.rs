@@ -23,6 +23,7 @@ pub mod session;
 
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::env::VarError;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -124,6 +125,15 @@ pub async fn prepare_session_with_init_scripts(
     url: &str,
     init_scripts: &[&str],
 ) -> Result<crate::browser::Browser> {
+    prepare_session_with_mode(root_dir, url, init_scripts, session::MODE_FOREGROUND).await
+}
+
+async fn prepare_session_with_mode(
+    root_dir: &Path,
+    url: &str,
+    init_scripts: &[&str],
+    mode: &str,
+) -> Result<crate::browser::Browser> {
     use crate::browser::{Browser, LaunchOptions};
     eprintln!("[jet browser] launching Chromium…");
     let mut options = LaunchOptions::default();
@@ -149,12 +159,16 @@ pub async fn prepare_session_with_init_scripts(
     page.goto(url)
         .await
         .with_context(|| format!("navigating to {url}"))?;
+    page.bring_to_front()
+        .await
+        .context("activating browser target")?;
 
     let s = session::Session {
+        mode: mode.to_string(),
         ws_endpoint: browser.ws_url().to_string(),
         target_id: page.target_id().to_string(),
         url: url.to_string(),
-        pid: std::process::id(),
+        pid: browser.process_id().unwrap_or_else(std::process::id),
         started_at: session::now_unix(),
     };
     session::write(root_dir, &s)?;
@@ -162,14 +176,34 @@ pub async fn prepare_session_with_init_scripts(
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
-pub async fn launch(root_dir: &Path, url: &str) -> Result<()> {
+pub async fn launch_detached(root_dir: &Path, url: &str) -> Result<()> {
+    session::clear_shutdown_request(root_dir);
+    let browser = prepare_session_with_mode(root_dir, url, &[], session::MODE_DETACHED).await?;
+    let s = session::read(root_dir).context("reading just-written browser session")?;
+    browser.detach();
+
+    let payload = serde_json::json!({
+        "schema_version": "jet.bb.session.v1",
+        "mode": "detached",
+        "url": s.url,
+        "ws_endpoint": s.ws_endpoint,
+        "target_id": s.target_id,
+        "pid": s.pid,
+        "session_file": session::session_path(root_dir).display().to_string(),
+    });
+    println!("{}", serde_json::to_string_pretty(&payload)?);
+    Ok(())
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
+pub async fn launch_foreground(root_dir: &Path, url: &str) -> Result<()> {
     session::clear_shutdown_request(root_dir);
     let browser = prepare_session(root_dir, url).await?;
     eprintln!(
         "[jet browser] session ready. In another terminal try:\n    \
-         jet browser tree\n    \
-         jet browser pick\n    \
-         jet browser hooks 0\n\
+         jet bb tree\n    \
+         jet bb pick\n    \
+         jet bb hooks 0\n\
          Ctrl-C to shut the browser down."
     );
 
@@ -225,10 +259,44 @@ pub async fn shutdown(root_dir: &Path) -> Result<()> {
     session::request_shutdown(root_dir)?;
 
     if let Some(s) = existing {
-        eprintln!("[jet browser] shutdown requested for launch pid {}", s.pid);
+        if !s.is_detached() {
+            eprintln!(
+                "[jet browser] shutdown requested for foreground pid {}; launch process will close it.",
+                s.pid
+            );
+            return Ok(());
+        }
+
+        match close_remote_browser(&s).await {
+            Ok(()) => {
+                session::clear(root_dir);
+                session::clear_shutdown_request(root_dir);
+                eprintln!(
+                    "[jet browser] shutdown requested and CDP close sent for pid {}",
+                    s.pid
+                );
+            }
+            Err(err) => {
+                eprintln!(
+                    "[jet browser] shutdown requested for pid {}; direct CDP close failed: {err:#}",
+                    s.pid
+                );
+            }
+        }
     } else {
         eprintln!("[jet browser] shutdown requested; no current session file was readable.");
     }
+    Ok(())
+}
+
+async fn close_remote_browser(s: &session::Session) -> Result<()> {
+    let client = crate::browser::CdpClient::connect(&s.ws_endpoint)
+        .await
+        .with_context(|| format!("connecting to browser session {}", s.ws_endpoint))?;
+    client
+        .send("Browser.close", serde_json::json!({}))
+        .await
+        .context("sending Browser.close over CDP")?;
     Ok(())
 }
 
@@ -353,6 +421,315 @@ pub async fn frame(root_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Print a compact performance/status snapshot from the attached page.
+/// Unlike `capture`, this does not read the element tree, layout tree,
+/// paint ops, screenshot, or hook values, so it is safe to run during
+/// interaction profiling. It intentionally does not require
+/// `window.__jet_debug`; release WASM builds still expose
+/// `window.__jet_webgpu_status`.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
+pub async fn perf(root_dir: &Path) -> Result<()> {
+    let page = attach(root_dir).await?;
+    let v = page
+        .evaluate(
+            r#"
+            (() => {
+                const nav = performance.getEntriesByType('navigation')[0];
+                const canvas = document.getElementById('jet-canvas');
+                const rect = canvas ? canvas.getBoundingClientRect() : null;
+                const status = window.__jet_webgpu_status || null;
+                const resources = performance.getEntriesByType('resource')
+                    .filter((entry) => {
+                        const name = entry.name.split('/').pop() || entry.name;
+                        return name.endsWith('.wasm')
+                            || name.endsWith('.js')
+                            || name === 'jet-target.json';
+                    })
+                    .map((entry) => ({
+                        name: entry.name.split('/').pop() || entry.name,
+                        duration: entry.duration,
+                        transferSize: entry.transferSize || 0,
+                        decodedBodySize: entry.decodedBodySize || 0
+                    }));
+                return {
+                    schema_version: 'jet.bb.perf.v1',
+                    url: window.location.href,
+                    readyState: document.readyState,
+                    webgpu: !!navigator.gpu,
+                    debugBridge: typeof window.__jet_debug,
+                    canvas: canvas ? {
+                        width: canvas.width,
+                        height: canvas.height,
+                        clientWidth: canvas.clientWidth,
+                        clientHeight: canvas.clientHeight,
+                        rect: rect ? {
+                            x: rect.x,
+                            y: rect.y,
+                            width: rect.width,
+                            height: rect.height
+                        } : null
+                    } : null,
+                    status,
+                    navigation: nav ? {
+                        duration: nav.duration,
+                        domContentLoadedEventEnd: nav.domContentLoadedEventEnd,
+                        loadEventEnd: nav.loadEventEnd
+                    } : null,
+                    resources
+                };
+            })()
+            "#,
+        )
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&v)?);
+    Ok(())
+}
+
+async fn dispatch_mouse_event(
+    page: &Page,
+    event_type: &str,
+    x: f64,
+    y: f64,
+    button: Option<&str>,
+    buttons: Option<u64>,
+    click_count: Option<u64>,
+) -> Result<()> {
+    match event_type {
+        "mouseMoved" | "mousePressed" | "mouseReleased" => {}
+        other => bail!(
+            "unknown mouse event type {other:?}; expected mouseMoved, mousePressed, or mouseReleased"
+        ),
+    }
+    let mut params = serde_json::json!({
+        "type": event_type,
+        "x": x,
+        "y": y,
+    });
+    if let Some(button) = button {
+        match button {
+            "left" | "right" | "middle" | "none" => {
+                params["button"] = Value::String(button.to_string());
+            }
+            other => bail!("unknown mouse button {other:?}; expected left, right, middle, or none"),
+        }
+    }
+    if let Some(buttons) = buttons {
+        params["buttons"] = serde_json::json!(buttons);
+    }
+    if let Some(click_count) = click_count {
+        params["clickCount"] = serde_json::json!(click_count);
+    }
+    page.session()
+        .send("Input.dispatchMouseEvent", params)
+        .await
+        .with_context(|| format!("dispatching CDP mouse event {event_type}"))?;
+    Ok(())
+}
+
+/// Dispatch one CDP mouse event into the attached Jet browser session.
+/// Coordinates are viewport CSS pixels, matching `getBoundingClientRect()`.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
+pub async fn mouse(
+    root_dir: &Path,
+    event_type: &str,
+    x: f64,
+    y: f64,
+    button: Option<&str>,
+    buttons: Option<u64>,
+    click_count: Option<u64>,
+) -> Result<()> {
+    let page = attach(root_dir).await?;
+    dispatch_mouse_event(&page, event_type, x, y, button, buttons, click_count).await?;
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "ok": true,
+            "type": event_type,
+            "x": x,
+            "y": y,
+            "button": button,
+            "buttons": buttons,
+            "clickCount": click_count,
+        }))?
+    );
+    Ok(())
+}
+
+/// Dispatch one CDP mouse wheel event into the attached Jet browser session.
+/// Coordinates are viewport CSS pixels; deltas are CSS-pixel wheel deltas.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
+pub async fn wheel(root_dir: &Path, x: f64, y: f64, delta_x: f64, delta_y: f64) -> Result<()> {
+    let page = attach(root_dir).await?;
+    let params = serde_json::json!({
+        "type": "mouseWheel",
+        "x": x,
+        "y": y,
+        "deltaX": delta_x,
+        "deltaY": delta_y,
+    });
+    page.session()
+        .send("Input.dispatchMouseEvent", params)
+        .await
+        .context("dispatching CDP mouse wheel event")?;
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "ok": true,
+            "type": "mouseWheel",
+            "x": x,
+            "y": y,
+            "deltaX": delta_x,
+            "deltaY": delta_y,
+        }))?
+    );
+    Ok(())
+}
+
+/// Drag from one viewport coordinate to another using CDP mouse events.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
+pub async fn drag(
+    root_dir: &Path,
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    steps: u64,
+) -> Result<()> {
+    let page = attach(root_dir).await?;
+    let steps = steps.max(1);
+    dispatch_mouse_event(&page, "mouseMoved", from_x, from_y, None, Some(0), None).await?;
+    dispatch_mouse_event(
+        &page,
+        "mousePressed",
+        from_x,
+        from_y,
+        Some("left"),
+        Some(1),
+        Some(1),
+    )
+    .await?;
+    for step in 1..=steps {
+        let t = step as f64 / steps as f64;
+        let x = from_x + (to_x - from_x) * t;
+        let y = from_y + (to_y - from_y) * t;
+        dispatch_mouse_event(&page, "mouseMoved", x, y, Some("left"), Some(1), None).await?;
+        tokio::time::sleep(Duration::from_millis(16)).await;
+    }
+    dispatch_mouse_event(
+        &page,
+        "mouseReleased",
+        to_x,
+        to_y,
+        Some("left"),
+        Some(0),
+        Some(1),
+    )
+    .await?;
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "ok": true,
+            "from": { "x": from_x, "y": from_y },
+            "to": { "x": to_x, "y": to_y },
+            "steps": steps,
+        }))?
+    );
+    Ok(())
+}
+
+fn key_code_for(key: &str) -> String {
+    if key.len() == 1 {
+        let mut chars = key.chars();
+        if let Some(ch) = chars.next() {
+            if ch.is_ascii_alphabetic() {
+                return format!("Key{}", ch.to_ascii_uppercase());
+            }
+            if ch.is_ascii_digit() {
+                return format!("Digit{ch}");
+            }
+        }
+    }
+    match key {
+        "Enter" => "Enter",
+        "Tab" => "Tab",
+        "Escape" => "Escape",
+        "Backspace" => "Backspace",
+        "Delete" => "Delete",
+        "ArrowUp" => "ArrowUp",
+        "ArrowDown" => "ArrowDown",
+        "ArrowLeft" => "ArrowLeft",
+        "ArrowRight" => "ArrowRight",
+        _ => key,
+    }
+    .to_string()
+}
+
+fn windows_virtual_key_code_for(key: &str) -> Option<u64> {
+    if key.len() == 1 {
+        let ch = key.chars().next()?;
+        if ch.is_ascii_alphanumeric() {
+            return Some(ch.to_ascii_uppercase() as u64);
+        }
+    }
+    match key {
+        "Enter" => Some(13),
+        "Tab" => Some(9),
+        "Escape" => Some(27),
+        "Backspace" => Some(8),
+        "Delete" => Some(46),
+        "ArrowUp" => Some(38),
+        "ArrowDown" => Some(40),
+        "ArrowLeft" => Some(37),
+        "ArrowRight" => Some(39),
+        _ => None,
+    }
+}
+
+async fn dispatch_key_event(
+    page: &Page,
+    event_type: &str,
+    key: &str,
+    modifiers: u64,
+) -> Result<()> {
+    let code = key_code_for(key);
+    let mut params = serde_json::json!({
+        "type": event_type,
+        "key": key,
+        "code": code,
+        "modifiers": modifiers,
+    });
+    if modifiers == 0 && key.len() == 1 {
+        params["text"] = Value::String(key.to_string());
+    }
+    if let Some(vk) = windows_virtual_key_code_for(key) {
+        params["windowsVirtualKeyCode"] = serde_json::json!(vk);
+        params["nativeVirtualKeyCode"] = serde_json::json!(vk);
+    }
+    page.session()
+        .send("Input.dispatchKeyEvent", params)
+        .await
+        .with_context(|| format!("dispatching CDP key event {event_type}"))?;
+    Ok(())
+}
+
+/// Press one key in the attached Jet browser session using CDP key events.
+/// Modifiers use the CDP bitmask: Alt=1, Ctrl=2, Meta=4, Shift=8.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
+pub async fn key(root_dir: &Path, key: &str, modifiers: u64) -> Result<()> {
+    let page = attach(root_dir).await?;
+    dispatch_key_event(&page, "keyDown", key, modifiers).await?;
+    dispatch_key_event(&page, "keyUp", key, modifiers).await?;
+    println!(
+        "{}",
+        serde_json::to_string(&serde_json::json!({
+            "ok": true,
+            "key": key,
+            "modifiers": modifiers,
+        }))?
+    );
+    Ok(())
+}
+
 /// Capture one machine-readable observation bundle from the attached
 /// jet-wasm debug session. This is intentionally raw JSON: parity
 /// tooling needs stable evidence, not the human pretty-printers used
@@ -361,6 +738,15 @@ pub async fn frame(root_dir: &Path) -> Result<()> {
 pub async fn observation_bundle(root_dir: &Path, requested_hook_ids: &[u64]) -> Result<Value> {
     let page = attach(root_dir).await?;
     assert_debug_bridge(&page).await?;
+    let build_artifact = read_target_manifest_bundle(root_dir);
+    page.bring_to_front()
+        .await
+        .context("bringing page to front before observation screenshot")?;
+    let screenshot = page
+        .screenshot()
+        .await
+        .context("capturing observation screenshot")?;
+    let screenshot_visual_probe = screenshot_visual_probe_from_png(&screenshot);
 
     let runtime = page
         .evaluate(
@@ -368,6 +754,80 @@ pub async fn observation_bundle(root_dir: &Path, requested_hook_ids: &[u64]) -> 
             (() => {
                 const canvas = document.getElementById('jet-canvas');
                 const rect = canvas ? canvas.getBoundingClientRect() : null;
+                const canvasVisualProbe = (canvas) => {
+                    if (!canvas) return { error: 'missing-canvas' };
+                    const sourceW = Math.max(1, Math.min(canvas.width || canvas.clientWidth || 1, 1024));
+                    const sourceH = Math.max(1, Math.min(canvas.height || canvas.clientHeight || 1, 1024));
+                    const sample = document.createElement('canvas');
+                    sample.width = 32;
+                    sample.height = 32;
+                    const ctx = sample.getContext('2d', { willReadFrequently: true });
+                    if (!ctx) return { error: 'missing-2d-context' };
+                    try {
+                        ctx.drawImage(canvas, 0, 0, sourceW, sourceH, 0, 0, 32, 32);
+                    } catch (error) {
+                        return { error: String(error) };
+                    }
+                    const data = ctx.getImageData(0, 0, 32, 32).data;
+                    let nonTransparent = 0;
+                    let nonWhite = 0;
+                    let nonBlack = 0;
+                    const buckets = new Set();
+                    const luma = [];
+                    for (let i = 0; i < data.length; i += 4) {
+                        const r = data[i];
+                        const g = data[i + 1];
+                        const b = data[i + 2];
+                        const a = data[i + 3];
+                        if (a > 0) nonTransparent += 1;
+                        if (a > 0 && (r < 250 || g < 250 || b < 250)) nonWhite += 1;
+                        if (a > 0 && (r > 5 || g > 5 || b > 5)) nonBlack += 1;
+                        buckets.add(`${r >> 5}:${g >> 5}:${b >> 5}:${a >> 5}`);
+                        luma.push((299 * r + 587 * g + 114 * b) / 1000);
+                    }
+                    const blockLuma = [];
+                    for (let by = 0; by < 8; by += 1) {
+                        for (let bx = 0; bx < 8; bx += 1) {
+                            let sum = 0;
+                            for (let y = 0; y < 4; y += 1) {
+                                for (let x = 0; x < 4; x += 1) {
+                                    sum += luma[(by * 4 + y) * 32 + (bx * 4 + x)];
+                                }
+                            }
+                            blockLuma.push(sum / 16);
+                        }
+                    }
+                    const avg = blockLuma.reduce((acc, value) => acc + value, 0) / blockLuma.length;
+                    let hash = '';
+                    let ones = 0;
+                    for (let i = 0; i < blockLuma.length; i += 4) {
+                        let nibble = 0;
+                        for (let j = 0; j < 4; j += 1) {
+                            const bit = blockLuma[i + j] >= avg ? 1 : 0;
+                            ones += bit;
+                            nibble = (nibble << 1) | bit;
+                        }
+                        hash += nibble.toString(16);
+                    }
+                    return {
+                        width: canvas.width,
+                        height: canvas.height,
+                        clientWidth: canvas.clientWidth,
+                        clientHeight: canvas.clientHeight,
+                        sourceW,
+                        sourceH,
+                        nonTransparent,
+                        nonWhite,
+                        nonBlack,
+                        uniqueBuckets: buckets.size,
+                        averageLuma: avg,
+                        hash,
+                        hashOnes: ones
+                    };
+                };
+                const webgpuStatus = window.__jet_webgpu_status
+                    ? JSON.parse(JSON.stringify(window.__jet_webgpu_status))
+                    : null;
                 return {
                     url: window.location.href,
                     title: document.title || "",
@@ -376,6 +836,8 @@ pub async fn observation_bundle(root_dir: &Path, requested_hook_ids: &[u64]) -> 
                         height: window.innerHeight,
                         device_pixel_ratio: window.devicePixelRatio || 1
                     },
+                    webgpu_status: webgpuStatus,
+                    canvas_visual_probe: canvasVisualProbe(canvas),
                     canvas: canvas ? {
                         present: true,
                         id: canvas.id || "",
@@ -440,6 +902,8 @@ pub async fn observation_bundle(root_dir: &Path, requested_hook_ids: &[u64]) -> 
 
     Ok(serde_json::json!({
         "schema_version": "jet.browser.observation.v1",
+        "build_artifact": build_artifact,
+        "screenshot_visual_probe": screenshot_visual_probe,
         "runtime": runtime,
         "bridge": {
             "available": true,
@@ -462,11 +926,198 @@ pub async fn observation_bundle(root_dir: &Path, requested_hook_ids: &[u64]) -> 
     }))
 }
 
+fn read_target_manifest_bundle(root_dir: &Path) -> Value {
+    let manifest_path = root_dir.join("dist").join("jet-target.json");
+    let relative_path = "dist/jet-target.json";
+    match std::fs::read_to_string(&manifest_path) {
+        Ok(body) => match serde_json::from_str::<Value>(&body) {
+            Ok(manifest) => serde_json::json!({
+                "present": true,
+                "path": relative_path,
+                "manifest": manifest,
+            }),
+            Err(err) => serde_json::json!({
+                "present": false,
+                "path": relative_path,
+                "error": format!("parse error: {err}"),
+            }),
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => serde_json::json!({
+            "present": false,
+            "path": relative_path,
+        }),
+        Err(err) => serde_json::json!({
+            "present": false,
+            "path": relative_path,
+            "error": format!("read error: {err}"),
+        }),
+    }
+}
+
+fn screenshot_visual_probe_from_png(bytes: &[u8]) -> Value {
+    let image = match image::load_from_memory(bytes) {
+        Ok(image) => image.to_rgba8(),
+        Err(err) => {
+            return serde_json::json!({
+                "schema_version": "jet.browser.screenshot_visual_probe.v1",
+                "pngByteLen": bytes.len(),
+                "error": format!("decode error: {err}"),
+            });
+        }
+    };
+    let (width, height) = image.dimensions();
+    let background = image
+        .get_pixel_checked(0, 0)
+        .map(|pixel| pixel.0)
+        .unwrap_or([0, 0, 0, 0]);
+    let mut non_transparent = 0_u64;
+    let mut non_white = 0_u64;
+    let mut non_black = 0_u64;
+    let mut foreground_count = 0_u64;
+    let mut buckets = HashSet::new();
+
+    for pixel in image.pixels() {
+        let [r, g, b, a] = pixel.0;
+        if a > 0 {
+            non_transparent += 1;
+        }
+        if a > 0 && (r < 250 || g < 250 || b < 250) {
+            non_white += 1;
+        }
+        if a > 0 && (r > 5 || g > 5 || b > 5) {
+            non_black += 1;
+        }
+        if pixel_differs_from_background(pixel.0, background) {
+            foreground_count += 1;
+        }
+        buckets.insert((r >> 5, g >> 5, b >> 5, a >> 5));
+    }
+
+    let sample = image::imageops::resize(&image, 32, 32, image::imageops::FilterType::Triangle);
+    let mut block_luma = Vec::with_capacity(64);
+    for by in 0..8 {
+        for bx in 0..8 {
+            let mut sum = 0.0;
+            for y in 0..4 {
+                for x in 0..4 {
+                    let [r, g, b, a] = sample.get_pixel(bx * 4 + x, by * 4 + y).0;
+                    let alpha = f64::from(a) / 255.0;
+                    let luma = (299.0 * f64::from(r) + 587.0 * f64::from(g) + 114.0 * f64::from(b))
+                        / 1000.0;
+                    sum += luma * alpha;
+                }
+            }
+            block_luma.push(sum / 16.0);
+        }
+    }
+    let average_luma = if block_luma.is_empty() {
+        0.0
+    } else {
+        block_luma.iter().sum::<f64>() / block_luma.len() as f64
+    };
+    let mut hash = String::new();
+    let mut hash_ones = 0_u64;
+    for chunk in block_luma.chunks(4) {
+        let mut nibble = 0_u8;
+        for value in chunk {
+            let bit = u8::from(*value >= average_luma);
+            hash_ones += u64::from(bit);
+            nibble = (nibble << 1) | bit;
+        }
+        hash.push_str(&format!("{nibble:x}"));
+    }
+
+    serde_json::json!({
+        "schema_version": "jet.browser.screenshot_visual_probe.v1",
+        "pngByteLen": bytes.len(),
+        "width": width,
+        "height": height,
+        "nonTransparent": non_transparent,
+        "nonWhite": non_white,
+        "nonBlack": non_black,
+        "uniqueBuckets": buckets.len(),
+        "foregroundCount": foreground_count,
+        "averageLuma": average_luma,
+        "hash": hash,
+        "hashOnes": hash_ones,
+    })
+}
+
+fn pixel_differs_from_background(pixel: [u8; 4], background: [u8; 4]) -> bool {
+    let channel_delta = |a: u8, b: u8| a.abs_diff(b);
+    channel_delta(pixel[0], background[0]) > 12
+        || channel_delta(pixel[1], background[1]) > 12
+        || channel_delta(pixel[2], background[2]) > 12
+        || channel_delta(pixel[3], background[3]) > 8
+}
+
+#[cfg(test)]
+mod screenshot_visual_probe_tests {
+    use super::*;
+
+    #[test]
+    fn screenshot_visual_probe_reports_comparable_hash_for_png() {
+        let mut image = image::RgbaImage::new(8, 8);
+        for y in 0..8 {
+            for x in 0..8 {
+                let pixel = if x < 4 {
+                    image::Rgba([255, 255, 255, 255])
+                } else {
+                    image::Rgba([20, 40, 80, 255])
+                };
+                image.put_pixel(x, y, pixel);
+            }
+        }
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode png");
+
+        let probe = screenshot_visual_probe_from_png(&bytes);
+        assert_eq!(
+            probe.get("schema_version").and_then(|value| value.as_str()),
+            Some("jet.browser.screenshot_visual_probe.v1"),
+        );
+        assert_eq!(probe.get("width").and_then(|value| value.as_u64()), Some(8));
+        assert_eq!(
+            probe.get("height").and_then(|value| value.as_u64()),
+            Some(8)
+        );
+        assert!(
+            probe
+                .get("nonWhite")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0)
+                > 0,
+            "probe should observe non-white pixels: {probe:?}",
+        );
+        assert_eq!(
+            probe
+                .get("hash")
+                .and_then(|value| value.as_str())
+                .map(str::len),
+            Some(16),
+            "probe should expose a 64-bit perceptual hash: {probe:?}",
+        );
+    }
+}
+
 /// Capture one machine-readable observation bundle from a live DOM page.
 /// The tree shape intentionally matches the React DOM oracle test normalizer
 /// so browser-capture evidence can be compared directly against jet-wasm.
 /// @spec .aw/tech-design/projects/jet/specs/3941.md#changes
 pub async fn dom_observation_bundle_from_page(page: &Page, root_selector: &str) -> Result<Value> {
+    page.bring_to_front()
+        .await
+        .context("bringing page to front before DOM observation screenshot")?;
+    let screenshot = page
+        .screenshot()
+        .await
+        .context("capturing DOM observation screenshot")?;
+    let screenshot_visual_probe = screenshot_visual_probe_from_png(&screenshot);
     let runtime = page
         .evaluate(
             r#"
@@ -492,6 +1143,7 @@ pub async fn dom_observation_bundle_from_page(page: &Page, root_selector: &str) 
         "schema_version": "jet.browser.dom_observation.v1",
         "runtime": runtime,
         "root_selector": root_selector,
+        "screenshot_visual_probe": screenshot_visual_probe,
         "dom_tree": dom_tree,
     }))
 }

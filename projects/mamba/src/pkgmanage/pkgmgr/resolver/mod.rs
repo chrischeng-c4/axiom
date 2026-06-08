@@ -132,10 +132,9 @@ impl Resolver {
             }
 
             // fetch_meta
-            let candidates = match self
-                .provider
-                .candidate_versions(&name, |v| (self.marker_excludes)(v, &req.marker))
-            {
+            let candidates = match self.provider.candidate_versions(&name, |v| {
+                (self.marker_excludes)(v, &req.marker)
+            }) {
                 Ok(v) => v,
                 Err(IndexError::NotFound { .. }) => {
                     return Err(ResolutionError {
@@ -175,7 +174,8 @@ impl Resolver {
             }
 
             // Apply --prerelease policy (Tick 141 integration).
-            let policy_filtered = apply_prerelease_policy(&kept, &req, self.prerelease_policy);
+            let policy_filtered =
+                apply_prerelease_policy(&kept, &req, self.prerelease_policy);
             if policy_filtered.is_empty() {
                 return Err(ResolutionError {
                     kind: ResolutionErrorKind::EmptyIntersection,
@@ -199,14 +199,14 @@ impl Resolver {
                 .pick_candidate(is_direct, &ascending)
                 .cloned()
                 .expect("non-empty after prerelease filter — checked above");
-            let meta =
-                self.provider
-                    .fetch_metadata_blocking(&name)
-                    .map_err(|e| ResolutionError {
-                        kind: ResolutionErrorKind::MissingPackage,
-                        trace: format!("metadata for {name} disappeared: {e}"),
-                        involved: vec![name.clone()],
-                    })?;
+            let meta = self
+                .provider
+                .fetch_metadata_blocking(&name)
+                .map_err(|e| ResolutionError {
+                    kind: ResolutionErrorKind::MissingPackage,
+                    trace: format!("metadata for {name} disappeared: {e}"),
+                    involved: vec![name.clone()],
+                })?;
 
             // Apply yanked + --exclude-newer file filters (Tick 144
             // integration). Files past the cutoff are dropped as if
@@ -276,10 +276,7 @@ impl Resolver {
 
         // build_graph: nodes sorted by name (BTreeMap iteration), roots in input order.
         let nodes = decided.into_values().collect::<Vec<_>>();
-        Ok(ResolvedGraph {
-            nodes,
-            roots: root_names,
-        })
+        Ok(ResolvedGraph { nodes, roots: root_names })
     }
 }
 
@@ -346,7 +343,8 @@ mod prerelease_integration_tests {
         // Newest-first kept list: 2.0a1 (pre), 1.9 (stable), 1.8 (stable).
         let kept = vec!["2.0a1".to_string(), "1.9".to_string(), "1.8".to_string()];
         let r = req("foo", &[]);
-        let out = apply_prerelease_policy(&kept, &r, PrereleasePolicy::IfNecessaryOrExplicit);
+        let out =
+            apply_prerelease_policy(&kept, &r, PrereleasePolicy::IfNecessaryOrExplicit);
         // 2.0a1 dropped: stable exists, no explicit prerelease pin.
         assert_eq!(out, vec!["1.9", "1.8"]);
     }
@@ -379,7 +377,8 @@ mod prerelease_integration_tests {
     fn explicit_prerelease_pin_lets_prerelease_through_default_policy() {
         let kept = vec!["2.0a1".to_string()];
         let r = req("foo", &[(Op::Eq, "2.0a1")]);
-        let out = apply_prerelease_policy(&kept, &r, PrereleasePolicy::IfNecessaryOrExplicit);
+        let out =
+            apply_prerelease_policy(&kept, &r, PrereleasePolicy::IfNecessaryOrExplicit);
         assert_eq!(out, vec!["2.0a1"]);
     }
 
@@ -438,15 +437,21 @@ mod prerelease_integration_tests {
 
     #[test]
     fn resolution_highest_picks_newest() {
-        let picked =
-            pick_from_newest_first(ResolutionStrategy::Highest, true, vec!["3.0", "2.5", "2.0"]);
+        let picked = pick_from_newest_first(
+            ResolutionStrategy::Highest,
+            true,
+            vec!["3.0", "2.5", "2.0"],
+        );
         assert_eq!(picked.as_deref(), Some("3.0"));
     }
 
     #[test]
     fn resolution_lowest_picks_oldest() {
-        let picked =
-            pick_from_newest_first(ResolutionStrategy::Lowest, true, vec!["3.0", "2.5", "2.0"]);
+        let picked = pick_from_newest_first(
+            ResolutionStrategy::Lowest,
+            true,
+            vec!["3.0", "2.5", "2.0"],
+        );
         assert_eq!(picked.as_deref(), Some("2.0"));
     }
 
@@ -470,8 +475,11 @@ mod prerelease_integration_tests {
 
     #[test]
     fn resolution_default_matches_pip_highest() {
-        let picked =
-            pick_from_newest_first(ResolutionStrategy::default(), true, vec!["3.0", "2.0"]);
+        let picked = pick_from_newest_first(
+            ResolutionStrategy::default(),
+            true,
+            vec!["3.0", "2.0"],
+        );
         assert_eq!(picked.as_deref(), Some("3.0"));
     }
 
@@ -487,12 +495,11 @@ mod prerelease_integration_tests {
             "1.9".to_string(),
         ];
         let r = req("foo", &[]);
-        let filtered = apply_prerelease_policy(&kept, &r, PrereleasePolicy::IfNecessaryOrExplicit);
+        let filtered =
+            apply_prerelease_policy(&kept, &r, PrereleasePolicy::IfNecessaryOrExplicit);
         let mut asc = filtered;
         asc.reverse();
-        let picked = ResolutionStrategy::Lowest
-            .pick_candidate(true, &asc)
-            .cloned();
+        let picked = ResolutionStrategy::Lowest.pick_candidate(true, &asc).cloned();
         assert_eq!(picked.as_deref(), Some("1.9"));
     }
 }

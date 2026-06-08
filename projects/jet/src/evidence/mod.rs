@@ -352,6 +352,8 @@ mod tests {
                 }],
             }],
             artifacts: vec![],
+            serve_session: None,
+            browser_sessions: vec![],
             open_control: None,
         }
     }

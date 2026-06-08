@@ -120,6 +120,23 @@ impl Browser {
         Ok(())
     }
 
+    /// OS process id for a browser launched by this handle.
+    pub fn process_id(&self) -> Option<u32> {
+        self.process.as_ref().and_then(|proc| proc.id())
+    }
+
+    /// Release ownership of a launched browser process without closing it.
+    ///
+    /// Used by agent-first CLI commands that launch a browser, persist the CDP
+    /// session metadata, then exit while follow-up commands reattach through
+    /// the stored WebSocket endpoint.
+    pub fn detach(mut self) {
+        self.default_context.take();
+        if let Some(proc) = self.process.take() {
+            std::mem::forget(proc);
+        }
+    }
+
     /// The WebSocket URL this browser is connected on.
     pub fn ws_url(&self) -> &str {
         &self.ws_url

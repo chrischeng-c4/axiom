@@ -19,14 +19,11 @@ use crate::{Callback, Component, Element};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[cfg(feature = "canvas-app")]
-pub mod canvas_app;
-
-#[cfg(feature = "dom-app")]
-pub mod dom_app;
-
 #[cfg(all(feature = "webgpu-app", target_arch = "wasm32"))]
 pub mod webgpu_app;
+
+#[cfg(all(feature = "dom-app", target_arch = "wasm32"))]
+pub mod dom_app;
 
 // ── Fiber + hook storage ────────────────────────────────────────────────────
 
@@ -95,6 +92,7 @@ pub type MemoDepHash = u64;
 
 thread_local! {
     static RUNTIME: RefCell<Runtime> = RefCell::new(Runtime::default());
+    static UPDATE_SCHEDULER: RefCell<Option<Rc<dyn Fn()>>> = RefCell::new(None);
 }
 
 #[derive(Default)]
@@ -221,6 +219,7 @@ impl<T: Clone + 'static> StateSetter<T> {
             fiber.hooks[self.idx] = HookSlot::State(Box::new(new_value));
             fiber.dirty = true;
         });
+        notify_update_scheduled();
     }
 }
 
@@ -302,7 +301,26 @@ impl<S: Clone + 'static, A: 'static> DispatchHandle<S, A> {
             fiber.hooks[self.idx] = HookSlot::State(Box::new(new_state));
             fiber.dirty = true;
         });
+        notify_update_scheduled();
     }
+}
+
+/// Register the renderer-side async update scheduler. State setters
+/// are framework-level primitives, but only the mounted renderer knows
+/// how to coalesce dirty fibers into an actual frame.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src-react.md#schema
+pub fn set_update_scheduler(scheduler: Option<Rc<dyn Fn()>>) {
+    UPDATE_SCHEDULER.with(|slot| {
+        *slot.borrow_mut() = scheduler;
+    });
+}
+
+fn notify_update_scheduled() {
+    UPDATE_SCHEDULER.with(|slot| {
+        if let Some(schedule) = slot.borrow().as_ref().cloned() {
+            schedule();
+        }
+    });
 }
 
 /// `useReducer` — same slot as `useState`, but transitions driven
@@ -490,7 +508,7 @@ pub fn mount(component: Component) -> MountHandle {
 }
 
 /// Returned from `mount`. Holds the live fiber + the last rendered
-/// tree so tests / the canvas renderer can inspect it.
+/// tree so tests / the WebGPU renderer can inspect it.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src-react.md#schema
 pub struct MountHandle {
     pub fiber_id: FiberId,

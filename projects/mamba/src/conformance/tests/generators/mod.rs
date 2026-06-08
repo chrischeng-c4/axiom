@@ -96,12 +96,7 @@ pub fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
@@ -119,9 +114,9 @@ pub fn assert_contains(actual: &str, needle: &str) {
     }
 }
 
-pub mod test_async_generators;
 pub mod test_generators_basic;
-pub mod test_generators_close;
 pub mod test_generators_send_throw;
+pub mod test_generators_close;
 pub mod test_generators_yield_from;
 pub mod test_iterator_protocol;
+pub mod test_async_generators;

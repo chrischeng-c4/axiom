@@ -275,7 +275,7 @@ pub fn shake_module(source: &str, path: &PathBuf, used_exports: &HashSet<String>
         // Check if this is an ESM export we should remove
         if trimmed.starts_with("export ") && !trimmed.starts_with("export default") {
             if let Some(name) = extract_single_export_name(trimmed) {
-                if !used_exports.contains(&name) {
+                if !used_exports.contains(&name) && is_single_line_removable_export(trimmed) {
                     result.push('\n');
                     continue;
                 }
@@ -288,6 +288,18 @@ pub fn shake_module(source: &str, path: &PathBuf, used_exports: &HashSet<String>
 
     let _ = path;
     result
+}
+
+fn is_single_line_removable_export(line: &str) -> bool {
+    let line = line.trim();
+    if line.starts_with("export const ")
+        || line.starts_with("export let ")
+        || line.starts_with("export var ")
+    {
+        return line.ends_with(';');
+    }
+
+    false
 }
 
 // --- ESM analysis ---
@@ -1074,6 +1086,29 @@ const internal = 2;
         let result = shake_module(source, &PathBuf::from("test.js"), &used);
         assert!(result.contains("export const used"));
         assert!(!result.contains("export const unused"));
+    }
+
+    #[test]
+    fn test_shake_keeps_unused_multiline_export_declaration_intact() {
+        let source = "function useRenderTimes() {}\nexport default process.env.NODE_ENV !== 'production' ? useRenderTimes : function () {};\nexport var RenderBlock = React.memo(function () {\n  var times = useRenderTimes();\n  return React.createElement(\"h1\", null, times);\n});\n";
+        let mut used = HashSet::new();
+        used.insert("default".to_string());
+
+        let result = shake_module(source, &PathBuf::from("useRenderTimes.js"), &used);
+
+        assert!(
+            result.contains("export var RenderBlock = React.memo(function () {"),
+            "multi-line export declaration should remain intact, got: {}",
+            result
+        );
+
+        let transformed =
+            crate::transform::modules::transform_modules(&result, &HashMap::new()).unwrap();
+        assert!(
+            !transformed.code.contains("module.exports[\"default\"] = ;"),
+            "shaken source must not make default export empty, got: {}",
+            transformed.code
+        );
     }
 
     // --- CJS tests ---

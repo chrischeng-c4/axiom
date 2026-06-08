@@ -32,16 +32,9 @@ fn profile_path() -> PathBuf {
         .join("package_manager.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_run_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -77,7 +70,7 @@ fn pkgmgr_run_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_run_setup_names_script_and_sentinel() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let setup = doc
         .get("setup")
         .and_then(|v| v.as_table())
@@ -94,9 +87,7 @@ fn pkgmgr_run_setup_names_script_and_sentinel() {
         "`[setup].lockfile_present` must be true — lockfile pins what `sync` installs"
     );
     assert_eq!(
-        setup
-            .get("project_env_present_initial")
-            .and_then(|v| v.as_bool()),
+        setup.get("project_env_present_initial").and_then(|v| v.as_bool()),
         Some(false),
         "`[setup].project_env_present_initial` must be false — phase 1 has no env yet"
     );
@@ -116,14 +107,11 @@ fn pkgmgr_run_setup_names_script_and_sentinel() {
 
 #[test]
 fn pkgmgr_run_unsynced_failure_case_fails_cleanly() {
-    let doc = load_toml(&manifest_path());
-    let phase = doc
-        .get("unsynced_failure_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[unsynced_failure_case]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let phase = doc.get("unsynced_failure_case").and_then(|v| v.as_table()).expect(
+        "missing `[unsynced_failure_case]` block \
          (acceptance: \"Running without sync or install fails with a clear diagnostic.\")",
-        );
+    );
 
     let command: Vec<&str> = phase
         .get("command")
@@ -149,9 +137,7 @@ fn pkgmgr_run_unsynced_failure_case_fails_cleanly() {
     assert!(!diag.is_empty(), "diagnostic substring must be non-empty");
 
     assert_eq!(
-        phase
-            .get("must_not_print_sentinel")
-            .and_then(|v| v.as_bool()),
+        phase.get("must_not_print_sentinel").and_then(|v| v.as_bool()),
         Some(true),
         "`[unsynced_failure_case].must_not_print_sentinel` must be true — \
          the script never gets to run"
@@ -166,14 +152,11 @@ fn pkgmgr_run_unsynced_failure_case_fails_cleanly() {
 
 #[test]
 fn pkgmgr_run_synced_success_case_prints_sentinel() {
-    let doc = load_toml(&manifest_path());
-    let phase = doc
-        .get("synced_success_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[synced_success_case]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let phase = doc.get("synced_success_case").and_then(|v| v.as_table()).expect(
+        "missing `[synced_success_case]` block \
          (acceptance: \"Running after sync prints the expected sentinel.\")",
-        );
+    );
 
     let prep: Vec<&str> = phase
         .get("preparatory_command")
@@ -181,8 +164,7 @@ fn pkgmgr_run_synced_success_case_prints_sentinel() {
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
     assert_eq!(
-        prep,
-        vec!["sync"],
+        prep, vec!["sync"],
         "`[synced_success_case].preparatory_command` must be [\"sync\"]; got {prep:?}"
     );
 
@@ -233,14 +215,11 @@ fn pkgmgr_run_synced_success_case_prints_sentinel() {
 
 #[test]
 fn pkgmgr_run_no_global_state_assertion_pins_user_env() {
-    let doc = load_toml(&manifest_path());
-    let no_global = doc
-        .get("no_global_state_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[no_global_state_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let no_global = doc.get("no_global_state_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[no_global_state_assertion]` block \
          (acceptance: \"No global PATH or user environment mutation is required.\")",
-        );
+    );
 
     for flag in &[
         "user_path_must_be_unchanged",
@@ -257,7 +236,7 @@ fn pkgmgr_run_no_global_state_assertion_pins_user_env() {
 
 #[test]
 fn pkgmgr_run_isolation_pins_global_path_and_shell_env() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -281,7 +260,7 @@ fn pkgmgr_run_isolation_pins_global_path_and_shell_env() {
 
 #[test]
 fn pkgmgr_run_runner_contract_declares_phase_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -320,7 +299,7 @@ fn pkgmgr_run_runner_contract_declares_phase_keys() {
 
 #[test]
 fn pkgmgr_run_pins_out_of_scope_per_issue_2684() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())
@@ -339,7 +318,7 @@ fn pkgmgr_run_pins_out_of_scope_per_issue_2684() {
 
 #[test]
 fn pkgmgr_profile_links_to_run_fixture_directory() {
-    let doc = load_toml(&profile_path());
+    let doc = crate::common::load_toml(&profile_path());
     let run = doc
         .get("families")
         .and_then(|v| v.get("run"))

@@ -1,4 +1,5 @@
 #![cfg(test)]
+
 // HANDWRITE-BEGIN gap="missing-generator:hand-written:b59d08ba" tracker="standardize-gap-projects-mamba-tests-pkgmgr-resolver-test-rs" reason="Integration tests covering AC1-AC6. AC6 gated on PYPI_LIVE=1 env var."
 //! Integration tests for the mamba pkgmgr resolver.
 //!
@@ -10,7 +11,7 @@
 //! acceptance-criteria contract is documented in code.
 
 use crate::pkgmanage::pkgmgr::resolver::{
-    parse_requirement, ResolutionErrorKind, ResolvedGraph, Resolver,
+    parse_requirement, ResolutionErrorKind, Resolver, ResolvedGraph,
 };
 
 /// AC1: Resolver::resolve(['requests']) returns full transitive closure.
@@ -51,7 +52,8 @@ fn ac4_output_byte_stable_across_reruns() {
 #[ignore = "AC5 — needs marker-eval policy + frozen index fixture"]
 fn ac5_marker_excludes_incompatible_python() {
     // Resolver::with_marker_eval is the wiring point.
-    let _builder_marker_check = |v: &str, m: &Option<String>| v.is_empty() && m.is_some();
+    let _builder_marker_check =
+        |v: &str, m: &Option<String>| v.is_empty() && m.is_some();
     let _ = _builder_marker_check;
 }
 

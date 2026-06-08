@@ -46,7 +46,10 @@ fn test_signed_range_classifier_via_elif() {
         print(n, "big")
 "#,
     );
-    assert_output(&out, "-3 neg\n0 zero\n5 small\n42 med\n999 big\n");
+    assert_output(
+        &out,
+        "-3 neg\n0 zero\n5 small\n42 med\n999 big\n",
+    );
 }
 
 #[test]
@@ -61,5 +64,8 @@ fn test_three_way_elif_discriminator() {
         print(n, "odd")
 "#,
     );
-    assert_output(&out, "-2 even\n-1 odd\n0 zero\n1 odd\n2 even\n");
+    assert_output(
+        &out,
+        "-2 even\n-1 odd\n0 zero\n1 odd\n2 even\n",
+    );
 }

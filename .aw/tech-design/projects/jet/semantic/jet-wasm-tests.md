@@ -60,6 +60,23 @@ semantic_domain:
           role: "test"
           section_type: "tests"
           domain: "projects/jet/wasm/tests"
+      - path: "projects/jet/wasm/tests/common/mod.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["test_fixture", "helper_function"]
+        symbols:
+          - name: "TUFFY_REGULAR"
+            kind: "constant"
+            public: true
+          - name: "tuffy_regular"
+            kind: "function"
+            public: true
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "test"
+          section_type: "tests"
+          domain: "projects/jet/wasm/tests"
       - path: "projects/jet/wasm/tests/line_bidi_s5.rs"
         language: "rust"
         ownership_state: "codegen"
@@ -503,6 +520,7 @@ tests:
     source_tests:
       - path: "projects/jet/wasm/tests/line_bidi_s1.rs"
       - path: "projects/jet/wasm/tests/text_shaping_s1.rs"
+      - path: "projects/jet/wasm/tests/common/mod.rs"
       - path: "projects/jet/wasm/tests/line_bidi_s5.rs"
       - path: "projects/jet/wasm/tests/line_bidi_s4.rs"
       - path: "projects/jet/wasm/tests/layout_block.rs"
@@ -535,6 +553,12 @@ changes:
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
   - path: "projects/jet/wasm/tests/text_shaping_s1.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/jet/wasm/tests/common/mod.rs"
     action: modify
     section: schema
     description: |

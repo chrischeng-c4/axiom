@@ -1,8 +1,9 @@
-use super::rc::{MbObject, ObjData};
 /// Set operations for Mamba (#386) — thread-safe.
 ///
 /// All mutable set access goes through RwLock guards for thread-safety.
+
 use super::value::MbValue;
+use super::rc::{MbObject, ObjData};
 
 #[inline]
 fn eq_py(a: MbValue, b: MbValue) -> bool {
@@ -14,10 +15,9 @@ fn eq_py(a: MbValue, b: MbValue) -> bool {
 /// → set. Wrap the resulting `Vec<MbValue>` accordingly.
 #[inline]
 fn build_set_like_left(left: MbValue, items: Vec<MbValue>) -> MbValue {
-    let is_frozen = left
-        .as_ptr()
-        .map(|p| unsafe { matches!((*p).data, ObjData::FrozenSet(_)) })
-        .unwrap_or(false);
+    let is_frozen = left.as_ptr().map(|p| unsafe {
+        matches!((*p).data, ObjData::FrozenSet(_))
+    }).unwrap_or(false);
     if is_frozen {
         MbValue::from_ptr(MbObject::new_frozenset(items))
     } else {
@@ -30,34 +30,44 @@ pub fn mb_set_new() -> MbValue {
     MbValue::from_ptr(MbObject::new_set(Vec::new()))
 }
 
-/// Create a set from a list of elements.
+/// Create a set from a list of elements, deduplicating via the hash index
+/// (O(n) amortized instead of the old O(n²) linear-scan dedup).
 pub fn mb_set_from_list(list: MbValue) -> MbValue {
-    let mut items = Vec::new();
-    if let Some(ptr) = list.as_ptr() {
+    let elems: Vec<MbValue> = if let Some(ptr) = list.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let elems = lock.read().unwrap();
-                for elem in elems.iter() {
-                    if !items.iter().any(|v: &MbValue| eq_py(*v, *elem)) {
-                        items.push(*elem);
-                    }
+                lock.read().unwrap().to_vec()
+            } else {
+                Vec::new()
+            }
+        }
+    } else {
+        Vec::new()
+    };
+    let set = mb_set_new();
+    if let Some(ptr) = set.as_ptr() {
+        unsafe {
+            if let ObjData::Set(ref lock) = (*ptr).data {
+                let mut items = lock.write().unwrap();
+                for elem in elems {
+                    // `set_insert` retains only newly-added (deduped) elements,
+                    // matching the borrowed-from-list ownership semantics.
+                    items.set_insert(elem);
                 }
             }
         }
     }
-    MbValue::from_ptr(MbObject::new_set(items))
+    set
 }
 
-/// set.add(elem) — add an element (no-op if already present).
+/// set.add(elem) — add an element (no-op if already present). O(1) amortized
+/// via the hash index in `MbSet`.
 pub fn mb_set_add(set_val: MbValue, elem: MbValue) {
     if let Some(ptr) = set_val.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
-                let mut items = lock.write().unwrap();
-                if !items.iter().any(|v| eq_py(*v, elem)) {
-                    super::rc::retain_if_ptr(elem);
-                    items.push(elem);
-                }
+                // `set_insert` retains `elem` itself only when newly added.
+                lock.write().unwrap().set_insert(elem);
             }
         }
     }
@@ -68,9 +78,8 @@ pub fn mb_set_remove(set_val: MbValue, elem: MbValue) {
     if let Some(ptr) = set_val.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
-                let mut items = lock.write().unwrap();
-                if let Some(pos) = items.iter().position(|v| eq_py(*v, elem)) {
-                    items.swap_remove(pos);
+                if let Some(removed) = lock.write().unwrap().set_remove(elem) {
+                    super::rc::release_if_ptr(removed);
                     return;
                 }
                 // CPython raises KeyError(elem) with the bare element, not
@@ -78,16 +87,9 @@ pub fn mb_set_remove(set_val: MbValue, elem: MbValue) {
                 // printing the exception. Pre-repring here causes a double
                 // quote escape (e.g. `KE: '\'zeta\''` instead of `KE: 'zeta'`).
                 let str_val = super::builtins::mb_str(elem);
-                let str_s = str_val
-                    .as_ptr()
-                    .and_then(|p| {
-                        if let ObjData::Str(ref s) = (*p).data {
-                            Some(s.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_default();
+                let str_s = str_val.as_ptr().and_then(|p| {
+                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                }).unwrap_or_default();
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(str_s)),
@@ -102,9 +104,8 @@ pub fn mb_set_discard(set_val: MbValue, elem: MbValue) {
     if let Some(ptr) = set_val.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
-                let mut items = lock.write().unwrap();
-                if let Some(pos) = items.iter().position(|v| eq_py(*v, elem)) {
-                    items.swap_remove(pos);
+                if let Some(removed) = lock.write().unwrap().set_remove(elem) {
+                    super::rc::release_if_ptr(removed);
                 }
             }
         }
@@ -118,9 +119,7 @@ pub fn mb_set_contains(set_val: MbValue, elem: MbValue) -> MbValue {
             match &(*ptr).data {
                 // REQ: R8
                 ObjData::Set(ref lock) => {
-                    return MbValue::from_bool(
-                        lock.read().unwrap().iter().any(|v| eq_py(*v, elem)),
-                    );
+                    return MbValue::from_bool(lock.read().unwrap().contains_value(elem));
                 }
                 // REQ: R8
                 ObjData::FrozenSet(ref items) => {
@@ -202,7 +201,14 @@ pub fn mb_set_symmetric_difference(a: MbValue, b: MbValue) -> MbValue {
         .copied()
         .collect();
     for elem in &items_b {
-        if !items_a.iter().any(|v| eq_py(*v, *elem)) {
+        // Dedup: only contribute an element from `b` if it is in neither `a`
+        // nor already in the result. CPython accepts any iterable for the
+        // argument (string, range, list with repeats, …), so `items_b` may
+        // contain duplicates; without this check the result would be a
+        // multiset rather than a set.
+        if !items_a.iter().any(|v| eq_py(*v, *elem))
+            && !result.iter().any(|v| eq_py(*v, *elem))
+        {
             result.push(*elem);
         }
     }
@@ -214,16 +220,21 @@ pub fn mb_set_pop(receiver: MbValue) -> MbValue {
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
-                let mut items = lock.write().unwrap();
-                if items.is_empty() {
-                    drop(items);
-                    super::exception::mb_raise(
-                        MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str("pop from an empty set".to_string())),
-                    );
-                    return MbValue::none();
+                let popped = lock.write().unwrap().pop_front();
+                match popped {
+                    // `pop_front` hands back the owned reference held by the set;
+                    // the caller becomes the owner, so no extra retain.
+                    Some(v) => return v,
+                    None => {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "pop from an empty set".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
+                    }
                 }
-                return items.swap_remove(0);
             }
         }
     }
@@ -250,10 +261,8 @@ pub fn mb_set_update(receiver: MbValue, other: MbValue) -> MbValue {
             if let ObjData::Set(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
                 for elem in new_items {
-                    if !items.iter().any(|v| eq_py(*v, elem)) {
-                        super::rc::retain_if_ptr(elem);
-                        items.push(elem);
-                    }
+                    // `set_insert` retains only on a newly-added element.
+                    items.set_insert(elem);
                 }
             }
         }
@@ -268,13 +277,13 @@ pub fn mb_set_intersection_update(receiver: MbValue, other: MbValue) -> MbValue 
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
-                let mut i = 0;
-                while i < items.len() {
-                    if other_items.iter().any(|v| eq_py(*v, items[i])) {
-                        i += 1;
-                    } else {
-                        let dropped = items.swap_remove(i);
-                        super::rc::release_if_ptr(dropped);
+                // Snapshot current elements, then drop the ones not in `other`.
+                let current: Vec<MbValue> = items.iter().copied().collect();
+                for elem in current {
+                    if !other_items.iter().any(|v| eq_py(*v, elem)) {
+                        if let Some(dropped) = items.set_remove(elem) {
+                            super::rc::release_if_ptr(dropped);
+                        }
                     }
                 }
             }
@@ -290,13 +299,9 @@ pub fn mb_set_difference_update(receiver: MbValue, other: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
-                let mut i = 0;
-                while i < items.len() {
-                    if other_items.iter().any(|v| eq_py(*v, items[i])) {
-                        let dropped = items.swap_remove(i);
+                for elem in other_items {
+                    if let Some(dropped) = items.set_remove(elem) {
                         super::rc::release_if_ptr(dropped);
-                    } else {
-                        i += 1;
                     }
                 }
             }
@@ -307,28 +312,22 @@ pub fn mb_set_difference_update(receiver: MbValue, other: MbValue) -> MbValue {
 
 /// set.symmetric_difference_update(other) — in-place; keep elements in exactly one set.
 pub fn mb_set_symmetric_difference_update(receiver: MbValue, other: MbValue) -> MbValue {
-    let other_items = extract_set_items(other);
+    // Dedup `other` first: a symmetric-difference toggle must be applied once
+    // per *distinct* element, so a duplicate-containing iterable (e.g.
+    // `[2, 2, 4]`) cannot toggle the same element twice. (CPython coerces
+    // `other` to a set internally.)
+    let other_items = dedup_items(extract_set_items(other));
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
-                // Drop intersection first.
-                let mut i = 0;
-                let mut shared: Vec<MbValue> = Vec::new();
-                while i < items.len() {
-                    if other_items.iter().any(|v| eq_py(*v, items[i])) {
-                        shared.push(items[i]);
-                        let dropped = items.swap_remove(i);
+                for elem in other_items {
+                    // Present in both → remove; present in only `other` → add.
+                    if let Some(dropped) = items.set_remove(elem) {
                         super::rc::release_if_ptr(dropped);
                     } else {
-                        i += 1;
-                    }
-                }
-                // Add elements unique to `other`.
-                for elem in other_items {
-                    if !shared.iter().any(|v| eq_py(*v, elem)) {
-                        super::rc::retain_if_ptr(elem);
-                        items.push(elem);
+                        // `set_insert` retains only on a newly-added element.
+                        items.set_insert(elem);
                     }
                 }
             }
@@ -337,12 +336,28 @@ pub fn mb_set_symmetric_difference_update(receiver: MbValue, other: MbValue) -> 
     MbValue::none()
 }
 
+/// Deduplicate a vector of values with `eq_py` semantics. Used to coerce an
+/// arbitrary iterable's items to set-distinct elements before a symmetric
+/// toggle. Order-preserving; keeps the first occurrence.
+fn dedup_items(items: Vec<MbValue>) -> Vec<MbValue> {
+    let mut out: Vec<MbValue> = Vec::with_capacity(items.len());
+    for v in items {
+        if !out.iter().any(|u| eq_py(*u, v)) {
+            out.push(v);
+        }
+    }
+    out
+}
+
 /// set.clear()
 pub fn mb_set_clear(set_val: MbValue) {
     if let Some(ptr) = set_val.as_ptr() {
         unsafe {
             if let ObjData::Set(ref lock) = (*ptr).data {
-                lock.write().unwrap().clear();
+                // Match the pre-index behavior: drop items + index together.
+                // (Element refs are reclaimed when the set object itself is
+                // released — mirroring the original `MbList::clear()`.)
+                lock.write().unwrap().clear_all();
             }
         }
     }
@@ -412,12 +427,7 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         unsafe {
             if let Some(ptr) = args.as_ptr() {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    return lock
-                        .read()
-                        .unwrap()
-                        .get(i)
-                        .copied()
-                        .unwrap_or(MbValue::none());
+                    return lock.read().unwrap().get(i).copied().unwrap_or(MbValue::none());
                 }
             }
             MbValue::none()
@@ -427,14 +437,8 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
     if let Some(ptr) = receiver.as_ptr() {
         if unsafe { matches!((*ptr).data, ObjData::FrozenSet(_)) } {
             match name {
-                "add"
-                | "remove"
-                | "discard"
-                | "pop"
-                | "clear"
-                | "update"
-                | "intersection_update"
-                | "difference_update"
+                "add" | "remove" | "discard" | "pop" | "clear" | "update"
+                | "intersection_update" | "difference_update"
                 | "symmetric_difference_update" => {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
@@ -449,22 +453,10 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         }
     }
     match name {
-        "add" => {
-            mb_set_add(receiver, arg(0));
-            MbValue::none()
-        }
-        "remove" => {
-            mb_set_remove(receiver, arg(0));
-            MbValue::none()
-        }
-        "discard" => {
-            mb_set_discard(receiver, arg(0));
-            MbValue::none()
-        }
-        "clear" => {
-            mb_set_clear(receiver);
-            MbValue::none()
-        }
+        "add" => { mb_set_add(receiver, arg(0)); MbValue::none() }
+        "remove" => { mb_set_remove(receiver, arg(0)); MbValue::none() }
+        "discard" => { mb_set_discard(receiver, arg(0)); MbValue::none() }
+        "clear" => { mb_set_clear(receiver); MbValue::none() }
         "copy" => mb_set_copy(receiver),
         "union" => mb_set_union(receiver, arg(0)),
         "intersection" => mb_set_intersection(receiver, arg(0)),
@@ -508,16 +500,20 @@ fn extract_set_items(val: MbValue) -> Vec<MbValue> {
             match &(*ptr).data {
                 ObjData::Set(ref lock) => return lock.read().unwrap().to_vec(),
                 ObjData::FrozenSet(ref items) => return items.clone(),
-                // CPython's set methods (difference, difference_update,
-                // intersection_update, issubset, isdisjoint, …) accept any
-                // iterable; mirror that for the most common iterable shapes.
                 ObjData::List(ref lock) => return lock.read().unwrap().to_vec(),
                 ObjData::Tuple(ref items) => return items.clone(),
                 _ => {}
             }
         }
     }
-    vec![]
+    // CPython's set methods (union, intersection, difference,
+    // symmetric_difference, issubset, issuperset, isdisjoint, …) accept any
+    // iterable and raise `TypeError: 'X' object is not iterable` for a
+    // non-iterable argument. Delegate to the general iterable-collection
+    // path so strings (chars), dicts (keys), ranges, and user iterables are
+    // expanded correctly — and so non-iterables raise instead of silently
+    // being treated as an empty set. (Option-A strengthening)
+    super::builtins::extract_items(val)
 }
 
 #[cfg(test)]
@@ -532,14 +528,8 @@ mod tests {
         mb_set_add(set, MbValue::from_int(1)); // duplicate
 
         assert_eq!(mb_set_len(set).as_int(), Some(2));
-        assert_eq!(
-            mb_set_contains(set, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(set, MbValue::from_int(3)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(set, MbValue::from_int(1)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(set, MbValue::from_int(3)).as_bool(), Some(false));
     }
 
     #[test]
@@ -549,10 +539,7 @@ mod tests {
         mb_set_add(set, MbValue::from_int(2));
         mb_set_remove(set, MbValue::from_int(1));
         assert_eq!(mb_set_len(set).as_int(), Some(1));
-        assert_eq!(
-            mb_set_contains(set, MbValue::from_int(1)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(set, MbValue::from_int(1)).as_bool(), Some(false));
     }
 
     #[test]
@@ -600,10 +587,7 @@ mod tests {
         mb_set_add(set, MbValue::from_int(20));
         mb_set_discard(set, MbValue::from_int(10));
         assert_eq!(mb_set_len(set).as_int(), Some(1));
-        assert_eq!(
-            mb_set_contains(set, MbValue::from_int(10)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(set, MbValue::from_int(10)).as_bool(), Some(false));
     }
 
     #[test]
@@ -628,20 +612,14 @@ mod tests {
     #[test]
     fn test_set_contains_empty() {
         let set = mb_set_new();
-        assert_eq!(
-            mb_set_contains(set, MbValue::from_int(1)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(set, MbValue::from_int(1)).as_bool(), Some(false));
     }
 
     #[test]
     fn test_set_contains_non_set_value() {
         // Passing a non-set MbValue should return false.
         let val = MbValue::from_int(42);
-        assert_eq!(
-            mb_set_contains(val, MbValue::from_int(1)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(val, MbValue::from_int(1)).as_bool(), Some(false));
     }
 
     // ── mb_set_len on non-set ──
@@ -681,14 +659,8 @@ mod tests {
 
         let copy = mb_set_copy(set);
         assert_eq!(mb_set_len(copy).as_int(), Some(2));
-        assert_eq!(
-            mb_set_contains(copy, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(copy, MbValue::from_int(2)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(copy, MbValue::from_int(1)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(copy, MbValue::from_int(2)).as_bool(), Some(true));
 
         // Mutating original should not affect the copy.
         mb_set_add(set, MbValue::from_int(3));
@@ -710,18 +682,9 @@ mod tests {
 
         let result = mb_set_difference(a, b);
         assert_eq!(mb_set_len(result).as_int(), Some(2));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(3)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(2)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(1)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(3)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(2)).as_bool(), Some(false));
     }
 
     #[test]
@@ -734,10 +697,7 @@ mod tests {
 
         let result = mb_set_difference(a, b);
         assert_eq!(mb_set_len(result).as_int(), Some(1));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(1)).as_bool(), Some(true));
     }
 
     #[test]
@@ -765,18 +725,9 @@ mod tests {
 
         let result = mb_set_symmetric_difference(a, b);
         assert_eq!(mb_set_len(result).as_int(), Some(2));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(3)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(2)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(1)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(3)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(2)).as_bool(), Some(false));
     }
 
     #[test]
@@ -893,10 +844,7 @@ mod tests {
 
         let result = mb_set_union(a, b);
         assert_eq!(mb_set_len(result).as_int(), Some(1));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(1)).as_bool(), Some(true));
     }
 
     #[test]
@@ -940,10 +888,7 @@ mod tests {
         let set = mb_set_new();
         let result = dispatch_set_method("add", set, make_args(vec![MbValue::from_int(5)]));
         assert!(result.is_none());
-        assert_eq!(
-            mb_set_contains(set, MbValue::from_int(5)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(set, MbValue::from_int(5)).as_bool(), Some(true));
     }
 
     #[test]
@@ -979,10 +924,7 @@ mod tests {
         mb_set_add(set, MbValue::from_int(1));
         let copy = dispatch_set_method("copy", set, make_args(vec![]));
         assert_eq!(mb_set_len(copy).as_int(), Some(1));
-        assert_eq!(
-            mb_set_contains(copy, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(copy, MbValue::from_int(1)).as_bool(), Some(true));
     }
 
     #[test]
@@ -1015,10 +957,7 @@ mod tests {
         mb_set_add(b, MbValue::from_int(2));
         let result = dispatch_set_method("difference", a, make_args(vec![b]));
         assert_eq!(mb_set_len(result).as_int(), Some(1));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(1)).as_bool(), Some(true));
     }
 
     #[test]
@@ -1071,14 +1010,13 @@ mod tests {
     #[test]
     fn test_frozenset_add_raises_attribute_error() {
         super::super::exception::mb_clear_exception();
-        let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![MbValue::from_int(1)]));
+        let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![
+            MbValue::from_int(1),
+        ]));
         // R7: dispatch_set_method must raise AttributeError for mutation methods on frozenset
         let result = dispatch_set_method("add", fs, make_args(vec![MbValue::from_int(2)]));
         assert!(result.is_none());
-        assert_eq!(
-            super::super::exception::mb_has_exception().as_bool(),
-            Some(true)
-        );
+        assert_eq!(super::super::exception::mb_has_exception().as_bool(), Some(true));
         // frozenset is still intact: R8 len works
         assert_eq!(mb_set_len(fs).as_int(), Some(1));
         super::super::exception::mb_clear_exception();
@@ -1088,13 +1026,12 @@ mod tests {
     #[test]
     fn test_frozenset_remove_raises_attribute_error() {
         super::super::exception::mb_clear_exception();
-        let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![MbValue::from_int(1)]));
+        let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![
+            MbValue::from_int(1),
+        ]));
         let result = dispatch_set_method("remove", fs, make_args(vec![MbValue::from_int(1)]));
         assert!(result.is_none());
-        assert_eq!(
-            super::super::exception::mb_has_exception().as_bool(),
-            Some(true)
-        );
+        assert_eq!(super::super::exception::mb_has_exception().as_bool(), Some(true));
         super::super::exception::mb_clear_exception();
     }
 
@@ -1102,26 +1039,28 @@ mod tests {
     #[test]
     fn test_frozenset_clear_raises_attribute_error() {
         super::super::exception::mb_clear_exception();
-        let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![MbValue::from_int(1)]));
+        let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![
+            MbValue::from_int(1),
+        ]));
         let result = dispatch_set_method("clear", fs, make_args(vec![]));
         assert!(result.is_none());
-        assert_eq!(
-            super::super::exception::mb_has_exception().as_bool(),
-            Some(true)
-        );
+        assert_eq!(super::super::exception::mb_has_exception().as_bool(), Some(true));
         super::super::exception::mb_clear_exception();
     }
 
-    // ── extract_set_items: non-set returns empty vec ──
+    // ── extract_set_items: non-iterable argument ──
 
     #[test]
     fn test_extract_set_items_non_set() {
-        // extract_set_items is private, but we exercise it through union with a non-set.
+        // extract_set_items is private, but we exercise it through union with a
+        // non-iterable. At runtime this raises `TypeError: 'int' object is not
+        // iterable` (set a pending exception via mb_raise); in this pure-Rust
+        // unit context the pending exception is not unwound, so the union keeps
+        // the left operand's elements. No new element is contributed.
         let a = mb_set_new();
         mb_set_add(a, MbValue::from_int(1));
         let non_set = MbValue::from_int(99);
         let result = mb_set_union(a, non_set);
-        // union with a non-set should treat it as empty.
         assert_eq!(mb_set_len(result).as_int(), Some(1));
     }
 
@@ -1135,10 +1074,7 @@ mod tests {
         assert_eq!(mb_set_len(set).as_int(), Some(0));
         mb_set_add(set, MbValue::from_int(1));
         assert_eq!(mb_set_len(set).as_int(), Some(1));
-        assert_eq!(
-            mb_set_contains(set, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(set, MbValue::from_int(1)).as_bool(), Some(true));
     }
 
     // ── union returns a new set (not aliased) ──
@@ -1174,22 +1110,10 @@ mod tests {
 
         let result = mb_set_intersection(a, b);
         assert_eq!(mb_set_len(result).as_int(), Some(2));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(2)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(3)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(1)).as_bool(),
-            Some(false)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(4)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(2)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(3)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(1)).as_bool(), Some(false));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(4)).as_bool(), Some(false));
     }
 
     // -- Py3.12 conformance --
@@ -1205,22 +1129,10 @@ mod tests {
         mb_set_add(b, MbValue::from_int(4));
         let result = mb_set_symmetric_difference(a, b);
         assert_eq!(mb_set_len(result).as_int(), Some(3));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(2)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(4)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(3)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(1)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(2)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(4)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(3)).as_bool(), Some(false));
     }
 
     #[test]
@@ -1337,10 +1249,7 @@ mod tests {
         // Simulate difference_update via mb_set_difference (returns new set)
         let result = mb_set_difference(a, b);
         assert_eq!(mb_set_len(result).as_int(), Some(2));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(2)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(2)).as_bool(), Some(false));
     }
 
     #[test]
@@ -1354,18 +1263,9 @@ mod tests {
         ]));
         let s = mb_set_from_list(list);
         assert_eq!(mb_set_len(s).as_int(), Some(3));
-        assert_eq!(
-            mb_set_contains(s, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(s, MbValue::from_int(2)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(s, MbValue::from_int(3)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(s, MbValue::from_int(1)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(s, MbValue::from_int(2)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(s, MbValue::from_int(3)).as_bool(), Some(true));
     }
 
     // ── frozenset R8: len and contains ──
@@ -1379,14 +1279,8 @@ mod tests {
             MbValue::from_int(30),
         ]));
         assert_eq!(mb_set_len(fs).as_int(), Some(3));
-        assert_eq!(
-            mb_set_contains(fs, MbValue::from_int(20)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(fs, MbValue::from_int(99)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_set_contains(fs, MbValue::from_int(20)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(fs, MbValue::from_int(99)).as_bool(), Some(false));
     }
 
     // ── frozenset R6: algebra operations ──
@@ -1404,18 +1298,9 @@ mod tests {
         ]));
         let result = mb_set_union(fs_a, fs_b);
         assert_eq!(mb_set_len(result).as_int(), Some(3));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(1)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(2)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(3)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(1)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(2)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(3)).as_bool(), Some(true));
     }
 
     // REQ: R6
@@ -1433,14 +1318,8 @@ mod tests {
         ]));
         let result = mb_set_intersection(fs_a, fs_b);
         assert_eq!(mb_set_len(result).as_int(), Some(2));
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(2)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_set_contains(result, MbValue::from_int(3)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_set_contains(result, MbValue::from_int(2)).as_bool(), Some(true));
+        assert_eq!(mb_set_contains(result, MbValue::from_int(3)).as_bool(), Some(true));
     }
 
     // REQ: R6
@@ -1466,10 +1345,7 @@ mod tests {
         let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![MbValue::from_int(1)]));
         let result = dispatch_set_method("discard", fs, make_args(vec![MbValue::from_int(1)]));
         assert!(result.is_none());
-        assert_eq!(
-            super::super::exception::mb_has_exception().as_bool(),
-            Some(true)
-        );
+        assert_eq!(super::super::exception::mb_has_exception().as_bool(), Some(true));
         super::super::exception::mb_clear_exception();
     }
 
@@ -1480,10 +1356,7 @@ mod tests {
         let fs = MbValue::from_ptr(MbObject::new_frozenset(vec![MbValue::from_int(1)]));
         let result = dispatch_set_method("pop", fs, make_args(vec![]));
         assert!(result.is_none());
-        assert_eq!(
-            super::super::exception::mb_has_exception().as_bool(),
-            Some(true)
-        );
+        assert_eq!(super::super::exception::mb_has_exception().as_bool(), Some(true));
         super::super::exception::mb_clear_exception();
     }
 
@@ -1496,10 +1369,7 @@ mod tests {
         mb_set_add(other, MbValue::from_int(2));
         let result = dispatch_set_method("update", fs, make_args(vec![other]));
         assert!(result.is_none());
-        assert_eq!(
-            super::super::exception::mb_has_exception().as_bool(),
-            Some(true)
-        );
+        assert_eq!(super::super::exception::mb_has_exception().as_bool(), Some(true));
         super::super::exception::mb_clear_exception();
     }
 
@@ -1522,4 +1392,5 @@ mod tests {
         // {1,2} is NOT a subset of {2,3}
         assert_eq!(sub_result.as_bool(), Some(false));
     }
+
 }

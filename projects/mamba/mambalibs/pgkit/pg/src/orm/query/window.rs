@@ -1,7 +1,7 @@
 //! Window function types and utilities.
 
-use super::types::OrderDirection;
 use crate::ExtractedValue;
+use super::types::OrderDirection;
 
 /// Window function types
 #[derive(Debug, Clone, PartialEq)]

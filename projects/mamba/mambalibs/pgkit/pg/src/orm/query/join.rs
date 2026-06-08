@@ -1,8 +1,8 @@
 //! JOIN clause types and utilities.
 
+use crate::Result;
 use super::builder::QueryBuilder;
 use super::types::JoinType;
-use crate::Result;
 
 /// Structured JOIN condition to prevent SQL injection
 /// Only allows safe table.column = table.column patterns
@@ -33,7 +33,10 @@ impl JoinCondition {
     pub fn to_sql(&self, main_table: &str) -> String {
         format!(
             "\"{}\".\"{}\" = \"{}\".\"{}\"",
-            main_table, self.left_column, self.right_table, self.right_column
+            main_table,
+            self.left_column,
+            self.right_table,
+            self.right_column
         )
     }
 }

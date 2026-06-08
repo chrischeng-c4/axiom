@@ -120,13 +120,10 @@ impl DependencyGroups {
                 ),
             });
         }
-        let entries = self
-            .by_name
-            .get(name)
-            .ok_or_else(|| IndexError::ParseError {
-                url: GROUPS_URL.into(),
-                detail: format!("unknown dependency group: {name:?}"),
-            })?;
+        let entries = self.by_name.get(name).ok_or_else(|| IndexError::ParseError {
+            url: GROUPS_URL.into(),
+            detail: format!("unknown dependency group: {name:?}"),
+        })?;
 
         visiting.insert(name.to_string());
         for entry in entries {
@@ -413,10 +410,7 @@ b = [{include-group = "a"}]
         )
         .unwrap();
         let err = groups.expand(&["a"]).unwrap_err();
-        assert!(
-            format!("{err}").contains("cyclic include-group"),
-            "got: {err}"
-        );
+        assert!(format!("{err}").contains("cyclic include-group"), "got: {err}");
     }
 
     #[test]
@@ -429,10 +423,7 @@ loopy = [{include-group = "loopy"}]
         )
         .unwrap();
         let err = groups.expand(&["loopy"]).unwrap_err();
-        assert!(
-            format!("{err}").contains("cyclic include-group"),
-            "got: {err}"
-        );
+        assert!(format!("{err}").contains("cyclic include-group"), "got: {err}");
     }
 
     #[test]

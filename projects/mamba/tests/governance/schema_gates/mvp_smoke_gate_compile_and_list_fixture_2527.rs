@@ -21,17 +21,11 @@ fn manifest() -> Value {
 fn header_is_well_formed() {
     let m = manifest();
     assert_eq!(m["version"].as_integer(), Some(1));
-    assert_eq!(
-        m["fixture"].as_str(),
-        Some("mvp_smoke_gate_compile_and_list")
-    );
+    assert_eq!(m["fixture"].as_str(), Some("mvp_smoke_gate_compile_and_list"));
     assert_eq!(m["issue"].as_integer(), Some(2527));
     assert_eq!(m["parent_issue"].as_integer(), Some(2526));
     assert_eq!(m["profile"].as_str(), Some("mvp"));
-    assert_eq!(
-        m["family"].as_str(),
-        Some("mvp_smoke_gate_compile_and_list")
-    );
+    assert_eq!(m["family"].as_str(), Some("mvp_smoke_gate_compile_and_list"));
     assert_eq!(m["network"].as_str(), Some("offline"));
 }
 
@@ -170,10 +164,7 @@ fn smoke_summary_reports_total_tests_fixture_counts_and_debt_counts() {
             "skip_count",
         ]
     );
-    assert_eq!(
-        c["smoke_summary_field_name"].as_str(),
-        Some("smoke_summary")
-    );
+    assert_eq!(c["smoke_summary_field_name"].as_str(), Some("smoke_summary"));
     assert_eq!(
         c["summary_freeform_failure_kind"].as_str(),
         Some("mvp_smoke_summary_freeform")
@@ -194,7 +185,9 @@ fn coverage_tooling_points_at_projects_mamba_and_package_mamba_not_stale_crate_p
     let c = &manifest()["coverage_tooling_path_contract"];
     assert_eq!(
         c["case"].as_str(),
-        Some("coverage_tooling_points_at_projects_mamba_and_package_mamba_not_stale_crate_paths")
+        Some(
+            "coverage_tooling_points_at_projects_mamba_and_package_mamba_not_stale_crate_paths"
+        )
     );
     for key in [
         "must_point_coverage_tooling_at_projects_mamba",

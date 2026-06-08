@@ -116,11 +116,11 @@ fn local_binding_crate_can_be_declared_built_locked_and_imported() {
         .iter()
         .map(|v| v.as_str().expect("string"))
         .collect();
-    assert_eq!(phases, vec!["declared", "built", "locked", "imported"]);
     assert_eq!(
-        c["lifecycle_phase_field_name"].as_str(),
-        Some("lifecycle_phase")
+        phases,
+        vec!["declared", "built", "locked", "imported"]
     );
+    assert_eq!(c["lifecycle_phase_field_name"].as_str(), Some("lifecycle_phase"));
     assert_eq!(
         c["declared_phase_failure_kind"].as_str(),
         Some("mambalibs_mode2_declared_phase_failed")

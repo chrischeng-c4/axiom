@@ -20,7 +20,10 @@ print(s[2:5])
 print(s[::-1])
 "#,
     );
-    assert_output(&out, "abcdefgh\ncdefgh\nabc\ncde\nhgfedcba\n");
+    assert_output(
+        &out,
+        "abcdefgh\ncdefgh\nabc\ncde\nhgfedcba\n",
+    );
 }
 
 #[test]
@@ -34,7 +37,10 @@ print(s[:-3])
 print(s[-5:-2])
 "#,
     );
-    assert_output(&out, "aceg\nbdfh\nfgh\nabcde\ndef\n");
+    assert_output(
+        &out,
+        "aceg\nbdfh\nfgh\nabcde\ndef\n",
+    );
 }
 
 #[test]

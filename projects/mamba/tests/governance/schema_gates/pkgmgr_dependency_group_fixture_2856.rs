@@ -25,16 +25,9 @@ fn manifest_path() -> PathBuf {
         .join("manifest.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_dependency_group_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -65,7 +58,7 @@ fn pkgmgr_dependency_group_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_dependency_group_blocks_pin_distinct_runtime_and_group_deps() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let runtime_name = doc
         .get("runtime_dependency")
@@ -92,7 +85,7 @@ fn pkgmgr_dependency_group_blocks_pin_distinct_runtime_and_group_deps() {
 
 #[test]
 fn pkgmgr_dependency_group_default_sync_excludes_group_dep() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let case = doc
         .get("default_sync_case")
         .and_then(|v| v.as_table())
@@ -124,14 +117,12 @@ fn pkgmgr_dependency_group_default_sync_excludes_group_dep() {
         "`[default_sync_case].expected_exit_code` must be 0"
     );
     assert_eq!(
-        case.get("must_install_runtime_dependency")
-            .and_then(|v| v.as_bool()),
+        case.get("must_install_runtime_dependency").and_then(|v| v.as_bool()),
         Some(true),
         "`[default_sync_case].must_install_runtime_dependency` must be true"
     );
     assert_eq!(
-        case.get("must_not_install_group_dependency")
-            .and_then(|v| v.as_bool()),
+        case.get("must_not_install_group_dependency").and_then(|v| v.as_bool()),
         Some(true),
         "`[default_sync_case].must_not_install_group_dependency` must be true"
     );
@@ -147,8 +138,7 @@ fn pkgmgr_dependency_group_default_sync_excludes_group_dep() {
         "`[default_sync_case].group_import_probe` must equal `[group].dependency`"
     );
     assert_eq!(
-        case.get("group_expected_import_outcome")
-            .and_then(|v| v.as_str()),
+        case.get("group_expected_import_outcome").and_then(|v| v.as_str()),
         Some("module_not_found"),
         "`[default_sync_case].group_expected_import_outcome` must be \"module_not_found\""
     );
@@ -166,7 +156,7 @@ fn pkgmgr_dependency_group_default_sync_excludes_group_dep() {
 
 #[test]
 fn pkgmgr_dependency_group_sync_case_includes_group_dep() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let case = doc
         .get("group_sync_case")
         .and_then(|v| v.as_table())
@@ -207,20 +197,17 @@ fn pkgmgr_dependency_group_sync_case_includes_group_dep() {
         "`[group_sync_case].expected_exit_code` must be 0"
     );
     assert_eq!(
-        case.get("must_install_runtime_dependency")
-            .and_then(|v| v.as_bool()),
+        case.get("must_install_runtime_dependency").and_then(|v| v.as_bool()),
         Some(true),
         "`[group_sync_case].must_install_runtime_dependency` must be true"
     );
     assert_eq!(
-        case.get("must_install_group_dependency")
-            .and_then(|v| v.as_bool()),
+        case.get("must_install_group_dependency").and_then(|v| v.as_bool()),
         Some(true),
         "`[group_sync_case].must_install_group_dependency` must be true"
     );
     assert_eq!(
-        case.get("group_expected_import_outcome")
-            .and_then(|v| v.as_str()),
+        case.get("group_expected_import_outcome").and_then(|v| v.as_str()),
         Some("import_ok"),
         "`[group_sync_case].group_expected_import_outcome` must be \"import_ok\""
     );
@@ -238,7 +225,7 @@ fn pkgmgr_dependency_group_sync_case_includes_group_dep() {
 
 #[test]
 fn pkgmgr_dependency_group_lockfile_separates_group_section() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let lock = doc
         .get("lockfile_assertion")
         .and_then(|v| v.as_table())
@@ -266,20 +253,17 @@ fn pkgmgr_dependency_group_lockfile_separates_group_section() {
         "`[lockfile_assertion].must_contain_runtime_dependency` must equal `[runtime_dependency].name`"
     );
     assert_eq!(
-        lock.get("must_contain_group_dependency")
-            .and_then(|v| v.as_str()),
+        lock.get("must_contain_group_dependency").and_then(|v| v.as_str()),
         Some(group_dep),
         "`[lockfile_assertion].must_contain_group_dependency` must equal `[group].dependency`"
     );
     assert_eq!(
-        lock.get("group_section_records_group_name")
-            .and_then(|v| v.as_str()),
+        lock.get("group_section_records_group_name").and_then(|v| v.as_str()),
         Some(group_name),
         "`[lockfile_assertion].group_section_records_group_name` must equal `[group].name`"
     );
     assert_eq!(
-        lock.get("runtime_section_must_not_contain")
-            .and_then(|v| v.as_str()),
+        lock.get("runtime_section_must_not_contain").and_then(|v| v.as_str()),
         Some(group_dep),
         "`[lockfile_assertion].runtime_section_must_not_contain` must equal `[group].dependency`"
     );
@@ -304,14 +288,11 @@ fn pkgmgr_dependency_group_lockfile_separates_group_section() {
 
 #[test]
 fn pkgmgr_dependency_group_summary_names_selected_and_available_groups() {
-    let doc = load_toml(&manifest_path());
-    let summary = doc
-        .get("summary_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[summary_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let summary = doc.get("summary_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[summary_assertion]` block \
          (acceptance: \"Summary names selected groups.\")",
-        );
+    );
 
     for flag in &[
         "must_name_selected_groups",
@@ -342,7 +323,7 @@ fn pkgmgr_dependency_group_summary_names_selected_and_available_groups() {
 
 #[test]
 fn pkgmgr_dependency_group_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -364,7 +345,7 @@ fn pkgmgr_dependency_group_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_dependency_group_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -407,14 +388,13 @@ fn pkgmgr_dependency_group_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_dependency_group_pins_out_of_scope_per_issue_2856() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("every_group_selection_cli_variant")
-            .and_then(|v| v.as_bool()),
+        oos.get("every_group_selection_cli_variant").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].every_group_selection_cli_variant` must be true \
          (issue text: \"Out of scope: every group-selection CLI variant.\")"

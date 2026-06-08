@@ -128,17 +128,18 @@ pub fn parse_workspace_config(toml_src: &str) -> Result<Option<WorkspaceConfig>,
     Ok(Some(WorkspaceConfig { members, exclude }))
 }
 
-fn collect_string_array(arr: &[toml::Value], field_name: &str) -> Result<Vec<String>, IndexError> {
+fn collect_string_array(
+    arr: &[toml::Value],
+    field_name: &str,
+) -> Result<Vec<String>, IndexError> {
     arr.iter()
         .map(|v| {
-            v.as_str()
-                .map(String::from)
-                .ok_or_else(|| IndexError::ParseError {
-                    url: WORKSPACE_TOML_URL.into(),
-                    detail: format!(
-                        "[tool.uv.workspace].{field_name} entries must be strings, got {v:?}"
-                    ),
-                })
+            v.as_str().map(String::from).ok_or_else(|| IndexError::ParseError {
+                url: WORKSPACE_TOML_URL.into(),
+                detail: format!(
+                    "[tool.uv.workspace].{field_name} entries must be strings, got {v:?}"
+                ),
+            })
         })
         .collect()
 }
@@ -197,7 +198,10 @@ pub fn discover_workspace_members(
 
     matched.sort();
 
-    matched.into_iter().map(|root| read_member(&root)).collect()
+    matched
+        .into_iter()
+        .map(|root| read_member(&root))
+        .collect()
 }
 
 /// Expand one member pattern. Supports literal segments and single `*` per
@@ -318,10 +322,12 @@ fn read_member(root: &Path) -> Result<WorkspaceMember, IndexError> {
         detail: format!("malformed member pyproject.toml: {err}"),
     })?;
 
-    let project = doc.get("project").ok_or_else(|| IndexError::ParseError {
-        url: pyproject.display().to_string(),
-        detail: "workspace member missing [project] table".into(),
-    })?;
+    let project = doc
+        .get("project")
+        .ok_or_else(|| IndexError::ParseError {
+            url: pyproject.display().to_string(),
+            detail: "workspace member missing [project] table".into(),
+        })?;
 
     let name = project
         .get("name")
@@ -517,9 +523,7 @@ version = "0.2.0"
         assert_eq!(members[0].name, "alpha-pkg"); // normalized
         assert_eq!(members[0].version, "0.1.0");
         assert!(members[0].root.ends_with("packages/alpha"));
-        assert!(members[0]
-            .pyproject
-            .ends_with("packages/alpha/pyproject.toml"));
+        assert!(members[0].pyproject.ends_with("packages/alpha/pyproject.toml"));
         assert_eq!(members[1].name, "beta-pkg");
     }
 

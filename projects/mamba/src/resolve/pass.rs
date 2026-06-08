@@ -1,11 +1,12 @@
-use super::scope::{SymbolId, SymbolKind, SymbolTable, VariableClass};
 /// Name resolution pass (#276): walks the AST and resolves names to SymbolIds.
 ///
 /// Populates a SymbolTable with all variable, function, class, and parameter bindings.
 /// Reports unresolved names as errors.
+
 use crate::error::MambaError;
 use crate::parser::ast::*;
 use crate::source::span::{Span, Spanned};
+use super::scope::{SymbolId, SymbolKind, SymbolTable, VariableClass};
 
 /// Result of name resolution: the populated symbol table.
 pub struct ResolveResult {
@@ -97,14 +98,13 @@ impl Resolver {
                 self.resolve_expr(target);
                 self.resolve_expr(value);
             }
-            Stmt::FnDef { params, body, .. } | Stmt::AsyncFnDef { params, body, .. } => {
+            Stmt::FnDef { params, body, .. }
+            | Stmt::AsyncFnDef { params, body, .. } => {
                 self.symbols.push_scope();
                 let func_scope = self.symbols.current_scope_idx();
                 self.function_scope_stack.push(func_scope);
                 for param in params {
-                    let id = self
-                        .symbols
-                        .define(param.name.clone(), SymbolKind::Parameter);
+                    let id = self.symbols.define(param.name.clone(), SymbolKind::Parameter);
                     self.name_map.push((param.span, id));
                 }
                 // Python: any name assigned anywhere in a function body is
@@ -116,12 +116,8 @@ impl Resolver {
                 collect_assignment_targets(body, &mut assigned, &mut declared);
                 collect_walrus_targets_in_stmts(body, &mut assigned);
                 for name in assigned {
-                    if declared.iter().any(|n: &String| n == &name) {
-                        continue;
-                    }
-                    if self.symbols.lookup_in_scope(func_scope, &name).is_some() {
-                        continue;
-                    }
+                    if declared.iter().any(|n: &String| n == &name) { continue; }
+                    if self.symbols.lookup_in_scope(func_scope, &name).is_some() { continue; }
                     let id = self.symbols.define(name.clone(), SymbolKind::Variable);
                     self.name_map.push((stmt.span, id));
                 }
@@ -138,103 +134,55 @@ impl Resolver {
                 }
                 self.symbols.pop_scope();
             }
-            Stmt::If {
-                condition,
-                body,
-                elif_clauses,
-                else_body,
-                ..
-            } => {
+            Stmt::If { condition, body, elif_clauses, else_body, .. } => {
                 self.resolve_expr(condition);
-                for s in body {
-                    self.resolve_stmt(s);
-                }
+                for s in body { self.resolve_stmt(s); }
                 for (cond, elif_body) in elif_clauses {
                     self.resolve_expr(cond);
-                    for s in elif_body {
-                        self.resolve_stmt(s);
-                    }
+                    for s in elif_body { self.resolve_stmt(s); }
                 }
                 if let Some(eb) = else_body {
-                    for s in eb {
-                        self.resolve_stmt(s);
-                    }
+                    for s in eb { self.resolve_stmt(s); }
                 }
             }
-            Stmt::While {
-                condition, body, ..
-            } => {
+            Stmt::While { condition, body, .. } => {
                 self.resolve_expr(condition);
-                for s in body {
-                    self.resolve_stmt(s);
-                }
+                for s in body { self.resolve_stmt(s); }
             }
-            Stmt::For {
-                targets,
-                iter,
-                body,
-                ..
-            }
-            | Stmt::AsyncFor {
-                targets,
-                iter,
-                body,
-                ..
-            } => {
+            Stmt::For { targets, iter, body, .. }
+            | Stmt::AsyncFor { targets, iter, body, .. } => {
                 self.resolve_expr(iter);
                 for var in targets {
                     let id = self.symbols.define(var.clone(), SymbolKind::Variable);
                     self.name_map.push((stmt.span, id));
                 }
-                for s in body {
-                    self.resolve_stmt(s);
-                }
+                for s in body { self.resolve_stmt(s); }
             }
-            Stmt::Return(Some(expr)) => {
-                self.resolve_expr(expr);
-            }
+            Stmt::Return(Some(expr)) => { self.resolve_expr(expr); }
             Stmt::Return(None) | Stmt::Pass | Stmt::Break | Stmt::Continue => {}
-            Stmt::ExprStmt(expr) => {
-                self.resolve_expr(expr);
-            }
-            Stmt::Try {
-                body,
-                handlers,
-                else_body,
-                finally_body,
-            } => {
-                for s in body {
-                    self.resolve_stmt(s);
-                }
+            Stmt::ExprStmt(expr) => { self.resolve_expr(expr); }
+            Stmt::Try { body, handlers, else_body, finally_body } => {
+                for s in body { self.resolve_stmt(s); }
                 for handler in handlers {
                     if let Some(name) = &handler.name {
                         let id = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.name_map.push((handler.span, id));
                     }
-                    for s in &handler.body {
-                        self.resolve_stmt(s);
-                    }
+                    for s in &handler.body { self.resolve_stmt(s); }
                 }
                 if let Some(eb) = else_body {
-                    for s in eb {
-                        self.resolve_stmt(s);
-                    }
+                    for s in eb { self.resolve_stmt(s); }
                 }
                 if let Some(fb) = finally_body {
-                    for s in fb {
-                        self.resolve_stmt(s);
-                    }
+                    for s in fb { self.resolve_stmt(s); }
                 }
             }
             Stmt::Raise { value, from } => {
-                if let Some(v) = value {
-                    self.resolve_expr(v);
-                }
-                if let Some(f) = from {
-                    self.resolve_expr(f);
-                }
+                if let Some(v) = value { self.resolve_expr(v); }
+                if let Some(f) = from { self.resolve_expr(f); }
             }
-            Stmt::With { items, body, .. } | Stmt::AsyncWith { items, body, .. } => {
+            Stmt::With { items, body, .. }
+            | Stmt::AsyncWith { items, body, .. } => {
                 for item in items {
                     self.resolve_expr(&item.context);
                     if let Some(alias) = &item.alias {
@@ -242,36 +190,26 @@ impl Resolver {
                         self.name_map.push((stmt.span, id));
                     }
                 }
-                for s in body {
-                    self.resolve_stmt(s);
-                }
+                for s in body { self.resolve_stmt(s); }
             }
             Stmt::Assert { test, msg } => {
                 self.resolve_expr(test);
-                if let Some(m) = msg {
-                    self.resolve_expr(m);
-                }
+                if let Some(m) = msg { self.resolve_expr(m); }
             }
-            Stmt::Del(expr) => {
-                self.resolve_expr(expr);
-            }
+            Stmt::Del(expr) => { self.resolve_expr(expr); }
             Stmt::Match { expr, arms } => {
                 self.resolve_expr(expr);
                 for arm in arms {
                     self.resolve_pattern(&arm.pattern);
-                    if let Some(guard) = &arm.guard {
-                        self.resolve_expr(guard);
-                    }
-                    for s in &arm.body {
-                        self.resolve_stmt(s);
-                    }
+                    if let Some(guard) = &arm.guard { self.resolve_expr(guard); }
+                    for s in &arm.body { self.resolve_stmt(s); }
                 }
             }
             Stmt::EnumDef { variants, .. } => {
                 for variant in variants {
-                    let id = self
-                        .symbols
-                        .define(variant.name.clone(), SymbolKind::EnumVariant);
+                    let id = self.symbols.define(
+                        variant.name.clone(), SymbolKind::EnumVariant,
+                    );
                     self.name_map.push((variant.span, id));
                 }
             }
@@ -298,9 +236,7 @@ impl Resolver {
                             // Mark the outer variable as Cell (captured by inner)
                             self.symbols.set_var_class(outer_id, VariableClass::Cell);
                             // Define or re-use in current scope as Free
-                            let inner_id = if let Some(existing) =
-                                self.symbols.lookup_in_scope(current, name)
-                            {
+                            let inner_id = if let Some(existing) = self.symbols.lookup_in_scope(current, name) {
                                 existing
                             } else {
                                 self.symbols.define(name.clone(), SymbolKind::Variable)
@@ -326,11 +262,7 @@ impl Resolver {
                 let id = self.symbols.define(name.clone(), SymbolKind::Variable);
                 self.name_map.push((stmt.span, id));
             }
-            Stmt::Import {
-                module,
-                names,
-                module_alias,
-            } => {
+            Stmt::Import { module, names, module_alias } => {
                 // R2 (#1132): Define imported names in the symbol table so that
                 // subsequent references resolve to valid SymbolIds.
                 if let Some(names) = names {
@@ -339,9 +271,7 @@ impl Resolver {
                     // Skip `from X import *` — star imports bind names dynamically
                     // at runtime, not statically at resolve time.
                     for (name, alias) in names {
-                        if name == "*" {
-                            continue;
-                        }
+                        if name == "*" { continue; }
                         let bound = alias.as_deref().unwrap_or(name.as_str());
                         let id = self.symbols.define(bound.to_string(), SymbolKind::Variable);
                         self.name_map.push((stmt.span, id));
@@ -380,45 +310,32 @@ impl Resolver {
                 self.resolve_expr(lhs);
                 self.resolve_expr(rhs);
             }
-            Expr::UnaryOp { operand, .. } => {
-                self.resolve_expr(operand);
-            }
+            Expr::UnaryOp { operand, .. } => { self.resolve_expr(operand); }
             Expr::Call { func, args } => {
                 self.resolve_expr(func);
                 for arg in args {
                     match arg {
-                        CallArg::Positional(e)
-                        | CallArg::StarArg(e)
+                        CallArg::Positional(e) | CallArg::StarArg(e)
                         | CallArg::DoubleStarArg(e) => self.resolve_expr(e),
                         CallArg::Keyword { value, .. } => self.resolve_expr(value),
                     }
                 }
             }
-            Expr::Attr { object, .. } => {
-                self.resolve_expr(object);
-            }
+            Expr::Attr { object, .. } => { self.resolve_expr(object); }
             Expr::Index { object, index } => {
                 self.resolve_expr(object);
                 self.resolve_expr(index);
             }
             Expr::ListLit(elems) | Expr::SetLit(elems) | Expr::TupleLit(elems) => {
-                for e in elems {
-                    self.resolve_expr(e);
-                }
+                for e in elems { self.resolve_expr(e); }
             }
             Expr::DictLit(entries) => {
                 for (k, v) in entries {
-                    if let Some(key) = k {
-                        self.resolve_expr(key);
-                    }
+                    if let Some(key) = k { self.resolve_expr(key); }
                     self.resolve_expr(v);
                 }
             }
-            Expr::IfExpr {
-                body,
-                condition,
-                else_body,
-            } => {
+            Expr::IfExpr { body, condition, else_body } => {
                 self.resolve_expr(condition);
                 self.resolve_expr(body);
                 self.resolve_expr(else_body);
@@ -435,18 +352,9 @@ impl Resolver {
                 self.function_scope_stack.pop();
                 self.symbols.pop_scope();
             }
-            Expr::ListComp {
-                element,
-                generators,
-            }
-            | Expr::SetComp {
-                element,
-                generators,
-            }
-            | Expr::GeneratorExpr {
-                element,
-                generators,
-            } => {
+            Expr::ListComp { element, generators }
+            | Expr::SetComp { element, generators }
+            | Expr::GeneratorExpr { element, generators } => {
                 self.comprehension_depth += 1;
                 self.symbols.push_scope();
                 for gen in generators {
@@ -455,19 +363,13 @@ impl Resolver {
                         let id = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.name_map.push((gen.iter.span, id));
                     }
-                    for cond in &gen.conditions {
-                        self.resolve_expr(cond);
-                    }
+                    for cond in &gen.conditions { self.resolve_expr(cond); }
                 }
                 self.resolve_expr(element);
                 self.symbols.pop_scope();
                 self.comprehension_depth -= 1;
             }
-            Expr::DictComp {
-                key,
-                value,
-                generators,
-            } => {
+            Expr::DictComp { key, value, generators } => {
                 self.comprehension_depth += 1;
                 self.symbols.push_scope();
                 for gen in generators {
@@ -476,9 +378,7 @@ impl Resolver {
                         let id = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.name_map.push((gen.iter.span, id));
                     }
-                    for cond in &gen.conditions {
-                        self.resolve_expr(cond);
-                    }
+                    for cond in &gen.conditions { self.resolve_expr(cond); }
                 }
                 self.resolve_expr(key);
                 self.resolve_expr(value);
@@ -491,53 +391,33 @@ impl Resolver {
                     // PEP 572: bind walrus target in enclosing function scope,
                     // not the comprehension's inner scope.
                     let func_scope = *self.function_scope_stack.last().unwrap_or(&0);
-                    self.symbols
-                        .define_in_scope(func_scope, target.clone(), SymbolKind::Variable)
+                    self.symbols.define_in_scope(func_scope, target.clone(), SymbolKind::Variable)
                 } else {
                     self.symbols.define(target.clone(), SymbolKind::Variable)
                 };
                 self.name_map.push((expr.span, id));
             }
             Expr::Slice { start, stop, step } => {
-                if let Some(s) = start {
-                    self.resolve_expr(s);
-                }
-                if let Some(s) = stop {
-                    self.resolve_expr(s);
-                }
-                if let Some(s) = step {
-                    self.resolve_expr(s);
-                }
+                if let Some(s) = start { self.resolve_expr(s); }
+                if let Some(s) = stop { self.resolve_expr(s); }
+                if let Some(s) = step { self.resolve_expr(s); }
             }
             Expr::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Expr(e, _) = part {
-                        self.resolve_expr(e);
-                    }
+                    if let FStringPart::Expr(e, _) = part { self.resolve_expr(e); }
                 }
             }
-            Expr::Yield(Some(e)) | Expr::YieldFrom(e) | Expr::Await(e) | Expr::Starred(e) => {
-                self.resolve_expr(e);
-            }
+            Expr::Yield(Some(e)) | Expr::YieldFrom(e)
+            | Expr::Await(e) | Expr::Starred(e) => { self.resolve_expr(e); }
             Expr::Yield(None) => {}
             Expr::UnpackTarget(elems) => {
-                for e in elems {
-                    self.resolve_expr(e);
-                }
+                for e in elems { self.resolve_expr(e); }
             }
             Expr::ChainedCompare { operands, .. } => {
-                for e in operands {
-                    self.resolve_expr(e);
-                }
+                for e in operands { self.resolve_expr(e); }
             }
-            Expr::IntLit(_)
-            | Expr::FloatLit(_)
-            | Expr::ComplexLit(_)
-            | Expr::StrLit(_)
-            | Expr::BytesLit(_)
-            | Expr::BoolLit(_)
-            | Expr::NoneLit
-            | Expr::Ellipsis => {}
+            Expr::IntLit(_) | Expr::FloatLit(_) | Expr::ComplexLit(_) | Expr::StrLit(_)
+            | Expr::BytesLit(_) | Expr::BoolLit(_) | Expr::NoneLit | Expr::Ellipsis => {}
         }
     }
 
@@ -548,9 +428,7 @@ impl Resolver {
                 self.name_map.push((pattern.span, id));
             }
             Pattern::Or(pats) | Pattern::Sequence(pats) => {
-                for p in pats {
-                    self.resolve_pattern(p);
-                }
+                for p in pats { self.resolve_pattern(p); }
             }
             Pattern::Constructor { fields, .. } => {
                 for name in fields {
@@ -570,18 +448,13 @@ impl Resolver {
                 }
             }
             Pattern::ClassPattern { patterns, .. } => {
-                for (_, p) in patterns {
-                    self.resolve_pattern(p);
-                }
+                for (_, p) in patterns { self.resolve_pattern(p); }
             }
             Pattern::Star(Some(name)) => {
                 let id = self.symbols.define(name.clone(), SymbolKind::Variable);
                 self.name_map.push((pattern.span, id));
             }
-            Pattern::As {
-                pattern: inner,
-                name,
-            } => {
+            Pattern::As { pattern: inner, name } => {
                 // Resolve the inner pattern, then register the AS binding (#827)
                 self.resolve_pattern(inner);
                 let id = self.symbols.define(name.clone(), SymbolKind::Variable);
@@ -609,88 +482,48 @@ pub fn collect_assignment_targets(
     for stmt in stmts {
         match &stmt.node {
             Stmt::VarDecl { name, .. } => {
-                if !assigned.iter().any(|n| n == name) {
-                    assigned.push(name.clone());
-                }
+                if !assigned.iter().any(|n| n == name) { assigned.push(name.clone()); }
             }
             Stmt::Assign { target, .. } | Stmt::AugAssign { target, .. } => {
                 collect_expr_targets(&target.node, assigned);
             }
-            Stmt::For {
-                targets,
-                body,
-                else_body,
-                ..
-            }
-            | Stmt::AsyncFor {
-                targets,
-                body,
-                else_body,
-                ..
-            } => {
+            Stmt::For { targets, body, else_body, .. }
+            | Stmt::AsyncFor { targets, body, else_body, .. } => {
                 for t in targets {
-                    if !assigned.iter().any(|n| n == t) {
-                        assigned.push(t.clone());
-                    }
+                    if !assigned.iter().any(|n| n == t) { assigned.push(t.clone()); }
                 }
                 collect_assignment_targets(body, assigned, declared);
-                if let Some(eb) = else_body {
-                    collect_assignment_targets(eb, assigned, declared);
-                }
+                if let Some(eb) = else_body { collect_assignment_targets(eb, assigned, declared); }
             }
             Stmt::With { items, body } | Stmt::AsyncWith { items, body } => {
                 for item in items {
                     if let Some(name) = &item.alias {
-                        if !assigned.iter().any(|n| n == name) {
-                            assigned.push(name.clone());
-                        }
+                        if !assigned.iter().any(|n| n == name) { assigned.push(name.clone()); }
                     }
                 }
                 collect_assignment_targets(body, assigned, declared);
             }
-            Stmt::Try {
-                body,
-                handlers,
-                else_body,
-                finally_body,
-            } => {
+            Stmt::Try { body, handlers, else_body, finally_body } => {
                 collect_assignment_targets(body, assigned, declared);
                 for h in handlers {
                     if let Some(name) = &h.name {
-                        if !assigned.iter().any(|n| n == name) {
-                            assigned.push(name.clone());
-                        }
+                        if !assigned.iter().any(|n| n == name) { assigned.push(name.clone()); }
                     }
                     collect_assignment_targets(&h.body, assigned, declared);
                 }
-                if let Some(eb) = else_body {
-                    collect_assignment_targets(eb, assigned, declared);
-                }
-                if let Some(fb) = finally_body {
-                    collect_assignment_targets(fb, assigned, declared);
-                }
+                if let Some(eb) = else_body { collect_assignment_targets(eb, assigned, declared); }
+                if let Some(fb) = finally_body { collect_assignment_targets(fb, assigned, declared); }
             }
-            Stmt::If {
-                body,
-                elif_clauses,
-                else_body,
-                ..
-            } => {
+            Stmt::If { body, elif_clauses, else_body, .. } => {
                 collect_assignment_targets(body, assigned, declared);
                 for (_, b) in elif_clauses {
                     collect_assignment_targets(b, assigned, declared);
                 }
-                if let Some(eb) = else_body {
-                    collect_assignment_targets(eb, assigned, declared);
-                }
+                if let Some(eb) = else_body { collect_assignment_targets(eb, assigned, declared); }
             }
-            Stmt::While {
-                body, else_body, ..
-            } => {
+            Stmt::While { body, else_body, .. } => {
                 collect_assignment_targets(body, assigned, declared);
-                if let Some(eb) = else_body {
-                    collect_assignment_targets(eb, assigned, declared);
-                }
+                if let Some(eb) = else_body { collect_assignment_targets(eb, assigned, declared); }
             }
             Stmt::Match { arms, .. } => {
                 for arm in arms {
@@ -698,55 +531,34 @@ pub fn collect_assignment_targets(
                 }
             }
             Stmt::Global(names) | Stmt::Nonlocal(names) => {
-                for n in names {
-                    declared.push(n.clone());
-                }
+                for n in names { declared.push(n.clone()); }
             }
-            Stmt::Import {
-                names: Some(names),
-                module,
-                module_alias,
-            } => {
+            Stmt::Import { names: Some(names), module, module_alias } => {
                 for (n, alias) in names {
                     let binding = alias.clone().unwrap_or_else(|| n.clone());
-                    if !assigned.iter().any(|x| x == &binding) {
-                        assigned.push(binding);
-                    }
+                    if !assigned.iter().any(|x| x == &binding) { assigned.push(binding); }
                 }
                 // `import a.b as c` binds `c`; `import a` binds `a`.
                 if names.is_empty() {
                     if let Some(alias) = module_alias {
-                        if !assigned.iter().any(|x| x == alias) {
-                            assigned.push(alias.clone());
-                        }
+                        if !assigned.iter().any(|x| x == alias) { assigned.push(alias.clone()); }
                     } else if let Some(first) = module.first() {
-                        if !assigned.iter().any(|x| x == first) {
-                            assigned.push(first.clone());
-                        }
+                        if !assigned.iter().any(|x| x == first) { assigned.push(first.clone()); }
                     }
                 }
             }
-            Stmt::Import {
-                module,
-                module_alias,
-                names: None,
-            } => {
-                let binding = module_alias.clone().or_else(|| module.first().cloned());
+            Stmt::Import { module, module_alias, names: None } => {
+                let binding = module_alias.clone()
+                    .or_else(|| module.first().cloned());
                 if let Some(b) = binding {
-                    if !assigned.iter().any(|x| x == &b) {
-                        assigned.push(b);
-                    }
+                    if !assigned.iter().any(|x| x == &b) { assigned.push(b); }
                 }
             }
             // Nested function / class definitions bind the name but do NOT
             // contribute their body's assignments to the outer scope.
-            Stmt::FnDef { name, .. }
-            | Stmt::AsyncFnDef { name, .. }
-            | Stmt::ClassDef { name, .. }
-            | Stmt::EnumDef { name, .. } => {
-                if !assigned.iter().any(|n| n == name) {
-                    assigned.push(name.clone());
-                }
+            Stmt::FnDef { name, .. } | Stmt::AsyncFnDef { name, .. }
+            | Stmt::ClassDef { name, .. } | Stmt::EnumDef { name, .. } => {
+                if !assigned.iter().any(|n| n == name) { assigned.push(name.clone()); }
             }
             _ => {}
         }
@@ -758,18 +570,12 @@ pub fn collect_assignment_targets(
 fn collect_expr_targets(expr: &Expr, assigned: &mut Vec<String>) {
     match expr {
         Expr::Ident(name) => {
-            if !assigned.iter().any(|n| n == name) {
-                assigned.push(name.clone());
-            }
+            if !assigned.iter().any(|n| n == name) { assigned.push(name.clone()); }
         }
         Expr::TupleLit(elems) | Expr::UnpackTarget(elems) => {
-            for e in elems {
-                collect_expr_targets(&e.node, assigned);
-            }
+            for e in elems { collect_expr_targets(&e.node, assigned); }
         }
-        Expr::Starred(inner) => {
-            collect_expr_targets(&inner.node, assigned);
-        }
+        Expr::Starred(inner) => { collect_expr_targets(&inner.node, assigned); }
         _ => {}
     }
 }
@@ -782,9 +588,7 @@ fn collect_expr_targets(expr: &Expr, assigned: &mut Vec<String>) {
 fn collect_walrus_targets(expr: &Expr, assigned: &mut Vec<String>) {
     match expr {
         Expr::Walrus { target, value } => {
-            if !assigned.iter().any(|n| n == target) {
-                assigned.push(target.clone());
-            }
+            if !assigned.iter().any(|n| n == target) { assigned.push(target.clone()); }
             collect_walrus_targets(&value.node, assigned);
         }
         Expr::BinOp { lhs, rhs, .. } => {
@@ -796,9 +600,8 @@ fn collect_walrus_targets(expr: &Expr, assigned: &mut Vec<String>) {
             collect_walrus_targets(&func.node, assigned);
             for arg in args {
                 match arg {
-                    CallArg::Positional(e) | CallArg::StarArg(e) | CallArg::DoubleStarArg(e) => {
-                        collect_walrus_targets(&e.node, assigned)
-                    }
+                    CallArg::Positional(e) | CallArg::StarArg(e)
+                    | CallArg::DoubleStarArg(e) => collect_walrus_targets(&e.node, assigned),
                     CallArg::Keyword { value, .. } => collect_walrus_targets(&value.node, assigned),
                 }
             }
@@ -809,34 +612,20 @@ fn collect_walrus_targets(expr: &Expr, assigned: &mut Vec<String>) {
             collect_walrus_targets(&index.node, assigned);
         }
         Expr::Slice { start, stop, step } => {
-            if let Some(s) = start {
-                collect_walrus_targets(&s.node, assigned);
-            }
-            if let Some(s) = stop {
-                collect_walrus_targets(&s.node, assigned);
-            }
-            if let Some(s) = step {
-                collect_walrus_targets(&s.node, assigned);
-            }
+            if let Some(s) = start { collect_walrus_targets(&s.node, assigned); }
+            if let Some(s) = stop { collect_walrus_targets(&s.node, assigned); }
+            if let Some(s) = step { collect_walrus_targets(&s.node, assigned); }
         }
         Expr::TupleLit(elems) | Expr::ListLit(elems) | Expr::SetLit(elems) => {
-            for e in elems {
-                collect_walrus_targets(&e.node, assigned);
-            }
+            for e in elems { collect_walrus_targets(&e.node, assigned); }
         }
-        Expr::IfExpr {
-            body,
-            condition,
-            else_body,
-        } => {
+        Expr::IfExpr { body, condition, else_body } => {
             collect_walrus_targets(&condition.node, assigned);
             collect_walrus_targets(&body.node, assigned);
             collect_walrus_targets(&else_body.node, assigned);
         }
         Expr::ChainedCompare { operands, .. } => {
-            for o in operands {
-                collect_walrus_targets(&o.node, assigned);
-            }
+            for o in operands { collect_walrus_targets(&o.node, assigned); }
         }
         Expr::Starred(inner) => collect_walrus_targets(&inner.node, assigned),
         _ => {}
@@ -847,7 +636,9 @@ fn collect_walrus_targets(expr: &Expr, assigned: &mut Vec<String>) {
 /// collect walrus targets. Mirrors collect_assignment_targets but only
 /// chases walrus, since walrus targets need a *separate* local-define
 /// pass (they can appear inside conditions that aren't assignment stmts).
-pub fn collect_walrus_targets_in_stmts(stmts: &[Spanned<Stmt>], assigned: &mut Vec<String>) {
+pub fn collect_walrus_targets_in_stmts(
+    stmts: &[Spanned<Stmt>], assigned: &mut Vec<String>,
+) {
     for stmt in stmts {
         match &stmt.node {
             Stmt::Assign { target, value } => {
@@ -861,76 +652,38 @@ pub fn collect_walrus_targets_in_stmts(stmts: &[Spanned<Stmt>], assigned: &mut V
             Stmt::VarDecl { value, .. } => collect_walrus_targets(&value.node, assigned),
             Stmt::ExprStmt(e) => collect_walrus_targets(&e.node, assigned),
             Stmt::Return(Some(e)) => collect_walrus_targets(&e.node, assigned),
-            Stmt::If {
-                condition,
-                body,
-                elif_clauses,
-                else_body,
-            } => {
+            Stmt::If { condition, body, elif_clauses, else_body } => {
                 collect_walrus_targets(&condition.node, assigned);
                 collect_walrus_targets_in_stmts(body, assigned);
                 for (c, b) in elif_clauses {
                     collect_walrus_targets(&c.node, assigned);
                     collect_walrus_targets_in_stmts(b, assigned);
                 }
-                if let Some(eb) = else_body {
-                    collect_walrus_targets_in_stmts(eb, assigned);
-                }
+                if let Some(eb) = else_body { collect_walrus_targets_in_stmts(eb, assigned); }
             }
-            Stmt::While {
-                condition,
-                body,
-                else_body,
-            } => {
+            Stmt::While { condition, body, else_body } => {
                 collect_walrus_targets(&condition.node, assigned);
                 collect_walrus_targets_in_stmts(body, assigned);
-                if let Some(eb) = else_body {
-                    collect_walrus_targets_in_stmts(eb, assigned);
-                }
+                if let Some(eb) = else_body { collect_walrus_targets_in_stmts(eb, assigned); }
             }
-            Stmt::For {
-                iter,
-                body,
-                else_body,
-                ..
-            }
-            | Stmt::AsyncFor {
-                iter,
-                body,
-                else_body,
-                ..
-            } => {
+            Stmt::For { iter, body, else_body, .. }
+            | Stmt::AsyncFor { iter, body, else_body, .. } => {
                 collect_walrus_targets(&iter.node, assigned);
                 collect_walrus_targets_in_stmts(body, assigned);
-                if let Some(eb) = else_body {
-                    collect_walrus_targets_in_stmts(eb, assigned);
-                }
+                if let Some(eb) = else_body { collect_walrus_targets_in_stmts(eb, assigned); }
             }
             Stmt::With { items, body } | Stmt::AsyncWith { items, body } => {
-                for item in items {
-                    collect_walrus_targets(&item.context.node, assigned);
-                }
+                for item in items { collect_walrus_targets(&item.context.node, assigned); }
                 collect_walrus_targets_in_stmts(body, assigned);
             }
-            Stmt::Try {
-                body,
-                handlers,
-                else_body,
-                finally_body,
-            } => {
+            Stmt::Try { body, handlers, else_body, finally_body } => {
                 collect_walrus_targets_in_stmts(body, assigned);
                 for h in handlers {
-                    if let Some(e) = &h.exc_type {
-                        collect_walrus_targets(&e.node, assigned);
-                    }
+                    if let Some(e) = &h.exc_type { collect_walrus_targets(&e.node, assigned); }
                     collect_walrus_targets_in_stmts(&h.body, assigned);
                 }
-                if let Some(eb) = else_body {
-                    collect_walrus_targets_in_stmts(eb, assigned);
-                }
-                if let Some(fb) = finally_body {
-                    collect_walrus_targets_in_stmts(fb, assigned);
-                }
+                if let Some(eb) = else_body { collect_walrus_targets_in_stmts(eb, assigned); }
+                if let Some(fb) = finally_body { collect_walrus_targets_in_stmts(fb, assigned); }
             }
             Stmt::Match { expr, arms } => {
                 collect_walrus_targets(&expr.node, assigned);
@@ -940,9 +693,7 @@ pub fn collect_walrus_targets_in_stmts(stmts: &[Spanned<Stmt>], assigned: &mut V
             }
             Stmt::Assert { test, msg } => {
                 collect_walrus_targets(&test.node, assigned);
-                if let Some(m) = msg {
-                    collect_walrus_targets(&m.node, assigned);
-                }
+                if let Some(m) = msg { collect_walrus_targets(&m.node, assigned); }
             }
             // Nested function/class definitions carry their own scope; their
             // walrus targets belong to them, not to us.
@@ -963,33 +714,37 @@ mod tests {
     #[test]
     fn test_resolve_simple_function() {
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "add".into(),
-                type_params: vec![],
-                params: vec![
-                    Param {
-                        name: "a".into(),
-                        ty: sp(TypeExpr::Named("int".into())),
-                        default: None,
-                        kind: ParamKind::Regular,
-                        span: Span::dummy(),
-                    },
-                    Param {
-                        name: "b".into(),
-                        ty: sp(TypeExpr::Named("int".into())),
-                        default: None,
-                        kind: ParamKind::Regular,
-                        span: Span::dummy(),
-                    },
-                ],
-                return_ty: Some(sp(TypeExpr::Named("int".into()))),
-                body: vec![sp(Stmt::Return(Some(sp(Expr::BinOp {
-                    op: BinOp::Add,
-                    lhs: Box::new(sp(Expr::Ident("a".into()))),
-                    rhs: Box::new(sp(Expr::Ident("b".into()))),
-                }))))],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "add".into(),
+                    type_params: vec![],
+                    params: vec![
+                        Param {
+                            name: "a".into(),
+                            ty: sp(TypeExpr::Named("int".into())),
+                            default: None,
+                            kind: ParamKind::Regular,
+                            span: Span::dummy(),
+                        },
+                        Param {
+                            name: "b".into(),
+                            ty: sp(TypeExpr::Named("int".into())),
+                            default: None,
+                            kind: ParamKind::Regular,
+                            span: Span::dummy(),
+                        },
+                    ],
+                    return_ty: Some(sp(TypeExpr::Named("int".into()))),
+                    body: vec![
+                        sp(Stmt::Return(Some(sp(Expr::BinOp {
+                            op: BinOp::Add,
+                            lhs: Box::new(sp(Expr::Ident("a".into()))),
+                            rhs: Box::new(sp(Expr::Ident("b".into()))),
+                        })))),
+                    ],
+                }),
+            ],
         };
 
         let result = resolve_module(&module);
@@ -1001,7 +756,9 @@ mod tests {
     #[test]
     fn test_resolve_undefined_name() {
         let module = Module {
-            stmts: vec![sp(Stmt::ExprStmt(sp(Expr::Ident("undefined_var".into()))))],
+            stmts: vec![
+                sp(Stmt::ExprStmt(sp(Expr::Ident("undefined_var".into())))),
+            ],
         };
 
         let result = resolve_module(&module);
@@ -1029,64 +786,69 @@ mod tests {
     fn test_resolve_global_declaration() {
         // def f(): global x; x = 42
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "f".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![
-                    sp(Stmt::Global(vec!["x".into()])),
-                    sp(Stmt::Assign {
-                        target: sp(Expr::Ident("x".into())),
-                        value: sp(Expr::IntLit(42)),
-                    }),
-                ],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Global(vec!["x".into()])),
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("x".into())),
+                            value: sp(Expr::IntLit(42)),
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
         // Find the SymbolId for x in name_map (global decl produces a mapping)
-        let x_id = result
-            .name_map
-            .iter()
+        let x_id = result.name_map.iter()
             .map(|(_, id)| *id)
             .find(|id| result.symbols.get_symbol(*id).name == "x")
             .expect("x should have a name_map entry");
-        assert_eq!(result.symbols.get_var_class(x_id), VariableClass::Global,);
+        assert_eq!(
+            result.symbols.get_var_class(x_id),
+            VariableClass::Global,
+        );
     }
 
     #[test]
     fn test_resolve_nonlocal_declaration() {
         // def outer(): x = 1; def inner(): nonlocal x; x = 2
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "outer".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![
-                    sp(Stmt::Assign {
-                        target: sp(Expr::Ident("x".into())),
-                        value: sp(Expr::IntLit(1)),
-                    }),
-                    sp(Stmt::FnDef {
-                        decorators: vec![],
-                        name: "inner".into(),
-                        type_params: vec![],
-                        params: vec![],
-                        return_ty: None,
-                        body: vec![
-                            sp(Stmt::Nonlocal(vec!["x".into()])),
-                            sp(Stmt::Assign {
-                                target: sp(Expr::Ident("x".into())),
-                                value: sp(Expr::IntLit(2)),
-                            }),
-                        ],
-                    }),
-                ],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "outer".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("x".into())),
+                            value: sp(Expr::IntLit(1)),
+                        }),
+                        sp(Stmt::FnDef {
+                            decorators: vec![],
+                            name: "inner".into(),
+                            type_params: vec![],
+                            params: vec![],
+                            return_ty: None,
+                            body: vec![
+                                sp(Stmt::Nonlocal(vec!["x".into()])),
+                                sp(Stmt::Assign {
+                                    target: sp(Expr::Ident("x".into())),
+                                    value: sp(Expr::IntLit(2)),
+                                }),
+                            ],
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1096,21 +858,24 @@ mod tests {
     fn test_resolve_nonlocal_not_found_error() {
         // def f(): nonlocal z  (z not in any enclosing scope)
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "f".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![sp(Stmt::Nonlocal(vec!["z".into()]))],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Nonlocal(vec!["z".into()])),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert_eq!(result.errors.len(), 1);
         assert!(
             result.errors[0].to_string().contains("nonlocal"),
-            "error should mention nonlocal: {:?}",
-            result.errors[0]
+            "error should mention nonlocal: {:?}", result.errors[0]
         );
     }
 
@@ -1120,31 +885,32 @@ mod tests {
     fn test_top_level_variable_registered() {
         // x = 42  →  lookup("x") is Some
         let module = Module {
-            stmts: vec![sp(Stmt::Assign {
-                target: sp(Expr::Ident("x".into())),
-                value: sp(Expr::IntLit(42)),
-            })],
+            stmts: vec![
+                sp(Stmt::Assign {
+                    target: sp(Expr::Ident("x".into())),
+                    value: sp(Expr::IntLit(42)),
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        assert!(
-            result.symbols.lookup("x").is_some(),
-            "x should be registered"
-        );
+        assert!(result.symbols.lookup("x").is_some(), "x should be registered");
     }
 
     #[test]
     fn test_top_level_function_registered() {
         // def f(): pass  →  lookup("f") has kind=Function
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "f".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![sp(Stmt::Pass)],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![sp(Stmt::Pass)],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1156,14 +922,16 @@ mod tests {
     fn test_top_level_class_registered() {
         // class C: pass  →  lookup("C") has kind=Class
         let module = Module {
-            stmts: vec![sp(Stmt::ClassDef {
-                decorators: vec![],
-                name: "C".into(),
-                type_params: vec![],
-                bases: vec![],
-                keyword_args: vec![],
-                body: vec![sp(Stmt::Pass)],
-            })],
+            stmts: vec![
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "C".into(),
+                    type_params: vec![],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Pass)],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1196,86 +964,62 @@ mod tests {
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        assert!(
-            result.symbols.lookup("f").is_some(),
-            "f should be registered"
-        );
-        assert!(
-            result.symbols.lookup("g").is_some(),
-            "g should be registered"
-        );
+        assert!(result.symbols.lookup("f").is_some(), "f should be registered");
+        assert!(result.symbols.lookup("g").is_some(), "g should be registered");
     }
 
     #[test]
     fn test_top_level_import_registers_name() {
         // import os  →  "os" resolvable
         let module = Module {
-            stmts: vec![sp(Stmt::Import {
-                module: vec!["os".into()],
-                names: None,
-                module_alias: None,
-            })],
+            stmts: vec![
+                sp(Stmt::Import {
+                    module: vec!["os".into()],
+                    names: None,
+                    module_alias: None,
+                }),
+            ],
         };
         // Per R2 (#1132), `import os` defines `os` as a Variable in the symbol table
         // so subsequent references (e.g. `os.path`) resolve to a valid SymbolId.
         let result = resolve_module(&module);
-        assert!(
-            result.errors.is_empty(),
-            "import should not produce errors: {:?}",
-            result.errors
-        );
-        assert!(
-            result.symbols.lookup("os").is_some(),
-            "import should define `os` in symbol table"
-        );
+        assert!(result.errors.is_empty(), "import should not produce errors: {:?}", result.errors);
+        assert!(result.symbols.lookup("os").is_some(), "import should define `os` in symbol table");
     }
 
     #[test]
     fn test_from_import_with_alias_registers_bound_name() {
         // from os import path as p  →  "p" resolvable, "path" NOT resolvable (unbound alias source)
         let module = Module {
-            stmts: vec![sp(Stmt::Import {
-                module: vec!["os".into()],
-                names: Some(vec![("path".into(), Some("p".into()))]),
-                module_alias: None,
-            })],
+            stmts: vec![
+                sp(Stmt::Import {
+                    module: vec!["os".into()],
+                    names: Some(vec![("path".into(), Some("p".into()))]),
+                    module_alias: None,
+                }),
+            ],
         };
         let result = resolve_module(&module);
-        assert!(
-            result.errors.is_empty(),
-            "from-import-as should not error: {:?}",
-            result.errors
-        );
-        assert!(
-            result.symbols.lookup("p").is_some(),
-            "alias `p` should be defined"
-        );
-        assert!(
-            result.symbols.lookup("path").is_none(),
-            "source name `path` should NOT be defined (only alias binds)"
-        );
+        assert!(result.errors.is_empty(), "from-import-as should not error: {:?}", result.errors);
+        assert!(result.symbols.lookup("p").is_some(), "alias `p` should be defined");
+        assert!(result.symbols.lookup("path").is_none(), "source name `path` should NOT be defined (only alias binds)");
     }
 
     #[test]
     fn test_from_import_star_skips_symbol_definition() {
         // from os import *  →  no symbol defined (star imports are dynamic)
         let module = Module {
-            stmts: vec![sp(Stmt::Import {
-                module: vec!["os".into()],
-                names: Some(vec![("*".into(), None)]),
-                module_alias: None,
-            })],
+            stmts: vec![
+                sp(Stmt::Import {
+                    module: vec!["os".into()],
+                    names: Some(vec![("*".into(), None)]),
+                    module_alias: None,
+                }),
+            ],
         };
         let result = resolve_module(&module);
-        assert!(
-            result.errors.is_empty(),
-            "star-import should not error: {:?}",
-            result.errors
-        );
-        assert!(
-            result.symbols.lookup("*").is_none(),
-            "star-import should not define `*`"
-        );
+        assert!(result.errors.is_empty(), "star-import should not error: {:?}", result.errors);
+        assert!(result.symbols.lookup("*").is_none(), "star-import should not define `*`");
     }
 
     // ── Group 2: LEGB resolution order ────────────────────────────────────
@@ -1324,10 +1068,7 @@ mod tests {
         let result = resolve_module(&module);
         // y is not yet defined when first used (top-level registration only hoists
         // functions/classes, not bare assignments).
-        assert!(
-            !result.errors.is_empty(),
-            "should get an undefined-name error for y"
-        );
+        assert!(!result.errors.is_empty(), "should get an undefined-name error for y");
     }
 
     #[test]
@@ -1338,10 +1079,12 @@ mod tests {
         // that the resolver has a known limitation (no builtin pre-population).
         // We simply verify no panic occurs.
         let module = Module {
-            stmts: vec![sp(Stmt::ExprStmt(sp(Expr::Call {
-                func: Box::new(sp(Expr::Ident("len".into()))),
-                args: vec![CallArg::Positional(sp(Expr::ListLit(vec![])))],
-            })))],
+            stmts: vec![
+                sp(Stmt::ExprStmt(sp(Expr::Call {
+                    func: Box::new(sp(Expr::Ident("len".into()))),
+                    args: vec![CallArg::Positional(sp(Expr::ListLit(vec![])))],
+                }))),
+            ],
         };
         let result = resolve_module(&module);
         // Either 0 errors (if builtins pre-populated) or 1 error (len unknown) — no panic.
@@ -1352,27 +1095,31 @@ mod tests {
     fn test_nested_function_sees_outer_var() {
         // outer x=1; def inner(): use x  →  x found in enclosing scope, no error
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "outer".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![
-                    sp(Stmt::Assign {
-                        target: sp(Expr::Ident("x".into())),
-                        value: sp(Expr::IntLit(1)),
-                    }),
-                    sp(Stmt::FnDef {
-                        decorators: vec![],
-                        name: "inner".into(),
-                        type_params: vec![],
-                        params: vec![],
-                        return_ty: None,
-                        body: vec![sp(Stmt::ExprStmt(sp(Expr::Ident("x".into()))))],
-                    }),
-                ],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "outer".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("x".into())),
+                            value: sp(Expr::IntLit(1)),
+                        }),
+                        sp(Stmt::FnDef {
+                            decorators: vec![],
+                            name: "inner".into(),
+                            type_params: vec![],
+                            params: vec![],
+                            return_ty: None,
+                            body: vec![
+                                sp(Stmt::ExprStmt(sp(Expr::Ident("x".into())))),
+                            ],
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1383,53 +1130,60 @@ mod tests {
         // def outer(): def inner(): y = 1; use y  →  y is inside inner only
         // outer body uses y → error
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "outer".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![
-                    sp(Stmt::FnDef {
-                        decorators: vec![],
-                        name: "inner".into(),
-                        type_params: vec![],
-                        params: vec![],
-                        return_ty: None,
-                        body: vec![sp(Stmt::Assign {
-                            target: sp(Expr::Ident("y".into())),
-                            value: sp(Expr::IntLit(1)),
-                        })],
-                    }),
-                    sp(Stmt::ExprStmt(sp(Expr::Ident("y".into())))),
-                ],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "outer".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::FnDef {
+                            decorators: vec![],
+                            name: "inner".into(),
+                            type_params: vec![],
+                            params: vec![],
+                            return_ty: None,
+                            body: vec![
+                                sp(Stmt::Assign {
+                                    target: sp(Expr::Ident("y".into())),
+                                    value: sp(Expr::IntLit(1)),
+                                }),
+                            ],
+                        }),
+                        sp(Stmt::ExprStmt(sp(Expr::Ident("y".into())))),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
-        assert!(
-            !result.errors.is_empty(),
-            "y defined only inside inner should not be visible in outer"
-        );
+        assert!(!result.errors.is_empty(), "y defined only inside inner should not be visible in outer");
     }
 
     #[test]
     fn test_function_param_visible_in_body() {
         // def f(n: int): return n  →  n visible in body, no error
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "f".into(),
-                type_params: vec![],
-                params: vec![Param {
-                    name: "n".into(),
-                    ty: sp(TypeExpr::Named("int".into())),
-                    default: None,
-                    kind: ParamKind::Regular,
-                    span: Span::dummy(),
-                }],
-                return_ty: None,
-                body: vec![sp(Stmt::Return(Some(sp(Expr::Ident("n".into())))))],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".into(),
+                    type_params: vec![],
+                    params: vec![
+                        Param {
+                            name: "n".into(),
+                            ty: sp(TypeExpr::Named("int".into())),
+                            default: None,
+                            kind: ParamKind::Regular,
+                            span: Span::dummy(),
+                        },
+                    ],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Return(Some(sp(Expr::Ident("n".into()))))),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1441,20 +1195,22 @@ mod tests {
     fn test_global_marks_variable() {
         // def f(): global x  →  x has var_class == Global
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "f".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![sp(Stmt::Global(vec!["x".into()]))],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Global(vec!["x".into()])),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        let x_id = result
-            .name_map
-            .iter()
+        let x_id = result.name_map.iter()
             .map(|(_, id)| *id)
             .find(|id| result.symbols.get_symbol(*id).name == "x")
             .expect("x should have a name_map entry");
@@ -1465,20 +1221,22 @@ mod tests {
     fn test_global_allows_use_without_local_define() {
         // def f(): global x; x = 10  →  no error (x treated as module-level)
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "f".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![
-                    sp(Stmt::Global(vec!["x".into()])),
-                    sp(Stmt::Assign {
-                        target: sp(Expr::Ident("x".into())),
-                        value: sp(Expr::IntLit(10)),
-                    }),
-                ],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Global(vec!["x".into()])),
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("x".into())),
+                            value: sp(Expr::IntLit(10)),
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1488,26 +1246,26 @@ mod tests {
     fn test_multiple_globals() {
         // def f(): global x, y  →  both x and y marked Global
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "f".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![sp(Stmt::Global(vec!["x".into(), "y".into()]))],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Global(vec!["x".into(), "y".into()])),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        let x_id = result
-            .name_map
-            .iter()
+        let x_id = result.name_map.iter()
             .map(|(_, id)| *id)
             .find(|id| result.symbols.get_symbol(*id).name == "x")
             .expect("x should be in name_map");
-        let y_id = result
-            .name_map
-            .iter()
+        let y_id = result.name_map.iter()
             .map(|(_, id)| *id)
             .find(|id| result.symbols.get_symbol(*id).name == "y")
             .expect("y should be in name_map");
@@ -1519,27 +1277,31 @@ mod tests {
     fn test_global_in_nested_function() {
         // def outer(): def inner(): global g  →  g is Global
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "outer".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![sp(Stmt::FnDef {
+            stmts: vec![
+                sp(Stmt::FnDef {
                     decorators: vec![],
-                    name: "inner".into(),
+                    name: "outer".into(),
                     type_params: vec![],
                     params: vec![],
                     return_ty: None,
-                    body: vec![sp(Stmt::Global(vec!["g".into()]))],
-                })],
-            })],
+                    body: vec![
+                        sp(Stmt::FnDef {
+                            decorators: vec![],
+                            name: "inner".into(),
+                            type_params: vec![],
+                            params: vec![],
+                            return_ty: None,
+                            body: vec![
+                                sp(Stmt::Global(vec!["g".into()])),
+                            ],
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        let g_id = result
-            .name_map
-            .iter()
+        let g_id = result.name_map.iter()
             .map(|(_, id)| *id)
             .find(|id| result.symbols.get_symbol(*id).name == "g")
             .expect("g should be in name_map");
@@ -1552,35 +1314,41 @@ mod tests {
     fn test_nonlocal_marks_variable() {
         // outer x=1; inner nonlocal x  →  inner x has var_class == Free
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "outer".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![
-                    sp(Stmt::Assign {
-                        target: sp(Expr::Ident("x".into())),
-                        value: sp(Expr::IntLit(1)),
-                    }),
-                    sp(Stmt::FnDef {
-                        decorators: vec![],
-                        name: "inner".into(),
-                        type_params: vec![],
-                        params: vec![],
-                        return_ty: None,
-                        body: vec![sp(Stmt::Nonlocal(vec!["x".into()]))],
-                    }),
-                ],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "outer".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("x".into())),
+                            value: sp(Expr::IntLit(1)),
+                        }),
+                        sp(Stmt::FnDef {
+                            decorators: vec![],
+                            name: "inner".into(),
+                            type_params: vec![],
+                            params: vec![],
+                            return_ty: None,
+                            body: vec![
+                                sp(Stmt::Nonlocal(vec!["x".into()])),
+                            ],
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
         // The inner x should be classified as Free
-        let free_x = result.name_map.iter().map(|(_, id)| *id).find(|id| {
-            result.symbols.get_symbol(*id).name == "x"
-                && result.symbols.get_var_class(*id) == VariableClass::Free
-        });
+        let free_x = result.name_map.iter()
+            .map(|(_, id)| *id)
+            .find(|id| {
+                result.symbols.get_symbol(*id).name == "x"
+                    && result.symbols.get_var_class(*id) == VariableClass::Free
+            });
         assert!(free_x.is_some(), "inner x should be classified as Free");
     }
 
@@ -1588,62 +1356,70 @@ mod tests {
     fn test_nonlocal_not_found_in_direct_outer() {
         // def outer(): def inner(): nonlocal w  (w not in outer either)
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "outer".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![sp(Stmt::FnDef {
+            stmts: vec![
+                sp(Stmt::FnDef {
                     decorators: vec![],
-                    name: "inner".into(),
+                    name: "outer".into(),
                     type_params: vec![],
                     params: vec![],
                     return_ty: None,
-                    body: vec![sp(Stmt::Nonlocal(vec!["w".into()]))],
-                })],
-            })],
+                    body: vec![
+                        sp(Stmt::FnDef {
+                            decorators: vec![],
+                            name: "inner".into(),
+                            type_params: vec![],
+                            params: vec![],
+                            return_ty: None,
+                            body: vec![
+                                sp(Stmt::Nonlocal(vec!["w".into()])),
+                            ],
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
-        assert_eq!(
-            result.errors.len(),
-            1,
-            "should have exactly one nonlocal-not-found error"
-        );
+        assert_eq!(result.errors.len(), 1, "should have exactly one nonlocal-not-found error");
     }
 
     #[test]
     fn test_nonlocal_in_deeply_nested() {
         // 3-level nesting: outermost defines x, middle does nothing, innermost nonlocal x
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "level1".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![
-                    sp(Stmt::Assign {
-                        target: sp(Expr::Ident("x".into())),
-                        value: sp(Expr::IntLit(1)),
-                    }),
-                    sp(Stmt::FnDef {
-                        decorators: vec![],
-                        name: "level2".into(),
-                        type_params: vec![],
-                        params: vec![],
-                        return_ty: None,
-                        body: vec![sp(Stmt::FnDef {
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "level1".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("x".into())),
+                            value: sp(Expr::IntLit(1)),
+                        }),
+                        sp(Stmt::FnDef {
                             decorators: vec![],
-                            name: "level3".into(),
+                            name: "level2".into(),
                             type_params: vec![],
                             params: vec![],
                             return_ty: None,
-                            body: vec![sp(Stmt::Nonlocal(vec!["x".into()]))],
-                        })],
-                    }),
-                ],
-            })],
+                            body: vec![
+                                sp(Stmt::FnDef {
+                                    decorators: vec![],
+                                    name: "level3".into(),
+                                    type_params: vec![],
+                                    params: vec![],
+                                    return_ty: None,
+                                    body: vec![
+                                        sp(Stmt::Nonlocal(vec!["x".into()])),
+                                    ],
+                                }),
+                            ],
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1667,7 +1443,9 @@ mod tests {
                     type_params: vec![],
                     params: vec![],
                     return_ty: None,
-                    body: vec![sp(Stmt::Nonlocal(vec!["x".into()]))],
+                    body: vec![
+                        sp(Stmt::Nonlocal(vec!["x".into()])),
+                    ],
                 }),
             ],
         };
@@ -1675,10 +1453,12 @@ mod tests {
         // The resolver resolves nonlocal against the module-level x — no error.
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
         // The inner x should be classified as Free (captured from enclosing scope).
-        let free_x = result.name_map.iter().map(|(_, id)| *id).find(|id| {
-            result.symbols.get_symbol(*id).name == "x"
-                && result.symbols.get_var_class(*id) == VariableClass::Free
-        });
+        let free_x = result.name_map.iter()
+            .map(|(_, id)| *id)
+            .find(|id| {
+                result.symbols.get_symbol(*id).name == "x"
+                    && result.symbols.get_var_class(*id) == VariableClass::Free
+            });
         assert!(free_x.is_some(), "nonlocal x should be classified as Free");
     }
 
@@ -1688,17 +1468,21 @@ mod tests {
     fn test_class_body_defines_names() {
         // class C: x = 1  →  x registered in class scope (no error)
         let module = Module {
-            stmts: vec![sp(Stmt::ClassDef {
-                decorators: vec![],
-                name: "C".into(),
-                type_params: vec![],
-                bases: vec![],
-                keyword_args: vec![],
-                body: vec![sp(Stmt::Assign {
-                    target: sp(Expr::Ident("x".into())),
-                    value: sp(Expr::IntLit(1)),
-                })],
-            })],
+            stmts: vec![
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "C".into(),
+                    type_params: vec![],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("x".into())),
+                            value: sp(Expr::IntLit(1)),
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1708,27 +1492,33 @@ mod tests {
     fn test_class_method_registered() {
         // class C: def method(self): pass  →  no errors
         let module = Module {
-            stmts: vec![sp(Stmt::ClassDef {
-                decorators: vec![],
-                name: "C".into(),
-                type_params: vec![],
-                bases: vec![],
-                keyword_args: vec![],
-                body: vec![sp(Stmt::FnDef {
+            stmts: vec![
+                sp(Stmt::ClassDef {
                     decorators: vec![],
-                    name: "method".into(),
+                    name: "C".into(),
                     type_params: vec![],
-                    params: vec![Param {
-                        name: "self".into(),
-                        ty: sp(TypeExpr::Named("C".into())),
-                        default: None,
-                        kind: ParamKind::Regular,
-                        span: Span::dummy(),
-                    }],
-                    return_ty: None,
-                    body: vec![sp(Stmt::Pass)],
-                })],
-            })],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![
+                        sp(Stmt::FnDef {
+                            decorators: vec![],
+                            name: "method".into(),
+                            type_params: vec![],
+                            params: vec![
+                                Param {
+                                    name: "self".into(),
+                                    ty: sp(TypeExpr::Named("C".into())),
+                                    default: None,
+                                    kind: ParamKind::Regular,
+                                    span: Span::dummy(),
+                                },
+                            ],
+                            return_ty: None,
+                            body: vec![sp(Stmt::Pass)],
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1738,20 +1528,19 @@ mod tests {
     fn test_class_name_registered_at_module() {
         // class MyClass: pass  →  lookup("MyClass") returns Class symbol
         let module = Module {
-            stmts: vec![sp(Stmt::ClassDef {
-                decorators: vec![],
-                name: "MyClass".into(),
-                type_params: vec![],
-                bases: vec![],
-                keyword_args: vec![],
-                body: vec![sp(Stmt::Pass)],
-            })],
+            stmts: vec![
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "MyClass".into(),
+                    type_params: vec![],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Pass)],
+                }),
+            ],
         };
         let result = resolve_module(&module);
-        let id = result
-            .symbols
-            .lookup("MyClass")
-            .expect("MyClass should be registered");
+        let id = result.symbols.lookup("MyClass").expect("MyClass should be registered");
         assert_eq!(result.symbols.get_symbol(id).kind, SymbolKind::Class);
     }
 
@@ -1788,11 +1577,13 @@ mod tests {
     fn test_import_registers_module_name() {
         // import os  →  no parse errors; Import is currently a no-op in resolver
         let module = Module {
-            stmts: vec![sp(Stmt::Import {
-                module: vec!["os".into()],
-                names: None,
-                module_alias: None,
-            })],
+            stmts: vec![
+                sp(Stmt::Import {
+                    module: vec!["os".into()],
+                    names: None,
+                    module_alias: None,
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1802,11 +1593,13 @@ mod tests {
     fn test_import_as_registers_alias() {
         // import os as operating_system  →  no errors
         let module = Module {
-            stmts: vec![sp(Stmt::Import {
-                module: vec!["os".into()],
-                names: None,
-                module_alias: Some("operating_system".into()),
-            })],
+            stmts: vec![
+                sp(Stmt::Import {
+                    module: vec!["os".into()],
+                    names: None,
+                    module_alias: Some("operating_system".into()),
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1816,11 +1609,13 @@ mod tests {
     fn test_from_import_registers_name() {
         // from sys import argv  →  no errors
         let module = Module {
-            stmts: vec![sp(Stmt::Import {
-                module: vec!["sys".into()],
-                names: Some(vec![("argv".into(), None)]),
-                module_alias: None,
-            })],
+            stmts: vec![
+                sp(Stmt::Import {
+                    module: vec!["sys".into()],
+                    names: Some(vec![("argv".into(), None)]),
+                    module_alias: None,
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1830,11 +1625,13 @@ mod tests {
     fn test_from_import_as_registers_alias() {
         // from os import path as p  →  no errors
         let module = Module {
-            stmts: vec![sp(Stmt::Import {
-                module: vec!["os".into()],
-                names: Some(vec![("path".into(), Some("p".into()))]),
-                module_alias: None,
-            })],
+            stmts: vec![
+                sp(Stmt::Import {
+                    module: vec!["os".into()],
+                    names: Some(vec![("path".into(), Some("p".into()))]),
+                    module_alias: None,
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
@@ -1868,18 +1665,17 @@ mod tests {
     fn test_augassign_requires_prior_definition() {
         // x += 1 where x was not previously defined → resolver tries to resolve x → error
         let module = Module {
-            stmts: vec![sp(Stmt::AugAssign {
-                target: sp(Expr::Ident("x".into())),
-                op: AugOp::Add,
-                value: sp(Expr::IntLit(1)),
-            })],
+            stmts: vec![
+                sp(Stmt::AugAssign {
+                    target: sp(Expr::Ident("x".into())),
+                    op: AugOp::Add,
+                    value: sp(Expr::IntLit(1)),
+                }),
+            ],
         };
         let result = resolve_module(&module);
         // AugAssign resolves target as an expression, so undefined x → error
-        assert!(
-            !result.errors.is_empty(),
-            "augmented assign to undefined variable should error"
-        );
+        assert!(!result.errors.is_empty(), "augmented assign to undefined variable should error");
     }
 
     #[test]
@@ -1941,10 +1737,7 @@ mod tests {
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
         // "x" should not be a standalone symbol
-        assert!(
-            result.symbols.lookup("x").is_none(),
-            "attribute assignment should not register x as a symbol"
-        );
+        assert!(result.symbols.lookup("x").is_none(), "attribute assignment should not register x as a symbol");
     }
 
     // ── Group 8: Comprehension / For scope ────────────────────────────────
@@ -1953,20 +1746,19 @@ mod tests {
     fn test_for_loop_target_defines_variable() {
         // for i in []: pass  →  "i" defined after loop, no error
         let module = Module {
-            stmts: vec![sp(Stmt::For {
-                targets: vec!["i".into()],
-                var_ty: None,
-                iter: sp(Expr::ListLit(vec![])),
-                body: vec![sp(Stmt::Pass)],
-                else_body: None,
-            })],
+            stmts: vec![
+                sp(Stmt::For {
+                    targets: vec!["i".into()],
+                    var_ty: None,
+                    iter: sp(Expr::ListLit(vec![])),
+                    body: vec![sp(Stmt::Pass)],
+                    else_body: None,
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        assert!(
-            result.symbols.lookup("i").is_some(),
-            "loop variable i should be defined"
-        );
+        assert!(result.symbols.lookup("i").is_some(), "loop variable i should be defined");
     }
 
     #[test]
@@ -2018,45 +1810,45 @@ mod tests {
     fn test_undefined_name_in_function() {
         // def f(): return z  (z never defined)
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "f".into(),
-                type_params: vec![],
-                params: vec![],
-                return_ty: None,
-                body: vec![sp(Stmt::Return(Some(sp(Expr::Ident("z".into())))))],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".into(),
+                    type_params: vec![],
+                    params: vec![],
+                    return_ty: None,
+                    body: vec![
+                        sp(Stmt::Return(Some(sp(Expr::Ident("z".into()))))),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
-        assert_eq!(
-            result.errors.len(),
-            1,
-            "should have exactly one undefined-name error"
-        );
+        assert_eq!(result.errors.len(), 1, "should have exactly one undefined-name error");
     }
 
     #[test]
     fn test_undefined_in_class_body() {
         // class C: x = undefined_thing
         let module = Module {
-            stmts: vec![sp(Stmt::ClassDef {
-                decorators: vec![],
-                name: "C".into(),
-                type_params: vec![],
-                bases: vec![],
-                keyword_args: vec![],
-                body: vec![sp(Stmt::Assign {
-                    target: sp(Expr::Ident("x".into())),
-                    value: sp(Expr::Ident("undefined_thing".into())),
-                })],
-            })],
+            stmts: vec![
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "C".into(),
+                    type_params: vec![],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![
+                        sp(Stmt::Assign {
+                            target: sp(Expr::Ident("x".into())),
+                            value: sp(Expr::Ident("undefined_thing".into())),
+                        }),
+                    ],
+                }),
+            ],
         };
         let result = resolve_module(&module);
-        assert_eq!(
-            result.errors.len(),
-            1,
-            "class body should report undefined names"
-        );
+        assert_eq!(result.errors.len(), 1, "class body should report undefined names");
     }
 
     #[test]
@@ -2070,28 +1862,23 @@ mod tests {
             ],
         };
         let result = resolve_module(&module);
-        assert_eq!(
-            result.errors.len(),
-            3,
-            "should report 3 undefined-name errors"
-        );
+        assert_eq!(result.errors.len(), 3, "should report 3 undefined-name errors");
     }
 
     #[test]
     fn test_self_referential_assignment() {
         // x = x  where x not yet defined → error resolving rhs
         let module = Module {
-            stmts: vec![sp(Stmt::Assign {
-                target: sp(Expr::Ident("x".into())),
-                value: sp(Expr::Ident("x".into())),
-            })],
+            stmts: vec![
+                sp(Stmt::Assign {
+                    target: sp(Expr::Ident("x".into())),
+                    value: sp(Expr::Ident("x".into())),
+                }),
+            ],
         };
         let result = resolve_module(&module);
         // The resolver defines x after resolving rhs, so rhs x is undefined → error
-        assert!(
-            !result.errors.is_empty(),
-            "self-referential assignment should error"
-        );
+        assert!(!result.errors.is_empty(), "self-referential assignment should error");
     }
 
     #[test]
@@ -2099,14 +1886,8 @@ mod tests {
         // Empty module: no stmts → 0 errors, empty name_map
         let module = Module { stmts: vec![] };
         let result = resolve_module(&module);
-        assert!(
-            result.errors.is_empty(),
-            "empty module should have no errors"
-        );
-        assert!(
-            result.name_map.is_empty(),
-            "empty module should have empty name_map"
-        );
+        assert!(result.errors.is_empty(), "empty module should have no errors");
+        assert!(result.name_map.is_empty(), "empty module should have empty name_map");
     }
 
     // ── Group 10: Name map / symbol counts ────────────────────────────────
@@ -2115,20 +1896,17 @@ mod tests {
     fn test_name_map_populated() {
         // VarDecl creates an entry in name_map
         let module = Module {
-            stmts: vec![sp(Stmt::VarDecl {
-                name: "v".into(),
-                ty: sp(TypeExpr::Named("int".into())),
-                value: sp(Expr::IntLit(0)),
-            })],
+            stmts: vec![
+                sp(Stmt::VarDecl {
+                    name: "v".into(),
+                    ty: sp(TypeExpr::Named("int".into())),
+                    value: sp(Expr::IntLit(0)),
+                }),
+            ],
         };
         let result = resolve_module(&module);
-        assert!(
-            !result.name_map.is_empty(),
-            "VarDecl should create a name_map entry"
-        );
-        let has_v = result
-            .name_map
-            .iter()
+        assert!(!result.name_map.is_empty(), "VarDecl should create a name_map entry");
+        let has_v = result.name_map.iter()
             .any(|(_, id)| result.symbols.get_symbol(*id).name == "v");
         assert!(has_v, "name_map should contain entry for v");
     }
@@ -2166,71 +1944,65 @@ mod tests {
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        assert!(
-            result.name_map.len() >= 3,
-            "should have at least 3 name_map entries for 3 functions"
-        );
+        assert!(result.name_map.len() >= 3, "should have at least 3 name_map entries for 3 functions");
     }
 
     #[test]
     fn test_function_params_in_name_map() {
         // def f(a: int, b: int): pass  →  2 param entries in name_map
         let module = Module {
-            stmts: vec![sp(Stmt::FnDef {
-                decorators: vec![],
-                name: "f".into(),
-                type_params: vec![],
-                params: vec![
-                    Param {
-                        name: "a".into(),
-                        ty: sp(TypeExpr::Named("int".into())),
-                        default: None,
-                        kind: ParamKind::Regular,
-                        span: Span::dummy(),
-                    },
-                    Param {
-                        name: "b".into(),
-                        ty: sp(TypeExpr::Named("int".into())),
-                        default: None,
-                        kind: ParamKind::Regular,
-                        span: Span::dummy(),
-                    },
-                ],
-                return_ty: None,
-                body: vec![sp(Stmt::Pass)],
-            })],
+            stmts: vec![
+                sp(Stmt::FnDef {
+                    decorators: vec![],
+                    name: "f".into(),
+                    type_params: vec![],
+                    params: vec![
+                        Param {
+                            name: "a".into(),
+                            ty: sp(TypeExpr::Named("int".into())),
+                            default: None,
+                            kind: ParamKind::Regular,
+                            span: Span::dummy(),
+                        },
+                        Param {
+                            name: "b".into(),
+                            ty: sp(TypeExpr::Named("int".into())),
+                            default: None,
+                            kind: ParamKind::Regular,
+                            span: Span::dummy(),
+                        },
+                    ],
+                    return_ty: None,
+                    body: vec![sp(Stmt::Pass)],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        let param_entries = result
-            .name_map
-            .iter()
+        let param_entries = result.name_map.iter()
             .filter(|(_, id)| result.symbols.get_symbol(*id).kind == SymbolKind::Parameter)
             .count();
-        assert_eq!(
-            param_entries, 2,
-            "should have 2 parameter entries in name_map"
-        );
+        assert_eq!(param_entries, 2, "should have 2 parameter entries in name_map");
     }
 
     #[test]
     fn test_class_def_in_name_map() {
         // class Foo: pass  →  name_map has entry for Foo
         let module = Module {
-            stmts: vec![sp(Stmt::ClassDef {
-                decorators: vec![],
-                name: "Foo".into(),
-                type_params: vec![],
-                bases: vec![],
-                keyword_args: vec![],
-                body: vec![sp(Stmt::Pass)],
-            })],
+            stmts: vec![
+                sp(Stmt::ClassDef {
+                    decorators: vec![],
+                    name: "Foo".into(),
+                    type_params: vec![],
+                    bases: vec![],
+                    keyword_args: vec![],
+                    body: vec![sp(Stmt::Pass)],
+                }),
+            ],
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        let has_foo = result
-            .name_map
-            .iter()
+        let has_foo = result.name_map.iter()
             .any(|(_, id)| result.symbols.get_symbol(*id).name == "Foo");
         assert!(has_foo, "name_map should contain entry for Foo");
     }
@@ -2407,10 +2179,7 @@ mod tests {
         };
         let result = resolve_module(&module);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
-        assert!(
-            result.symbols.lookup("y").is_some(),
-            "y should be defined by walrus operator"
-        );
+        assert!(result.symbols.lookup("y").is_some(), "y should be defined by walrus operator");
     }
 
     #[test]
@@ -2464,14 +2233,16 @@ mod tests {
                     generators: vec![Comprehension {
                         targets: vec!["x".into()],
                         iter: sp(Expr::Ident("items".into())),
-                        conditions: vec![sp(Expr::BinOp {
-                            op: BinOp::Gt,
-                            lhs: Box::new(sp(Expr::Walrus {
-                                target: "z".into(),
-                                value: Box::new(sp(Expr::Ident("x".into()))),
-                            })),
-                            rhs: Box::new(sp(Expr::IntLit(2))),
-                        })],
+                        conditions: vec![
+                            sp(Expr::BinOp {
+                                op: BinOp::Gt,
+                                lhs: Box::new(sp(Expr::Walrus {
+                                    target: "z".into(),
+                                    value: Box::new(sp(Expr::Ident("x".into()))),
+                                })),
+                                rhs: Box::new(sp(Expr::IntLit(2))),
+                            }),
+                        ],
                         is_async: false,
                     }],
                 }))),
@@ -2539,21 +2310,19 @@ mod tests {
         // `from somemod import *` should NOT define `*` as a symbol.
         // Star imports bind names dynamically at runtime, not statically.
         let module = Module {
-            stmts: vec![sp(Stmt::Import {
-                module: vec!["somemod".to_string()],
-                names: Some(vec![("*".to_string(), None)]),
-                module_alias: None,
-            })],
+            stmts: vec![
+                sp(Stmt::Import {
+                    module: vec!["somemod".to_string()],
+                    names: Some(vec![("*".to_string(), None)]),
+                    module_alias: None,
+                }),
+            ],
         };
         let result = resolve_module(&module);
-        assert!(
-            result.errors.is_empty(),
+        assert!(result.errors.is_empty(),
             "from X import * should not produce resolve errors, got: {:?}",
-            result.errors
-        );
-        assert!(
-            result.symbols.lookup("*").is_none(),
-            "* should NOT be defined as a symbol in the resolve pass"
-        );
+            result.errors);
+        assert!(result.symbols.lookup("*").is_none(),
+            "* should NOT be defined as a symbol in the resolve pass");
     }
 }

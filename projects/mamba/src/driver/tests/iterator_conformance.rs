@@ -10,6 +10,7 @@
 /// T9:  iter(callable, sentinel) (R9)
 /// T12: Iterable unpacking with generators (R12)
 /// Regression: Existing iterator fixtures
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -90,38 +91,13 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
             "output mismatch:\n--- expected ---\n{expected_trimmed}\n--- actual ---\n{actual_trimmed}\n--- diff ---\n{diff}"
         );
     }
-}
-
-/// Load a fixture file and its golden expected output, run through JIT, and compare.
-fn run_fixture(fixture_path: &str) {
-    let src = std::fs::read_to_string(fixture_path)
-        .unwrap_or_else(|e| panic!("read fixture {fixture_path}: {e}"));
-    let expected_path = fixture_path.replace(".py", ".expected");
-    let expected = std::fs::read_to_string(&expected_path)
-        .unwrap_or_else(|e| panic!("read expected {expected_path}: {e}"));
-
-    // Strip xfail directive from source before running
-    let src_clean: String = src
-        .lines()
-        .filter(|line| !line.trim().starts_with("# mamba-xfail:"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-
-    let output = jit_capture(&src_clean);
-    assert_output(&output, &expected);
 }
 
 // =============================================================================
@@ -271,12 +247,6 @@ print(a, b, c)
     assert_output(&output, "10 20 30\n");
 }
 
-/// T7 fixture: custom_iterator.py (passing subset — for-loop only) fixture matches golden output.
-#[test]
-fn test_t7_fixture_custom_iterator() {
-    run_fixture("tests/cpython/fixtures/core/iterators/custom_iterator.py");
-}
-
 // =============================================================================
 // T8: Iterator Composition with Generators (R8) — composition.py
 // =============================================================================
@@ -357,12 +327,6 @@ fn test_t8_5_chained_composition() {
     assert_output(&output, "[(0, 1), (1, 2), (2, 3)]\n");
 }
 
-/// T8 fixture: composition.py (passing subset — enumerate only) fixture matches golden output.
-#[test]
-fn test_t8_fixture_composition() {
-    run_fixture("tests/cpython/fixtures/core/iterators/composition.py");
-}
-
 // =============================================================================
 // T9: iter(callable, sentinel) (R9) — callable_sentinel.py
 // =============================================================================
@@ -392,12 +356,6 @@ print(list(iter(counter, 4)))
 "#,
     );
     assert_output(&output, "[1, 2, 3]\n");
-}
-
-/// T9 fixture: Full callable_sentinel.py fixture matches golden output.
-#[test]
-fn test_t9_fixture_callable_sentinel() {
-    run_fixture("tests/cpython/fixtures/core/iterators/callable_sentinel.py");
 }
 
 // =============================================================================
@@ -486,26 +444,4 @@ except ValueError:
 "#,
     );
     assert_output(&output, "too many values\n");
-}
-
-/// T12 fixture: Full unpacking.py fixture matches golden output.
-#[test]
-fn test_t12_fixture_unpacking() {
-    run_fixture("tests/cpython/fixtures/core/iterators/unpacking.py");
-}
-
-// =============================================================================
-// Regression: Existing iterator fixtures must continue to pass
-// =============================================================================
-
-/// Regression: existing iterators/protocol.py fixture still passes.
-#[test]
-fn test_regression_iterators_protocol() {
-    run_fixture("tests/cpython/fixtures/core/iterators/protocol.py");
-}
-
-/// Regression: existing builtins/iteration.py fixture still passes.
-#[test]
-fn test_regression_builtins_iteration() {
-    run_fixture("tests/cpython/fixtures/builtin-libs/builtins/iteration.py");
 }

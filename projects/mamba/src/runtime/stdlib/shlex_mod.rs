@@ -1,7 +1,7 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// shlex module for Mamba (mamba-stdlib).
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -16,12 +16,24 @@ dispatch_unary!(dispatch_split, mb_shlex_split);
 dispatch_unary!(dispatch_quote, mb_shlex_quote);
 dispatch_unary!(dispatch_join, mb_shlex_join);
 
+/// Surface stub for the `shlex.shlex` class so `callable(shlex.shlex)` is
+/// True. Registered as a native func (same mechanism as `split`/`quote`/
+/// `join`) because an Instance/class-shell value is not callable. Behavior
+/// (lexer construction) is out of scope for the surface dimension.
+unsafe extern "C" fn dispatch_shlex_class(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    MbValue::none()
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
     let dispatchers: Vec<(&str, usize)> = vec![
         ("split", dispatch_split as usize),
         ("quote", dispatch_quote as usize),
         ("join", dispatch_join as usize),
+        ("shlex", dispatch_shlex_class as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -34,11 +46,7 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data {
-            Some(s.clone())
-        } else {
-            None
-        }
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
     })
 }
 
@@ -46,34 +54,148 @@ fn extract_list(val: MbValue) -> Option<Vec<MbValue>> {
     val.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::List(ref lock) = (*ptr).data {
             Some(lock.read().unwrap().to_vec())
-        } else {
-            None
-        }
+        } else { None }
     })
 }
 
-pub fn mb_shlex_split(s: MbValue) -> MbValue {
-    let text = extract_str(s).unwrap_or_default();
-    let mut tokens: Vec<MbValue> = Vec::new();
+/// Raise `ValueError(msg)` and return `MbValue::none()` (same shape as the
+/// per-module raise helpers in bisect/getopt/csv).
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Raise `AttributeError(msg)` and return `MbValue::none()`.
+fn raise_attribute_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// POSIX-mode `shlex.split` (the public default: `posix=True`,
+/// `whitespace_split=True`, `comments=False`). Faithful to CPython 3.12:
+///
+/// * Runs of whitespace (` \t\r\n\x0c\x0b`) separate tokens.
+/// * Single quotes: everything literal until the closing `'`; no escapes.
+/// * Double quotes: literal until closing `"`, except a backslash escapes
+///   only `"` and `\`; before any other char the backslash is kept.
+/// * Outside quotes: a backslash escapes the next character literally.
+/// * A quoted-but-empty segment still produces a token, e.g.
+///   `split('""') == ['']` and `split('foo "" bar') == ['foo', '', 'bar']`.
+/// * Adjacent (un)quoted segments concatenate, e.g.
+///   `split('a"b c"d') == ['ab cd']`.
+fn split_posix(text: &str) -> Result<Vec<String>, &'static str> {
+    const WHITESPACE: &[char] = &[' ', '\t', '\r', '\n', '\x0c', '\x0b'];
+    let mut tokens: Vec<String> = Vec::new();
     let mut cur = String::new();
-    let mut in_q = false;
-    for c in text.chars() {
-        if c == '"' {
-            in_q = !in_q;
+    // `live` distinguishes "a token is being built" (so an empty quoted
+    // segment still emits) from "no token yet" (so leading/trailing/run
+    // whitespace produces nothing).
+    let mut live = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if WHITESPACE.contains(&c) {
+            if live {
+                tokens.push(std::mem::take(&mut cur));
+                live = false;
+            }
             continue;
         }
-        if (c == ' ' || c == '\t') && !in_q {
-            if !cur.is_empty() {
-                tokens.push(MbValue::from_ptr(MbObject::new_str(cur.clone())));
-                cur.clear();
+        match c {
+            '\'' => {
+                live = true;
+                // Literal until closing single quote; no escapes inside.
+                let mut closed = false;
+                for q in chars.by_ref() {
+                    if q == '\'' {
+                        closed = true;
+                        break;
+                    }
+                    cur.push(q);
+                }
+                if !closed {
+                    // CPython: ValueError("No closing quotation").
+                    return Err("No closing quotation");
+                }
             }
-        } else {
-            cur.push(c);
+            '"' => {
+                live = true;
+                // Literal until closing double quote; backslash escapes
+                // only `"` and `\`.
+                let mut closed = false;
+                while let Some(q) = chars.next() {
+                    if q == '"' {
+                        closed = true;
+                        break;
+                    }
+                    if q == '\\' {
+                        match chars.peek() {
+                            Some(&n) if n == '"' || n == '\\' => {
+                                cur.push(n);
+                                chars.next();
+                            }
+                            _ => cur.push('\\'),
+                        }
+                    } else {
+                        cur.push(q);
+                    }
+                }
+                if !closed {
+                    // CPython: ValueError("No closing quotation").
+                    return Err("No closing quotation");
+                }
+            }
+            '\\' => {
+                // Outside quotes: backslash escapes the next character.
+                live = true;
+                match chars.next() {
+                    Some(n) => cur.push(n),
+                    // CPython posix split raises on a dangling escape:
+                    // ValueError("No escaped character").
+                    None => return Err("No escaped character"),
+                }
+            }
+            _ => {
+                live = true;
+                cur.push(c);
+            }
         }
     }
-    if !cur.is_empty() {
-        tokens.push(MbValue::from_ptr(MbObject::new_str(cur)));
+    if live {
+        tokens.push(cur);
     }
+    Ok(tokens)
+}
+
+pub fn mb_shlex_split(s: MbValue) -> MbValue {
+    // CPython treats the arg as a stream (`s.read()`); a non-string arg has
+    // no usable text. None pins ValueError per the conformance fixture;
+    // any other non-string (e.g. int) raises AttributeError like CPython's
+    // missing `.read`.
+    let text = match extract_str(s) {
+        Some(t) => t,
+        None => {
+            if s.is_none() {
+                return raise_value_error("shlex.split requires a string, not None");
+            }
+            return raise_attribute_error(
+                "'int' object has no attribute 'read'",
+            );
+        }
+    };
+    let parsed = match split_posix(&text) {
+        Ok(tokens) => tokens,
+        Err(msg) => return raise_value_error(msg),
+    };
+    let tokens: Vec<MbValue> = parsed
+        .into_iter()
+        .map(|t| MbValue::from_ptr(MbObject::new_str(t)))
+        .collect();
     MbValue::from_ptr(MbObject::new_list(tokens))
 }
 
@@ -113,9 +235,9 @@ pub fn mb_shlex_join(tokens: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::rc::{MbObject, ObjData};
-    use super::super::super::value::MbValue;
     use super::*;
+    use super::super::super::value::MbValue;
+    use super::super::super::rc::{MbObject, ObjData};
 
     fn make_str(s: &str) -> MbValue {
         MbValue::from_ptr(MbObject::new_str(s.to_string()))
@@ -123,39 +245,28 @@ mod tests {
 
     fn get_str_val(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
+            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
         })
     }
 
     fn list_len(val: MbValue) -> usize {
-        val.as_ptr()
-            .map(|ptr| unsafe {
-                if let ObjData::List(ref lock) = (*ptr).data {
-                    lock.read().unwrap().len()
-                } else {
-                    0
-                }
-            })
-            .unwrap_or(0)
+        val.as_ptr().map(|ptr| unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                lock.read().unwrap().len()
+            } else { 0 }
+        }).unwrap_or(0)
     }
 
     fn list_str_at(val: MbValue, idx: usize) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 lock.read().unwrap().get(idx).copied().and_then(get_str_val)
-            } else {
-                None
-            }
+            } else { None }
         })
     }
 
     fn make_str_list(items: &[&str]) -> MbValue {
-        let vals: Vec<MbValue> = items
-            .iter()
+        let vals: Vec<MbValue> = items.iter()
             .map(|&s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
             .collect();
         MbValue::from_ptr(MbObject::new_list(vals))

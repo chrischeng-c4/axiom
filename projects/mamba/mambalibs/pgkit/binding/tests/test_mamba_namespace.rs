@@ -1,6 +1,6 @@
 //! Namespace registration tests for the pgkit Mamba interface.
 
-use cclab_mamba_registry::{find_module, ModuleRegistrar};
+use cclab_mamba_registry::{ModuleRegistrar, find_module};
 use pgkit_binding as _;
 use std::collections::HashSet;
 

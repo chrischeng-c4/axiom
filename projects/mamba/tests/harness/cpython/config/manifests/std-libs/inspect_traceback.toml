@@ -3,7 +3,7 @@
 # `inspect_traceback` is the consolidated fixture dir for inspect/traceback
 # behaviors that touch both modules (frame introspection + traceback
 # formatting). One [[case]] per fixture. `fixture_gen.py` turns this into the
-# files under tests/cpython/fixtures/std-libs/inspect_traceback/<dimension>/<case>.py:
+# files under tests/cpython/std-libs/inspect_traceback/<dimension>/<case>.py:
 #   - mechanical surface/errors come out complete (status="filled")
 #   - semantic cases come out as fillable skeletons (status="generated")
 #

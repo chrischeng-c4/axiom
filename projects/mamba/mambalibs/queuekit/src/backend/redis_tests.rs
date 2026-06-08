@@ -86,10 +86,8 @@ fn state_serialization_round_trip() {
 #[test]
 fn result_serialization_round_trip() {
     let task_id = TaskId::new();
-    let result = TaskResult::success(
-        task_id.clone(),
-        serde_json::json!({"key": "value", "num": 42}),
-    );
+    let result =
+        TaskResult::success(task_id.clone(), serde_json::json!({"key": "value", "num": 42}));
     let json = serde_json::to_string(&result).unwrap();
     let deserialized: TaskResult = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.task_id, task_id);
@@ -140,9 +138,7 @@ async fn make_backend() -> Option<RedisBackend> {
 
 #[tokio::test]
 async fn key_generation_state_format() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     assert_eq!(
         backend.state_key(&task_id),
@@ -154,9 +150,7 @@ async fn key_generation_state_format() {
 
 #[tokio::test]
 async fn key_generation_result_format() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     assert_eq!(
         backend.result_key(&task_id),
@@ -168,9 +162,7 @@ async fn key_generation_result_format() {
 
 #[tokio::test]
 async fn get_ttl_seconds_with_override() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     assert_eq!(backend.get_ttl_seconds(Some(Duration::from_secs(60))), 60);
 }
 
@@ -178,9 +170,7 @@ async fn get_ttl_seconds_with_override() {
 
 #[tokio::test]
 async fn get_ttl_seconds_default_fallback() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     assert_eq!(
         backend.get_ttl_seconds(None),
         backend.config.default_ttl.as_secs()
@@ -191,15 +181,10 @@ async fn get_ttl_seconds_default_fallback() {
 
 #[tokio::test]
 async fn test_set_get_state() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
 
-    backend
-        .set_state(&task_id, TaskState::Started)
-        .await
-        .unwrap();
+    backend.set_state(&task_id, TaskState::Started).await.unwrap();
     let retrieved = backend.get_state(&task_id).await.unwrap();
     assert_eq!(retrieved, Some(TaskState::Started));
 
@@ -210,9 +195,7 @@ async fn test_set_get_state() {
 
 #[tokio::test]
 async fn get_state_absent_returns_none() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     assert_eq!(backend.get_state(&task_id).await.unwrap(), None);
 }
@@ -221,18 +204,10 @@ async fn get_state_absent_returns_none() {
 
 #[tokio::test]
 async fn set_state_overwrites() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
-    backend
-        .set_state(&task_id, TaskState::Pending)
-        .await
-        .unwrap();
-    backend
-        .set_state(&task_id, TaskState::Started)
-        .await
-        .unwrap();
+    backend.set_state(&task_id, TaskState::Pending).await.unwrap();
+    backend.set_state(&task_id, TaskState::Started).await.unwrap();
     assert_eq!(
         backend.get_state(&task_id).await.unwrap(),
         Some(TaskState::Started)
@@ -244,9 +219,7 @@ async fn set_state_overwrites() {
 
 #[tokio::test]
 async fn test_set_get_result() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     let result = TaskResult::success(task_id.clone(), serde_json::json!({"test": "data"}));
 
@@ -268,9 +241,7 @@ async fn test_set_get_result() {
 
 #[tokio::test]
 async fn get_result_absent_returns_none() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     assert!(backend.get_result(&task_id).await.unwrap().is_none());
 }
@@ -279,9 +250,7 @@ async fn get_result_absent_returns_none() {
 
 #[tokio::test]
 async fn set_result_custom_ttl() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     let result = TaskResult::success(task_id.clone(), serde_json::json!({"v": 1}));
     backend
@@ -297,9 +266,7 @@ async fn set_result_custom_ttl() {
 
 #[tokio::test]
 async fn set_result_zero_ttl_no_expiry() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     let result = TaskResult::success(task_id.clone(), serde_json::json!({"v": 2}));
     // Duration::ZERO -> ttl_secs == 0 -> SET without EX (no expiry)
@@ -316,9 +283,7 @@ async fn set_result_zero_ttl_no_expiry() {
 
 #[tokio::test]
 async fn set_result_writes_state_key() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     let result = TaskResult::success(task_id.clone(), serde_json::json!({"done": true}));
     backend.set_result(&task_id, result, None).await.unwrap();
@@ -332,18 +297,12 @@ async fn set_result_writes_state_key() {
 
 #[tokio::test]
 async fn wait_for_result_immediate_terminal() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     let result = TaskResult::success(task_id.clone(), serde_json::json!({"fast": true}));
     backend.set_result(&task_id, result, None).await.unwrap();
     let got = backend
-        .wait_for_result(
-            &task_id,
-            Some(Duration::from_secs(5)),
-            Duration::from_millis(50),
-        )
+        .wait_for_result(&task_id, Some(Duration::from_secs(5)), Duration::from_millis(50))
         .await
         .unwrap();
     assert_eq!(got.state, TaskState::Success);
@@ -355,9 +314,7 @@ async fn wait_for_result_immediate_terminal() {
 
 #[tokio::test]
 async fn test_wait_for_result_success() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
 
     backend
@@ -369,8 +326,10 @@ async fn test_wait_for_result_success() {
     let backend_clone = backend.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let result =
-            TaskResult::success(task_id_clone.clone(), serde_json::json!({"result": "done"}));
+        let result = TaskResult::success(
+            task_id_clone.clone(),
+            serde_json::json!({"result": "done"}),
+        );
         backend_clone
             .set_result(&task_id_clone, result, None)
             .await
@@ -395,9 +354,7 @@ async fn test_wait_for_result_success() {
 
 #[tokio::test]
 async fn test_wait_for_result_timeout() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
 
     backend
@@ -422,9 +379,7 @@ async fn test_wait_for_result_timeout() {
 
 #[tokio::test]
 async fn wait_for_result_default_timeout() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     backend
         .set_state(&task_id, TaskState::Pending)
@@ -448,9 +403,7 @@ async fn wait_for_result_default_timeout() {
 
 #[tokio::test]
 async fn wait_for_result_terminal_no_result_key() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     // Set state to terminal WITHOUT setting result
     backend
@@ -458,11 +411,7 @@ async fn wait_for_result_terminal_no_result_key() {
         .await
         .unwrap();
     let err = backend
-        .wait_for_result(
-            &task_id,
-            Some(Duration::from_secs(5)),
-            Duration::from_millis(50),
-        )
+        .wait_for_result(&task_id, Some(Duration::from_secs(5)), Duration::from_millis(50))
         .await
         .unwrap_err();
     match err {
@@ -479,13 +428,14 @@ async fn wait_for_result_terminal_no_result_key() {
 
 #[tokio::test]
 async fn test_delete() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     let result = TaskResult::success(task_id.clone(), serde_json::json!({"test": "data"}));
 
-    backend.set_result(&task_id, result, None).await.unwrap();
+    backend
+        .set_result(&task_id, result, None)
+        .await
+        .unwrap();
 
     assert!(backend.get_result(&task_id).await.unwrap().is_some());
     backend.delete(&task_id).await.unwrap();
@@ -497,9 +447,7 @@ async fn test_delete() {
 
 #[tokio::test]
 async fn delete_idempotent() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id = TaskId::new();
     backend.delete(&task_id).await.unwrap();
 }
@@ -508,9 +456,7 @@ async fn delete_idempotent() {
 
 #[tokio::test]
 async fn test_get_many() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let task_id1 = TaskId::new();
     let task_id2 = TaskId::new();
     let task_id3 = TaskId::new();
@@ -541,9 +487,7 @@ async fn test_get_many() {
 
 #[tokio::test]
 async fn get_many_empty_input() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let results = backend.get_many(&[]).await.unwrap();
     assert!(results.is_empty());
 }
@@ -552,9 +496,7 @@ async fn get_many_empty_input() {
 
 #[tokio::test]
 async fn get_many_all_absent() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let ids = [TaskId::new(), TaskId::new(), TaskId::new()];
     let results = backend.get_many(&ids).await.unwrap();
     assert_eq!(results.len(), 3);
@@ -565,9 +507,7 @@ async fn get_many_all_absent() {
 
 #[tokio::test]
 async fn test_health_check() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     backend.health_check().await.unwrap();
 }
 
@@ -575,15 +515,10 @@ async fn test_health_check() {
 
 #[tokio::test]
 async fn set_get_metadata_round_trip() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let key = format!("test-meta-{}", uuid::Uuid::now_v7());
     let value = serde_json::json!({"chain_id": "abc", "step": 3});
-    backend
-        .set_metadata(&key, value.clone(), None)
-        .await
-        .unwrap();
+    backend.set_metadata(&key, value.clone(), None).await.unwrap();
     let got = backend.get_metadata(&key).await.unwrap();
     assert_eq!(got, Some(value));
     backend.delete_metadata(&key).await.unwrap();
@@ -593,9 +528,7 @@ async fn set_get_metadata_round_trip() {
 
 #[tokio::test]
 async fn get_metadata_absent_returns_none() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let got = backend.get_metadata("nonexistent-key-xyz").await.unwrap();
     assert_eq!(got, None);
 }
@@ -604,9 +537,7 @@ async fn get_metadata_absent_returns_none() {
 
 #[tokio::test]
 async fn set_metadata_custom_ttl() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let key = format!("test-meta-ttl-{}", uuid::Uuid::now_v7());
     let value = serde_json::json!({"ttl_test": true});
     backend
@@ -622,9 +553,7 @@ async fn set_metadata_custom_ttl() {
 
 #[tokio::test]
 async fn delete_metadata_removes_key() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let key = format!("test-meta-del-{}", uuid::Uuid::now_v7());
     backend
         .set_metadata(&key, serde_json::json!("val"), None)
@@ -639,9 +568,7 @@ async fn delete_metadata_removes_key() {
 
 #[tokio::test]
 async fn delete_metadata_idempotent() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     backend.delete_metadata("never-existed-key").await.unwrap();
 }
 
@@ -649,15 +576,10 @@ async fn delete_metadata_idempotent() {
 
 #[tokio::test]
 async fn metadata_key_format() {
-    let Some(backend) = make_backend().await else {
-        return;
-    };
+    let Some(backend) = make_backend().await else { return };
     let key = "workflow-123";
     let value = serde_json::json!({"status": "running"});
-    backend
-        .set_metadata(key, value.clone(), None)
-        .await
-        .unwrap();
+    backend.set_metadata(key, value.clone(), None).await.unwrap();
     let got = backend.get_metadata(key).await.unwrap();
     assert_eq!(got, Some(value));
     backend.delete_metadata(key).await.unwrap();
@@ -667,9 +589,7 @@ async fn metadata_key_format() {
 
 #[tokio::test]
 async fn clone_shares_pool() {
-    let Some(backend1) = make_backend().await else {
-        return;
-    };
+    let Some(backend1) = make_backend().await else { return };
     let backend2 = backend1.clone();
     let task_id = TaskId::new();
     let result = TaskResult::success(task_id.clone(), serde_json::json!({"shared": true}));

@@ -83,19 +83,24 @@ fn lock_records_direct_and_transitive_deps() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(run(
-        &proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.path().to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
 
-    let out = run(&proj, &["lock", "--index", index.path().to_str().unwrap()]);
+    let out = run(
+        &proj,
+        &["lock", "--index", index.path().to_str().unwrap()],
+    );
     assert!(
         out.status.success(),
         "stderr: {}",
@@ -103,10 +108,7 @@ fn lock_records_direct_and_transitive_deps() {
     );
 
     let lock = std::fs::read_to_string(proj.join("mamba.lock")).unwrap();
-    assert!(
-        lock.contains("name = \"frozen_demo_pkg\""),
-        "direct: {lock}"
-    );
+    assert!(lock.contains("name = \"frozen_demo_pkg\""), "direct: {lock}");
     assert!(
         lock.contains("name = \"frozen_demo_transitive\""),
         "transitive: {lock}"
@@ -128,21 +130,26 @@ fn lock_does_not_create_venv_or_site_packages() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(run(
-        &proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.path().to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
     assert!(
-        run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
-            .status
-            .success()
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        run(
+            &proj,
+            &["lock", "--index", index.path().to_str().unwrap()]
+        )
+        .status
+        .success()
     );
 
     assert!(!proj.join(".venv").exists(), "lock must not create .venv");
@@ -168,7 +175,10 @@ fn lock_unresolvable_dep_fails_cleanly() {
     );
     std::fs::write(proj.join("mamba.toml"), edited).unwrap();
 
-    let out = run(&proj, &["lock", "--index", index.path().to_str().unwrap()]);
+    let out = run(
+        &proj,
+        &["lock", "--index", index.path().to_str().unwrap()],
+    );
     assert!(!out.status.success(), "must exit non-zero");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -192,27 +202,35 @@ fn lock_is_byte_identical_on_replay() {
     let proj = tmp.path().join("demo");
     std::fs::create_dir(&proj).unwrap();
     assert!(run(&proj, &["init"]).status.success());
-    assert!(run(
-        &proj,
-        &[
-            "add",
-            "frozen_demo_pkg==0.1.0",
-            "--index",
-            index.path().to_str().unwrap()
-        ]
-    )
-    .status
-    .success());
     assert!(
-        run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
-            .status
-            .success()
+        run(
+            &proj,
+            &[
+                "add",
+                "frozen_demo_pkg==0.1.0",
+                "--index",
+                index.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        run(
+            &proj,
+            &["lock", "--index", index.path().to_str().unwrap()]
+        )
+        .status
+        .success()
     );
     let a = std::fs::read(proj.join("mamba.lock")).unwrap();
     assert!(
-        run(&proj, &["lock", "--index", index.path().to_str().unwrap()])
-            .status
-            .success()
+        run(
+            &proj,
+            &["lock", "--index", index.path().to_str().unwrap()]
+        )
+        .status
+        .success()
     );
     let b = std::fs::read(proj.join("mamba.lock")).unwrap();
     assert_eq!(a, b, "lockfile must be byte-identical on replay");
@@ -410,7 +428,10 @@ fn lock_resolves_transitive_requires_dist_against_pypi_mock() {
         "lock contains transitive leaf: {lock}"
     );
     // The root must distinguish itself as direct AND name its dep.
-    assert!(lock.contains("direct = true"), "root marked direct: {lock}");
+    assert!(
+        lock.contains("direct = true"),
+        "root marked direct: {lock}"
+    );
     assert!(
         lock.contains("direct = false"),
         "leaf marked transitive: {lock}"

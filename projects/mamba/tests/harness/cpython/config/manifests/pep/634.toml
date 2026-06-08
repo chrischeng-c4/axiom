@@ -1,7 +1,7 @@
 # Manifest for the PEP 634 (structural pattern matching) conformance corpus.
 #
 # One [[case]] per fixture. `fixture_gen.py` turns this into the files under
-# tests/cpython/fixtures/pep/634/<dimension>/<case>.py:
+# tests/cpython/pep/634/<dimension>/<case>.py:
 #   - mechanical errors come out complete (status="filled")
 #   - semantic surface/behavior cases come out as fillable skeletons
 #     (status="generated")

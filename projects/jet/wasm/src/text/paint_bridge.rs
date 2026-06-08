@@ -10,11 +10,10 @@
 //! `Vec<PaintOp>` from all paint functions.
 //!
 //! `DrawGlyph` is a typed sub-record consumed by `paint-runtime.md`'s
-//! op set when the canvas backend grows glyph rasterization. For now
-//! it stays in this module so the text engine can be integrated
-//! without forcing a paint-runtime spec edit; once paint-runtime
-//! formalizes the `PaintOp::DrawGlyph` variant a follow-up issue will
-//! re-export it from there.
+//! op set when the WebGPU text path grows a first-class `PaintOp::DrawGlyph`
+//! variant. For now it stays in this module so the text engine can be
+//! integrated without forcing a paint-runtime spec edit; once paint-runtime
+//! formalizes the variant a follow-up issue will re-export it from there.
 
 use super::shaped::ShapedRun;
 

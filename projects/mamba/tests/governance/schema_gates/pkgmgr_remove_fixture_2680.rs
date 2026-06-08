@@ -33,16 +33,9 @@ fn manifest_path() -> PathBuf {
         .join("manifest.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_remove_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -78,7 +71,7 @@ fn pkgmgr_remove_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_remove_setup_pins_starting_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let setup = doc
         .get("setup")
@@ -119,7 +112,7 @@ fn pkgmgr_remove_setup_pins_starting_state() {
 
 #[test]
 fn pkgmgr_remove_action_pins_the_command() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let action = doc
         .get("action")
@@ -164,7 +157,7 @@ fn pkgmgr_remove_action_pins_the_command() {
 
 #[test]
 fn pkgmgr_remove_metadata_assertion_drops_dependency() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let meta = doc
         .get("metadata_assertion")
@@ -195,8 +188,7 @@ fn pkgmgr_remove_metadata_assertion_drops_dependency() {
     );
 
     assert_eq!(
-        meta.get("must_preserve_other_deps")
-            .and_then(|v| v.as_bool()),
+        meta.get("must_preserve_other_deps").and_then(|v| v.as_bool()),
         Some(true),
         "`[metadata_assertion].must_preserve_other_deps` must be true — remove targets one dep"
     );
@@ -216,7 +208,7 @@ fn pkgmgr_remove_metadata_assertion_drops_dependency() {
 
 #[test]
 fn pkgmgr_remove_lockfile_assertion_is_deterministic() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let lock = doc
         .get("lockfile_assertion")
@@ -242,8 +234,7 @@ fn pkgmgr_remove_lockfile_assertion_is_deterministic() {
         "`[lockfile_assertion].deterministic` must be true (acceptance text)"
     );
     assert_eq!(
-        lock.get("byte_identical_on_replay")
-            .and_then(|v| v.as_bool()),
+        lock.get("byte_identical_on_replay").and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_assertion].byte_identical_on_replay` must be true — \
          determinism implies the replay produces the same bytes"
@@ -266,7 +257,7 @@ fn pkgmgr_remove_lockfile_assertion_is_deterministic() {
 
 #[test]
 fn pkgmgr_remove_environment_assertion_blocks_import() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let env = doc
         .get("environment_assertion")
@@ -305,7 +296,7 @@ fn pkgmgr_remove_environment_assertion_blocks_import() {
 
 #[test]
 fn pkgmgr_remove_reentry_is_idempotent_no_op() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let reentry = doc
         .get("reentry")
@@ -334,7 +325,7 @@ fn pkgmgr_remove_reentry_is_idempotent_no_op() {
 
 #[test]
 fn pkgmgr_remove_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let isolation = doc
         .get("isolation")
@@ -348,13 +339,17 @@ fn pkgmgr_remove_isolation_pins_no_global_state() {
         "forbid_global_cache_writes",
     ] {
         let value = isolation.get(*flag).and_then(|v| v.as_bool());
-        assert_eq!(value, Some(true), "`[isolation].{flag}` must be `true`");
+        assert_eq!(
+            value,
+            Some(true),
+            "`[isolation].{flag}` must be `true`"
+        );
     }
 }
 
 #[test]
 fn pkgmgr_remove_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -392,14 +387,16 @@ fn pkgmgr_remove_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_remove_pins_out_of_scope_per_issue_2680() {
-    let doc = load_toml(&manifest_path());
-    let oos = doc.get("out_of_scope").and_then(|v| v.as_table()).expect(
-        "manifest.toml missing `[out_of_scope]` block — issue #2680 \
+    let doc = crate::common::load_toml(&manifest_path());
+    let oos = doc
+        .get("out_of_scope")
+        .and_then(|v| v.as_table())
+        .expect(
+            "manifest.toml missing `[out_of_scope]` block — issue #2680 \
              explicitly excludes global cache GC",
-    );
+        );
     assert_eq!(
-        oos.get("global_cache_garbage_collection")
-            .and_then(|v| v.as_bool()),
+        oos.get("global_cache_garbage_collection").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].global_cache_garbage_collection` must be true \
          (issue text: \"Out of scope: garbage collection of shared global caches.\")"

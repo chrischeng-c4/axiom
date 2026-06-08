@@ -460,6 +460,9 @@ mod tests {
         assert!(macos_pick.filename.contains("macosx"));
         assert!(macos_pick.filename.contains("arm64"));
         assert!(macos_pick.filename.contains("cp312"));
-        assert_eq!(win_pick.filename, "numpy-1.26.0-cp312-cp312-win_amd64.whl");
+        assert_eq!(
+            win_pick.filename,
+            "numpy-1.26.0-cp312-cp312-win_amd64.whl"
+        );
     }
 }

@@ -1,7 +1,7 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// numbers module for Mamba (mamba-stdlib).
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -37,78 +37,54 @@ pub fn register() {
 
 pub fn mb_numbers_Number() -> MbValue {
     let dict = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*dict).data {
-            let mut map = lock.write().unwrap();
-            map.insert(
-                "__name__".into(),
-                MbValue::from_ptr(MbObject::new_str("Number".to_string())),
-            );
-            map.insert("__abstract__".into(), MbValue::from_bool(true));
-        }
-    }
+    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
+        let mut map = lock.write().unwrap();
+        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Number".to_string())));
+        map.insert("__abstract__".into(), MbValue::from_bool(true));
+    }}
     MbValue::from_ptr(dict)
 }
 
 pub fn mb_numbers_Complex() -> MbValue {
     let dict = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*dict).data {
-            let mut map = lock.write().unwrap();
-            map.insert(
-                "__name__".into(),
-                MbValue::from_ptr(MbObject::new_str("Complex".to_string())),
-            );
-            map.insert("__abstract__".into(), MbValue::from_bool(true));
-        }
-    }
+    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
+        let mut map = lock.write().unwrap();
+        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Complex".to_string())));
+        map.insert("__abstract__".into(), MbValue::from_bool(true));
+    }}
     MbValue::from_ptr(dict)
 }
 
 pub fn mb_numbers_Real() -> MbValue {
     let dict = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*dict).data {
-            let mut map = lock.write().unwrap();
-            map.insert(
-                "__name__".into(),
-                MbValue::from_ptr(MbObject::new_str("Real".to_string())),
-            );
-            map.insert("__abstract__".into(), MbValue::from_bool(true));
-        }
-    }
+    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
+        let mut map = lock.write().unwrap();
+        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Real".to_string())));
+        map.insert("__abstract__".into(), MbValue::from_bool(true));
+    }}
     MbValue::from_ptr(dict)
 }
 
 pub fn mb_numbers_Rational() -> MbValue {
     let dict = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*dict).data {
-            let mut map = lock.write().unwrap();
-            map.insert(
-                "__name__".into(),
-                MbValue::from_ptr(MbObject::new_str("Rational".to_string())),
-            );
-            map.insert("__abstract__".into(), MbValue::from_bool(true));
-        }
-    }
+    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
+        let mut map = lock.write().unwrap();
+        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Rational".to_string())));
+        map.insert("__abstract__".into(), MbValue::from_bool(true));
+    }}
     MbValue::from_ptr(dict)
 }
 
 pub fn mb_numbers_Integral() -> MbValue {
     let dict = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*dict).data {
-            let mut map = lock.write().unwrap();
-            map.insert(
-                "__name__".into(),
-                MbValue::from_ptr(MbObject::new_str("Integral".to_string())),
-            );
-            map.insert("__abstract__".into(), MbValue::from_bool(true));
-        }
-    }
+    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
+        let mut map = lock.write().unwrap();
+        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Integral".to_string())));
+        map.insert("__abstract__".into(), MbValue::from_bool(true));
+    }}
     MbValue::from_ptr(dict)
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -116,22 +92,16 @@ mod tests {
 
     fn extract_name(d: MbValue) -> String {
         unsafe {
-            let ObjData::Dict(ref lock) = (*d.as_ptr().unwrap()).data else {
-                panic!("expected Dict");
-            };
+            let ObjData::Dict(ref lock) = (*d.as_ptr().unwrap()).data else { panic!("expected Dict"); };
             let m = lock.read().unwrap();
-            let ObjData::Str(ref s) = (*m["__name__"].as_ptr().unwrap()).data else {
-                panic!("expected Str");
-            };
+            let ObjData::Str(ref s) = (*m["__name__"].as_ptr().unwrap()).data else { panic!("expected Str"); };
             s.clone()
         }
     }
 
     fn extract_abstract(d: MbValue) -> bool {
         unsafe {
-            let ObjData::Dict(ref lock) = (*d.as_ptr().unwrap()).data else {
-                panic!("expected Dict");
-            };
+            let ObjData::Dict(ref lock) = (*d.as_ptr().unwrap()).data else { panic!("expected Dict"); };
             lock.read().unwrap()["__abstract__"].as_bool().unwrap()
         }
     }

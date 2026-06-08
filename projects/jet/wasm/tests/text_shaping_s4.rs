@@ -4,12 +4,13 @@
 //!
 //! @spec .aw/tech-design/projects/jet/wasm-renderer/text-shaping.md#scenarios
 //!
-//! L0 pure-Rust tier. The empty-string path is exercised on the
-//! `ShapedRun::empty` constructor (which `shape_text` returns directly
-//! for `text == ""` without touching rustybuzz). The end-to-end check
-//! through a real font is `#[ignore]`'d pending an embedded asset.
+//! L0 pure-Rust tier. The empty-string path is exercised on both the
+//! `ShapedRun::empty` constructor and the same vendored Tuffy face
+//! used by the WebGPU glyph atlas bridge.
 
-use jet_wasm::text::ShapedRun;
+use jet_wasm::text::{shape_text, ShapedRun};
+
+mod common;
 
 #[test]
 fn s4_empty_run_constructor_has_metrics() {
@@ -22,13 +23,12 @@ fn s4_empty_run_constructor_has_metrics() {
 }
 
 #[test]
-#[ignore = "S4 end-to-end — needs an embedded TEST_FONT_BYTES asset"]
 fn s4_shape_empty_string_returns_metrics_only() {
-    // GIVEN a real font face.
-    // WHEN  shape_text(font, "", 16.0) is called.
-    // THEN  Result is Ok(ShapedRun) with glyphs.is_empty()
-    //       AND advance_width == 0.0
-    //       AND ascent > 0 AND descent > 0
-    //       AND no rustybuzz call was made (fast path).
+    let font = common::tuffy_regular();
+    let run = shape_text(&font, "", 16.0).expect("empty text shapes through Tuffy metrics");
+    assert!(run.glyphs.is_empty());
+    assert_eq!(run.advance_width, 0.0);
+    assert!(run.ascent > 0.0);
+    assert!(run.descent > 0.0);
 }
 // CODEGEN-END

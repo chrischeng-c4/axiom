@@ -22,10 +22,7 @@ print(bool({1: 2}))
 print(bool(None))
 "#,
     );
-    assert_output(
-        &out,
-        "False\nTrue\nFalse\nTrue\nFalse\nTrue\nFalse\nTrue\nFalse\n",
-    );
+    assert_output(&out, "False\nTrue\nFalse\nTrue\nFalse\nTrue\nFalse\nTrue\nFalse\n");
 }
 
 #[test]
@@ -59,5 +56,8 @@ print([] or [1, 2])
 print([3] and [4, 5])
 "#,
     );
-    assert_output(&out, "fallback\nfirst\n0\nwinner\n[1, 2]\n[4, 5]\n");
+    assert_output(
+        &out,
+        "fallback\nfirst\n0\nwinner\n[1, 2]\n[4, 5]\n",
+    );
 }

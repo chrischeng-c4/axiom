@@ -12,15 +12,31 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub const MODE_FOREGROUND: &str = "foreground";
+pub const MODE_DETACHED: &str = "detached";
+
 /// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Session {
+    #[serde(default = "default_mode")]
+    pub mode: String,
     pub ws_endpoint: String,
     pub target_id: String,
     pub url: String,
     pub pid: u32,
     /// Unix seconds when `launch` wrote the file.
     pub started_at: u64,
+}
+
+fn default_mode() -> String {
+    MODE_FOREGROUND.to_string()
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
+impl Session {
+    pub fn is_detached(&self) -> bool {
+        self.mode == MODE_DETACHED
+    }
 }
 
 /// Session file path for a given project root. We intentionally bind
@@ -198,6 +214,7 @@ mod tests {
     fn roundtrips_session_file() {
         let dir = tempdir().unwrap();
         let s = Session {
+            mode: MODE_FOREGROUND.into(),
             ws_endpoint: "ws://127.0.0.1:9222/devtools/browser/abc".into(),
             target_id: "ABC123".into(),
             url: "http://localhost:3131/".into(),
@@ -209,6 +226,22 @@ mod tests {
         assert_eq!(back.target_id, s.target_id);
         assert_eq!(back.url, s.url);
         assert_eq!(back.pid, s.pid);
+        assert_eq!(back.mode, MODE_FOREGROUND);
+    }
+
+    #[test]
+    fn missing_mode_defaults_to_foreground() {
+        let body = r#"{
+            "ws_endpoint": "ws://127.0.0.1:9222/devtools/browser/abc",
+            "target_id": "ABC123",
+            "url": "http://localhost:3131/",
+            "pid": 42,
+            "started_at": 123
+        }"#;
+
+        let s: Session = serde_json::from_str(body).unwrap();
+        assert_eq!(s.mode, MODE_FOREGROUND);
+        assert!(!s.is_detached());
     }
 
     #[test]
@@ -225,6 +258,7 @@ mod tests {
     fn clear_removes_file() {
         let dir = tempdir().unwrap();
         let s = Session {
+            mode: MODE_FOREGROUND.into(),
             ws_endpoint: "ws://127.0.0.1:9222".into(),
             target_id: "X".into(),
             url: "about:blank".into(),
@@ -271,6 +305,7 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let s = Session {
+            mode: MODE_FOREGROUND.into(),
             ws_endpoint: "ws://127.0.0.1:9222".into(),
             target_id: "X".into(),
             url: "about:blank".into(),

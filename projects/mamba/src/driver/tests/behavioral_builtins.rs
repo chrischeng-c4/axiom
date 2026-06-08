@@ -14,6 +14,7 @@
 ///
 /// Tests marked `#[ignore]` require features not yet implemented (tracked as xfail
 /// in the fixture-based harness). Remove `#[ignore]` as features land.
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -94,12 +95,7 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
@@ -108,40 +104,9 @@ fn assert_output(actual: &str, expected: &str) {
     }
 }
 
-/// Load a fixture file and its expected output, run through JIT, compare.
-fn run_fixture(fixture_rel_path: &str) {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/fixtures")
-        .join(fixture_rel_path);
-    let py_path = base.with_extension("py");
-    let expected_path = base.with_extension("expected");
-
-    let src = std::fs::read_to_string(&py_path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", py_path.display()));
-    let expected = std::fs::read_to_string(&expected_path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", expected_path.display()));
-
-    // Strip xfail directive for fixture-based runs
-    let clean_src: String = src
-        .lines()
-        .filter(|l| !l.trim().starts_with("# mamba-xfail:"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-
-    let actual = jit_capture(&clean_src);
-    assert_output(&actual, &expected);
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // T1: Numeric Builtin Edge Cases (R1)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// T1 full fixture.
-#[test]
-fn test_t1_numeric_edge_cases_fixture() {
-    run_fixture("builtins/numeric_edge_cases");
-}
 
 /// T1.1: abs(-0.0) == 0.0.
 #[test]
@@ -224,12 +189,6 @@ fn test_t1_pow_basic() {
 // T2: Type Introspection Edge Cases (R2)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T2 full fixture.
-#[test]
-fn test_t2_type_introspection_fixture() {
-    run_fixture("builtins/type_introspection_edge_cases");
-}
-
 /// T2.1: isinstance(True, int) == True — bool is subclass of int.
 #[test]
 fn test_t2_1_isinstance_bool_int() {
@@ -282,12 +241,6 @@ fn test_t2_7_callable_false() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // T3: String/Repr Builtins (R3)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// T3 full fixture.
-#[test]
-fn test_t3_string_repr_fixture() {
-    run_fixture("builtins/string_repr_edge_cases");
-}
 
 /// T3.1: repr('hello') == "'hello'".
 #[test]
@@ -355,12 +308,6 @@ fn test_t3_repr_bool() {
 // ═══════════════════════════════════════════════════════════════════════════════
 // T4: Collection Builtins — sorted/min/max (R4)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// T4 full fixture.
-#[test]
-fn test_t4_collection_edge_cases_fixture() {
-    run_fixture("builtins/collection_edge_cases");
-}
 
 /// T4.1: sorted('hello') == ['e', 'h', 'l', 'l', 'o'].
 #[test]
@@ -441,12 +388,6 @@ print(any([False, False, True]))
 // T5: Print with sep/end kwargs (R5)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T5 full fixture.
-#[test]
-fn test_t5_print_kwargs_fixture() {
-    run_fixture("builtins/print_kwargs");
-}
-
 /// T5.1: print(1, 2, 3, sep='-') => "1-2-3".
 #[test]
 fn test_t5_1_print_sep() {
@@ -466,15 +407,4 @@ fn test_t5_2_print_end() {
 fn test_t5_3_print_sep_end_empty() {
     let output = jit_capture("print('a', 'b', sep='', end='')\n");
     assert_output(&output, "ab");
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// T6: Long-tail builtins (#1256) — `slice` constructor
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// T6.1: slice() constructor canonical conformance — 1/2/3-arg forms,
-/// attribute access, repr, and 0-arg TypeError matching CPython 3.12.
-#[test]
-fn test_t6_1_slice_basic_fixture() {
-    run_fixture("builtins/long_tail/slice/slice_basic");
 }

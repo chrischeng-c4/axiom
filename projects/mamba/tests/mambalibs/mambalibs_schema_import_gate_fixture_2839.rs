@@ -171,8 +171,7 @@ fn mambalibs_schema_supported_case_asserts_minimal_symbol() {
         "`[supported_case].case` must be \"schema_import_supported\""
     );
     assert_eq!(
-        case.get("status_under_which_applicable")
-            .and_then(|v| v.as_str()),
+        case.get("status_under_which_applicable").and_then(|v| v.as_str()),
         Some("pass"),
         "`[supported_case].status_under_which_applicable` must be \"pass\""
     );
@@ -222,8 +221,7 @@ fn mambalibs_schema_blocked_case_links_to_tracker() {
         "`[blocked_case].case` must be \"schema_import_blocked\""
     );
     assert_eq!(
-        case.get("status_under_which_applicable")
-            .and_then(|v| v.as_str()),
+        case.get("status_under_which_applicable").and_then(|v| v.as_str()),
         Some("blocker"),
         "`[blocked_case].status_under_which_applicable` must be \"blocker\""
     );
@@ -233,12 +231,14 @@ fn mambalibs_schema_blocked_case_links_to_tracker() {
         "`[blocked_case].expected_outcome` must be \"blocked\""
     );
     assert_eq!(
-        case.get("linked_blocker_issue")
-            .and_then(|v| v.as_integer()),
+        case.get("linked_blocker_issue").and_then(|v| v.as_integer()),
         Some(2839),
         "`[blocked_case].linked_blocker_issue` must record #2839"
     );
-    for flag in &["must_emit_structured_blocker", "must_not_attempt_import"] {
+    for flag in &[
+        "must_emit_structured_blocker",
+        "must_not_attempt_import",
+    ] {
         assert_eq!(
             case.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -246,8 +246,7 @@ fn mambalibs_schema_blocked_case_links_to_tracker() {
         );
     }
     assert_eq!(
-        case.get("must_name_offending_library")
-            .and_then(|v| v.as_str()),
+        case.get("must_name_offending_library").and_then(|v| v.as_str()),
         Some("schema"),
         "`[blocked_case].must_name_offending_library` must be \"schema\""
     );
@@ -273,13 +272,10 @@ fn mambalibs_schema_blocked_case_links_to_tracker() {
 #[test]
 fn mambalibs_schema_diagnostic_contract_names_library_and_surface() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("diagnostic_contract")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[diagnostic_contract]` block \
+    let block = doc.get("diagnostic_contract").and_then(|v| v.as_table()).expect(
+        "missing `[diagnostic_contract]` block \
          (acceptance: \"Failure output names schema and mambalibs.\")",
-        );
+    );
 
     for flag in &[
         "diagnostic_must_be_deterministic",
@@ -292,16 +288,12 @@ fn mambalibs_schema_diagnostic_contract_names_library_and_surface() {
         );
     }
     assert_eq!(
-        block
-            .get("diagnostic_must_name_library")
-            .and_then(|v| v.as_str()),
+        block.get("diagnostic_must_name_library").and_then(|v| v.as_str()),
         Some("schema"),
         "`[diagnostic_contract].diagnostic_must_name_library` must be \"schema\""
     );
     assert_eq!(
-        block
-            .get("diagnostic_must_name_surface")
-            .and_then(|v| v.as_str()),
+        block.get("diagnostic_must_name_surface").and_then(|v| v.as_str()),
         Some("mambalibs"),
         "`[diagnostic_contract].diagnostic_must_name_surface` must be \"mambalibs\""
     );
@@ -482,8 +474,7 @@ fn mambalibs_schema_pins_out_of_scope_per_issue_2839() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("full_schema_validation_behavior")
-            .and_then(|v| v.as_bool()),
+        oos.get("full_schema_validation_behavior").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].full_schema_validation_behavior` must be true \
          (issue text: \"Out of scope: full schema validation behavior.\")"

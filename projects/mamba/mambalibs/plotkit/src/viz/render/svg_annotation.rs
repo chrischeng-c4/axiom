@@ -90,12 +90,7 @@ impl SvgRenderer {
         // Shaft line
         self.elements.push(format!(
             r#"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{}" stroke-width="{}" />"#,
-            px1,
-            py1,
-            px2,
-            py2,
-            a.color.to_hex(),
-            a.width
+            px1, py1, px2, py2, a.color.to_hex(), a.width
         ));
 
         // Arrowhead (triangle)
@@ -115,13 +110,7 @@ impl SvgRenderer {
 
         self.elements.push(format!(
             r#"<polygon points="{:.1},{:.1} {:.1},{:.1} {:.1},{:.1}" fill="{}" />"#,
-            tip_x,
-            tip_y,
-            left_x,
-            left_y,
-            right_x,
-            right_y,
-            a.color.to_hex()
+            tip_x, tip_y, left_x, left_y, right_x, right_y, a.color.to_hex()
         ));
 
         // Label near arrowhead
@@ -241,12 +230,7 @@ impl SvgRenderer {
 
         self.elements.push(format!(
             r#"<circle cx="{:.1}" cy="{:.1}" r="{:.1}" fill="{}" opacity="{:.2}"{} />"#,
-            px,
-            py,
-            c.radius,
-            c.fill.to_hex(),
-            c.opacity,
-            stroke_attr
+            px, py, c.radius, c.fill.to_hex(), c.opacity, stroke_attr
         ));
     }
 }

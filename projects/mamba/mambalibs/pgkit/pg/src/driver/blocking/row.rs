@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use crate::driver::blocking::Connection;
 use crate::driver::row::RelationConfig;
 use crate::driver::{ExtractedValue, Row};
-use crate::query::{Operator, OrderDirection};
 use crate::schema::ManyToManyConfig;
+use crate::query::{Operator, OrderDirection};
 use crate::QueryBuilder;
 use crate::Result;
 
@@ -69,7 +69,11 @@ impl Row {
         ))
     }
 
-    pub fn find_by_id_blocking(conn: &Connection, table: &str, id: i64) -> Result<Option<Self>> {
+    pub fn find_by_id_blocking(
+        conn: &Connection,
+        table: &str,
+        id: i64,
+    ) -> Result<Option<Self>> {
         conn.runtime()
             .block_on(Row::find_by_id(conn.as_async().pool(), table, id))
     }

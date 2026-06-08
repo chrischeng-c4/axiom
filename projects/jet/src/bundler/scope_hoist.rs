@@ -128,21 +128,20 @@ pub fn is_scope_hoist_safe(modules: &[CompiledModule]) -> bool {
     true
 }
 
-/// Returns `true` when no module uses `eval()`, `with` statements, or dynamic
-/// `arguments[...]` access, which would make it unsafe to inline the module
-/// body into a shared scope.
+/// Returns `true` when no module uses `eval()` or `with` statements, which
+/// would make it unsafe to inline the module body into a shared scope.
 ///
 /// - `eval()` can reference ambient variables by name at runtime.
 /// - `with(obj)` creates dynamic scope that cannot be statically resolved.
-/// - `arguments[dynamic_index]` relies on the current function's `arguments`
-///   object being stable, which renaming could violate.
+///
+/// Function-local `arguments[...]` access is safe: flattening only changes the
+/// module wrapper boundary, not the function activation record where
+/// `arguments` is read. Treating every `arguments[` substring as unsafe keeps
+/// React production packages on the larger Phase 1 wrapper path.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn is_flatten_safe(modules: &[CompiledModule]) -> bool {
     for module in modules {
-        if module.code.contains("eval(")
-            || module.code.contains("with(")
-            || module.code.contains("arguments[")
-        {
+        if module.code.contains("eval(") || module.code.contains("with(") {
             return false;
         }
     }
@@ -216,7 +215,7 @@ pub fn generate_flattened_bundle(modules: &[CompiledModule]) -> String {
         };
         out.push_str(&format!("// Module {}: {}\n", original_idx, module_path));
 
-        if side_effect_free {
+        if side_effect_free && !has_top_level_decl_shadowed_by_function_param(&module.code) {
             // Side-effect-free: inline directly into flat scope.
             // Apply per-module prefix renaming (R3) + CJS substitutions (R2).
             let inlined = inline_module_body_v2(&module.code, original_idx);
@@ -229,8 +228,12 @@ pub fn generate_flattened_bundle(modules: &[CompiledModule]) -> String {
             out.push_str("\n}\n\n");
         } else {
             // Side-effectful: keep IIFE wrapper to preserve execution order.
+            // Modules whose top-level names are shadowed by function parameters
+            // also keep the wrapper until the prefix-renamer becomes
+            // scope-aware. Direct inlining would rename the shadowing parameter
+            // and make later constant propagation unsafe.
             tracing::debug!(
-                "Module {} has side effects, retaining wrapper",
+                "Module {} requires wrapper isolation, retaining wrapper",
                 original_idx
             );
             out.push_str(&format!(
@@ -720,6 +723,253 @@ fn collect_top_level_decls(code: &str) -> Vec<String> {
         .collect()
 }
 
+fn has_top_level_decl_shadowed_by_function_param(code: &str) -> bool {
+    let decls: std::collections::HashSet<String> =
+        collect_top_level_decls(code).into_iter().collect();
+    if decls.is_empty() {
+        return false;
+    }
+
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = 0;
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'' | b'`') {
+            i = skip_js_literal_bytes(b, i);
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                i += 2;
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+
+        if i + 8 <= len
+            && &b[i..i + 8] == b"function"
+            && (i == 0 || !is_id_cont_byte(b[i - 1]))
+            && (i + 8 >= len || !is_id_cont_byte(b[i + 8]))
+        {
+            let mut j = i + 8;
+            while j < len && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r') {
+                j += 1;
+            }
+            if j < len && b[j] == b'*' {
+                j += 1;
+                while j < len && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r') {
+                    j += 1;
+                }
+            }
+            if j < len && is_id_start_byte(b[j]) {
+                while j < len && is_id_cont_byte(b[j]) {
+                    j += 1;
+                }
+                while j < len && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r') {
+                    j += 1;
+                }
+            }
+            if j < len && b[j] == b'(' {
+                if let Some(close) = find_matching_paren_byte(code, j) {
+                    if function_params_intersect_top_level_decls(&code[j + 1..close], &decls) {
+                        return true;
+                    }
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+
+        i += 1;
+    }
+
+    false
+}
+
+fn function_params_intersect_top_level_decls(
+    params: &str,
+    decls: &std::collections::HashSet<String>,
+) -> bool {
+    let b = params.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if matches!(b[i], b'"' | b'\'' | b'`') {
+            i = skip_js_literal_bytes(b, i);
+            continue;
+        }
+        if is_id_start_byte(b[i]) {
+            let start = i;
+            i += 1;
+            while i < b.len() && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let ident = &params[start..i];
+            if !is_js_decl_keyword(ident) && decls.contains(ident) {
+                return true;
+            }
+            continue;
+        }
+        i += 1;
+    }
+    false
+}
+
+fn find_matching_paren_byte(code: &str, open: usize) -> Option<usize> {
+    let b = code.as_bytes();
+    let mut depth = 0i32;
+    let mut i = open;
+    while i < b.len() {
+        if matches!(b[i], b'"' | b'\'' | b'`') {
+            i = skip_js_literal_bytes(b, i);
+            continue;
+        }
+        match b[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn skip_js_literal_bytes(b: &[u8], start: usize) -> usize {
+    let q = b[start];
+    let mut i = start + 1;
+    while i < b.len() {
+        if b[i] == b'\\' {
+            i = (i + 2).min(b.len());
+            continue;
+        }
+        if b[i] == q {
+            return i + 1;
+        }
+        i += 1;
+    }
+    i
+}
+
+fn copy_template_literal_with_renamed_expressions(
+    code: &str,
+    start: usize,
+    out: &mut Vec<u8>,
+    renames: &HashMap<String, String>,
+) -> usize {
+    let b = code.as_bytes();
+    let mut i = start;
+    out.push(b[i]);
+    i += 1;
+
+    while i < b.len() {
+        if b[i] == b'\\' {
+            out.push(b[i]);
+            i += 1;
+            if i < b.len() {
+                out.push(b[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if b[i] == b'`' {
+            out.push(b[i]);
+            return i + 1;
+        }
+        if b[i] == b'$' && i + 1 < b.len() && b[i + 1] == b'{' {
+            out.extend_from_slice(b"${");
+            i += 2;
+            let expr_start = i;
+            let mut depth = 1usize;
+            while i < b.len() {
+                if matches!(b[i], b'"' | b'\'' | b'`') {
+                    i = skip_js_literal_bytes(b, i);
+                    continue;
+                }
+                if b[i] == b'/' && i + 1 < b.len() {
+                    if b[i + 1] == b'/' {
+                        i += 2;
+                        while i < b.len() && b[i] != b'\n' {
+                            i += 1;
+                        }
+                        continue;
+                    }
+                    if b[i + 1] == b'*' {
+                        i += 2;
+                        while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                            i += 1;
+                        }
+                        i = (i + 2).min(b.len());
+                        continue;
+                    }
+                }
+                match b[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            let renamed =
+                                apply_renames_in_module_body(&code[expr_start..i], renames);
+                            out.extend_from_slice(renamed.as_bytes());
+                            out.push(b'}');
+                            i += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+
+    i
+}
+
+fn previous_significant_output_byte(out: &[u8]) -> Option<u8> {
+    let mut p = out.len();
+    while p > 0 && matches!(out[p - 1], b' ' | b'\t' | b'\n' | b'\r') {
+        p -= 1;
+    }
+    if p > 0 {
+        Some(out[p - 1])
+    } else {
+        None
+    }
+}
+
+fn next_significant_source_byte(b: &[u8], mut i: usize) -> Option<u8> {
+    while i < b.len() && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r') {
+        i += 1;
+    }
+    b.get(i).copied()
+}
+
+fn looks_like_object_property_position(out: &[u8], delimiter_stack: &[u8]) -> bool {
+    delimiter_stack.last().copied() == Some(b'{')
+        && matches!(
+            previous_significant_output_byte(out),
+            Some(b'{') | Some(b',')
+        )
+}
+
 /// Apply a rename map to a module body in a single byte-level pass.
 ///
 /// Identifiers preceded by `.` (property accesses) are never renamed.
@@ -729,10 +979,15 @@ fn apply_renames_in_module_body(code: &str, renames: &HashMap<String, String>) -
     let len = b.len();
     let mut out = Vec::with_capacity(len + renames.len() * 4);
     let mut i = 0;
+    let mut delimiter_stack: Vec<u8> = Vec::new();
 
     while i < len {
-        // Skip string literals
-        if matches!(b[i], b'"' | b'\'' | b'`') {
+        if b[i] == b'`' {
+            i = copy_template_literal_with_renamed_expressions(code, i, &mut out, renames);
+            continue;
+        }
+        // Skip plain string literals
+        if matches!(b[i], b'"' | b'\'') {
             let q = b[i];
             out.push(b[i]);
             i += 1;
@@ -786,7 +1041,7 @@ fn apply_renames_in_module_body(code: &str, renames: &HashMap<String, String>) -
             // Check if immediately preceded by '.' (property access — skip)
             let prev_is_dot = {
                 let mut p = out.len();
-                while p > 0 && matches!(out[p - 1], b' ' | b'\t' | b'\r' | b'\n') {
+                while p > 0 && matches!(out[p - 1], b' ' | b'\t') {
                     p -= 1;
                 }
                 p > 0 && out[p - 1] == b'.'
@@ -798,12 +1053,46 @@ fn apply_renames_in_module_body(code: &str, renames: &HashMap<String, String>) -
             let ident = &code[start..i];
             if !prev_is_dot {
                 if let Some(new_name) = renames.get(ident) {
+                    if looks_like_object_property_position(&out, &delimiter_stack) {
+                        match next_significant_source_byte(b, i) {
+                            Some(b':') => {
+                                out.extend_from_slice(ident.as_bytes());
+                                continue;
+                            }
+                            Some(b',') | Some(b'}') => {
+                                out.extend_from_slice(ident.as_bytes());
+                                out.extend_from_slice(b": ");
+                                out.extend_from_slice(new_name.as_bytes());
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                     out.extend_from_slice(new_name.as_bytes());
                     continue;
                 }
             }
             out.extend_from_slice(ident.as_bytes());
             continue;
+        }
+        match b[i] {
+            b'{' | b'(' | b'[' => delimiter_stack.push(b[i]),
+            b'}' => {
+                if delimiter_stack.last().copied() == Some(b'{') {
+                    delimiter_stack.pop();
+                }
+            }
+            b')' => {
+                if delimiter_stack.last().copied() == Some(b'(') {
+                    delimiter_stack.pop();
+                }
+            }
+            b']' => {
+                if delimiter_stack.last().copied() == Some(b'[') {
+                    delimiter_stack.pop();
+                }
+            }
+            _ => {}
         }
         out.push(b[i]);
         i += 1;
@@ -1115,6 +1404,34 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_flattened_bundle_wraps_shadowed_top_level_decl_params() {
+        let modules = vec![make_module(
+            "stylis-like.js",
+            "var length=0;function node(value,length){return{length:length};}exports.node=node;",
+        )];
+
+        assert!(
+            has_top_level_decl_shadowed_by_function_param(&modules[0].code),
+            "shadowed top-level declaration should be detected"
+        );
+
+        let flat = generate_flattened_bundle(&modules);
+
+        assert!(
+            flat.contains("!function(module,exports,require)"),
+            "module should retain wrapper isolation, got: {flat}"
+        );
+        assert!(
+            flat.contains("function node(value,length)"),
+            "shadowing parameter must not be prefixed, got: {flat}"
+        );
+        assert!(
+            !flat.contains("function _m0_node(value,_m0_length)"),
+            "direct inline renaming would corrupt shadowing, got: {flat}"
+        );
+    }
+
+    #[test]
     fn test_inline_module_body_utf8_safe() {
         // Multi-byte UTF-8 characters must pass through unchanged
         let code = "exports.msg = '日本語テスト ✓'; require(1);";
@@ -1132,15 +1449,15 @@ mod tests {
     }
 
     // ──────────────────────────────────────────────────────────────────
-    // R5 bailout: is_flatten_safe with arguments[ check
+    // R5 bailout: flatten safety checks
     // ──────────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_flatten_unsafe_with_dynamic_arguments() {
+    fn test_flatten_safe_with_function_local_dynamic_arguments() {
         let modules = vec![make_module("a.js", "function f() { return arguments[0]; }")];
         assert!(
-            !is_flatten_safe(&modules),
-            "dynamic arguments[ access should trigger bailout"
+            is_flatten_safe(&modules),
+            "function-local dynamic arguments access should not block flattening"
         );
     }
 
@@ -1303,12 +1620,133 @@ mod tests {
     }
 
     #[test]
+    fn test_inline_v2_expands_renamed_object_shorthand_values() {
+        let code = "const generateColorPalettes = () => 1; const generateNeutralColorPalettes = () => 2; const token = gen(seed, { generateColorPalettes, generateNeutralColorPalettes }); exports.token = token;";
+        let result = inline_module_body_v2(code, 4019);
+        assert!(
+            result.contains(
+                "{ generateColorPalettes: _m4019_generateColorPalettes, generateNeutralColorPalettes: _m4019_generateNeutralColorPalettes }"
+            ),
+            "object shorthand keys should stay public while values are renamed, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("{ _m4019_generateColorPalettes"),
+            "renamed shorthand must not change the property key, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_v2_preserves_object_property_keys_before_colon() {
+        let code = "const generateColorPalettes = () => 1; const token = { generateColorPalettes: generateColorPalettes }; exports.token = token;";
+        let result = inline_module_body_v2(code, 4019);
+        assert!(
+            result.contains("{ generateColorPalettes: _m4019_generateColorPalettes }"),
+            "object property key should stay stable while value is renamed, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("{ _m4019_generateColorPalettes:"),
+            "property key must not be prefixed, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_v2_does_not_rewrite_function_arguments_as_object_shorthand() {
+        let code = "const COMMENT = 1; const node = (value, kind) => kind; exports.value = node(value, COMMENT, root);";
+        let result = inline_module_body_v2(code, 3944);
+        assert!(
+            result.contains("_m3944_node(value, _m3944_COMMENT, root)"),
+            "function argument should be renamed as a value, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("COMMENT:"),
+            "function argument must not be rewritten as object shorthand, got: {}",
+            result
+        );
+    }
+
+    #[test]
     fn test_inline_v2_string_content_preserved() {
         let code = r#"var s = "exports module require"; exports.x = s;"#;
         let result = inline_module_body_v2(code, 0);
         assert!(
             result.contains(r#""exports module require""#),
             "string content preserved, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_v2_renames_template_literal_expressions() {
+        let code = "const defaultPrefixCls = 'ant'; const getPrefixCls = suffixCls => `${defaultPrefixCls}-${suffixCls}`; exports.getPrefixCls = getPrefixCls;";
+        let result = inline_module_body_v2(code, 3926);
+        assert!(
+            result.contains("${_m3926_defaultPrefixCls}-${suffixCls}"),
+            "template expression should rename top-level binding only, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("${defaultPrefixCls}"),
+            "unprefixed top-level binding must not remain in template expression, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_v2_renames_static_property_assignment_receiver() {
+        let code = "const useFormItemStatus = () => {}; useFormItemStatus.Context = FormItemInputContext; exports.default = useFormItemStatus;";
+        let result = inline_module_body_v2(code, 97);
+        assert!(
+            result.contains("_m97_useFormItemStatus.Context"),
+            "static property assignment receiver should be renamed, got: {}",
+            result
+        );
+        assert!(
+            !result.contains(" useFormItemStatus.Context"),
+            "unprefixed receiver must not survive, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_v2_renames_static_property_assignment_after_arrow_body() {
+        let code = r#"var React = require(4140);
+var devUseWarning = require(3765)["devUseWarning"];
+var FormItemInputContext = require(3266)["FormItemInputContext"];
+const useFormItemStatus = () => {
+  const {
+    status,
+    errors = [],
+    warnings = []
+  } = React.useContext(FormItemInputContext);
+  if ("production" !== 'production') {
+    const warning = devUseWarning('Form.Item');
+    "production" !== "production" ? warning(status !== undefined, 'usage', 'Form.Item.useStatus should be used under Form.Item component. For more information: https://u.ant.design/form-item-usestatus') : void 0;
+  }
+  return {
+    status,
+    errors,
+    warnings
+  };
+};
+// Only used for compatible package. Not promise this will work on future version.
+useFormItemStatus.Context = FormItemInputContext;
+exports.default = useFormItemStatus;"#;
+
+        let result = inline_module_body_v2(code, 97);
+        assert!(
+            result.contains("_m97_useFormItemStatus.Context"),
+            "static property assignment after arrow body should be renamed, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("\nuseFormItemStatus.Context")
+                && !result.contains(";useFormItemStatus.Context"),
+            "unprefixed receiver must not survive, got: {}",
             result
         );
     }

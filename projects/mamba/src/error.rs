@@ -25,30 +25,19 @@ pub enum MambaError {
 
 impl MambaError {
     pub fn syntax(span: Span, message: impl Into<String>) -> Self {
-        Self::Syntax {
-            span,
-            message: message.into(),
-        }
+        Self::Syntax { span, message: message.into() }
     }
 
     pub fn type_err(span: Span, message: impl Into<String>) -> Self {
-        Self::Type {
-            span,
-            message: message.into(),
-        }
+        Self::Type { span, message: message.into() }
     }
 
     pub fn name(span: Span, message: impl Into<String>) -> Self {
-        Self::Name {
-            span,
-            message: message.into(),
-        }
+        Self::Name { span, message: message.into() }
     }
 
     pub fn codegen(message: impl Into<String>) -> Self {
-        Self::Codegen {
-            message: message.into(),
-        }
+        Self::Codegen { message: message.into() }
     }
 
     pub fn span(&self) -> Option<Span> {

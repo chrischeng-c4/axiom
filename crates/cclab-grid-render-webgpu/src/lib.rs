@@ -143,6 +143,22 @@ pub mod viewport_clamp;
 
 pub use frame::FrameBuilder;
 pub use frame_timing::FrameTimingPool;
+
+/// CPU-side glyph atlas upload used by the text pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextAtlasUpload {
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+    pub upload_count: u32,
+    pub nonzero_alpha_count: u32,
+}
+
+struct TextAtlasResources {
+    _texture: wgpu::Texture,
+    _view: wgpu::TextureView,
+    _sampler: wgpu::Sampler,
+}
 pub use lost_context::{DeviceLostEvent, LostContextStatus, RecoveryError};
 
 /// Wraps the GPU primitives required to drive a frame loop against a single
@@ -194,6 +210,7 @@ pub struct WebGpuRenderer<'window> {
     text_placeholder_atlas: wgpu::Texture,
     text_placeholder_atlas_view: wgpu::TextureView,
     text_placeholder_sampler: wgpu::Sampler,
+    text_real_atlas: Option<TextAtlasResources>,
     /// Persistent bind-group composing `viewport_buffer` (@binding 0),
     /// the placeholder atlas view (@binding 1), and the placeholder
     /// sampler (@binding 2) against `text_bind_group_layout`. Slice
@@ -205,6 +222,11 @@ pub struct WebGpuRenderer<'window> {
     /// e2e (T8) can tell encode-fired-but-empty apart from
     /// encode-never-fired. Slice #2191.
     last_text_glyph_count: u32,
+    last_text_atlas_mode: &'static str,
+    last_text_atlas_upload_count: u32,
+    last_text_atlas_width: u32,
+    last_text_atlas_height: u32,
+    last_text_atlas_nonzero_alpha_count: u32,
     /// MSAA sample count for the cell-rect pass. Defaults to 1 on
     /// `wasm32` (axis-aligned rects don't need it on web; resolves are
     /// expensive on integrated GPUs) and 4 on native (cheap 4× on
@@ -500,8 +522,14 @@ impl<'window> WebGpuRenderer<'window> {
             text_placeholder_atlas,
             text_placeholder_atlas_view,
             text_placeholder_sampler,
+            text_real_atlas: None,
             text_bind_group,
             last_text_glyph_count: 0,
+            last_text_atlas_mode: "placeholder",
+            last_text_atlas_upload_count: 0,
+            last_text_atlas_width: 1,
+            last_text_atlas_height: 1,
+            last_text_atlas_nonzero_alpha_count: 1,
             msaa_count: MSAA_DEFAULT,
             msaa_color: None,
             viewport_buffer,
@@ -1625,8 +1653,14 @@ impl<'window> WebGpuRenderer<'window> {
         self.text_placeholder_atlas = text_placeholder_atlas;
         self.text_placeholder_atlas_view = text_placeholder_atlas_view;
         self.text_placeholder_sampler = text_placeholder_sampler;
+        self.text_real_atlas = None;
         self.text_bind_group = text_bind_group;
         self.last_text_glyph_count = 0;
+        self.last_text_atlas_mode = "placeholder";
+        self.last_text_atlas_upload_count = 0;
+        self.last_text_atlas_width = 1;
+        self.last_text_atlas_height = 1;
+        self.last_text_atlas_nonzero_alpha_count = 1;
         // Preserve the staging-path threshold across recovery so a
         // user-set override (Slice 4r, #1736) survives device loss.
         let threshold = self.instance_pool.staging_threshold_bytes();
@@ -1765,6 +1799,28 @@ impl<'window> WebGpuRenderer<'window> {
         &self.text_bind_group
     }
 
+    /// Last text atlas mode observed by the text pass.
+    pub fn last_text_atlas_mode(&self) -> &'static str {
+        self.last_text_atlas_mode
+    }
+
+    /// Number of glyph atlas uploads represented by the latest atlas.
+    pub fn last_text_atlas_upload_count(&self) -> u32 {
+        self.last_text_atlas_upload_count
+    }
+
+    pub fn last_text_atlas_width(&self) -> u32 {
+        self.last_text_atlas_width
+    }
+
+    pub fn last_text_atlas_height(&self) -> u32 {
+        self.last_text_atlas_height
+    }
+
+    pub fn last_text_atlas_nonzero_alpha_count(&self) -> u32 {
+        self.last_text_atlas_nonzero_alpha_count
+    }
+
     /// Last text-pass glyph instance count observed by
     /// [`Self::render_frame_with_text`]. `0` if no text-bearing frame
     /// has been rendered. Surfaced by the wasm bridge for browser e2e.
@@ -1773,6 +1829,41 @@ impl<'window> WebGpuRenderer<'window> {
     /// @issue #2191
     pub fn last_text_glyph_count(&self) -> u32 {
         self.last_text_glyph_count
+    }
+
+    fn install_text_atlas(&mut self, atlas: &TextAtlasUpload) -> Result<(), RenderFrameError> {
+        let expected_len =
+            atlas.width.checked_mul(atlas.height).ok_or_else(|| {
+                RenderFrameError::Other("text atlas dimensions overflow".to_string())
+            })? as usize;
+        if atlas.width == 0 || atlas.height == 0 || atlas.pixels.len() != expected_len {
+            return Err(RenderFrameError::Other(format!(
+                "invalid text atlas upload: {}x{} with {} bytes",
+                atlas.width,
+                atlas.height,
+                atlas.pixels.len()
+            )));
+        }
+
+        let (texture, view, sampler, bind_group) = build_text_atlas_resources(
+            &self.device,
+            &self.queue,
+            &self.text_bind_group_layout,
+            &self.viewport_buffer,
+            atlas,
+        );
+        self.text_real_atlas = Some(TextAtlasResources {
+            _texture: texture,
+            _view: view,
+            _sampler: sampler,
+        });
+        self.text_bind_group = bind_group;
+        self.last_text_atlas_mode = "glyph-atlas";
+        self.last_text_atlas_upload_count = atlas.upload_count;
+        self.last_text_atlas_width = atlas.width;
+        self.last_text_atlas_height = atlas.height;
+        self.last_text_atlas_nonzero_alpha_count = atlas.nonzero_alpha_count;
+        Ok(())
     }
 
     /// Render one frame containing a cell-rect pass followed by a
@@ -1793,6 +1884,37 @@ impl<'window> WebGpuRenderer<'window> {
         cells: &[cell_rect::CellInstance],
         glyphs: &[text_pass::GlyphInstance],
     ) -> Result<(), RenderFrameError> {
+        self.last_text_atlas_mode = "placeholder";
+        self.last_text_atlas_upload_count = 0;
+        self.last_text_atlas_width = 1;
+        self.last_text_atlas_height = 1;
+        self.last_text_atlas_nonzero_alpha_count = 1;
+        self.text_real_atlas = None;
+        let frame_id = next_frame_id();
+        let span = tracing::info_span!(
+            "frame",
+            frame_id = frame_id,
+            cells = cells.len(),
+            glyphs = glyphs.len(),
+        );
+        let _guard = span.enter();
+        let clear = self.clear_color;
+        let mut frame = self.begin_frame()?;
+        frame.encode_cell_pass(cells, Some(clear));
+        frame.encode_text_pass(glyphs, None);
+        frame.commit()?;
+        self.last_text_glyph_count = glyphs.len() as u32;
+        Ok(())
+    }
+
+    /// Render one text-bearing frame using a caller-provided glyph atlas.
+    pub fn render_frame_with_text_atlas(
+        &mut self,
+        cells: &[cell_rect::CellInstance],
+        glyphs: &[text_pass::GlyphInstance],
+        atlas: &TextAtlasUpload,
+    ) -> Result<(), RenderFrameError> {
+        self.install_text_atlas(atlas)?;
         let frame_id = next_frame_id();
         let span = tracing::info_span!(
             "frame",
@@ -1876,6 +1998,62 @@ fn build_text_placeholder_resources(
     });
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("text_pass_bind_group"),
+        layout: text_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: viewport_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    });
+    (atlas, view, sampler, bind_group)
+}
+
+fn build_text_atlas_resources(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    text_bind_group_layout: &wgpu::BindGroupLayout,
+    viewport_buffer: &wgpu::Buffer,
+    upload: &TextAtlasUpload,
+) -> (
+    wgpu::Texture,
+    wgpu::TextureView,
+    wgpu::Sampler,
+    wgpu::BindGroup,
+) {
+    let desc = glyph_atlas::glyph_atlas_texture_descriptor(upload.width, upload.height);
+    let atlas = device.create_texture(&desc);
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture: &atlas,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        &upload.pixels,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(upload.width),
+            rows_per_image: Some(upload.height),
+        },
+        wgpu::Extent3d {
+            width: upload.width,
+            height: upload.height,
+            depth_or_array_layers: 1,
+        },
+    );
+    let view = atlas.create_view(&wgpu::TextureViewDescriptor::default());
+    let sampler = device.create_sampler(&glyph_atlas::glyph_atlas_sampler_descriptor());
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("text_pass_glyph_atlas_bind_group"),
         layout: text_bind_group_layout,
         entries: &[
             wgpu::BindGroupEntry {

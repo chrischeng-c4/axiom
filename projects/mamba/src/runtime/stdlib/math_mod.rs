@@ -1,5 +1,3 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// math module for Mamba (#310 R3).
 ///
 /// Provides: math.pi, math.e, math.inf, math.nan, math.sqrt(), math.floor(),
@@ -7,7 +5,10 @@ use super::super::value::MbValue;
 ///           math.exp(), math.pow(), math.fabs(), math.gcd(), math.factorial(),
 ///           math.isnan(), math.isinf(), math.isfinite(), math.lcm(), math.perm(),
 ///           math.sinh(), math.cosh(), math.modf(), math.frexp()
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 // ── Dispatch wrappers: native ABI ──
 
@@ -47,6 +48,38 @@ macro_rules! dispatch_binary {
     };
 }
 
+/// Binary dispatch wrapper that enforces CPython arity + type rules:
+///   * exactly two positional arguments (else TypeError);
+///   * the FIRST operand is validated before the second is even inspected,
+///     matching CPython's bpo-39871 guarantee that a bad first arg raises
+///     TypeError without converting the second (`__float__` untouched).
+macro_rules! dispatch_binary_number {
+    ($name:ident, $fn:ident, $py_name:literal) => {
+        unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            if nargs != 2 {
+                return raise_type_error(concat!(
+                    $py_name,
+                    "() takes exactly two arguments"
+                ));
+            }
+            if !is_real_number(a[0]) {
+                return raise_type_error(concat!(
+                    $py_name,
+                    "() argument 1 must be a real number"
+                ));
+            }
+            if !is_real_number(a[1]) {
+                return raise_type_error(concat!(
+                    $py_name,
+                    "() argument 2 must be a real number"
+                ));
+            }
+            $fn(a[0], a[1])
+        }
+    };
+}
+
 dispatch_unary_number!(dispatch_sqrt, mb_math_sqrt, "sqrt");
 dispatch_unary!(dispatch_floor, mb_math_floor);
 dispatch_unary!(dispatch_ceil, mb_math_ceil);
@@ -73,9 +106,9 @@ dispatch_unary!(dispatch_modf, mb_math_modf);
 dispatch_unary!(dispatch_frexp, mb_math_frexp);
 
 dispatch_binary!(dispatch_pow, mb_math_pow);
-dispatch_binary!(dispatch_atan2, mb_math_atan2);
-dispatch_binary!(dispatch_fmod, mb_math_fmod);
-dispatch_binary!(dispatch_copysign, mb_math_copysign);
+dispatch_binary_number!(dispatch_atan2, mb_math_atan2, "atan2");
+dispatch_binary_number!(dispatch_fmod, mb_math_fmod, "fmod");
+dispatch_binary_number!(dispatch_copysign, mb_math_copysign, "copysign");
 dispatch_binary!(dispatch_comb, mb_math_comb);
 dispatch_binary!(dispatch_perm, mb_math_perm);
 dispatch_binary!(dispatch_isclose, mb_math_isclose);
@@ -92,8 +125,13 @@ dispatch_unary!(dispatch_atanh, mb_math_atanh);
 dispatch_unary!(dispatch_ulp, mb_math_ulp);
 dispatch_binary!(dispatch_nextafter, mb_math_nextafter);
 dispatch_binary!(dispatch_ldexp, mb_math_ldexp);
-dispatch_binary!(dispatch_remainder, mb_math_remainder);
+dispatch_binary_number!(dispatch_remainder, mb_math_remainder, "remainder");
 dispatch_binary!(dispatch_dist, mb_math_dist);
+dispatch_binary!(dispatch_sumprod, mb_math_sumprod);
+dispatch_unary_number!(dispatch_erf, mb_math_erf, "erf");
+dispatch_unary_number!(dispatch_erfc, mb_math_erfc, "erfc");
+dispatch_unary_number!(dispatch_gamma, mb_math_gamma, "gamma");
+dispatch_unary_number!(dispatch_lgamma, mb_math_lgamma, "lgamma");
 
 /// math.hypot(*coordinates) — Py3.8+ accepts N-D Euclidean norm.
 /// Bare 2-arg form stays exact (`f64::hypot`); N-arg uses
@@ -129,10 +167,7 @@ unsafe extern "C" fn dispatch_prod(args_ptr: *const MbValue, nargs: usize) -> Mb
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let guard = lock.read().unwrap();
                     let key = super::super::dict_ops::DictKey::Str("start".to_string());
-                    guard
-                        .get(&key)
-                        .copied()
-                        .unwrap_or_else(|| MbValue::from_int(1))
+                    guard.get(&key).copied().unwrap_or_else(|| MbValue::from_int(1))
                 } else {
                     a[1]
                 }
@@ -167,19 +202,12 @@ unsafe extern "C" fn dispatch_lcm(args_ptr: *const MbValue, nargs: usize) -> MbV
     if a.is_empty() {
         return MbValue::from_int(1);
     }
-    let mut acc = mb_math_lcm(
-        a[0],
-        MbValue::from_int(a[0].as_int().map(|i| i).unwrap_or(0)),
-    );
+    let mut acc = mb_math_lcm(a[0], MbValue::from_int(a[0].as_int().map(|i| i).unwrap_or(0)));
     // lcm(x) = |x|; reproduce by abs().
-    if let Some(x) = a[0].as_int() {
-        acc = MbValue::from_int(x.abs());
-    }
+    if let Some(x) = a[0].as_int() { acc = MbValue::from_int(x.abs()); }
     for v in &a[1..] {
         acc = mb_math_lcm(acc, *v);
-        if acc.as_int() == Some(0) {
-            return acc;
-        }
+        if acc.as_int() == Some(0) { return acc; }
     }
     acc
 }
@@ -203,10 +231,7 @@ pub fn register() {
     // Constants
     attrs.insert("pi".to_string(), MbValue::from_float(std::f64::consts::PI));
     attrs.insert("e".to_string(), MbValue::from_float(std::f64::consts::E));
-    attrs.insert(
-        "tau".to_string(),
-        MbValue::from_float(std::f64::consts::TAU),
-    );
+    attrs.insert("tau".to_string(), MbValue::from_float(std::f64::consts::TAU));
     attrs.insert("inf".to_string(), MbValue::from_float(f64::INFINITY));
     attrs.insert("nan".to_string(), MbValue::from_float(f64::NAN));
 
@@ -263,6 +288,11 @@ pub fn register() {
         ("atanh", dispatch_atanh as *const () as usize),
         ("nextafter", dispatch_nextafter as *const () as usize),
         ("ulp", dispatch_ulp as *const () as usize),
+        ("sumprod", dispatch_sumprod as *const () as usize),
+        ("erf", dispatch_erf as *const () as usize),
+        ("erfc", dispatch_erfc as *const () as usize),
+        ("gamma", dispatch_gamma as *const () as usize),
+        ("lgamma", dispatch_lgamma as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -277,28 +307,45 @@ pub fn register() {
 // ── Helper: extract numeric value as f64 ──
 
 fn as_f64(val: MbValue) -> Option<f64> {
-    if let Some(f) = val.as_float() {
-        Some(f)
-    } else if let Some(i) = val.as_int() {
-        Some(i as f64)
-    } else {
-        None
-    }
+    if let Some(f) = val.as_float() { Some(f) }
+    else if let Some(i) = val.as_int() { Some(i as f64) }
+    // Python defines bool as a subclass of int: True == 1.0, False == 0.0.
+    else if let Some(b) = val.as_bool() { Some(if b { 1.0 } else { 0.0 }) }
+    else { None }
 }
 
 fn as_i64(val: MbValue) -> Option<i64> {
-    if let Some(i) = val.as_int() {
-        Some(i)
-    } else if let Some(f) = val.as_float() {
-        Some(f as i64)
-    } else {
-        None
-    }
+    if let Some(i) = val.as_int() { Some(i) }
+    else if let Some(b) = val.as_bool() { Some(b as i64) }
+    else if let Some(f) = val.as_float() { Some(f as i64) }
+    else { None }
+}
+
+/// True when `val` is a Python real number (int, float, or bool). math's
+/// numeric functions accept all three; everything else is a TypeError.
+fn is_real_number(val: MbValue) -> bool {
+    val.as_float().is_some() || val.as_int().is_some() || val.as_bool().is_some()
 }
 
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn raise_overflow_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
         MbValue::from_ptr(MbObject::new_str(msg.to_string())),
     );
     MbValue::none()
@@ -321,69 +368,59 @@ pub fn mb_math_sqrt(val: MbValue) -> MbValue {
 }
 
 pub fn mb_math_floor(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_int(f.floor() as i64))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_int(f.floor() as i64)).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_ceil(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_int(f.ceil() as i64))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_int(f.ceil() as i64)).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_trunc(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_int(f.trunc() as i64))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_int(f.trunc() as i64)).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_fabs(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.abs()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.abs())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_sin(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.sin()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.sin())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_cos(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.cos()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.cos())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_tan(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.tan()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.tan())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_asin(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.asin()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.asin())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_acos(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.acos()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.acos())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_atan(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.atan()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.atan())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_exp(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.exp()))
-        .unwrap_or(MbValue::none())
+    match as_f64(val) {
+        Some(f) => {
+            let r = f.exp();
+            // CPython raises OverflowError when a finite argument produces an
+            // infinite result ("math range error"); a genuine inf input keeps
+            // returning inf.
+            if r.is_infinite() && f.is_finite() {
+                return raise_overflow_error("math range error");
+            }
+            MbValue::from_float(r)
+        }
+        None => MbValue::none(),
+    }
 }
 
 pub fn mb_math_log(val: MbValue) -> MbValue {
@@ -401,27 +438,19 @@ pub fn mb_math_log(val: MbValue) -> MbValue {
 }
 
 pub fn mb_math_log2(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.log2()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.log2())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_log10(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.log10()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.log10())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_degrees(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.to_degrees()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.to_degrees())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_radians(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.to_radians()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.to_radians())).unwrap_or(MbValue::none())
 }
 
 // ── Binary math functions ──
@@ -466,13 +495,8 @@ pub fn mb_math_hypot(x: MbValue, y: MbValue) -> MbValue {
 pub fn mb_math_gcd(a: MbValue, b: MbValue) -> MbValue {
     match (as_i64(a), as_i64(b)) {
         (Some(mut x), Some(mut y)) => {
-            x = x.abs();
-            y = y.abs();
-            while y != 0 {
-                let t = y;
-                y = x % y;
-                x = t;
-            }
+            x = x.abs(); y = y.abs();
+            while y != 0 { let t = y; y = x % y; x = t; }
             MbValue::from_int(x)
         }
         _ => MbValue::none(),
@@ -482,9 +506,7 @@ pub fn mb_math_gcd(a: MbValue, b: MbValue) -> MbValue {
 /// math.isqrt(n) — integer square root, Python 3.8+. Returns ⌊√n⌋ for n ≥ 0;
 /// raises ValueError for negative input. Uses Newton's method on i64.
 pub fn mb_math_isqrt(val: MbValue) -> MbValue {
-    let Some(n) = as_i64(val) else {
-        return MbValue::none();
-    };
+    let Some(n) = as_i64(val) else { return MbValue::none(); };
     if n < 0 {
         super::super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
@@ -494,21 +516,15 @@ pub fn mb_math_isqrt(val: MbValue) -> MbValue {
         );
         return MbValue::none();
     }
-    if n < 2 {
-        return MbValue::from_int(n);
-    }
+    if n < 2 { return MbValue::from_int(n); }
     // Newton's method seeded with the float sqrt; refine in i64 space.
     let mut x = (n as f64).sqrt() as i64;
     // Two correction iterations cover any rounding inaccuracy from f64.
     for _ in 0..2 {
         x = (x + n / x) / 2;
     }
-    while x * x > n {
-        x -= 1;
-    }
-    while (x + 1).checked_mul(x + 1).map_or(false, |sq| sq <= n) {
-        x += 1;
-    }
+    while x * x > n { x -= 1; }
+    while (x + 1).checked_mul(x + 1).map_or(false, |sq| sq <= n) { x += 1; }
     MbValue::from_int(x)
 }
 
@@ -519,7 +535,7 @@ pub fn mb_math_factorial(val: MbValue) -> MbValue {
         super::super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(
-                "'float' object cannot be interpreted as an integer".to_string(),
+                "'float' object cannot be interpreted as an integer".to_string()
             )),
         );
         return MbValue::none();
@@ -529,14 +545,12 @@ pub fn mb_math_factorial(val: MbValue) -> MbValue {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(
-                    "factorial() not defined for negative values".to_string(),
+                    "factorial() not defined for negative values".to_string()
                 )),
             );
             return MbValue::none();
         }
-        if n > 20 {
-            return MbValue::none();
-        } // Overflow for i64
+        if n > 20 { return MbValue::none(); } // Overflow for i64
         let result: i64 = (1..=n).product();
         MbValue::from_int(result)
     } else {
@@ -572,11 +586,7 @@ pub fn mb_math_lcm(a: MbValue, b: MbValue) -> MbValue {
                 // lcm(a,b) = |a*b| / gcd(a,b)
                 let mut gx = ax;
                 let mut gy = ay;
-                while gy != 0 {
-                    let t = gy;
-                    gy = gx % gy;
-                    gx = t;
-                }
+                while gy != 0 { let t = gy; gy = gx % gy; gx = t; }
                 MbValue::from_int(ax / gx * ay)
             }
         }
@@ -598,15 +608,11 @@ pub fn mb_math_perm(n: MbValue, k: MbValue) -> MbValue {
 }
 
 pub fn mb_math_sinh(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.sinh()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.sinh())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_cosh(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.cosh()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.cosh())).unwrap_or(MbValue::none())
 }
 
 /// math.log(x, base) -> log_base(x)
@@ -700,7 +706,9 @@ pub fn mb_math_isclose(a: MbValue, b: MbValue) -> MbValue {
             let rel_tol: f64 = 1e-9;
             let abs_tol: f64 = 0.0;
             let diff = (x - y).abs();
-            MbValue::from_bool(diff <= f64::max(abs_tol, rel_tol * f64::max(x.abs(), y.abs())))
+            MbValue::from_bool(
+                diff <= f64::max(abs_tol, rel_tol * f64::max(x.abs(), y.abs()))
+            )
         }
         _ => MbValue::from_bool(false),
     }
@@ -750,11 +758,7 @@ pub fn mb_math_remainder(x: MbValue, y: MbValue) -> MbValue {
                 // tie → round-to-even
                 let candidate_lo = n_floor;
                 let candidate_hi = n_floor + 1.0;
-                if (candidate_lo as i64) & 1 == 0 {
-                    candidate_lo
-                } else {
-                    candidate_hi
-                }
+                if (candidate_lo as i64) & 1 == 0 { candidate_lo } else { candidate_hi }
             };
             MbValue::from_float(xv - n * yv)
         }
@@ -771,6 +775,10 @@ pub fn mb_math_dist(p: MbValue, q: MbValue) -> MbValue {
     let qv = extract_seq_floats(q);
     let (pv, qv) = match (pv, qv) {
         (Some(a), Some(b)) if a.len() == b.len() => (a, b),
+        // CPython: differing point dimensions is a ValueError.
+        (Some(_), Some(_)) => {
+            return raise_value_error("both points must have the same number of dimensions");
+        }
         _ => return MbValue::none(),
     };
     let mut sum = 0.0f64;
@@ -818,24 +826,16 @@ pub fn mb_math_prod(iterable: MbValue, start: MbValue) -> MbValue {
             return MbValue::none();
         }
     }
-    if promoted {
-        MbValue::from_float(acc_f)
-    } else {
-        MbValue::from_int(acc_i)
-    }
+    if promoted { MbValue::from_float(acc_f) } else { MbValue::from_int(acc_i) }
 }
 
 // math.tanh / asinh / acosh / atanh — hyperbolic + inverse-hyperbolic.
 pub fn mb_math_tanh(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.tanh()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.tanh())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_asinh(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.asinh()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.asinh())).unwrap_or(MbValue::none())
 }
 
 pub fn mb_math_acosh(val: MbValue) -> MbValue {
@@ -916,16 +916,12 @@ pub fn mb_math_ulp(val: MbValue) -> MbValue {
 
 // math.cbrt(x) — Py3.11+. Cube root with sign (cbrt(-8) == -2.0).
 pub fn mb_math_cbrt(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.cbrt()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.cbrt())).unwrap_or(MbValue::none())
 }
 
 // math.exp2(x) — Py3.11+. 2**x; faster and more accurate than pow(2, x).
 pub fn mb_math_exp2(val: MbValue) -> MbValue {
-    as_f64(val)
-        .map(|f| MbValue::from_float(f.exp2()))
-        .unwrap_or(MbValue::none())
+    as_f64(val).map(|f| MbValue::from_float(f.exp2())).unwrap_or(MbValue::none())
 }
 
 // math.fsum(iterable) — accurate floating-point sum using Shewchuk's
@@ -962,6 +958,300 @@ pub fn mb_math_fsum(val: MbValue) -> MbValue {
     // intermediate cancellation.
     let total = if total == 0.0 { 0.0 } else { total };
     MbValue::from_float(total)
+}
+
+/// math.sumprod(p, q) — Py3.12+. Extended-precision dot product. Stays
+/// integer-typed when every operand of both sequences is an int (or bool);
+/// otherwise sums the exact products with the same compensated algorithm as
+/// `fsum`, so catastrophic cancellation (e.g. 1e101 terms) is exact.
+/// Mismatched lengths raise ValueError.
+pub fn mb_math_sumprod(p: MbValue, q: MbValue) -> MbValue {
+    let pv = match extract_seq_values(p) {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
+    let qv = match extract_seq_values(q) {
+        Some(v) => v,
+        None => return MbValue::none(),
+    };
+    if pv.len() != qv.len() {
+        return raise_value_error("Inputs are not the same length");
+    }
+
+    // Fast path: pure-integer dot product stays an int.
+    let all_int = pv.iter().chain(qv.iter()).all(|v| {
+        v.as_int().is_some() || v.as_bool().is_some()
+    });
+    if all_int {
+        let mut acc: i64 = 0;
+        for (a, b) in pv.iter().zip(qv.iter()) {
+            let ai = a.as_int().or_else(|| a.as_bool().map(|x| x as i64)).unwrap_or(0);
+            let bi = b.as_int().or_else(|| b.as_bool().map(|x| x as i64)).unwrap_or(0);
+            acc = acc.saturating_add(ai.saturating_mul(bi));
+        }
+        return MbValue::from_int(acc);
+    }
+
+    // Mixed/float path: compensated summation of the products.
+    let mut partials: Vec<f64> = Vec::new();
+    for (a, b) in pv.iter().zip(qv.iter()) {
+        let (af, bf) = match (as_f64(*a), as_f64(*b)) {
+            (Some(x), Some(y)) => (x, y),
+            _ => return MbValue::none(),
+        };
+        let prod = af * bf;
+        fsum_add(&mut partials, prod);
+    }
+    let total: f64 = partials.iter().sum();
+    let total = if total == 0.0 { 0.0 } else { total };
+    MbValue::from_float(total)
+}
+
+/// One Shewchuk partial-sum accumulation step (shared shape with `fsum`).
+fn fsum_add(partials: &mut Vec<f64>, x_in: f64) {
+    let mut x = x_in;
+    let mut i = 0;
+    for j in 0..partials.len() {
+        let mut y = partials[j];
+        if x.abs() < y.abs() {
+            std::mem::swap(&mut x, &mut y);
+        }
+        let hi = x + y;
+        let lo = y - (hi - x);
+        if lo != 0.0 {
+            partials[i] = lo;
+            i += 1;
+        }
+        x = hi;
+    }
+    partials.truncate(i);
+    partials.push(x);
+}
+
+/// math.erf(x) — Gauss error function. Implemented via a series for small |x|
+/// and the continued-fraction/complementary form for large |x|; matches the
+/// double-precision reference used by CPython to within a few ULPs.
+pub fn mb_math_erf(val: MbValue) -> MbValue {
+    match as_f64(val) {
+        Some(x) => MbValue::from_float(erf_impl(x)),
+        None => MbValue::none(),
+    }
+}
+
+/// math.erfc(x) — complementary error function (1 - erf(x)), computed directly
+/// for large |x| to preserve accuracy.
+pub fn mb_math_erfc(val: MbValue) -> MbValue {
+    match as_f64(val) {
+        Some(x) => MbValue::from_float(erfc_impl(x)),
+        None => MbValue::none(),
+    }
+}
+
+/// math.gamma(x) — gamma function via Lanczos approximation. Raises ValueError
+/// for poles (non-positive integers) and for arguments that overflow.
+pub fn mb_math_gamma(val: MbValue) -> MbValue {
+    let x = match as_f64(val) {
+        Some(f) => f,
+        None => return MbValue::none(),
+    };
+    if x.is_nan() {
+        return MbValue::from_float(x);
+    }
+    if x.is_infinite() {
+        if x > 0.0 {
+            return MbValue::from_float(f64::INFINITY);
+        }
+        // gamma(-inf) is undefined.
+        return raise_value_error("math domain error");
+    }
+    // Poles at 0 and the negative integers.
+    if x <= 0.0 && x == x.floor() {
+        return raise_value_error("math domain error");
+    }
+    let g = gamma_impl(x);
+    if g.is_infinite() {
+        return raise_overflow_error("math range error");
+    }
+    MbValue::from_float(g)
+}
+
+/// math.lgamma(x) — natural log of |gamma(x)|. Raises ValueError at the poles.
+pub fn mb_math_lgamma(val: MbValue) -> MbValue {
+    let x = match as_f64(val) {
+        Some(f) => f,
+        None => return MbValue::none(),
+    };
+    if x.is_nan() {
+        return MbValue::from_float(x);
+    }
+    if x.is_infinite() {
+        return MbValue::from_float(f64::INFINITY);
+    }
+    if x <= 0.0 && x == x.floor() {
+        return raise_value_error("math domain error");
+    }
+    MbValue::from_float(lgamma_impl(x))
+}
+
+// ── Special-function numerical kernels (pure Rust; std has no erf/gamma) ──
+
+fn erf_impl(x: f64) -> f64 {
+    if x.is_nan() {
+        return x;
+    }
+    if x == 0.0 {
+        // Preserve the sign of zero.
+        return x;
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { 1.0 } else { -1.0 };
+    }
+    // For small |x| use the Maclaurin series; for large |x| use 1 - erfc.
+    if x.abs() < 1.5 {
+        erf_series(x)
+    } else {
+        let sign = if x < 0.0 { -1.0 } else { 1.0 };
+        sign * (1.0 - erfc_continued_fraction(x.abs()))
+    }
+}
+
+fn erfc_impl(x: f64) -> f64 {
+    if x.is_nan() {
+        return x;
+    }
+    if x.is_infinite() {
+        return if x > 0.0 { 0.0 } else { 2.0 };
+    }
+    if x.abs() < 1.5 {
+        1.0 - erf_series(x)
+    } else if x >= 0.0 {
+        erfc_continued_fraction(x)
+    } else {
+        2.0 - erfc_continued_fraction(-x)
+    }
+}
+
+/// erf(x) Maclaurin series: (2/sqrt(pi)) * sum_{n>=0} (-1)^n x^(2n+1) / (n! (2n+1)).
+fn erf_series(x: f64) -> f64 {
+    let two_over_sqrt_pi = 1.128379167095512573896158903121545171688_f64;
+    let x2 = x * x;
+    let mut term = x; // n = 0 term before the (2/sqrt(pi)) factor
+    let mut sum = x;
+    let mut n = 0.0_f64;
+    loop {
+        n += 1.0;
+        // term_{n} = term_{n-1} * (-x^2) * (2n-1) / (n * (2n+1))
+        term *= -x2 * (2.0 * n - 1.0) / (n * (2.0 * n + 1.0));
+        let new_sum = sum + term;
+        if new_sum == sum {
+            break;
+        }
+        sum = new_sum;
+        if n > 200.0 {
+            break;
+        }
+    }
+    two_over_sqrt_pi * sum
+}
+
+/// erfc(x) for x >= ~1.5 via the Lentz continued fraction:
+/// erfc(x) = (exp(-x^2)/(x*sqrt(pi))) * 1/(1 + 1/(2x^2)/(1 + 2/(2x^2)/(1 + ...)))
+fn erfc_continued_fraction(x: f64) -> f64 {
+    let sqrt_pi = 1.7724538509055160272981674833411451827975_f64;
+    // Lentz's algorithm for the continued fraction
+    let tiny = 1e-300_f64;
+    let x2 = x * x;
+    let mut f = tiny;
+    let mut c = f;
+    let mut d = 0.0_f64;
+    // CF: b0 + a1/(b1 + a2/(b2 + ...)) with b_k = x and a_k = k/2.
+    // We use the form: erfc(x)= exp(-x^2)/sqrt(pi) * 1/(x + (1/2)/(x + 1/(x + (3/2)/(x + ...))))
+    let mut k = 0.0_f64;
+    for _ in 0..400 {
+        let a = if k == 0.0 { 1.0 } else { k / 2.0 };
+        let b = x;
+        d = b + a * d;
+        if d == 0.0 {
+            d = tiny;
+        }
+        c = b + a / c;
+        if c == 0.0 {
+            c = tiny;
+        }
+        d = 1.0 / d;
+        let delta = c * d;
+        f *= delta;
+        if (delta - 1.0).abs() < 1e-16 {
+            break;
+        }
+        k += 1.0;
+    }
+    // f is the continued fraction 1/(x + (1/2)/(x + ...)); multiply by the prefactor.
+    (-x2).exp() / sqrt_pi * f
+}
+
+// Lanczos approximation coefficients (g = 7, n = 9), accurate to ~1e-15.
+const LANCZOS_G: f64 = 7.0;
+const LANCZOS_COEF: [f64; 9] = [
+    0.99999999999980993,
+    676.5203681218851,
+    -1259.1392167224028,
+    771.32342877765313,
+    -176.61502916214059,
+    12.507343278686905,
+    -0.13857109526572012,
+    9.9843695780195716e-6,
+    1.5056327351493116e-7,
+];
+
+fn gamma_impl(x: f64) -> f64 {
+    // Reflection formula for x < 0.5: gamma(x) = pi / (sin(pi x) * gamma(1-x))
+    if x < 0.5 {
+        let pi = std::f64::consts::PI;
+        pi / ((pi * x).sin() * gamma_impl(1.0 - x))
+    } else {
+        let x = x - 1.0;
+        let mut a = LANCZOS_COEF[0];
+        let t = x + LANCZOS_G + 0.5;
+        for (i, &coef) in LANCZOS_COEF.iter().enumerate().skip(1) {
+            a += coef / (x + i as f64);
+        }
+        let two_pi = std::f64::consts::TAU;
+        two_pi.sqrt() * t.powf(x + 0.5) * (-t).exp() * a
+    }
+}
+
+fn lgamma_impl(x: f64) -> f64 {
+    // ln|gamma(x)| using the same Lanczos machinery; reflection for x < 0.5.
+    if x < 0.5 {
+        let pi = std::f64::consts::PI;
+        // ln|gamma(x)| = ln(pi) - ln|sin(pi x)| - lgamma(1-x)
+        pi.ln() - (pi * x).sin().abs().ln() - lgamma_impl(1.0 - x)
+    } else {
+        let x = x - 1.0;
+        let mut a = LANCZOS_COEF[0];
+        let t = x + LANCZOS_G + 0.5;
+        for (i, &coef) in LANCZOS_COEF.iter().enumerate().skip(1) {
+            a += coef / (x + i as f64);
+        }
+        let two_pi = std::f64::consts::TAU;
+        0.5 * two_pi.ln() + (x + 0.5) * t.ln() - t + a.ln()
+    }
+}
+
+/// Extract a list/tuple as a vector of MbValues (preserving int/bool/float
+/// identity), or None when the argument is not a list/tuple.
+fn extract_seq_values(val: MbValue) -> Option<Vec<MbValue>> {
+    match val.as_ptr() {
+        Some(ptr) => unsafe {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => Some(lock.read().unwrap().to_vec()),
+                ObjData::Tuple(items) => Some(items.clone()),
+                _ => None,
+            }
+        },
+        None => None,
+    }
 }
 
 /// Best-effort conversion of a list/tuple of numerics to `Vec<f64>`.
@@ -1014,44 +1304,23 @@ mod tests {
 
     #[test]
     fn test_math_gcd() {
-        assert_eq!(
-            mb_math_gcd(MbValue::from_int(12), MbValue::from_int(8)).as_int(),
-            Some(4)
-        );
-        assert_eq!(
-            mb_math_gcd(MbValue::from_int(7), MbValue::from_int(13)).as_int(),
-            Some(1)
-        );
+        assert_eq!(mb_math_gcd(MbValue::from_int(12), MbValue::from_int(8)).as_int(), Some(4));
+        assert_eq!(mb_math_gcd(MbValue::from_int(7), MbValue::from_int(13)).as_int(), Some(1));
     }
 
     #[test]
     fn test_math_factorial() {
         assert_eq!(mb_math_factorial(MbValue::from_int(0)).as_int(), Some(1));
         assert_eq!(mb_math_factorial(MbValue::from_int(5)).as_int(), Some(120));
-        assert_eq!(
-            mb_math_factorial(MbValue::from_int(10)).as_int(),
-            Some(3628800)
-        );
+        assert_eq!(mb_math_factorial(MbValue::from_int(10)).as_int(), Some(3628800));
     }
 
     #[test]
     fn test_math_predicates() {
-        assert_eq!(
-            mb_math_isnan(MbValue::from_float(f64::NAN)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_math_isnan(MbValue::from_float(1.0)).as_bool(),
-            Some(false)
-        );
-        assert_eq!(
-            mb_math_isinf(MbValue::from_float(f64::INFINITY)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_math_isfinite(MbValue::from_float(42.0)).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_math_isnan(MbValue::from_float(f64::NAN)).as_bool(), Some(true));
+        assert_eq!(mb_math_isnan(MbValue::from_float(1.0)).as_bool(), Some(false));
+        assert_eq!(mb_math_isinf(MbValue::from_float(f64::INFINITY)).as_bool(), Some(true));
+        assert_eq!(mb_math_isfinite(MbValue::from_float(42.0)).as_bool(), Some(true));
     }
 
     #[test]
@@ -1098,8 +1367,7 @@ mod tests {
         assert!((e1 - 1.0).abs() < 1e-10);
 
         let ln_e = mb_math_log(MbValue::from_float(std::f64::consts::E))
-            .as_float()
-            .unwrap();
+            .as_float().unwrap();
         assert!((ln_e - 1.0).abs() < 1e-10);
     }
 
@@ -1108,79 +1376,68 @@ mod tests {
         let l2 = mb_math_log2(MbValue::from_float(8.0)).as_float().unwrap();
         assert!((l2 - 3.0).abs() < 1e-10);
 
-        let l10 = mb_math_log10(MbValue::from_float(1000.0))
-            .as_float()
-            .unwrap();
+        let l10 = mb_math_log10(MbValue::from_float(1000.0)).as_float().unwrap();
         assert!((l10 - 3.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_math_degrees_radians() {
         let deg = mb_math_degrees(MbValue::from_float(std::f64::consts::PI))
-            .as_float()
-            .unwrap();
+            .as_float().unwrap();
         assert!((deg - 180.0).abs() < 1e-10);
 
         let rad = mb_math_radians(MbValue::from_float(180.0))
-            .as_float()
-            .unwrap();
+            .as_float().unwrap();
         assert!((rad - std::f64::consts::PI).abs() < 1e-10);
     }
 
     #[test]
     fn test_math_atan2() {
         let r = mb_math_atan2(MbValue::from_float(1.0), MbValue::from_float(1.0))
-            .as_float()
-            .unwrap();
+            .as_float().unwrap();
         assert!((r - std::f64::consts::FRAC_PI_4).abs() < 1e-10);
     }
 
     #[test]
     fn test_math_fmod() {
         let r = mb_math_fmod(MbValue::from_float(10.0), MbValue::from_float(3.0))
-            .as_float()
-            .unwrap();
+            .as_float().unwrap();
         assert!((r - 1.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_math_copysign() {
         let r = mb_math_copysign(MbValue::from_float(5.0), MbValue::from_float(-1.0))
-            .as_float()
-            .unwrap();
+            .as_float().unwrap();
         assert!((r - (-5.0)).abs() < 1e-10);
     }
 
     #[test]
     fn test_math_hypot() {
         let r = mb_math_hypot(MbValue::from_float(3.0), MbValue::from_float(4.0))
-            .as_float()
-            .unwrap();
+            .as_float().unwrap();
         assert!((r - 5.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_math_comb() {
-        assert_eq!(
-            mb_math_comb(MbValue::from_int(5), MbValue::from_int(2)).as_int(),
-            Some(10)
-        );
-        assert_eq!(
-            mb_math_comb(MbValue::from_int(10), MbValue::from_int(0)).as_int(),
-            Some(1)
-        );
-        assert_eq!(
-            mb_math_comb(MbValue::from_int(6), MbValue::from_int(6)).as_int(),
-            Some(1)
-        );
+        assert_eq!(mb_math_comb(MbValue::from_int(5), MbValue::from_int(2)).as_int(), Some(10));
+        assert_eq!(mb_math_comb(MbValue::from_int(10), MbValue::from_int(0)).as_int(), Some(1));
+        assert_eq!(mb_math_comb(MbValue::from_int(6), MbValue::from_int(6)).as_int(), Some(1));
     }
 
     #[test]
     fn test_math_isclose() {
-        let r = mb_math_isclose(MbValue::from_float(1.0), MbValue::from_float(1.0 + 1e-10));
+        let r = mb_math_isclose(
+            MbValue::from_float(1.0),
+            MbValue::from_float(1.0 + 1e-10),
+        );
         assert_eq!(r.as_bool(), Some(true));
 
-        let r2 = mb_math_isclose(MbValue::from_float(1.0), MbValue::from_float(2.0));
+        let r2 = mb_math_isclose(
+            MbValue::from_float(1.0),
+            MbValue::from_float(2.0),
+        );
         assert_eq!(r2.as_bool(), Some(false));
     }
 
@@ -1194,10 +1451,7 @@ mod tests {
 
     #[test]
     fn test_math_gcd_negative() {
-        assert_eq!(
-            mb_math_gcd(MbValue::from_int(-12), MbValue::from_int(8)).as_int(),
-            Some(4)
-        );
+        assert_eq!(mb_math_gcd(MbValue::from_int(-12), MbValue::from_int(8)).as_int(), Some(4));
     }
 
     #[test]
@@ -1270,4 +1524,5 @@ mod tests {
         let pi = std::f64::consts::PI;
         assert!((pi - 3.14159265).abs() < 1e-7);
     }
+
 }

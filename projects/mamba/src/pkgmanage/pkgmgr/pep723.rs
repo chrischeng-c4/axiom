@@ -79,14 +79,12 @@ pub fn parse_pep723(source: &str) -> Result<Option<ScriptMetadata>, IndexError> 
         .map(String::from);
 
     let requires_python = match &requires_python_raw {
-        Some(raw) => {
-            Some(
-                parse_requires_python_loose(raw).map_err(|detail| IndexError::ParseError {
-                    url: PEP723_URL.into(),
-                    detail,
-                })?,
-            )
-        }
+        Some(raw) => Some(parse_requires_python_loose(raw).map_err(|detail| {
+            IndexError::ParseError {
+                url: PEP723_URL.into(),
+                detail,
+            }
+        })?),
         None => None,
     };
 
@@ -94,14 +92,12 @@ pub fn parse_pep723(source: &str) -> Result<Option<ScriptMetadata>, IndexError> 
         Some(toml::Value::Array(arr)) => arr
             .iter()
             .map(|v| {
-                v.as_str()
-                    .map(String::from)
-                    .ok_or_else(|| IndexError::ParseError {
-                        url: PEP723_URL.into(),
-                        detail: format!(
-                            "PEP 723 `dependencies` entries must be strings, got {v:?}"
-                        ),
-                    })
+                v.as_str().map(String::from).ok_or_else(|| IndexError::ParseError {
+                    url: PEP723_URL.into(),
+                    detail: format!(
+                        "PEP 723 `dependencies` entries must be strings, got {v:?}"
+                    ),
+                })
             })
             .collect::<Result<Vec<_>, _>>()?,
         Some(other) => {
@@ -351,7 +347,10 @@ pub fn upsert_pep723(source: &str, meta: &ScriptMetadata) -> Result<String, Inde
 /// `# /// <name>` block in `source` (start marker line through close
 /// marker line). Lines are counted in `split_inclusive('\n')` order so
 /// they round-trip exactly back into the source string.
-fn find_block_line_range(source: &str, name: &str) -> Result<Option<(usize, usize)>, IndexError> {
+fn find_block_line_range(
+    source: &str,
+    name: &str,
+) -> Result<Option<(usize, usize)>, IndexError> {
     let start_marker = format!("# /// {name}");
     let lines: Vec<&str> = source.split_inclusive('\n').collect();
     let mut start: Option<usize> = None;
@@ -424,7 +423,10 @@ import requests
 "#;
         let meta = parse_pep723(src).unwrap().unwrap();
         assert_eq!(meta.requires_python_raw.as_deref(), Some(">=3.11"));
-        assert_eq!(meta.requires_python, Some(PythonRequest::MajorMinor(3, 11)));
+        assert_eq!(
+            meta.requires_python,
+            Some(PythonRequest::MajorMinor(3, 11))
+        );
         assert_eq!(meta.dependencies, vec!["requests<3", "rich"]);
     }
 
@@ -495,9 +497,15 @@ print("hi")
     fn pep440_compound_specifier_uses_first_bound() {
         let src = "# /// script\n# requires-python = \">=3.11,<3.13\"\n# ///\n";
         let meta = parse_pep723(src).unwrap().unwrap();
-        assert_eq!(meta.requires_python_raw.as_deref(), Some(">=3.11,<3.13"));
+        assert_eq!(
+            meta.requires_python_raw.as_deref(),
+            Some(">=3.11,<3.13")
+        );
         // First bound is `>=3.11`, which maps to MajorMinor(3, 11).
-        assert_eq!(meta.requires_python, Some(PythonRequest::MajorMinor(3, 11)));
+        assert_eq!(
+            meta.requires_python,
+            Some(PythonRequest::MajorMinor(3, 11))
+        );
     }
 
     #[test]
@@ -506,7 +514,9 @@ print("hi")
         let meta = parse_pep723(src).unwrap().unwrap();
         assert_eq!(
             meta.requires_python,
-            Some(PythonRequest::Exact("3.12.7".parse().unwrap()))
+            Some(PythonRequest::Exact(
+                "3.12.7".parse().unwrap()
+            ))
         );
     }
 

@@ -22,7 +22,8 @@ use std::sync::{Arc, Mutex};
 
 use cclab_pg::blocking::Session as PgSession;
 use cclab_pg::driver::blocking::{
-    Connection as PgConnection, MigrationRunner as PgMigrationRunner, Transaction as PgTransaction,
+    Connection as PgConnection, MigrationRunner as PgMigrationRunner,
+    Transaction as PgTransaction,
 };
 use cclab_pg::migrate::Migration;
 
@@ -37,9 +38,7 @@ pub struct MbPgConnection {
 
 impl MbPgConnection {
     pub fn new(inner: PgConnection) -> Self {
-        Self {
-            inner: std::sync::Arc::new(inner),
-        }
+        Self { inner: std::sync::Arc::new(inner) }
     }
 }
 
@@ -55,9 +54,7 @@ pub struct MbPgTransaction {
 
 impl MbPgTransaction {
     pub fn new(tx: PgTransaction) -> Self {
-        Self {
-            inner: Mutex::new(Some(tx)),
-        }
+        Self { inner: Mutex::new(Some(tx)) }
     }
 }
 
@@ -68,9 +65,7 @@ pub struct MbPgMigrationRunner {
 
 impl MbPgMigrationRunner {
     pub fn new(runner: PgMigrationRunner) -> Self {
-        Self {
-            inner: std::sync::Arc::new(runner),
-        }
+        Self { inner: std::sync::Arc::new(runner) }
     }
 }
 
@@ -82,9 +77,7 @@ pub struct MbPgMigration {
 
 impl MbPgMigration {
     pub fn new(m: Migration) -> Self {
-        Self {
-            inner: std::sync::Arc::new(m),
-        }
+        Self { inner: std::sync::Arc::new(m) }
     }
 }
 

@@ -2,7 +2,7 @@
 //!
 //! Convention: see `tests/harness/cpython/conventions/REAL-WORLD-CONVENTION.md`.
 //!
-//! Walks every `tests/cpython/fixtures/{std-libs,3rd-libs}/*/real_world/*.py`
+//! Walks every `tests/cpython/{std-libs,3rd-libs}/*/real_world/*.py`
 //! fixture and shells out twice per file:
 //!   1. `python3 <file>`   — must exit 0 (skipped if python3 missing).
 //!   2. `mamba <file>`     — must exit 0.
@@ -28,6 +28,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[path = "harness_common.rs"]
+mod common;
+use common::{mamba_bin, python3_available};
+
 /// #2555 — per-fixture expected outcome from the manifest. Drives the
 /// runner's pass / fail / xfail / skip bucketing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,10 +44,6 @@ enum ExpectedOutcome {
     /// Structurally unrunnable in the default gate (e.g. needs a
     /// C-extension mamba can't load yet). Never executed.
     Skip,
-}
-
-fn mamba_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_mamba"))
 }
 
 fn fixtures_root() -> PathBuf {
@@ -125,14 +125,6 @@ fn collect_real_world_scripts(root: &Path) -> Vec<PathBuf> {
     }
     out.sort();
     out
-}
-
-fn python3_available() -> bool {
-    Command::new("python3")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 #[test]

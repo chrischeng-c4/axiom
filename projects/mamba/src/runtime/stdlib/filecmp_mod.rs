@@ -1,5 +1,3 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// filecmp module for Mamba (#1261 long-tail).
 ///
 /// Replaces the long_tail stub which returned False for every `cmp()`
@@ -24,21 +22,17 @@ use super::super::value::MbValue;
 /// `dircmp` stays as a callable class shell — CPython's dircmp does
 /// recursive directory traversal with cached attributes (left/right/common/
 /// diff_files/funny_files/...); not worth porting until a consumer needs it.
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 const BUFSIZE: usize = 8192;
 const DEFAULT_IGNORES: &[&str] = &[
-    "RCS",
-    "CVS",
-    "tags",
-    ".git",
-    ".hg",
-    ".bzr",
-    "_darcs",
-    "__pycache__",
+    "RCS", "CVS", "tags", ".git", ".hg", ".bzr", "_darcs", "__pycache__",
 ];
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
@@ -59,9 +53,7 @@ unsafe fn as_str(val: MbValue) -> Option<String> {
 }
 
 fn arg_bool(val: Option<MbValue>, default: bool) -> bool {
-    let Some(v) = val else {
-        return default;
-    };
+    let Some(v) = val else { return default; };
     if let Some(b) = v.as_bool() {
         return b;
     }
@@ -72,16 +64,9 @@ fn arg_bool(val: Option<MbValue>, default: bool) -> bool {
 }
 
 unsafe fn collect_strings(val: MbValue) -> Vec<String> {
-    let Some(ptr) = val.as_ptr() else {
-        return Vec::new();
-    };
+    let Some(ptr) = val.as_ptr() else { return Vec::new(); };
     match &(*ptr).data {
-        ObjData::List(lock) => lock
-            .read()
-            .unwrap()
-            .iter()
-            .filter_map(|v| as_str(*v))
-            .collect(),
+        ObjData::List(lock) => lock.read().unwrap().iter().filter_map(|v| as_str(*v)).collect(),
         ObjData::Tuple(items) => items.iter().filter_map(|v| as_str(*v)).collect(),
         _ => Vec::new(),
     }
@@ -106,17 +91,11 @@ fn signature(path: &Path) -> Option<Sig> {
         },
         Err(_) => (0, 0),
     };
-    Some(Sig {
-        is_file,
-        size,
-        mtime_secs,
-        mtime_nanos,
-    })
+    Some(Sig { is_file, size, mtime_secs, mtime_nanos })
 }
 
 fn sigs_match(a: &Sig, b: &Sig) -> bool {
-    a.is_file
-        && b.is_file
+    a.is_file && b.is_file
         && a.size == b.size
         && a.mtime_secs == b.mtime_secs
         && a.mtime_nanos == b.mtime_nanos
@@ -143,10 +122,8 @@ fn byte_compare(p1: &Path, p2: &Path) -> std::io::Result<bool> {
 }
 
 fn cmp_files(p1: &Path, p2: &Path, shallow: bool) -> Result<bool, std::io::Error> {
-    let s1 = signature(p1)
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "stat f1"))?;
-    let s2 = signature(p2)
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "stat f2"))?;
+    let s1 = signature(p1).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "stat f1"))?;
+    let s2 = signature(p2).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "stat f2"))?;
     if !s1.is_file || !s2.is_file {
         return Ok(false);
     }
@@ -390,18 +367,14 @@ mod tests {
                 let read_list = |v: MbValue| -> Vec<String> {
                     let ptr = v.as_ptr().unwrap();
                     if let ObjData::List(lock) = &(*ptr).data {
-                        lock.read()
-                            .unwrap()
-                            .iter()
-                            .filter_map(|x| {
-                                let xp = x.as_ptr()?;
-                                if let ObjData::Str(s) = &(*xp).data {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            })
-                            .collect()
+                        lock.read().unwrap().iter().filter_map(|x| {
+                            let xp = x.as_ptr()?;
+                            if let ObjData::Str(s) = &(*xp).data {
+                                Some(s.clone())
+                            } else {
+                                None
+                            }
+                        }).collect()
                     } else {
                         Vec::new()
                     }

@@ -241,7 +241,10 @@ pub fn find_record_path(install_root: &Path) -> Result<PathBuf, IndexError> {
         1 => Ok(candidates.into_iter().next().unwrap()),
         _ => Err(IndexError::CacheIo {
             path: install_root.display().to_string(),
-            detail: format!("multiple *.dist-info/RECORD files found: {:?}", candidates),
+            detail: format!(
+                "multiple *.dist-info/RECORD files found: {:?}",
+                candidates
+            ),
         }),
     }
 }

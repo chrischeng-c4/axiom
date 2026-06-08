@@ -179,9 +179,7 @@ mod tests {
 
     #[test]
     fn classifies_pep625_sdist() {
-        let e = classify_filename("requests-2.31.0.tar.gz")
-            .unwrap()
-            .unwrap();
+        let e = classify_filename("requests-2.31.0.tar.gz").unwrap().unwrap();
         assert_eq!(e.name, "requests");
         assert_eq!(e.raw_name, "requests");
         assert_eq!(e.version, "2.31.0");
@@ -214,9 +212,7 @@ mod tests {
     fn unknown_extension_returns_none() {
         assert!(classify_filename("README.md").unwrap().is_none());
         assert!(classify_filename("requests-2.31.0.egg").unwrap().is_none());
-        assert!(classify_filename("requests-2.31.0.tar.bz2")
-            .unwrap()
-            .is_none());
+        assert!(classify_filename("requests-2.31.0.tar.bz2").unwrap().is_none());
         assert!(classify_filename("not-an-artifact").unwrap().is_none());
     }
 
@@ -279,7 +275,12 @@ mod tests {
 
     #[test]
     fn group_by_name_preserves_input_order_within_bucket() {
-        let entries = classify_many(["x-1.0.tar.gz", "x-2.0.tar.gz", "x-3.0.tar.gz"]).unwrap();
+        let entries = classify_many([
+            "x-1.0.tar.gz",
+            "x-2.0.tar.gz",
+            "x-3.0.tar.gz",
+        ])
+        .unwrap();
         let grouped = group_by_name(entries);
         let x = grouped.get("x").unwrap();
         assert_eq!(x[0].version, "1.0");
@@ -289,8 +290,12 @@ mod tests {
 
     #[test]
     fn group_by_name_buckets_are_alphabetical() {
-        let entries =
-            classify_many(["zope-1.0.tar.gz", "alpha-1.0.tar.gz", "middle-1.0.tar.gz"]).unwrap();
+        let entries = classify_many([
+            "zope-1.0.tar.gz",
+            "alpha-1.0.tar.gz",
+            "middle-1.0.tar.gz",
+        ])
+        .unwrap();
         let grouped = group_by_name(entries);
         let keys: Vec<&str> = grouped.keys().map(String::as_str).collect();
         assert_eq!(keys, vec!["alpha", "middle", "zope"]);
@@ -339,7 +344,8 @@ mod tests {
             let v = grouped.get(*name).unwrap();
             assert_eq!(v.len(), 2);
             // Each package has one wheel + one sdist.
-            let kinds: std::collections::HashSet<ArtifactKind> = v.iter().map(|e| e.kind).collect();
+            let kinds: std::collections::HashSet<ArtifactKind> =
+                v.iter().map(|e| e.kind).collect();
             assert_eq!(kinds.len(), 2);
         }
     }

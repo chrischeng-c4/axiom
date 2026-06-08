@@ -500,8 +500,12 @@ fn compute_renames(
             ancestor = si.scopes[aid].parent;
         }
 
-        let mut gen = NameGen::new(&free_vars);
-        for name in &scope.decls {
+        let mut skip_names = free_vars;
+        skip_names.extend(scope.decls.iter().cloned());
+        let mut gen = NameGen::new(&skip_names);
+        let mut decls: Vec<&String> = scope.decls.iter().collect();
+        decls.sort();
+        for name in decls {
             if is_reserved(name) {
                 continue;
             }
@@ -791,6 +795,17 @@ mod tests {
         assert!(
             !out.contains("second"),
             "should mangle second, got: {}",
+            out
+        );
+    }
+
+    #[test]
+    fn test_mangling_does_not_collide_with_existing_short_param() {
+        let src = "\"use strict\";function batchedUpdates(callback,a){return callback(a);}";
+        let out = mangle_variables(src);
+        assert!(
+            !out.contains("function batchedUpdates(a,a)"),
+            "mangler must not create duplicate parameter names, got: {}",
             out
         );
     }
@@ -1098,6 +1113,15 @@ mod tests {
             ".exports property access preserved, got: {}",
             out
         );
+    }
+
+    #[test]
+    fn test_root_scope_mangle_order_is_deterministic() {
+        let src = r#"(function(){var zebra={exports:{}},alpha={exports:{}},middle={exports:{}};function read(which){switch(which){case 0:return zebra.exports;case 1:return alpha.exports;default:return middle.exports}}return read(0)})()"#;
+        let first = mangle_variables_with_root(src);
+        for _ in 0..32 {
+            assert_eq!(mangle_variables_with_root(src), first);
+        }
     }
 
     #[test]

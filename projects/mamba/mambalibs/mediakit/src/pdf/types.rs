@@ -172,7 +172,10 @@ impl Default for TextStyle {
 #[derive(Debug, Clone)]
 pub enum ContentElement {
     /// A paragraph of text.
-    Text { content: String, style: TextStyle },
+    Text {
+        content: String,
+        style: TextStyle,
+    },
     /// A heading (bold, larger).
     Heading {
         content: String,
@@ -180,7 +183,10 @@ pub enum ContentElement {
         style: TextStyle,
     },
     /// A horizontal rule / separator line.
-    HorizontalRule { thickness: f64, color: Color },
+    HorizontalRule {
+        thickness: f64,
+        color: Color,
+    },
     /// Raw RGB image data.
     Image {
         data: Vec<u8>,
@@ -190,7 +196,9 @@ pub enum ContentElement {
         display_height: f64,
     },
     /// Vertical spacing.
-    Spacer { height: f64 },
+    Spacer {
+        height: f64,
+    },
 }
 
 /// A PDF page with its content elements.

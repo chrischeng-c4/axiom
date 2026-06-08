@@ -9,8 +9,9 @@
 //!   machine — load, launch, navigate, await_mount, 5 channels, bundle.
 //!   These cover T1, T2, T3, T4, T5, T6, T7, T8, T10 against deterministic
 //!   canned data.
-//! * **Live-Chromium tests** (`#[ignore]`-d): real Playwright drive.
-//!   Gated on the #2139 follow-up that lands the live browser harness.
+//! * **Live-Chromium tests**: real Jet CDP browser drive. They are opt-in via
+//!   `JET_PARITY_ORACLE_LIVE=1` so normal unit runs do not require a local
+//!   browser binary, but the parity gate can make the live harness mandatory.
 
 use jet_parity_oracle::{
     run_fixture, ArtifactBundle, BrowserKind, BrowserSession, MatrixEntry, Runner, RunnerConfig,
@@ -230,7 +231,7 @@ async fn test_byte_equivalent_replay() {
 /// (Live verification is gated on the #2139 browser harness follow-up.)
 #[tokio::test]
 async fn test_cdp_session_attached() {
-    let mut stub = StubBrowserSession::new();
+    let stub = StubBrowserSession::new();
     // Domain reachability is modeled as: ax_full_tree + capture_focus_trace
     // + capture_ime_trace all callable without panic.
     let ax = stub.browser_kind();
@@ -276,20 +277,76 @@ async fn test_per_fixture_budget_under_8s() {
 }
 
 /// Live-Chromium smoke test (R11 wall-clock + R9 byte-equivalent replay).
-/// Skipped by default — depends on the browser-harness follow-up.
+/// Opt-in so local unit runs do not require Chrome, but no longer ignored:
+/// parity gates can set `JET_PARITY_ORACLE_LIVE=1` and prove the live harness.
 #[tokio::test]
-#[ignore = "blocked on live browser harness — issue #2139 follow-up"]
 async fn test_runner_live_chromium_smoke() {
-    if std::env::var("JET_PARITY_ORACLE_SKIP").is_ok() {
-        eprintln!("skipped: JET_PARITY_ORACLE_SKIP set");
+    if std::env::var("JET_PARITY_ORACLE_LIVE").ok().as_deref() != Some("1") {
+        eprintln!("skipped: set JET_PARITY_ORACLE_LIVE=1 to run live Chromium smoke");
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
-    let cfg = make_config(tmp.path());
+    let fixture = tmp.path().join("live-oracle-fixture.tsx");
+    std::fs::write(
+        &fixture,
+        r#"/** @fixture { "name": "live-oracle-fixture", "ime": false, "tab_count": 2 } */
+export default function LiveOracleFixture() { return null; }
+"#,
+    )
+    .unwrap();
+    let shell = tmp.path().join("live-shell.html");
+    std::fs::write(
+        &shell,
+        r#"<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>jet parity live oracle smoke</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; }
+      main { padding: 24px; }
+      button, input { font-size: 16px; margin: 8px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <button id="oracle-button" data-jet-fixture="live-oracle-fixture">Click me</button>
+      <input aria-label="Name" value="Jet" />
+    </main>
+    <script>
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          window.__jet_oracle_mounted = true;
+        });
+      });
+    </script>
+  </body>
+</html>
+"#,
+    )
+    .unwrap();
+    let cfg = RunnerConfig {
+        artifact_root: tmp.path().join("artifacts"),
+        shell_html: shell,
+        per_fixture_budget: Duration::from_secs(8),
+        viewport: (400, 300),
+    };
     let matrix = MatrixEntry {
         browser: BrowserKind::Chromium,
         dpr: 1.0,
     };
-    let _ = run_fixture(&cfg, &fixture_path(), matrix).await.unwrap();
+    let bundle = run_fixture(&cfg, &fixture, matrix).await.unwrap();
+    assert!(bundle.pixel_png.exists(), "live screenshot missing");
+    let pixel = std::fs::read(&bundle.pixel_png).unwrap();
+    assert_eq!(
+        &pixel[..8],
+        &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]
+    );
+    let focus: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&bundle.focus_json).unwrap()).unwrap();
+    assert_eq!(focus.as_array().unwrap().len(), 2);
+    let pointer: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&bundle.pointer_json).unwrap()).unwrap();
+    assert_eq!(pointer.as_array().unwrap().len(), 1000);
 }
 // CODEGEN-END

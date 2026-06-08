@@ -51,12 +51,12 @@
 //!     historically 16 * 1024, bumped in CPython 3.8). Matches the
 //!     constant the user-facing tests and Wave-9 brief reference.
 
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
-use super::super::value::MbValue;
-use crate::runtime::rc::MbRwLock as RwLock;
-use rustc_hash::FxHashMap;
 use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 /// CPython 3.12 `shutil.COPY_BUFSIZE` on POSIX (64 KiB).
 const COPY_BUFSIZE: i64 = 64 * 1024;
@@ -113,26 +113,90 @@ macro_rules! dispatch_variadic_none {
 }
 
 // File-op dispatchers
-dispatch_binary!(dispatch_copy, mb_shutil_copy);
-dispatch_binary!(dispatch_copy2, mb_shutil_copy);
-dispatch_binary!(dispatch_copyfile, mb_shutil_copyfile);
-dispatch_binary!(dispatch_copyfileobj, mb_shutil_copyfile);
-dispatch_binary!(dispatch_copymode, mb_shutil_copymode);
-dispatch_binary!(dispatch_copystat, mb_shutil_copymode);
-dispatch_binary!(dispatch_copytree, mb_shutil_copytree);
-dispatch_unary!(dispatch_rmtree, mb_shutil_rmtree);
-dispatch_binary!(dispatch_move, mb_shutil_move);
-dispatch_unary!(dispatch_which, mb_shutil_which);
-dispatch_unary!(dispatch_disk_usage, mb_shutil_disk_usage);
+dispatch_binary!(dispatch_copy,         mb_shutil_copy);
+dispatch_binary!(dispatch_copy2,        mb_shutil_copy);
+dispatch_binary!(dispatch_copyfile,     mb_shutil_copyfile);
+
+// copyfileobj(fsrc, fdst, length=COPY_BUFSIZE) operates on file-like objects,
+// not paths — it needs the third positional `length` arg, so it gets a
+// bespoke dispatcher rather than the binary macro.
+unsafe extern "C" fn dispatch_copyfileobj(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let _ = core::hint::black_box(stringify!(dispatch_copyfileobj));
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    mb_shutil_copyfileobj(
+        a.first().copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+        a.get(2).copied(),
+    )
+}
+dispatch_binary!(dispatch_copymode,     mb_shutil_copymode);
+dispatch_binary!(dispatch_copystat,     mb_shutil_copymode);
+dispatch_binary!(dispatch_copytree,     mb_shutil_copytree);
+// rmtree(path, ignore_errors=False, ...). `ignore_errors` arrives either as the
+// 2nd positional or inside the trailing kwargs Dict; either way, when truthy the
+// refusal guards must be swallowed. A bespoke dispatcher resolves the flag.
+unsafe extern "C" fn dispatch_rmtree(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let _ = core::hint::black_box(stringify!(dispatch_rmtree));
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let path = a.first().copied().unwrap_or_else(MbValue::none);
+    let ignore_errors = rmtree_ignore_errors_flag(&a[a.len().min(1)..]);
+    mb_shutil_rmtree(path, ignore_errors)
+}
+dispatch_binary!(dispatch_move,         mb_shutil_move);
+dispatch_unary!(dispatch_which,         mb_shutil_which);
+dispatch_unary!(dispatch_disk_usage,    mb_shutil_disk_usage);
 
 // Terminal / archive / chown / ignore
-dispatch_nullary!(dispatch_get_terminal_size, mb_shutil_get_terminal_size);
+//
+// get_terminal_size(fallback=(columns, lines)) — the optional `fallback`
+// tuple is the only positional arg, so it gets a bespoke dispatcher.
+unsafe extern "C" fn dispatch_get_terminal_size(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let _ = core::hint::black_box(stringify!(dispatch_get_terminal_size));
+    // `args_ptr` may be null when called with no positional args; only build a
+    // slice when there is at least one element to read.
+    let fallback = if nargs == 0 || args_ptr.is_null() {
+        None
+    } else {
+        let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+        a.first().copied()
+    };
+    mb_shutil_get_terminal_size(fallback)
+}
 dispatch_nullary!(dispatch_get_archive_formats, mb_shutil_empty_list);
-dispatch_nullary!(dispatch_get_unpack_formats, mb_shutil_empty_list);
+dispatch_nullary!(dispatch_get_unpack_formats,  mb_shutil_empty_list);
 
 dispatch_variadic_none!(dispatch_chown);
 dispatch_variadic_none!(dispatch_ignore_patterns);
-dispatch_variadic_none!(dispatch_make_archive);
+// make_archive(base_name, format, ...) is still a stub (returns None for any
+// valid format — the archive subsystem is deferred), but CPython raises
+// `ValueError("unknown archive format ...")` for an unregistered format. Only
+// the 5 built-in default formats are accepted; anything else raises ValueError.
+// A valid-format call keeps the historical None return (no over-raise).
+unsafe extern "C" fn dispatch_make_archive(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let _ = core::hint::black_box(stringify!(dispatch_make_archive));
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    // The format is the 2nd positional arg. If absent we cannot validate it, so
+    // fall through to the historical None return rather than over-raise.
+    if let Some(fmt) = a.get(1).copied().and_then(extract_str) {
+        const KNOWN_FORMATS: &[&str] = &["zip", "tar", "gztar", "bztar", "xztar"];
+        if !KNOWN_FORMATS.contains(&fmt.as_str()) {
+            return raise_named("ValueError", &format!("unknown archive format '{fmt}'"));
+        }
+    }
+    MbValue::none()
+}
 dispatch_variadic_none!(dispatch_unpack_archive);
 dispatch_variadic_none!(dispatch_register_archive_format);
 dispatch_variadic_none!(dispatch_register_unpack_format);
@@ -144,40 +208,28 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("copy", dispatch_copy as usize),
-        ("copy2", dispatch_copy2 as usize),
-        ("copyfile", dispatch_copyfile as usize),
-        ("copyfileobj", dispatch_copyfileobj as usize),
-        ("copymode", dispatch_copymode as usize),
-        ("copystat", dispatch_copystat as usize),
-        ("copytree", dispatch_copytree as usize),
-        ("rmtree", dispatch_rmtree as usize),
-        ("move", dispatch_move as usize),
-        ("which", dispatch_which as usize),
-        ("disk_usage", dispatch_disk_usage as usize),
-        ("get_terminal_size", dispatch_get_terminal_size as usize),
-        ("get_archive_formats", dispatch_get_archive_formats as usize),
-        ("get_unpack_formats", dispatch_get_unpack_formats as usize),
-        ("chown", dispatch_chown as usize),
-        ("ignore_patterns", dispatch_ignore_patterns as usize),
-        ("make_archive", dispatch_make_archive as usize),
-        ("unpack_archive", dispatch_unpack_archive as usize),
-        (
-            "register_archive_format",
-            dispatch_register_archive_format as usize,
-        ),
-        (
-            "register_unpack_format",
-            dispatch_register_unpack_format as usize,
-        ),
-        (
-            "unregister_archive_format",
-            dispatch_unregister_archive_format as usize,
-        ),
-        (
-            "unregister_unpack_format",
-            dispatch_unregister_unpack_format as usize,
-        ),
+        ("copy",                       dispatch_copy                       as usize),
+        ("copy2",                      dispatch_copy2                      as usize),
+        ("copyfile",                   dispatch_copyfile                   as usize),
+        ("copyfileobj",                dispatch_copyfileobj                as usize),
+        ("copymode",                   dispatch_copymode                   as usize),
+        ("copystat",                   dispatch_copystat                   as usize),
+        ("copytree",                   dispatch_copytree                   as usize),
+        ("rmtree",                     dispatch_rmtree                     as usize),
+        ("move",                       dispatch_move                       as usize),
+        ("which",                      dispatch_which                      as usize),
+        ("disk_usage",                 dispatch_disk_usage                 as usize),
+        ("get_terminal_size",          dispatch_get_terminal_size          as usize),
+        ("get_archive_formats",        dispatch_get_archive_formats        as usize),
+        ("get_unpack_formats",         dispatch_get_unpack_formats         as usize),
+        ("chown",                      dispatch_chown                      as usize),
+        ("ignore_patterns",            dispatch_ignore_patterns            as usize),
+        ("make_archive",               dispatch_make_archive               as usize),
+        ("unpack_archive",             dispatch_unpack_archive             as usize),
+        ("register_archive_format",    dispatch_register_archive_format    as usize),
+        ("register_unpack_format",     dispatch_register_unpack_format     as usize),
+        ("unregister_archive_format",  dispatch_unregister_archive_format  as usize),
+        ("unregister_unpack_format",   dispatch_unregister_unpack_format   as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -209,15 +261,8 @@ pub fn register() {
     // on each platform (one is the imported alias, the other resolves to
     // None at module load on the foreign OS). Mirror that surface here.
     for sub in [
-        "collections",
-        "errno",
-        "fnmatch",
-        "nt",
-        "os",
-        "posix",
-        "stat",
-        "sys",
-        "warnings",
+        "collections", "errno", "fnmatch", "nt", "os", "posix",
+        "stat", "sys", "warnings",
     ] {
         attrs.insert(sub.to_string(), MbValue::none());
     }
@@ -235,13 +280,15 @@ fn make_error_sentinel(name: &str) -> MbValue {
         "__module__".to_string(),
         MbValue::from_ptr(MbObject::new_str("shutil".to_string())),
     );
+    // class_name="type" makes this a resolvable type-object: `resolve_class_name`
+    // reads `__name__` off a `type`-classed Instance, so `except shutil.SameFileError`
+    // (and the other shutil exception sentinels) match a `mb_raise("SameFileError", …)`.
+    // The `__name__`/`__module__` fields are preserved, so identity + attribute
+    // access (and `hasattr(shutil, "SameFileError")`) are unchanged.
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
+        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
-            class_name: name.to_string(),
+            class_name: "type".to_string(),
             fields: RwLock::new(fields),
         },
     });
@@ -252,12 +299,47 @@ fn make_error_sentinel(name: &str) -> MbValue {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data {
-            Some(s.clone())
-        } else {
-            None
-        }
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
     })
+}
+
+/// Raise a catchable exception whose type-name is `exc` (matched by the
+/// runtime's exception hierarchy: e.g. `FileNotFoundError`/`NotADirectoryError`
+/// also match `except OSError`). Returns `none` so dispatchers can `return`
+/// straight through — the runtime checks the pending-exception flag after the
+/// native call, exactly like the netrc/configparser native modules.
+fn raise_named(exc: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Resolve `rmtree`'s `ignore_errors` flag from the trailing args (everything
+/// after `path`). It may arrive as the 2nd positional (a bare value) or inside
+/// the trailing kwargs Dict as `ignore_errors=...`. Returns true only when the
+/// resolved value is truthy; absent/false → false (the refusal guards apply).
+fn rmtree_ignore_errors_flag(rest: &[MbValue]) -> bool {
+    for arg in rest {
+        // Trailing kwargs Dict: look up `ignore_errors` by name.
+        if let Some(ptr) = arg.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    if let Ok(guard) = lock.read() {
+                        if let Some(v) = guard.get("ignore_errors") {
+                            return super::super::builtins::mb_is_truthy(*v) != 0;
+                        }
+                    }
+                    // A kwargs dict without `ignore_errors` does not set the flag.
+                    continue;
+                }
+            }
+        }
+        // First non-dict trailing arg is the positional `ignore_errors`.
+        return super::super::builtins::mb_is_truthy(*arg) != 0;
+    }
+    false
 }
 
 fn make_named_instance(class_name: &str, fields_vec: Vec<(&str, MbValue)>) -> MbValue {
@@ -266,10 +348,42 @@ fn make_named_instance(class_name: &str, fields_vec: Vec<(&str, MbValue)>) -> Mb
         fields.insert(k.to_string(), v);
     }
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: AtomicU32::new(1),
-            kind: ObjKind::Instance,
+        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        data: ObjData::Instance {
+            class_name: class_name.to_string(),
+            fields: RwLock::new(fields),
         },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// Build a *namedtuple-shaped* Instance: dotted attribute access on each field
+/// name PLUS the full tuple surface (`len`, iteration, `tuple(x)`, indexing).
+///
+/// The runtime recognizes the `_namedtuple_fields` marker (a list of field-name
+/// strings) and routes `mb_len` / `mb_obj_subscript` / `mb_iter` through the
+/// values in declared order — see `collections_mod::namedtuple_values`. This
+/// lets `shutil.get_terminal_size()` match CPython's `os.terminal_size`
+/// namedtuple without introducing a new shared ObjData variant.
+fn make_namedtuple(class_name: &str, fields_vec: Vec<(&str, MbValue)>) -> MbValue {
+    let mut fields = FxHashMap::default();
+    let name_list: Vec<MbValue> = fields_vec
+        .iter()
+        .map(|(k, _)| MbValue::from_ptr(MbObject::new_str(k.to_string())))
+        .collect();
+    for (k, v) in fields_vec {
+        fields.insert(k.to_string(), v);
+    }
+    fields.insert(
+        "_namedtuple_fields".to_string(),
+        MbValue::from_ptr(MbObject::new_list(name_list)),
+    );
+    fields.insert(
+        "_namedtuple_name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(class_name.to_string())),
+    );
+    let obj = Box::new(MbObject {
+        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: RwLock::new(fields),
@@ -282,31 +396,29 @@ fn make_named_instance(class_name: &str, fields_vec: Vec<(&str, MbValue)>) -> Mb
 
 /// shutil.copy(src, dst) -> dst (copy a single file). Also wired as `copy2`.
 pub fn mb_shutil_copy(src: MbValue, dst: MbValue) -> MbValue {
-    let src_path = match extract_str(src) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
-    let dst_path = match extract_str(dst) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let src_path = match extract_str(src) { Some(s) => s, None => return MbValue::none() };
+    let dst_path = match extract_str(dst) { Some(s) => s, None => return MbValue::none() };
 
     let final_dst = if std::path::Path::new(&dst_path).is_dir() {
         let fname = std::path::Path::new(&src_path)
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("file");
-        std::path::Path::new(&dst_path)
-            .join(fname)
-            .to_str()
-            .unwrap_or("")
-            .to_string()
+        std::path::Path::new(&dst_path).join(fname)
+            .to_str().unwrap_or("").to_string()
     } else {
         dst_path
     };
 
     match std::fs::copy(&src_path, &final_dst) {
         Ok(_) => MbValue::from_ptr(MbObject::new_str(final_dst)),
+        // CPython raises FileNotFoundError when the source path is missing.
+        // `std::fs::copy` reports ErrorKind::NotFound in exactly that case, so a
+        // successful copy never reaches this arm — no over-raise on valid input.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            raise_named("FileNotFoundError",
+                &format!("[Errno 2] No such file or directory: '{src_path}'"))
+        }
         Err(_) => MbValue::none(),
     }
 }
@@ -314,38 +426,77 @@ pub fn mb_shutil_copy(src: MbValue, dst: MbValue) -> MbValue {
 /// shutil.copyfile(src, dst) -> dst. Direct file-to-file copy; no dir-target
 /// expansion. Also serves `copyfileobj` (file paths only; FD objects n/a).
 pub fn mb_shutil_copyfile(src: MbValue, dst: MbValue) -> MbValue {
-    let src_path = match extract_str(src) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
-    let dst_path = match extract_str(dst) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let src_path = match extract_str(src) { Some(s) => s, None => return MbValue::none() };
+    let dst_path = match extract_str(dst) { Some(s) => s, None => return MbValue::none() };
+    // CPython's copyfile calls `_samefile(src, dst)` and raises SameFileError
+    // when src and dst are the same file — including when dst is a symlink that
+    // points back to src. `canonicalize` resolves symlinks, so we compare the
+    // real targets. Both must already exist for this to fire: a normal copy to a
+    // not-yet-created dst fails canonicalize on dst and falls through, and two
+    // distinct files never share a canonical path — so no over-raise.
+    if let (Ok(c_src), Ok(c_dst)) = (
+        std::fs::canonicalize(&src_path),
+        std::fs::canonicalize(&dst_path),
+    ) {
+        if c_src == c_dst {
+            return raise_named("SameFileError",
+                &format!("{src_path:?} and {dst_path:?} are the same file"));
+        }
+    }
     match std::fs::copy(&src_path, &dst_path) {
         Ok(_) => MbValue::from_ptr(MbObject::new_str(dst_path)),
         Err(_) => MbValue::none(),
     }
 }
 
+/// shutil.copyfileobj(fsrc, fdst, length=COPY_BUFSIZE) -> None.
+///
+/// Copies bytes from one file-like object to another by driving their Python
+/// `.read(length)` / `.write(buf)` methods, exactly as CPython does:
+///   while buf := fsrc.read(length): fdst.write(buf)
+/// Works for any object exposing `read`/`write` (io.BytesIO, io.StringIO,
+/// real file handles, custom file-likes).
+pub fn mb_shutil_copyfileobj(fsrc: MbValue, fdst: MbValue, length: Option<MbValue>) -> MbValue {
+    // CPython default is COPY_BUFSIZE; a caller-supplied length (even 0/None
+    // semantics) is passed straight through to read().
+    let length = length
+        .filter(|v| !v.is_none())
+        .unwrap_or_else(|| MbValue::from_int(COPY_BUFSIZE));
+
+    loop {
+        let read_args = MbValue::from_ptr(MbObject::new_list(vec![length]));
+        let buf = call_obj_method(fsrc, "read", read_args);
+        // Stop on EOF: an empty bytes/str object is falsy.
+        if super::super::builtins::mb_is_truthy(buf) == 0 {
+            break;
+        }
+        let write_args = MbValue::from_ptr(MbObject::new_list(vec![buf]));
+        let _ = call_obj_method(fdst, "write", write_args);
+    }
+    MbValue::none()
+}
+
+/// Invoke a Python-level method by name on `obj` with a pre-built args list.
+fn call_obj_method(obj: MbValue, method: &str, args: MbValue) -> MbValue {
+    let name = MbValue::from_ptr(MbObject::new_str(method.to_string()));
+    super::super::class::mb_call_method(obj, name, args)
+}
+
 /// shutil.copymode(src, dst) -> None. Copies Unix permission bits.
 /// Also serves `copystat` (mamba doesn't track atime/mtime restore yet —
 /// permission bits are the meaningful subset).
 pub fn mb_shutil_copymode(src: MbValue, dst: MbValue) -> MbValue {
-    let src_path = match extract_str(src) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
-    let dst_path = match extract_str(dst) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let src_path = match extract_str(src) { Some(s) => s, None => return MbValue::none() };
+    let dst_path = match extract_str(dst) { Some(s) => s, None => return MbValue::none() };
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if let Ok(meta) = std::fs::metadata(&src_path) {
             let mode = meta.permissions().mode();
-            let _ = std::fs::set_permissions(&dst_path, std::fs::Permissions::from_mode(mode));
+            let _ = std::fs::set_permissions(
+                &dst_path,
+                std::fs::Permissions::from_mode(mode),
+            );
         }
     }
     #[cfg(not(unix))]
@@ -357,14 +508,17 @@ pub fn mb_shutil_copymode(src: MbValue, dst: MbValue) -> MbValue {
 
 /// shutil.copytree(src, dst) -> dst (recursive directory copy)
 pub fn mb_shutil_copytree(src: MbValue, dst: MbValue) -> MbValue {
-    let src_path = match extract_str(src) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
-    let dst_path = match extract_str(dst) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let src_path = match extract_str(src) { Some(s) => s, None => return MbValue::none() };
+    let dst_path = match extract_str(dst) { Some(s) => s, None => return MbValue::none() };
+    // CPython 3.12 copytree calls `os.makedirs(dst, exist_ok=dirs_exist_ok)` with
+    // `dirs_exist_ok=False` by default, raising FileExistsError when dst already
+    // exists. Mamba's dispatcher has no `dirs_exist_ok` arg, so the default
+    // (refuse an existing dst) applies. A normal copytree targets a fresh dst, so
+    // this guard never fires on valid input.
+    if std::path::Path::new(&dst_path).exists() {
+        return raise_named("FileExistsError",
+            &format!("[Errno 17] File exists: '{dst_path}'"));
+    }
     if copy_dir_recursive(&src_path, &dst_path).is_ok() {
         MbValue::from_ptr(MbObject::new_str(dst_path))
     } else {
@@ -394,9 +548,48 @@ fn copy_dir_recursive(src: &str, dst: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// shutil.rmtree(path) -> None
-pub fn mb_shutil_rmtree(path: MbValue) -> MbValue {
+/// shutil.rmtree(path, ignore_errors=False) -> None
+///
+/// When `ignore_errors` is true, CPython swallows every error (missing path,
+/// symlink refusal, non-dir) and returns silently — so the refusal guards below
+/// must NOT fire in that mode.
+pub fn mb_shutil_rmtree(path: MbValue, ignore_errors: bool) -> MbValue {
     if let Some(s) = extract_str(path) {
+        // Mirror CPython rmtree's refusal conditions using a no-follow lstat:
+        //   - missing path              -> FileNotFoundError
+        //   - symlink (even to a dir)   -> OSError ("Cannot call rmtree on a
+        //                                  symbolic link"); the link target is
+        //                                  left untouched
+        //   - not a directory (FIFO,
+        //     regular file, socket)     -> NotADirectoryError
+        // A real directory falls through to the actual recursive remove, so a
+        // valid rmtree is unaffected. With ignore_errors=True every condition is
+        // swallowed (no raise), matching CPython.
+        match std::fs::symlink_metadata(&s) {
+            Err(_) => {
+                if !ignore_errors {
+                    return raise_named("FileNotFoundError",
+                        &format!("[Errno 2] No such file or directory: '{s}'"));
+                }
+                return MbValue::none();
+            }
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    if !ignore_errors {
+                        return raise_named("OSError",
+                            "Cannot call rmtree on a symbolic link");
+                    }
+                    return MbValue::none();
+                }
+                if !meta.is_dir() {
+                    if !ignore_errors {
+                        return raise_named("NotADirectoryError",
+                            &format!("[Errno 20] Not a directory: '{s}'"));
+                    }
+                    return MbValue::none();
+                }
+            }
+        }
         let _ = std::fs::remove_dir_all(&s);
     }
     MbValue::none()
@@ -404,14 +597,17 @@ pub fn mb_shutil_rmtree(path: MbValue) -> MbValue {
 
 /// shutil.move(src, dst) -> dst
 pub fn mb_shutil_move(src: MbValue, dst: MbValue) -> MbValue {
-    let src_path = match extract_str(src) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
-    let dst_path = match extract_str(dst) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let src_path = match extract_str(src) { Some(s) => s, None => return MbValue::none() };
+    let dst_path = match extract_str(dst) { Some(s) => s, None => return MbValue::none() };
+
+    // CPython's move starts with os.rename(src, dst), which raises
+    // FileNotFoundError when src is missing. Use a no-follow lstat so a dangling
+    // symlink (which IS movable) is not mistaken for a missing source; only a
+    // truly absent path raises. A real file/dir source falls through.
+    if std::fs::symlink_metadata(&src_path).is_err() {
+        return raise_named("FileNotFoundError",
+            &format!("[Errno 2] No such file or directory: '{src_path}'"));
+    }
 
     // CPython: if dst is an existing directory, move src into it preserving
     // the basename. Mirror that surface.
@@ -423,11 +619,8 @@ pub fn mb_shutil_move(src: MbValue, dst: MbValue) -> MbValue {
         if fname.is_empty() {
             dst_path
         } else {
-            std::path::Path::new(&dst_path)
-                .join(fname)
-                .to_str()
-                .unwrap_or("")
-                .to_string()
+            std::path::Path::new(&dst_path).join(fname)
+                .to_str().unwrap_or("").to_string()
         }
     } else {
         dst_path
@@ -453,10 +646,7 @@ pub fn mb_shutil_move(src: MbValue, dst: MbValue) -> MbValue {
 
 /// shutil.which(name) -> path string or None
 pub fn mb_shutil_which(name: MbValue) -> MbValue {
-    let cmd = match extract_str(name) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let cmd = match extract_str(name) { Some(s) => s, None => return MbValue::none() };
 
     let path_var = match std::env::var("PATH") {
         Ok(v) => v,
@@ -483,42 +673,154 @@ pub fn mb_shutil_which(name: MbValue) -> MbValue {
 }
 
 /// shutil.disk_usage(path) -> namedtuple(total, used, free).
-/// Returns an Instance with `total`/`used`/`free` int fields. Real
-/// filesystem statvfs is deferred (needs nix/libc); when stat is
-/// unavailable we still return a zero-filled instance so the surface
-/// shape matches.
+///
+/// Returns an Instance with `total`/`used`/`free` int fields, computed from a
+/// real `statvfs(2)` on POSIX. CPython 3.12 derives the fields as:
+///   total = f_blocks * f_frsize
+///   free  = f_bavail * f_frsize
+///   used  = total - free          (so total == used + free always holds)
+/// Mamba ints are 48-bit; the byte totals on a typical disk (~2e12) sit well
+/// inside 2^47-1, but we clamp defensively to avoid a panic on huge volumes.
 pub fn mb_shutil_disk_usage(path: MbValue) -> MbValue {
     let p = extract_str(path).unwrap_or_default();
-    let (total, used, free): (i64, i64, i64) = if let Ok(meta) = std::fs::metadata(&p) {
-        // For a regular file we can at least report its size as `used`.
-        // For a directory we cannot stat the filesystem without a syscall
-        // binding; return zeros for total/free.
-        let used = meta.len() as i64;
-        (0, used, 0)
-    } else {
+
+    // CPython's disk_usage calls os.statvfs(path), which raises FileNotFoundError
+    // when the path does not exist. Guard on existence first; any real path
+    // proceeds to the statvfs computation below, so a valid call never raises.
+    if !std::path::Path::new(&p).exists() {
+        return raise_named("FileNotFoundError",
+            &format!("[Errno 2] No such file or directory: '{p}'"));
+    }
+
+    #[cfg(unix)]
+    let (total, used, free): (i64, i64, i64) = {
+        use std::os::unix::ffi::OsStrExt;
+        let c_path = std::ffi::CString::new(
+            std::path::Path::new(&p).as_os_str().as_bytes(),
+        );
+        match c_path {
+            Ok(cstr) => {
+                // SAFETY: statvfs writes into a zeroed buffer; we only read
+                // scalar fields back out on success (rc == 0).
+                let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+                let rc = unsafe { libc::statvfs(cstr.as_ptr(), &mut stat) };
+                if rc == 0 {
+                    let frsize = stat.f_frsize as i128;
+                    let total = stat.f_blocks as i128 * frsize;
+                    let free = stat.f_bavail as i128 * frsize;
+                    let used = total - free;
+                    (clamp_i64(total), clamp_i64(used), clamp_i64(free))
+                } else {
+                    (0, 0, 0)
+                }
+            }
+            Err(_) => (0, 0, 0),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let (total, used, free): (i64, i64, i64) = {
+        let _ = &p;
         (0, 0, 0)
     };
+
     make_named_instance(
         "usage",
         vec![
             ("total", MbValue::from_int(total)),
-            ("used", MbValue::from_int(used)),
-            ("free", MbValue::from_int(free)),
+            ("used",  MbValue::from_int(used)),
+            ("free",  MbValue::from_int(free)),
         ],
     )
 }
 
-/// shutil.get_terminal_size(fallback=(80, 24)) -> namedtuple(columns, lines).
-/// TIOCGWINSZ syscall is deferred — we return the fallback.
-pub fn mb_shutil_get_terminal_size() -> MbValue {
-    let (cols, lines) = (80_i64, 24_i64);
-    make_named_instance(
-        "terminal_size",
+/// Clamp an i128 byte count into mamba's 48-bit signed int payload range so
+/// `MbValue::from_int` never panics on multi-terabyte volumes.
+fn clamp_i64(v: i128) -> i64 {
+    const MAX: i128 = (1i128 << 47) - 1;
+    const MIN: i128 = -(1i128 << 47);
+    v.clamp(MIN, MAX) as i64
+}
+
+/// shutil.get_terminal_size(fallback=(80, 24)) -> os.terminal_size namedtuple.
+///
+/// CPython precedence per field:
+///   1. The `COLUMNS` / `LINES` env var, if present and parseable as an int
+///      (a malformed value is ignored, NOT an error).
+///   2. The real terminal size via ioctl(TIOCGWINSZ).
+///   3. The `fallback` tuple (default `(80, 24)`).
+///
+/// The ioctl probe is deferred, so steps 2/3 collapse to the caller-supplied
+/// `fallback` (default 80×24). The returned value is a true namedtuple, so it
+/// supports `.columns` / `.lines`, `len() == 2`, `tuple(size)`, and indexing —
+/// matching `os.terminal_size`.
+pub fn mb_shutil_get_terminal_size(fallback: Option<MbValue>) -> MbValue {
+    let (fb_cols, fb_lines) = fallback
+        .filter(|v| !v.is_none())
+        .and_then(tuple_pair_ints)
+        .unwrap_or((80, 24));
+
+    // Env override: parse as a signed int; a malformed value falls through to
+    // the fallback (CPython swallows the ValueError).
+    let cols = env_lookup("COLUMNS")
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .unwrap_or(fb_cols);
+    let lines = env_lookup("LINES")
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .unwrap_or(fb_lines);
+
+    make_namedtuple(
+        "os.terminal_size",
         vec![
             ("columns", MbValue::from_int(cols)),
-            ("lines", MbValue::from_int(lines)),
+            ("lines",   MbValue::from_int(lines)),
         ],
     )
+}
+
+/// Read an environment variable the way CPython's `shutil.get_terminal_size`
+/// does — through `os.environ` — falling back to the real process environment.
+///
+/// CPython consults the Python-level `os.environ` mapping, so a test that does
+/// `os.environ['COLUMNS'] = '777'` must be honored. In mamba `os.environ` is a
+/// plain dict that user code mutates but which is NOT synced to the C
+/// environment, so we probe that dict first and only fall back to
+/// `std::env::var` for vars inherited from the real process env.
+fn env_lookup(key: &str) -> Option<String> {
+    // 1. os.environ dict (reflects runtime `os.environ[...] = ...` writes).
+    let from_environ = super::super::module::MODULES.with(|mods| {
+        let mods = mods.borrow();
+        let environ = mods.get("os").and_then(|m| m.attrs.get("environ").copied())?;
+        let ptr = environ.as_ptr()?;
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let guard = lock.read().unwrap();
+                return guard.get(key).and_then(|v| extract_str(*v));
+            }
+        }
+        None
+    });
+    if from_environ.is_some() {
+        return from_environ;
+    }
+    // 2. Real process environment.
+    std::env::var(key).ok()
+}
+
+/// Extract a `(i64, i64)` pair from a 2-element tuple/list MbValue (used for
+/// the `fallback=(cols, lines)` argument of `get_terminal_size`).
+fn tuple_pair_ints(val: MbValue) -> Option<(i64, i64)> {
+    let items: Vec<MbValue> = val.as_ptr().and_then(|ptr| unsafe {
+        match &(*ptr).data {
+            ObjData::Tuple(items) => Some(items.clone()),
+            ObjData::List(lock) => Some(lock.read().unwrap().to_vec()),
+            _ => None,
+        }
+    })?;
+    if items.len() != 2 {
+        return None;
+    }
+    Some((items[0].as_int()?, items[1].as_int()?))
 }
 
 /// `get_archive_formats` / `get_unpack_formats` stub: empty list.
@@ -558,13 +860,16 @@ mod tests {
         std::fs::write(src_dir.join("a.txt"), "hello").unwrap();
         std::fs::write(src_dir.join("sub/b.txt"), "world").unwrap();
 
-        let result = mb_shutil_copytree(s(src_dir.to_str().unwrap()), s(dst_dir.to_str().unwrap()));
+        let result = mb_shutil_copytree(
+            s(src_dir.to_str().unwrap()),
+            s(dst_dir.to_str().unwrap()),
+        );
         assert!(!result.is_none());
         assert!(dst_dir.join("a.txt").exists());
         assert!(dst_dir.join("sub/b.txt").exists());
 
-        mb_shutil_rmtree(s(src_dir.to_str().unwrap()));
-        mb_shutil_rmtree(s(dst_dir.to_str().unwrap()));
+        mb_shutil_rmtree(s(src_dir.to_str().unwrap()), false);
+        mb_shutil_rmtree(s(dst_dir.to_str().unwrap()), false);
         assert!(!src_dir.exists());
         assert!(!dst_dir.exists());
     }
@@ -576,7 +881,10 @@ mod tests {
         let dst = scratch.path().join("dst.txt");
 
         std::fs::write(&src, "content").unwrap();
-        let result = mb_shutil_move(s(src.to_str().unwrap()), s(dst.to_str().unwrap()));
+        let result = mb_shutil_move(
+            s(src.to_str().unwrap()),
+            s(dst.to_str().unwrap()),
+        );
         assert_eq!(get_str(result), dst.to_str().unwrap());
         assert!(!src.exists());
         assert!(dst.exists());
@@ -599,7 +907,10 @@ mod tests {
         let dst = scratch.path().join("b.txt");
         std::fs::write(&src, "payload").unwrap();
 
-        let out = mb_shutil_copyfile(s(src.to_str().unwrap()), s(dst.to_str().unwrap()));
+        let out = mb_shutil_copyfile(
+            s(src.to_str().unwrap()),
+            s(dst.to_str().unwrap()),
+        );
         assert_eq!(get_str(out), dst.to_str().unwrap());
         assert_eq!(std::fs::read_to_string(&dst).unwrap(), "payload");
     }
@@ -615,31 +926,48 @@ mod tests {
         std::fs::write(&dst, "y").unwrap();
         std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o741)).unwrap();
 
-        mb_shutil_copymode(s(src.to_str().unwrap()), s(dst.to_str().unwrap()));
+        mb_shutil_copymode(
+            s(src.to_str().unwrap()),
+            s(dst.to_str().unwrap()),
+        );
         let mode = std::fs::metadata(&dst).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o741);
     }
 
     #[test]
     fn test_disk_usage_shape() {
+        // disk_usage now reports real statvfs(2) data, matching CPython:
+        // total/used/free are filesystem-wide byte counts where
+        // `total == used + free` and `total > 0`.
         let scratch = tempfile::tempdir().unwrap();
         let file = scratch.path().join("f");
         std::fs::write(&file, "abcdef").unwrap();
 
         let usage = mb_shutil_disk_usage(s(file.to_str().unwrap()));
+        let total = instance_field(usage, "total").and_then(|v| v.as_int());
         let used = instance_field(usage, "used").and_then(|v| v.as_int());
-        assert_eq!(used, Some(6));
-        assert!(instance_field(usage, "total").is_some());
-        assert!(instance_field(usage, "free").is_some());
+        let free = instance_field(usage, "free").and_then(|v| v.as_int());
+        assert!(total.is_some() && used.is_some() && free.is_some());
+        #[cfg(unix)]
+        {
+            let (t, u, f) = (total.unwrap(), used.unwrap(), free.unwrap());
+            assert!(t > 0, "total should be positive, got {t}");
+            assert_eq!(t, u + f, "total must equal used + free");
+        }
     }
 
     #[test]
     fn test_get_terminal_size_shape() {
-        let term = mb_shutil_get_terminal_size();
+        // Drop any inherited env so the fallback path is deterministic.
+        std::env::remove_var("COLUMNS");
+        std::env::remove_var("LINES");
+        let term = mb_shutil_get_terminal_size(None);
         let cols = instance_field(term, "columns").and_then(|v| v.as_int());
         let lines = instance_field(term, "lines").and_then(|v| v.as_int());
         assert_eq!(cols, Some(80));
         assert_eq!(lines, Some(24));
+        // Namedtuple markers present so len()/tuple()/indexing work at runtime.
+        assert!(instance_field(term, "_namedtuple_fields").is_some());
     }
 
     #[test]
@@ -660,11 +988,9 @@ mod tests {
     fn test_register_wires_full_surface() {
         register();
         // 22 dispatchers must be registered.
-        let snap = super::super::super::module::NATIVE_FUNC_ADDRS.with(|s| s.borrow().len());
-        assert!(
-            snap >= 22,
-            "expected at least 22 native func addrs registered, got {snap}"
-        );
+        let snap = super::super::super::module::NATIVE_FUNC_ADDRS
+            .with(|s| s.borrow().len());
+        assert!(snap >= 22, "expected at least 22 native func addrs registered, got {snap}");
     }
 
     #[test]

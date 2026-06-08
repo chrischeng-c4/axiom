@@ -36,11 +36,7 @@ pub struct PythonVersion {
 
 impl PythonVersion {
     pub fn new(major: u32, minor: u32, patch: u32) -> Self {
-        Self {
-            major,
-            minor,
-            patch,
-        }
+        Self { major, minor, patch }
     }
 }
 
@@ -84,11 +80,7 @@ impl FromStr for PythonVersion {
         let major = numeric[0];
         let minor = numeric.get(1).copied().unwrap_or(0);
         let patch = numeric.get(2).copied().unwrap_or(0);
-        Ok(PythonVersion {
-            major,
-            minor,
-            patch,
-        })
+        Ok(PythonVersion { major, minor, patch })
     }
 }
 
@@ -114,7 +106,9 @@ impl PythonRequest {
         match self {
             PythonRequest::Any => true,
             PythonRequest::Major(maj) => version.major == *maj,
-            PythonRequest::MajorMinor(maj, min) => version.major == *maj && version.minor == *min,
+            PythonRequest::MajorMinor(maj, min) => {
+                version.major == *maj && version.minor == *min
+            }
             PythonRequest::Exact(want) => *want == *version,
         }
     }
@@ -307,18 +301,19 @@ pub fn read_python_pin(project_root: &Path) -> Result<Option<PythonRequest>, Ind
         return Ok(None);
     };
 
-    PythonRequest::from_str(line)
-        .map(Some)
-        .map_err(|err| IndexError::ParseError {
-            url: pin.display().to_string(),
-            detail: err,
-        })
+    PythonRequest::from_str(line).map(Some).map_err(|err| IndexError::ParseError {
+        url: pin.display().to_string(),
+        detail: err,
+    })
 }
 
 /// Write a `.python-version` file pinning the project to `request`.
 /// Overwrites any existing pin. `Any` is rejected — a bare `*` pin would
 /// be a no-op that's almost certainly an authoring mistake.
-pub fn write_python_pin(project_root: &Path, request: &PythonRequest) -> Result<(), IndexError> {
+pub fn write_python_pin(
+    project_root: &Path,
+    request: &PythonRequest,
+) -> Result<(), IndexError> {
     let body = match request {
         PythonRequest::Any => {
             return Err(IndexError::ParseError {

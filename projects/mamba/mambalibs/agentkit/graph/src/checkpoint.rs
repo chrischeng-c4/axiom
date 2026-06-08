@@ -83,10 +83,7 @@ where
     State: Clone + Send + Sync + 'static,
 {
     async fn save(&self, key: &str, state: &State) -> NovaResult<()> {
-        self.inner
-            .write()
-            .await
-            .insert(key.to_string(), state.clone());
+        self.inner.write().await.insert(key.to_string(), state.clone());
         Ok(())
     }
 
@@ -119,9 +116,7 @@ impl<State> FileCheckpoint<State> {
     /// is created if it does not yet exist.
     pub async fn new(root: impl AsRef<Path>) -> NovaResult<Self> {
         let root = root.as_ref().to_path_buf();
-        tokio::fs::create_dir_all(&root)
-            .await
-            .map_err(NovaError::IoError)?;
+        tokio::fs::create_dir_all(&root).await.map_err(NovaError::IoError)?;
         Ok(Self {
             root,
             _state: PhantomData,

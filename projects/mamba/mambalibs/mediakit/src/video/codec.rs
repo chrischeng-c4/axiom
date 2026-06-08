@@ -45,13 +45,7 @@ impl Decoder for RawDecoder {
             let start = i * frame_size;
             let frame_data = data[start..start + frame_size].to_vec();
             let timestamp = i as f64 / meta.fps;
-            frames.push(Frame::new(
-                frame_data,
-                meta.width,
-                meta.height,
-                timestamp,
-                i,
-            ));
+            frames.push(Frame::new(frame_data, meta.width, meta.height, timestamp, i));
         }
 
         Ok(frames)

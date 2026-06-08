@@ -6,12 +6,13 @@
 //! Run with: cargo test -p cclab-titan --test test_query_builder
 
 use cclab_pg::{
-    Connection, ExtractedValue, JoinCondition, Operator, OrderDirection, PoolConfig, QueryBuilder,
-    WindowSpec,
+    Connection, PoolConfig, QueryBuilder, Operator, OrderDirection,
+    JoinCondition, ExtractedValue, WindowSpec,
 };
 
 fn get_database_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
+    std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
 }
 
 async fn cleanup_table(pool: &sqlx::PgPool, table: &str) -> Result<(), sqlx::Error> {
@@ -36,16 +37,10 @@ async fn test_select_all_columns() -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT, age INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, age) VALUES ('Alice', 30), ('Bob', 25)",
-        table
-    ))
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, age) VALUES ('Alice', 30), ('Bob', 25)", table))
+        .execute(pool).await?;
 
     let qb = QueryBuilder::new(table)?;
     let (sql, _params) = qb.build();
@@ -59,11 +54,8 @@ async fn test_select_all_columns() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_select_specific_columns() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("users")?.select(vec![
-        "id".to_string(),
-        "name".to_string(),
-        "email".to_string(),
-    ])?;
+    let qb = QueryBuilder::new("users")?
+        .select(vec!["id".to_string(), "name".to_string(), "email".to_string()])?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("\"id\""));
@@ -74,7 +66,8 @@ async fn test_select_specific_columns() -> Result<(), Box<dyn std::error::Error>
 
 #[tokio::test]
 async fn test_select_with_only() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("users")?.only(&["id", "name"])?;
+    let qb = QueryBuilder::new("users")?
+        .only(&["id", "name"])?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("\"id\""));
@@ -86,11 +79,7 @@ async fn test_select_with_only() -> Result<(), Box<dyn std::error::Error>> {
 #[tokio::test]
 async fn test_select_with_defer() -> Result<(), Box<dyn std::error::Error>> {
     let qb = QueryBuilder::new("users")?
-        .select(vec![
-            "id".to_string(),
-            "name".to_string(),
-            "large_blob".to_string(),
-        ])?
+        .select(vec!["id".to_string(), "name".to_string(), "large_blob".to_string()])?
         .defer(&["large_blob"])?;
 
     let (sql, _) = qb.build();
@@ -106,8 +95,8 @@ async fn test_select_with_defer() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_where_eq() -> Result<(), Box<dyn std::error::Error>> {
-    let qb =
-        QueryBuilder::new("users")?.where_clause("id", Operator::Eq, ExtractedValue::Int(42))?;
+    let qb = QueryBuilder::new("users")?
+        .where_clause("id", Operator::Eq, ExtractedValue::Int(42))?;
 
     let (sql, params) = qb.build();
     assert!(sql.contains("WHERE"));
@@ -121,11 +110,7 @@ async fn test_where_multiple_conditions() -> Result<(), Box<dyn std::error::Erro
     let qb = QueryBuilder::new("users")?
         .where_clause("age", Operator::Gte, ExtractedValue::Int(18))?
         .where_clause("active", Operator::Eq, ExtractedValue::Bool(true))?
-        .where_clause(
-            "name",
-            Operator::Like,
-            ExtractedValue::String("%test%".to_string()),
-        )?;
+        .where_clause("name", Operator::Like, ExtractedValue::String("%test%".to_string()))?;
 
     let (sql, params) = qb.build();
     assert!(sql.contains("AND"));
@@ -135,10 +120,11 @@ async fn test_where_multiple_conditions() -> Result<(), Box<dyn std::error::Erro
 
 #[tokio::test]
 async fn test_filter_by_sqlalchemy_style_equality() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("users")?.filter_by(&[
-        ("active", ExtractedValue::Bool(true)),
-        ("deleted_at", ExtractedValue::Null),
-    ])?;
+    let qb = QueryBuilder::new("users")?
+        .filter_by(&[
+            ("active", ExtractedValue::Bool(true)),
+            ("deleted_at", ExtractedValue::Null),
+        ])?;
 
     let (sql, params) = qb.build();
     assert!(sql.contains("\"active\" = $1"));
@@ -151,11 +137,7 @@ async fn test_filter_by_sqlalchemy_style_equality() -> Result<(), Box<dyn std::e
 async fn test_where_between_sqlalchemy_style_range() -> Result<(), Box<dyn std::error::Error>> {
     let qb = QueryBuilder::new("orders")?
         .where_between("amount", ExtractedValue::Int(10), ExtractedValue::Int(20))?
-        .where_not_between(
-            "created_day",
-            ExtractedValue::Int(1),
-            ExtractedValue::Int(7),
-        )?;
+        .where_not_between("created_day", ExtractedValue::Int(1), ExtractedValue::Int(7))?;
 
     let (sql, params) = qb.build();
     assert!(sql.contains("\"amount\" BETWEEN $1 AND $2"));
@@ -187,16 +169,8 @@ async fn test_where_null_and_not_null() -> Result<(), Box<dyn std::error::Error>
 #[tokio::test]
 async fn test_where_like_ilike() -> Result<(), Box<dyn std::error::Error>> {
     let qb = QueryBuilder::new("users")?
-        .where_clause(
-            "name",
-            Operator::Like,
-            ExtractedValue::String("%alice%".to_string()),
-        )?
-        .where_clause(
-            "email",
-            Operator::ILike,
-            ExtractedValue::String("%@EXAMPLE.COM".to_string()),
-        )?;
+        .where_clause("name", Operator::Like, ExtractedValue::String("%alice%".to_string()))?
+        .where_clause("email", Operator::ILike, ExtractedValue::String("%@EXAMPLE.COM".to_string()))?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("LIKE"));
@@ -211,11 +185,7 @@ async fn test_where_comparison_operators() -> Result<(), Box<dyn std::error::Err
         .where_clause("stock", Operator::Lt, ExtractedValue::Int(50))?
         .where_clause("rating", Operator::Gte, ExtractedValue::Double(4.0))?
         .where_clause("discount", Operator::Lte, ExtractedValue::Double(0.5))?
-        .where_clause(
-            "category",
-            Operator::Ne,
-            ExtractedValue::String("deprecated".to_string()),
-        )?;
+        .where_clause("category", Operator::Ne, ExtractedValue::String("deprecated".to_string()))?;
 
     let (sql, params) = qb.build();
     assert!(sql.contains(">") && !sql.contains(">=") || sql.contains("> $"));
@@ -237,7 +207,8 @@ async fn test_where_in_subquery() -> Result<(), Box<dyn std::error::Error>> {
         .select(vec!["user_id".to_string()])?
         .where_clause("total", Operator::Gt, ExtractedValue::Double(1000.0))?;
 
-    let qb = QueryBuilder::new("users")?.where_in_subquery("id", subquery)?;
+    let qb = QueryBuilder::new("users")?
+        .where_in_subquery("id", subquery)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("IN (SELECT"));
@@ -246,9 +217,11 @@ async fn test_where_in_subquery() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_where_not_in_subquery() -> Result<(), Box<dyn std::error::Error>> {
-    let subquery = QueryBuilder::new("banned_users")?.select(vec!["user_id".to_string()])?;
+    let subquery = QueryBuilder::new("banned_users")?
+        .select(vec!["user_id".to_string()])?;
 
-    let qb = QueryBuilder::new("users")?.where_not_in_subquery("id", subquery)?;
+    let qb = QueryBuilder::new("users")?
+        .where_not_in_subquery("id", subquery)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("NOT IN (SELECT"));
@@ -257,9 +230,11 @@ async fn test_where_not_in_subquery() -> Result<(), Box<dyn std::error::Error>> 
 
 #[tokio::test]
 async fn test_where_exists() -> Result<(), Box<dyn std::error::Error>> {
-    let subquery = QueryBuilder::new("orders")?.select(vec!["1".to_string()])?;
+    let subquery = QueryBuilder::new("orders")?
+        .select(vec!["1".to_string()])?;
 
-    let qb = QueryBuilder::new("users")?.where_exists(subquery)?;
+    let qb = QueryBuilder::new("users")?
+        .where_exists(subquery)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("EXISTS (SELECT"));
@@ -268,9 +243,11 @@ async fn test_where_exists() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_where_not_exists() -> Result<(), Box<dyn std::error::Error>> {
-    let subquery = QueryBuilder::new("spam_reports")?.select(vec!["1".to_string()])?;
+    let subquery = QueryBuilder::new("spam_reports")?
+        .select(vec!["1".to_string()])?;
 
-    let qb = QueryBuilder::new("messages")?.where_not_exists(subquery)?;
+    let qb = QueryBuilder::new("messages")?
+        .where_not_exists(subquery)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("NOT EXISTS (SELECT"));
@@ -283,8 +260,8 @@ async fn test_where_not_exists() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_where_json_contains() -> Result<(), Box<dyn std::error::Error>> {
-    let qb =
-        QueryBuilder::new("documents")?.where_json_contains("metadata", r#"{"type": "report"}"#)?;
+    let qb = QueryBuilder::new("documents")?
+        .where_json_contains("metadata", r#"{"type": "report"}"#)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("@>"));
@@ -303,7 +280,8 @@ async fn test_where_json_contained_by() -> Result<(), Box<dyn std::error::Error>
 
 #[tokio::test]
 async fn test_where_json_key_exists() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("documents")?.where_json_key_exists("metadata", "author")?;
+    let qb = QueryBuilder::new("documents")?
+        .where_json_key_exists("metadata", "author")?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("?"));
@@ -346,13 +324,11 @@ async fn test_where_any() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_where_array_contains() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("posts")?.where_array_contains(
-        "tags",
-        vec![
+    let qb = QueryBuilder::new("posts")?
+        .where_array_contains("tags", vec![
             ExtractedValue::String("rust".to_string()),
             ExtractedValue::String("postgres".to_string()),
-        ],
-    )?;
+        ])?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("@>"));
@@ -361,13 +337,11 @@ async fn test_where_array_contains() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_where_array_overlaps() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("posts")?.where_array_overlaps(
-        "tags",
-        vec![
+    let qb = QueryBuilder::new("posts")?
+        .where_array_overlaps("tags", vec![
             ExtractedValue::String("featured".to_string()),
             ExtractedValue::String("popular".to_string()),
-        ],
-    )?;
+        ])?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("&&"));
@@ -380,7 +354,8 @@ async fn test_where_array_overlaps() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_order_by_single() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("users")?.order_by("created_at", OrderDirection::Desc)?;
+    let qb = QueryBuilder::new("users")?
+        .order_by("created_at", OrderDirection::Desc)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("ORDER BY"));
@@ -404,7 +379,9 @@ async fn test_order_by_multiple() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_limit_offset() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("users")?.limit(10).offset(20);
+    let qb = QueryBuilder::new("users")?
+        .limit(10)
+        .offset(20);
 
     let (sql, _) = qb.build();
     assert!(sql.contains("LIMIT"));
@@ -442,7 +419,8 @@ async fn test_distinct_on() -> Result<(), Box<dyn std::error::Error>> {
 #[tokio::test]
 async fn test_inner_join() -> Result<(), Box<dyn std::error::Error>> {
     let condition = JoinCondition::new("user_id", "u", "id")?;
-    let qb = QueryBuilder::new("orders")?.inner_join("users", Some("u"), condition)?;
+    let qb = QueryBuilder::new("orders")?
+        .inner_join("users", Some("u"), condition)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("INNER JOIN"));
@@ -453,7 +431,8 @@ async fn test_inner_join() -> Result<(), Box<dyn std::error::Error>> {
 #[tokio::test]
 async fn test_left_join() -> Result<(), Box<dyn std::error::Error>> {
     let condition = JoinCondition::new("id", "profiles", "user_id")?;
-    let qb = QueryBuilder::new("users")?.left_join("profiles", None, condition)?;
+    let qb = QueryBuilder::new("users")?
+        .left_join("profiles", None, condition)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("LEFT JOIN"));
@@ -463,7 +442,8 @@ async fn test_left_join() -> Result<(), Box<dyn std::error::Error>> {
 #[tokio::test]
 async fn test_right_join() -> Result<(), Box<dyn std::error::Error>> {
     let condition = JoinCondition::new("product_id", "products", "id")?;
-    let qb = QueryBuilder::new("orders")?.right_join("products", None, condition)?;
+    let qb = QueryBuilder::new("orders")?
+        .right_join("products", None, condition)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("RIGHT JOIN"));
@@ -473,7 +453,8 @@ async fn test_right_join() -> Result<(), Box<dyn std::error::Error>> {
 #[tokio::test]
 async fn test_full_outer_join() -> Result<(), Box<dyn std::error::Error>> {
     let condition = JoinCondition::new("dept_id", "departments", "id")?;
-    let qb = QueryBuilder::new("employees")?.full_join("departments", None, condition)?;
+    let qb = QueryBuilder::new("employees")?
+        .full_join("departments", None, condition)?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("FULL") || sql.contains("FULL OUTER"));
@@ -503,7 +484,8 @@ async fn test_multiple_joins() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_count_all() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("users")?.count_agg(Some("total"))?;
+    let qb = QueryBuilder::new("users")?
+        .count_agg(Some("total"))?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("COUNT(*)"));
@@ -513,7 +495,8 @@ async fn test_count_all() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_count_distinct() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("orders")?.count_distinct("user_id", Some("unique_customers"))?;
+    let qb = QueryBuilder::new("orders")?
+        .count_distinct("user_id", Some("unique_customers"))?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("COUNT(DISTINCT"));
@@ -587,7 +570,8 @@ async fn test_row_number() -> Result<(), Box<dyn std::error::Error>> {
         .partition_by(&["department"])
         .order_by("salary", OrderDirection::Desc);
 
-    let qb = QueryBuilder::new("employees")?.row_number(spec, "rank")?;
+    let qb = QueryBuilder::new("employees")?
+        .row_number(spec, "rank")?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("ROW_NUMBER()"));
@@ -599,7 +583,8 @@ async fn test_row_number() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_rank_dense_rank() -> Result<(), Box<dyn std::error::Error>> {
-    let spec = WindowSpec::new().order_by("score", OrderDirection::Desc);
+    let spec = WindowSpec::new()
+        .order_by("score", OrderDirection::Desc);
 
     let qb = QueryBuilder::new("players")?
         .rank(spec.clone(), "rank")?
@@ -650,11 +635,12 @@ async fn test_simple_cte() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_raw_cte() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("recent_orders")?.with_cte_raw(
-        "recent_orders",
-        "SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '7 days'",
-        vec![],
-    )?;
+    let qb = QueryBuilder::new("recent_orders")?
+        .with_cte_raw(
+            "recent_orders",
+            "SELECT * FROM orders WHERE created_at > NOW() - INTERVAL '7 days'",
+            vec![],
+        )?;
 
     let (sql, _) = qb.build();
     assert!(sql.contains("WITH"));
@@ -670,10 +656,7 @@ async fn test_raw_cte() -> Result<(), Box<dyn std::error::Error>> {
 async fn test_build_insert() -> Result<(), Box<dyn std::error::Error>> {
     let qb = QueryBuilder::new("users")?;
     let values = vec![
-        (
-            "name".to_string(),
-            ExtractedValue::String("Alice".to_string()),
-        ),
+        ("name".to_string(), ExtractedValue::String("Alice".to_string())),
         ("age".to_string(), ExtractedValue::Int(30)),
         ("active".to_string(), ExtractedValue::Bool(true)),
     ];
@@ -692,18 +675,12 @@ async fn test_build_insert() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_build_update() -> Result<(), Box<dyn std::error::Error>> {
-    let qb =
-        QueryBuilder::new("users")?.where_clause("id", Operator::Eq, ExtractedValue::Int(42))?;
+    let qb = QueryBuilder::new("users")?
+        .where_clause("id", Operator::Eq, ExtractedValue::Int(42))?;
 
     let values = vec![
-        (
-            "name".to_string(),
-            ExtractedValue::String("Bob".to_string()),
-        ),
-        (
-            "updated_at".to_string(),
-            ExtractedValue::String("NOW()".to_string()),
-        ),
+        ("name".to_string(), ExtractedValue::String("Bob".to_string())),
+        ("updated_at".to_string(), ExtractedValue::String("NOW()".to_string())),
     ];
 
     let (sql, params) = qb.build_update(&values)?;
@@ -737,12 +714,12 @@ async fn test_build_delete() -> Result<(), Box<dyn std::error::Error>> {
 
 #[tokio::test]
 async fn test_returning_clause() -> Result<(), Box<dyn std::error::Error>> {
-    let qb = QueryBuilder::new("users")?.returning(&["id", "created_at"])?;
+    let qb = QueryBuilder::new("users")?
+        .returning(&["id", "created_at"])?;
 
-    let values = vec![(
-        "name".to_string(),
-        ExtractedValue::String("Test".to_string()),
-    )];
+    let values = vec![
+        ("name".to_string(), ExtractedValue::String("Test".to_string())),
+    ];
 
     let (sql, _) = qb.build_insert(&values)?;
     assert!(sql.contains("RETURNING"));
@@ -767,20 +744,15 @@ async fn test_integration_select_with_join() -> Result<(), Box<dyn std::error::E
 
     // Create tables
     sqlx::query("CREATE TABLE test_users_qb (id SERIAL PRIMARY KEY, name TEXT NOT NULL)")
-        .execute(pool)
-        .await?;
+        .execute(pool).await?;
     sqlx::query("CREATE TABLE test_orders_qb (id SERIAL PRIMARY KEY, user_id INTEGER REFERENCES test_users_qb(id), amount NUMERIC(10,2))")
         .execute(pool).await?;
 
     // Insert data
     sqlx::query("INSERT INTO test_users_qb (name) VALUES ('Alice'), ('Bob')")
-        .execute(pool)
-        .await?;
-    sqlx::query(
-        "INSERT INTO test_orders_qb (user_id, amount) VALUES (1, 100.00), (1, 200.00), (2, 150.00)",
-    )
-    .execute(pool)
-    .await?;
+        .execute(pool).await?;
+    sqlx::query("INSERT INTO test_orders_qb (user_id, amount) VALUES (1, 100.00), (1, 200.00), (2, 150.00)")
+        .execute(pool).await?;
 
     // Build and execute query with JOIN
     let condition = JoinCondition::new("user_id", "test_users_qb", "id")?;
@@ -795,7 +767,9 @@ async fn test_integration_select_with_join() -> Result<(), Box<dyn std::error::E
 
     let (sql, _params) = qb.build();
 
-    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    let rows = sqlx::query(&sql)
+        .fetch_all(pool)
+        .await?;
 
     assert_eq!(rows.len(), 3);
 
@@ -817,16 +791,12 @@ async fn test_integration_aggregates() -> Result<(), Box<dyn std::error::Error>>
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, category TEXT, amount NUMERIC(10,2))",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     sqlx::query(&format!(
         "INSERT INTO {} (category, amount) VALUES ('A', 100), ('A', 200), ('B', 150), ('B', 50)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Test aggregates
     let qb = QueryBuilder::new(table)?
@@ -857,9 +827,7 @@ async fn test_integration_window_function() -> Result<(), Box<dyn std::error::Er
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, dept TEXT, salary INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     sqlx::query(&format!(
         "INSERT INTO {} (dept, salary) VALUES ('IT', 5000), ('IT', 6000), ('HR', 4000), ('HR', 4500)",
@@ -871,7 +839,8 @@ async fn test_integration_window_function() -> Result<(), Box<dyn std::error::Er
         .partition_by(&["dept"])
         .order_by("salary", OrderDirection::Desc);
 
-    let qb = QueryBuilder::new(table)?.row_number(spec, "rank")?;
+    let qb = QueryBuilder::new(table)?
+        .row_number(spec, "rank")?;
 
     let (sql, _) = qb.build();
     let rows = sqlx::query(&sql).fetch_all(pool).await?;

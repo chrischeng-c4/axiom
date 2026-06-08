@@ -29,14 +29,12 @@ pub fn sobel(img: &Image) -> Image {
 fn sobel_at(img: &Image, w: usize, x: usize, y: usize) -> (i32, i32) {
     let p = |dx: usize, dy: usize| img.data[dy * w + dx] as i32;
 
-    let gx = -p(x - 1, y - 1) + p(x + 1, y - 1) - 2 * p(x - 1, y) + 2 * p(x + 1, y)
-        - p(x - 1, y + 1)
-        + p(x + 1, y + 1);
+    let gx = -p(x - 1, y - 1) + p(x + 1, y - 1)
+        - 2 * p(x - 1, y) + 2 * p(x + 1, y)
+        - p(x - 1, y + 1) + p(x + 1, y + 1);
 
     let gy = -p(x - 1, y - 1) - 2 * p(x, y - 1) - p(x + 1, y - 1)
-        + p(x - 1, y + 1)
-        + 2 * p(x, y + 1)
-        + p(x + 1, y + 1);
+        + p(x - 1, y + 1) + 2 * p(x, y + 1) + p(x + 1, y + 1);
 
     (gx, gy)
 }
@@ -74,7 +72,9 @@ pub fn canny(img: &Image, low_thresh: u8, high_thresh: u8) -> Image {
         for x in 2..w.saturating_sub(2) {
             let angle = direction[y * w + x];
             let mag = magnitude[y * w + x];
-            let (n1, n2) = neighbors_along_gradient(&magnitude, w, x, y, angle);
+            let (n1, n2) = neighbors_along_gradient(
+                &magnitude, w, x, y, angle,
+            );
             nms[y * w + x] = if mag >= n1 && mag >= n2 { mag } else { 0.0 };
         }
     }
@@ -145,7 +145,8 @@ fn gaussian_blur_5x5(img: &Image) -> Image {
             let mut acc = 0.0;
             for ky in 0..5usize {
                 for kx in 0..5usize {
-                    acc += img.data[(y + ky - 2) * w + (x + kx - 2)] as f64 * kernel[ky * 5 + kx];
+                    acc += img.data[(y + ky - 2) * w + (x + kx - 2)] as f64
+                        * kernel[ky * 5 + kx];
                 }
             }
             out.data[y * w + x] = (acc / sum).clamp(0.0, 255.0) as u8;
@@ -155,7 +156,13 @@ fn gaussian_blur_5x5(img: &Image) -> Image {
 }
 
 /// Get the two neighbor magnitudes along the gradient direction.
-fn neighbors_along_gradient(mag: &[f64], w: usize, x: usize, y: usize, angle: f64) -> (f64, f64) {
+fn neighbors_along_gradient(
+    mag: &[f64],
+    w: usize,
+    x: usize,
+    y: usize,
+    angle: f64,
+) -> (f64, f64) {
     // Quantize angle to 0, 45, 90, 135 degrees
     let deg = angle.to_degrees();
     let deg = if deg < 0.0 { deg + 180.0 } else { deg };
@@ -225,10 +232,7 @@ mod tests {
         // Edge should be detected near column 7-8
         let mid = edges.data[8 * 16 + 8];
         let flat = edges.data[8 * 16 + 2];
-        assert!(
-            mid > flat,
-            "edge pixel ({mid}) should be brighter than flat ({flat})"
-        );
+        assert!(mid > flat, "edge pixel ({mid}) should be brighter than flat ({flat})");
     }
 
     #[test]
@@ -237,10 +241,7 @@ mod tests {
         let edges = canny(&img, 50, 150);
         // Should have some 255-valued pixels along the edge
         let strong_count = edges.data.iter().filter(|&&v| v == 255).count();
-        assert!(
-            strong_count > 0,
-            "canny should detect at least one strong edge pixel"
-        );
+        assert!(strong_count > 0, "canny should detect at least one strong edge pixel");
     }
 
     #[test]
@@ -258,10 +259,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(
-            interior_strong, 0,
-            "uniform image interior should have zero edges"
-        );
+        assert_eq!(interior_strong, 0, "uniform image interior should have zero edges");
     }
 
     #[test]

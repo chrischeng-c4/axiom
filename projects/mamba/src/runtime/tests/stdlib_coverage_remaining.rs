@@ -1,73 +1,61 @@
 #![cfg(test)]
 
-use crate::runtime::rc::{MbObject, ObjData};
 /// Integration tests for remaining coverage stdlib modules.
 ///
 /// Covers cross-module interactions for: argparse, platform, unittest,
 /// socket, array, errno, traceback, codecs, logging, pickle, threading, sqlite3.
+
 use crate::runtime::value::MbValue;
+use crate::runtime::rc::{MbObject, ObjData};
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn str_val(v: MbValue) -> Option<String> {
     v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data {
-            Some(s.clone())
-        } else {
-            None
-        }
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
     })
 }
 
 fn bytes_val(v: MbValue) -> Option<Vec<u8>> {
     v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Bytes(ref b) = (*ptr).data {
-            Some(b.clone())
-        } else {
-            None
-        }
+        if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
     })
 }
 
+// Reads a string-valued attribute from either a Dict (socket/logging/sqlite3
+// modules return ObjData::Dict) or an Instance (threading returns
+// ObjData::Instance so `.name`/`.locked()` and `isinstance` dispatch work).
 fn dict_str(v: MbValue, key: &str) -> Option<String> {
+    let str_of = |val: &MbValue| -> Option<String> {
+        val.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        })
+    };
     v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Dict(ref lock) = (*ptr).data {
-            let map = lock.read().unwrap();
-            map.get(key).and_then(|val| {
-                val.as_ptr().and_then(|p| {
-                    if let ObjData::Str(ref s) = (*p).data {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
-                })
-            })
-        } else {
-            None
+        match (*ptr).data {
+            ObjData::Dict(ref lock) => lock.read().unwrap().get(key).and_then(&str_of),
+            ObjData::Instance { ref fields, .. } => fields.read().unwrap().get(key).and_then(&str_of),
+            _ => None,
         }
     })
 }
 
 fn dict_bool(v: MbValue, key: &str) -> Option<bool> {
     v.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Dict(ref lock) = (*ptr).data {
-            lock.read().unwrap().get(key).and_then(|val| val.as_bool())
-        } else {
-            None
+        match (*ptr).data {
+            ObjData::Dict(ref lock) => lock.read().unwrap().get(key).and_then(|val| val.as_bool()),
+            ObjData::Instance { ref fields, .. } => fields.read().unwrap().get(key).and_then(|val| val.as_bool()),
+            _ => None,
         }
     })
 }
 
 fn list_len(v: MbValue) -> usize {
-    v.as_ptr()
-        .map(|ptr| unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().len()
-            } else {
-                0
-            }
-        })
-        .unwrap_or(0)
+    v.as_ptr().map(|ptr| unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            lock.read().unwrap().len()
+        } else { 0 }
+    }).unwrap_or(0)
 }
 
 fn s(text: &str) -> MbValue {
@@ -79,7 +67,7 @@ fn s(text: &str) -> MbValue {
 #[test]
 fn test_argparse_full_lifecycle() {
     use crate::runtime::stdlib::argparse_mod::{
-        mb_argparse_add_argument, mb_argparse_new, mb_argparse_parse_args,
+        mb_argparse_new, mb_argparse_add_argument, mb_argparse_parse_args,
     };
 
     let parser = mb_argparse_new(s("CLI tool"));
@@ -115,21 +103,11 @@ fn test_argparse_non_str_description() {
 fn test_platform_all_functions_return_strings() {
     use crate::runtime::stdlib::platform_mod::*;
 
-    assert!(str_val(mb_platform_system())
-        .map(|s| !s.is_empty())
-        .unwrap_or(false));
-    assert!(str_val(mb_platform_release())
-        .map(|s| s == "0.0.0")
-        .unwrap_or(false));
-    assert!(str_val(mb_platform_machine())
-        .map(|s| !s.is_empty())
-        .unwrap_or(false));
-    assert!(str_val(mb_platform_processor())
-        .map(|s| !s.is_empty())
-        .unwrap_or(false));
-    assert!(str_val(mb_platform_python_version())
-        .map(|s| s == "3.12.0")
-        .unwrap_or(false));
+    assert!(str_val(mb_platform_system()).map(|s| !s.is_empty()).unwrap_or(false));
+    assert!(str_val(mb_platform_release()).map(|s| s == "0.0.0").unwrap_or(false));
+    assert!(str_val(mb_platform_machine()).map(|s| !s.is_empty()).unwrap_or(false));
+    assert!(str_val(mb_platform_processor()).map(|s| !s.is_empty()).unwrap_or(false));
+    assert!(str_val(mb_platform_python_version()).map(|s| s == "3.12.0").unwrap_or(false));
     let plat = str_val(mb_platform_platform()).unwrap_or_default();
     assert!(plat.contains('-'), "platform should be OS-ARCH format");
 }
@@ -201,13 +179,9 @@ fn test_socket_host_env_fallback() {
     let result = str_val(mb_socket_gethostname()).unwrap_or_default();
 
     // Restore
-    if let Some(h) = orig_hostname {
-        std::env::set_var("HOSTNAME", h);
-    }
+    if let Some(h) = orig_hostname { std::env::set_var("HOSTNAME", h); }
     std::env::remove_var("HOST");
-    if let Some(h) = orig_host {
-        std::env::set_var("HOST", h);
-    }
+    if let Some(h) = orig_host { std::env::set_var("HOST", h); }
 
     assert_eq!(result, "my-host-test");
 }
@@ -224,15 +198,24 @@ fn test_array_bytes_roundtrip() {
     mb_array_append(arr, MbValue::from_int(20));
     mb_array_append(arr, MbValue::from_int(30));
 
+    // typecode 'i' is a 4-byte signed int, so tobytes() emits the 12-byte
+    // little-endian image (CPython 3.12 parity), NOT one byte per element.
     let raw = mb_array_tobytes(arr);
-    assert_eq!(bytes_val(raw).unwrap_or_default(), vec![10u8, 20u8, 30u8]);
+    assert_eq!(
+        bytes_val(raw).unwrap_or_default(),
+        vec![10u8, 0, 0, 0, 20, 0, 0, 0, 30, 0, 0, 0]
+    );
 
     let arr2 = mb_array_new(s("i"), MbValue::none());
     mb_array_frombytes(arr2, raw);
 
-    // tolist and verify
+    // frombytes decodes the 12-byte image back into 3 elements.
     let list = mb_array_tolist(arr2);
     assert_eq!(list_len(list), 3);
+    assert_eq!(
+        bytes_val(mb_array_tobytes(arr2)).unwrap_or_default(),
+        vec![10u8, 0, 0, 0, 20, 0, 0, 0, 30, 0, 0, 0]
+    );
 }
 
 #[test]
@@ -249,8 +232,8 @@ fn test_array_non_list_init_is_empty() {
 
 #[test]
 fn test_errno_errorcode_and_strerror_integration() {
-    use crate::runtime::dict_ops::DictKey;
     use crate::runtime::stdlib::errno_mod::{mb_errno_errorcode, mb_errno_strerror};
+    use crate::runtime::dict_ops::DictKey;
 
     // errorcode dict: 2 → "ENOENT". CPython parity: keys are ints, so
     // the lookup must use `DictKey::Int(2)` rather than the string "2".
@@ -266,22 +249,10 @@ fn test_errno_errorcode_and_strerror_integration() {
     }
 
     // strerror: verify several codes
-    assert_eq!(
-        str_val(mb_errno_strerror(MbValue::from_int(1))).as_deref(),
-        Some("Operation not permitted")
-    );
-    assert_eq!(
-        str_val(mb_errno_strerror(MbValue::from_int(22))).as_deref(),
-        Some("Invalid argument")
-    );
-    assert_eq!(
-        str_val(mb_errno_strerror(MbValue::from_int(111))).as_deref(),
-        Some("Connection refused")
-    );
-    assert_eq!(
-        str_val(mb_errno_strerror(MbValue::from_int(0))).as_deref(),
-        Some("Unknown error")
-    );
+    assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(1))).as_deref(), Some("Operation not permitted"));
+    assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(22))).as_deref(), Some("Invalid argument"));
+    assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(111))).as_deref(), Some("Connection refused"));
+    assert_eq!(str_val(mb_errno_strerror(MbValue::from_int(0))).as_deref(), Some("Unknown error"));
 }
 
 // ── traceback ────────────────────────────────────────────────────────────────
@@ -426,12 +397,10 @@ fn test_pickle_nested_list() {
 
     // [[1, 2], [3, 4]]
     let inner1 = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(1),
-        MbValue::from_int(2),
+        MbValue::from_int(1), MbValue::from_int(2),
     ]));
     let inner2 = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(3),
-        MbValue::from_int(4),
+        MbValue::from_int(3), MbValue::from_int(4),
     ]));
     let outer = MbValue::from_ptr(MbObject::new_list(vec![inner1, inner2]));
 
@@ -454,24 +423,27 @@ fn test_pickle_nested_list() {
 
 #[test]
 fn test_pickle_loads_negative_int() {
-    use crate::runtime::stdlib::pickle_mod::mb_pickle_loads;
+    use crate::runtime::stdlib::pickle_mod::{mb_pickle_dumps, mb_pickle_loads};
 
-    // Negative int deserialization
-    let r = mb_pickle_loads(s("I-42"));
+    // Negative int round-trips through the CPython-compatible binary format.
+    let r = mb_pickle_loads(mb_pickle_dumps(MbValue::from_int(-42)));
     assert_eq!(r.as_int(), Some(-42));
 }
 
 #[test]
 fn test_pickle_loads_empty_list() {
-    use crate::runtime::stdlib::pickle_mod::mb_pickle_loads;
+    use crate::runtime::stdlib::pickle_mod::{mb_pickle_dumps, mb_pickle_loads};
 
-    // Empty list: "L0;"
-    let r = mb_pickle_loads(s("L0;"));
+    // Empty list round-trips to an empty list.
+    let empty = MbValue::from_ptr(MbObject::new_list(vec![]));
+    let r = mb_pickle_loads(mb_pickle_dumps(empty));
     assert!(r.as_ptr().is_some());
     if let Some(ptr) = r.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 assert!(lock.read().unwrap().is_empty());
+            } else {
+                panic!("expected empty list");
             }
         }
     }
@@ -489,10 +461,7 @@ fn test_threading_deterministic_sync_with_barrier() {
     let b2 = Arc::clone(&barrier);
 
     let thread_dict = mb_threading_thread(MbValue::none(), s("sync_worker"));
-    assert_eq!(
-        dict_str(thread_dict, "name").as_deref(),
-        Some("sync_worker")
-    );
+    assert_eq!(dict_str(thread_dict, "name").as_deref(), Some("sync_worker"));
 
     let counter = Arc::new(std::sync::atomic::AtomicI64::new(0));
     let counter2 = Arc::clone(&counter);
@@ -567,10 +536,7 @@ fn test_sqlite3_create_table_if_not_exists_integration() {
     use crate::runtime::stdlib::sqlite3_mod::{mb_sqlite3_connect, mb_sqlite3_execute};
 
     let conn = mb_sqlite3_connect(s(":memory:"));
-    mb_sqlite3_execute(
-        conn,
-        s("CREATE TABLE IF NOT EXISTS metrics (ts INT, val FLOAT)"),
-    );
+    mb_sqlite3_execute(conn, s("CREATE TABLE IF NOT EXISTS metrics (ts INT, val FLOAT)"));
     // Just verify no panic and conn is still valid
     assert!(conn.as_ptr().is_some());
 }
@@ -610,8 +576,7 @@ fn test_unittest_testcase_and_asserts() {
 
     // assertIn list
     let list = MbValue::from_ptr(MbObject::new_list(vec![
-        MbValue::from_int(1),
-        MbValue::from_int(2),
+        MbValue::from_int(1), MbValue::from_int(2),
     ]));
     mb_unittest_assert_in(MbValue::from_int(2), list);
 

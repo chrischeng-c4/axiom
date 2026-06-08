@@ -1,11 +1,11 @@
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 /// colorsys module for Mamba (mamba-stdlib).
 ///
 /// Pure-math color-space conversion functions mirroring CPython 3.12
 /// Lib/colorsys.py. All inputs and outputs are floats in [0.0, 1.0]
 /// (except YIQ i/q channels which may exceed that range).
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::MbObject;
 
 macro_rules! dispatch_ternary {
     ($name:ident, $fn:ident) => {
@@ -56,7 +56,16 @@ pub fn register() {
 // ── Helper ──
 
 fn extract_float(val: MbValue) -> f64 {
-    val.as_float().unwrap_or(0.0)
+    // CPython's colorsys accepts any real number: rgb_to_hsv(1, 0, 0) passes
+    // ints. NaN-boxed ints/bools are not float-tagged, so coerce them (bool is
+    // an int subclass: True→1.0, False→0.0) instead of silently reading 0.0.
+    if let Some(f) = val.as_float() {
+        f
+    } else if let Some(i) = val.as_int_pyint() {
+        i as f64
+    } else {
+        0.0
+    }
 }
 
 /// Pack three f64 components into a 3-element Tuple MbValue.
@@ -245,8 +254,8 @@ pub fn mb_colorsys_yiq_to_rgb(y: MbValue, i: MbValue, q: MbValue) -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::rc::ObjData;
     use super::*;
+    use super::super::super::rc::ObjData;
 
     fn f(v: f64) -> MbValue {
         MbValue::from_float(v)
@@ -340,9 +349,6 @@ mod tests {
         register();
         use super::super::super::module::MODULES;
         let present = MODULES.with(|m| m.borrow().contains_key("colorsys"));
-        assert!(
-            present,
-            "colorsys module should be in the registry after register()"
-        );
+        assert!(present, "colorsys module should be in the registry after register()");
     }
 }

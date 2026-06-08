@@ -88,6 +88,8 @@ fn cue_artifact_studio_bundle(mode: E2eMode) -> E2eEvidenceBundle {
             },
         ],
         artifacts: vec![],
+        serve_session: None,
+        browser_sessions: vec![],
         open_control: None,
     }
 }
@@ -195,6 +197,9 @@ fn step_events_carry_start_end_duration_and_failure_context() {
 fn kind(e: &E2eEvidenceEvent) -> &'static str {
     match e {
         E2eEvidenceEvent::RunStarted { .. } => "run_started",
+        E2eEvidenceEvent::ServeSessionStarted { .. } => "serve_session_started",
+        E2eEvidenceEvent::BrowserSessionStarted { .. } => "browser_session_started",
+        E2eEvidenceEvent::BrowserSessionFinished { .. } => "browser_session_finished",
         E2eEvidenceEvent::StepStarted { .. } => "step_started",
         E2eEvidenceEvent::StepFinished { .. } => "step_finished",
         E2eEvidenceEvent::CaseFinished { .. } => "case_finished",

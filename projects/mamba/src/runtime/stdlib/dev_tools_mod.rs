@@ -1,5 +1,3 @@
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 /// Dev-tools stdlib modules for Mamba (#1261 long-tail).
 ///
 /// Bundles surface-only shims for the introspection / profiling /
@@ -12,7 +10,10 @@ use super::super::value::MbValue;
 /// testmod` resolves and returns a sentinel rather than crashing. The
 /// underlying functionality (running tests, profiling, debugger entry)
 /// is not yet hosted on Mamba — these are import-resolution stubs.
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::MbObject;
 
 unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
@@ -63,9 +64,7 @@ pub fn register() {
 fn add_addrs(addrs: &[usize]) {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
-        for a in addrs {
-            set.insert(*a as u64);
-        }
+        for a in addrs { set.insert(*a as u64); }
     });
 }
 
@@ -74,10 +73,10 @@ fn register_pyclbr() {
     let dict_ret = dispatch_class_shell as *const () as usize;
     let mut attrs = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("readmodule", dict_ret),
+        ("readmodule",    dict_ret),
         ("readmodule_ex", dict_ret),
-        ("Class", shell),
-        ("Function", shell),
+        ("Class",         shell),
+        ("Function",      shell),
     ];
     for (n, a) in dispatchers {
         attrs.insert((*n).into(), MbValue::from_func(*a));
@@ -91,34 +90,30 @@ fn register_symtable() {
     let int_zero = dispatch_int_zero as *const () as usize;
     let mut attrs = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("symtable", shell),
-        ("SymbolTable", shell),
-        ("Function", shell),
-        ("Class", shell),
-        ("Symbol", shell),
+        ("symtable",      shell),
+        ("SymbolTable",   shell),
+        ("Function",      shell),
+        ("Class",         shell),
+        ("Symbol",        shell),
     ];
     for (n, a) in dispatchers {
         attrs.insert((*n).into(), MbValue::from_func(*a));
     }
     // Type / scope constants used in symtable internals.
     for (name, value) in &[
-        ("USE", 0x10),
-        ("DEF_GLOBAL", 0x01),
-        ("DEF_LOCAL", 0x02),
-        ("DEF_PARAM", 0x04),
-        ("DEF_NONLOCAL", 0x08),
-        ("DEF_FREE", 0x80),
-        ("DEF_IMPORT", 0x40),
-        ("DEF_BOUND", 0x07),
-        ("LOCAL", 1),
-        ("GLOBAL_EXPLICIT", 2),
-        ("GLOBAL_IMPLICIT", 3),
-        ("FREE", 4),
-        ("CELL", 5),
+        ("USE", 0x10), ("DEF_GLOBAL", 0x01), ("DEF_LOCAL", 0x02),
+        ("DEF_PARAM", 0x04), ("DEF_NONLOCAL", 0x08), ("DEF_FREE", 0x80),
+        ("DEF_IMPORT", 0x40), ("DEF_BOUND", 0x07),
+        ("LOCAL", 1), ("GLOBAL_EXPLICIT", 2), ("GLOBAL_IMPLICIT", 3),
+        ("FREE", 4), ("CELL", 5),
     ] {
         attrs.insert((*name).into(), MbValue::from_int(*value));
     }
     add_addrs(&[shell, int_zero]);
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("DEF_ANNOT".into(), MbValue::from_int(256));
+    attrs.insert("SCOPE_MASK".into(), MbValue::from_int(15));
+    attrs.insert("SCOPE_OFF".into(), MbValue::from_int(12));
     super::register_module("symtable", attrs);
 }
 
@@ -126,15 +121,9 @@ fn register_modulefinder() {
     let shell = dispatch_class_shell as *const () as usize;
     let mut attrs = HashMap::new();
     attrs.insert("ModuleFinder".into(), MbValue::from_func(shell));
-    attrs.insert("Module".into(), MbValue::from_func(shell));
-    attrs.insert(
-        "AddPackagePath".into(),
-        MbValue::from_func(dispatch_noop as *const () as usize),
-    );
-    attrs.insert(
-        "ReplacePackage".into(),
-        MbValue::from_func(dispatch_noop as *const () as usize),
-    );
+    attrs.insert("Module".into(),       MbValue::from_func(shell));
+    attrs.insert("AddPackagePath".into(), MbValue::from_func(dispatch_noop as *const () as usize));
+    attrs.insert("ReplacePackage".into(), MbValue::from_func(dispatch_noop as *const () as usize));
     add_addrs(&[shell, dispatch_noop as *const () as usize]);
     super::register_module("modulefinder", attrs);
 }
@@ -143,8 +132,8 @@ fn register_runpy() {
     let shell = dispatch_class_shell as *const () as usize;
     let mut attrs = HashMap::new();
     attrs.insert("run_module".into(), MbValue::from_func(shell));
-    attrs.insert("run_path".into(), MbValue::from_func(shell));
-    attrs.insert("_run_code".into(), MbValue::from_func(shell));
+    attrs.insert("run_path".into(),   MbValue::from_func(shell));
+    attrs.insert("_run_code".into(),  MbValue::from_func(shell));
     attrs.insert("_run_module_code".into(), MbValue::from_func(shell));
     add_addrs(&[shell]);
     super::register_module("runpy", attrs);
@@ -157,17 +146,17 @@ fn register_pkgutil() {
     let noop = dispatch_noop as *const () as usize;
     let mut attrs = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("get_data", empty_str),
-        ("iter_modules", empty_list),
-        ("walk_packages", empty_list),
-        ("find_loader", noop),
-        ("get_importer", noop),
-        ("get_loader", noop),
-        ("extend_path", empty_list),
-        ("resolve_name", noop),
-        ("ImpImporter", shell),
-        ("ImpLoader", shell),
-        ("ModuleInfo", shell),
+        ("get_data",              empty_str),
+        ("iter_modules",          empty_list),
+        ("walk_packages",         empty_list),
+        ("find_loader",           noop),
+        ("get_importer",          noop),
+        ("get_loader",            noop),
+        ("extend_path",           empty_list),
+        ("resolve_name",          noop),
+        ("ImpImporter",           shell),
+        ("ImpLoader",             shell),
+        ("ModuleInfo",            shell),
     ];
     for (n, a) in dispatchers {
         attrs.insert((*n).into(), MbValue::from_func(*a));
@@ -182,9 +171,9 @@ fn register_timeit() {
     let empty_list = dispatch_empty_list as *const () as usize;
     let mut attrs = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("timeit", int_zero),
-        ("repeat", empty_list),
-        ("Timer", shell),
+        ("timeit",   int_zero),
+        ("repeat",   empty_list),
+        ("Timer",    shell),
         ("default_timer", int_zero),
         ("default_number", int_zero),
     ];
@@ -192,23 +181,32 @@ fn register_timeit() {
         attrs.insert((*n).into(), MbValue::from_func(*a));
     }
     add_addrs(&dispatchers.iter().map(|(_, a)| *a).collect::<Vec<_>>());
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("default_repeat".into(), MbValue::from_int(5));
+    attrs.insert("dummy_src_name".into(), MbValue::from_ptr(MbObject::new_str("<timeit-src>".to_string())));
+    attrs.insert("template".into(), MbValue::from_ptr(MbObject::new_str("\ndef inner(_it, _timer{init}):\n    {setup}\n    _t0 = _timer()\n    for _i in _it:\n        {stmt}\n        pass\n    _t1 = _timer()\n    return _t1 - _t0\n".to_string())));
     super::register_module("timeit", attrs);
 }
 
 fn register_trace() {
     let shell = dispatch_class_shell as *const () as usize;
     let mut attrs = HashMap::new();
-    attrs.insert("Trace".into(), MbValue::from_func(shell));
+    attrs.insert("Trace".into(),    MbValue::from_func(shell));
     attrs.insert("CoverageResults".into(), MbValue::from_func(shell));
     add_addrs(&[shell]);
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("PRAGMA_NOCOVER".into(), MbValue::from_ptr(MbObject::new_str("#pragma NO COVER".to_string())));
     super::register_module("trace", attrs);
 }
 
 fn register_pstats() {
     let shell = dispatch_class_shell as *const () as usize;
     let mut attrs = HashMap::new();
-    attrs.insert("Stats".into(), MbValue::from_func(shell));
-    attrs.insert("SortKey".into(), MbValue::from_func(shell));
+    attrs.insert("Stats".into(),    MbValue::from_func(shell));
+    attrs.insert("SortKey".into(),  MbValue::from_func(shell));
+    // surface: missing CPython classes (auto-added)
+    attrs.insert("FunctionProfile".into(), MbValue::from_func(shell));
+    attrs.insert("StatsProfile".into(),    MbValue::from_func(shell));
     add_addrs(&[shell]);
     super::register_module("pstats", attrs);
 }
@@ -217,14 +215,8 @@ fn register_profile() {
     let shell = dispatch_class_shell as *const () as usize;
     let mut attrs = HashMap::new();
     attrs.insert("Profile".into(), MbValue::from_func(shell));
-    attrs.insert(
-        "run".into(),
-        MbValue::from_func(dispatch_noop as *const () as usize),
-    );
-    attrs.insert(
-        "runctx".into(),
-        MbValue::from_func(dispatch_noop as *const () as usize),
-    );
+    attrs.insert("run".into(),     MbValue::from_func(dispatch_noop as *const () as usize));
+    attrs.insert("runctx".into(),  MbValue::from_func(dispatch_noop as *const () as usize));
     add_addrs(&[shell, dispatch_noop as *const () as usize]);
     super::register_module("profile", attrs);
 }
@@ -233,14 +225,8 @@ fn register_cprofile() {
     let shell = dispatch_class_shell as *const () as usize;
     let mut attrs = HashMap::new();
     attrs.insert("Profile".into(), MbValue::from_func(shell));
-    attrs.insert(
-        "run".into(),
-        MbValue::from_func(dispatch_noop as *const () as usize),
-    );
-    attrs.insert(
-        "runctx".into(),
-        MbValue::from_func(dispatch_noop as *const () as usize),
-    );
+    attrs.insert("run".into(),     MbValue::from_func(dispatch_noop as *const () as usize));
+    attrs.insert("runctx".into(),  MbValue::from_func(dispatch_noop as *const () as usize));
     add_addrs(&[shell, dispatch_noop as *const () as usize]);
     super::register_module("cProfile", attrs);
 }
@@ -251,75 +237,58 @@ fn register_doctest() {
     let empty_list = dispatch_empty_list as *const () as usize;
     let mut attrs = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("testmod", test_results),
-        ("testfile", test_results),
-        (
-            "run_docstring_examples",
-            dispatch_noop as *const () as usize,
-        ),
-        ("DocTestFinder", shell),
-        ("DocTestParser", shell),
-        ("DocTestRunner", shell),
-        ("DebugRunner", shell),
-        ("OutputChecker", shell),
-        ("Example", shell),
-        ("DocTest", shell),
-        ("DocTestCase", shell),
-        ("DocFileCase", shell),
-        ("DocTestSuite", shell),
-        ("DocFileSuite", shell),
-        (
-            "set_unittest_reportflags",
-            dispatch_noop as *const () as usize,
-        ),
-        (
-            "register_optionflag",
-            dispatch_int_zero as *const () as usize,
-        ),
-        (
-            "script_from_examples",
-            dispatch_empty_str as *const () as usize,
-        ),
-        ("debug", dispatch_noop as *const () as usize),
-        ("debug_script", dispatch_noop as *const () as usize),
-        ("debug_src", dispatch_noop as *const () as usize),
-        ("master", dispatch_noop as *const () as usize),
-        ("Tester", shell),
-        ("REPORTING_FLAGS", dispatch_int_zero as *const () as usize),
-        ("COMPARISON_FLAGS", dispatch_int_zero as *const () as usize),
+        ("testmod",     test_results),
+        ("testfile",    test_results),
+        ("run_docstring_examples", dispatch_noop as *const () as usize),
+        ("DocTestFinder",          shell),
+        ("DocTestParser",          shell),
+        ("DocTestRunner",          shell),
+        ("DebugRunner",            shell),
+        ("OutputChecker",          shell),
+        ("Example",                shell),
+        ("DocTest",                shell),
+        ("DocTestCase",            shell),
+        ("DocFileCase",            shell),
+        ("DocTestSuite",           shell),
+        ("DocFileSuite",           shell),
+        ("DocTestFailure",         shell),
+        ("UnexpectedException",    shell),
+        ("set_unittest_reportflags", dispatch_noop as *const () as usize),
+        ("register_optionflag",    dispatch_int_zero as *const () as usize),
+        ("script_from_examples",   dispatch_empty_str as *const () as usize),
+        ("testsource",             dispatch_empty_str as *const () as usize),
+        ("debug",                  dispatch_noop as *const () as usize),
+        ("debug_script",           dispatch_noop as *const () as usize),
+        ("debug_src",              dispatch_noop as *const () as usize),
+        ("master",                 dispatch_noop as *const () as usize),
+        ("Tester",                 shell),
+        ("REPORTING_FLAGS",        dispatch_int_zero as *const () as usize),
+        ("COMPARISON_FLAGS",       dispatch_int_zero as *const () as usize),
     ];
     for (n, a) in dispatchers {
         attrs.insert((*n).into(), MbValue::from_func(*a));
     }
     // Option flags used by doctest decorators / runners.
     for (name, value) in &[
-        ("DONT_ACCEPT_TRUE_FOR_1", 1),
-        ("DONT_ACCEPT_BLANKLINE", 2),
-        ("NORMALIZE_WHITESPACE", 4),
-        ("ELLIPSIS", 8),
-        ("SKIP", 16),
-        ("IGNORE_EXCEPTION_DETAIL", 32),
-        ("FAIL_FAST", 1024),
-        ("REPORT_UDIFF", 64),
-        ("REPORT_CDIFF", 128),
-        ("REPORT_NDIFF", 256),
+        ("DONT_ACCEPT_TRUE_FOR_1", 1), ("DONT_ACCEPT_BLANKLINE", 2),
+        ("NORMALIZE_WHITESPACE", 4),    ("ELLIPSIS", 8),
+        ("SKIP", 16),                    ("IGNORE_EXCEPTION_DETAIL", 32),
+        ("FAIL_FAST", 1024),             ("REPORT_UDIFF", 64),
+        ("REPORT_CDIFF", 128),           ("REPORT_NDIFF", 256),
         ("REPORT_ONLY_FIRST_FAILURE", 512),
     ] {
         attrs.insert((*name).into(), MbValue::from_int(*value));
     }
-    attrs.insert(
-        "__file__".into(),
-        MbValue::from_ptr(MbObject::new_str("<doctest>".to_string())),
-    );
+    attrs.insert("__file__".into(),
+        MbValue::from_ptr(MbObject::new_str("<doctest>".to_string())));
     attrs.insert("_unittest_reportflags".into(), MbValue::from_int(0));
-    add_addrs(&[
-        shell,
-        test_results,
-        empty_list,
+    add_addrs(&[shell, test_results, empty_list,
         dispatch_noop as *const () as usize,
         dispatch_int_zero as *const () as usize,
-        dispatch_empty_str as *const () as usize,
-    ]);
+        dispatch_empty_str as *const () as usize]);
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("BLANKLINE_MARKER".into(), MbValue::from_ptr(MbObject::new_str("<BLANKLINE>".to_string())));
+    attrs.insert("ELLIPSIS_MARKER".into(), MbValue::from_ptr(MbObject::new_str("...".to_string())));
     super::register_module("doctest", attrs);
 }
 
@@ -327,37 +296,35 @@ fn register_pdb() {
     let shell = dispatch_class_shell as *const () as usize;
     let mut attrs = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("set_trace", dispatch_noop as *const () as usize),
-        ("post_mortem", dispatch_noop as *const () as usize),
-        ("pm", dispatch_noop as *const () as usize),
-        ("run", dispatch_noop as *const () as usize),
-        ("runeval", dispatch_noop as *const () as usize),
-        ("runctx", dispatch_noop as *const () as usize),
-        ("runcall", dispatch_noop as *const () as usize),
-        ("Pdb", shell),
-        ("Restart", shell),
+        ("set_trace",       dispatch_noop as *const () as usize),
+        ("post_mortem",     dispatch_noop as *const () as usize),
+        ("pm",              dispatch_noop as *const () as usize),
+        ("run",             dispatch_noop as *const () as usize),
+        ("runeval",         dispatch_noop as *const () as usize),
+        ("runctx",          dispatch_noop as *const () as usize),
+        ("runcall",         dispatch_noop as *const () as usize),
+        ("help",            dispatch_noop as *const () as usize),
+        ("Pdb",             shell),
+        ("Restart",         shell),
     ];
     for (n, a) in dispatchers {
         attrs.insert((*n).into(), MbValue::from_func(*a));
     }
     add_addrs(&[shell, dispatch_noop as *const () as usize]);
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("TESTCMD".into(), MbValue::from_ptr(MbObject::new_str("import x; x.main()".to_string())));
+    attrs.insert("line_prefix".into(), MbValue::from_ptr(MbObject::new_str("\n-> ".to_string())));
     super::register_module("pdb", attrs);
 }
 
 fn register_tabnanny() {
     let shell = dispatch_class_shell as *const () as usize;
     let mut attrs = HashMap::new();
-    attrs.insert(
-        "check".into(),
-        MbValue::from_func(dispatch_noop as *const () as usize),
-    );
-    attrs.insert(
-        "process_tokens".into(),
-        MbValue::from_func(dispatch_noop as *const () as usize),
-    );
-    attrs.insert("NannyNag".into(), MbValue::from_func(shell));
-    attrs.insert("verbose".into(), MbValue::from_int(0));
-    attrs.insert("filename_only".into(), MbValue::from_int(0));
+    attrs.insert("check".into(),           MbValue::from_func(dispatch_noop as *const () as usize));
+    attrs.insert("process_tokens".into(),  MbValue::from_func(dispatch_noop as *const () as usize));
+    attrs.insert("NannyNag".into(),        MbValue::from_func(shell));
+    attrs.insert("verbose".into(),         MbValue::from_int(0));
+    attrs.insert("filename_only".into(),   MbValue::from_int(0));
     add_addrs(&[shell, dispatch_noop as *const () as usize]);
     super::register_module("tabnanny", attrs);
 }
@@ -366,17 +333,14 @@ fn register_py_compile() {
     let shell = dispatch_class_shell as *const () as usize;
     let empty_str = dispatch_empty_str as *const () as usize;
     let mut attrs = HashMap::new();
-    attrs.insert("compile".into(), MbValue::from_func(empty_str));
-    attrs.insert(
-        "main".into(),
-        MbValue::from_func(dispatch_noop as *const () as usize),
-    );
-    attrs.insert("PyCompileError".into(), MbValue::from_func(shell));
+    attrs.insert("compile".into(),          MbValue::from_func(empty_str));
+    attrs.insert("main".into(),             MbValue::from_func(dispatch_noop as *const () as usize));
+    attrs.insert("PyCompileError".into(),   MbValue::from_func(shell));
     attrs.insert("PycInvalidationMode".into(), MbValue::from_func(shell));
     // PycInvalidationMode constants used by py_compile callers.
-    attrs.insert("CHECKED_HASH".into(), MbValue::from_int(2));
-    attrs.insert("UNCHECKED_HASH".into(), MbValue::from_int(3));
-    attrs.insert("TIMESTAMP".into(), MbValue::from_int(1));
+    attrs.insert("CHECKED_HASH".into(),     MbValue::from_int(2));
+    attrs.insert("UNCHECKED_HASH".into(),   MbValue::from_int(3));
+    attrs.insert("TIMESTAMP".into(),        MbValue::from_int(1));
     add_addrs(&[shell, empty_str, dispatch_noop as *const () as usize]);
     super::register_module("py_compile", attrs);
 }

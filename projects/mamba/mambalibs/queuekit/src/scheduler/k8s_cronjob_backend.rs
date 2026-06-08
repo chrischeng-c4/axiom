@@ -177,7 +177,11 @@ impl K8sCronJobBackend {
     }
 
     /// Update an existing K8s CronJob schedule via merge patch
-    pub async fn update_cronjob(&self, name: &str, schedule: &str) -> Result<CronJob, TaskError> {
+    pub async fn update_cronjob(
+        &self,
+        name: &str,
+        schedule: &str,
+    ) -> Result<CronJob, TaskError> {
         let patch = serde_json::json!({
             "spec": {
                 "schedule": schedule
@@ -236,7 +240,10 @@ impl K8sCronJobBackend {
         schedule: &str,
         task_message: &TaskMessage,
     ) -> CronJob {
-        let push_url = format!("{}/scheduler/push/{}", self.config.target_base_url, name);
+        let push_url = format!(
+            "{}/scheduler/push/{}",
+            self.config.target_base_url, name
+        );
 
         let payload = serde_json::to_string(task_message).unwrap_or_default();
 
@@ -464,7 +471,11 @@ impl SchedulerBackend for K8sCronJobBackend {
     }
 
     /// Persist task state to in-memory store
-    async fn set_task_state(&self, name: &str, state: &TaskScheduleState) -> Result<(), TaskError> {
+    async fn set_task_state(
+        &self,
+        name: &str,
+        state: &TaskScheduleState,
+    ) -> Result<(), TaskError> {
         self.task_states
             .write()
             .await

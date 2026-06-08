@@ -110,14 +110,10 @@ pub fn resize_bilinear(img: &Image, new_width: u32, new_height: u32) -> Image {
 
             let dst_idx = (y as usize * new_width as usize + x as usize) * ch;
             for c in 0..ch {
-                let p00 =
-                    img.data[(y0 as usize * img.width as usize + x0 as usize) * ch + c] as f64;
-                let p10 =
-                    img.data[(y0 as usize * img.width as usize + x1 as usize) * ch + c] as f64;
-                let p01 =
-                    img.data[(y1 as usize * img.width as usize + x0 as usize) * ch + c] as f64;
-                let p11 =
-                    img.data[(y1 as usize * img.width as usize + x1 as usize) * ch + c] as f64;
+                let p00 = img.data[(y0 as usize * img.width as usize + x0 as usize) * ch + c] as f64;
+                let p10 = img.data[(y0 as usize * img.width as usize + x1 as usize) * ch + c] as f64;
+                let p01 = img.data[(y1 as usize * img.width as usize + x0 as usize) * ch + c] as f64;
+                let p11 = img.data[(y1 as usize * img.width as usize + x1 as usize) * ch + c] as f64;
 
                 let top = p00 * (1.0 - fx) + p10 * fx;
                 let bot = p01 * (1.0 - fx) + p11 * fx;
@@ -186,7 +182,8 @@ pub fn rgb_to_grayscale(img: &Image) -> Image {
     for y in 0..img.height {
         for x in 0..img.width {
             let px = img.get_pixel(x, y);
-            let gray = (0.299 * px[0] as f64 + 0.587 * px[1] as f64 + 0.114 * px[2] as f64) as u8;
+            let gray =
+                (0.299 * px[0] as f64 + 0.587 * px[1] as f64 + 0.114 * px[2] as f64) as u8;
             out.set_pixel(x, y, &[gray]);
         }
     }

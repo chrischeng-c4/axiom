@@ -31,7 +31,9 @@ pub fn parse_hash_spec(spec: &str) -> Result<FileHash, IndexError> {
     let (algo, hex) = match s.split_once(':') {
         Some(x) => x,
         None => {
-            return Err(pe(&format!("hash spec must be 'algo:hex', got {s:?}")));
+            return Err(pe(&format!(
+                "hash spec must be 'algo:hex', got {s:?}"
+            )));
         }
     };
     let algo = algo.trim();
@@ -195,7 +197,10 @@ mod tests {
 
     #[test]
     fn parse_specs_collects_in_order() {
-        let specs = vec![format!("sha256:{SHA256_X}"), format!("sha512:{SHA512_X}")];
+        let specs = vec![
+            format!("sha256:{SHA256_X}"),
+            format!("sha512:{SHA512_X}"),
+        ];
         let hashes = parse_hash_specs(&specs).unwrap();
         assert_eq!(hashes.len(), 2);
         assert_eq!(hashes[0].algorithm, "sha256");

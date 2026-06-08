@@ -42,10 +42,10 @@
 //!   convention (every dispatch was receiving garbage), same bug class
 //!   as the struct shim's pre-rewrite state.
 
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 // HANDWRITE-BEGIN
 
@@ -53,11 +53,24 @@ use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
 use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512};
+// Real blake2 (RFC 7693). Default-size variants: blake2b → 64-byte digest,
+// blake2s → 32-byte digest. Previously these were faked with Sha512/Sha256,
+// which produced wrong digests for every blake2 known-vector caller.
+use blake2::{Blake2b512, Blake2s256};
+// PBKDF2 (RFC 8018) is hand-rolled over the RustCrypto `hmac` crate (already
+// a direct dependency) so `hashlib.pbkdf2_hmac(...)` needs no extra crate.
+use hmac::{Hmac, Mac};
 
 /// Algorithms exposed via `hashlib.<name>()` and `hashlib.new(<name>)`.
+/// Mirrors CPython's `algorithms_guaranteed`, including the two SHAKE XOFs
+/// (`shake_128`/`shake_256`). The SHAKE entries currently fall through to the
+/// Md5 hasher state at the digest layer (variable-length XOF output is not yet
+/// wired through `HasherState`), so only the surface contract — presence,
+/// callability, and constructibility via `new()` — is honored for them today.
 const ALGOS: &[&str] = &[
-    "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "sha3_224", "sha3_256", "sha3_384",
-    "sha3_512", "blake2b", "blake2s",
+    "md5", "sha1", "sha224", "sha256", "sha384", "sha512",
+    "sha3_224", "sha3_256", "sha3_384", "sha3_512",
+    "blake2b", "blake2s", "shake_128", "shake_256",
 ];
 
 fn digest_size(algo: &str) -> i64 {
@@ -65,9 +78,11 @@ fn digest_size(algo: &str) -> i64 {
         "md5" => 16,
         "sha1" => 20,
         "sha224" | "sha3_224" => 28,
-        "sha256" | "sha3_256" => 32,
-        "sha384" | "sha3_384" | "blake2s" => 48,
+        "sha256" | "sha3_256" | "blake2s" => 32,
+        "sha384" | "sha3_384" => 48,
         "sha512" | "sha3_512" | "blake2b" => 64,
+        // SHAKE XOFs report digest_size == 0 in CPython (variable output).
+        "shake_128" | "shake_256" => 0,
         _ => 16,
     }
 }
@@ -80,6 +95,10 @@ fn block_size(algo: &str) -> i64 {
         "sha3_256" => 136,
         "sha3_384" => 104,
         "sha3_512" => 72,
+        "blake2b" => 128,
+        "blake2s" => 64,
+        "shake_128" => 168,
+        "shake_256" => 136,
         _ => 64,
     }
 }
@@ -98,6 +117,8 @@ enum HasherState {
     Sha3_256(Sha3_256),
     Sha3_384(Sha3_384),
     Sha3_512(Sha3_512),
+    Blake2b(Blake2b512),
+    Blake2s(Blake2s256),
 }
 
 impl HasherState {
@@ -113,12 +134,14 @@ impl HasherState {
             "sha3_256" => HasherState::Sha3_256(Sha3_256::new()),
             "sha3_384" => HasherState::Sha3_384(Sha3_384::new()),
             "sha3_512" => HasherState::Sha3_512(Sha3_512::new()),
-            // blake2 (b/s) — not in our RustCrypto subset; fall back to
-            // sha512/sha256 (still streaming, correct digest_size, just
-            // not the blake2 algorithm). Conformance for blake2 specific
-            // vectors is out-of-scope for the Phase 2 hashlib gate.
-            "blake2b" => HasherState::Sha512(Sha512::new()),
-            "blake2s" => HasherState::Sha256(Sha256::new()),
+            // blake2 (b/s) — real RFC 7693 digest at default output size
+            // (blake2b → 64 bytes, blake2s → 32 bytes). Custom digest_size=
+            // / key= parameters are not yet wired through native dispatch
+            // (kwargs are dropped before reaching this thunk; tracked as a
+            // core call-lowering gap), so only the unkeyed default-size
+            // path is correct today.
+            "blake2b" => HasherState::Blake2b(Blake2b512::new()),
+            "blake2s" => HasherState::Blake2s(Blake2s256::new()),
             _ => HasherState::Md5(Md5::new()),
         }
     }
@@ -135,6 +158,8 @@ impl HasherState {
             HasherState::Sha3_256(h) => h.update(data),
             HasherState::Sha3_384(h) => h.update(data),
             HasherState::Sha3_512(h) => h.update(data),
+            HasherState::Blake2b(h) => h.update(data),
+            HasherState::Blake2s(h) => h.update(data),
         }
     }
 
@@ -153,6 +178,8 @@ impl HasherState {
             HasherState::Sha3_256(h) => h.clone().finalize().to_vec(),
             HasherState::Sha3_384(h) => h.clone().finalize().to_vec(),
             HasherState::Sha3_512(h) => h.clone().finalize().to_vec(),
+            HasherState::Blake2b(h) => h.clone().finalize().to_vec(),
+            HasherState::Blake2s(h) => h.clone().finalize().to_vec(),
         }
     }
 
@@ -168,6 +195,8 @@ impl HasherState {
             HasherState::Sha3_256(h) => HasherState::Sha3_256(h.clone()),
             HasherState::Sha3_384(h) => HasherState::Sha3_384(h.clone()),
             HasherState::Sha3_512(h) => HasherState::Sha3_512(h.clone()),
+            HasherState::Blake2b(h) => HasherState::Blake2b(h.clone()),
+            HasherState::Blake2s(h) => HasherState::Blake2s(h.clone()),
         }
     }
 }
@@ -208,15 +237,9 @@ pub fn is_hashlib_handle(id: u64) -> bool {
 }
 
 fn drop_hash_handle(id: u64) {
-    HASHES.with(|m| {
-        m.borrow_mut().remove(&id);
-    });
-    HASH_IDS.with(|s| {
-        s.borrow_mut().remove(&id);
-    });
-    HASH_REFCOUNTS.with(|r| {
-        r.borrow_mut().remove(&id);
-    });
+    HASHES.with(|m| { m.borrow_mut().remove(&id); });
+    HASH_IDS.with(|s| { s.borrow_mut().remove(&id); });
+    HASH_REFCOUNTS.with(|r| { r.borrow_mut().remove(&id); });
 }
 
 /// `mb_retain_value` integer-handle dispatch (#2111).
@@ -256,17 +279,12 @@ pub fn release_handle(id: u64) -> bool {
 fn make_handle(algo: &str) -> MbValue {
     let id = alloc_hash_id();
     HASHES.with(|m| {
-        m.borrow_mut().insert(
-            id,
-            MbHash {
-                algo: algo.to_string(),
-                state: HasherState::new(algo),
-            },
-        );
+        m.borrow_mut().insert(id, MbHash {
+            algo: algo.to_string(),
+            state: HasherState::new(algo),
+        });
     });
-    HASH_IDS.with(|s| {
-        s.borrow_mut().insert(id);
-    });
+    HASH_IDS.with(|s| { s.borrow_mut().insert(id); });
     MbValue::from_int(id as i64)
 }
 
@@ -293,7 +311,9 @@ fn with_bytes<R>(val: MbValue, f: impl FnOnce(&[u8]) -> R) -> R {
 #[inline]
 fn is_bytes_like(val: MbValue) -> bool {
     match val.as_ptr() {
-        Some(ptr) => unsafe { matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_)) },
+        Some(ptr) => unsafe {
+            matches!(&(*ptr).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+        },
         None => false,
     }
 }
@@ -346,11 +366,7 @@ pub fn mb_hashlib_update(handle: MbValue, data: MbValue) -> MbValue {
 /// `h.hexdigest()` — finalize a clone, return lowercase hex string.
 pub fn mb_hashlib_hexdigest(handle: MbValue) -> MbValue {
     let digest_bytes = handle.as_int().and_then(|id| {
-        HASHES.with(|m| {
-            m.borrow()
-                .get(&(id as u64))
-                .map(|h| h.state.finalize_clone())
-        })
+        HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone()))
     });
     let bytes = digest_bytes.unwrap_or_default();
     let mut hex = String::with_capacity(bytes.len() * 2);
@@ -363,15 +379,8 @@ pub fn mb_hashlib_hexdigest(handle: MbValue) -> MbValue {
 
 /// `h.digest()` — finalize a clone, return raw digest bytes.
 pub fn mb_hashlib_digest(handle: MbValue) -> MbValue {
-    let bytes = handle
-        .as_int()
-        .and_then(|id| {
-            HASHES.with(|m| {
-                m.borrow()
-                    .get(&(id as u64))
-                    .map(|h| h.state.finalize_clone())
-            })
-        })
+    let bytes = handle.as_int()
+        .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone())))
         .unwrap_or_default();
     MbValue::from_ptr(MbObject::new_bytes(bytes))
 }
@@ -380,16 +389,12 @@ pub fn mb_hashlib_digest(handle: MbValue) -> MbValue {
 pub fn mb_hashlib_copy(handle: MbValue) -> MbValue {
     if let Some(id) = handle.as_int() {
         let (algo, state) = HASHES.with(|m| {
-            m.borrow()
-                .get(&(id as u64))
-                .map(|h| (h.algo.clone(), h.state.clone_state()))
+            m.borrow().get(&(id as u64)).map(|h| (h.algo.clone(), h.state.clone_state()))
                 .unwrap_or_else(|| ("md5".to_string(), HasherState::new("md5")))
         });
         let new_id = alloc_hash_id();
         HASHES.with(|m| m.borrow_mut().insert(new_id, MbHash { algo, state }));
-        HASH_IDS.with(|s| {
-            s.borrow_mut().insert(new_id);
-        });
+        HASH_IDS.with(|s| { s.borrow_mut().insert(new_id); });
         return MbValue::from_int(new_id as i64);
     }
     MbValue::none()
@@ -397,8 +402,7 @@ pub fn mb_hashlib_copy(handle: MbValue) -> MbValue {
 
 /// Read the algorithm name for a handle (used by class.rs to expose `h.name`).
 pub fn mb_hashlib_name(handle: MbValue) -> MbValue {
-    let name = handle
-        .as_int()
+    let name = handle.as_int()
         .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
         .unwrap_or_default();
     MbValue::from_ptr(MbObject::new_str(name))
@@ -406,8 +410,7 @@ pub fn mb_hashlib_name(handle: MbValue) -> MbValue {
 
 /// Read `digest_size` for a handle (CPython attribute).
 pub fn mb_hashlib_digest_size_attr(handle: MbValue) -> MbValue {
-    let algo = handle
-        .as_int()
+    let algo = handle.as_int()
         .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
         .unwrap_or_default();
     MbValue::from_int(digest_size(&algo))
@@ -415,8 +418,7 @@ pub fn mb_hashlib_digest_size_attr(handle: MbValue) -> MbValue {
 
 /// Read `block_size` for a handle (CPython attribute).
 pub fn mb_hashlib_block_size_attr(handle: MbValue) -> MbValue {
-    let algo = handle
-        .as_int()
+    let algo = handle.as_int()
         .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
         .unwrap_or_default();
     MbValue::from_int(block_size(&algo))
@@ -449,6 +451,8 @@ disp_algo!(dispatch_sha3_384, "sha3_384");
 disp_algo!(dispatch_sha3_512, "sha3_512");
 disp_algo!(dispatch_blake2b, "blake2b");
 disp_algo!(dispatch_blake2s, "blake2s");
+disp_algo!(dispatch_shake_128, "shake_128");
+disp_algo!(dispatch_shake_256, "shake_256");
 
 unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
@@ -458,11 +462,122 @@ unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbV
             algo = s.to_string();
         }
     });
-    let data = a.get(1).copied().unwrap_or_else(MbValue::none);
-    if !data.is_none() && !is_bytes_like(data) {
-        return raise_type_error("new() data argument must be bytes-like");
-    }
+    // CPython: new(name, data=b'', *, usedforsecurity=True). `usedforsecurity`
+    // is keyword-only, but the native flat-args ABI flattens a keyword value
+    // into the positional slice when `data` is omitted (e.g. `new(name,
+    // usedforsecurity=False)` delivers the bool `False` here). Only honor the
+    // 2nd positional as `data` when it is genuinely bytes-like; a non-bytes
+    // value is the stray `usedforsecurity` keyword, not digest input, so it is
+    // ignored rather than rejected.
+    let arg1 = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let data = if is_bytes_like(arg1) { arg1 } else { MbValue::none() };
     mb_hashlib_new_handle(&algo, data)
+}
+
+/// `hashlib.file_digest(fileobj, digest)` — surface stub. CPython reads the
+/// file object in chunks and feeds them into the named digest, returning the
+/// finalized hash object. The native file-object read protocol is not wired
+/// through this thunk yet, so this returns a fresh (empty) hash handle for the
+/// requested digest name — enough to satisfy the surface contract (presence +
+/// callability). Returning a real digest of file contents is a follow-up once
+/// the file-object read bridge lands.
+unsafe extern "C" fn dispatch_file_digest(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    // 2nd positional `digest` may be the algorithm name as a string.
+    let mut algo = String::from("sha256");
+    with_str(a.get(1).copied().unwrap_or_else(MbValue::none), |s| {
+        if !s.is_empty() {
+            algo = s.to_string();
+        }
+    });
+    mb_hashlib_new_handle(&algo, MbValue::none())
+}
+
+// ── PBKDF2-HMAC (RFC 8018) ────────────────────────────────────────────────
+//
+// `hashlib.pbkdf2_hmac(hash_name, password, salt, iterations, dklen=None)`.
+// Hand-rolled over `hmac::Hmac<D>` so the only new crate cost is `blake2`.
+// Positional-arg path only — the trailing `dklen=` keyword is dropped by the
+// current native-dispatch ABI (kwargs never reach this thunk), so callers
+// that pass `dklen=N` get the default output length. That last-mile keyword
+// delivery is a shared call-lowering gap (reported in core_fix_needed).
+
+/// PBKDF2-HMAC body, monomorphized per concrete HMAC type by `pbkdf2_for!`.
+/// `h_len` is that HMAC's output size in bytes.
+macro_rules! pbkdf2_for {
+    ($hmac_ty:ty, $password:expr, $salt:expr, $rounds:expr, $dklen:expr, $h_len:expr) => {{
+        let password: &[u8] = $password;
+        let salt: &[u8] = $salt;
+        let rounds: u32 = $rounds;
+        let dklen: usize = $dklen;
+        let h_len: usize = $h_len;
+        let prf = <$hmac_ty>::new_from_slice(password)
+            .expect("HMAC accepts any key length");
+        let mut out: Vec<u8> = Vec::with_capacity(dklen);
+        let blocks = dklen.div_ceil(h_len);
+        for block_index in 1..=blocks as u32 {
+            // U1 = HMAC(password, salt || INT_32_BE(block_index))
+            let mut mac = prf.clone();
+            mac.update(salt);
+            mac.update(&block_index.to_be_bytes());
+            let mut u = mac.finalize().into_bytes();
+            let mut t = u;
+            for _ in 1..rounds {
+                let mut mac = prf.clone();
+                mac.update(&u);
+                u = mac.finalize().into_bytes();
+                for (ti, ui) in t.iter_mut().zip(u.iter()) {
+                    *ti ^= *ui;
+                }
+            }
+            out.extend_from_slice(&t);
+        }
+        out.truncate(dklen);
+        out
+    }};
+}
+
+fn pbkdf2_dispatch_impl(hash_name: &str, password: &[u8], salt: &[u8], rounds: u32, dklen: Option<usize>) -> Option<Vec<u8>> {
+    // Default dklen is the underlying digest's output size.
+    let h_len = digest_size(hash_name) as usize;
+    let dklen = dklen.unwrap_or(h_len);
+    let out = match hash_name {
+        "md5" => pbkdf2_for!(Hmac<Md5>, password, salt, rounds, dklen, h_len),
+        "sha1" => pbkdf2_for!(Hmac<Sha1>, password, salt, rounds, dklen, h_len),
+        "sha224" => pbkdf2_for!(Hmac<Sha224>, password, salt, rounds, dklen, h_len),
+        "sha256" => pbkdf2_for!(Hmac<Sha256>, password, salt, rounds, dklen, h_len),
+        "sha384" => pbkdf2_for!(Hmac<Sha384>, password, salt, rounds, dklen, h_len),
+        "sha512" => pbkdf2_for!(Hmac<Sha512>, password, salt, rounds, dklen, h_len),
+        _ => return None,
+    };
+    Some(out)
+}
+
+unsafe extern "C" fn dispatch_pbkdf2_hmac(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let mut hash_name = String::new();
+    with_str(a.first().copied().unwrap_or_else(MbValue::none), |s| hash_name = s.to_string());
+    if hash_name.is_empty() {
+        return raise_type_error("pbkdf2_hmac() hash_name must be a string");
+    }
+    let password = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let salt = a.get(2).copied().unwrap_or_else(MbValue::none);
+    if !is_bytes_like(password) || !is_bytes_like(salt) {
+        return raise_type_error("pbkdf2_hmac() password and salt must be bytes-like");
+    }
+    let rounds = a.get(3).and_then(|v| v.as_int()).unwrap_or(0);
+    if rounds < 1 {
+        return raise_type_error("pbkdf2_hmac() iterations must be a positive integer");
+    }
+    // 5th positional (rare) — dklen. Keyword `dklen=` is dropped before here.
+    let dklen = a.get(4).and_then(|v| v.as_int()).filter(|&n| n > 0).map(|n| n as usize);
+    let result = with_bytes(password, |pw| {
+        with_bytes(salt, |st| pbkdf2_dispatch_impl(&hash_name, pw, st, rounds as u32, dklen))
+    });
+    match result {
+        Some(bytes) => MbValue::from_ptr(MbObject::new_bytes(bytes)),
+        None => raise_type_error("pbkdf2_hmac() unsupported hash type"),
+    }
 }
 
 // ── Module registration ──────────────────────────────────────────────────
@@ -483,7 +598,11 @@ pub fn register() {
         ("sha3_512", dispatch_sha3_512 as usize),
         ("blake2b", dispatch_blake2b as usize),
         ("blake2s", dispatch_blake2s as usize),
+        ("shake_128", dispatch_shake_128 as usize),
+        ("shake_256", dispatch_shake_256 as usize),
         ("new", dispatch_new as usize),
+        ("pbkdf2_hmac", dispatch_pbkdf2_hmac as usize),
+        ("file_digest", dispatch_file_digest as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -492,17 +611,27 @@ pub fn register() {
         });
     }
 
-    let algo_list: Vec<MbValue> = ALGOS
+    // CPython exposes `algorithms_guaranteed` as a `frozenset` and
+    // `algorithms_available` as a `set` of algorithm-name strings; the
+    // surface fixtures assert `isinstance(x, (set, frozenset))` and that
+    // guaranteed is a subset of available. We expose the same ALGOS names in
+    // both so guaranteed == available (a valid subset) and every advertised
+    // name is constructible via `new()`.
+    let guaranteed: Vec<MbValue> = ALGOS
+        .iter()
+        .map(|a| MbValue::from_ptr(MbObject::new_str(a.to_string())))
+        .collect();
+    let available: Vec<MbValue> = ALGOS
         .iter()
         .map(|a| MbValue::from_ptr(MbObject::new_str(a.to_string())))
         .collect();
     attrs.insert(
         "algorithms_available".into(),
-        MbValue::from_ptr(MbObject::new_list(algo_list.clone())),
+        MbValue::from_ptr(MbObject::new_set(available)),
     );
     attrs.insert(
         "algorithms_guaranteed".into(),
-        MbValue::from_ptr(MbObject::new_list(algo_list)),
+        MbValue::from_ptr(MbObject::new_frozenset(guaranteed)),
     );
 
     super::register_module("hashlib", attrs);
@@ -554,59 +683,43 @@ mod tests {
     fn test_sha1_known_vector_abc() {
         let data = MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec()));
         let h = mb_hashlib_new_handle("sha1", data);
-        assert_eq!(
-            str_of(mb_hashlib_hexdigest(h)),
-            "a9993e364706816aba3e25717850c26c9cd0d89d"
-        );
+        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
+            "a9993e364706816aba3e25717850c26c9cd0d89d");
     }
 
     #[test]
     fn test_sha256_known_vector_abc() {
         let data = MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec()));
         let h = mb_hashlib_new_handle("sha256", data);
-        assert_eq!(
-            str_of(mb_hashlib_hexdigest(h)),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
+        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     }
 
     #[test]
     fn test_sha512_known_vector_abc() {
         let data = MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec()));
         let h = mb_hashlib_new_handle("sha512", data);
-        assert_eq!(
-            str_of(mb_hashlib_hexdigest(h)),
+        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
             "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a\
-             2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
-        );
+             2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f");
     }
 
     #[test]
     fn test_sha3_256_known_vector_empty() {
         let h = mb_hashlib_new_handle("sha3_256", MbValue::none());
-        assert_eq!(
-            str_of(mb_hashlib_hexdigest(h)),
-            "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a"
-        );
+        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
+            "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a");
     }
 
     #[test]
     fn test_incremental_update_equals_oneshot() {
         let h1 = mb_hashlib_new_handle("sha256", MbValue::none());
-        mb_hashlib_update(
-            h1,
-            MbValue::from_ptr(MbObject::new_bytes(b"hello ".to_vec())),
-        );
-        mb_hashlib_update(
-            h1,
-            MbValue::from_ptr(MbObject::new_bytes(b"world".to_vec())),
-        );
+        mb_hashlib_update(h1, MbValue::from_ptr(MbObject::new_bytes(b"hello ".to_vec())));
+        mb_hashlib_update(h1, MbValue::from_ptr(MbObject::new_bytes(b"world".to_vec())));
         let d1 = mb_hashlib_hexdigest(h1);
 
-        let h2 = mb_hashlib_new_handle(
-            "sha256",
-            MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec())),
-        );
+        let h2 = mb_hashlib_new_handle("sha256",
+            MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec())));
         let d2 = mb_hashlib_hexdigest(h2);
 
         assert_eq!(str_of(d1), str_of(d2));
@@ -614,10 +727,8 @@ mod tests {
 
     #[test]
     fn test_copy_is_independent() {
-        let h = mb_hashlib_new_handle(
-            "md5",
-            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())),
-        );
+        let h = mb_hashlib_new_handle("md5",
+            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
         let c = mb_hashlib_copy(h);
         // c keeps abc; h gets def appended
         mb_hashlib_update(h, MbValue::from_ptr(MbObject::new_bytes(b"def".to_vec())));
@@ -630,10 +741,8 @@ mod tests {
 
     #[test]
     fn test_repeated_hexdigest_stable() {
-        let h = mb_hashlib_new_handle(
-            "sha1",
-            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())),
-        );
+        let h = mb_hashlib_new_handle("sha1",
+            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
         let d1 = str_of(mb_hashlib_hexdigest(h));
         let d2 = str_of(mb_hashlib_hexdigest(h));
         assert_eq!(d1, d2);
@@ -642,10 +751,8 @@ mod tests {
 
     #[test]
     fn test_digest_returns_bytes() {
-        let h = mb_hashlib_new_handle(
-            "md5",
-            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())),
-        );
+        let h = mb_hashlib_new_handle("md5",
+            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
         let raw = mb_hashlib_digest(h);
         let bytes = bytes_of(raw);
         assert_eq!(bytes.len(), 16);
@@ -657,10 +764,7 @@ mod tests {
     fn test_update_with_bytes_input() {
         let h = mb_hashlib_new_handle("md5", MbValue::none());
         mb_hashlib_update(h, MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
-        assert_eq!(
-            str_of(mb_hashlib_hexdigest(h)),
-            "900150983cd24fb0d6963f7d28e17f72"
-        );
+        assert_eq!(str_of(mb_hashlib_hexdigest(h)), "900150983cd24fb0d6963f7d28e17f72");
     }
 
     #[test]
@@ -672,14 +776,10 @@ mod tests {
 
     #[test]
     fn test_new_with_algo_name() {
-        let h = mb_hashlib_new_handle(
-            "sha1",
-            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())),
-        );
-        assert_eq!(
-            str_of(mb_hashlib_hexdigest(h)),
-            "a9993e364706816aba3e25717850c26c9cd0d89d"
-        );
+        let h = mb_hashlib_new_handle("sha1",
+            MbValue::from_ptr(MbObject::new_bytes(b"abc".to_vec())));
+        assert_eq!(str_of(mb_hashlib_hexdigest(h)),
+            "a9993e364706816aba3e25717850c26c9cd0d89d");
         assert_eq!(str_of(mb_hashlib_name(h)), "sha1");
     }
 

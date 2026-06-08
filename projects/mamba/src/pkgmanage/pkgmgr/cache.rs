@@ -145,12 +145,10 @@ pub async fn promote_to_content_addressed(
         return Ok(dest);
     }
     if let Some(parent) = dest.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| IndexError::CacheIo {
-                path: parent.display().to_string(),
-                detail: format!("create CAS dir: {e}"),
-            })?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| IndexError::CacheIo {
+            path: parent.display().to_string(),
+            detail: format!("create CAS dir: {e}"),
+        })?;
     }
     // Hard link first; fall back to a byte copy on EXDEV / unsupported FS.
     let hardlink_result = {
@@ -164,12 +162,10 @@ pub async fn promote_to_content_addressed(
             })?
     };
     if hardlink_result.is_err() {
-        tokio::fs::copy(verified_src, &dest)
-            .await
-            .map_err(|e| IndexError::CacheIo {
-                path: dest.display().to_string(),
-                detail: format!("CAS fallback copy: {e}"),
-            })?;
+        tokio::fs::copy(verified_src, &dest).await.map_err(|e| IndexError::CacheIo {
+            path: dest.display().to_string(),
+            detail: format!("CAS fallback copy: {e}"),
+        })?;
     }
     Ok(dest)
 }
@@ -193,9 +189,7 @@ pub async fn read_cached_metadata(
     // Stat the file to check mtime.
     let metadata = tokio::fs::metadata(&path).await.ok()?;
     let mtime = metadata.modified().ok()?;
-    let age = SystemTime::now()
-        .duration_since(mtime)
-        .unwrap_or(Duration::MAX);
+    let age = SystemTime::now().duration_since(mtime).unwrap_or(Duration::MAX);
     if age > Duration::from_secs(ttl_secs) {
         return None;
     }
@@ -223,12 +217,10 @@ pub async fn write_cached_metadata(
 
     // Create parent directories.
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| IndexError::CacheIo {
-                path: parent.display().to_string(),
-                detail: format!("create_dir_all failed: {e}"),
-            })?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| IndexError::CacheIo {
+            path: parent.display().to_string(),
+            detail: format!("create_dir_all failed: {e}"),
+        })?;
     }
 
     // Serialize.
@@ -238,20 +230,16 @@ pub async fn write_cached_metadata(
     })?;
 
     // Write to .tmp file.
-    tokio::fs::write(&tmp_path, &bytes)
-        .await
-        .map_err(|e| IndexError::CacheIo {
-            path: tmp_path.display().to_string(),
-            detail: format!("write .tmp failed: {e}"),
-        })?;
+    tokio::fs::write(&tmp_path, &bytes).await.map_err(|e| IndexError::CacheIo {
+        path: tmp_path.display().to_string(),
+        detail: format!("write .tmp failed: {e}"),
+    })?;
 
     // Atomic rename.
-    tokio::fs::rename(&tmp_path, &path)
-        .await
-        .map_err(|e| IndexError::CacheIo {
-            path: path.display().to_string(),
-            detail: format!("rename .tmp → final failed: {e}"),
-        })?;
+    tokio::fs::rename(&tmp_path, &path).await.map_err(|e| IndexError::CacheIo {
+        path: path.display().to_string(),
+        detail: format!("rename .tmp → final failed: {e}"),
+    })?;
 
     Ok(())
 }
@@ -299,29 +287,23 @@ pub async fn write_cached_etag(
 
     // Create parent directories.
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| IndexError::CacheIo {
-                path: parent.display().to_string(),
-                detail: format!("create_dir_all failed: {e}"),
-            })?;
+        tokio::fs::create_dir_all(parent).await.map_err(|e| IndexError::CacheIo {
+            path: parent.display().to_string(),
+            detail: format!("create_dir_all failed: {e}"),
+        })?;
     }
 
     // Write to .tmp file.
-    tokio::fs::write(&tmp_path, etag.as_bytes())
-        .await
-        .map_err(|e| IndexError::CacheIo {
-            path: tmp_path.display().to_string(),
-            detail: format!("write .tmp failed: {e}"),
-        })?;
+    tokio::fs::write(&tmp_path, etag.as_bytes()).await.map_err(|e| IndexError::CacheIo {
+        path: tmp_path.display().to_string(),
+        detail: format!("write .tmp failed: {e}"),
+    })?;
 
     // Atomic rename.
-    tokio::fs::rename(&tmp_path, &path)
-        .await
-        .map_err(|e| IndexError::CacheIo {
-            path: path.display().to_string(),
-            detail: format!("rename .tmp → final failed: {e}"),
-        })?;
+    tokio::fs::rename(&tmp_path, &path).await.map_err(|e| IndexError::CacheIo {
+        path: path.display().to_string(),
+        detail: format!("rename .tmp → final failed: {e}"),
+    })?;
 
     Ok(())
 }
@@ -480,10 +462,7 @@ mod tests {
 
         // TTL = 0 → any age causes miss.
         let result = read_cached_metadata(cache_dir, "requests", "json", 0).await;
-        assert!(
-            result.is_none(),
-            "should return None when TTL=0 (always stale)"
-        );
+        assert!(result.is_none(), "should return None when TTL=0 (always stale)");
     }
 
     // REQ: test_metadata_corrupt_file_returns_none — garbage JSON → None, no panic
@@ -501,10 +480,7 @@ mod tests {
         f.write_all(b"this is not valid JSON {{{}}}").unwrap();
 
         let result = read_cached_metadata(cache_dir, "mypkg", "json", 9999).await;
-        assert!(
-            result.is_none(),
-            "corrupt JSON should return None, not panic"
-        );
+        assert!(result.is_none(), "corrupt JSON should return None, not panic");
     }
 
     // REQ: test_artifact_sidecar_verify_hit — correct sidecar → Some(path)
@@ -536,10 +512,7 @@ mod tests {
         };
 
         let result = read_cached_artifact(cache_dir, "mypkg", filename, &expected_hash).await;
-        assert!(
-            result.is_some(),
-            "correct sidecar + bytes should return Some"
-        );
+        assert!(result.is_some(), "correct sidecar + bytes should return Some");
         assert_eq!(result.unwrap(), path);
     }
 
@@ -579,10 +552,7 @@ mod tests {
         let cache = tmp.path();
 
         let short = content_addressed_path(cache, "deadbeef");
-        assert_eq!(
-            short,
-            cache.join("content").join("_invalid").join("deadbeef")
-        );
+        assert_eq!(short, cache.join("content").join("_invalid").join("deadbeef"));
 
         let non_hex = "z".repeat(64);
         let nh = content_addressed_path(cache, &non_hex);
@@ -703,10 +673,7 @@ mod tests {
         };
 
         let result = read_cached_artifact(cache_dir, "mypkg", filename, &expected_hash).await;
-        assert!(
-            result.is_none(),
-            "sidecar mismatch against expected should return None"
-        );
+        assert!(result.is_none(), "sidecar mismatch against expected should return None");
 
         // File should be deleted.
         assert!(!path.exists(), "corrupt artifact file should be deleted");

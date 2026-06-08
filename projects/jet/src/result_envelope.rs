@@ -1491,6 +1491,8 @@ mod tests {
                 }],
             }],
             artifacts: vec![],
+            serve_session: None,
+            browser_sessions: vec![],
             open_control: None,
         };
 
@@ -1537,6 +1539,8 @@ mod tests {
                 steps: vec![],
             }],
             artifacts: vec![],
+            serve_session: None,
+            browser_sessions: vec![],
             open_control: None,
         };
 
@@ -1574,6 +1578,8 @@ mod tests {
                 steps: vec![],
             }],
             artifacts: vec![],
+            serve_session: None,
+            browser_sessions: vec![],
             open_control: None,
         };
 

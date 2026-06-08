@@ -1,8 +1,3 @@
-use super::dict_ops::DictKey;
-use indexmap::IndexMap;
-use num_bigint::BigInt;
-use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
 /// Reference-counted heap objects (#280) — thread-safe, no-GIL.
 ///
 /// Every heap-allocated Mamba object starts with a MbObjectHeader containing
@@ -70,7 +65,13 @@ use smallvec::SmallVec;
 /// ## NON-POINTER (returns NaN-boxed i64/f64/bool — retain_if_ptr is no-op)
 ///
 ///   mb_len, mb_is_truthy, mb_hash, mb_id, mb_bool
+
 use std::sync::atomic::{AtomicU32, Ordering};
+use indexmap::IndexMap;
+use num_bigint::BigInt;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
+use super::dict_ops::DictKey;
 
 #[inline]
 fn is_typed_native_wrapper(val: super::value::MbValue) -> bool {
@@ -98,6 +99,223 @@ fn is_typed_native_wrapper(val: super::value::MbValue) -> bool {
 /// Inline capacity 8 covers the dominant literal arity (`mb_list_new_1`
 /// through `mb_list_new_8` fixed-arity JIT shims).
 pub type MbList = SmallVec<[super::value::MbValue; 8]>;
+
+/// Hash-indexed backing store for `ObjData::Set` (#set-perf).
+///
+/// Previously a set was a bare `MbList` (a `Vec`), so membership / `add`
+/// dedup / `discard` all did a *linear* `eq_py` scan — making `set.add` in
+/// a loop O(n²). `MbSet` keeps the ordered `items: MbList` (so iteration,
+/// `pop`, GC traversal, repr, and the ~40 read-only consumer sites all keep
+/// working through `Deref<Target = MbList>`) and adds a `buckets` hash index
+/// that maps a value's `set_hash` to the positions in `items` that hash
+/// there. Membership / add / discard become amortized O(1): hash the value,
+/// look in its bucket, confirm with `eq_py` (so exact Python `==` semantics,
+/// including `1 == 1.0 == True`, are preserved — values that may compare
+/// equal across types share a bucket and are disambiguated by `eq_py`).
+///
+/// Read-only access (`.iter()`, `.len()`, `.to_vec()`, `.is_empty()`, …)
+/// goes through `Deref` to `items`. All *mutation* must go through the
+/// inherent methods (`set_insert` / `set_remove` / `pop_front`) so the index
+/// stays in sync — `MbSet` deliberately does NOT implement `DerefMut`.
+#[derive(Default)]
+pub struct MbSet {
+    items: MbList,
+    /// `set_hash(value) -> positions into `items`` with that hash.
+    buckets: FxHashMap<u64, SmallVec<[u32; 1]>>,
+}
+
+impl std::ops::Deref for MbSet {
+    type Target = MbList;
+    #[inline]
+    fn deref(&self) -> &MbList {
+        &self.items
+    }
+}
+
+/// Hash that is *consistent with* `mb_eq` (`eq_py`): any two values that
+/// compare equal MUST hash the same so they bucket together.
+///
+/// - int / bool → the integer value (so `True`/`1`/`1.0` share a bucket)
+/// - integral float that fits i64 → that integer value
+/// - other float → its bit pattern
+/// - str → the string contents
+/// - tuple → structural `mb_tuple_hash`
+/// - everything else (custom `__eq__` instances, bytes-like, namedtuples,
+///   …) → a single shared bucket (0) so `eq_py` still resolves them
+///   correctly. These rarer types fall back to a linear scan *within that
+///   one bucket*, exactly matching the old behavior, while the common
+///   int/str/tuple element types get true O(1).
+pub(crate) fn set_hash(v: super::value::MbValue) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    if let Some(i) = v.as_int() {
+        0u8.hash(&mut h);
+        i.hash(&mut h);
+        return h.finish();
+    }
+    if let Some(b) = v.as_bool() {
+        0u8.hash(&mut h);
+        (b as i64).hash(&mut h);
+        return h.finish();
+    }
+    if let Some(f) = v.as_float() {
+        // Integral floats hash as the matching integer so `1.0` and `1`
+        // land in the same bucket (they compare equal under eq_py).
+        if f.is_finite() && f.fract() == 0.0 && f >= i64::MIN as f64 && f <= i64::MAX as f64 {
+            0u8.hash(&mut h);
+            (f as i64).hash(&mut h);
+        } else {
+            1u8.hash(&mut h);
+            f.to_bits().hash(&mut h);
+        }
+        return h.finish();
+    }
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Str(s) => {
+                    2u8.hash(&mut h);
+                    s.hash(&mut h);
+                    return h.finish();
+                }
+                ObjData::Tuple(_) => {
+                    3u8.hash(&mut h);
+                    super::tuple_ops::mb_tuple_hash(v)
+                        .as_int()
+                        .unwrap_or(0)
+                        .hash(&mut h);
+                    return h.finish();
+                }
+                _ => {}
+            }
+        }
+    }
+    // Fallback: a single shared bucket for value types whose cross-type
+    // equality we don't want to risk splitting. eq_py resolves these.
+    0xFFFF_FFFF_FFFF_FFFF
+}
+
+impl MbSet {
+    /// Build a set from `elements` and construct the hash index.
+    ///
+    /// This preserves `new_set`'s historical contract: every element in
+    /// `elements` is stored verbatim and the set takes ownership of the
+    /// references the caller already holds (no extra retain, no release of
+    /// dropped duplicates). Callers that need set semantics (dedup) pass an
+    /// already-deduplicated vector — `union`, `intersection`, `copy`, etc.
+    /// all do. Building the index for duplicate-equal elements simply records
+    /// multiple positions in the same bucket, which the `eq_py` confirm step
+    /// tolerates.
+    pub fn from_elements(elements: Vec<super::value::MbValue>) -> Self {
+        let mut s = MbSet {
+            items: MbList::with_capacity(elements.len()),
+            buckets: FxHashMap::default(),
+        };
+        for e in elements {
+            let pos = s.items.len() as u32;
+            s.items.push(e);
+            s.buckets.entry(set_hash(e)).or_default().push(pos);
+        }
+        s
+    }
+
+    /// Find the position of `value` in `items`, or `None`. O(1) amortized.
+    #[inline]
+    fn position_of(&self, value: super::value::MbValue) -> Option<usize> {
+        let hh = set_hash(value);
+        let bucket = self.buckets.get(&hh)?;
+        for &pos in bucket.iter() {
+            let existing = self.items[pos as usize];
+            if super::builtins::mb_eq(existing, value).as_bool() == Some(true) {
+                return Some(pos as usize);
+            }
+        }
+        None
+    }
+
+    /// `value in set` — O(1) amortized.
+    #[inline]
+    pub fn contains_value(&self, value: super::value::MbValue) -> bool {
+        self.position_of(value).is_some()
+    }
+
+    /// Insert `value`, retaining it (one new owned reference) if it is newly
+    /// added. Returns true if newly inserted. O(1) amortized.
+    #[inline]
+    pub fn set_insert(&mut self, value: super::value::MbValue) -> bool {
+        if self.position_of(value).is_some() {
+            return false;
+        }
+        unsafe {
+            super::rc::retain_if_ptr(value);
+        }
+        let pos = self.items.len() as u32;
+        self.items.push(value);
+        self.buckets.entry(set_hash(value)).or_default().push(pos);
+        true
+    }
+
+    /// Remove `value` if present, returning the removed `MbValue` (which the
+    /// caller is responsible for releasing). O(1) amortized — uses
+    /// `swap_remove` and fixes up the moved element's index entry.
+    pub fn set_remove(&mut self, value: super::value::MbValue) -> Option<super::value::MbValue> {
+        let pos = self.position_of(value)?;
+        Some(self.remove_at(pos))
+    }
+
+    /// Remove and return the element at `idx` via `swap_remove`, keeping the
+    /// hash index consistent (the element previously at the last position is
+    /// moved to `idx`, so its bucket entry is repointed).
+    fn remove_at(&mut self, idx: usize) -> super::value::MbValue {
+        let last = self.items.len() - 1;
+        let removed = self.items[idx];
+        // Drop `removed`'s index entry (it hashed to bucket of `removed`).
+        self.bucket_remove_pos(set_hash(removed), idx as u32);
+        if idx != last {
+            // The element at `last` is about to move into slot `idx`.
+            let moved = self.items[last];
+            self.bucket_replace_pos(set_hash(moved), last as u32, idx as u32);
+        }
+        self.items.swap_remove(idx)
+    }
+
+    /// Remove and return the first element (used by `set.pop`). O(1)
+    /// amortized via the same swap-remove bookkeeping.
+    pub fn pop_front(&mut self) -> Option<super::value::MbValue> {
+        if self.items.is_empty() {
+            return None;
+        }
+        Some(self.remove_at(0))
+    }
+
+    fn bucket_remove_pos(&mut self, hash: u64, pos: u32) {
+        if let Some(bucket) = self.buckets.get_mut(&hash) {
+            if let Some(i) = bucket.iter().position(|&p| p == pos) {
+                bucket.swap_remove(i);
+            }
+            if bucket.is_empty() {
+                self.buckets.remove(&hash);
+            }
+        }
+    }
+
+    fn bucket_replace_pos(&mut self, hash: u64, old: u32, new: u32) {
+        if let Some(bucket) = self.buckets.get_mut(&hash) {
+            for p in bucket.iter_mut() {
+                if *p == old {
+                    *p = new;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Clear all elements and the index (callers release element refs).
+    pub fn clear_all(&mut self) {
+        self.items.clear();
+        self.buckets.clear();
+    }
+}
 
 /// Container lock for `ObjData::{List,Dict,Set,ByteArray}` + `Instance.fields`
 /// (#2518). Wraps `parking_lot::RwLock` so the uncontended read+write fast
@@ -177,12 +395,8 @@ pub type InstanceFields = FxHashMap<String, super::value::MbValue>;
 /// (CPython's "untracked tuple" optimization). Strs/bytes/numerics can't form
 /// cycles so they're skipped here.
 fn value_is_cycle_capable(v: super::value::MbValue) -> bool {
-    let Some(ptr) = v.as_ptr() else {
-        return false;
-    };
-    if ptr.is_null() {
-        return false;
-    }
+    let Some(ptr) = v.as_ptr() else { return false; };
+    if ptr.is_null() { return false; }
     let kind = unsafe { (*ptr).header.kind };
     matches!(
         kind,
@@ -270,7 +484,7 @@ pub enum ObjData {
         class_name: String,
         fields: MbRwLock<InstanceFields>,
     },
-    Set(MbRwLock<MbList>),
+    Set(MbRwLock<MbSet>),
     Bytes(Vec<u8>),
     ByteArray(MbRwLock<Vec<u8>>),
     FrozenSet(Vec<super::value::MbValue>),
@@ -313,10 +527,7 @@ fn atomic_rc(val: u32) -> AtomicU32 {
 impl MbObject {
     pub fn new_str(s: String) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::Str,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Str },
             data: ObjData::Str(s),
         });
         Box::into_raw(obj)
@@ -326,10 +537,7 @@ impl MbObject {
     /// `mb_retain`/`mb_release` are no-ops. Used for compile-time constants.
     pub fn new_str_immortal(s: String) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(IMMORTAL_REFCOUNT),
-                kind: ObjKind::Str,
-            },
+            header: MbObjectHeader { rc: atomic_rc(IMMORTAL_REFCOUNT), kind: ObjKind::Str },
             data: ObjData::Str(s),
         });
         Box::into_raw(obj)
@@ -352,10 +560,7 @@ impl MbObject {
             MbList::from_vec(elements)
         };
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::List,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::List },
             data: ObjData::List(MbRwLock::new(buf)),
         });
         let ptr = Box::into_raw(obj);
@@ -371,10 +576,7 @@ impl MbObject {
     /// allocation. #2517.
     pub fn new_list_inline(buf: MbList) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::List,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::List },
             data: ObjData::List(MbRwLock::new(buf)),
         });
         let ptr = Box::into_raw(obj);
@@ -396,10 +598,7 @@ impl MbObject {
 
     pub fn new_dict() -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::Dict,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Dict },
             data: ObjData::Dict(MbRwLock::new(IndexMap::new())),
         });
         let ptr = Box::into_raw(obj);
@@ -411,10 +610,7 @@ impl MbObject {
     /// Used when the number of entries is known or estimated.
     pub fn new_dict_with_capacity(capacity: usize) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::Dict,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Dict },
             data: ObjData::Dict(MbRwLock::new(IndexMap::with_capacity(capacity))),
         });
         let ptr = Box::into_raw(obj);
@@ -425,10 +621,7 @@ impl MbObject {
     pub fn new_tuple(elements: Vec<super::value::MbValue>) -> *mut Self {
         let needs_tracking = elements.iter().any(|v| value_is_cycle_capable(*v));
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::Tuple,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Tuple },
             data: ObjData::Tuple(elements),
         });
         let ptr = Box::into_raw(obj);
@@ -449,17 +642,10 @@ impl MbObject {
     }
 
     pub fn new_set(elements: Vec<super::value::MbValue>) -> *mut Self {
-        let buf: MbList = if elements.len() <= 8 {
-            MbList::from_slice(&elements)
-        } else {
-            MbList::from_vec(elements)
-        };
+        let set = MbSet::from_elements(elements);
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::Set,
-            },
-            data: ObjData::Set(MbRwLock::new(buf)),
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Set },
+            data: ObjData::Set(MbRwLock::new(set)),
         });
         let ptr = Box::into_raw(obj);
         super::gc::gc_track(ptr);
@@ -515,10 +701,7 @@ impl MbObject {
             data.shrink_to_fit();
         }
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::Bytes,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Bytes },
             data: ObjData::Bytes(data),
         });
         Box::into_raw(obj)
@@ -531,10 +714,7 @@ impl MbObject {
             data.shrink_to_fit();
         }
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(IMMORTAL_REFCOUNT),
-                kind: ObjKind::Bytes,
-            },
+            header: MbObjectHeader { rc: atomic_rc(IMMORTAL_REFCOUNT), kind: ObjKind::Bytes },
             data: ObjData::Bytes(data),
         });
         Box::into_raw(obj)
@@ -542,10 +722,7 @@ impl MbObject {
 
     pub fn new_bytearray(data: Vec<u8>) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::ByteArray,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::ByteArray },
             data: ObjData::ByteArray(MbRwLock::new(data)),
         });
         Box::into_raw(obj)
@@ -554,10 +731,7 @@ impl MbObject {
     pub fn new_frozenset(elements: Vec<super::value::MbValue>) -> *mut Self {
         let needs_tracking = elements.iter().any(|v| value_is_cycle_capable(*v));
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::FrozenSet,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::FrozenSet },
             data: ObjData::FrozenSet(elements),
         });
         let ptr = Box::into_raw(obj);
@@ -570,10 +744,7 @@ impl MbObject {
     /// Allocate a BigInt heap object (#833).
     pub fn new_bigint(value: BigInt) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::BigInt,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::BigInt },
             data: ObjData::BigInt(value),
         });
         Box::into_raw(obj)
@@ -582,10 +753,7 @@ impl MbObject {
     /// Allocate a Complex heap object (R3 CPython 3.12 conformance).
     pub fn new_complex(real: f64, imag: f64) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::Complex,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Complex },
             data: ObjData::Complex(real, imag),
         });
         Box::into_raw(obj)
@@ -603,10 +771,7 @@ impl MbObject {
         ast: crate::parser::ast::Module,
     ) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::CodeObject,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::CodeObject },
             data: ObjData::CodeObject {
                 source,
                 filename,
@@ -619,10 +784,7 @@ impl MbObject {
 
     pub fn new_instance(class_name: String) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::Instance,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Instance },
             data: ObjData::Instance {
                 class_name,
                 fields: MbRwLock::new(InstanceFields::default()),
@@ -638,10 +800,7 @@ impl MbObject {
     /// during field assignment in __init__.
     pub fn new_instance_with_capacity(class_name: String, capacity: usize) -> *mut Self {
         let obj = Box::new(MbObject {
-            header: MbObjectHeader {
-                rc: atomic_rc(1),
-                kind: ObjKind::Instance,
-            },
+            header: MbObjectHeader { rc: atomic_rc(1), kind: ObjKind::Instance },
             data: ObjData::Instance {
                 class_name,
                 fields: MbRwLock::new(InstanceFields::with_capacity_and_hasher(
@@ -870,7 +1029,9 @@ pub unsafe extern "C" fn mb_release_value(val: u64) {
                 // would abort the entire process.  Skipping the release
                 // leaks memory but avoids a double-free crash.
                 #[cfg(debug_assertions)]
-                eprintln!("mb_release_value: UAF detected (kind={kind_byte}), skipping release");
+                eprintln!(
+                    "mb_release_value: UAF detected (kind={kind_byte}), skipping release"
+                );
                 return;
             }
         }
@@ -889,8 +1050,8 @@ pub unsafe extern "C" fn mb_release_value(val: u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::value::MbValue;
     use super::*;
+    use super::super::value::MbValue;
 
     #[test]
     fn test_str_object_lifecycle() {
@@ -912,7 +1073,10 @@ mod tests {
     #[test]
     fn test_list_object() {
         unsafe {
-            let list = MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(2)]);
+            let list = MbObject::new_list(vec![
+                MbValue::from_int(1),
+                MbValue::from_int(2),
+            ]);
             assert_eq!((*list).header.kind, ObjKind::List);
             if let ObjData::List(ref lock) = (*list).data {
                 let items = lock.read().unwrap();
@@ -939,9 +1103,7 @@ mod tests {
 
         let obj = MbObject::new_str("shared".into());
         // Bump refcount so it survives all threads
-        unsafe {
-            (*obj).header.rc.store(1001, Ordering::Relaxed);
-        }
+        unsafe { (*obj).header.rc.store(1001, Ordering::Relaxed); }
         let addr = obj as usize;
 
         let handles: Vec<_> = (0..10)
@@ -997,7 +1159,10 @@ mod tests {
     #[test]
     fn test_set_object() {
         unsafe {
-            let set = MbObject::new_set(vec![MbValue::from_int(1), MbValue::from_int(2)]);
+            let set = MbObject::new_set(vec![
+                MbValue::from_int(1),
+                MbValue::from_int(2),
+            ]);
             assert_eq!((*set).header.kind, ObjKind::Set);
             if let ObjData::Set(ref lock) = (*set).data {
                 let items = lock.read().unwrap();
@@ -1042,7 +1207,9 @@ mod tests {
     #[test]
     fn test_frozenset_object() {
         unsafe {
-            let fs = MbObject::new_frozenset(vec![MbValue::from_int(10)]);
+            let fs = MbObject::new_frozenset(vec![
+                MbValue::from_int(10),
+            ]);
             assert_eq!((*fs).header.kind, ObjKind::FrozenSet);
             if let ObjData::FrozenSet(ref items) = (*fs).data {
                 assert_eq!(items.len(), 1);
@@ -1060,11 +1227,7 @@ mod tests {
             let inst = MbObject::new_instance("MyClass".to_string());
             assert_eq!((*inst).header.kind, ObjKind::Instance);
             assert_eq!(mb_refcount(inst), 1);
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*inst).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*inst).data {
                 assert_eq!(class_name, "MyClass");
                 assert!(fields.read().unwrap().is_empty());
             } else {
@@ -1076,17 +1239,13 @@ mod tests {
 
     #[test]
     fn test_retain_null_is_safe() {
-        unsafe {
-            mb_retain(std::ptr::null_mut());
-        }
+        unsafe { mb_retain(std::ptr::null_mut()); }
         // Should not panic
     }
 
     #[test]
     fn test_release_null_is_safe() {
-        unsafe {
-            mb_release(std::ptr::null_mut());
-        }
+        unsafe { mb_release(std::ptr::null_mut()); }
         // Should not panic
     }
 
@@ -1199,7 +1358,7 @@ mod tests {
     #[test]
     fn test_new_bytes_zero_copy_carveout_2107() {
         // 1 MiB payload — matches the cross-runtime bench fixture size
-        // (`tests/cpython/fixtures/std-libs/{gzip,zlib,lzma}/bench/compress_1mb.py`)
+        // (`tests/cpython/std-libs/{gzip,zlib,lzma}/bench/compress_1mb.py`)
         // so a regression here is directly visible in those benches.
         let mut data = vec![0u8; 1024 * 1024];
         // Touch the first byte so MIRI / LLVM cannot fold the alloc.
@@ -1212,11 +1371,7 @@ mod tests {
             let obj = MbObject::new_bytes(data);
             // Same pointer ⇒ no memcpy of payload occurred during materialization.
             if let ObjData::Bytes(ref stored) = (*obj).data {
-                assert_eq!(
-                    stored.as_ptr(),
-                    src_ptr,
-                    "new_bytes must not memcpy payload (#2107)"
-                );
+                assert_eq!(stored.as_ptr(), src_ptr, "new_bytes must not memcpy payload (#2107)");
                 assert_eq!(stored.len(), src_len);
                 assert_eq!(stored.capacity(), src_cap);
                 assert_eq!(stored[0], 0x5A);

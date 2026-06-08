@@ -14,7 +14,7 @@ use crate::test_runner::coverage::CoverageSummary;
 use crate::test_runner::discovery::SpecFile;
 use crate::test_runner::wire::WorkerEvent;
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -163,6 +163,100 @@ pub struct TestReport {
     pub artifacts: Vec<PathBuf>,
 }
 
+/// Stable schema tag for browser sessions captured by the native test runner.
+pub const BROWSER_SESSION_SCHEMA_VERSION: &str = "jet.test.browser-session.v1";
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-test-runner.md#schema
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BrowserSessionState {
+    Launching,
+    Ready,
+    Closed,
+    Failed,
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-test-runner.md#schema
+impl BrowserSessionState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BrowserSessionState::Launching => "launching",
+            BrowserSessionState::Ready => "ready",
+            BrowserSessionState::Closed => "closed",
+            BrowserSessionState::Failed => "failed",
+        }
+    }
+}
+
+/// Browser lifecycle observed by the Rust test host while satisfying the
+/// `page` fixture. This is intentionally owned by `jet test`, not `jet e2e`,
+/// so both direct test runs and e2e evidence can consume the same fact.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-test-runner.md#schema
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserSessionReport {
+    pub schema_version: String,
+    pub session_id: String,
+    pub driver: String,
+    pub anchor: String,
+    pub headless: bool,
+    pub spec_file: PathBuf,
+    pub state: BrowserSessionState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ws_endpoint: Option<String>,
+    pub started_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_at_ms: Option<u64>,
+    #[serde(default)]
+    pub graceful_close: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-test-runner.md#schema
+impl BrowserSessionReport {
+    pub fn launching(spec_file: PathBuf, headless: bool, started_at_ms: u64) -> Self {
+        Self {
+            schema_version: BROWSER_SESSION_SCHEMA_VERSION.to_string(),
+            session_id: format!("chromium-{}-{started_at_ms}", std::process::id()),
+            driver: "chromium".to_string(),
+            anchor: "launched".to_string(),
+            headless,
+            spec_file,
+            state: BrowserSessionState::Launching,
+            pid: None,
+            ws_endpoint: None,
+            started_at_ms,
+            ready_at_ms: None,
+            closed_at_ms: None,
+            graceful_close: false,
+            error: None,
+        }
+    }
+
+    pub fn ready(&mut self, pid: Option<u32>, ws_endpoint: String, ready_at_ms: u64) {
+        self.state = BrowserSessionState::Ready;
+        self.pid = pid;
+        self.ws_endpoint = Some(ws_endpoint);
+        self.ready_at_ms = Some(ready_at_ms);
+    }
+
+    pub fn close(&mut self, graceful: bool, closed_at_ms: u64) {
+        self.state = BrowserSessionState::Closed;
+        self.graceful_close = graceful;
+        self.closed_at_ms = Some(closed_at_ms);
+    }
+
+    pub fn fail(&mut self, error: String, failed_at_ms: u64) {
+        self.state = BrowserSessionState::Failed;
+        self.error = Some(error);
+        self.closed_at_ms = Some(failed_at_ms);
+    }
+}
+
 /// Aggregated summary emitted at the end of a `run` invocation.
 ///
 /// JSON serialization carries `schema_version` as the first field so
@@ -183,6 +277,10 @@ pub struct Summary {
     // @spec #2714
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<CoverageSummary>,
+    /// Browser sessions launched by the Rust test host while satisfying page
+    /// fixtures. Empty for pure unit specs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_sessions: Vec<BrowserSessionReport>,
 }
 
 #[cfg(test)]
@@ -253,6 +351,7 @@ impl Default for Summary {
             duration_ms: 0,
             reports: Vec::new(),
             coverage: None,
+            browser_sessions: Vec::new(),
         }
     }
 }
@@ -469,6 +568,7 @@ mod tests {
                 artifacts: Vec::new(),
             }],
             coverage: None,
+            browser_sessions: Vec::new(),
         };
         reporter.on_finish(&summary).unwrap();
         let out_path = cfg.project_root.join(".jet/test-results.json");
@@ -480,6 +580,34 @@ mod tests {
             body.contains("\"schema_version\": \"jet.test.result.v1\""),
             "stable schema tag must be present: {body}"
         );
+    }
+
+    #[test]
+    fn browser_session_report_records_ready_and_close() {
+        let mut report =
+            BrowserSessionReport::launching(PathBuf::from("e2e/browser.spec.js"), true, 100);
+        assert_eq!(report.schema_version, BROWSER_SESSION_SCHEMA_VERSION);
+        assert_eq!(report.state, BrowserSessionState::Launching);
+        assert_eq!(report.driver, "chromium");
+        assert_eq!(report.anchor, "launched");
+        assert!(report.headless);
+
+        report.ready(
+            Some(42),
+            "ws://127.0.0.1/devtools/browser/abc".to_string(),
+            120,
+        );
+        assert_eq!(report.state, BrowserSessionState::Ready);
+        assert_eq!(report.pid, Some(42));
+        assert_eq!(
+            report.ws_endpoint.as_deref(),
+            Some("ws://127.0.0.1/devtools/browser/abc")
+        );
+
+        report.close(true, 180);
+        assert_eq!(report.state, BrowserSessionState::Closed);
+        assert!(report.graceful_close);
+        assert_eq!(report.closed_at_ms, Some(180));
     }
 
     #[test]

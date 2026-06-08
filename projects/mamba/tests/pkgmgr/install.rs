@@ -91,16 +91,10 @@ fn install_materializes_tool_in_tools_dir() {
         tool_dir.join("pkg/frozen-demo-pkg.py").exists(),
         "pkg stub written"
     );
-    assert!(
-        tool_dir.join("bin/frozen_demo_pkg").exists(),
-        "shim written"
-    );
+    assert!(tool_dir.join("bin/frozen_demo_pkg").exists(), "shim written");
 
     let manifest = std::fs::read_to_string(tool_dir.join("manifest.toml")).unwrap();
-    assert!(
-        manifest.contains("name = \"frozen_demo_pkg\""),
-        "{manifest}"
-    );
+    assert!(manifest.contains("name = \"frozen_demo_pkg\""), "{manifest}");
     assert!(manifest.contains("version = \"0.1.0\""), "{manifest}");
 }
 
@@ -131,19 +125,21 @@ fn install_same_version_twice_is_a_noop() {
     let index = build_index();
     let tmp = tempfile::tempdir().unwrap();
     let tools = tmp.path().join("mamba-tools");
-    assert!(run(
-        &tools,
-        &[
-            "install",
-            "frozen_demo_pkg",
-            "--version",
-            "0.1.0",
-            "--index",
-            index.path().to_str().unwrap(),
-        ],
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &tools,
+            &[
+                "install",
+                "frozen_demo_pkg",
+                "--version",
+                "0.1.0",
+                "--index",
+                index.path().to_str().unwrap(),
+            ],
+        )
+        .status
+        .success()
+    );
 
     let out = run(
         &tools,
@@ -174,32 +170,36 @@ fn install_list_shows_installed_tools_sorted() {
 
     let tmp = tempfile::tempdir().unwrap();
     let tools = tmp.path().join("mamba-tools");
-    assert!(run(
-        &tools,
-        &[
-            "install",
-            "frozen_demo_pkg",
-            "--version",
-            "0.1.0",
-            "--index",
-            index.path().to_str().unwrap(),
-        ],
-    )
-    .status
-    .success());
-    assert!(run(
-        &tools,
-        &[
-            "install",
-            "alpha-tool",
-            "--version",
-            "1.0.0",
-            "--index",
-            index.path().to_str().unwrap(),
-        ],
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &tools,
+            &[
+                "install",
+                "frozen_demo_pkg",
+                "--version",
+                "0.1.0",
+                "--index",
+                index.path().to_str().unwrap(),
+            ],
+        )
+        .status
+        .success()
+    );
+    assert!(
+        run(
+            &tools,
+            &[
+                "install",
+                "alpha-tool",
+                "--version",
+                "1.0.0",
+                "--index",
+                index.path().to_str().unwrap(),
+            ],
+        )
+        .status
+        .success()
+    );
 
     let out = run(&tools, &["install", "--list"]);
     assert!(out.status.success());
@@ -213,19 +213,21 @@ fn install_uninstall_removes_tool_dir() {
     let index = build_index();
     let tmp = tempfile::tempdir().unwrap();
     let tools = tmp.path().join("mamba-tools");
-    assert!(run(
-        &tools,
-        &[
-            "install",
-            "frozen_demo_pkg",
-            "--version",
-            "0.1.0",
-            "--index",
-            index.path().to_str().unwrap(),
-        ],
-    )
-    .status
-    .success());
+    assert!(
+        run(
+            &tools,
+            &[
+                "install",
+                "frozen_demo_pkg",
+                "--version",
+                "0.1.0",
+                "--index",
+                index.path().to_str().unwrap(),
+            ],
+        )
+        .status
+        .success()
+    );
     let tool_dir = tools.join("frozen-demo-pkg");
     assert!(tool_dir.exists());
 
@@ -237,10 +239,7 @@ fn install_uninstall_removes_tool_dir() {
     let out2 = run(&tools, &["install", "--uninstall", "frozen_demo_pkg"]);
     assert!(out2.status.success());
     let stderr = String::from_utf8_lossy(&out2.stderr);
-    assert!(
-        stderr.contains("no_op"),
-        "uninstall replay no-op: {stderr:?}"
-    );
+    assert!(stderr.contains("no_op"), "uninstall replay no-op: {stderr:?}");
 }
 
 #[test]

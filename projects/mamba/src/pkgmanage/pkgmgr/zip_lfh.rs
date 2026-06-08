@@ -128,8 +128,8 @@ pub fn parse_lfh(bytes: &[u8]) -> Result<LocalFileHeader, IndexError> {
         });
     }
 
-    let filename =
-        String::from_utf8_lossy(&bytes[LFH_FIXED_LEN..LFH_FIXED_LEN + filename_len]).into_owned();
+    let filename = String::from_utf8_lossy(&bytes[LFH_FIXED_LEN..LFH_FIXED_LEN + filename_len])
+        .into_owned();
 
     Ok(LocalFileHeader {
         filename,
@@ -172,11 +172,11 @@ mod tests {
     ) -> Vec<u8> {
         let mut buf = Vec::with_capacity(LFH_FIXED_LEN + filename.len() + extra.len());
         buf.extend_from_slice(&LFH_SIG);
-        buf.extend_from_slice(&20u16.to_le_bytes()); // version needed
+        buf.extend_from_slice(&20u16.to_le_bytes());      // version needed
         buf.extend_from_slice(&gp_flag.to_le_bytes());
         buf.extend_from_slice(&compression_method.to_le_bytes());
-        buf.extend_from_slice(&0u16.to_le_bytes()); // mod time
-        buf.extend_from_slice(&0u16.to_le_bytes()); // mod date
+        buf.extend_from_slice(&0u16.to_le_bytes());       // mod time
+        buf.extend_from_slice(&0u16.to_le_bytes());       // mod date
         buf.extend_from_slice(&crc32.to_le_bytes());
         buf.extend_from_slice(&compressed_size.to_le_bytes());
         buf.extend_from_slice(&uncompressed_size.to_le_bytes());
@@ -189,15 +189,7 @@ mod tests {
 
     #[test]
     fn parse_basic_deflate_header() {
-        let lfh = build_lfh(
-            b"pkg-1.0.dist-info/METADATA",
-            512,
-            1024,
-            8,
-            0,
-            0xDEADBEEF,
-            &[],
-        );
+        let lfh = build_lfh(b"pkg-1.0.dist-info/METADATA", 512, 1024, 8, 0, 0xDEADBEEF, &[]);
         let parsed = parse_lfh(&lfh).unwrap();
         assert_eq!(parsed.filename, "pkg-1.0.dist-info/METADATA");
         assert_eq!(parsed.compressed_size, 512);

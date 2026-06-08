@@ -14,7 +14,9 @@ use crate::browser::{Browser, LaunchOptions};
 use crate::cdp_driver::{dispatch_page_request, parse_page_request, write_page_response};
 use crate::test_runner::config::{LiveE2eConfig, RunnerConfig};
 use crate::test_runner::discovery::SpecFile;
-use crate::test_runner::reporter::{MultiReporter, Outcome, Summary, TestReport};
+use crate::test_runner::reporter::{
+    BrowserSessionReport, MultiReporter, Outcome, Summary, TestReport,
+};
 use crate::test_runner::wire::{
     self, MatcherDiff, TestOutcome, WireRequest, WireResponse, WireTraceMode, WorkerEvent,
 };
@@ -58,7 +60,8 @@ pub async fn run_spec(
     config: &RunnerConfig,
     reporter: &MultiReporter,
 ) -> Result<Summary> {
-    // 1. Transform the spec file (TS → JS). Skip for already-JS files.
+    // 1. Transform the spec file (TS → JS). Skip type-stripping for
+    //    already-JS files, but still normalize Jet's virtual test module.
     let transformed = transform_spec(&spec.path).context("Failed to type-strip spec")?;
 
     // 2. Write transformed spec + boot shim to a temp dir. The runtime is
@@ -154,6 +157,7 @@ export default __jet;
     // Closed in the teardown block below.
     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R5
     let browser: Arc<Mutex<Option<Browser>>> = Arc::new(Mutex::new(None));
+    let browser_session: Arc<Mutex<Option<BrowserSessionReport>>> = Arc::new(Mutex::new(None));
 
     // 4. Drive the worker: read NDJSON from stdout, tail stderr into console
     //    events.
@@ -300,7 +304,7 @@ export default __jet;
                     // Lazily launch the browser on the first new_page request.
                     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R5
                     let req_id = *req_id;
-                    match ensure_browser(&browser, headless).await {
+                    match ensure_browser(&browser, &browser_session, &spec.path, headless).await {
                         Err(e) => PageResponse::Error {
                             req_id,
                             message: format!("browser launch failed: {e}"),
@@ -326,7 +330,7 @@ export default __jet;
                 // @spec .aw/issues/open/enhancement-browsercontext-refactor-multi-context-isolation-fo.md#R6
                 PageRequest::NewContext { req_id } => {
                     let req_id = *req_id;
-                    match ensure_browser(&browser, headless).await {
+                    match ensure_browser(&browser, &browser_session, &spec.path, headless).await {
                         Err(e) => PageResponse::Error {
                             req_id,
                             message: format!("browser launch failed: {e}"),
@@ -660,7 +664,13 @@ export default __jet;
     // 6. Worker teardown: close browser if one was launched.
     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R5
     if let Some(browser) = browser.lock().await.take() {
-        let _ = browser.close().await;
+        let close_ok = browser.close().await.is_ok();
+        if let Some(session) = browser_session.lock().await.as_mut() {
+            session.close(close_ok, now_ms());
+        }
+    }
+    if let Some(session) = browser_session.lock().await.take() {
+        summary.browser_sessions.push(session);
     }
 
     if !status.success() && summary.reports.is_empty() {
@@ -1169,16 +1179,37 @@ fn page_req_id_str(req: &crate::cdp_driver::PageRequest) -> Option<&str> {
 /// browser is now populated inside the `Arc<Mutex<Option<Browser>>>`), or the
 /// launcher error otherwise so the calling handler can surface it to JS.
 // @spec .aw/issues/open/enhancement-browsercontext-refactor-multi-context-isolation-fo.md#R6
-async fn ensure_browser(browser: &Arc<Mutex<Option<Browser>>>, headless: bool) -> Result<()> {
+async fn ensure_browser(
+    browser: &Arc<Mutex<Option<Browser>>>,
+    browser_session: &Arc<Mutex<Option<BrowserSessionReport>>>,
+    spec_path: &Path,
+    headless: bool,
+) -> Result<()> {
     let mut guard = browser.lock().await;
     if guard.is_some() {
         return Ok(());
     }
-    let launched = Browser::launch(LaunchOptions {
+    let mut session = BrowserSessionReport::launching(spec_path.to_path_buf(), headless, now_ms());
+    let launched = match Browser::launch(LaunchOptions {
         headless,
         ..Default::default()
     })
-    .await?;
+    .await
+    {
+        Ok(launched) => launched,
+        Err(err) => {
+            let message = format!("{err:#}");
+            session.fail(message, now_ms());
+            *browser_session.lock().await = Some(session);
+            return Err(err);
+        }
+    };
+    session.ready(
+        launched.process_id(),
+        launched.ws_url().to_string(),
+        now_ms(),
+    );
+    *browser_session.lock().await = Some(session);
     *guard = Some(launched);
     Ok(())
 }
@@ -1601,7 +1632,7 @@ fn transform_spec(path: &Path) -> Result<String> {
 
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext == "js" || ext == "mjs" {
-        return Ok(source);
+        return Ok(normalize_jet_test_virtual_imports(source));
     }
 
     let options = TransformOptions {
@@ -1613,7 +1644,17 @@ fn transform_spec(path: &Path) -> Result<String> {
     let result = transformer
         .transform_js(&source, path)
         .with_context(|| format!("Failed to type-strip {}", path.display()))?;
-    Ok(result.code)
+    Ok(normalize_jet_test_virtual_imports(result.code))
+}
+
+fn normalize_jet_test_virtual_imports(source: String) -> String {
+    if !source.contains("jet:test") {
+        return source;
+    }
+
+    source
+        .replace("\"jet:test\"", "\"@jet/test\"")
+        .replace("'jet:test'", "'@jet/test'")
 }
 
 /// Build the boot ESM module that wires the runtime to the spec and writes

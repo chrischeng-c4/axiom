@@ -37,16 +37,9 @@ fn profile_path() -> PathBuf {
         .join("package_manager.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_lock_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -82,7 +75,7 @@ fn pkgmgr_lock_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_lock_setup_carries_direct_and_transitive_deps() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let setup = doc
         .get("setup")
         .and_then(|v| v.as_table())
@@ -120,9 +113,7 @@ fn pkgmgr_lock_setup_carries_direct_and_transitive_deps() {
         "`[setup].lockfile_present` must be false — lock creates the lockfile"
     );
     assert_eq!(
-        setup
-            .get("site_packages_populated")
-            .and_then(|v| v.as_bool()),
+        setup.get("site_packages_populated").and_then(|v| v.as_bool()),
         Some(false),
         "`[setup].site_packages_populated` must be false — lock does NOT install"
     );
@@ -130,7 +121,7 @@ fn pkgmgr_lock_setup_carries_direct_and_transitive_deps() {
 
 #[test]
 fn pkgmgr_lock_action_invokes_lock() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let action = doc
         .get("action")
         .and_then(|v| v.as_table())
@@ -148,9 +139,7 @@ fn pkgmgr_lock_action_invokes_lock() {
     );
 
     assert_eq!(
-        action
-            .get("expected_exit_code")
-            .and_then(|v| v.as_integer()),
+        action.get("expected_exit_code").and_then(|v| v.as_integer()),
         Some(0),
         "`[action].expected_exit_code` must be 0 — happy path succeeds"
     );
@@ -158,7 +147,7 @@ fn pkgmgr_lock_action_invokes_lock() {
 
 #[test]
 fn pkgmgr_lock_lockfile_assertion_lists_both_dep_kinds() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let lock = doc
         .get("lockfile_assertion")
         .and_then(|v| v.as_table())
@@ -213,8 +202,7 @@ fn pkgmgr_lock_lockfile_assertion_lists_both_dep_kinds() {
         "`[lockfile_assertion].deterministic` must be true"
     );
     assert_eq!(
-        lock.get("byte_identical_on_replay")
-            .and_then(|v| v.as_bool()),
+        lock.get("byte_identical_on_replay").and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_assertion].byte_identical_on_replay` must be true"
     );
@@ -222,14 +210,11 @@ fn pkgmgr_lock_lockfile_assertion_lists_both_dep_kinds() {
 
 #[test]
 fn pkgmgr_lock_install_assertion_keeps_env_untouched() {
-    let doc = load_toml(&manifest_path());
-    let install = doc
-        .get("install_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[install_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let install = doc.get("install_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[install_assertion]` block \
          (acceptance: \"No package files are installed during lock-only run.\")",
-        );
+    );
 
     for flag in &[
         "site_packages_must_remain_untouched",
@@ -246,7 +231,7 @@ fn pkgmgr_lock_install_assertion_keeps_env_untouched() {
 
 #[test]
 fn pkgmgr_lock_failure_case_diagnostic_is_deterministic() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let fail = doc.get("failure_case").and_then(|v| v.as_table()).expect(
         "missing `[failure_case]` block \
          (acceptance: \"Lock failure diagnostics are deterministic.\")",
@@ -274,8 +259,7 @@ fn pkgmgr_lock_failure_case_diagnostic_is_deterministic() {
     assert!(!diag.is_empty(), "diagnostic substring must be non-empty");
 
     assert_eq!(
-        fail.get("diagnostic_is_deterministic")
-            .and_then(|v| v.as_bool()),
+        fail.get("diagnostic_is_deterministic").and_then(|v| v.as_bool()),
         Some(true),
         "`[failure_case].diagnostic_is_deterministic` must be true (acceptance text)"
     );
@@ -286,8 +270,7 @@ fn pkgmgr_lock_failure_case_diagnostic_is_deterministic() {
         "`[failure_case].diagnostic_must_name_failing_dependency` must be true"
     );
     assert_eq!(
-        fail.get("must_not_write_partial_lockfile")
-            .and_then(|v| v.as_bool()),
+        fail.get("must_not_write_partial_lockfile").and_then(|v| v.as_bool()),
         Some(true),
         "`[failure_case].must_not_write_partial_lockfile` must be true — \
          a failed lock must not leave half-baked state"
@@ -296,7 +279,7 @@ fn pkgmgr_lock_failure_case_diagnostic_is_deterministic() {
 
 #[test]
 fn pkgmgr_lock_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -318,7 +301,7 @@ fn pkgmgr_lock_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_lock_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -358,14 +341,13 @@ fn pkgmgr_lock_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_lock_pins_out_of_scope_per_issue_2682() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("resolver_algorithm_improvements")
-            .and_then(|v| v.as_bool()),
+        oos.get("resolver_algorithm_improvements").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].resolver_algorithm_improvements` must be true \
          (issue text: \"Out of scope: resolver algorithm improvements.\")"
@@ -374,7 +356,7 @@ fn pkgmgr_lock_pins_out_of_scope_per_issue_2682() {
 
 #[test]
 fn pkgmgr_profile_links_to_lock_fixture_directory() {
-    let doc = load_toml(&profile_path());
+    let doc = crate::common::load_toml(&profile_path());
     let lock = doc
         .get("families")
         .and_then(|v| v.get("lock"))

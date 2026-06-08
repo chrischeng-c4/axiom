@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/ipaddress_1474.toml)
 issue = 1474
 lib = "ipaddress"
-fixture = "tests/cpython/fixtures/std-libs/ipaddress/bench/ip_address_bulk.py"
+fixture = "tests/cpython/_regression/std-libs/ipaddress/bench/ip_address_bulk.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 1

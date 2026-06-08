@@ -5,10 +5,9 @@
 //!
 //! The runner owns a [`BrowserSession`] trait object so unit tests can
 //! substitute a [`StubBrowserSession`] without requiring a live Chromium.
-//! The production implementation (`PlaywrightBrowserSession`) launches
-//! Chromium via the `playwright` crate; per the issue scope, the live
-//! harness is currently `unimplemented!()` and gated on the #2139
-//! follow-up.
+//! The production implementation (`JetBrowserSession`) launches Chromium
+//! directly and talks Chrome DevTools Protocol (CDP), matching the Jet Browser
+//! architecture without depending on the `jet` crate and creating a cycle.
 
 use crate::artifacts::{ArtifactBundle, ArtifactWriter};
 use crate::channels::{
@@ -17,10 +16,20 @@ use crate::channels::{
 };
 use crate::manifest::{FixtureManifest, ManifestError};
 use async_trait::async_trait;
+use base64::Engine as _;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
+use tokio::process::{Child, Command};
+use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio_tungstenite::tungstenite::Message;
 
 /// @spec parity-dom-reference-runner.md#Dependency (RunnerConfig)
 #[derive(Debug, Clone)]
@@ -89,6 +98,8 @@ pub enum RunnerError {
     },
     #[error("browser launch failed: {0}")]
     LaunchFail(String),
+    #[error("browser protocol error: {0}")]
+    Browser(String),
     #[error("mount sentinel timeout after {0:?}")]
     MountTimeout(Duration),
     #[error("per-fixture wall-clock budget exceeded ({0:?})")]
@@ -100,7 +111,7 @@ pub enum RunnerError {
 /// @spec parity-dom-reference-runner.md#Dependency (PageHost)
 ///
 /// The minimal page-host surface the channels need. In production this is
-/// a Playwright `Page` handle; in tests it's `StubPageHost`.
+/// backed by a CDP page session; in tests it is stub data.
 #[derive(Debug, Default, Clone)]
 pub struct PageHost {
     pub url: String,
@@ -111,9 +122,9 @@ pub struct PageHost {
 /// @spec parity-dom-reference-runner.md#Dependency (BrowserSession trait)
 ///
 /// Abstraction over the Chromium-driving harness. The production impl
-/// (`PlaywrightBrowserSession`) wraps `playwright::api::Browser`. The
-/// stub impl ([`StubBrowserSession`]) returns canned data so tests can
-/// exercise the channel orchestration without a live browser.
+/// (`JetBrowserSession`) uses CDP. The stub impl ([`StubBrowserSession`])
+/// returns canned data so tests can exercise channel orchestration without a
+/// live browser.
 #[async_trait]
 pub trait BrowserSession: Send + Sync {
     fn browser_kind(&self) -> BrowserKind;
@@ -160,33 +171,215 @@ pub trait BrowserSession: Send + Sync {
     async fn capture_ime_trace(&mut self) -> Result<Vec<serde_json::Value>, ChannelError>;
 }
 
-/// @spec parity-dom-reference-runner.md#Dependency (BrowserSession)
-///
-/// Production implementation (gated on the #2139 follow-up). Returns
-/// `unimplemented!()` until the Playwright driver wiring lands.
-pub struct PlaywrightBrowserSession {
-    page: PageHost,
+#[derive(Serialize)]
+struct CdpRequest {
+    id: u64,
+    method: String,
+    params: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "sessionId")]
+    session_id: Option<String>,
 }
 
-/// @spec .aw/tech-design/projects/jet/semantic/jet-parity-oracle-src.md#schema
-impl PlaywrightBrowserSession {
-    pub fn new() -> Self {
+#[derive(Deserialize)]
+struct CdpResponse {
+    id: Option<u64>,
+    result: Option<Value>,
+    error: Option<CdpError>,
+    method: Option<String>,
+    params: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CdpError {
+    code: i64,
+    message: String,
+}
+
+enum OutgoingMessage {
+    Send(String),
+}
+
+#[derive(Clone)]
+struct OracleCdpSession {
+    sender: mpsc::Sender<OutgoingMessage>,
+    session_id: Option<String>,
+    next_id: Arc<AtomicU64>,
+    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<anyhow::Result<Value>>>>>,
+}
+
+struct OracleCdpClient {
+    root: OracleCdpSession,
+    _reader_handle: tokio::task::JoinHandle<()>,
+    _writer_handle: tokio::task::JoinHandle<()>,
+}
+
+/// @spec parity-dom-reference-runner.md#Dependency (BrowserSession)
+impl OracleCdpClient {
+    async fn connect(ws_url: &str) -> anyhow::Result<Self> {
+        let (ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await?;
+        let (mut ws_sink, mut ws_reader) = ws_stream.split();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::channel::<OutgoingMessage>(64);
+        let next_id = Arc::new(AtomicU64::new(1));
+        let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<anyhow::Result<Value>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+
+        let writer_handle = tokio::spawn(async move {
+            while let Some(OutgoingMessage::Send(text)) = outgoing_rx.recv().await {
+                if ws_sink.send(Message::Text(text.into())).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let pending_for_reader = pending.clone();
+        let reader_handle = tokio::spawn(async move {
+            while let Some(Ok(msg)) = ws_reader.next().await {
+                let Message::Text(text) = msg else {
+                    continue;
+                };
+                let Ok(resp) = serde_json::from_str::<CdpResponse>(&text) else {
+                    continue;
+                };
+                if let Some(id) = resp.id {
+                    let result = if let Some(err) = resp.error {
+                        Err(anyhow::anyhow!("CDP error {}: {}", err.code, err.message))
+                    } else {
+                        Ok(resp.result.unwrap_or(Value::Null))
+                    };
+                    if let Some(tx) = pending_for_reader.lock().await.remove(&id) {
+                        let _ = tx.send(result);
+                    }
+                } else {
+                    let _ = (&resp.method, &resp.params);
+                }
+            }
+        });
+
+        Ok(Self {
+            root: OracleCdpSession {
+                sender: outgoing_tx,
+                session_id: None,
+                next_id,
+                pending,
+            },
+            _reader_handle: reader_handle,
+            _writer_handle: writer_handle,
+        })
+    }
+
+    fn root_session(&self) -> OracleCdpSession {
+        self.root.clone()
+    }
+
+    async fn create_page_session(&self, url: &str) -> anyhow::Result<OracleCdpSession> {
+        let target = self
+            .root
+            .send("Target.createTarget", serde_json::json!({ "url": url }))
+            .await?;
+        let target_id = target["targetId"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing targetId in Target.createTarget"))?;
+        let attached = self
+            .root
+            .send(
+                "Target.attachToTarget",
+                serde_json::json!({
+                    "targetId": target_id,
+                    "flatten": true
+                }),
+            )
+            .await?;
+        let session_id = attached["sessionId"]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("missing sessionId in Target.attachToTarget"))?;
+        Ok(self.root.child_session(session_id.to_string()))
+    }
+}
+
+/// @spec parity-dom-reference-runner.md#Dependency (BrowserSession)
+impl OracleCdpSession {
+    async fn send(&self, method: &str, params: Value) -> anyhow::Result<Value> {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let request = CdpRequest {
+            id,
+            method: method.to_string(),
+            params,
+            session_id: self.session_id.clone(),
+        };
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(id, tx);
+        let text = serde_json::to_string(&request)?;
+        self.sender
+            .send(OutgoingMessage::Send(text))
+            .await
+            .map_err(|_| anyhow::anyhow!("CDP outgoing channel closed while sending {method}"))?;
+        rx.await
+            .map_err(|_| anyhow::anyhow!("CDP response channel closed for {method}"))?
+    }
+
+    fn child_session(&self, session_id: String) -> Self {
         Self {
-            page: PageHost::default(),
+            sender: self.sender.clone(),
+            session_id: Some(session_id),
+            next_id: self.next_id.clone(),
+            pending: self.pending.clone(),
         }
     }
 }
 
+/// @spec parity-dom-reference-runner.md#Dependency (BrowserSession)
+///
+/// Production implementation backed by Chromium CDP. It intentionally keeps a
+/// small local CDP client instead of importing `jet::browser`, because the Jet
+/// crate depends on this oracle crate for re-export and tests.
+pub struct JetBrowserSession {
+    page: PageHost,
+    process: Option<Child>,
+    user_data_dir: Option<tempfile::TempDir>,
+    client: Option<OracleCdpClient>,
+    page_session: Option<OracleCdpSession>,
+}
+
 /// @spec .aw/tech-design/projects/jet/semantic/jet-parity-oracle-src.md#schema
-impl Default for PlaywrightBrowserSession {
+impl JetBrowserSession {
+    pub fn new() -> Self {
+        Self {
+            page: PageHost::default(),
+            process: None,
+            user_data_dir: None,
+            client: None,
+            page_session: None,
+        }
+    }
+
+    fn page_session(&self) -> Result<&OracleCdpSession, ChannelError> {
+        self.page_session
+            .as_ref()
+            .ok_or(ChannelError::Cdp("CDP page session is not attached".into()))
+    }
+
+    fn page_session_for_runner(&self) -> Result<&OracleCdpSession, RunnerError> {
+        self.page_session
+            .as_ref()
+            .ok_or_else(|| RunnerError::Browser("CDP page session is not attached".into()))
+    }
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-parity-oracle-src.md#schema
+impl Default for JetBrowserSession {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// Backward-compatible type name for callers that referenced the old
+/// Playwright placeholder directly.
+pub type PlaywrightBrowserSession = JetBrowserSession;
+
 /// @spec .aw/tech-design/projects/jet/semantic/jet-parity-oracle-src.md#schema
 #[async_trait]
-impl BrowserSession for PlaywrightBrowserSession {
+impl BrowserSession for JetBrowserSession {
     fn browser_kind(&self) -> BrowserKind {
         BrowserKind::Chromium
     }
@@ -197,39 +390,457 @@ impl BrowserSession for PlaywrightBrowserSession {
         &mut self.page
     }
 
-    async fn launch(&mut self, _dpr: f32, _viewport: (u32, u32)) -> Result<(), RunnerError> {
-        unimplemented!("blocked on browser harness — issue #2139 follow-up")
-    }
-    async fn navigate(&mut self, _url: &str) -> Result<(), RunnerError> {
-        unimplemented!("blocked on browser harness — issue #2139 follow-up")
-    }
-    async fn await_mount(&mut self, _budget: Duration) -> Result<(), RunnerError> {
-        unimplemented!("blocked on browser harness — issue #2139 follow-up")
-    }
-    async fn close(&mut self) -> Result<(), RunnerError> {
+    async fn launch(&mut self, dpr: f32, viewport: (u32, u32)) -> Result<(), RunnerError> {
+        let executable = find_chromium_executable().map_err(|err| RunnerError::LaunchFail(err))?;
+        let port = find_free_port().map_err(|err| RunnerError::LaunchFail(err.to_string()))?;
+        let user_data_dir =
+            tempfile::tempdir().map_err(|err| RunnerError::LaunchFail(err.to_string()))?;
+        let mut cmd = Command::new(executable);
+        cmd.arg(format!("--remote-debugging-port={port}"))
+            .arg(format!(
+                "--user-data-dir={}",
+                user_data_dir.path().display()
+            ))
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .arg("--disable-background-networking")
+            .arg("--disable-default-apps")
+            .arg("--disable-extensions")
+            .arg("--disable-sync")
+            .arg("--disable-translate")
+            .arg("--metrics-recording-only")
+            .arg("--mute-audio")
+            .arg("--no-sandbox")
+            .arg("--headless=new")
+            .arg(format!("--window-size={},{}", viewport.0, viewport.1))
+            .arg(format!("--force-device-scale-factor={dpr}"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        let child = cmd
+            .spawn()
+            .map_err(|err| RunnerError::LaunchFail(err.to_string()))?;
+        let ws_url = wait_for_ws_endpoint(port)
+            .await
+            .map_err(|err| RunnerError::LaunchFail(err.to_string()))?;
+        let client = OracleCdpClient::connect(&ws_url)
+            .await
+            .map_err(|err| RunnerError::LaunchFail(err.to_string()))?;
+        let page_session = client
+            .create_page_session("about:blank")
+            .await
+            .map_err(|err| RunnerError::LaunchFail(err.to_string()))?;
+        page_session
+            .send("Page.enable", serde_json::json!({}))
+            .await
+            .map_err(|err| RunnerError::Browser(err.to_string()))?;
+        page_session
+            .send("Runtime.enable", serde_json::json!({}))
+            .await
+            .map_err(|err| RunnerError::Browser(err.to_string()))?;
+        page_session
+            .send("Accessibility.enable", serde_json::json!({}))
+            .await
+            .map_err(|err| RunnerError::Browser(err.to_string()))?;
+
+        self.page.viewport = viewport;
+        self.process = Some(child);
+        self.user_data_dir = Some(user_data_dir);
+        self.page_session = Some(page_session);
+        self.client = Some(client);
         Ok(())
     }
+
+    async fn navigate(&mut self, url: &str) -> Result<(), RunnerError> {
+        let session = self.page_session_for_runner()?;
+        session
+            .send("Page.navigate", serde_json::json!({ "url": url }))
+            .await
+            .map_err(|err| RunnerError::Browser(err.to_string()))?;
+        wait_for_ready_state(session, Duration::from_secs(10)).await?;
+        self.page.url = url.to_string();
+        Ok(())
+    }
+
+    async fn await_mount(&mut self, budget: Duration) -> Result<(), RunnerError> {
+        let session = self.page_session_for_runner()?;
+        let start = std::time::Instant::now();
+        loop {
+            let mounted = evaluate_json(
+                session,
+                "Boolean(window.__jet_oracle_mounted)",
+                "mount sentinel",
+            )
+            .await
+            .map_err(|err| RunnerError::Browser(err.to_string()))?;
+            if mounted.as_bool().unwrap_or(false) {
+                self.page.mounted = true;
+                return Ok(());
+            }
+            if start.elapsed() >= budget {
+                return Err(RunnerError::MountTimeout(budget));
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    async fn close(&mut self) -> Result<(), RunnerError> {
+        if let Some(client) = &self.client {
+            let _ = client
+                .root_session()
+                .send("Browser.close", serde_json::json!({}))
+                .await;
+        }
+        if let Some(mut child) = self.process.take() {
+            let _ = child.kill().await;
+        }
+        self.page_session.take();
+        self.client.take();
+        self.user_data_dir.take();
+        Ok(())
+    }
+
     async fn screenshot(&mut self) -> Result<Vec<u8>, ChannelError> {
-        unimplemented!("blocked on browser harness — issue #2139 follow-up")
+        let session = self.page_session()?;
+        let _ = session
+            .send("Page.bringToFront", serde_json::json!({}))
+            .await;
+        let result = session
+            .send(
+                "Page.captureScreenshot",
+                serde_json::json!({ "format": "png" }),
+            )
+            .await
+            .map_err(|err| ChannelError::Cdp(err.to_string()))?;
+        let data = result["data"]
+            .as_str()
+            .ok_or_else(|| ChannelError::Cdp("missing Page.captureScreenshot data".into()))?;
+        base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .map_err(|err| ChannelError::Cdp(err.to_string()))
     }
+
     async fn ax_full_tree(&mut self) -> Result<serde_json::Value, ChannelError> {
-        unimplemented!("blocked on browser harness — issue #2139 follow-up")
+        self.page_session()?
+            .send("Accessibility.getFullAXTree", serde_json::json!({}))
+            .await
+            .map_err(|err| ChannelError::Cdp(err.to_string()))
     }
+
     async fn capture_focus_trace(
         &mut self,
-        _tab_count: u32,
+        tab_count: u32,
     ) -> Result<Vec<crate::channels::FocusEntry>, ChannelError> {
-        unimplemented!("blocked on browser harness — issue #2139 follow-up")
+        let session = self.page_session()?;
+        let mut trace = Vec::with_capacity(tab_count as usize);
+        for step in 0..tab_count {
+            dispatch_key(session, "keyDown", "Tab").await?;
+            dispatch_key(session, "keyUp", "Tab").await?;
+            let expression = focus_snapshot_js(step);
+            let value = evaluate_json(session, &expression, "focus trace").await?;
+            let entry: crate::channels::FocusEntry =
+                serde_json::from_value(value).map_err(ChannelError::Json)?;
+            trace.push(entry);
+        }
+        Ok(trace)
     }
+
     async fn capture_pointer_hits(
         &mut self,
-        _coords: &[(u32, u32)],
+        coords: &[(u32, u32)],
     ) -> Result<Vec<crate::channels::PointerHit>, ChannelError> {
-        unimplemented!("blocked on browser harness — issue #2139 follow-up")
+        let coords_json = serde_json::to_string(coords).map_err(ChannelError::Json)?;
+        let expression = format!(
+            r##"(() => {{
+  const coords = {coords_json};
+  const cssEscape = window.CSS && CSS.escape ? CSS.escape.bind(CSS) : (v) => String(v).replace(/"/g, "\\\"");
+  const selectorFor = (el) => {{
+    if (!el) return "";
+    if (el.id) return "#" + cssEscape(el.id);
+    const fixture = el.getAttribute && el.getAttribute("data-jet-fixture");
+    if (fixture) return `[data-jet-fixture="${{cssEscape(fixture)}}"]`;
+    const role = el.getAttribute && el.getAttribute("role");
+    if (role) return `${{el.tagName.toLowerCase()}}[role="${{cssEscape(role)}}"]`;
+    return el.tagName ? el.tagName.toLowerCase() : "";
+  }};
+  return coords.map(([x, y]) => {{
+    const el = document.elementFromPoint(x, y);
+    const style = el ? getComputedStyle(el) : null;
+    return {{
+      x,
+      y,
+      target_selector: selectorFor(el),
+      computed_cursor: style ? style.cursor : ""
+    }};
+  }});
+}})()"##
+        );
+        let value = evaluate_json(self.page_session()?, &expression, "pointer hit map").await?;
+        serde_json::from_value(value).map_err(ChannelError::Json)
     }
+
     async fn capture_ime_trace(&mut self) -> Result<Vec<serde_json::Value>, ChannelError> {
-        unimplemented!("blocked on browser harness — issue #2139 follow-up")
+        let session = self.page_session()?;
+        evaluate_json(
+            session,
+            r#"(() => {
+  window.__jet_oracle_ime_events = [];
+  let el = document.querySelector('input, textarea, [contenteditable="true"]');
+  if (!el) {
+    el = document.createElement('textarea');
+    el.setAttribute('data-jet-oracle-ime-probe', 'true');
+    document.body.appendChild(el);
+  }
+  for (const type of ['compositionstart', 'compositionupdate', 'compositionend', 'beforeinput', 'input']) {
+    el.addEventListener(type, (event) => {
+      window.__jet_oracle_ime_events.push({
+        type,
+        data: event.data || '',
+        inputType: event.inputType || ''
+      });
+    });
+  }
+  el.focus();
+  return true;
+})()"#,
+            "ime setup",
+        )
+        .await?;
+        session
+            .send(
+                "Input.imeSetComposition",
+                serde_json::json!({
+                    "text": "ni",
+                    "selectionStart": 2,
+                    "selectionEnd": 2,
+                    "replacementStart": 0,
+                    "replacementEnd": 0
+                }),
+            )
+            .await
+            .map_err(|err| ChannelError::Cdp(err.to_string()))?;
+        session
+            .send("Input.insertText", serde_json::json!({ "text": "你" }))
+            .await
+            .map_err(|err| ChannelError::Cdp(err.to_string()))?;
+        let value =
+            evaluate_json(session, "window.__jet_oracle_ime_events || []", "ime trace").await?;
+        serde_json::from_value(value).map_err(ChannelError::Json)
     }
+}
+
+fn find_chromium_executable() -> Result<PathBuf, String> {
+    if let Ok(path) = std::env::var("JET_PARITY_ORACLE_CHROME") {
+        let path = PathBuf::from(path);
+        if is_executable(&path) {
+            return Ok(path);
+        }
+        return Err(format!(
+            "JET_PARITY_ORACLE_CHROME points to a non-executable path: {}",
+            path.display()
+        ));
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        let cache = home.join(".jet").join("browsers");
+        if let Some(path) = find_chromium_in_cache(&cache) {
+            return Ok(path);
+        }
+    }
+
+    for candidate in chromium_system_candidates() {
+        let path = PathBuf::from(candidate);
+        if is_executable(&path) {
+            return Ok(path);
+        }
+    }
+    Err("Chrome/Chromium not found for jet-parity-oracle live harness".into())
+}
+
+fn chromium_system_candidates() -> Vec<&'static str> {
+    if cfg!(target_os = "macos") {
+        vec![
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+        ]
+    } else if cfg!(target_os = "linux") {
+        vec![
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium",
+        ]
+    } else {
+        vec![
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        ]
+    }
+}
+
+fn find_chromium_in_cache(cache_root: &Path) -> Option<PathBuf> {
+    let binary_subpath = if cfg!(target_os = "macos") {
+        "chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+    } else if cfg!(target_os = "linux") {
+        "chrome-linux/chrome"
+    } else {
+        "chrome-win/chrome.exe"
+    };
+    let mut entries = std::fs::read_dir(cache_root)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let suffix = name.strip_prefix("chromium-")?;
+            let rev = suffix.parse::<u64>().ok()?;
+            Some((rev, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| b.0.cmp(&a.0));
+    entries
+        .into_iter()
+        .map(|(_, dir)| dir.join(binary_subpath))
+        .find(|path| is_executable(path))
+}
+
+fn is_executable(path: &Path) -> bool {
+    if !path.exists() || !path.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|meta| meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn find_free_port() -> std::io::Result<u16> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
+}
+
+async fn wait_for_ws_endpoint(port: u16) -> anyhow::Result<String> {
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{port}/json/version");
+    let mut last_error = None;
+    for _ in 0..100 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        match client.get(&url).send().await {
+            Ok(resp) => match resp.json::<Value>().await {
+                Ok(json) => {
+                    if let Some(ws) = json["webSocketDebuggerUrl"].as_str() {
+                        return Ok(ws.to_string());
+                    }
+                    last_error = Some("missing webSocketDebuggerUrl".to_string());
+                }
+                Err(err) => last_error = Some(format!("json parse: {err}")),
+            },
+            Err(err) => last_error = Some(format!("connect: {err}")),
+        }
+    }
+    anyhow::bail!(
+        "timed out waiting for Chromium CDP endpoint on {url}; last error: {}",
+        last_error.unwrap_or_else(|| "none".into())
+    )
+}
+
+async fn wait_for_ready_state(
+    session: &OracleCdpSession,
+    timeout: Duration,
+) -> Result<(), RunnerError> {
+    let start = std::time::Instant::now();
+    loop {
+        let state = evaluate_json(session, "document.readyState", "document.readyState")
+            .await
+            .map_err(|err| RunnerError::Browser(err.to_string()))?;
+        if state.as_str() == Some("complete") {
+            return Ok(());
+        }
+        if start.elapsed() >= timeout {
+            return Err(RunnerError::Browser(format!(
+                "timed out waiting for document.readyState=complete; last={state}"
+            )));
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn evaluate_json(
+    session: &OracleCdpSession,
+    expression: &str,
+    context: &str,
+) -> Result<Value, ChannelError> {
+    let result = session
+        .send(
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": expression,
+                "returnByValue": true,
+                "awaitPromise": true
+            }),
+        )
+        .await
+        .map_err(|err| ChannelError::Cdp(format!("{context}: {err}")))?;
+    if let Some(exception) = result.get("exceptionDetails") {
+        return Err(ChannelError::Cdp(format!(
+            "{context}: JS exception: {exception}"
+        )));
+    }
+    Ok(result["result"]["value"].clone())
+}
+
+async fn dispatch_key(
+    session: &OracleCdpSession,
+    event_type: &str,
+    key: &str,
+) -> Result<(), ChannelError> {
+    session
+        .send(
+            "Input.dispatchKeyEvent",
+            serde_json::json!({
+                "type": event_type,
+                "key": key,
+                "code": key,
+                "windowsVirtualKeyCode": 9,
+                "nativeVirtualKeyCode": 9
+            }),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|err| ChannelError::Cdp(err.to_string()))
+}
+
+fn focus_snapshot_js(step: u32) -> String {
+    format!(
+        r##"(() => {{
+  const el = document.activeElement || document.body;
+  const rect = el.getBoundingClientRect();
+  const cssEscape = window.CSS && CSS.escape ? CSS.escape.bind(CSS) : (v) => String(v).replace(/"/g, "\\\"");
+  const selector = (() => {{
+    if (el.id) return "#" + cssEscape(el.id);
+    const fixture = el.getAttribute && el.getAttribute("data-jet-fixture");
+    if (fixture) return `[data-jet-fixture="${{cssEscape(fixture)}}"]`;
+    const name = el.getAttribute && el.getAttribute("name");
+    if (name) return `${{el.tagName.toLowerCase()}}[name="${{cssEscape(name)}}"]`;
+    return el.tagName ? el.tagName.toLowerCase() : "";
+  }})();
+  return {{
+    step: {step},
+    selector,
+    role: (el.getAttribute && el.getAttribute("role")) || (el.tagName ? el.tagName.toLowerCase() : ""),
+    name: ((el.getAttribute && (el.getAttribute("aria-label") || el.getAttribute("title"))) || el.textContent || "").trim(),
+    bounds: [rect.x, rect.y, rect.width, rect.height]
+  }};
+}})()"##
+    )
 }
 
 /// @spec parity-dom-reference-runner.md#Dependency (BrowserSession — test substitution)

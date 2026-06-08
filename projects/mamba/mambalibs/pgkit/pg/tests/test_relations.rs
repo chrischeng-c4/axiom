@@ -6,7 +6,9 @@
 //! These tests require a PostgreSQL database to be running.
 //! Set DATABASE_URL environment variable or skip with SKIP_INTEGRATION=true
 
-use cclab_pg::{Connection, ExtractedValue, JoinType, PoolConfig, RelationConfig, Row};
+use cclab_pg::{
+    Connection, ExtractedValue, JoinType, PoolConfig, RelationConfig, Row,
+};
 use qc::{expect, AssertionError};
 
 #[tokio::test]
@@ -16,7 +18,9 @@ async fn test_find_with_relations_basic() -> Result<(), AssertionError> {
     let uri = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string());
 
-    let conn = Connection::new(&uri, PoolConfig::default()).await.unwrap();
+    let conn = Connection::new(&uri, PoolConfig::default())
+        .await
+        .unwrap();
     let pool = conn.pool();
 
     // Create test tables
@@ -51,11 +55,10 @@ async fn test_find_with_relations_basic() -> Result<(), AssertionError> {
     .unwrap();
 
     // Insert test data
-    let user_values = vec![(
-        "name".to_string(),
-        ExtractedValue::String("Alice".to_string()),
-    )];
-    let user = Row::insert(pool, "test_users", &user_values).await.unwrap();
+    let user_values = vec![("name".to_string(), ExtractedValue::String("Alice".to_string()))];
+    let user = Row::insert(pool, "test_users", &user_values)
+        .await
+        .unwrap();
     let user_id = match user.get("id").unwrap() {
         ExtractedValue::BigInt(i) => *i,
         _ => panic!("Expected BigInt for id"),
@@ -68,7 +71,9 @@ async fn test_find_with_relations_basic() -> Result<(), AssertionError> {
         ),
         ("author_id".to_string(), ExtractedValue::BigInt(user_id)),
     ];
-    let post = Row::insert(pool, "test_posts", &post_values).await.unwrap();
+    let post = Row::insert(pool, "test_posts", &post_values)
+        .await
+        .unwrap();
     let post_id = match post.get("id").unwrap() {
         ExtractedValue::BigInt(i) => *i,
         _ => panic!("Expected BigInt for id"),
@@ -93,16 +98,17 @@ async fn test_find_with_relations_basic() -> Result<(), AssertionError> {
     expect(matches!(
         result.get("title").unwrap(),
         ExtractedValue::String(s) if s == "First Post"
-    ))
-    .to_be_true()?;
+    )).to_be_true()?;
 
     // Verify relation data
     let author_data = result.get("author").unwrap();
     match author_data {
         ExtractedValue::Json(json_val) => {
             let author_obj = json_val.as_object().expect("Author should be object");
-            expect(author_obj.get("name").unwrap().as_str().unwrap()).to_equal(&"Alice")?;
-            expect(author_obj.get("id").unwrap().as_i64().unwrap()).to_equal(&user_id)?;
+            expect(author_obj.get("name").unwrap().as_str().unwrap())
+                .to_equal(&"Alice")?;
+            expect(author_obj.get("id").unwrap().as_i64().unwrap())
+                .to_equal(&user_id)?;
         }
         _ => panic!("Expected JSON for author"),
     }
@@ -127,7 +133,9 @@ async fn test_find_one_eager_helper() -> Result<(), AssertionError> {
     let uri = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string());
 
-    let conn = Connection::new(&uri, PoolConfig::default()).await.unwrap();
+    let conn = Connection::new(&uri, PoolConfig::default())
+        .await
+        .unwrap();
     let pool = conn.pool();
 
     // Create test tables
@@ -178,11 +186,10 @@ async fn test_find_one_eager_helper() -> Result<(), AssertionError> {
     .unwrap();
 
     // Insert test data
-    let user_values = vec![(
-        "name".to_string(),
-        ExtractedValue::String("Bob".to_string()),
-    )];
-    let user = Row::insert(pool, "test_users", &user_values).await.unwrap();
+    let user_values = vec![("name".to_string(), ExtractedValue::String("Bob".to_string()))];
+    let user = Row::insert(pool, "test_users", &user_values)
+        .await
+        .unwrap();
     let user_id = match user.get("id").unwrap() {
         ExtractedValue::BigInt(i) => *i,
         _ => panic!("Expected BigInt for id"),
@@ -195,7 +202,9 @@ async fn test_find_one_eager_helper() -> Result<(), AssertionError> {
         ),
         ("author_id".to_string(), ExtractedValue::BigInt(user_id)),
     ];
-    let post = Row::insert(pool, "test_posts", &post_values).await.unwrap();
+    let post = Row::insert(pool, "test_posts", &post_values)
+        .await
+        .unwrap();
     let post_id = match post.get("id").unwrap() {
         ExtractedValue::BigInt(i) => *i,
         _ => panic!("Expected BigInt for id"),
@@ -235,15 +244,15 @@ async fn test_find_one_eager_helper() -> Result<(), AssertionError> {
     expect(matches!(
         result.get("content").unwrap(),
         ExtractedValue::String(s) if s == "Great post!"
-    ))
-    .to_be_true()?;
+    )).to_be_true()?;
 
     // Verify post relation
     let post_data = result.get("post").unwrap();
     match post_data {
         ExtractedValue::Json(json_val) => {
             let post_obj = json_val.as_object().expect("Post should be object");
-            expect(post_obj.get("title").unwrap().as_str().unwrap()).to_equal(&"Test Post")?;
+            expect(post_obj.get("title").unwrap().as_str().unwrap())
+                .to_equal(&"Test Post")?;
         }
         _ => panic!("Expected JSON for post"),
     }
@@ -253,7 +262,8 @@ async fn test_find_one_eager_helper() -> Result<(), AssertionError> {
     match author_data {
         ExtractedValue::Json(json_val) => {
             let author_obj = json_val.as_object().expect("Author should be object");
-            expect(author_obj.get("name").unwrap().as_str().unwrap()).to_equal(&"Bob")?;
+            expect(author_obj.get("name").unwrap().as_str().unwrap())
+                .to_equal(&"Bob")?;
         }
         _ => panic!("Expected JSON for author"),
     }
@@ -282,7 +292,9 @@ async fn test_find_with_relations_not_found() -> Result<(), AssertionError> {
     let uri = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string());
 
-    let conn = Connection::new(&uri, PoolConfig::default()).await.unwrap();
+    let conn = Connection::new(&uri, PoolConfig::default())
+        .await
+        .unwrap();
     let pool = conn.pool();
 
     // Create test tables
@@ -352,7 +364,9 @@ async fn test_find_with_relations_null_foreign_key() -> Result<(), AssertionErro
     let uri = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string());
 
-    let conn = Connection::new(&uri, PoolConfig::default()).await.unwrap();
+    let conn = Connection::new(&uri, PoolConfig::default())
+        .await
+        .unwrap();
     let pool = conn.pool();
 
     // Create test tables
@@ -391,7 +405,9 @@ async fn test_find_with_relations_null_foreign_key() -> Result<(), AssertionErro
         "title".to_string(),
         ExtractedValue::String("Anonymous Post".to_string()),
     )];
-    let post = Row::insert(pool, "test_posts", &post_values).await.unwrap();
+    let post = Row::insert(pool, "test_posts", &post_values)
+        .await
+        .unwrap();
     let post_id = match post.get("id").unwrap() {
         ExtractedValue::BigInt(i) => *i,
         _ => panic!("Expected BigInt for id"),
@@ -416,15 +432,11 @@ async fn test_find_with_relations_null_foreign_key() -> Result<(), AssertionErro
     expect(matches!(
         result.get("title").unwrap(),
         ExtractedValue::String(s) if s == "Anonymous Post"
-    ))
-    .to_be_true()?;
+    )).to_be_true()?;
 
     // Verify author is NULL (LEFT JOIN with NULL foreign key)
-    expect(matches!(
-        result.get("author_id").unwrap(),
-        ExtractedValue::Null
-    ))
-    .to_be_true()?;
+    expect(matches!(result.get("author_id").unwrap(), ExtractedValue::Null))
+        .to_be_true()?;
 
     // Clean up
     sqlx::query("DROP TABLE test_posts CASCADE")
@@ -448,7 +460,9 @@ async fn test_find_with_relations_column_collision() -> Result<(), AssertionErro
     let uri = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string());
 
-    let conn = Connection::new(&uri, PoolConfig::default()).await.unwrap();
+    let conn = Connection::new(&uri, PoolConfig::default())
+        .await
+        .unwrap();
     let pool = conn.pool();
 
     // Create test tables with overlapping column names
@@ -485,10 +499,7 @@ async fn test_find_with_relations_column_collision() -> Result<(), AssertionErro
     .unwrap();
 
     // Insert test data
-    let author_values = vec![(
-        "name".to_string(),
-        ExtractedValue::String("Jane Doe".to_string()),
-    )];
+    let author_values = vec![("name".to_string(), ExtractedValue::String("Jane Doe".to_string()))];
     let author = Row::insert(pool, "test_authors", &author_values)
         .await
         .unwrap();
@@ -504,7 +515,9 @@ async fn test_find_with_relations_column_collision() -> Result<(), AssertionErro
         ),
         ("author_id".to_string(), ExtractedValue::BigInt(author_id)),
     ];
-    let post = Row::insert(pool, "test_posts", &post_values).await.unwrap();
+    let post = Row::insert(pool, "test_posts", &post_values)
+        .await
+        .unwrap();
     let post_id = match post.get("id").unwrap() {
         ExtractedValue::BigInt(i) => *i,
         _ => panic!("Expected BigInt for id"),
@@ -520,7 +533,7 @@ async fn test_find_with_relations_column_collision() -> Result<(), AssertionErro
         select_columns: Some(vec![
             "id".to_string(),
             "name".to_string(),
-            "created_at".to_string(),
+            "created_at".to_string()
         ]),
     }];
 
@@ -539,15 +552,13 @@ async fn test_find_with_relations_column_collision() -> Result<(), AssertionErro
     expect(matches!(
         result.get("title").unwrap(),
         ExtractedValue::String(s) if s == "Collision Test"
-    ))
-    .to_be_true()?;
+    )).to_be_true()?;
 
     // Main row should have created_at
     expect(matches!(
         result.get("created_at").unwrap(),
         ExtractedValue::TimestampTz(_)
-    ))
-    .to_be_true()?;
+    )).to_be_true()?;
 
     // Verify relation data - should have the author's id, name, and created_at
     let author_data = result.get("author").unwrap();
@@ -560,7 +571,8 @@ async fn test_find_with_relations_column_collision() -> Result<(), AssertionErro
             expect(author_rel_id).to_equal(&author_id)?;
 
             // Author should have name
-            expect(author_obj.get("name").unwrap().as_str().unwrap()).to_equal(&"Jane Doe")?;
+            expect(author_obj.get("name").unwrap().as_str().unwrap())
+                .to_equal(&"Jane Doe")?;
 
             // Author should have its own created_at (different from post's created_at)
             expect(author_obj.contains_key("created_at")).to_be_true()?;

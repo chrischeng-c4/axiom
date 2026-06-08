@@ -34,9 +34,7 @@ pub struct SurfaceReport {
 }
 
 impl SurfaceReport {
-    pub fn total(&self) -> usize {
-        self.expected.len()
-    }
+    pub fn total(&self) -> usize { self.expected.len() }
 
     pub fn covered(&self) -> usize {
         self.expected.intersection(&self.implemented).count()
@@ -52,11 +50,7 @@ impl SurfaceReport {
     pub fn render(&self) -> String {
         let total = self.total();
         let n = self.covered();
-        let pct = if total == 0 {
-            0.0
-        } else {
-            (n as f64 / total as f64) * 100.0
-        };
+        let pct = if total == 0 { 0.0 } else { (n as f64 / total as f64) * 100.0 };
         let mut out = format!("implemented/total = {}/{} ({:.0}%)\n", n, total, pct);
         let missing = self.missing();
         if missing.is_empty() {
@@ -74,21 +68,10 @@ impl SurfaceReport {
 /// 3p `stubs/<pkg>/<pkg>.pyi`, 3p `stubs/<pkg>/__init__.pyi`.
 pub fn find_stub(typeshed_root: &Path, package: &str) -> Option<PathBuf> {
     let candidates = [
-        typeshed_root
-            .join("stdlib")
-            .join(format!("{}.pyi", package)),
-        typeshed_root
-            .join("stdlib")
-            .join(package)
-            .join("__init__.pyi"),
-        typeshed_root
-            .join("stubs")
-            .join(package)
-            .join(format!("{}.pyi", package)),
-        typeshed_root
-            .join("stubs")
-            .join(package)
-            .join("__init__.pyi"),
+        typeshed_root.join("stdlib").join(format!("{}.pyi", package)),
+        typeshed_root.join("stdlib").join(package).join("__init__.pyi"),
+        typeshed_root.join("stubs").join(package).join(format!("{}.pyi", package)),
+        typeshed_root.join("stubs").join(package).join("__init__.pyi"),
     ];
     candidates.into_iter().find(|p| p.is_file())
 }
@@ -140,7 +123,9 @@ pub fn parse_stub(path: &Path) -> std::io::Result<BTreeSet<String>> {
         for module in star_import_modules(&text) {
             if let Some(companion) = find_companion_stub(dir, &module) {
                 if let Ok(companion_text) = fs::read_to_string(&companion) {
-                    let companion_names = if let Some(all_names) = parse_all_list(&companion_text) {
+                    let companion_names = if let Some(all_names) =
+                        parse_all_list(&companion_text)
+                    {
                         all_names
                     } else {
                         parse_defs_classes_and_reexports(&companion_text)
@@ -166,12 +151,8 @@ fn star_import_modules(text: &str) -> Vec<String> {
             continue;
         }
         let line = raw.trim_end();
-        let Some(rest) = line.strip_prefix("from ") else {
-            continue;
-        };
-        let Some(import_idx) = rest.find(" import ") else {
-            continue;
-        };
+        let Some(rest) = line.strip_prefix("from ") else { continue };
+        let Some(import_idx) = rest.find(" import ") else { continue };
         let module = rest[..import_idx].trim();
         let tail = rest[import_idx + " import ".len()..].trim();
         if tail == "*" && !module.is_empty() {
@@ -220,7 +201,8 @@ fn parse_all_list(text: &str) -> Option<BTreeSet<String>> {
 
         // Trim leading whitespace once to test for `__all__` keyword.
         let trimmed = raw_line.trim_start();
-        let is_top_level = raw_line.len() == trimmed.len() || raw_line.starts_with('#');
+        let is_top_level = raw_line.len() == trimmed.len()
+            || raw_line.starts_with('#');
 
         let starts_all = trimmed.starts_with("__all__");
         if starts_all && is_top_level {
@@ -247,12 +229,21 @@ fn parse_all_list(text: &str) -> Option<BTreeSet<String>> {
                             .find(opener)
                             .expect("opener present after `=`");
                         let open_pos_in_trimmed = eq_idx + 1 + rel_after_eq;
-                        let open_abs =
-                            line_start + (raw_line.len() - trimmed.len()) + open_pos_in_trimmed + 1; // skip past opener
-                        let close_abs = find_matching(&text[open_abs..], opener, closer)
-                            .map(|d| open_abs + d)
-                            .unwrap_or(bytes.len());
-                        collect_string_literals(&text[open_abs..close_abs], &mut names);
+                        let open_abs = line_start
+                            + (raw_line.len() - trimmed.len())
+                            + open_pos_in_trimmed
+                            + 1; // skip past opener
+                        let close_abs = find_matching(
+                            &text[open_abs..],
+                            opener,
+                            closer,
+                        )
+                        .map(|d| open_abs + d)
+                        .unwrap_or(bytes.len());
+                        collect_string_literals(
+                            &text[open_abs..close_abs],
+                            &mut names,
+                        );
                         // Advance past the closer.
                         i = close_abs + 1;
                         continue;
@@ -292,7 +283,9 @@ fn find_matching(s: &str, opener: char, closer: char) -> Option<usize> {
             b'#' => {
                 // Skip rest of the line — Python comment.
                 if let Some(d) = s[i..].find('\n') {
-                    return s[i + d + 1..].find(closer).map(|d2| i + d + 1 + d2);
+                    return s[i + d + 1..]
+                        .find(closer)
+                        .map(|d2| i + d + 1 + d2);
                 }
                 return None;
             }
@@ -503,11 +496,7 @@ fn pick_tuple_dispatcher(line: &str) -> Option<String> {
 fn extract_ident(after_keyword: &str, terminator: char) -> Option<String> {
     let end = after_keyword.find(terminator)?;
     let candidate = after_keyword[..end].trim();
-    if candidate.is_empty() {
-        None
-    } else {
-        Some(candidate.to_string())
-    }
+    if candidate.is_empty() { None } else { Some(candidate.to_string()) }
 }
 
 fn is_identifier(s: &str) -> bool {
@@ -542,7 +531,9 @@ pub fn build_report(
         .map_err(|e| format!("failed to read stub {}: {}", stub_path.display(), e))?;
 
     let implemented = if let Some(ref p) = mod_path {
-        parse_mod(p).map_err(|e| format!("failed to read mod {}: {}", p.display(), e))?
+        parse_mod(p).map_err(|e| {
+            format!("failed to read mod {}: {}", p.display(), e)
+        })?
     } else {
         BTreeSet::new()
     };
@@ -592,11 +583,7 @@ mod tests {
         let d = tmpdir();
         let modf = d.path().join("foo_mod.rs");
         let mut f = fs::File::create(&modf).unwrap();
-        writeln!(
-            f,
-            "attrs.insert(\"getcwd\".to_string(), MbValue::from_func(0));"
-        )
-        .unwrap();
+        writeln!(f, "attrs.insert(\"getcwd\".to_string(), MbValue::from_func(0));").unwrap();
         writeln!(f, "attrs.insert(\"listdir\".to_string(),").unwrap();
         writeln!(f, "    MbValue::from_func(addr));").unwrap();
         writeln!(f, "    (\"mkdir\", dispatch_mkdir as *const () as usize),").unwrap();
@@ -719,11 +706,7 @@ mod tests {
         let stub = d.path().join("foo.pyi");
         let mut f = fs::File::create(&stub).unwrap();
         writeln!(f, "from _impl import abs as abs, add as add, sub as sub").unwrap();
-        writeln!(
-            f,
-            "from _impl import private_name  # bare — NOT re-exported"
-        )
-        .unwrap();
+        writeln!(f, "from _impl import private_name  # bare — NOT re-exported").unwrap();
         writeln!(f, "from _impl import (").unwrap();
         writeln!(f, "    mul as mul,").unwrap();
         writeln!(f, "    div as div,").unwrap();
@@ -843,11 +826,7 @@ mod tests {
         let d = tmpdir();
         let modf = d.path().join("foo_mod.rs");
         let mut f = fs::File::create(&modf).unwrap();
-        writeln!(
-            f,
-            "attrs.insert(\"loads\".to_string(), MbValue::from_func(0));"
-        )
-        .unwrap();
+        writeln!(f, "attrs.insert(\"loads\".to_string(), MbValue::from_func(0));").unwrap();
         writeln!(f, "attrs.insert(\"JSONDecodeError\".into(), exc_class);").unwrap();
         let names = parse_mod(&modf).unwrap();
         assert!(names.contains("loads"));
@@ -870,32 +849,12 @@ mod tests {
         // Mirror typeshed's random.pyi __all__ — 26 names.
         writeln!(f, "__all__ = [").unwrap();
         for name in [
-            "Random",
-            "seed",
-            "random",
-            "uniform",
-            "randint",
-            "choice",
-            "sample",
-            "randrange",
-            "shuffle",
-            "normalvariate",
-            "lognormvariate",
-            "expovariate",
-            "vonmisesvariate",
-            "gammavariate",
-            "triangular",
-            "gauss",
-            "betavariate",
-            "paretovariate",
-            "weibullvariate",
-            "getstate",
-            "setstate",
-            "getrandbits",
-            "choices",
-            "SystemRandom",
-            "randbytes",
-            "binomialvariate",
+            "Random", "seed", "random", "uniform", "randint", "choice",
+            "sample", "randrange", "shuffle", "normalvariate", "lognormvariate",
+            "expovariate", "vonmisesvariate", "gammavariate", "triangular",
+            "gauss", "betavariate", "paretovariate", "weibullvariate",
+            "getstate", "setstate", "getrandbits", "choices", "SystemRandom",
+            "randbytes", "binomialvariate",
         ] {
             writeln!(f, "    \"{}\",", name).unwrap();
         }
@@ -921,13 +880,7 @@ mod tests {
         );
         // Spot-check: must include re-export-style names that the def/class
         // fallback cannot see.
-        for must in [
-            "seed",
-            "random",
-            "uniform",
-            "getrandbits",
-            "binomialvariate",
-        ] {
+        for must in ["seed", "random", "uniform", "getrandbits", "binomialvariate"] {
             assert!(names.contains(must), "missing {} from random surface", must);
         }
     }
@@ -945,55 +898,13 @@ mod tests {
         let mut f = fs::File::create(&stub).unwrap();
         writeln!(f, "from _operator import (").unwrap();
         let reexports = [
-            "abs",
-            "add",
-            "and_",
-            "concat",
-            "contains",
-            "countOf",
-            "delitem",
-            "eq",
-            "floordiv",
-            "ge",
-            "getitem",
-            "gt",
-            "iadd",
-            "iand",
-            "iconcat",
-            "ifloordiv",
-            "ilshift",
-            "imatmul",
-            "imod",
-            "imul",
-            "indexOf",
-            "inv",
-            "invert",
-            "ior",
-            "ipow",
-            "irshift",
-            "is_",
-            "is_not",
-            "isub",
-            "itruediv",
-            "ixor",
-            "le",
-            "lshift",
-            "lt",
-            "matmul",
-            "mod",
-            "mul",
-            "ne",
-            "neg",
-            "not_",
-            "or_",
-            "pos",
-            "pow",
-            "rshift",
-            "setitem",
-            "sub",
-            "truediv",
-            "truth",
-            "xor",
+            "abs", "add", "and_", "concat", "contains", "countOf", "delitem",
+            "eq", "floordiv", "ge", "getitem", "gt", "iadd", "iand", "iconcat",
+            "ifloordiv", "ilshift", "imatmul", "imod", "imul", "indexOf",
+            "inv", "invert", "ior", "ipow", "irshift", "is_", "is_not",
+            "isub", "itruediv", "ixor", "le", "lshift", "lt", "matmul", "mod",
+            "mul", "ne", "neg", "not_", "or_", "pos", "pow", "rshift",
+            "setitem", "sub", "truediv", "truth", "xor",
         ];
         for name in reexports {
             writeln!(f, "    {} as {},", name, name).unwrap();

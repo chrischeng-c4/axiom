@@ -95,21 +95,16 @@ fn count_identifier_refs(code: &str, ident: &str) -> usize {
     let mut i = 0;
 
     while i < len {
-        // Skip string literals
-        if matches!(b[i], b'"' | b'\'' | b'`') {
-            let q = b[i];
-            i += 1;
-            while i < len {
-                if b[i] == b'\\' {
-                    i += 2;
-                    continue;
-                }
-                if b[i] == q {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
+        if b[i] == b'`' {
+            let (refs, next) = count_identifier_refs_in_template(code, i, ident);
+            count += refs;
+            i = next;
+            continue;
+        }
+
+        // Skip plain string literals
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_plain_string_bytes(b, i);
             continue;
         }
 
@@ -159,6 +154,125 @@ fn count_identifier_refs(code: &str, ident: &str) -> usize {
     count
 }
 
+fn count_identifier_refs_in_template(code: &str, start: usize, ident: &str) -> (usize, usize) {
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut count = 0;
+    let mut i = start + 1;
+
+    while i < len {
+        if b[i] == b'\\' {
+            i = (i + 2).min(len);
+            continue;
+        }
+        if b[i] == b'`' {
+            return (count, i + 1);
+        }
+        if b[i] == b'$' && i + 1 < len && b[i + 1] == b'{' {
+            let expr_start = i + 2;
+            let Some(expr_end) = find_matching_template_expr_close(code, i + 1) else {
+                return (count, len);
+            };
+            count += count_identifier_refs(&code[expr_start..expr_end], ident);
+            i = expr_end + 1;
+            continue;
+        }
+        i += 1;
+    }
+
+    (count, i)
+}
+
+fn find_matching_template_expr_close(code: &str, open_brace: usize) -> Option<usize> {
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut depth = 1usize;
+    let mut i = open_brace + 1;
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_plain_string_bytes(b, i);
+            continue;
+        }
+        if b[i] == b'`' {
+            i = skip_template_literal_bytes(code, i);
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                i += 2;
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+        }
+        match b[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    None
+}
+
+fn skip_plain_string_bytes(b: &[u8], start: usize) -> usize {
+    let q = b[start];
+    let mut i = start + 1;
+    while i < b.len() {
+        if b[i] == b'\\' {
+            i = (i + 2).min(b.len());
+            continue;
+        }
+        if b[i] == q {
+            return i + 1;
+        }
+        i += 1;
+    }
+    i
+}
+
+fn skip_template_literal_bytes(code: &str, start: usize) -> usize {
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = start + 1;
+
+    while i < len {
+        if b[i] == b'\\' {
+            i = (i + 2).min(len);
+            continue;
+        }
+        if b[i] == b'`' {
+            return i + 1;
+        }
+        if b[i] == b'$' && i + 1 < len && b[i + 1] == b'{' {
+            let Some(expr_end) = find_matching_template_expr_close(code, i + 1) else {
+                return len;
+            };
+            i = expr_end + 1;
+            continue;
+        }
+        i += 1;
+    }
+
+    i
+}
+
 /// Replace all standalone identifier references (not inside strings, comments,
 /// or property accesses) with the given replacement string.
 fn replace_identifier(code: &str, ident: &str, replacement: &str) -> String {
@@ -170,8 +284,19 @@ fn replace_identifier(code: &str, ident: &str, replacement: &str) -> String {
     let mut i = 0;
 
     while i < len {
-        // Skip string literals
-        if matches!(b[i], b'"' | b'\'' | b'`') {
+        if b[i] == b'`' {
+            i = copy_template_literal_with_replaced_expressions(
+                code,
+                i,
+                &mut out,
+                ident,
+                replacement,
+            );
+            continue;
+        }
+
+        // Skip plain string literals
+        if matches!(b[i], b'"' | b'\'') {
             let q = b[i];
             out.push(b[i]);
             i += 1;
@@ -246,6 +371,53 @@ fn replace_identifier(code: &str, ident: &str, replacement: &str) -> String {
     }
 
     String::from_utf8(out).unwrap_or_else(|_| code.to_string())
+}
+
+fn copy_template_literal_with_replaced_expressions(
+    code: &str,
+    start: usize,
+    out: &mut Vec<u8>,
+    ident: &str,
+    replacement: &str,
+) -> usize {
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut i = start;
+    out.push(b[i]);
+    i += 1;
+
+    while i < len {
+        if b[i] == b'\\' {
+            out.push(b[i]);
+            i += 1;
+            if i < len {
+                out.push(b[i]);
+                i += 1;
+            }
+            continue;
+        }
+        if b[i] == b'`' {
+            out.push(b[i]);
+            return i + 1;
+        }
+        if b[i] == b'$' && i + 1 < len && b[i + 1] == b'{' {
+            out.extend_from_slice(b"${");
+            let expr_start = i + 2;
+            let Some(expr_end) = find_matching_template_expr_close(code, i + 1) else {
+                i += 2;
+                continue;
+            };
+            let replaced = replace_identifier(&code[expr_start..expr_end], ident, replacement);
+            out.extend_from_slice(replaced.as_bytes());
+            out.push(b'}');
+            i = expr_end + 1;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+
+    i
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -724,6 +896,45 @@ console.log(_m0_count);"#;
         assert!(
             result.contains("_m0_count"),
             "referenced prefixed var should survive, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_prefixed_vars_keeps_template_expression_refs() {
+        let code = r#"var _m3242_defaultPrefixCls = _r(3926)["defaultPrefixCls"];
+const _m3242_TARGET_CLS = `${_m3242_defaultPrefixCls}-wave-target`;
+_m3242e.TARGET_CLS = _m3242_TARGET_CLS;"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("var _m3242_defaultPrefixCls"),
+            "template expression read should keep imported binding, got: {}",
+            result
+        );
+        assert!(
+            result.contains("${_m3242_defaultPrefixCls}"),
+            "template expression should remain intact, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_cross_module_constants_rewrites_template_expression_refs() {
+        let code = r#"var _m0_prefix = "ant";
+const _m0_cls = `${_m0_prefix}-button`;"#;
+
+        let result = inline_cross_module_constants(code);
+
+        assert!(
+            !result.contains("var _m0_prefix"),
+            "constant declaration should be removed after inlining, got: {}",
+            result
+        );
+        assert!(
+            result.contains("${\"ant\"}-button"),
+            "template expression should receive replacement, got: {}",
             result
         );
     }

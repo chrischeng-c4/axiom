@@ -188,12 +188,10 @@ impl RateLimiter for TokenBucket {
 
     async fn acquire_many(&self, key: &str, count: u32) -> RateLimitResult {
         let mut buckets = self.buckets.write().await;
-        let state = buckets
-            .entry(key.to_string())
-            .or_insert_with(|| BucketState {
-                tokens: self.config.capacity as f64,
-                last_update: Instant::now(),
-            });
+        let state = buckets.entry(key.to_string()).or_insert_with(|| BucketState {
+            tokens: self.config.capacity as f64,
+            last_update: Instant::now(),
+        });
 
         self.refill(state);
 
@@ -205,18 +203,19 @@ impl RateLimiter for TokenBucket {
             // Calculate wait time
             let tokens_needed = count_f64 - state.tokens;
             let wait_secs = tokens_needed / self.config.rate;
-            RateLimitResult::denied(Duration::from_secs_f64(wait_secs), self.config.capacity)
+            RateLimitResult::denied(
+                Duration::from_secs_f64(wait_secs),
+                self.config.capacity,
+            )
         }
     }
 
     async fn peek(&self, key: &str) -> RateLimitResult {
         let mut buckets = self.buckets.write().await;
-        let state = buckets
-            .entry(key.to_string())
-            .or_insert_with(|| BucketState {
-                tokens: self.config.capacity as f64,
-                last_update: Instant::now(),
-            });
+        let state = buckets.entry(key.to_string()).or_insert_with(|| BucketState {
+            tokens: self.config.capacity as f64,
+            last_update: Instant::now(),
+        });
 
         self.refill(state);
         RateLimitResult::allowed(state.tokens as u32, self.config.capacity)
@@ -297,11 +296,9 @@ impl RateLimiter for SlidingWindow {
 
     async fn acquire_many(&self, key: &str, count: u32) -> RateLimitResult {
         let mut windows = self.windows.write().await;
-        let state = windows
-            .entry(key.to_string())
-            .or_insert_with(|| WindowState {
-                requests: Vec::new(),
-            });
+        let state = windows.entry(key.to_string()).or_insert_with(|| WindowState {
+            requests: Vec::new(),
+        });
 
         self.cleanup(state);
 
@@ -329,11 +326,9 @@ impl RateLimiter for SlidingWindow {
 
     async fn peek(&self, key: &str) -> RateLimitResult {
         let mut windows = self.windows.write().await;
-        let state = windows
-            .entry(key.to_string())
-            .or_insert_with(|| WindowState {
-                requests: Vec::new(),
-            });
+        let state = windows.entry(key.to_string()).or_insert_with(|| WindowState {
+            requests: Vec::new(),
+        });
 
         self.cleanup(state);
         let current_count = state.requests.len() as u32;
@@ -345,12 +340,7 @@ impl RateLimiter for SlidingWindow {
 
     async fn reset(&self, key: &str) {
         let mut windows = self.windows.write().await;
-        windows.insert(
-            key.to_string(),
-            WindowState {
-                requests: Vec::new(),
-            },
-        );
+        windows.insert(key.to_string(), WindowState { requests: Vec::new() });
     }
 }
 
@@ -382,15 +372,13 @@ impl RateLimitManager {
 
     /// Add a per-task rate limit
     pub fn task_limit<R: RateLimiter + 'static>(mut self, task_name: &str, limiter: R) -> Self {
-        self.task_limits
-            .insert(task_name.to_string(), Arc::new(limiter));
+        self.task_limits.insert(task_name.to_string(), Arc::new(limiter));
         self
     }
 
     /// Add a per-queue rate limit
     pub fn queue_limit<R: RateLimiter + 'static>(mut self, queue: &str, limiter: R) -> Self {
-        self.queue_limits
-            .insert(queue.to_string(), Arc::new(limiter));
+        self.queue_limits.insert(queue.to_string(), Arc::new(limiter));
         self
     }
 
@@ -814,7 +802,10 @@ mod tests {
 
     #[tokio::test]
     async fn sw_window_expiry() {
-        let sw = SlidingWindow::new(RateLimitConfig::per_second(1), Duration::from_millis(50));
+        let sw = SlidingWindow::new(
+            RateLimitConfig::per_second(1),
+            Duration::from_millis(50),
+        );
         sw.acquire("k").await;
         assert!(!sw.acquire("k").await.allowed);
         tokio::time::sleep(Duration::from_millis(60)).await;
@@ -890,7 +881,8 @@ mod tests {
 
     #[tokio::test]
     async fn manager_global_blocks_first() {
-        let m = RateLimitManager::new().global_limit(TokenBucket::per_second(1));
+        let m = RateLimitManager::new()
+            .global_limit(TokenBucket::per_second(1));
         assert!(m.check("t", "q").await.allowed);
         assert!(!m.check("t2", "q2").await.allowed);
     }
@@ -906,14 +898,16 @@ mod tests {
 
     #[tokio::test]
     async fn manager_task_limit_enforced() {
-        let m = RateLimitManager::new().task_limit("t", TokenBucket::per_second(1));
+        let m = RateLimitManager::new()
+            .task_limit("t", TokenBucket::per_second(1));
         assert!(m.check("t", "q").await.allowed);
         assert!(!m.check("t", "q").await.allowed);
     }
 
     #[tokio::test]
     async fn manager_different_task_not_affected() {
-        let m = RateLimitManager::new().task_limit("a", TokenBucket::per_second(1));
+        let m = RateLimitManager::new()
+            .task_limit("a", TokenBucket::per_second(1));
         m.check("a", "q").await;
         m.check("a", "q").await; // denied
         let r = m.check("b", "q").await;
@@ -930,7 +924,8 @@ mod tests {
 
     #[tokio::test]
     async fn manager_peek_global() {
-        let m = RateLimitManager::new().global_limit(TokenBucket::per_second(5));
+        let m = RateLimitManager::new()
+            .global_limit(TokenBucket::per_second(5));
         let r = m.peek("t", "q").await;
         assert!(r.allowed);
         // peek falls through when allowed — remaining is u32::MAX from the default path
@@ -940,7 +935,8 @@ mod tests {
 
     #[tokio::test]
     async fn manager_peek_queue() {
-        let m = RateLimitManager::new().queue_limit("q", TokenBucket::per_second(3));
+        let m = RateLimitManager::new()
+            .queue_limit("q", TokenBucket::per_second(3));
         let r = m.peek("t", "q").await;
         assert!(r.allowed);
         // peek falls through when allowed — remaining is u32::MAX from the default path
@@ -949,7 +945,8 @@ mod tests {
 
     #[tokio::test]
     async fn manager_peek_task() {
-        let m = RateLimitManager::new().task_limit("t", TokenBucket::per_second(7));
+        let m = RateLimitManager::new()
+            .task_limit("t", TokenBucket::per_second(7));
         let r = m.peek("t", "q").await;
         assert!(r.allowed);
         assert_eq!(r.remaining, 7);
@@ -985,7 +982,9 @@ mod tests {
         let mut handles = vec![];
         for _ in 0..10 {
             let tb = Arc::clone(&tb);
-            handles.push(tokio::spawn(async move { tb.acquire("k").await }));
+            handles.push(tokio::spawn(async move {
+                tb.acquire("k").await
+            }));
         }
         let mut allowed = 0;
         for h in handles {

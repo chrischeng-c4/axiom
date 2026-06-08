@@ -21,7 +21,7 @@ pub mod methods;
 pub mod session;
 pub mod types;
 
-use cclab_mamba_registry::{rt_sym, MambaModule, ModuleRegistrar, MAMBA_MODULES};
+use cclab_mamba_registry::{MAMBA_MODULES, MambaModule, ModuleRegistrar, rt_sym};
 use linkme::distributed_slice;
 
 // ── PgMambaModule — `mambalibs.pg` ───────────────────────────────────────────

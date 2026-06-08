@@ -1,26 +1,30 @@
-use super::rc::{MbObject, ObjData};
 /// Dict operations for the Mamba runtime (#285) — thread-safe.
 ///
 /// Implements Python-compatible dict methods. All mutable access goes
 /// through RwLock guards for thread-safety.
+
 use super::value::MbValue;
+use super::rc::{MbObject, ObjData};
 
 /// Type-preserving dict key. Distinguishes int from string keys so that
 /// `d[1]` and `d["1"]` are distinct entries (matching CPython semantics).
 #[derive(Debug)]
 pub enum DictKey {
     Int(i64),
+    /// Non-integral float key, stored as its raw IEEE-754 bits (`0.5`, `1.5`).
+    /// Integral float values (`1.0`, `2.0`) are normalized to `Int` in
+    /// `to_dict_key` so `{1: a, 1.0: b}` collapses to one entry and
+    /// `hash(1.0) == hash(1)` — matching CPython numeric key equality. Two
+    /// equal non-integral floats share identical bits, so bit-keying buckets
+    /// them together correctly.
+    Float(u64),
     Str(String),
     Bool(bool),
     None,
     /// User-class instance key: `hash_val` comes from `__hash__`, `ptr` holds
     /// the instance so `__eq__` can be dispatched when buckets collide.
     /// `ptr` is retained on construction and released on Drop/Clone-to-None.
-    Instance {
-        hash_val: i64,
-        ptr: usize,
-        class_name: String,
-    },
+    Instance { hash_val: i64, ptr: usize, class_name: String },
     /// Fallback for non-hashable heap objects we can't currently route through
     /// the dunder protocol — keyed by the raw NaN-boxed bits as a string so
     /// identity-based storage still works.
@@ -34,29 +38,26 @@ pub enum DictKey {
     /// Tuple key — hashed structurally via `mb_tuple_hash` so that two
     /// literal `(0, 1)` tuples bucket together. `ptr` retains the tuple
     /// object so element-wise `mb_tuple_eq` can break hash collisions.
-    Tuple {
-        hash_val: i64,
-        ptr: usize,
-    },
+    Tuple { hash_val: i64, ptr: usize },
+    /// FrozenSet key — hashed by content via `mb_hash` (order-independent),
+    /// so two frozensets with equal elements (regardless of build order)
+    /// bucket together. `ptr` retains the frozenset object so `mb_eq` can
+    /// break hash collisions element-wise. Mirrors the Tuple variant.
+    FrozenSet { hash_val: i64, ptr: usize },
 }
 
 impl Clone for DictKey {
     fn clone(&self) -> Self {
         match self {
             DictKey::Int(i) => DictKey::Int(*i),
+            DictKey::Float(b) => DictKey::Float(*b),
             DictKey::Str(s) => DictKey::Str(s.clone()),
             DictKey::Bool(b) => DictKey::Bool(*b),
             DictKey::None => DictKey::None,
-            DictKey::Instance {
-                hash_val,
-                ptr,
-                class_name,
-            } => {
+            DictKey::Instance { hash_val, ptr, class_name } => {
                 // Retain so the cloned key owns its own rc on the instance.
                 let val = super::value::MbValue::from_ptr(*ptr as *mut super::rc::MbObject);
-                unsafe {
-                    super::rc::retain_if_ptr(val);
-                }
+                unsafe { super::rc::retain_if_ptr(val); }
                 DictKey::Instance {
                     hash_val: *hash_val,
                     ptr: *ptr,
@@ -67,13 +68,13 @@ impl Clone for DictKey {
             DictKey::Func(addr) => DictKey::Func(*addr),
             DictKey::Tuple { hash_val, ptr } => {
                 let val = super::value::MbValue::from_ptr(*ptr as *mut super::rc::MbObject);
-                unsafe {
-                    super::rc::retain_if_ptr(val);
-                }
-                DictKey::Tuple {
-                    hash_val: *hash_val,
-                    ptr: *ptr,
-                }
+                unsafe { super::rc::retain_if_ptr(val); }
+                DictKey::Tuple { hash_val: *hash_val, ptr: *ptr }
+            }
+            DictKey::FrozenSet { hash_val, ptr } => {
+                let val = super::value::MbValue::from_ptr(*ptr as *mut super::rc::MbObject);
+                unsafe { super::rc::retain_if_ptr(val); }
+                DictKey::FrozenSet { hash_val: *hash_val, ptr: *ptr }
             }
         }
     }
@@ -82,11 +83,11 @@ impl Clone for DictKey {
 impl Drop for DictKey {
     fn drop(&mut self) {
         match self {
-            DictKey::Instance { ptr, .. } | DictKey::Tuple { ptr, .. } => {
+            DictKey::Instance { ptr, .. }
+            | DictKey::Tuple { ptr, .. }
+            | DictKey::FrozenSet { ptr, .. } => {
                 let val = super::value::MbValue::from_ptr(*ptr as *mut super::rc::MbObject);
-                unsafe {
-                    super::rc::release_if_ptr(val);
-                }
+                unsafe { super::rc::release_if_ptr(val); }
             }
             _ => {}
         }
@@ -105,12 +106,14 @@ impl std::hash::Hash for DictKey {
                 std::mem::discriminant(self).hash(state);
                 match self {
                     DictKey::Int(i) => i.hash(state),
+                    DictKey::Float(b) => b.hash(state),
                     DictKey::Bool(b) => b.hash(state),
                     DictKey::None => {}
                     DictKey::Instance { hash_val, .. } => hash_val.hash(state),
                     DictKey::Other(s) => s.hash(state),
                     DictKey::Func(addr) => addr.hash(state),
                     DictKey::Tuple { hash_val, .. } => hash_val.hash(state),
+                    DictKey::FrozenSet { hash_val, .. } => hash_val.hash(state),
                     DictKey::Str(_) => unreachable!(),
                 }
             }
@@ -122,55 +125,36 @@ impl PartialEq for DictKey {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (DictKey::Int(a), DictKey::Int(b)) => a == b,
+            (DictKey::Float(a), DictKey::Float(b)) => a == b,
             (DictKey::Str(a), DictKey::Str(b)) => a == b,
             (DictKey::Bool(a), DictKey::Bool(b)) => a == b,
             (DictKey::None, DictKey::None) => true,
-            (
-                DictKey::Instance {
-                    hash_val: ha,
-                    ptr: pa,
-                    ..
-                },
-                DictKey::Instance {
-                    hash_val: hb,
-                    ptr: pb,
-                    ..
-                },
-            ) => {
-                if ha != hb {
-                    return false;
-                }
-                if pa == pb {
-                    return true;
-                }
+            (DictKey::Instance { hash_val: ha, ptr: pa, .. },
+             DictKey::Instance { hash_val: hb, ptr: pb, .. }) => {
+                if ha != hb { return false; }
+                if pa == pb { return true; }
                 // Hash collision with different pointers — dispatch __eq__.
                 let a_val = super::value::MbValue::from_ptr(*pa as *mut super::rc::MbObject);
                 let b_val = super::value::MbValue::from_ptr(*pb as *mut super::rc::MbObject);
-                super::builtins::mb_eq(a_val, b_val)
-                    .as_bool()
-                    .unwrap_or(false)
+                super::builtins::mb_eq(a_val, b_val).as_bool().unwrap_or(false)
             }
-            (
-                DictKey::Tuple {
-                    hash_val: ha,
-                    ptr: pa,
-                },
-                DictKey::Tuple {
-                    hash_val: hb,
-                    ptr: pb,
-                },
-            ) => {
-                if ha != hb {
-                    return false;
-                }
-                if pa == pb {
-                    return true;
-                }
+            (DictKey::Tuple { hash_val: ha, ptr: pa },
+             DictKey::Tuple { hash_val: hb, ptr: pb }) => {
+                if ha != hb { return false; }
+                if pa == pb { return true; }
                 let a_val = super::value::MbValue::from_ptr(*pa as *mut super::rc::MbObject);
                 let b_val = super::value::MbValue::from_ptr(*pb as *mut super::rc::MbObject);
-                super::tuple_ops::mb_tuple_eq(a_val, b_val)
-                    .as_bool()
-                    .unwrap_or(false)
+                super::tuple_ops::mb_tuple_eq(a_val, b_val).as_bool().unwrap_or(false)
+            }
+            (DictKey::FrozenSet { hash_val: ha, ptr: pa },
+             DictKey::FrozenSet { hash_val: hb, ptr: pb }) => {
+                if ha != hb { return false; }
+                if pa == pb { return true; }
+                // Hash collision with different objects — compare by content
+                // (mb_eq routes through the FrozenSet set-equality arm).
+                let a_val = super::value::MbValue::from_ptr(*pa as *mut super::rc::MbObject);
+                let b_val = super::value::MbValue::from_ptr(*pb as *mut super::rc::MbObject);
+                super::builtins::mb_eq(a_val, b_val).as_bool().unwrap_or(false)
             }
             (DictKey::Other(a), DictKey::Other(b)) => a == b,
             (DictKey::Func(a), DictKey::Func(b)) => a == b,
@@ -199,31 +183,21 @@ impl std::fmt::Display for DictKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DictKey::Int(i) => write!(f, "{i}"),
+            DictKey::Float(bits) => write!(f, "{}", dict_key_display(&DictKey::Float(*bits))),
             DictKey::Str(s) => write!(f, "{s}"),
             DictKey::Bool(b) => write!(f, "{}", if *b { "True" } else { "False" }),
             DictKey::None => write!(f, "None"),
-            DictKey::Instance {
-                class_name, ptr, ..
-            } => {
-                write!(
-                    f,
-                    "<{class_name} at {:p}>",
-                    *ptr as *const super::rc::MbObject
-                )
+            DictKey::Instance { class_name, ptr, .. } => {
+                write!(f, "<{class_name} at {:p}>", *ptr as *const super::rc::MbObject)
             }
             DictKey::Other(s) => write!(f, "{s}"),
             DictKey::Func(addr) => write!(f, "<function at 0x{addr:x}>"),
-            DictKey::Tuple { ptr, .. } => {
+            DictKey::Tuple { ptr, .. } | DictKey::FrozenSet { ptr, .. } => {
                 let val = super::value::MbValue::from_ptr(*ptr as *mut super::rc::MbObject);
                 let r = super::builtins::mb_repr(val);
-                let s = r
-                    .as_ptr()
+                let s = r.as_ptr()
                     .and_then(|p| unsafe {
-                        if let ObjData::Str(ref s) = (*p).data {
-                            Some(s.clone())
-                        } else {
-                            None
-                        }
+                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
                     })
                     .unwrap_or_default();
                 write!(f, "{s}")
@@ -233,15 +207,11 @@ impl std::fmt::Display for DictKey {
 }
 
 impl From<String> for DictKey {
-    fn from(s: String) -> Self {
-        DictKey::Str(s)
-    }
+    fn from(s: String) -> Self { DictKey::Str(s) }
 }
 
 impl From<&str> for DictKey {
-    fn from(s: &str) -> Self {
-        DictKey::Str(s.to_string())
-    }
+    fn from(s: &str) -> Self { DictKey::Str(s.to_string()) }
 }
 
 impl DictKey {
@@ -276,6 +246,20 @@ pub fn to_dict_key(val: MbValue) -> DictKey {
     if val.is_none() {
         return DictKey::None;
     }
+    // Float keys. CPython hashes an integral float equal to the matching int
+    // (`hash(1.0) == hash(1)`, `1.0 == 1`), so normalize integral floats to an
+    // Int key — `{1: a, 1.0: b}` then collapses to one entry. Non-integral
+    // floats (`0.5`, `1.5`) get a dedicated Float key bucketed by raw bits.
+    // Checked before the ptr/fallback paths; ints/bools/ptrs are NaN-boxed so
+    // `is_float()` is false for them and never reaches here.
+    if let Some(f) = val.as_float() {
+        if f.is_finite() && f.fract() == 0.0
+            && f >= i64::MIN as f64 && f <= i64::MAX as f64
+        {
+            return DictKey::Int(f as i64);
+        }
+        return DictKey::Float(val.to_bits());
+    }
     // TAG_FUNC values are hashable by code address (Python identity hash).
     if let Some(addr) = val.as_func() {
         return DictKey::Func(addr);
@@ -290,17 +274,22 @@ pub fn to_dict_key(val: MbValue) -> DictKey {
                     // so element-wise eq can break collisions.
                     let h = super::tuple_ops::mb_tuple_hash(val).as_int().unwrap_or(0);
                     super::rc::retain_if_ptr(val);
-                    return DictKey::Tuple {
-                        hash_val: h,
-                        ptr: ptr as usize,
-                    };
+                    return DictKey::Tuple { hash_val: h, ptr: ptr as usize };
+                }
+                ObjData::FrozenSet(_) => {
+                    // Content hash via mb_hash (order-independent), so two equal
+                    // frozensets bucket together regardless of build order;
+                    // retain the object so mb_eq can break collisions.
+                    let h = super::builtins::mb_hash(val).as_int().unwrap_or(0);
+                    super::rc::retain_if_ptr(val);
+                    return DictKey::FrozenSet { hash_val: h, ptr: ptr as usize };
                 }
                 ObjData::Instance { class_name, .. } => {
                     // Dispatch __hash__ to bucket by Python's hash; fall back to
                     // pointer identity when the class defines no __hash__.
-                    let h = super::builtins::mb_hash(val)
-                        .as_int()
-                        .unwrap_or_else(|| (ptr as u64 >> 17) as i64);
+                    let h = super::builtins::mb_hash(val).as_int().unwrap_or_else(|| {
+                        (ptr as u64 >> 17) as i64
+                    });
                     super::rc::retain_if_ptr(val);
                     return DictKey::Instance {
                         hash_val: h,
@@ -320,23 +309,20 @@ pub fn to_dict_key(val: MbValue) -> DictKey {
 pub fn dict_key_to_mbvalue(key: &DictKey) -> MbValue {
     match key {
         DictKey::Int(i) => MbValue::from_int(*i),
+        DictKey::Float(bits) => MbValue::from_float(f64::from_bits(*bits)),
         DictKey::Str(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
         DictKey::Bool(b) => MbValue::from_bool(*b),
         DictKey::None => MbValue::none(),
         DictKey::Instance { ptr, .. } => {
             let val = MbValue::from_ptr(*ptr as *mut MbObject);
-            unsafe {
-                super::rc::retain_if_ptr(val);
-            }
+            unsafe { super::rc::retain_if_ptr(val); }
             val
         }
         DictKey::Other(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
         DictKey::Func(addr) => MbValue::from_func(*addr),
-        DictKey::Tuple { ptr, .. } => {
+        DictKey::Tuple { ptr, .. } | DictKey::FrozenSet { ptr, .. } => {
             let val = MbValue::from_ptr(*ptr as *mut MbObject);
-            unsafe {
-                super::rc::retain_if_ptr(val);
-            }
+            unsafe { super::rc::retain_if_ptr(val); }
             val
         }
     }
@@ -350,13 +336,7 @@ pub fn dict_key_raw_str(key: &DictKey) -> String {
     match key {
         DictKey::Int(i) => i.to_string(),
         DictKey::Str(s) => s.clone(),
-        DictKey::Bool(b) => {
-            if *b {
-                "True".to_string()
-            } else {
-                "False".to_string()
-            }
-        }
+        DictKey::Bool(b) => if *b { "True".to_string() } else { "False".to_string() },
         DictKey::None => "None".to_string(),
         _ => dict_key_display(key),
     }
@@ -366,25 +346,28 @@ pub fn dict_key_raw_str(key: &DictKey) -> String {
 pub fn dict_key_display(key: &DictKey) -> String {
     match key {
         DictKey::Int(i) => i.to_string(),
-        DictKey::Str(s) => format!("'{s}'"),
-        DictKey::Bool(b) => {
-            if *b {
-                "True".to_string()
-            } else {
-                "False".to_string()
-            }
+        DictKey::Float(bits) => {
+            // Route through mb_repr so float keys render with Python's float
+            // formatting (`0.5`, `1.5`, `1e+20`) identical to float values.
+            let val = MbValue::from_float(f64::from_bits(*bits));
+            super::builtins::mb_repr(val)
+                .as_ptr()
+                .and_then(|p| unsafe {
+                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                })
+                .unwrap_or_default()
         }
+        DictKey::Str(s) => format!("'{s}'"),
+        DictKey::Bool(b) => if *b { "True".to_string() } else { "False".to_string() },
         DictKey::None => "None".to_string(),
-        DictKey::Instance { ptr, .. } | DictKey::Tuple { ptr, .. } => {
+        DictKey::Instance { ptr, .. }
+        | DictKey::Tuple { ptr, .. }
+        | DictKey::FrozenSet { ptr, .. } => {
             let val = MbValue::from_ptr(*ptr as *mut MbObject);
             super::builtins::mb_repr(val)
                 .as_ptr()
                 .and_then(|p| unsafe {
-                    if let ObjData::Str(ref s) = (*p).data {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
+                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
                 })
                 .unwrap_or_default()
         }
@@ -396,16 +379,13 @@ pub fn dict_key_display(key: &DictKey) -> String {
             super::builtins::mb_repr(val)
                 .as_ptr()
                 .and_then(|p| unsafe {
-                    if let ObjData::Str(ref s) = (*p).data {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
+                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
                 })
                 .unwrap_or_else(|| format!("<function at 0x{addr:x}>"))
         }
     }
 }
+
 
 #[allow(dead_code)]
 fn new_str(s: &str) -> MbValue {
@@ -637,7 +617,10 @@ pub fn mb_dict_keys(dict: MbValue) -> MbValue {
         if let Some(ptr) = dict.as_ptr() {
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let map = lock.read().unwrap();
-                let keys: Vec<MbValue> = map.keys().map(|k| dict_key_to_mbvalue(k)).collect();
+                let keys: Vec<MbValue> = map
+                    .keys()
+                    .map(|k| dict_key_to_mbvalue(k))
+                    .collect();
                 return MbValue::from_ptr(MbObject::new_list(keys));
             }
         }
@@ -738,22 +721,15 @@ pub fn mb_dict_setdefault(dict: MbValue, key: MbValue, default: MbValue) -> MbVa
 /// dict.update(other) — merge other dict into this one
 pub fn mb_dict_update(dict: MbValue, other: MbValue) {
     unsafe {
-        let Some(dict_ptr) = dict.as_ptr() else {
-            return;
-        };
-        let ObjData::Dict(ref dict_lock) = (*dict_ptr).data else {
-            return;
-        };
+        let Some(dict_ptr) = dict.as_ptr() else { return; };
+        let ObjData::Dict(ref dict_lock) = (*dict_ptr).data else { return; };
 
         // Collect pairs from `other` first to avoid holding two locks.
         let pairs: Vec<(DictKey, MbValue)> = if let Some(ptr) = other.as_ptr() {
             match &(*ptr).data {
-                ObjData::Dict(ref lock) => lock
-                    .read()
-                    .unwrap()
-                    .iter()
-                    .map(|(k, v)| (k.clone(), *v))
-                    .collect(),
+                ObjData::Dict(ref lock) => {
+                    lock.read().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect()
+                }
                 ObjData::List(ref lock) => {
                     let items = lock.read().unwrap().clone();
                     let mut out = Vec::with_capacity(items.len());
@@ -763,11 +739,7 @@ pub fn mb_dict_update(dict: MbValue, other: MbValue) {
                                 ObjData::Tuple(ref t) if t.len() == 2 => Some((t[0], t[1])),
                                 ObjData::List(ref l) => {
                                     let l = l.read().unwrap();
-                                    if l.len() == 2 {
-                                        Some((l[0], l[1]))
-                                    } else {
-                                        None
-                                    }
+                                    if l.len() == 2 { Some((l[0], l[1])) } else { None }
                                 }
                                 _ => None,
                             };
@@ -787,11 +759,7 @@ pub fn mb_dict_update(dict: MbValue, other: MbValue) {
                                 ObjData::Tuple(ref t) if t.len() == 2 => Some((t[0], t[1])),
                                 ObjData::List(ref l) => {
                                     let l = l.read().unwrap();
-                                    if l.len() == 2 {
-                                        Some((l[0], l[1]))
-                                    } else {
-                                        None
-                                    }
+                                    if l.len() == 2 { Some((l[0], l[1])) } else { None }
                                 }
                                 _ => None,
                             };
@@ -811,8 +779,7 @@ pub fn mb_dict_update(dict: MbValue, other: MbValue) {
                     if let Some(backing) = super::class::unwrap_dictlike_data(other) {
                         if let Some(bp) = backing.as_ptr() {
                             if let ObjData::Dict(ref src) = (*bp).data {
-                                src.read()
-                                    .unwrap()
+                                src.read().unwrap()
                                     .iter()
                                     .map(|(k, v)| {
                                         super::rc::retain_if_ptr(*v);
@@ -895,12 +862,12 @@ pub fn mb_dict_fromkeys(keys: MbValue, value: MbValue) -> MbValue {
             break;
         }
         let k = super::iter::mb_next(handle);
-        if k.is_none() && super::iter::mb_has_next(handle).as_bool() != Some(true) {
+        if k.is_none()
+            && super::iter::mb_has_next(handle).as_bool() != Some(true)
+        {
             break;
         }
-        unsafe {
-            super::rc::retain_if_ptr(value);
-        }
+        unsafe { super::rc::retain_if_ptr(value); }
         mb_dict_setitem(out, k, value);
     }
     out
@@ -980,12 +947,8 @@ pub fn mb_dict_merge(a: MbValue, b: MbValue) -> MbValue {
 // REQ: R7
 pub fn mb_dict_or(a: MbValue, b: MbValue) -> MbValue {
     unsafe {
-        let is_a_dict = a
-            .as_ptr()
-            .map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
-        let is_b_dict = b
-            .as_ptr()
-            .map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
+        let is_a_dict = a.as_ptr().map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
+        let is_b_dict = b.as_ptr().map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
         if !is_a_dict || !is_b_dict {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -996,26 +959,20 @@ pub fn mb_dict_or(a: MbValue, b: MbValue) -> MbValue {
             return MbValue::none();
         }
         // Clone a's map, then merge b's entries
-        let mut merged = a
-            .as_ptr()
-            .and_then(|p| {
-                if let ObjData::Dict(ref lock) = (*p).data {
-                    Some(lock.read().unwrap().clone())
-                } else {
-                    None
-                }
-            })
-            .expect("a is dict — checked above");
-        let b_entries = b
-            .as_ptr()
-            .and_then(|p| {
-                if let ObjData::Dict(ref lock) = (*p).data {
-                    Some(lock.read().unwrap().clone())
-                } else {
-                    None
-                }
-            })
-            .expect("b is dict — checked above");
+        let mut merged = a.as_ptr().and_then(|p| {
+            if let ObjData::Dict(ref lock) = (*p).data {
+                Some(lock.read().unwrap().clone())
+            } else {
+                None
+            }
+        }).expect("a is dict — checked above");
+        let b_entries = b.as_ptr().and_then(|p| {
+            if let ObjData::Dict(ref lock) = (*p).data {
+                Some(lock.read().unwrap().clone())
+            } else {
+                None
+            }
+        }).expect("b is dict — checked above");
         for (k, v) in b_entries {
             merged.insert(k, v);
         }
@@ -1036,12 +993,8 @@ pub fn mb_dict_or(a: MbValue, b: MbValue) -> MbValue {
 // REQ: R7
 pub fn mb_dict_ior(a: MbValue, b: MbValue) -> MbValue {
     unsafe {
-        let is_a_dict = a
-            .as_ptr()
-            .map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
-        let is_b_dict = b
-            .as_ptr()
-            .map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
+        let is_a_dict = a.as_ptr().map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
+        let is_b_dict = b.as_ptr().map_or(false, |p| matches!((*p).data, ObjData::Dict(_)));
         if !is_a_dict || !is_b_dict {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -1052,22 +1005,13 @@ pub fn mb_dict_ior(a: MbValue, b: MbValue) -> MbValue {
             return MbValue::none();
         }
         // Read b's entries first (avoid holding two write locks simultaneously)
-        let b_entries: Vec<(DictKey, MbValue)> = b
-            .as_ptr()
-            .and_then(|p| {
-                if let ObjData::Dict(ref lock) = (*p).data {
-                    Some(
-                        lock.read()
-                            .unwrap()
-                            .iter()
-                            .map(|(k, v)| (k.clone(), *v))
-                            .collect(),
-                    )
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
+        let b_entries: Vec<(DictKey, MbValue)> = b.as_ptr().and_then(|p| {
+            if let ObjData::Dict(ref lock) = (*p).data {
+                Some(lock.read().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect())
+            } else {
+                None
+            }
+        }).unwrap_or_default();
         // Merge into a in-place
         if let Some(pa) = a.as_ptr() {
             if let ObjData::Dict(ref lock) = (*pa).data {
@@ -1089,12 +1033,7 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
         unsafe {
             if let Some(ptr) = args.as_ptr() {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    return lock
-                        .read()
-                        .unwrap()
-                        .get(i)
-                        .copied()
-                        .unwrap_or(MbValue::none());
+                    return lock.read().unwrap().get(i).copied().unwrap_or(MbValue::none());
                 }
             }
             MbValue::none()
@@ -1113,17 +1052,10 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
     if dict_stub_class(receiver).as_deref() == Some("ConfigParser") {
         match name {
             "read_string" => {
-                return super::stdlib::configparser_mod::mb_configparser_read_string(
-                    receiver,
-                    arg(0),
-                );
+                return super::stdlib::configparser_mod::mb_configparser_read_string(receiver, arg(0));
             }
             "get" => {
-                return super::stdlib::configparser_mod::mb_configparser_get(
-                    receiver,
-                    arg(0),
-                    arg(1),
-                );
+                return super::stdlib::configparser_mod::mb_configparser_get(receiver, arg(0), arg(1));
             }
             "set" => {
                 return super::stdlib::configparser_mod::mb_configparser_set(
@@ -1196,14 +1128,8 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
         // CPython exposes these on every dict; previously each raised
         // AttributeError because the dispatch table was method-only.
         "__getitem__" => mb_dict_getitem(receiver, arg(0)),
-        "__setitem__" => {
-            mb_dict_setitem(receiver, arg(0), arg(1));
-            MbValue::none()
-        }
-        "__delitem__" => {
-            mb_dict_delitem(receiver, arg(0));
-            MbValue::none()
-        }
+        "__setitem__" => { mb_dict_setitem(receiver, arg(0), arg(1)); MbValue::none() }
+        "__delitem__" => { mb_dict_delitem(receiver, arg(0)); MbValue::none() }
         "__contains__" => mb_dict_contains(receiver, arg(0)),
         "__len__" => mb_dict_len(receiver),
         "__iter__" => super::iter::mb_iter(receiver),
@@ -1221,36 +1147,6 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
             MbValue::from_bool(eq.as_bool() != Some(true))
         }
         "__repr__" | "__str__" => super::builtins::mb_repr(receiver),
-        "substitute" if dict_stub_class(receiver).as_deref() == Some("Template") => {
-            super::stdlib::string_constants_mod::mb_template_substitute(receiver, arg(0), false)
-        }
-        "safe_substitute" if dict_stub_class(receiver).as_deref() == Some("Template") => {
-            super::stdlib::string_constants_mod::mb_template_substitute(receiver, arg(0), true)
-        }
-        "format" if dict_stub_class(receiver).as_deref() == Some("Formatter") => {
-            // string.Formatter().format(format_string, /, *args, **kwargs)
-            // delegates to str.format for the (non-overridden) base behavior.
-            // format_string is required.
-            if argc() == 0 {
-                super::exception::mb_raise(
-                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str(
-                        "format() missing 1 required positional argument: 'format_string'"
-                            .to_string(),
-                    )),
-                );
-                return MbValue::none();
-            }
-            let fmt_string = arg(0);
-            let rest: Vec<MbValue> = (1..argc()).map(arg).collect();
-            for &v in &rest {
-                unsafe {
-                    super::rc::retain_if_ptr(v);
-                }
-            }
-            let fmt_args = MbValue::from_ptr(MbObject::new_list(rest));
-            super::string_ops::mb_str_format(fmt_string, fmt_args)
-        }
         _ => {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
@@ -1263,7 +1159,7 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
     }
 }
 
-/// Read the `__class__` marker of a string dict-stub (e.g. Formatter/Template),
+/// Read the `__class__` marker of a string dict-stub (e.g. ConfigParser),
 /// if present.
 fn dict_stub_class(receiver: MbValue) -> Option<String> {
     unsafe {
@@ -1272,11 +1168,7 @@ fn dict_stub_class(receiver: MbValue) -> Option<String> {
             let map = lock.read().unwrap();
             if let Some(v) = map.get(&DictKey::Str("__class__".to_string())) {
                 return v.as_ptr().and_then(|p| {
-                    if let ObjData::Str(ref s) = (*p).data {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
+                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
                 });
             }
         }
@@ -1311,12 +1203,7 @@ mod tests {
         unsafe {
             if let Some(ptr) = v.as_ptr() {
                 if let ObjData::List(ref lock) = (*ptr).data {
-                    return lock
-                        .read()
-                        .unwrap()
-                        .get(i)
-                        .copied()
-                        .unwrap_or(MbValue::none());
+                    return lock.read().unwrap().get(i).copied().unwrap_or(MbValue::none());
                 }
             }
         }
@@ -1373,11 +1260,7 @@ mod tests {
             MbValue::from_int(0),
             MbValue::from_int(1),
         ]));
-        assert_ne!(
-            k1.to_bits(),
-            k2.to_bits(),
-            "literals must be distinct objects"
-        );
+        assert_ne!(k1.to_bits(), k2.to_bits(), "literals must be distinct objects");
         mb_dict_setitem(d, k1, MbValue::from_int(42));
         assert_eq!(mb_dict_getitem(d, k2).as_int(), Some(42));
     }
@@ -1401,10 +1284,7 @@ mod tests {
     fn test_setitem_int_key() {
         let d = mb_dict_new();
         mb_dict_setitem(d, MbValue::from_int(10), MbValue::from_int(100));
-        assert_eq!(
-            mb_dict_getitem(d, MbValue::from_int(10)).as_int(),
-            Some(100)
-        );
+        assert_eq!(mb_dict_getitem(d, MbValue::from_int(10)).as_int(), Some(100));
     }
 
     #[test]
@@ -1418,19 +1298,13 @@ mod tests {
     fn test_get_found() {
         let d = mb_dict_new();
         mb_dict_setitem(d, str_val("a"), MbValue::from_int(1));
-        assert_eq!(
-            mb_dict_get(d, str_val("a"), MbValue::from_int(-1)).as_int(),
-            Some(1)
-        );
+        assert_eq!(mb_dict_get(d, str_val("a"), MbValue::from_int(-1)).as_int(), Some(1));
     }
 
     #[test]
     fn test_get_missing_returns_default() {
         let d = mb_dict_new();
-        assert_eq!(
-            mb_dict_get(d, str_val("x"), MbValue::from_int(99)).as_int(),
-            Some(99)
-        );
+        assert_eq!(mb_dict_get(d, str_val("x"), MbValue::from_int(99)).as_int(), Some(99));
     }
 
     #[test]
@@ -1473,10 +1347,7 @@ mod tests {
 
     #[test]
     fn test_contains_non_dict() {
-        assert_eq!(
-            mb_dict_contains(MbValue::from_int(0), str_val("k")).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_dict_contains(MbValue::from_int(0), str_val("k")).as_bool(), Some(false));
     }
 
     // ── len ──
@@ -1550,7 +1421,9 @@ mod tests {
         mb_dict_setitem(d, str_val("b"), MbValue::from_int(20));
         let vals = mb_dict_values(d);
         assert_eq!(list_len(vals), 2);
-        let mut ints: Vec<i64> = (0..2).filter_map(|i| list_get(vals, i).as_int()).collect();
+        let mut ints: Vec<i64> = (0..2)
+            .filter_map(|i| list_get(vals, i).as_int())
+            .collect();
         ints.sort();
         assert_eq!(ints, vec![10, 20]);
     }
@@ -1583,20 +1456,14 @@ mod tests {
     fn test_pop_found() {
         let d = mb_dict_new();
         mb_dict_setitem(d, str_val("k"), MbValue::from_int(10));
-        assert_eq!(
-            mb_dict_pop(d, str_val("k"), MbValue::from_int(-1)).as_int(),
-            Some(10)
-        );
+        assert_eq!(mb_dict_pop(d, str_val("k"), MbValue::from_int(-1)).as_int(), Some(10));
         assert_eq!(mb_dict_len(d).as_int(), Some(0));
     }
 
     #[test]
     fn test_pop_missing() {
         let d = mb_dict_new();
-        assert_eq!(
-            mb_dict_pop(d, str_val("k"), MbValue::from_int(-1)).as_int(),
-            Some(-1)
-        );
+        assert_eq!(mb_dict_pop(d, str_val("k"), MbValue::from_int(-1)).as_int(), Some(-1));
     }
 
     // ── setdefault ──
@@ -1710,10 +1577,7 @@ mod tests {
     #[test]
     fn test_eq_non_dict() {
         // Delegates to mb_eq, so non-dict inputs still get sane equality.
-        assert_eq!(
-            mb_dict_eq(MbValue::from_int(1), MbValue::from_int(2)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_dict_eq(MbValue::from_int(1), MbValue::from_int(2)).as_bool(), Some(false));
     }
 
     // ── merge ──
@@ -1997,10 +1861,7 @@ mod tests {
         super::super::exception::mb_clear_exception();
         let d = mb_dict_new();
         let result = mb_dict_popitem(d);
-        assert!(
-            result.is_none(),
-            "popitem on empty dict must return the none sentinel"
-        );
+        assert!(result.is_none(), "popitem on empty dict must return the none sentinel");
         assert_eq!(
             super::super::exception::mb_has_exception().as_bool(),
             Some(true),
@@ -2048,4 +1909,5 @@ mod tests {
         let r = dispatch_dict_method("pop", d, args);
         assert_eq!(r.as_int(), Some(-1));
     }
+
 }

@@ -33,8 +33,8 @@ fn driver_must_not_depend_on_orm_or_migrate() {
         if path.extension().and_then(|s| s.to_str()) != Some("rs") {
             return;
         }
-        let src =
-            fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let src = fs::read_to_string(path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
         for needle in FORBIDDEN_FROM_DRIVER {
             if src.contains(needle) {
                 offenders.push((path.to_path_buf(), needle));
@@ -62,8 +62,8 @@ fn query_builder_execution_must_delegate_to_driver_connection() {
         execute.display()
     );
 
-    let src =
-        fs::read_to_string(&execute).unwrap_or_else(|e| panic!("read {}: {e}", execute.display()));
+    let src = fs::read_to_string(&execute)
+        .unwrap_or_else(|e| panic!("read {}: {e}", execute.display()));
     assert!(
         src.contains("conn.fetch_rows(&sql, &params).await"),
         "QueryBuilder::fetch_rows must delegate to driver Connection::fetch_rows"
@@ -93,7 +93,8 @@ fn query_execute_source() -> PathBuf {
 }
 
 fn walk(dir: &Path, visit: &mut dyn FnMut(&Path)) {
-    let entries = fs::read_dir(dir).unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()));
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {

@@ -146,19 +146,13 @@ pub fn enforce_at_least_one_usable(
     }
     // Pick the highest-versioned filtered entry for the error message.
     // Lexicographic max is fine here: error text only.
-    if let Some(worst) = decision
-        .filtered
-        .iter()
-        .max_by(|a, b| a.version.cmp(&b.version))
-    {
+    if let Some(worst) = decision.filtered.iter().max_by(|a, b| a.version.cmp(&b.version)) {
         return Err(IndexError::YankedRelease {
             name: name.to_string(),
             version: worst.version.clone(),
         });
     }
-    Err(IndexError::NotFound {
-        name: name.to_string(),
-    })
+    Err(IndexError::NotFound { name: name.to_string() })
 }
 
 // --- freshness --------------------------------------------------------------
@@ -229,10 +223,7 @@ pub fn check_metadata_freshness(
         path: path.display().to_string(),
         detail: format!("reading mtime: {err}"),
     })?;
-    let age = policy
-        .now
-        .duration_since(modified)
-        .unwrap_or(Duration::ZERO);
+    let age = policy.now.duration_since(modified).unwrap_or(Duration::ZERO);
     if age <= policy.ttl {
         Ok(FreshnessVerdict::Fresh { age })
     } else {
@@ -279,12 +270,7 @@ mod tests {
             mk_file("foo-2.0.0-py3-none-any.whl", false, None),
         ];
         let pinned = BTreeSet::new();
-        let d = filter_yanked(
-            &files,
-            YankedPolicy::AllowPinnedOnly,
-            &pinned,
-            version_from_filename,
-        );
+        let d = filter_yanked(&files, YankedPolicy::AllowPinnedOnly, &pinned, version_from_filename);
         assert_eq!(d.usable.len(), 2);
         assert!(d.filtered.is_empty());
         assert!(d.warnings.is_empty());
@@ -298,12 +284,7 @@ mod tests {
             mk_file("foo-2.0.0-py3-none-any.whl", false, None),
         ];
         let pinned = BTreeSet::new();
-        let d = filter_yanked(
-            &files,
-            YankedPolicy::AllowPinnedOnly,
-            &pinned,
-            version_from_filename,
-        );
+        let d = filter_yanked(&files, YankedPolicy::AllowPinnedOnly, &pinned, version_from_filename);
         assert_eq!(d.usable.len(), 2);
         assert_eq!(d.filtered.len(), 1);
         assert_eq!(d.filtered[0].version, "1.5.0");
@@ -313,19 +294,12 @@ mod tests {
 
     #[test]
     fn allow_pinned_only_keeps_yanked_when_user_pinned() {
-        let files = vec![mk_file(
-            "foo-1.5.0-py3-none-any.whl",
-            true,
-            Some("CVE-2024-x"),
-        )];
+        let files = vec![
+            mk_file("foo-1.5.0-py3-none-any.whl", true, Some("CVE-2024-x")),
+        ];
         let mut pinned = BTreeSet::new();
         pinned.insert("1.5.0".to_string());
-        let d = filter_yanked(
-            &files,
-            YankedPolicy::AllowPinnedOnly,
-            &pinned,
-            version_from_filename,
-        );
+        let d = filter_yanked(&files, YankedPolicy::AllowPinnedOnly, &pinned, version_from_filename);
         assert_eq!(d.usable.len(), 1);
         assert!(d.filtered.is_empty());
         assert_eq!(d.warnings.len(), 1, "should emit a 'using yanked' warning");
@@ -362,12 +336,7 @@ mod tests {
         let files = vec![mk_file("foo-1.5.0-py3-none-any.whl", true, None)];
         let mut pinned = BTreeSet::new();
         pinned.insert("1.5.0".to_string());
-        let d = filter_yanked(
-            &files,
-            YankedPolicy::AllowPinnedOnly,
-            &pinned,
-            version_from_filename,
-        );
+        let d = filter_yanked(&files, YankedPolicy::AllowPinnedOnly, &pinned, version_from_filename);
         assert_eq!(d.warnings.len(), 1);
         assert!(d.warnings[0].contains("no reason given"));
     }
@@ -375,9 +344,7 @@ mod tests {
     #[test]
     fn enforce_at_least_one_usable_passes_when_usable_nonempty() {
         let mut decision = YankedDecision::default();
-        decision
-            .usable
-            .push(mk_file("foo-1.0.0-py3-none-any.whl", false, None));
+        decision.usable.push(mk_file("foo-1.0.0-py3-none-any.whl", false, None));
         enforce_at_least_one_usable("foo", &decision).unwrap();
     }
 
@@ -479,10 +446,7 @@ mod tests {
             now: mtime - Duration::from_secs(30),
         };
         let v = check_metadata_freshness(&p, &policy).unwrap();
-        assert!(
-            v.is_fresh(),
-            "expected Fresh on backward clock skew, got {v:?}"
-        );
+        assert!(v.is_fresh(), "expected Fresh on backward clock skew, got {v:?}");
     }
 
     #[test]

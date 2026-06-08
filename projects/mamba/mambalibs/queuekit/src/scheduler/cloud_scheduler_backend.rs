@@ -66,7 +66,10 @@ impl Default for CloudSchedulerConfig {
 impl CloudSchedulerConfig {
     /// Jobs parent path for API calls
     fn jobs_parent(&self) -> String {
-        format!("projects/{}/locations/{}", self.project_id, self.location)
+        format!(
+            "projects/{}/locations/{}",
+            self.project_id, self.location
+        )
     }
 
     /// Fully qualified job name
@@ -237,7 +240,9 @@ impl CloudSchedulerBackend {
             .header("Metadata-Flavor", "Google")
             .send()
             .await
-            .map_err(|e| TaskError::Authentication(format!("Failed to fetch OIDC token: {}", e)))?;
+            .map_err(|e| {
+                TaskError::Authentication(format!("Failed to fetch OIDC token: {}", e))
+            })?;
 
         if !response.status().is_success() {
             return Err(TaskError::Authentication(format!(
@@ -246,9 +251,12 @@ impl CloudSchedulerBackend {
             )));
         }
 
-        let token_response: MetadataTokenResponse = response.json().await.map_err(|e| {
-            TaskError::Authentication(format!("Failed to parse token response: {}", e))
-        })?;
+        let token_response: MetadataTokenResponse = response
+            .json()
+            .await
+            .map_err(|e| {
+                TaskError::Authentication(format!("Failed to parse token response: {}", e))
+            })?;
 
         let expires_at = Utc::now() + chrono::Duration::seconds(token_response.expires_in);
 
@@ -264,13 +272,16 @@ impl CloudSchedulerBackend {
     fn map_gcp_error(status: reqwest::StatusCode, body: &str) -> TaskError {
         match status.as_u16() {
             404 => TaskError::TaskNotFound(body.to_string()),
-            401 | 403 => TaskError::Authentication(format!(
-                "GCP API authentication error ({}): {}",
-                status, body
-            )),
+            401 | 403 => TaskError::Authentication(
+                format!("GCP API authentication error ({}): {}", status, body),
+            ),
             429 => TaskError::RateLimited(Duration::from_secs(60)),
-            500..=599 => TaskError::Backend(format!("GCP API server error ({}): {}", status, body)),
-            _ => TaskError::Backend(format!("GCP API error ({}): {}", status, body)),
+            500..=599 => TaskError::Backend(
+                format!("GCP API server error ({}): {}", status, body),
+            ),
+            _ => TaskError::Backend(
+                format!("GCP API error ({}): {}", status, body),
+            ),
         }
     }
 
@@ -553,8 +564,8 @@ impl SchedulerBackend for CloudSchedulerBackend {
             "task_name": task.task_name,
             "args": task.args,
         });
-        let body_b64 =
-            BASE64_STANDARD.encode(serde_json::to_string(&body_json).unwrap_or_default());
+        let body_b64 = BASE64_STANDARD
+            .encode(serde_json::to_string(&body_json).unwrap_or_default());
 
         let job = CloudSchedulerJob {
             name: self.config.job_name(&task.name),
@@ -604,7 +615,11 @@ impl SchedulerBackend for CloudSchedulerBackend {
         Ok(states.get(name).cloned().unwrap_or_default())
     }
 
-    async fn set_task_state(&self, name: &str, state: &TaskScheduleState) -> Result<(), TaskError> {
+    async fn set_task_state(
+        &self,
+        name: &str,
+        state: &TaskScheduleState,
+    ) -> Result<(), TaskError> {
         self.task_states
             .write()
             .await
@@ -619,9 +634,7 @@ impl SchedulerBackend for CloudSchedulerBackend {
 
         // Update local state
         let mut states = self.task_states.write().await;
-        let state = states
-            .entry(name.to_string())
-            .or_insert_with(TaskScheduleState::default);
+        let state = states.entry(name.to_string()).or_insert_with(TaskScheduleState::default);
         state.enabled = false;
         Ok(())
     }
@@ -633,9 +646,7 @@ impl SchedulerBackend for CloudSchedulerBackend {
 
         // Update local state
         let mut states = self.task_states.write().await;
-        let state = states
-            .entry(name.to_string())
-            .or_insert_with(TaskScheduleState::default);
+        let state = states.entry(name.to_string()).or_insert_with(TaskScheduleState::default);
         state.enabled = true;
         Ok(())
     }

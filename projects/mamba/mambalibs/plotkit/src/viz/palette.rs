@@ -30,16 +30,16 @@ pub fn categorical() -> Palette {
     Palette {
         name: "categorical".into(),
         colors: vec![
-            Color::new(31, 119, 180),  // blue
-            Color::new(255, 127, 14),  // orange
-            Color::new(44, 160, 44),   // green
-            Color::new(214, 39, 40),   // red
-            Color::new(148, 103, 189), // purple
-            Color::new(140, 86, 75),   // brown
-            Color::new(227, 119, 194), // pink
-            Color::new(127, 127, 127), // gray
-            Color::new(188, 189, 34),  // olive
-            Color::new(23, 190, 207),  // cyan
+            Color::new(31, 119, 180),   // blue
+            Color::new(255, 127, 14),   // orange
+            Color::new(44, 160, 44),    // green
+            Color::new(214, 39, 40),    // red
+            Color::new(148, 103, 189),  // purple
+            Color::new(140, 86, 75),    // brown
+            Color::new(227, 119, 194),  // pink
+            Color::new(127, 127, 127),  // gray
+            Color::new(188, 189, 34),   // olive
+            Color::new(23, 190, 207),   // cyan
         ],
     }
 }

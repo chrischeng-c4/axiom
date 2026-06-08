@@ -143,6 +143,9 @@ fn apply_props(node: &web_sys::Element, props: &Props) -> Result<(), JsValue> {
     if let Some(aria_label) = &props.aria_label {
         node.set_attribute("aria-label", aria_label)?;
     }
+    if let Some(html_for) = &props.html_for {
+        node.set_attribute("for", html_for)?;
+    }
     if props.disabled {
         node.set_attribute("disabled", "true")?;
     }

@@ -21,18 +21,14 @@ use std::process::Command;
 use serde_json::Value;
 use toml::Value as TomlValue;
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn shipped_manifest_path() -> PathBuf {
-    project_root()
+    crate::common::project_root()
         .join("validation")
         .join("perf_benchmark_manifest.toml")
 }
 
 fn checker_script() -> PathBuf {
-    project_root()
+    crate::common::project_root()
         .join("scripts")
         .join("perf_internal_time_check.py")
 }
@@ -48,7 +44,8 @@ fn unique_dir(tag: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!("mamba-perf-internal-time-{tag}-{nanos}"));
+    let dir = std::env::temp_dir()
+        .join(format!("mamba-perf-internal-time-{tag}-{nanos}"));
     std::fs::create_dir_all(&dir).expect("create tempdir");
     dir
 }
@@ -57,7 +54,7 @@ fn run_checker(args: &[&str]) -> (i32, String, String) {
     let output = Command::new("python3")
         .arg(checker_script())
         .args(args)
-        .current_dir(project_root())
+        .current_dir(crate::common::project_root())
         .output()
         .expect("invoke perf_internal_time_check.py");
     (
@@ -127,8 +124,7 @@ fn shipped_required_entries_declare_internal_timing_mode() {
             .and_then(|v| v.as_str())
             .expect("required entry declares timing_mode");
         assert_eq!(
-            tm,
-            "internal",
+            tm, "internal",
             "required entry id={:?} must declare timing_mode=internal",
             e.get("id")
         );
@@ -142,7 +138,7 @@ fn shipped_required_entries_declare_internal_timing_mode() {
 #[test]
 fn shipped_required_fixtures_emit_internal_time_marker() {
     let manifest = read_manifest();
-    let root = project_root().join("validation").join(
+    let root = crate::common::project_root().join("validation").join(
         manifest
             .get("fixture_root")
             .and_then(|v| v.as_str())
@@ -157,7 +153,8 @@ fn shipped_required_fixtures_emit_internal_time_marker() {
             continue;
         }
         let fixture = e.get("fixture").and_then(|v| v.as_str()).unwrap();
-        let body = std::fs::read_to_string(root.join(fixture)).expect("read required fixture");
+        let body =
+            std::fs::read_to_string(root.join(fixture)).expect("read required fixture");
         assert!(
             body.contains("INTERNAL_TIME_NS="),
             "required fixture {fixture} must emit INTERNAL_TIME_NS marker"
@@ -200,9 +197,13 @@ tier = "required"
 location = "x"
 command = "y"
 "#;
-    let path =
-        write_manifest_and_fixtures(&dir, body, &[("rogue.py", "print('INTERNAL_TIME_NS=1')\n")]);
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let path = write_manifest_and_fixtures(
+        &dir,
+        body,
+        &[("rogue.py", "print('INTERNAL_TIME_NS=1')\n")],
+    );
+    let (code, payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 1, "missing timing_mode must gate; payload={payload}");
     let v = payload["violations"].as_array().unwrap();
     assert_eq!(v.len(), 1);
@@ -236,13 +237,19 @@ timing_mode = "process_wall"
 location = "x"
 command = "y"
 "#;
-    let path = write_manifest_and_fixtures(&dir, body, &[("slow.py", "x = 1\n")]);
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let path = write_manifest_and_fixtures(
+        &dir,
+        body,
+        &[("slow.py", "x = 1\n")],
+    );
+    let (code, payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 1, "process_wall on required must gate");
     let v = payload["violations"].as_array().unwrap();
-    assert!(v
-        .iter()
-        .any(|item| item["reason"].as_str().unwrap().contains("process_wall")));
+    assert!(v.iter().any(|item| item["reason"]
+        .as_str()
+        .unwrap()
+        .contains("process_wall")));
 }
 
 #[test]
@@ -274,7 +281,8 @@ command = "y"
         body,
         &[("liar.py", "# no marker here\nprint('hi')\n")],
     );
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 1, "missing marker must gate");
     let v = payload["violations"].as_array().unwrap();
     assert!(v.iter().any(|item| item["reason"]
@@ -312,7 +320,8 @@ command = "y"
         body,
         &[("ok.py", "print('INTERNAL_TIME_NS=12345')\n")],
     );
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 0, "valid required must pass; payload={payload}");
     assert_eq!(payload["violations"].as_array().unwrap().len(), 0);
 }
@@ -366,7 +375,8 @@ command = "y"
             ("legacy_b.py", "x = 1\n"),
         ],
     );
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 0, "mixed cohort must pass");
     let internal = payload["internal_timed"].as_array().unwrap();
     let process_wall = payload["process_wall_timed"].as_array().unwrap();
@@ -435,7 +445,8 @@ command = "y"
             ("legacy.py", "x = 1\n"),
         ],
     );
-    let (code, _payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, _payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 0, "exploratory process_wall must NOT gate");
 }
 
@@ -477,7 +488,8 @@ command = "y"
             ("legacy.py", "x = 1\n"),
         ],
     );
-    let (code, _payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, _payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(
         code, 0,
         "exploratory missing timing_mode must NOT gate (acceptance #3)"
@@ -509,7 +521,8 @@ fn checker_help_documents_manifest_and_format_flags() {
 
 #[test]
 fn shipped_int_sum_fixture_still_prints_final_answer_to_stdout() {
-    let path = project_root().join("tests/cpython/fixtures/core/bench/int_sum.py");
+    let path = crate::common::project_root()
+        .join("tests/cpython/fixtures/core/bench/int_sum.py");
     let body = std::fs::read_to_string(&path).expect("read int_sum.py");
     // Internal time marker MUST go to stderr; the golden answer
     // (`print(total)`) MUST stay on stdout. Anything else would

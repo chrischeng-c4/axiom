@@ -16,16 +16,11 @@
 //!        version.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde_json::{json, Value};
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn checker_script() -> PathBuf {
-    project_root()
+    crate::common::project_root()
         .join("scripts")
         .join("perf_suite_geomean_check.py")
 }
@@ -47,12 +42,7 @@ fn write_baseline(dir: &Path, name: &str, value: &Value) -> PathBuf {
 }
 
 fn run_checker(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new("python3")
-        .arg(checker_script())
-        .args(args)
-        .current_dir(project_root())
-        .output()
-        .expect("invoke perf_suite_geomean_check.py");
+    let output = crate::common::run_python_script(&checker_script(), args);
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -75,12 +65,11 @@ fn suite_geomean_below_floor_fails() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, stderr) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
-    assert_eq!(
-        code, 1,
-        "geomean ≈ 1.14× must fail under 10× floor (stderr={stderr})"
-    );
+    let (code, _, stderr) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
+    assert_eq!(code, 1, "geomean ≈ 1.14× must fail under 10× floor (stderr={stderr})");
     assert!(stderr.contains("rule:"), "must restate the rule");
     assert!(stderr.contains("#2569"), "must cite the issue");
     assert!(stderr.contains("worst contributors"));
@@ -98,8 +87,10 @@ fn empty_required_set_fails_rather_than_vacuous_pass() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     assert_eq!(code, 1, "empty required set must fail");
     let v: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(v["actual"].as_f64(), Some(0.0));
@@ -122,8 +113,10 @@ fn suite_geomean_at_floor_passes() {
         })).collect::<Vec<_>>(),
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, stderr) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, stderr) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
     assert_eq!(code, 0, "exact-floor geomean must pass (stderr={stderr})");
     assert!(stderr.contains("clean"));
 }
@@ -142,7 +135,10 @@ fn suite_geomean_well_above_floor_passes() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, _) = run_checker(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
     assert_eq!(code, 0);
 }
 
@@ -160,15 +156,14 @@ fn non_required_benchmarks_excluded_from_average() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     let v: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(code, 0, "optional outliers must not gate");
     assert_eq!(v["checked_count"].as_i64(), Some(1));
-    assert!(
-        v["actual"].as_f64().unwrap() > 15.0,
-        "geomean must reflect only required"
-    );
+    assert!(v["actual"].as_f64().unwrap() > 15.0, "geomean must reflect only required");
 }
 
 // ─── Acceptance 3: summary names count, method, cpython version ─────
@@ -183,16 +178,13 @@ fn json_summary_names_count_method_and_cpython_version() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (_code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (_code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     let v: Value = serde_json::from_str(&stdout).unwrap();
-    for key in [
-        "checked_count",
-        "method",
-        "cpython_version",
-        "actual",
-        "suite_average_floor",
-    ] {
+    for key in ["checked_count", "method", "cpython_version", "actual",
+                "suite_average_floor"] {
         assert!(v.get(key).is_some(), "summary must surface {key}: {v}");
     }
     assert_eq!(v["method"], json!("geometric_mean"));
@@ -210,8 +202,10 @@ fn text_summary_names_count_method_and_cpython_version() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (_code, _, stderr) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
+    let (_code, _, stderr) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
     assert!(stderr.contains("cpython=3.12"));
     assert!(stderr.contains("method=geometric_mean"));
     assert!(stderr.contains("checked=1"));
@@ -233,8 +227,10 @@ fn failure_lists_worst_contributors_for_triage() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     assert_eq!(code, 1);
     let v: Value = serde_json::from_str(&stdout).unwrap();
     let worst = v["worst_contributors"].as_array().unwrap();
@@ -257,8 +253,10 @@ fn geomean_is_correct_for_known_set() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (_code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (_code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     let v: Value = serde_json::from_str(&stdout).unwrap();
     let actual = v["actual"].as_f64().unwrap();
     assert!(
@@ -272,10 +270,8 @@ fn geomean_is_correct_for_known_set() {
 #[test]
 fn checker_exits_101_when_baseline_missing() {
     let (code, _, _) = run_checker(&[
-        "--baseline",
-        "/nonexistent/path/missing.json",
-        "--format",
-        "json",
+        "--baseline", "/nonexistent/path/missing.json",
+        "--format", "json",
     ]);
     assert_eq!(code, 101);
 }

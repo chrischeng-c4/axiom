@@ -54,10 +54,7 @@ pub enum Accumulator {
     /// Calculate average: `{ $avg: "$field" }`
     Avg { field: String, alias: String },
     /// Calculate sum: `{ $sum: "$field" }` or `{ $sum: 1 }` for count
-    Sum {
-        field: Option<String>,
-        alias: String,
-    },
+    Sum { field: Option<String>, alias: String },
     /// Find minimum: `{ $min: "$field" }`
     Min { field: String, alias: String },
     /// Find maximum: `{ $max: "$field" }`
@@ -123,18 +120,21 @@ impl Accumulator {
             Accumulator::Avg { field, alias } => {
                 (alias.clone(), doc! { "$avg": format!("${}", field) })
             }
-            Accumulator::Sum {
-                field: Some(f),
-                alias,
-            } => (alias.clone(), doc! { "$sum": format!("${}", f) }),
-            Accumulator::Sum { field: None, alias } => (alias.clone(), doc! { "$sum": 1 }),
+            Accumulator::Sum { field: Some(f), alias } => {
+                (alias.clone(), doc! { "$sum": format!("${}", f) })
+            }
+            Accumulator::Sum { field: None, alias } => {
+                (alias.clone(), doc! { "$sum": 1 })
+            }
             Accumulator::Min { field, alias } => {
                 (alias.clone(), doc! { "$min": format!("${}", field) })
             }
             Accumulator::Max { field, alias } => {
                 (alias.clone(), doc! { "$max": format!("${}", field) })
             }
-            Accumulator::Count { alias } => (alias.clone(), doc! { "$sum": 1 }),
+            Accumulator::Count { alias } => {
+                (alias.clone(), doc! { "$sum": 1 })
+            }
         };
         (alias, Bson::Document(expr))
     }
@@ -203,8 +203,7 @@ impl AggregationBuilder {
 
     /// Add a $group stage with the given group key and accumulators.
     pub fn group(mut self, id: GroupId, accumulators: Vec<Accumulator>) -> Self {
-        self.stages
-            .push(AggregationStage::Group { id, accumulators });
+        self.stages.push(AggregationStage::Group { id, accumulators });
         self
     }
 
@@ -300,7 +299,9 @@ impl AggregationBuilder {
         if let Some(f) = filter {
             builder = builder.match_stage(f);
         }
-        builder.group_all(vec![Accumulator::count("count")]).build()
+        builder
+            .group_all(vec![Accumulator::count("count")])
+            .build()
     }
 }
 

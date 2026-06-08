@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/httpx_1488.toml)
 issue = 1488
 lib = "httpx"
-fixture = "tests/cpython/fixtures/3rd-libs/httpx/bench/httpx_type_read_hot.py"
+fixture = "tests/cpython/_regression/3rd-libs/httpx/bench/httpx_type_read_hot.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 9

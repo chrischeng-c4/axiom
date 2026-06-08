@@ -148,11 +148,7 @@ pub fn render_wheel_metadata(meta: &WheelMetadata) -> String {
     out.push_str(&format!("Generator: {}\n", meta.generator));
     out.push_str(&format!(
         "Root-Is-Purelib: {}\n",
-        if meta.root_is_purelib {
-            "true"
-        } else {
-            "false"
-        }
+        if meta.root_is_purelib { "true" } else { "false" }
     ));
     for tag in &meta.tags {
         out.push_str(&format!("Tag: {tag}\n"));
@@ -493,14 +489,8 @@ impl WheelBuilder {
         let record_arc = format!("{dist_info}/RECORD");
         let entry_points_arc = format!("{dist_info}/entry_points.txt");
 
-        all.insert(
-            metadata_arc.clone(),
-            render_core_metadata(&self.core_meta).into_bytes(),
-        );
-        all.insert(
-            wheel_arc.clone(),
-            render_wheel_metadata(&self.wheel_meta).into_bytes(),
-        );
+        all.insert(metadata_arc.clone(), render_core_metadata(&self.core_meta).into_bytes());
+        all.insert(wheel_arc.clone(), render_wheel_metadata(&self.wheel_meta).into_bytes());
         if let Some(ep) = &self.entry_points_txt {
             all.insert(entry_points_arc.clone(), ep.as_bytes().to_vec());
         }
@@ -528,7 +518,8 @@ impl WheelBuilder {
                 .last_modified_time(
                     // PEP 491 / "reproducible builds" — pin mtime to
                     // the zip epoch so the archive is byte-stable.
-                    zip::DateTime::from_date_and_time(1980, 1, 1, 0, 0, 0).unwrap_or_default(),
+                    zip::DateTime::from_date_and_time(1980, 1, 1, 0, 0, 0)
+                        .unwrap_or_default(),
                 )
                 .unix_permissions(0o644);
             for (name, body) in &all {
@@ -632,11 +623,11 @@ mod tests {
         let mut wm = WheelMetadata::new("mamba 0.1");
         wm.tags = vec!["py3-none-any".into(), "py2.py3-none-any".into()];
         let body = render_wheel_metadata(&wm);
-        let tag_lines: Vec<&str> = body.lines().filter(|l| l.starts_with("Tag: ")).collect();
-        assert_eq!(
-            tag_lines,
-            vec!["Tag: py3-none-any", "Tag: py2.py3-none-any"]
-        );
+        let tag_lines: Vec<&str> = body
+            .lines()
+            .filter(|l| l.starts_with("Tag: "))
+            .collect();
+        assert_eq!(tag_lines, vec!["Tag: py3-none-any", "Tag: py2.py3-none-any"]);
     }
 
     #[test]
@@ -673,10 +664,7 @@ mod tests {
         m.requires_python = Some(">=3.11".into());
         m.requires_dist = vec!["jinja2>=3.0".into(), "werkzeug>=3.0".into()];
         m.classifiers = vec!["License :: OSI Approved :: BSD License".into()];
-        m.project_urls = vec![(
-            "Homepage".into(),
-            "https://flask.palletsprojects.com".into(),
-        )];
+        m.project_urls = vec![("Homepage".into(), "https://flask.palletsprojects.com".into())];
         m.provides_extras = vec!["async".into()];
         m.description = Some("Long form description.".into());
         m.description_content_type = Some("text/markdown".into());
@@ -739,10 +727,7 @@ mod tests {
         let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         let record_arc = format!("{}/RECORD", fname.dist_info_dir());
         let mut buf = Vec::new();
-        zip.by_name(&record_arc)
-            .unwrap()
-            .read_to_end(&mut buf)
-            .unwrap();
+        zip.by_name(&record_arc).unwrap().read_to_end(&mut buf).unwrap();
         let body = String::from_utf8(buf).unwrap();
 
         // Round-trip through the installer's parser — guards against

@@ -3,15 +3,16 @@
 //! Tracks migrations in a configurable table (default: `_migrations`) with
 //! source tracking (`legacy` for bootstrapped entries, `native` for new ones).
 
-use crate::{Connection, DataBridgeError, PoolConfig, Result};
+use crate::{Connection, Result, DataBridgeError, PoolConfig};
 use chrono::{DateTime, Utc};
-use sqlx::Row;
-use std::fs;
 use std::path::Path;
+use std::fs;
+use sqlx::Row;
 
 use super::{
-    sha256_hex, split_sql_statements, split_statements_simple, Migration, MigrationEntry,
-    MigrationSource, MigrationStatus, ALEMBIC_TABLE, DEFAULT_TABLE,
+    Migration, MigrationEntry, MigrationSource, MigrationStatus,
+    split_sql_statements, split_statements_simple, sha256_hex,
+    DEFAULT_TABLE, ALEMBIC_TABLE,
 };
 
 /// Migration runner for applying, reverting, and tracking database migrations.
@@ -63,9 +64,7 @@ impl MigrationRunner {
         sqlx::query(&sql)
             .execute(self.conn.pool())
             .await
-            .map_err(|e| {
-                DataBridgeError::Database(format!("Failed to create migrations table: {}", e))
-            })?;
+            .map_err(|e| DataBridgeError::Database(format!("Failed to create migrations table: {}", e)))?;
 
         self.bootstrap_alembic().await?;
 
@@ -104,10 +103,13 @@ impl MigrationRunner {
         }
 
         // Read Alembic version IDs
-        let ids: Vec<String> = sqlx::query_scalar("SELECT version_num FROM alembic_version")
-            .fetch_all(self.conn.pool())
-            .await
-            .map_err(|e| DataBridgeError::Database(format!("fetch alembic versions: {e}")))?;
+        let ids: Vec<String> =
+            sqlx::query_scalar("SELECT version_num FROM alembic_version")
+                .fetch_all(self.conn.pool())
+                .await
+                .map_err(|e| DataBridgeError::Database(
+                    format!("fetch alembic versions: {e}")
+                ))?;
 
         // Seed each ID
         for id in &ids {
@@ -120,7 +122,9 @@ impl MigrationRunner {
                 .bind(id)
                 .execute(self.conn.pool())
                 .await
-                .map_err(|e| DataBridgeError::Database(format!("seed legacy id {id}: {e}")))?;
+                .map_err(|e| DataBridgeError::Database(
+                    format!("seed legacy id {id}: {e}")
+                ))?;
         }
 
         tracing::info!("Bootstrapped {} legacy migration IDs", ids.len());
@@ -137,9 +141,7 @@ impl MigrationRunner {
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .fetch_all(self.conn.pool())
             .await
-            .map_err(|e| {
-                DataBridgeError::Database(format!("Failed to fetch applied migrations: {}", e))
-            })?;
+            .map_err(|e| DataBridgeError::Database(format!("Failed to fetch applied migrations: {}", e)))?;
 
         Ok(rows)
     }
@@ -201,20 +203,15 @@ impl MigrationRunner {
         let rows = sqlx::query(&sql)
             .fetch_all(self.conn.pool())
             .await
-            .map_err(|e| {
-                DataBridgeError::Database(format!("Failed to fetch applied migrations: {}", e))
-            })?;
+            .map_err(|e| DataBridgeError::Database(format!("Failed to fetch applied migrations: {}", e)))?;
 
         let mut migrations = Vec::new();
         for row in rows {
-            let version: String = row.try_get("migration_id").map_err(|e| {
-                DataBridgeError::Database(format!("Failed to get migration_id: {}", e))
-            })?;
-            let applied_at: DateTime<Utc> = row.try_get("applied_at").map_err(|e| {
-                DataBridgeError::Database(format!("Failed to get applied_at: {}", e))
-            })?;
-            let checksum: String = row
-                .try_get("checksum")
+            let version: String = row.try_get("migration_id")
+                .map_err(|e| DataBridgeError::Database(format!("Failed to get migration_id: {}", e)))?;
+            let applied_at: DateTime<Utc> = row.try_get("applied_at")
+                .map_err(|e| DataBridgeError::Database(format!("Failed to get applied_at: {}", e)))?;
+            let checksum: String = row.try_get("checksum")
                 .map_err(|e| DataBridgeError::Database(format!("Failed to get checksum: {}", e)))?;
 
             migrations.push(Migration {
@@ -273,9 +270,9 @@ impl MigrationRunner {
         }
 
         // Begin transaction
-        let mut tx = self.conn.pool().begin().await.map_err(|e| {
-            DataBridgeError::Database(format!("Failed to begin transaction: {}", e))
-        })?;
+        let mut tx = self.conn.pool().begin()
+            .await
+            .map_err(|e| DataBridgeError::Database(format!("Failed to begin transaction: {}", e)))?;
 
         // Split SQL into individual statements and execute each
         let statements = split_sql_statements(&migration.up);
@@ -287,9 +284,7 @@ impl MigrationRunner {
                     .map_err(|e| {
                         DataBridgeError::Database(format!(
                             "Failed to apply migration {} (statement {}): {}",
-                            migration.version,
-                            idx + 1,
-                            e
+                            migration.version, idx + 1, e
                         ))
                     })?;
             }
@@ -313,20 +308,16 @@ impl MigrationRunner {
             .await
             .map_err(|e| DataBridgeError::Database(format!("Failed to commit migration: {}", e)))?;
 
-        tracing::info!(
-            "Applied migration: {} - {}",
-            migration.version,
-            migration.name
-        );
+        tracing::info!("Applied migration: {} - {}", migration.version, migration.name);
         Ok(())
     }
 
     /// Reverts a migration by executing its down SQL in a transaction.
     pub async fn revert(&self, migration: &Migration) -> Result<()> {
         // Begin transaction
-        let mut tx = self.conn.pool().begin().await.map_err(|e| {
-            DataBridgeError::Database(format!("Failed to begin transaction: {}", e))
-        })?;
+        let mut tx = self.conn.pool().begin()
+            .await
+            .map_err(|e| DataBridgeError::Database(format!("Failed to begin transaction: {}", e)))?;
 
         // Split SQL into individual statements and execute each
         let statements = split_sql_statements(&migration.down);
@@ -338,9 +329,7 @@ impl MigrationRunner {
                     .map_err(|e| {
                         DataBridgeError::Database(format!(
                             "Failed to revert migration {} (statement {}): {}",
-                            migration.version,
-                            idx + 1,
-                            e
+                            migration.version, idx + 1, e
                         ))
                     })?;
             }
@@ -356,20 +345,14 @@ impl MigrationRunner {
             .bind(&migration.version)
             .execute(&mut *tx)
             .await
-            .map_err(|e| {
-                DataBridgeError::Database(format!("Failed to remove migration record: {}", e))
-            })?;
+            .map_err(|e| DataBridgeError::Database(format!("Failed to remove migration record: {}", e)))?;
 
         // Commit transaction
         tx.commit()
             .await
             .map_err(|e| DataBridgeError::Database(format!("Failed to commit rollback: {}", e)))?;
 
-        tracing::info!(
-            "Reverted migration: {} - {}",
-            migration.version,
-            migration.name
-        );
+        tracing::info!("Reverted migration: {} - {}", migration.version, migration.name);
         Ok(())
     }
 
@@ -425,10 +408,7 @@ impl MigrationRunner {
 
     /// Apply a single migration by version and up SQL (simple split, no dollar quotes).
     async fn apply_one(&self, version: &str, up_sql: &str) -> Result<()> {
-        let mut tx = self
-            .conn
-            .pool()
-            .begin()
+        let mut tx = self.conn.pool().begin()
             .await
             .map_err(|e| DataBridgeError::Database(format!("begin tx: {e}")))?;
 
@@ -436,7 +416,9 @@ impl MigrationRunner {
             sqlx::query(&stmt)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| DataBridgeError::Database(format!("apply {version} stmt: {e}")))?;
+                .map_err(|e| DataBridgeError::Database(
+                    format!("apply {version} stmt: {e}")
+                ))?;
         }
 
         let checksum = sha256_hex(up_sql);
@@ -474,12 +456,12 @@ impl MigrationRunner {
         };
 
         let all = Self::load_from_directory(migrations_dir)?;
-        let migration = all.iter().find(|m| m.version == last).ok_or_else(|| {
-            DataBridgeError::Validation(format!(
-                "Migration file for {last} not found in {}",
-                migrations_dir.display()
-            ))
-        })?;
+        let migration = all
+            .iter()
+            .find(|m| m.version == last)
+            .ok_or_else(|| DataBridgeError::Validation(
+                format!("Migration file for {last} not found in {}", migrations_dir.display())
+            ))?;
 
         self.revert_one(&migration.version, &migration.down).await?;
         Ok(Some(last))
@@ -487,10 +469,7 @@ impl MigrationRunner {
 
     /// Revert a single migration by version and down SQL (simple split).
     async fn revert_one(&self, version: &str, down_sql: &str) -> Result<()> {
-        let mut tx = self
-            .conn
-            .pool()
-            .begin()
+        let mut tx = self.conn.pool().begin()
             .await
             .map_err(|e| DataBridgeError::Database(format!("begin tx: {e}")))?;
 
@@ -498,7 +477,9 @@ impl MigrationRunner {
             sqlx::query(&stmt)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| DataBridgeError::Database(format!("revert {version} stmt: {e}")))?;
+                .map_err(|e| DataBridgeError::Database(
+                    format!("revert {version} stmt: {e}")
+                ))?;
         }
 
         sqlx::query(&format!(
@@ -542,10 +523,9 @@ impl MigrationRunner {
             if let Some(migration) = migrations.iter().find(|m| &m.version == version) {
                 migrations_to_revert.push(migration.clone());
             } else {
-                return Err(DataBridgeError::Validation(format!(
-                    "Migration {} is applied but not found in migration files",
-                    version
-                )));
+                return Err(DataBridgeError::Validation(
+                    format!("Migration {} is applied but not found in migration files", version)
+                ));
             }
         }
 
@@ -563,17 +543,15 @@ impl MigrationRunner {
     /// Loads all .sql migration files from directory, sorted by version.
     pub fn load_from_directory(path: &Path) -> Result<Vec<Migration>> {
         if !path.exists() {
-            return Err(DataBridgeError::Internal(format!(
-                "Migration directory does not exist: {}",
-                path.display()
-            )));
+            return Err(DataBridgeError::Internal(
+                format!("Migration directory does not exist: {}", path.display())
+            ));
         }
 
         if !path.is_dir() {
-            return Err(DataBridgeError::Internal(format!(
-                "Path is not a directory: {}",
-                path.display()
-            )));
+            return Err(DataBridgeError::Internal(
+                format!("Path is not a directory: {}", path.display())
+            ));
         }
 
         let mut migrations = Vec::new();
@@ -582,23 +560,17 @@ impl MigrationRunner {
             .map_err(|e| DataBridgeError::Internal(format!("Failed to read directory: {}", e)))?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| {
-                DataBridgeError::Internal(format!("Failed to read directory entry: {}", e))
-            })?;
+            let entry = entry
+                .map_err(|e| DataBridgeError::Internal(format!("Failed to read directory entry: {}", e)))?;
             let file_path = entry.path();
 
             // Skip non-SQL files
-            if file_path
-                .extension()
-                .and_then(|s: &std::ffi::OsStr| s.to_str())
-                != Some("sql")
-            {
+            if file_path.extension().and_then(|s: &std::ffi::OsStr| s.to_str()) != Some("sql") {
                 continue;
             }
 
             // Skip hidden files
-            if file_path
-                .file_name()
+            if file_path.file_name()
                 .and_then(|s: &std::ffi::OsStr| s.to_str())
                 .map(|s: &str| s.starts_with('.'))
                 .unwrap_or(false)
@@ -611,11 +583,7 @@ impl MigrationRunner {
                     migrations.push(migration);
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to load migration from {}: {}",
-                        file_path.display(),
-                        e
-                    );
+                    tracing::warn!("Failed to load migration from {}: {}", file_path.display(), e);
                 }
             }
         }
@@ -623,11 +591,7 @@ impl MigrationRunner {
         // Sort migrations by version
         migrations.sort_by(|a, b| a.version.cmp(&b.version));
 
-        tracing::info!(
-            "Loaded {} migrations from {}",
-            migrations.len(),
-            path.display()
-        );
+        tracing::info!("Loaded {} migrations from {}", migrations.len(), path.display());
         Ok(migrations)
     }
 
@@ -656,24 +620,9 @@ mod tests {
 
         let dir = tempfile::TempDir::new().unwrap();
         let files = [
-            (
-                "20260101_000001_test_a.sql",
-                "SELECT 1;",
-                "SELECT 0;",
-                "test_a",
-            ),
-            (
-                "20260101_000002_test_b.sql",
-                "SELECT 1;",
-                "SELECT 0;",
-                "test_b",
-            ),
-            (
-                "20260101_000003_test_c.sql",
-                "SELECT 1;",
-                "SELECT 0;",
-                "test_c",
-            ),
+            ("20260101_000001_test_a.sql", "SELECT 1;", "SELECT 0;", "test_a"),
+            ("20260101_000002_test_b.sql", "SELECT 1;", "SELECT 0;", "test_b"),
+            ("20260101_000003_test_c.sql", "SELECT 1;", "SELECT 0;", "test_c"),
         ];
 
         fn migration_sql(up: &str, down: &str, desc: &str) -> String {
@@ -693,8 +642,7 @@ mod tests {
 
         let all = runner.applied_native_ids().await.unwrap();
         for (name, _, _, _) in &files {
-            let version = name
-                .trim_end_matches(".sql")
+            let version = name.trim_end_matches(".sql")
                 .splitn(3, '_')
                 .take(2)
                 .collect::<Vec<_>>()
@@ -780,39 +728,30 @@ mod tests {
 
         // Create a fake alembic_version table with 8 rows
         sqlx::query("DROP TABLE IF EXISTS alembic_version")
-            .execute(conn.pool())
-            .await
-            .unwrap();
-        sqlx::query("CREATE TABLE alembic_version (version_num TEXT PRIMARY KEY)")
-            .execute(conn.pool())
-            .await
-            .unwrap();
+            .execute(conn.pool()).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE alembic_version (version_num TEXT PRIMARY KEY)"
+        )
+        .execute(conn.pool()).await.unwrap();
         for i in 0..8u32 {
             sqlx::query("INSERT INTO alembic_version (version_num) VALUES ($1)")
                 .bind(format!("abc{:03}", i))
-                .execute(conn.pool())
-                .await
-                .unwrap();
+                .execute(conn.pool()).await.unwrap();
         }
 
         let runner = MigrationRunner::new(conn.clone(), None);
         runner.init().await.unwrap();
 
         let entries = runner.all_entries().await.unwrap();
-        let legacy_entries: Vec<_> = entries
-            .iter()
+        let legacy_entries: Vec<_> = entries.iter()
             .filter(|e| e.source == MigrationSource::Legacy)
             .collect();
         assert_eq!(legacy_entries.len(), 8);
 
         // Cleanup
         sqlx::query("DROP TABLE IF EXISTS alembic_version")
-            .execute(conn.pool())
-            .await
-            .unwrap();
+            .execute(conn.pool()).await.unwrap();
         sqlx::query("DROP TABLE IF EXISTS _migrations")
-            .execute(conn.pool())
-            .await
-            .unwrap();
+            .execute(conn.pool()).await.unwrap();
     }
 }

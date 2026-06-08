@@ -1,5 +1,3 @@
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 /// jinja2 module for Mamba (#1518).
 ///
 /// Minimal callable-dispatcher shim covering the four most-used
@@ -13,7 +11,10 @@ use super::super::value::MbValue;
 /// surface) is tracked separately under #1518; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the 3p
 /// conformance issues have closed against.
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::MbObject;
 
 unsafe extern "C" fn dispatch_environment(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
@@ -23,17 +24,11 @@ unsafe extern "C" fn dispatch_template(_args_ptr: *const MbValue, _nargs: usize)
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_file_system_loader(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_file_system_loader(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_select_autoescape(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_select_autoescape(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
@@ -48,16 +43,10 @@ pub fn register() {
     attrs.insert("Template".into(), MbValue::from_func(addr_template));
 
     let addr_file_system_loader = dispatch_file_system_loader as *const () as usize;
-    attrs.insert(
-        "FileSystemLoader".into(),
-        MbValue::from_func(addr_file_system_loader),
-    );
+    attrs.insert("FileSystemLoader".into(), MbValue::from_func(addr_file_system_loader));
 
     let addr_select_autoescape = dispatch_select_autoescape as *const () as usize;
-    attrs.insert(
-        "select_autoescape".into(),
-        MbValue::from_func(addr_select_autoescape),
-    );
+    attrs.insert("select_autoescape".into(), MbValue::from_func(addr_select_autoescape));
 
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();

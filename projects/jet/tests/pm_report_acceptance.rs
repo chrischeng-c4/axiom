@@ -71,6 +71,8 @@ fn pm_fixture_bundle() -> E2eEvidenceBundle {
             },
         ],
         artifacts: vec![],
+        serve_session: None,
+        browser_sessions: vec![],
         open_control: None,
     }
 }

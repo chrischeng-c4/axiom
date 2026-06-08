@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/pathlib_1433.toml)
 issue = 1433
 lib = "pathlib"
-fixture = "tests/cpython/fixtures/std-libs/pathlib/bench/pure_path_type_read_hot.py"
+fixture = "tests/cpython/_regression/std-libs/pathlib/bench/pure_path_type_read_hot.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 1

@@ -29,16 +29,9 @@ fn manifest_path() -> PathBuf {
         .join("manifest.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_dev_dependency_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -69,7 +62,7 @@ fn pkgmgr_dev_dependency_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_dev_dependency_dependencies_block_pins_distinct_runtime_and_dev() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let deps = doc
         .get("dependencies")
         .and_then(|v| v.as_table())
@@ -96,16 +89,13 @@ fn pkgmgr_dev_dependency_dependencies_block_pins_distinct_runtime_and_dev() {
         .get("dev_version")
         .and_then(|v| v.as_str())
         .expect("`[dependencies].dev_version` must be set");
-    assert!(
-        !runtime_version.is_empty(),
-        "runtime version must be non-empty"
-    );
+    assert!(!runtime_version.is_empty(), "runtime version must be non-empty");
     assert!(!dev_version.is_empty(), "dev version must be non-empty");
 }
 
 #[test]
 fn pkgmgr_dev_dependency_add_dev_action_uses_dev_flag() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let action = doc
         .get("add_dev_action")
         .and_then(|v| v.as_table())
@@ -142,9 +132,7 @@ fn pkgmgr_dev_dependency_add_dev_action_uses_dev_flag() {
         "`[add_dev_action].expected_outcome` must be \"pass\""
     );
     assert_eq!(
-        action
-            .get("expected_exit_code")
-            .and_then(|v| v.as_integer()),
+        action.get("expected_exit_code").and_then(|v| v.as_integer()),
         Some(0),
         "`[add_dev_action].expected_exit_code` must be 0"
     );
@@ -157,14 +145,11 @@ fn pkgmgr_dev_dependency_add_dev_action_uses_dev_flag() {
 
 #[test]
 fn pkgmgr_dev_dependency_lockfile_separates_runtime_from_dev() {
-    let doc = load_toml(&manifest_path());
-    let lock = doc
-        .get("lockfile_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[lockfile_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let lock = doc.get("lockfile_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[lockfile_assertion]` block \
          (acceptance: \"Dev dependency is recorded distinctly from runtime dependency.\")",
-        );
+    );
 
     let runtime_name = doc
         .get("dependencies")
@@ -183,8 +168,7 @@ fn pkgmgr_dev_dependency_lockfile_separates_runtime_from_dev() {
         "`[lockfile_assertion].must_contain_runtime_dependency` must equal `[dependencies].runtime_name`"
     );
     assert_eq!(
-        lock.get("must_contain_dev_dependency")
-            .and_then(|v| v.as_str()),
+        lock.get("must_contain_dev_dependency").and_then(|v| v.as_str()),
         Some(dev_name),
         "`[lockfile_assertion].must_contain_dev_dependency` must equal `[dependencies].dev_name`"
     );
@@ -223,7 +207,7 @@ fn pkgmgr_dev_dependency_lockfile_separates_runtime_from_dev() {
 
 #[test]
 fn pkgmgr_dev_dependency_runtime_only_sync_excludes_dev_dep() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let case = doc.get("runtime_only_sync_case").and_then(|v| v.as_table()).expect(
         "missing `[runtime_only_sync_case]` block \
          (acceptance: \"Runtime-only install does not expose dev dependency unless policy says otherwise.\")",
@@ -255,26 +239,22 @@ fn pkgmgr_dev_dependency_runtime_only_sync_excludes_dev_dep() {
         "`[runtime_only_sync_case].expected_exit_code` must be 0"
     );
     assert_eq!(
-        case.get("must_install_runtime_dependency")
-            .and_then(|v| v.as_bool()),
+        case.get("must_install_runtime_dependency").and_then(|v| v.as_bool()),
         Some(true),
         "`[runtime_only_sync_case].must_install_runtime_dependency` must be true"
     );
     assert_eq!(
-        case.get("must_not_install_dev_dependency")
-            .and_then(|v| v.as_bool()),
+        case.get("must_not_install_dev_dependency").and_then(|v| v.as_bool()),
         Some(true),
         "`[runtime_only_sync_case].must_not_install_dev_dependency` must be true"
     );
     assert_eq!(
-        case.get("runtime_expected_import_outcome")
-            .and_then(|v| v.as_str()),
+        case.get("runtime_expected_import_outcome").and_then(|v| v.as_str()),
         Some("import_ok"),
         "`[runtime_only_sync_case].runtime_expected_import_outcome` must be \"import_ok\""
     );
     assert_eq!(
-        case.get("dev_expected_import_outcome")
-            .and_then(|v| v.as_str()),
+        case.get("dev_expected_import_outcome").and_then(|v| v.as_str()),
         Some("module_not_found"),
         "`[runtime_only_sync_case].dev_expected_import_outcome` must be \"module_not_found\""
     );
@@ -282,7 +262,7 @@ fn pkgmgr_dev_dependency_runtime_only_sync_excludes_dev_dep() {
 
 #[test]
 fn pkgmgr_dev_dependency_dev_sync_case_uses_dev_flag() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let case = doc
         .get("dev_sync_case")
         .and_then(|v| v.as_table())
@@ -309,20 +289,17 @@ fn pkgmgr_dev_dependency_dev_sync_case_uses_dev_flag() {
         "`[dev_sync_case].supported` must be true — opt-in dev install is part of MVP"
     );
     assert_eq!(
-        case.get("must_install_runtime_dependency")
-            .and_then(|v| v.as_bool()),
+        case.get("must_install_runtime_dependency").and_then(|v| v.as_bool()),
         Some(true),
         "`[dev_sync_case].must_install_runtime_dependency` must be true"
     );
     assert_eq!(
-        case.get("must_install_dev_dependency")
-            .and_then(|v| v.as_bool()),
+        case.get("must_install_dev_dependency").and_then(|v| v.as_bool()),
         Some(true),
         "`[dev_sync_case].must_install_dev_dependency` must be true"
     );
     assert_eq!(
-        case.get("dev_expected_import_outcome")
-            .and_then(|v| v.as_str()),
+        case.get("dev_expected_import_outcome").and_then(|v| v.as_str()),
         Some("import_ok"),
         "`[dev_sync_case].dev_expected_import_outcome` must be \"import_ok\""
     );
@@ -330,23 +307,18 @@ fn pkgmgr_dev_dependency_dev_sync_case_uses_dev_flag() {
 
 #[test]
 fn pkgmgr_dev_dependency_unsupported_behavior_forbids_silent_pass() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let con = doc.get("unsupported_behavior_contract").and_then(|v| v.as_table()).expect(
         "missing `[unsupported_behavior_contract]` block \
          (acceptance: \"Unsupported dev dependency behavior is a linked blocker, not silent pass.\")",
     );
 
     assert_eq!(
-        con.get("when_dev_sync_unsupported_outcome")
-            .and_then(|v| v.as_str()),
+        con.get("when_dev_sync_unsupported_outcome").and_then(|v| v.as_str()),
         Some("blocked"),
         "`[unsupported_behavior_contract].when_dev_sync_unsupported_outcome` must be \"blocked\""
     );
-    for flag in &[
-        "must_emit_blocker_diagnostic",
-        "must_link_tracking_issue",
-        "forbid_silent_pass",
-    ] {
+    for flag in &["must_emit_blocker_diagnostic", "must_link_tracking_issue", "forbid_silent_pass"] {
         assert_eq!(
             con.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -366,7 +338,7 @@ fn pkgmgr_dev_dependency_unsupported_behavior_forbids_silent_pass() {
 
 #[test]
 fn pkgmgr_dev_dependency_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -388,7 +360,7 @@ fn pkgmgr_dev_dependency_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_dev_dependency_runner_contract_includes_blocked_outcome() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -442,14 +414,13 @@ fn pkgmgr_dev_dependency_runner_contract_includes_blocked_outcome() {
 
 #[test]
 fn pkgmgr_dev_dependency_pins_out_of_scope_per_issue_2852() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("full_dependency_group_ux")
-            .and_then(|v| v.as_bool()),
+        oos.get("full_dependency_group_ux").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].full_dependency_group_ux` must be true \
          (issue text: \"Out of scope: full dependency group UX.\")"

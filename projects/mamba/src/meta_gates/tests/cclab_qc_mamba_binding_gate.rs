@@ -21,24 +21,16 @@ fn get<'a>(v: &'a Value, key: &str) -> &'a Value {
     v.get(key).unwrap_or_else(|| panic!("missing key: {key}"))
 }
 fn b(v: &Value, key: &str) -> bool {
-    get(v, key)
-        .as_bool()
-        .unwrap_or_else(|| panic!("{key} not bool"))
+    get(v, key).as_bool().unwrap_or_else(|| panic!("{key} not bool"))
 }
 fn s<'a>(v: &'a Value, key: &str) -> &'a str {
-    get(v, key)
-        .as_str()
-        .unwrap_or_else(|| panic!("{key} not str"))
+    get(v, key).as_str().unwrap_or_else(|| panic!("{key} not str"))
 }
 fn i(v: &Value, key: &str) -> i64 {
-    get(v, key)
-        .as_integer()
-        .unwrap_or_else(|| panic!("{key} not int"))
+    get(v, key).as_integer().unwrap_or_else(|| panic!("{key} not int"))
 }
 fn a<'a>(v: &'a Value, key: &str) -> &'a Vec<Value> {
-    get(v, key)
-        .as_array()
-        .unwrap_or_else(|| panic!("{key} not array"))
+    get(v, key).as_array().unwrap_or_else(|| panic!("{key} not array"))
 }
 
 #[test]
@@ -95,10 +87,7 @@ fn r1_pyo3_cprofile_shaped_api() {
     assert!(b(r, "must_expose_get_stats_function"));
     assert!(b(r, "must_expose_context_manager_convenience_wrapper"));
     assert!(b(r, "must_be_importable_under_mamba"));
-    assert!(b(
-        r,
-        "forbid_requiring_separate_process_for_basic_profiling"
-    ));
+    assert!(b(r, "forbid_requiring_separate_process_for_basic_profiling"));
     assert_eq!(s(r, "expected_pyo3_module_name"), "cclab.qc");
     let api = a(r, "required_api_surface");
     let names: Vec<&str> = api.iter().filter_map(|v| v.as_str()).collect();
@@ -123,10 +112,7 @@ fn r2_pyspy_sampling_bridge_walks_jit_frames() {
     let mnames: Vec<&str> = modes.iter().filter_map(|v| v.as_str()).collect();
     assert!(mnames.contains(&"py_spy_compatible_sampling"));
     assert!(mnames.contains(&"cprofile_deterministic"));
-    assert_eq!(
-        s(r, "expected_sampling_mode_for_r2"),
-        "py_spy_compatible_sampling"
-    );
+    assert_eq!(s(r, "expected_sampling_mode_for_r2"), "py_spy_compatible_sampling");
     assert_eq!(i(r, "unknown_jit_frame_exit_code"), 490);
     assert_eq!(i(r, "jit_frame_dropped_exit_code"), 491);
     assert!(b(r, "must_distinguish_unknown_frame_from_dropped_frame"));
@@ -143,24 +129,14 @@ fn r3_phase_breakdown_attribution_six_buckets() {
     assert!(b(r, "forbid_leaving_sample_unattributed_silently"));
     let buckets = a(r, "canonical_buckets");
     let names: Vec<&str> = buckets.iter().filter_map(|v| v.as_str()).collect();
-    for k in &[
-        "PythonExtract",
-        "RustConvert",
-        "JITCompile",
-        "JITExec",
-        "GC",
-        "Other",
-    ] {
+    for k in &["PythonExtract", "RustConvert", "JITCompile", "JITExec", "GC", "Other"] {
         assert!(names.contains(k), "missing bucket: {k}");
     }
     assert_eq!(buckets.len(), 6);
     assert_eq!(i(r, "double_count_exit_code"), 492);
     assert_eq!(i(r, "sample_unattributed_exit_code"), 493);
     assert_eq!(i(r, "bucket_missing_exit_code"), 494);
-    assert!(b(
-        r,
-        "must_distinguish_double_count_from_unattributed_from_bucket_missing"
-    ));
+    assert!(b(r, "must_distinguish_double_count_from_unattributed_from_bucket_missing"));
 }
 
 #[test]
@@ -176,18 +152,12 @@ fn r4_zero_overhead_when_disabled() {
     let knames: Vec<&str> = kinds.iter().filter_map(|v| v.as_str()).collect();
     assert!(knames.contains(&"no_op_when_feature_off"));
     assert!(knames.contains(&"always_compiled_in"));
-    assert_eq!(
-        s(r, "expected_feature_off_compile_kind"),
-        "no_op_when_feature_off"
-    );
+    assert_eq!(s(r, "expected_feature_off_compile_kind"), "no_op_when_feature_off");
     assert_eq!(i(r, "expected_idle_session_overhead_budget_ns"), 5);
     assert_eq!(i(r, "feature_off_not_compiled_out_exit_code"), 495);
     assert_eq!(i(r, "idle_session_overhead_exceeded_exit_code"), 496);
     assert_eq!(i(r, "overhead_budget_widened_exit_code"), 497);
-    assert!(b(
-        r,
-        "must_distinguish_not_compiled_out_from_exceeded_from_widened"
-    ));
+    assert!(b(r, "must_distinguish_not_compiled_out_from_exceeded_from_widened"));
 }
 
 #[test]
@@ -198,20 +168,14 @@ fn r5_correctness_invariants_recorded() {
     assert!(b(r, "must_record_sample_count"));
     assert!(b(r, "must_record_warmup_iters"));
     assert!(b(r, "must_record_elapsed_ns"));
-    assert!(b(
-        r,
-        "must_assert_two_consecutive_sessions_within_10_percent"
-    ));
+    assert!(b(r, "must_assert_two_consecutive_sessions_within_10_percent"));
     assert!(b(r, "forbid_dropping_invariant_field_from_session"));
     let fields = a(r, "required_session_fields");
     let names: Vec<&str> = fields.iter().filter_map(|v| v.as_str()).collect();
     for f in &["sample_count", "warmup_iters", "elapsed_ns"] {
         assert!(names.contains(f), "missing field: {f}");
     }
-    assert_eq!(
-        s(r, "expected_consecutive_session_noise_tolerance"),
-        "10_percent"
-    );
+    assert_eq!(s(r, "expected_consecutive_session_noise_tolerance"), "10_percent");
     assert_eq!(i(r, "invariant_field_missing_exit_code"), 498);
     assert_eq!(i(r, "consecutive_session_diverged_exit_code"), 499);
     assert!(b(r, "must_distinguish_field_missing_from_session_diverged"));

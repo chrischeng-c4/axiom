@@ -100,39 +100,66 @@ impl PoolMetrics {
             "# HELP {}_pool_size Current number of connections in the pool\n",
             prefix
         ));
-        output.push_str(&format!("# TYPE {}_pool_size gauge\n", prefix));
-        output.push_str(&format!("{}_pool_size {}\n", prefix, self.pool_size));
+        output.push_str(&format!(
+            "# TYPE {}_pool_size gauge\n",
+            prefix
+        ));
+        output.push_str(&format!(
+            "{}_pool_size {}\n",
+            prefix, self.pool_size
+        ));
 
         // Idle connections
         output.push_str(&format!(
             "# HELP {}_pool_idle Number of idle connections\n",
             prefix
         ));
-        output.push_str(&format!("# TYPE {}_pool_idle gauge\n", prefix));
-        output.push_str(&format!("{}_pool_idle {}\n", prefix, self.num_idle));
+        output.push_str(&format!(
+            "# TYPE {}_pool_idle gauge\n",
+            prefix
+        ));
+        output.push_str(&format!(
+            "{}_pool_idle {}\n",
+            prefix, self.num_idle
+        ));
 
         // Active connections
         output.push_str(&format!(
             "# HELP {}_pool_active Number of active connections\n",
             prefix
         ));
-        output.push_str(&format!("# TYPE {}_pool_active gauge\n", prefix));
-        output.push_str(&format!("{}_pool_active {}\n", prefix, self.num_active));
+        output.push_str(&format!(
+            "# TYPE {}_pool_active gauge\n",
+            prefix
+        ));
+        output.push_str(&format!(
+            "{}_pool_active {}\n",
+            prefix, self.num_active
+        ));
 
         // Max connections
         output.push_str(&format!(
             "# HELP {}_pool_max Maximum allowed connections\n",
             prefix
         ));
-        output.push_str(&format!("# TYPE {}_pool_max gauge\n", prefix));
-        output.push_str(&format!("{}_pool_max {}\n", prefix, self.max_connections));
+        output.push_str(&format!(
+            "# TYPE {}_pool_max gauge\n",
+            prefix
+        ));
+        output.push_str(&format!(
+            "{}_pool_max {}\n",
+            prefix, self.max_connections
+        ));
 
         // Utilization
         output.push_str(&format!(
             "# HELP {}_pool_utilization Pool utilization ratio (0-1)\n",
             prefix
         ));
-        output.push_str(&format!("# TYPE {}_pool_utilization gauge\n", prefix));
+        output.push_str(&format!(
+            "# TYPE {}_pool_utilization gauge\n",
+            prefix
+        ));
         output.push_str(&format!(
             "{}_pool_utilization {:.4}\n",
             prefix, self.utilization
@@ -397,7 +424,10 @@ impl MetricsCollector {
             "# HELP {}_acquire_total Total connection acquire attempts\n",
             prefix
         ));
-        output.push_str(&format!("# TYPE {}_acquire_total counter\n", prefix));
+        output.push_str(&format!(
+            "# TYPE {}_acquire_total counter\n",
+            prefix
+        ));
         output.push_str(&format!(
             "{}_acquire_total{{status=\"success\"}} {}\n",
             prefix, self.acquire_success
@@ -412,7 +442,10 @@ impl MetricsCollector {
             "# HELP {}_queries_total Total queries executed\n",
             prefix
         ));
-        output.push_str(&format!("# TYPE {}_queries_total counter\n", prefix));
+        output.push_str(&format!(
+            "# TYPE {}_queries_total counter\n",
+            prefix
+        ));
         output.push_str(&format!(
             "{}_queries_total{{status=\"success\"}} {}\n",
             prefix, self.queries_executed
@@ -428,7 +461,10 @@ impl MetricsCollector {
                 "# HELP {}_acquire_latency_us Acquire latency in microseconds\n",
                 prefix
             ));
-            output.push_str(&format!("# TYPE {}_acquire_latency_us summary\n", prefix));
+            output.push_str(&format!(
+                "# TYPE {}_acquire_latency_us summary\n",
+                prefix
+            ));
             output.push_str(&format!(
                 "{}_acquire_latency_us{{quantile=\"0.5\"}} {}\n",
                 prefix, self.acquire_latency.p50_us
@@ -448,7 +484,10 @@ impl MetricsCollector {
                 "# HELP {}_query_latency_us Query latency in microseconds\n",
                 prefix
             ));
-            output.push_str(&format!("# TYPE {}_query_latency_us summary\n", prefix));
+            output.push_str(&format!(
+                "# TYPE {}_query_latency_us summary\n",
+                prefix
+            ));
             output.push_str(&format!(
                 "{}_query_latency_us{{quantile=\"0.5\"}} {}\n",
                 prefix, self.query_latency.p50_us
@@ -468,7 +507,10 @@ impl MetricsCollector {
             "# HELP {}_uptime_seconds Seconds since metrics collection started\n",
             prefix
         ));
-        output.push_str(&format!("# TYPE {}_uptime_seconds counter\n", prefix));
+        output.push_str(&format!(
+            "# TYPE {}_uptime_seconds counter\n",
+            prefix
+        ));
         output.push_str(&format!(
             "{}_uptime_seconds {}\n",
             prefix,

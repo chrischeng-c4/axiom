@@ -25,16 +25,9 @@ fn manifest_path() -> PathBuf {
         .join("manifest.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_workspace_member_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -70,7 +63,7 @@ fn pkgmgr_workspace_member_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_workspace_member_blocks_pin_two_distinct_members() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let workspace = doc
         .get("workspace")
@@ -129,7 +122,7 @@ fn pkgmgr_workspace_member_blocks_pin_two_distinct_members() {
 
 #[test]
 fn pkgmgr_workspace_member_dependency_block_pins_local_resolution() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let dep = doc
         .get("member_dependency")
         .and_then(|v| v.as_table())
@@ -195,14 +188,11 @@ fn pkgmgr_workspace_member_dependency_block_pins_local_resolution() {
 
 #[test]
 fn pkgmgr_workspace_member_summary_assertion_names_workspace_status() {
-    let doc = load_toml(&manifest_path());
-    let summary = doc
-        .get("summary_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[summary_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let summary = doc.get("summary_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[summary_assertion]` block \
          (acceptance: \"Workspace status appears in package-manager summary.\")",
-        );
+    );
 
     for flag in &[
         "must_name_workspace_kind",
@@ -218,16 +208,12 @@ fn pkgmgr_workspace_member_summary_assertion_names_workspace_status() {
     }
 
     assert_eq!(
-        summary
-            .get("expected_workspace_kind")
-            .and_then(|v| v.as_str()),
+        summary.get("expected_workspace_kind").and_then(|v| v.as_str()),
         Some("local"),
         "`[summary_assertion].expected_workspace_kind` must be \"local\""
     );
     assert_eq!(
-        summary
-            .get("expected_member_count")
-            .and_then(|v| v.as_integer()),
+        summary.get("expected_member_count").and_then(|v| v.as_integer()),
         Some(2),
         "`[summary_assertion].expected_member_count` must be 2"
     );
@@ -235,7 +221,7 @@ fn pkgmgr_workspace_member_summary_assertion_names_workspace_status() {
 
 #[test]
 fn pkgmgr_workspace_sync_action_discovers_both_members() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let action = doc
         .get("workspace_sync_action")
         .and_then(|v| v.as_table())
@@ -260,9 +246,7 @@ fn pkgmgr_workspace_sync_action_discovers_both_members() {
         );
     }
     assert_eq!(
-        action
-            .get("must_record_member_count")
-            .and_then(|v| v.as_integer()),
+        action.get("must_record_member_count").and_then(|v| v.as_integer()),
         Some(2),
         "`[workspace_sync_action].must_record_member_count` must be 2"
     );
@@ -270,14 +254,11 @@ fn pkgmgr_workspace_sync_action_discovers_both_members() {
 
 #[test]
 fn pkgmgr_workspace_cross_member_dependency_resolves_via_workspace() {
-    let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("cross_member_dependency_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[cross_member_dependency_case]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let case = doc.get("cross_member_dependency_case").and_then(|v| v.as_table()).expect(
+        "missing `[cross_member_dependency_case]` block \
          (acceptance: \"Passing path proves one member can depend on another.\")",
-        );
+    );
 
     let probe_mod = case
         .get("import_probe_module")
@@ -322,8 +303,7 @@ fn pkgmgr_workspace_cross_member_dependency_resolves_via_workspace() {
     );
 
     assert_eq!(
-        case.get("resolves_via_workspace_not_index")
-            .and_then(|v| v.as_bool()),
+        case.get("resolves_via_workspace_not_index").and_then(|v| v.as_bool()),
         Some(true),
         "`[cross_member_dependency_case].resolves_via_workspace_not_index` must be true"
     );
@@ -331,7 +311,7 @@ fn pkgmgr_workspace_cross_member_dependency_resolves_via_workspace() {
 
 #[test]
 fn pkgmgr_workspace_lockfile_records_workspace_kind_and_members() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let lock = doc
         .get("lockfile_assertion")
         .and_then(|v| v.as_table())
@@ -349,26 +329,22 @@ fn pkgmgr_workspace_lockfile_records_workspace_kind_and_members() {
         .expect("`[member_b].name` must be set");
 
     assert_eq!(
-        lock.get("must_record_workspace_kind")
-            .and_then(|v| v.as_str()),
+        lock.get("must_record_workspace_kind").and_then(|v| v.as_str()),
         Some("local"),
         "`[lockfile_assertion].must_record_workspace_kind` must be \"local\""
     );
     assert_eq!(
-        lock.get("must_record_member_count")
-            .and_then(|v| v.as_integer()),
+        lock.get("must_record_member_count").and_then(|v| v.as_integer()),
         Some(2),
         "`[lockfile_assertion].must_record_member_count` must be 2"
     );
     assert_eq!(
-        lock.get("must_contain_dependency_a")
-            .and_then(|v| v.as_str()),
+        lock.get("must_contain_dependency_a").and_then(|v| v.as_str()),
         Some(a_name),
         "`[lockfile_assertion].must_contain_dependency_a` must equal `[member_a].name`"
     );
     assert_eq!(
-        lock.get("must_contain_dependency_b")
-            .and_then(|v| v.as_str()),
+        lock.get("must_contain_dependency_b").and_then(|v| v.as_str()),
         Some(b_name),
         "`[lockfile_assertion].must_contain_dependency_b` must equal `[member_b].name`"
     );
@@ -388,26 +364,18 @@ fn pkgmgr_workspace_lockfile_records_workspace_kind_and_members() {
 
 #[test]
 fn pkgmgr_workspace_unsupported_behavior_forbids_silent_pass() {
-    let doc = load_toml(&manifest_path());
-    let con = doc
-        .get("unsupported_behavior_contract")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[unsupported_behavior_contract]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let con = doc.get("unsupported_behavior_contract").and_then(|v| v.as_table()).expect(
+        "missing `[unsupported_behavior_contract]` block \
          (acceptance: \"Unsupported path is linked and not counted as pass.\")",
-        );
+    );
 
     assert_eq!(
-        con.get("when_workspace_unsupported_outcome")
-            .and_then(|v| v.as_str()),
+        con.get("when_workspace_unsupported_outcome").and_then(|v| v.as_str()),
         Some("blocked"),
         "`[unsupported_behavior_contract].when_workspace_unsupported_outcome` must be \"blocked\""
     );
-    for flag in &[
-        "must_emit_blocker_diagnostic",
-        "must_link_tracking_issue",
-        "forbid_silent_pass",
-    ] {
+    for flag in &["must_emit_blocker_diagnostic", "must_link_tracking_issue", "forbid_silent_pass"] {
         assert_eq!(
             con.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -426,7 +394,7 @@ fn pkgmgr_workspace_unsupported_behavior_forbids_silent_pass() {
 
 #[test]
 fn pkgmgr_workspace_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -448,7 +416,7 @@ fn pkgmgr_workspace_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_workspace_runner_contract_includes_blocked_outcome() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -501,14 +469,13 @@ fn pkgmgr_workspace_runner_contract_includes_blocked_outcome() {
 
 #[test]
 fn pkgmgr_workspace_pins_out_of_scope_per_issue_2854() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("monorepo_publishing_behavior")
-            .and_then(|v| v.as_bool()),
+        oos.get("monorepo_publishing_behavior").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].monorepo_publishing_behavior` must be true \
          (issue text: \"Out of scope: monorepo publishing behavior.\")"

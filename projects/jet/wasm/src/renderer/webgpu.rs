@@ -5,9 +5,9 @@
 //! This module keeps Jet's renderer pipeline unchanged: layout emits a
 //! `LayoutTree`, paint emits `PaintOp`s, and backends consume that op stream.
 //! The WebGPU backend translates the subset that already matches the shared
-//! grid renderer's cell-rect pipeline into `CellInstance`s. A later slice can
-//! hand the resulting frame plan to `cclab_grid_render_webgpu::WebGpuRenderer`
-//! without changing the renderer-facing trait.
+//! grid renderer's cell and text pipelines into `CellInstance`s and structured
+//! text runs. The wasm bridge shapes those text runs into real glyph atlas
+//! instances before calling `cclab_grid_render_webgpu::WebGpuRenderer`.
 
 use cclab_grid_render_webgpu::cell_rect::CellInstance;
 
@@ -80,9 +80,10 @@ impl WebGpuFramePlan {
 
 /// Text paint data preserved by the WebGPU planner.
 ///
-/// The current wasm bridge only submits cell rectangles, so text is still
-/// reported in `unsupported`. Keeping structured text runs in the frame plan
-/// gives the follow-up glyph/text pass a stable Jet-side lowering contract.
+/// The wasm bridge submits these runs through the WebGPU text pass after
+/// shaping/rasterizing them into the shared glyph atlas. Text is therefore
+/// part of the supported WebGPU plan; unsupported only tracks operations that
+/// still have no WebGPU lowering.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src-renderer.md#schema
 #[derive(Debug, Clone, PartialEq)]
 pub struct WebGpuTextRun {
@@ -139,12 +140,12 @@ impl WebGpuTextRun {
 /// lower yet.
 ///
 /// `StrokeRect` was removed in #2117 — strokes now lower to up to four
-/// `CellInstance` edge strips. The remaining variants still need atlas
-/// (Text) or scissor (Clip) work before they can be drawn.
+/// `CellInstance` edge strips. Text lowers to structured text runs consumed by
+/// the glyph atlas bridge. Clip still needs scissor/clip-stack work before it
+/// can be drawn.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src-renderer.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebGpuUnsupportedOp {
-    Text,
     Clip,
 }
 
@@ -158,6 +159,7 @@ pub enum WebGpuUnsupportedOp {
 #[derive(Debug, Clone)]
 pub struct WebGpuBackend {
     last_frame: WebGpuFramePlan,
+    dpr: f32,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src-renderer.md#schema
@@ -169,10 +171,20 @@ impl WebGpuBackend {
                 text_runs: Vec::new(),
                 unsupported: Vec::new(),
             },
+            dpr: 1.0,
         }
     }
 
     pub fn plan(ops: &[PaintOp]) -> WebGpuFramePlan {
+        Self::plan_with_dpr(ops, 1.0)
+    }
+
+    pub fn plan_with_dpr(ops: &[PaintOp], dpr: f32) -> WebGpuFramePlan {
+        let dpr = if dpr.is_finite() && dpr > 0.0 {
+            dpr
+        } else {
+            1.0
+        };
         let mut cells = Vec::new();
         let mut text_runs = Vec::new();
         let mut unsupported = Vec::new();
@@ -180,10 +192,14 @@ impl WebGpuBackend {
         for op in ops {
             match op {
                 PaintOp::FillRect { rect, color } => {
-                    cells.push(fill_rect_to_cell(*rect, *color));
+                    cells.push(fill_rect_to_cell(scale_rect(*rect, dpr), *color));
                 }
                 PaintOp::StrokeRect { rect, color, width } => {
-                    cells.extend(lower_stroke_rect(*rect, *color, *width));
+                    cells.extend(lower_stroke_rect(
+                        scale_rect(*rect, dpr),
+                        *color,
+                        *width * dpr,
+                    ));
                 }
                 PaintOp::Text {
                     origin,
@@ -192,14 +208,13 @@ impl WebGpuBackend {
                     color,
                 } => {
                     text_runs.push(WebGpuTextRun {
-                        origin_px: [origin.x, origin.y],
+                        origin_px: [origin.x * dpr, origin.y * dpr],
                         content: content.clone(),
                         font_family: font.family.clone(),
-                        font_size_px: font.size_px,
+                        font_size_px: font.size_px * dpr,
                         font_weight: font.weight,
                         color: color_to_f32(*color),
                     });
-                    unsupported.push(WebGpuUnsupportedOp::Text);
                 }
                 PaintOp::PushClip { .. } | PaintOp::PopClip => {
                     unsupported.push(WebGpuUnsupportedOp::Clip);
@@ -212,6 +227,14 @@ impl WebGpuBackend {
             text_runs,
             unsupported,
         }
+    }
+
+    pub fn set_dpr(&mut self, dpr: f32) {
+        self.dpr = if dpr.is_finite() && dpr > 0.0 {
+            dpr
+        } else {
+            1.0
+        };
     }
 
     pub fn last_frame(&self) -> &WebGpuFramePlan {
@@ -233,7 +256,16 @@ impl Default for WebGpuBackend {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src-renderer.md#schema
 impl PaintBackend for WebGpuBackend {
     fn execute(&mut self, ops: &[PaintOp]) {
-        self.last_frame = Self::plan(ops);
+        self.last_frame = Self::plan_with_dpr(ops, self.dpr);
+    }
+}
+
+fn scale_rect(rect: Rect, scale: f32) -> Rect {
+    Rect {
+        x: rect.x * scale,
+        y: rect.y * scale,
+        w: rect.w * scale,
+        h: rect.h * scale,
     }
 }
 
@@ -344,6 +376,39 @@ mod tests {
     }
 
     #[test]
+    fn plan_with_dpr_lowers_logical_paint_ops_to_physical_pixels() {
+        let plan = WebGpuBackend::plan_with_dpr(
+            &[
+                PaintOp::FillRect {
+                    rect: Rect {
+                        x: 10.0,
+                        y: 20.0,
+                        w: 30.0,
+                        h: 40.0,
+                    },
+                    color: Color::rgb(255, 255, 255),
+                },
+                PaintOp::Text {
+                    origin: Point { x: 3.0, y: 4.0 },
+                    content: "x".to_string(),
+                    font: FontSpec {
+                        family: "system-ui".to_string(),
+                        size_px: 14.0,
+                        weight: 400,
+                    },
+                    color: Color::rgb(0, 0, 0),
+                },
+            ],
+            2.0,
+        );
+
+        assert_eq!(plan.cells[0].pos_px, [20.0, 40.0]);
+        assert_eq!(plan.cells[0].size_px, [60.0, 80.0]);
+        assert_eq!(plan.text_runs[0].origin_px, [6.0, 8.0]);
+        assert_eq!(plan.text_runs[0].font_size_px, 28.0);
+    }
+
+    #[test]
     fn frame_plan_packs_cells_for_grid_wasm_bridge() {
         let plan = WebGpuFramePlan {
             cells: vec![
@@ -412,13 +477,30 @@ mod tests {
         assert_eq!(plan.text_runs[0].color, [0.0, 0.0, 0.0, 1.0]);
         assert_eq!(
             plan.unsupported,
-            vec![
-                WebGpuUnsupportedOp::Text,
-                WebGpuUnsupportedOp::Clip,
-                WebGpuUnsupportedOp::Clip
-            ]
+            vec![WebGpuUnsupportedOp::Clip, WebGpuUnsupportedOp::Clip]
         );
         assert!(!plan.is_complete());
+    }
+
+    #[test]
+    fn text_runs_are_supported_webgpu_plan_items() {
+        let plan = WebGpuBackend::plan(&[PaintOp::Text {
+            origin: Point { x: 0.0, y: 10.0 },
+            content: "cell 0".to_string(),
+            font: FontSpec {
+                family: "system-ui".to_string(),
+                size_px: 14.0,
+                weight: 400,
+            },
+            color: Color::rgb(0, 0, 0),
+        }]);
+
+        assert_eq!(plan.text_runs.len(), 1);
+        assert!(
+            plan.unsupported.is_empty(),
+            "text is lowered by the wasm glyph atlas bridge"
+        );
+        assert!(plan.is_complete());
     }
 
     // ── Slice #2117: StrokeRect lowering ──────────────────────────────────

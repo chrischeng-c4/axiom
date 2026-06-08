@@ -1,10 +1,11 @@
-use super::output::{write_captured, writeln_captured};
-use super::rc::{MbObject, ObjData};
 /// Runtime built-in function implementations (#281).
 ///
 /// These are the actual implementations of built-in functions that the
 /// compiled code calls at runtime via function pointers or extern calls.
+
 use super::value::MbValue;
+use super::output::{write_captured, writeln_captured};
+use super::rc::{MbObject, ObjData};
 use rustc_hash::FxHashMap;
 
 /// Write to capture buffer if active, else to stdout.
@@ -42,10 +43,7 @@ fn format_bytes_inner(data: &[u8]) -> String {
             b'\n' => out.push_str("\\n"),
             b'\r' => out.push_str("\\r"),
             b'\t' => out.push_str("\\t"),
-            c if c == quote => {
-                out.push('\\');
-                out.push(c as char);
-            }
+            c if c == quote => { out.push('\\'); out.push(c as char); }
             0x20..=0x7E => out.push(b as char),
             c => out.push_str(&format!("\\x{c:02x}")),
         }
@@ -81,9 +79,7 @@ pub fn mb_box_int(raw: i64) -> MbValue {
             // Retain the passthrough pointer so the result is genuinely
             // owned by the caller.
             let out = MbValue::from_bits(bits);
-            unsafe {
-                super::rc::retain_if_ptr(out);
-            }
+            unsafe { super::rc::retain_if_ptr(out); }
             return out;
         }
     }
@@ -169,28 +165,19 @@ pub fn mb_unbox_float(val: MbValue) -> f64 {
 /// (literal arms) or a boxed MbValue (e.g. IfExpr / getattr return),
 /// and the JIT entry caller expects a raw i64.
 pub fn mb_unbox_int_if_boxed(val: MbValue) -> i64 {
-    if let Some(i) = val.as_int() {
-        i
-    } else {
-        val.to_bits() as i64
-    }
+    if let Some(i) = val.as_int() { i } else { val.to_bits() as i64 }
 }
 
 /// Unbox a NaN-boxed bool if tagged; otherwise pass through. See
 /// `mb_unbox_int_if_boxed` for the entry-body return-path use case.
 pub fn mb_unbox_bool_if_boxed(val: MbValue) -> i64 {
-    if let Some(b) = val.as_bool() {
-        b as i64
-    } else {
-        val.to_bits() as i64
-    }
+    if let Some(b) = val.as_bool() { b as i64 } else { val.to_bits() as i64 }
 }
 
 /// Unbox a NaN-boxed float if it is one; otherwise reinterpret the
 /// bits as a raw f64. See `mb_unbox_int_if_boxed` for context.
 pub fn mb_unbox_float_if_boxed(val: MbValue) -> f64 {
-    val.as_float()
-        .unwrap_or_else(|| f64::from_bits(val.to_bits()))
+    val.as_float().unwrap_or_else(|| f64::from_bits(val.to_bits()))
 }
 
 /// Check if a value is None. Returns bool MbValue.
@@ -223,11 +210,8 @@ pub fn mb_print(val: MbValue) -> MbValue {
         let name_val = super::closure::mb_func_get_name(val);
         let name = if let Some(ptr) = name_val.as_ptr() {
             unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    s.clone()
-                } else {
-                    "<lambda>".to_string()
-                }
+                if let ObjData::Str(ref s) = (*ptr).data { s.clone() }
+                else { "<lambda>".to_string() }
             }
         } else {
             "<lambda>".to_string()
@@ -253,9 +237,7 @@ pub fn mb_print(val: MbValue) -> MbValue {
                     let items = lock.read().unwrap();
                     mb_out!("[");
                     for (i, item) in items.iter().enumerate() {
-                        if i > 0 {
-                            mb_out!(", ");
-                        }
+                        if i > 0 { mb_out!(", "); }
                         print_repr(*item);
                     }
                     mb_outln!("]");
@@ -264,9 +246,7 @@ pub fn mb_print(val: MbValue) -> MbValue {
                     let map = lock.read().unwrap();
                     mb_out!("{{");
                     for (i, (k, v)) in map.iter().enumerate() {
-                        if i > 0 {
-                            mb_out!(", ");
-                        }
+                        if i > 0 { mb_out!(", "); }
                         print_dict_key(k);
                         mb_out!(": ");
                         print_repr(*v);
@@ -276,64 +256,31 @@ pub fn mb_print(val: MbValue) -> MbValue {
                 ObjData::Tuple(items) => {
                     mb_out!("(");
                     for (i, item) in items.iter().enumerate() {
-                        if i > 0 {
-                            mb_out!(", ");
-                        }
+                        if i > 0 { mb_out!(", "); }
                         print_repr(*item);
                     }
-                    if items.len() == 1 {
-                        mb_out!(",");
-                    }
+                    if items.len() == 1 { mb_out!(","); }
                     mb_outln!(")");
                 }
-                ObjData::Instance {
-                    class_name,
-                    ref fields,
-                    ..
-                } => {
+                ObjData::Instance { class_name, ref fields, .. } => {
                     // Namedtuple: Point(x=1, y=2) format
                     let f = fields.read().unwrap();
                     if let Some(nt_fields) = f.get("_namedtuple_fields") {
-                        let nt_name = f
-                            .get("_namedtuple_name")
+                        let nt_name = f.get("_namedtuple_name")
                             .and_then(|v| v.as_ptr())
-                            .and_then(|p| {
-                                if let ObjData::Str(ref s) = (*p).data {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            })
+                            .and_then(|p| if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None })
                             .unwrap_or_else(|| class_name.clone());
                         mb_out!("{nt_name}(");
-                        let field_names: Vec<String> = nt_fields
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(
-                                        lk.read()
-                                            .unwrap()
-                                            .iter()
-                                            .filter_map(|v| {
-                                                v.as_ptr().and_then(|pp| {
-                                                    if let ObjData::Str(ref s) = (*pp).data {
-                                                        Some(s.clone())
-                                                    } else {
-                                                        None
-                                                    }
-                                                })
-                                            })
-                                            .collect(),
-                                    )
-                                } else {
-                                    None
-                                }
-                            })
+                        let field_names: Vec<String> = nt_fields.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().iter()
+                                    .filter_map(|v| v.as_ptr().and_then(|pp| {
+                                        if let ObjData::Str(ref s) = (*pp).data { Some(s.clone()) } else { None }
+                                    })).collect())
+                            } else { None })
                             .unwrap_or_default();
                         for (i, fname) in field_names.iter().enumerate() {
-                            if i > 0 {
-                                mb_out!(", ");
-                            }
+                            if i > 0 { mb_out!(", "); }
                             let val = f.get(fname).copied().unwrap_or(MbValue::none());
                             mb_out!("{fname}=");
                             print_repr(val);
@@ -347,9 +294,7 @@ pub fn mb_print(val: MbValue) -> MbValue {
                         let items: Option<Vec<MbValue>> = args_v.as_ptr().and_then(|p| {
                             if let ObjData::Tuple(ref it) = (*p).data {
                                 Some(it.clone())
-                            } else {
-                                None
-                            }
+                            } else { None }
                         });
                         drop(f);
                         if let Some(items) = items {
@@ -369,7 +314,8 @@ pub fn mb_print(val: MbValue) -> MbValue {
                                     mb_out!("\n");
                                 }
                                 _ => {
-                                    let tuple_val = MbValue::from_ptr(MbObject::new_tuple(items));
+                                    let tuple_val = MbValue::from_ptr(
+                                        MbObject::new_tuple(items));
                                     print_repr(tuple_val);
                                     mb_out!("\n");
                                 }
@@ -393,16 +339,9 @@ pub fn mb_print(val: MbValue) -> MbValue {
                         mb_out!("\n");
                     } else if class_name == "type" {
                         // Type objects: print <class 'name'> matching CPython
-                        let type_name = f
-                            .get("__name__")
+                        let type_name = f.get("__name__")
                             .and_then(|v| v.as_ptr())
-                            .and_then(|p| {
-                                if let ObjData::Str(ref s) = (*p).data {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            })
+                            .and_then(|p| if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None })
                             .unwrap_or_else(|| "unknown".to_string());
                         drop(f);
                         mb_outln!("<class '{type_name}'>");
@@ -412,10 +351,8 @@ pub fn mb_print(val: MbValue) -> MbValue {
                         let st = f.get("step").copied().unwrap_or(MbValue::none());
                         drop(f);
                         mb_out!("slice(");
-                        print_repr(s);
-                        mb_out!(", ");
-                        print_repr(e);
-                        mb_out!(", ");
+                        print_repr(s); mb_out!(", ");
+                        print_repr(e); mb_out!(", ");
                         print_repr(st);
                         mb_outln!(")");
                     } else if class_name == "memoryview" {
@@ -488,9 +425,7 @@ pub fn mb_print(val: MbValue) -> MbValue {
                     } else {
                         mb_out!("{{");
                         for (i, item) in items.iter().enumerate() {
-                            if i > 0 {
-                                mb_out!(", ");
-                            }
+                            if i > 0 { mb_out!(", "); }
                             print_repr(*item);
                         }
                         mb_outln!("}}");
@@ -502,9 +437,7 @@ pub fn mb_print(val: MbValue) -> MbValue {
                     } else {
                         mb_out!("frozenset({{");
                         for (i, item) in items.iter().enumerate() {
-                            if i > 0 {
-                                mb_out!(", ");
-                            }
+                            if i > 0 { mb_out!(", "); }
                             print_repr(*item);
                         }
                         mb_outln!("}})");
@@ -544,9 +477,7 @@ pub fn mb_print_args(args_list: MbValue) -> MbValue {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        mb_out!(" ");
-                    }
+                    if i > 0 { mb_out!(" "); }
                     print_value_str(*item);
                 }
                 mb_outln!("");
@@ -564,11 +495,8 @@ fn print_value_str(val: MbValue) {
         let name_val = super::closure::mb_func_get_name(val);
         let name = if let Some(ptr) = name_val.as_ptr() {
             unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    s.clone()
-                } else {
-                    "<lambda>".to_string()
-                }
+                if let ObjData::Str(ref s) = (*ptr).data { s.clone() }
+                else { "<lambda>".to_string() }
             }
         } else {
             "<lambda>".to_string()
@@ -591,10 +519,7 @@ fn print_value_str(val: MbValue) {
             match &(*ptr).data {
                 ObjData::Str(s) => mb_out!("{s}"),
                 // Exception instances: print the message (Python's str(exc))
-                ObjData::Instance {
-                    ref class_name,
-                    ref fields,
-                } => {
+                ObjData::Instance { ref class_name, ref fields } => {
                     // namedtuple has a dynamic class_name (the user-given tuple
                     // name), so dispatch by marker field. (#1648)
                     if let Some(s) = super::stdlib::collections_mod::namedtuple_repr(val) {
@@ -648,9 +573,7 @@ fn print_value_str(val: MbValue) {
                         let arg_items: Option<Vec<MbValue>> = args_v.as_ptr().and_then(|p| {
                             if let ObjData::Tuple(ref items) = (*p).data {
                                 Some(items.clone())
-                            } else {
-                                None
-                            }
+                            } else { None }
                         });
                         if let Some(items) = arg_items {
                             drop(fields);
@@ -671,7 +594,8 @@ fn print_value_str(val: MbValue) {
                                 }
                                 _ => {
                                     // Render as the tuple's repr.
-                                    let tuple_val = MbValue::from_ptr(MbObject::new_tuple(items));
+                                    let tuple_val = MbValue::from_ptr(
+                                        MbObject::new_tuple(items));
                                     print_repr(tuple_val);
                                     return;
                                 }
@@ -692,9 +616,7 @@ fn print_value_str(val: MbValue) {
                         print_repr(val);
                     }
                 }
-                _ => {
-                    print_repr(val);
-                }
+                _ => { print_repr(val); }
             }
         }
     }
@@ -705,11 +627,8 @@ fn print_repr(val: MbValue) {
         let name_val = super::closure::mb_func_get_name(val);
         let name = if let Some(ptr) = name_val.as_ptr() {
             unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    s.clone()
-                } else {
-                    "<lambda>".to_string()
-                }
+                if let ObjData::Str(ref s) = (*ptr).data { s.clone() }
+                else { "<lambda>".to_string() }
             }
         } else {
             "<lambda>".to_string()
@@ -754,9 +673,7 @@ fn print_repr(val: MbValue) {
                     let items = lock.read().unwrap();
                     mb_out!("[");
                     for (i, item) in items.iter().enumerate() {
-                        if i > 0 {
-                            mb_out!(", ");
-                        }
+                        if i > 0 { mb_out!(", "); }
                         print_repr(*item);
                     }
                     mb_out!("]");
@@ -764,23 +681,17 @@ fn print_repr(val: MbValue) {
                 ObjData::Tuple(items) => {
                     mb_out!("(");
                     for (i, item) in items.iter().enumerate() {
-                        if i > 0 {
-                            mb_out!(", ");
-                        }
+                        if i > 0 { mb_out!(", "); }
                         print_repr(*item);
                     }
-                    if items.len() == 1 {
-                        mb_out!(",");
-                    }
+                    if items.len() == 1 { mb_out!(","); }
                     mb_out!(")");
                 }
                 ObjData::Dict(ref lock) => {
                     let map = lock.read().unwrap();
                     mb_out!("{{");
                     for (i, (k, v)) in map.iter().enumerate() {
-                        if i > 0 {
-                            mb_out!(", ");
-                        }
+                        if i > 0 { mb_out!(", "); }
                         print_dict_key(k);
                         mb_out!(": ");
                         print_repr(*v);
@@ -794,9 +705,7 @@ fn print_repr(val: MbValue) {
                     } else {
                         mb_out!("{{");
                         for (i, item) in items.iter().enumerate() {
-                            if i > 0 {
-                                mb_out!(", ");
-                            }
+                            if i > 0 { mb_out!(", "); }
                             print_repr(*item);
                         }
                         mb_out!("}}");
@@ -808,18 +717,13 @@ fn print_repr(val: MbValue) {
                     } else {
                         mb_out!("frozenset({{");
                         for (i, item) in items.iter().enumerate() {
-                            if i > 0 {
-                                mb_out!(", ");
-                            }
+                            if i > 0 { mb_out!(", "); }
                             print_repr(*item);
                         }
                         mb_out!("}})");
                     }
                 }
-                ObjData::Instance {
-                    class_name,
-                    ref fields,
-                } => {
+                ObjData::Instance { class_name, ref fields } => {
                     // In container context Python calls repr() on each element;
                     // check for a user __repr__ before the built-in fallbacks.
                     let repr_method = super::class::lookup_method(class_name, "__repr__");
@@ -881,16 +785,9 @@ fn print_repr(val: MbValue) {
                     let f = fields.read().unwrap();
                     if class_name == "type" {
                         // Type objects: <class 'name'>
-                        let type_name = f
-                            .get("__name__")
+                        let type_name = f.get("__name__")
                             .and_then(|v| v.as_ptr())
-                            .and_then(|p| {
-                                if let ObjData::Str(ref s) = (*p).data {
-                                    Some(s.clone())
-                                } else {
-                                    None
-                                }
-                            })
+                            .and_then(|p| if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None })
                             .unwrap_or_else(|| "unknown".to_string());
                         mb_out!("<class '{type_name}'>");
                     } else if class_name == "slice" {
@@ -899,10 +796,8 @@ fn print_repr(val: MbValue) {
                         let st = f.get("step").copied().unwrap_or(MbValue::none());
                         drop(f);
                         mb_out!("slice(");
-                        print_repr(s);
-                        mb_out!(", ");
-                        print_repr(e);
-                        mb_out!(", ");
+                        print_repr(s); mb_out!(", ");
+                        print_repr(e); mb_out!(", ");
                         print_repr(st);
                         mb_out!(")");
                     } else if class_name == "memoryview" {
@@ -913,9 +808,7 @@ fn print_repr(val: MbValue) {
                         let msg = msg_val.as_ptr().and_then(|p| {
                             if let ObjData::Str(ref s) = (*p).data {
                                 Some(s.clone())
-                            } else {
-                                None
-                            }
+                            } else { None }
                         });
                         if let Some(m) = msg {
                             mb_out!("{class_name}('{m}')");
@@ -980,13 +873,8 @@ pub fn mb_len(val: MbValue) -> MbValue {
                 ObjData::Set(ref lock) => MbValue::from_int(lock.read().unwrap().len() as i64),
                 ObjData::FrozenSet(items) => MbValue::from_int(items.len() as i64),
                 ObjData::Bytes(data) => MbValue::from_int(data.len() as i64),
-                ObjData::ByteArray(ref lock) => {
-                    MbValue::from_int(lock.read().unwrap().len() as i64)
-                }
-                ObjData::Instance {
-                    ref class_name,
-                    ref fields,
-                } => {
+                ObjData::ByteArray(ref lock) => MbValue::from_int(lock.read().unwrap().len() as i64),
+                ObjData::Instance { ref class_name, ref fields } => {
                     // namedtuple instances: len reflects declared field count.
                     if let Some(vals) = super::stdlib::collections_mod::namedtuple_values(val) {
                         return MbValue::from_int(vals.len() as i64);
@@ -997,12 +885,8 @@ pub fn mb_len(val: MbValue) -> MbValue {
                         if let Some(b) = buf {
                             if let Some(bp) = b.as_ptr() {
                                 match (*bp).data {
-                                    ObjData::Bytes(ref data) => {
-                                        return MbValue::from_int(data.len() as i64)
-                                    }
-                                    ObjData::ByteArray(ref lock) => {
-                                        return MbValue::from_int(lock.read().unwrap().len() as i64)
-                                    }
+                                    ObjData::Bytes(ref data) => return MbValue::from_int(data.len() as i64),
+                                    ObjData::ByteArray(ref lock) => return MbValue::from_int(lock.read().unwrap().len() as i64),
                                     _ => {}
                                 }
                             }
@@ -1031,8 +915,7 @@ pub fn mb_len(val: MbValue) -> MbValue {
                     // instance fields without a registered class.
                     let len_method = super::class::lookup_method(class_name, "__len__");
                     if !len_method.is_none() {
-                        let method_name =
-                            MbValue::from_ptr(MbObject::new_str("__len__".to_string()));
+                        let method_name = MbValue::from_ptr(MbObject::new_str("__len__".to_string()));
                         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
                         return super::class::mb_call_method(val, method_name, args);
                     }
@@ -1045,6 +928,17 @@ pub fn mb_len(val: MbValue) -> MbValue {
                                 return f(items.as_ptr(), items.len());
                             }
                         }
+                    }
+                    // types.SimpleNamespace has no __len__ and is not a sized
+                    // container: len() raises TypeError, matching CPython. (#654)
+                    if class_name == "SimpleNamespace" {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "object of type 'types.SimpleNamespace' has no len()".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
                     }
                     MbValue::from_int(0)
                 }
@@ -1063,18 +957,10 @@ pub fn mb_len(val: MbValue) -> MbValue {
 /// follow the prefix (`0x_FF` → caller passes `_FF`). Returns `None`
 /// when placement is invalid.
 fn strip_pep515_underscores(s: &str, allow_leading: bool) -> Option<String> {
-    if s.is_empty() {
-        return None;
-    }
-    if !allow_leading && s.starts_with('_') {
-        return None;
-    }
-    if s.ends_with('_') {
-        return None;
-    }
-    if s.contains("__") {
-        return None;
-    }
+    if s.is_empty() { return None; }
+    if !allow_leading && s.starts_with('_') { return None; }
+    if s.ends_with('_') { return None; }
+    if s.contains("__") { return None; }
     Some(s.replace('_', ""))
 }
 
@@ -1090,17 +976,11 @@ fn strip_float_underscores(s: &str) -> Option<String> {
         if bytes[i] == b'_' {
             let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
             let next = bytes.get(i + 1).copied();
-            let forbidden = |c: Option<u8>| {
-                matches!(
-                    c,
-                    None | Some(b'.')
-                        | Some(b'e')
-                        | Some(b'E')
-                        | Some(b'+')
-                        | Some(b'-')
-                        | Some(b'_')
-                )
-            };
+            let forbidden = |c: Option<u8>| matches!(
+                c,
+                None | Some(b'.') | Some(b'e') | Some(b'E')
+                    | Some(b'+') | Some(b'-') | Some(b'_')
+            );
             if forbidden(prev) || forbidden(next) {
                 return None;
             }
@@ -1123,9 +1003,7 @@ pub fn mb_int(val: MbValue) -> MbValue {
             if let ObjData::Str(ref s) = (*ptr).data {
                 let trimmed = s.trim();
                 let try_parse = |t: &str| -> Option<i64> {
-                    if let Ok(i) = t.parse::<i64>() {
-                        return Some(i);
-                    }
+                    if let Ok(i) = t.parse::<i64>() { return Some(i); }
                     // PEP 515: digit-separator underscores. Strip optional
                     // sign, validate underscore placement on the remaining
                     // digits, then parse.
@@ -1285,18 +1163,13 @@ pub fn mb_str(val: MbValue) -> MbValue {
         let name_val = super::closure::mb_func_get_name(val);
         let name = if let Some(ptr) = name_val.as_ptr() {
             unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    s.clone()
-                } else {
-                    "<lambda>".to_string()
-                }
+                if let ObjData::Str(ref s) = (*ptr).data { s.clone() }
+                else { "<lambda>".to_string() }
             }
         } else {
             "<lambda>".to_string()
         };
-        return MbValue::from_ptr(MbObject::new_str(format!(
-            "<function {name} at 0x{addr:x}>"
-        )));
+        return MbValue::from_ptr(MbObject::new_str(format!("<function {name} at 0x{addr:x}>")));
     }
     let s = if let Some(i) = val.as_int() {
         // UUID handles are int-tagged but render as the canonical
@@ -1354,8 +1227,7 @@ pub fn mb_abs(val: MbValue) -> MbValue {
                 ObjData::Instance { class_name, .. } => {
                     let abs_method = super::class::lookup_method(class_name, "__abs__");
                     if !abs_method.is_none() {
-                        let method_name =
-                            MbValue::from_ptr(MbObject::new_str("__abs__".to_string()));
+                        let method_name = MbValue::from_ptr(MbObject::new_str("__abs__".to_string()));
                         let args = MbValue::from_ptr(MbObject::new_list(vec![]));
                         return super::class::mb_call_method(val, method_name, args);
                     }
@@ -1423,9 +1295,7 @@ fn parse_complex_str(input: &str) -> Option<(f64, f64)> {
     if s.starts_with('(') && s.ends_with(')') {
         s = s[1..s.len() - 1].trim();
     }
-    if s.is_empty() {
-        return None;
-    }
+    if s.is_empty() { return None; }
     // No 'j'/'J' → real-only number.
     let has_imag = s.ends_with('j') || s.ends_with('J');
     if !has_imag {
@@ -1457,24 +1327,16 @@ fn parse_complex_str(input: &str) -> Option<(f64, f64)> {
             let imag_part = body[idx..].trim();
             let re = real_part.parse::<f64>().ok()?;
             // Bare "+"/"-" prefix on imag means ±1j.
-            let im = if imag_part == "+" {
-                1.0
-            } else if imag_part == "-" {
-                -1.0
-            } else {
-                imag_part.parse::<f64>().ok()?
-            };
+            let im = if imag_part == "+" { 1.0 }
+                else if imag_part == "-" { -1.0 }
+                else { imag_part.parse::<f64>().ok()? };
             Some((re, im))
         }
         None => {
             // Whole body is the imag coefficient.
-            let im = if body == "+" {
-                1.0
-            } else if body == "-" {
-                -1.0
-            } else {
-                body.parse::<f64>().ok()?
-            };
+            let im = if body == "+" { 1.0 }
+                else if body == "-" { -1.0 }
+                else { body.parse::<f64>().ok()? };
             Some((0.0, im))
         }
     }
@@ -1584,7 +1446,14 @@ pub fn mb_type(val: MbValue) -> MbValue {
     let name = if let Some(iter_type) = super::iter::mb_iter_type_name(val) {
         iter_type
     } else if val.is_int() {
-        "int"
+        // uuid handles (NAMESPACE_*, uuid4(), ...) are int-tagged values; report
+        // their real type so `type(uuid.NAMESPACE_DNS).__name__ == "UUID"`.
+        let id = val.as_int().unwrap_or(0) as u64;
+        if super::stdlib::uuid_mod::is_uuid_handle(id) {
+            "UUID"
+        } else {
+            "int"
+        }
     } else if val.is_float() {
         "float"
     } else if val.is_bool() {
@@ -1681,7 +1550,9 @@ fn make_type_object(name: &str) -> MbValue {
         );
         fields.insert(
             "__doc__".to_string(),
-            MbValue::from_ptr(MbObject::new_str(format!("{name} type object."))),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{name} type object."
+            ))),
         );
         let obj = Box::new(MbObject {
             header: super::rc::MbObjectHeader {
@@ -1713,11 +1584,7 @@ fn make_type_object(name: &str) -> MbValue {
 pub fn mb_builtin_type_obj(name: MbValue) -> MbValue {
     let name_str: String = if let Some(ptr) = name.as_ptr() {
         unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                s.clone()
-            } else {
-                String::new()
-            }
+            if let ObjData::Str(ref s) = (*ptr).data { s.clone() } else { String::new() }
         }
     } else {
         String::new()
@@ -1738,31 +1605,24 @@ pub fn mb_builtin_type_obj(name: MbValue) -> MbValue {
 // @spec .aw/changes/mamba-type-3arg/groups/mamba-type-3arg-core/specs/mamba-type-3arg-spec.md#R4
 pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
     // 1. Extract name string
-    let class_name = name
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "dynamic_class".to_string());
+    let class_name = name.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            Some(s.clone())
+        } else {
+            None
+        }
+    }).unwrap_or_else(|| "dynamic_class".to_string());
 
     // 2. Extract bases tuple -> list of base class name strings
     let base_names: Vec<String> = if let Some(ptr) = bases.as_ptr() {
         unsafe {
             match &(*ptr).data {
                 ObjData::Tuple(items) => {
-                    let names: Vec<String> = items
-                        .iter()
-                        .filter_map(|item| {
-                            item.as_ptr().and_then(|p| match &(*p).data {
+                    let names: Vec<String> = items.iter().filter_map(|item| {
+                        item.as_ptr().and_then(|p| {
+                            match &(*p).data {
                                 ObjData::Str(s) => Some(s.clone()),
-                                ObjData::Instance {
-                                    class_name: cn,
-                                    fields,
-                                } => {
+                                ObjData::Instance { class_name: cn, fields } => {
                                     if cn == "type" {
                                         fields.read().ok().and_then(|f| {
                                             f.get("__name__").and_then(|v| {
@@ -1780,14 +1640,10 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
                                     }
                                 }
                                 _ => None,
-                            })
+                            }
                         })
-                        .collect();
-                    if names.is_empty() {
-                        vec!["object".to_string()]
-                    } else {
-                        names
-                    }
+                    }).collect();
+                    if names.is_empty() { vec!["object".to_string()] } else { names }
                 }
                 _ => vec!["object".to_string()],
             }
@@ -1835,12 +1691,45 @@ pub fn mb_type3(name: MbValue, bases: MbValue, dict: MbValue) -> MbValue {
 }
 
 /// range(stop) — produce a CPython-style reusable range handle.
+/// CPython requires every `range()` argument to be an integer (or a subclass
+/// such as `bool`); a `float`/`str`/etc. raises
+/// `TypeError: '<type>' object cannot be interpreted as an integer`.
+/// mamba is type-strict, so we enforce the same rule instead of silently
+/// coercing a non-int to `0` (the prior `as_int_pyint().unwrap_or(0)` behavior).
+///
+/// Returns `true` and raises a TypeError when `v` is not int-like, otherwise
+/// `false`. Accepts unboxed int/bool and boxed `BigInt` (large int literals).
+fn range_arg_raises_if_non_int(v: MbValue) -> bool {
+    if v.is_int() || v.is_bool() {
+        return false;
+    }
+    if let Some(ptr) = v.as_ptr() {
+        if let ObjData::BigInt(_) = unsafe { &(*ptr).data } {
+            return false;
+        }
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "'{}' object cannot be interpreted as an integer",
+            add_operand_type_name(v),
+        ))),
+    );
+    true
+}
+
 pub fn mb_range(stop: MbValue) -> MbValue {
+    if range_arg_raises_if_non_int(stop) {
+        return MbValue::none();
+    }
     super::iter::mb_range_iter(MbValue::from_int(0), stop, MbValue::from_int(1))
 }
 
 /// `range(start, stop)` — produce a CPython-style reusable range handle.
 pub fn mb_range_2(start: MbValue, stop: MbValue) -> MbValue {
+    if range_arg_raises_if_non_int(start) || range_arg_raises_if_non_int(stop) {
+        return MbValue::none();
+    }
     super::iter::mb_range_iter(start, stop, MbValue::from_int(1))
 }
 
@@ -1883,6 +1772,14 @@ pub fn mb_slice(start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
 
 /// `range(start, stop, step)` — produce a CPython-style reusable range handle.
 pub fn mb_range_3(start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
+    // CPython validates argument types (TypeError) before the zero-step
+    // ValueError: `range(0, 3, 0.0)` raises TypeError, not ValueError.
+    if range_arg_raises_if_non_int(start)
+        || range_arg_raises_if_non_int(stop)
+        || range_arg_raises_if_non_int(step)
+    {
+        return MbValue::none();
+    }
     if step.as_int_pyint() == Some(0) {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
@@ -1898,18 +1795,10 @@ pub fn mb_range_3(start: MbValue, stop: MbValue, step: MbValue) -> MbValue {
 /// Arithmetic helpers used by compiled code.
 /// Best-effort Python type name of an operand, for `+` TypeError messages.
 fn add_operand_type_name(v: MbValue) -> &'static str {
-    if v.is_int() {
-        return "int";
-    }
-    if v.is_float() {
-        return "float";
-    }
-    if v.is_bool() {
-        return "bool";
-    }
-    if v.is_none() {
-        return "NoneType";
-    }
+    if v.is_int() { return "int"; }
+    if v.is_float() { return "float"; }
+    if v.is_bool() { return "bool"; }
+    if v.is_none() { return "NoneType"; }
     if let Some(ptr) = v.as_ptr() {
         unsafe {
             return match &(*ptr).data {
@@ -1940,44 +1829,40 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
         return super::stdlib::array_mod::mb_array_concat(a, b);
     }
 
-    match (a.as_int(), b.as_int()) {
+    // bool is an int subclass in Python (True + 1.0 == 2.0), so coerce bool→int
+    // via as_int_pyint; plain as_int returns None for a NaN-boxed bool, which made
+    // `True + 1.0` fall through to None.
+    match (a.as_int_pyint(), b.as_int_pyint()) {
         (Some(ai), Some(bi)) => MbValue::from_int(ai.wrapping_add(bi)),
         _ => {
-            let af = a.as_int().map(|i| i as f64).or(a.as_float());
-            let bf = b.as_int().map(|i| i as f64).or(b.as_float());
+            let af = a.as_int_pyint().map(|i| i as f64).or(a.as_float());
+            let bf = b.as_int_pyint().map(|i| i as f64).or(b.as_float());
             match (af, bf) {
                 (Some(af), Some(bf)) => MbValue::from_float(af + bf),
                 _ => {
                     // List + List → concatenation
                     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
                         unsafe {
-                            if let (ObjData::List(ref la), ObjData::List(ref lb)) =
-                                (&(*pa).data, &(*pb).data)
-                            {
+                            if let (ObjData::List(ref la), ObjData::List(ref lb)) = (&(*pa).data, &(*pb).data) {
                                 let mut result = la.read().unwrap().clone();
                                 result.extend_from_slice(&lb.read().unwrap());
                                 return MbValue::from_ptr(MbObject::new_list_inline(result));
                             }
                             // Tuple + Tuple → concatenation
-                            if let (ObjData::Tuple(ref ta), ObjData::Tuple(ref tb)) =
-                                (&(*pa).data, &(*pb).data)
-                            {
+                            if let (ObjData::Tuple(ref ta), ObjData::Tuple(ref tb)) = (&(*pa).data, &(*pb).data) {
                                 let mut result = ta.clone();
                                 result.extend_from_slice(tb);
                                 return MbValue::from_ptr(MbObject::new_tuple(result));
                             }
                             // Str + Str → concatenation (fallback for Any-typed strings)
-                            if let (ObjData::Str(ref sa), ObjData::Str(ref sb)) =
-                                (&(*pa).data, &(*pb).data)
-                            {
+                            if let (ObjData::Str(ref sa), ObjData::Str(ref sb)) = (&(*pa).data, &(*pb).data) {
                                 let result = format!("{}{}", sa, sb);
                                 return MbValue::from_ptr(MbObject::new_str(result));
                             }
                             // bytes/bytearray + bytes/bytearray → concatenation.
                             // Result type follows the LEFT operand (CPython):
                             // bytes+bytearray → bytes, bytearray+bytes → bytearray.
-                            let a_byteslike =
-                                matches!(&(*pa).data, ObjData::Bytes(_) | ObjData::ByteArray(_));
+                            let a_byteslike = matches!(&(*pa).data, ObjData::Bytes(_) | ObjData::ByteArray(_));
                             if a_byteslike {
                                 let bytes_of = |p: *mut MbObject| -> Option<Vec<u8>> {
                                     match &(*p).data {
@@ -1997,20 +1882,15 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                                 }
                             }
                             // datetime.datetime + datetime.timedelta → shifted datetime
-                            if let (
-                                ObjData::Instance { class_name: ca, .. },
-                                ObjData::Instance { class_name: cb, .. },
-                            ) = (&(*pa).data, &(*pb).data)
+                            if let (ObjData::Instance { class_name: ca, .. },
+                                    ObjData::Instance { class_name: cb, .. }) =
+                                (&(*pa).data, &(*pb).data)
                             {
                                 if ca == "datetime.datetime" && cb == "datetime.timedelta" {
-                                    return super::stdlib::datetime_mod::mb_datetime_add_timedelta(
-                                        a, b,
-                                    );
+                                    return super::stdlib::datetime_mod::mb_datetime_add_timedelta(a, b);
                                 }
                                 if ca == "datetime.timedelta" && cb == "datetime.datetime" {
-                                    return super::stdlib::datetime_mod::mb_datetime_add_timedelta(
-                                        b, a,
-                                    );
+                                    return super::stdlib::datetime_mod::mb_datetime_add_timedelta(b, a);
                                 }
                                 // Counter + Counter — CPython multiset add. (#1636)
                                 if ca == "collections.Counter" && cb == "collections.Counter" {
@@ -2029,25 +1909,18 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                                 match &(*pa).data {
                                     ObjData::Str(_) => {
                                         super::exception::mb_raise(
-                                            MbValue::from_ptr(MbObject::new_str(
-                                                "TypeError".to_string(),
-                                            )),
+                                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                                             MbValue::from_ptr(MbObject::new_str(format!(
                                                 "can only concatenate str (not \"{}\") to str",
-                                                add_operand_type_name(b)
-                                            ))),
+                                                add_operand_type_name(b)))),
                                         );
                                         return MbValue::none();
                                     }
                                     ObjData::Bytes(_) | ObjData::ByteArray(_) => {
                                         super::exception::mb_raise(
-                                            MbValue::from_ptr(MbObject::new_str(
-                                                "TypeError".to_string(),
-                                            )),
+                                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                                             MbValue::from_ptr(MbObject::new_str(format!(
-                                                "can't concat {} to bytes",
-                                                add_operand_type_name(b)
-                                            ))),
+                                                "can't concat {} to bytes", add_operand_type_name(b)))),
                                         );
                                         return MbValue::none();
                                     }
@@ -2062,11 +1935,13 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                         if let (Some((ar, ai)), Some((br, bi))) =
                             (as_complex_pair(a), as_complex_pair(b))
                         {
-                            return MbValue::from_ptr(MbObject::new_complex(ar + br, ai + bi));
+                            return MbValue::from_ptr(
+                                MbObject::new_complex(ar + br, ai + bi),
+                            );
                         }
                     }
                     MbValue::none()
-                }
+                },
             }
         }
     }
@@ -2096,10 +1971,9 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
                 return super::set_ops::mb_set_difference(a, b);
             }
             // Counter - Counter — CPython multiset diff (drops <=0). (#1636)
-            if let (
-                ObjData::Instance { class_name: ca, .. },
-                ObjData::Instance { class_name: cb, .. },
-            ) = (&(*pa).data, &(*pb).data)
+            if let (ObjData::Instance { class_name: ca, .. },
+                    ObjData::Instance { class_name: cb, .. }) =
+                (&(*pa).data, &(*pb).data)
             {
                 if ca == "collections.Counter" && cb == "collections.Counter" {
                     return super::stdlib::collections_mod::mb_counter_sub(a, b);
@@ -2110,7 +1984,9 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
     // Complex subtraction — promote int/float to complex when either
     // operand is `ObjData::Complex`. (#1256)
     if is_complex_obj(a) || is_complex_obj(b) {
-        if let (Some((ar, ai)), Some((br, bi))) = (as_complex_pair(a), as_complex_pair(b)) {
+        if let (Some((ar, ai)), Some((br, bi))) =
+            (as_complex_pair(a), as_complex_pair(b))
+        {
             return MbValue::from_ptr(MbObject::new_complex(ar - br, ai - bi));
         }
     }
@@ -2215,7 +2091,10 @@ fn collect_union_operand(v: MbValue, out: &mut Vec<MbValue>) -> bool {
                     true
                 }
                 ObjData::Instance { class_name, fields } if class_name == "UnionType" => {
-                    let args = fields.read().ok().and_then(|f| f.get("__args__").copied());
+                    let args = fields
+                        .read()
+                        .ok()
+                        .and_then(|f| f.get("__args__").copied());
                     if let Some(args) = args {
                         return collect_union_operand(args, out);
                     }
@@ -2273,8 +2152,7 @@ fn type_name_from_value(v: MbValue) -> Option<String> {
                 ObjData::Str(s) => Some(s.clone()),
                 ObjData::Instance { class_name, fields } if class_name == "type" => {
                     fields.read().ok().and_then(|f| {
-                        f.get("__name__")
-                            .and_then(|name| type_name_from_value(*name))
+                        f.get("__name__").and_then(|name| type_name_from_value(*name))
                     })
                 }
                 _ => None,
@@ -2321,22 +2199,10 @@ pub(crate) fn union_type_repr(v: MbValue) -> String {
 fn is_type_name(s: &str) -> bool {
     matches!(
         s,
-        "int"
-            | "str"
-            | "float"
-            | "bool"
-            | "list"
-            | "dict"
-            | "set"
-            | "frozenset"
-            | "tuple"
-            | "bytes"
-            | "bytearray"
-            | "complex"
-            | "type"
-            | "object"
-            | "NoneType"
-            | "range"
+        "int" | "str" | "float" | "bool" | "list" | "dict"
+            | "set" | "frozenset" | "tuple" | "bytes"
+            | "bytearray" | "complex" | "type" | "object"
+            | "NoneType" | "range"
     ) || super::class::class_is_registered(s)
 }
 
@@ -2380,6 +2246,29 @@ pub fn mb_bitxor(a: MbValue, b: MbValue) -> MbValue {
     }
 }
 
+/// Left shift `a << b` for dynamically-typed (Any/boxed) integer operands.
+/// The static (Int, Int) path is handled inline by codegen; this is the
+/// runtime fallback reached when either operand is `Any` (e.g. a list/tuple
+/// element or an `enumerate` index), matching `mb_bitand`/`mb_bitor`. Without
+/// it, `x << n` on a boxed int silently produced None (no `mb_lshift` was
+/// registered, so `binop_to_runtime` returned None and codegen emitted a raw
+/// shift over NaN-boxed bits).
+pub fn mb_lshift(a: MbValue, b: MbValue) -> MbValue {
+    match (a.as_int(), b.as_int()) {
+        (Some(ai), Some(bi)) if bi >= 0 => MbValue::from_int(ai.wrapping_shl(bi as u32)),
+        _ => MbValue::none(),
+    }
+}
+
+/// Right shift `a >> b` for dynamically-typed (Any/boxed) integer operands.
+/// See `mb_lshift`.
+pub fn mb_rshift(a: MbValue, b: MbValue) -> MbValue {
+    match (a.as_int(), b.as_int()) {
+        (Some(ai), Some(bi)) if bi >= 0 => MbValue::from_int(ai.wrapping_shr(bi as u32)),
+        _ => MbValue::none(),
+    }
+}
+
 pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
     let a_is_array = is_array_handle_value(a);
     let b_is_array = is_array_handle_value(b);
@@ -2408,17 +2297,13 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
                             let items = lock.read().unwrap();
                             let n = n.max(0) as usize;
                             let mut result = Vec::with_capacity(items.len() * n);
-                            for _ in 0..n {
-                                result.extend_from_slice(&items);
-                            }
+                            for _ in 0..n { result.extend_from_slice(&items); }
                             return MbValue::from_ptr(MbObject::new_list(result));
                         }
                         ObjData::Tuple(ref items) => {
                             let n = n.max(0) as usize;
                             let mut result = Vec::with_capacity(items.len() * n);
-                            for _ in 0..n {
-                                result.extend_from_slice(items);
-                            }
+                            for _ in 0..n { result.extend_from_slice(items); }
                             return MbValue::from_ptr(MbObject::new_tuple(result));
                         }
                         ObjData::Str(ref s) => {
@@ -2429,9 +2314,7 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
                         ObjData::Bytes(ref data) => {
                             let n = n.max(0) as usize;
                             let mut result = Vec::with_capacity(data.len() * n);
-                            for _ in 0..n {
-                                result.extend_from_slice(data);
-                            }
+                            for _ in 0..n { result.extend_from_slice(data); }
                             return MbValue::from_ptr(MbObject::new_bytes(result));
                         }
                         _ => {}
@@ -2442,7 +2325,9 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
             // ObjData::Complex. Formula: (a+bi)*(c+di)=(ac-bd)+(ad+bc)i.
             // (#1256)
             if is_complex_obj(a) || is_complex_obj(b) {
-                if let (Some((ar, ai)), Some((br, bi))) = (as_complex_pair(a), as_complex_pair(b)) {
+                if let (Some((ar, ai)), Some((br, bi))) =
+                    (as_complex_pair(a), as_complex_pair(b))
+                {
                     return MbValue::from_ptr(MbObject::new_complex(
                         ar * br - ai * bi,
                         ar * bi + ai * br,
@@ -2463,12 +2348,16 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
     // Complex division — promote when either operand is ObjData::Complex.
     // Formula: (a+bi)/(c+di) = ((ac+bd)+(bc-ad)i)/(c²+d²). (#1256)
     if is_complex_obj(a) || is_complex_obj(b) {
-        if let (Some((ar, ai)), Some((br, bi))) = (as_complex_pair(a), as_complex_pair(b)) {
+        if let (Some((ar, ai)), Some((br, bi))) =
+            (as_complex_pair(a), as_complex_pair(b))
+        {
             let denom = br * br + bi * bi;
             if denom == 0.0 {
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
-                    MbValue::from_ptr(MbObject::new_str("complex division by zero".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "complex division by zero".to_string(),
+                    )),
                 );
                 return MbValue::none();
             }
@@ -2506,9 +2395,7 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
         // ZeroDivisionError: integer modulo by zero
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "integer division or modulo by zero".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("integer division or modulo by zero".to_string())),
         );
         return MbValue::none();
     }
@@ -2518,11 +2405,7 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
     match (af, bf) {
         (Some(af), Some(bf)) if bf != 0.0 => {
             let r = af % bf; // IEEE 754 remainder (C-style)
-            let result = if r != 0.0 && r.signum() != bf.signum() {
-                r + bf
-            } else {
-                r
-            };
+            let result = if r != 0.0 && r.signum() != bf.signum() { r + bf } else { r };
             return MbValue::from_float(result);
         }
         (Some(_), Some(_)) => {
@@ -2556,6 +2439,20 @@ pub fn mb_neg(a: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Complex(re, im) = (*ptr).data {
                 return MbValue::from_ptr(MbObject::new_complex(-re, -im));
+            }
+            // -bigint → negated big integer. Without this, `-(2**63)` leaks the
+            // BigInt pointer bits as a bogus small int (breaks every negative
+            // out-of-48-bit literal, e.g. plistlib's signed-int range checks).
+            if let ObjData::BigInt(ref big) = (*ptr).data {
+                let neg = -big.clone();
+                // Re-narrow to an inline int when it fits (e.g. -(2**47)).
+                use num_traits::ToPrimitive;
+                if let Some(i) = neg.to_i64() {
+                    if (-(1i64 << 47)..(1i64 << 47)).contains(&i) {
+                        return MbValue::from_int(i);
+                    }
+                }
+                return super::bigint_ops::bigint_from_big(neg);
             }
         }
         MbValue::none()
@@ -2668,6 +2565,17 @@ fn try_reflected_eq(obj: MbValue, other: MbValue) -> bool {
 
 /// Deep structural equality for MbValues.
 fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
+    // functools.cmp_to_key key objects compare via the wrapped cmp (sign == 0).
+    if super::stdlib::functools_mod::is_cmp_to_key_obj(a)
+        || super::stdlib::functools_mod::is_cmp_to_key_obj(b)
+    {
+        if let Some(r) = super::stdlib::functools_mod::mb_functools_cmp_to_key_richcmp(a, b, "eq") {
+            return r;
+        }
+        if let Some(r) = super::stdlib::functools_mod::mb_functools_cmp_to_key_richcmp(b, a, "eq") {
+            return r;
+        }
+    }
     if is_array_handle_value(a) || is_array_handle_value(b) {
         return super::stdlib::array_mod::mb_array_eq_bool(a, b).unwrap_or(false);
     }
@@ -2676,24 +2584,14 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         return fa == fb; // IEEE 754: NaN == NaN is false
     }
     // Fast path: identical bits (safe for non-float types)
-    if a.to_bits() == b.to_bits() {
-        return true;
-    }
+    if a.to_bits() == b.to_bits() { return true; }
     // Bool/int cross-comparison: Python `True == 1` and `False == 0` (#827)
     if a.is_bool() && b.is_int() {
-        let ai = if a.as_bool() == Some(true) {
-            1i64
-        } else {
-            0i64
-        };
+        let ai = if a.as_bool() == Some(true) { 1i64 } else { 0i64 };
         return ai == b.as_int().unwrap_or(i64::MIN);
     }
     if a.is_int() && b.is_bool() {
-        let bi = if b.as_bool() == Some(true) {
-            1i64
-        } else {
-            0i64
-        };
+        let bi = if b.as_bool() == Some(true) { 1i64 } else { 0i64 };
         return a.as_int().unwrap_or(i64::MIN) == bi;
     }
     // Int-float cross-comparison
@@ -2703,20 +2601,29 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     if let (Some(af), Some(bi)) = (a.as_float(), b.as_int()) {
         return af == (bi as f64);
     }
+    // BigInt value equality: two heap big integers (or a heap big int and an
+    // inline int) compare by value, not pointer identity. Without this,
+    // `2**64 == 2**64` is False (distinct allocations) — breaking plistlib's
+    // `data >= _UID_MAX`/`== _UID_MAX` range checks and any big-int equality.
+    {
+        let a_big = unsafe { super::bigint_ops::extract_bigint(a).is_some() };
+        let b_big = unsafe { super::bigint_ops::extract_bigint(b).is_some() };
+        if a_big || b_big {
+            if let (Some(ab), Some(bb)) = unsafe {
+                (super::bigint_ops::to_bigint(a), super::bigint_ops::to_bigint(b))
+            } {
+                return ab == bb;
+            }
+        }
+    }
     // IntEnum-like Instance vs int comparison: when an Instance carries a
     // `value` int field (e.g. HTTPStatus.OK) compare against the other side
     // by value so `HTTPStatus.OK == 200` mirrors CPython's IntEnum semantics.
     let instance_value = |v: MbValue| -> Option<i64> {
         v.as_ptr().and_then(|p| unsafe {
             if let ObjData::Instance { ref fields, .. } = (*p).data {
-                fields
-                    .read()
-                    .unwrap()
-                    .get("value")
-                    .and_then(|fv| fv.as_int())
-            } else {
-                None
-            }
+                fields.read().unwrap().get("value").and_then(|fv| fv.as_int())
+            } else { None }
         })
     };
     if let (Some(av), Some(bi)) = (instance_value(a), b.as_int()) {
@@ -2753,14 +2660,10 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     // virtual elements against the materialised list without consuming the
     // iterator. Only Range-kind iterators participate.
     if let (Some(ptr), true) = (a.as_ptr(), super::iter::is_iter_handle(b)) {
-        if let Some(eq) = list_vs_range_iter_eq(ptr, b) {
-            return eq;
-        }
+        if let Some(eq) = list_vs_range_iter_eq(ptr, b) { return eq; }
     }
     if let (Some(ptr), true) = (b.as_ptr(), super::iter::is_iter_handle(a)) {
-        if let Some(eq) = list_vs_range_iter_eq(ptr, a) {
-            return eq;
-        }
+        if let Some(eq) = list_vs_range_iter_eq(ptr, a) { return eq; }
     }
 
     // namedtuple instances behave like tuple subclasses: compare element-wise
@@ -2772,9 +2675,7 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
             v.as_ptr().and_then(|p| unsafe {
                 if let ObjData::Tuple(ref items) = (*p).data {
                     Some(items.to_vec())
-                } else {
-                    None
-                }
+                } else { None }
             })
         };
         let pair = match (a_nt, b_nt) {
@@ -2805,44 +2706,30 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                 (ObjData::Set(la), ObjData::Set(lb)) => {
                     let a = la.read().unwrap();
                     let b = lb.read().unwrap();
-                    if a.len() != b.len() {
-                        return false;
-                    }
+                    if a.len() != b.len() { return false; }
                     a.iter().all(|x| b.iter().any(|y| mb_values_eq(*x, *y)))
                 }
                 (ObjData::FrozenSet(a_items), ObjData::FrozenSet(b_items)) => {
-                    if a_items.len() != b_items.len() {
-                        return false;
-                    }
-                    a_items
-                        .iter()
-                        .all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
+                    if a_items.len() != b_items.len() { return false; }
+                    a_items.iter().all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
                 }
                 (ObjData::Set(la), ObjData::FrozenSet(b_items)) => {
                     let a = la.read().unwrap();
-                    if a.len() != b_items.len() {
-                        return false;
-                    }
-                    a.iter()
-                        .all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
+                    if a.len() != b_items.len() { return false; }
+                    a.iter().all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
                 }
                 (ObjData::FrozenSet(a_items), ObjData::Set(lb)) => {
                     let b = lb.read().unwrap();
-                    if a_items.len() != b.len() {
-                        return false;
-                    }
-                    a_items
-                        .iter()
-                        .all(|x| b.iter().any(|y| mb_values_eq(*x, *y)))
+                    if a_items.len() != b.len() { return false; }
+                    a_items.iter().all(|x| b.iter().any(|y| mb_values_eq(*x, *y)))
                 }
                 (ObjData::Dict(la), ObjData::Dict(lb)) => {
                     let a = la.read().unwrap();
                     let b = lb.read().unwrap();
-                    if a.len() != b.len() {
-                        return false;
-                    }
-                    a.iter()
-                        .all(|(k, v)| b.get(k).map_or(false, |v2| mb_values_eq(*v, *v2)))
+                    if a.len() != b.len() { return false; }
+                    a.iter().all(|(k, v)| {
+                        b.get(k).map_or(false, |v2| mb_values_eq(*v, *v2))
+                    })
                 }
                 (ObjData::Bytes(a), ObjData::Bytes(b)) => a == b,
                 (ObjData::Complex(ar, ai), ObjData::Complex(br, bi)) => {
@@ -2852,8 +2739,48 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                 (ObjData::ByteArray(la), ObjData::ByteArray(lb)) => {
                     *la.read().unwrap() == *lb.read().unwrap()
                 }
-                (ObjData::Bytes(a), ObjData::ByteArray(lb)) => *a == *lb.read().unwrap(),
-                (ObjData::ByteArray(la), ObjData::Bytes(b)) => *la.read().unwrap() == *b,
+                (ObjData::Bytes(a), ObjData::ByteArray(lb)) => {
+                    *a == *lb.read().unwrap()
+                }
+                (ObjData::ByteArray(la), ObjData::Bytes(b)) => {
+                    *la.read().unwrap() == *b
+                }
+                // types.SimpleNamespace value equality: two SimpleNamespace
+                // objects compare equal iff their attribute dicts (__dict__)
+                // are equal — same keys mapping to equal values. The native
+                // constructor produces a plain Instance with no user __eq__,
+                // so without this they compare by identity. CPython: a
+                // SimpleNamespace is *not* equal to any non-SimpleNamespace,
+                // so this only fires when both sides are SimpleNamespace.
+                (ObjData::Instance { class_name: ca, fields: fa },
+                 ObjData::Instance { class_name: cb, fields: fb })
+                    if ca == "SimpleNamespace" && cb == "SimpleNamespace" =>
+                {
+                    let ga = fa.read().unwrap();
+                    let gb = fb.read().unwrap();
+                    if ga.len() != gb.len() { return false; }
+                    return ga.iter().all(|(k, v)| {
+                        gb.get(k).map_or(false, |v2| mb_values_eq(*v, *v2))
+                    });
+                }
+                // statistics.NormalDist value equality: two NormalDists are
+                // equal iff their (mu, sigma) pairs are equal. The constructor
+                // produces a plain Instance with `mu`/`sigma` fields and no
+                // user `__eq__`, so without this they would compare by
+                // identity. Only fires when *both* sides are NormalDist;
+                // mismatched types fall through to the generic dunder path.
+                (ObjData::Instance { class_name: ca, fields: fa },
+                 ObjData::Instance { class_name: cb, fields: fb })
+                    if ca == "NormalDist" && cb == "NormalDist" =>
+                {
+                    let ga = fa.read().unwrap();
+                    let gb = fb.read().unwrap();
+                    let mua = ga.get("mu").and_then(|v| v.as_float().or_else(|| v.as_int().map(|i| i as f64)));
+                    let mub = gb.get("mu").and_then(|v| v.as_float().or_else(|| v.as_int().map(|i| i as f64)));
+                    let siga = ga.get("sigma").and_then(|v| v.as_float().or_else(|| v.as_int().map(|i| i as f64)));
+                    let sigb = gb.get("sigma").and_then(|v| v.as_float().or_else(|| v.as_int().map(|i| i as f64)));
+                    return mua == mub && siga == sigb;
+                }
                 // Instance: dispatch __eq__ dunder with NotImplemented fallback
                 (ObjData::Instance { class_name, .. }, _) => {
                     let eq_method = super::class::lookup_method(class_name, "__eq__");
@@ -2901,7 +2828,24 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
 }
 
 fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
-    a.to_bits() == b.to_bits()
+    if a.to_bits() == b.to_bits() {
+        return true;
+    }
+    // Class identity: a class is represented at runtime as its (uniquely-naming)
+    // class-name string, so two distinct string allocations that both name the
+    // same registered class refer to the same class object. This makes
+    // `cls is SomeClass` work (e.g. ABCMeta `__subclasshook__` identity guards)
+    // without interning ordinary strings.
+    if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
+        unsafe {
+            if let (ObjData::Str(ref sa), ObjData::Str(ref sb)) = (&(*pa).data, &(*pb).data) {
+                if sa == sb && super::class::class_is_registered(sa) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 /// Compare a list `ObjData::List` (heap pointer) against an unexhausted
@@ -2916,12 +2860,8 @@ fn list_vs_range_iter_eq(list_ptr: *mut MbObject, handle: MbValue) -> Option<boo
             let items = lock.read().unwrap();
             for v in items.iter() {
                 let in_range = (step > 0 && cur < stop) || (step < 0 && cur > stop);
-                if !in_range {
-                    return Some(false);
-                }
-                if v.as_int() != Some(cur) {
-                    return Some(false);
-                }
+                if !in_range { return Some(false); }
+                if v.as_int() != Some(cur) { return Some(false); }
                 cur += step;
             }
             let still_in_range = (step > 0 && cur < stop) || (step < 0 && cur > stop);
@@ -2937,12 +2877,38 @@ pub fn mb_lt(a: MbValue, b: MbValue) -> MbValue {
 
 /// Ordering comparison: supports int, float, mixed int/float, lists, tuples, strings.
 fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
+    // functools.cmp_to_key key objects delegate ordering to the wrapped cmp.
+    if super::stdlib::functools_mod::is_cmp_to_key_obj(a) {
+        if let Some(r) = super::stdlib::functools_mod::mb_functools_cmp_to_key_richcmp(a, b, "lt") {
+            return r;
+        }
+    }
+    // functools.total_ordering: derive __lt__ from the class's seed op.
+    if super::stdlib::functools_mod::is_total_ordering_instance(a) {
+        if let Some(r) = super::stdlib::functools_mod::mb_functools_total_ordering_richcmp(a, b, "lt") {
+            return r;
+        }
+    }
     if is_array_handle_value(a) || is_array_handle_value(b) {
         return super::stdlib::array_mod::mb_array_lt_bool(a, b).unwrap_or(false);
     }
     // Int comparison
     if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
         return ai < bi;
+    }
+    // BigInt comparison: when either operand is a heap big integer (literals
+    // beyond the 48-bit inline range, e.g. 2**64), compare as arbitrary-
+    // precision integers. Without this, `1 < 2**64` and `2**64 > 2**63`
+    // fall through to `false`. Only engages when at least one side is a heap
+    // BigInt, so inline-int and float paths above are unaffected.
+    let a_is_big = unsafe { super::bigint_ops::extract_bigint(a).is_some() };
+    let b_is_big = unsafe { super::bigint_ops::extract_bigint(b).is_some() };
+    if a_is_big || b_is_big {
+        if let (Some(ab), Some(bb)) = unsafe {
+            (super::bigint_ops::to_bigint(a), super::bigint_ops::to_bigint(b))
+        } {
+            return ab < bb;
+        }
     }
     // Float/mixed numeric comparison
     let af = a.as_int().map(|i| i as f64).or(a.as_float());
@@ -2963,19 +2929,16 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
                 (ObjData::Str(a), ObjData::Str(b)) => a < b,
                 // bytes/bytearray lexicographic ordering (all four combos).
                 (ObjData::Bytes(x), ObjData::Bytes(y)) => x.as_slice() < y.as_slice(),
-                (ObjData::ByteArray(x), ObjData::ByteArray(y)) => {
-                    *x.read().unwrap() < *y.read().unwrap()
-                }
-                (ObjData::Bytes(x), ObjData::ByteArray(y)) => {
-                    x.as_slice() < y.read().unwrap().as_slice()
-                }
-                (ObjData::ByteArray(x), ObjData::Bytes(y)) => {
-                    x.read().unwrap().as_slice() < y.as_slice()
-                }
-                (
-                    ObjData::Instance { class_name: ca, .. },
-                    ObjData::Instance { class_name: cb, .. },
-                ) if ca == "datetime.datetime" && cb == "datetime.datetime" => {
+                (ObjData::ByteArray(x), ObjData::ByteArray(y)) =>
+                    *x.read().unwrap() < *y.read().unwrap(),
+                (ObjData::Bytes(x), ObjData::ByteArray(y)) =>
+                    x.as_slice() < y.read().unwrap().as_slice(),
+                (ObjData::ByteArray(x), ObjData::Bytes(y)) =>
+                    x.read().unwrap().as_slice() < y.as_slice(),
+                (ObjData::Instance { class_name: ca, .. },
+                 ObjData::Instance { class_name: cb, .. })
+                    if ca == "datetime.datetime" && cb == "datetime.datetime" =>
+                {
                     let na = super::stdlib::datetime_mod::instance_to_naive(a);
                     let nb = super::stdlib::datetime_mod::instance_to_naive(b);
                     match (na, nb) {
@@ -2990,9 +2953,7 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
                     if a_items.len() >= b_items.len() {
                         return false;
                     }
-                    a_items
-                        .iter()
-                        .all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
+                    a_items.iter().all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
                 }
                 // Instance: dispatch __lt__ dunder
                 (ObjData::Instance { class_name, .. }, _) => {
@@ -3025,12 +2986,8 @@ fn dispatch_richcmp_dunder(a: MbValue, b: MbValue, class_name: &str, dunder: &st
 /// Lexicographic less-than for MbValue sequences.
 pub fn seq_lt(a: &[MbValue], b: &[MbValue]) -> bool {
     for (x, y) in a.iter().zip(b.iter()) {
-        if mb_values_lt(*x, *y) {
-            return true;
-        }
-        if mb_values_lt(*y, *x) {
-            return false;
-        }
+        if mb_values_lt(*x, *y) { return true; }
+        if mb_values_lt(*y, *x) { return false; }
     }
     a.len() < b.len()
 }
@@ -3045,25 +3002,19 @@ pub fn mb_not(a: MbValue) -> MbValue {
 /// min(iterable) or min(a, b) — return the smallest value.
 pub fn mb_min(args: MbValue) -> MbValue {
     let items = extract_items(args);
-    if items.is_empty() {
-        return MbValue::none();
-    }
-    items
-        .into_iter()
-        .reduce(|a, b| if compare_values(a, b) { a } else { b })
-        .unwrap_or(MbValue::none())
+    if items.is_empty() { return MbValue::none(); }
+    items.into_iter().reduce(|a, b| {
+        if compare_values(a, b) { a } else { b }
+    }).unwrap_or(MbValue::none())
 }
 
 /// max(iterable) or max(a, b) — return the largest value.
 pub fn mb_max(args: MbValue) -> MbValue {
     let items = extract_items(args);
-    if items.is_empty() {
-        return MbValue::none();
-    }
-    items
-        .into_iter()
-        .reduce(|a, b| if compare_values(b, a) { a } else { b })
-        .unwrap_or(MbValue::none())
+    if items.is_empty() { return MbValue::none(); }
+    items.into_iter().reduce(|a, b| {
+        if compare_values(b, a) { a } else { b }
+    }).unwrap_or(MbValue::none())
 }
 
 /// sum(iterable) — sum all numeric values.
@@ -3083,25 +3034,19 @@ pub fn mb_sum(args: MbValue) -> MbValue {
     let mut is_float = false;
     let mut ftotal: f64 = 0.0;
     for item in &items {
-        if let Some(i) = item.as_int() {
-            if is_float {
-                ftotal += i as f64;
-            } else {
-                total += i;
-            }
+        // bool is a subclass of int in Python, so sum([True, True]) == 2.
+        // NaN-boxed bools are distinct from ints, so coerce them first.
+        if let Some(b) = item.as_bool() {
+            let i = b as i64;
+            if is_float { ftotal += i as f64; } else { total += i; }
+        } else if let Some(i) = item.as_int() {
+            if is_float { ftotal += i as f64; } else { total += i; }
         } else if let Some(f) = item.as_float() {
-            if !is_float {
-                ftotal = total as f64;
-                is_float = true;
-            }
+            if !is_float { ftotal = total as f64; is_float = true; }
             ftotal += f;
         }
     }
-    if is_float {
-        MbValue::from_float(ftotal)
-    } else {
-        MbValue::from_int(total)
-    }
+    if is_float { MbValue::from_float(ftotal) } else { MbValue::from_int(total) }
 }
 
 /// sorted(iterable, reverse=False) — return a new sorted list.
@@ -3186,9 +3131,7 @@ fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
                 (ObjData::Tuple(ref ta), ObjData::Tuple(ref tb)) => {
                     for (ea, eb) in ta.iter().zip(tb.iter()) {
                         let cmp = mb_value_cmp(*ea, *eb);
-                        if cmp != std::cmp::Ordering::Equal {
-                            return cmp;
-                        }
+                        if cmp != std::cmp::Ordering::Equal { return cmp; }
                     }
                     return ta.len().cmp(&tb.len());
                 }
@@ -3197,21 +3140,15 @@ fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
                     let lb = lb.read().unwrap();
                     for (ea, eb) in la.iter().zip(lb.iter()) {
                         let cmp = mb_value_cmp(*ea, *eb);
-                        if cmp != std::cmp::Ordering::Equal {
-                            return cmp;
-                        }
+                        if cmp != std::cmp::Ordering::Equal { return cmp; }
                     }
                     return la.len().cmp(&lb.len());
                 }
                 (ObjData::Instance { .. }, _) | (_, ObjData::Instance { .. }) => {
                     // Dispatch __lt__ in both directions so sorted()/list.sort()
                     // on user-class values without a key= respects rich comparison.
-                    if mb_values_lt(a, b) {
-                        return std::cmp::Ordering::Less;
-                    }
-                    if mb_values_lt(b, a) {
-                        return std::cmp::Ordering::Greater;
-                    }
+                    if mb_values_lt(a, b) { return std::cmp::Ordering::Less; }
+                    if mb_values_lt(b, a) { return std::cmp::Ordering::Greater; }
                     return std::cmp::Ordering::Equal;
                 }
                 _ => {}
@@ -3232,17 +3169,13 @@ pub fn extract_items(val: MbValue) -> Vec<MbValue> {
                 ObjData::FrozenSet(items) => return items.clone(),
                 ObjData::Str(s) => {
                     // Iterate over characters like Python does: "abc" → ['a', 'b', 'c']
-                    return s
-                        .chars()
+                    return s.chars()
                         .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
                         .collect();
                 }
                 ObjData::Dict(ref lock) => {
                     // Iterating a dict yields its keys.
-                    return lock
-                        .read()
-                        .unwrap()
-                        .keys()
+                    return lock.read().unwrap().keys()
                         .map(|k| super::dict_ops::dict_key_to_mbvalue(k))
                         .collect();
                 }
@@ -3298,15 +3231,10 @@ pub fn mb_repr(val: MbValue) -> MbValue {
             let canon_val = super::stdlib::uuid_mod::mb_uuid_str(val);
             let canon = if let Some(ptr) = canon_val.as_ptr() {
                 unsafe {
-                    if let ObjData::Str(ref s) = (*ptr).data {
-                        s.clone()
-                    } else {
-                        String::new()
-                    }
+                    if let ObjData::Str(ref s) = (*ptr).data { s.clone() }
+                    else { String::new() }
                 }
-            } else {
-                String::new()
-            };
+            } else { String::new() };
             return MbValue::from_ptr(MbObject::new_str(format!("UUID('{canon}')")));
         }
         format!("{i}")
@@ -3327,11 +3255,8 @@ pub fn mb_repr(val: MbValue) -> MbValue {
         let name_val = super::closure::mb_func_get_name(val);
         let name = if let Some(ptr) = name_val.as_ptr() {
             unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    s.clone()
-                } else {
-                    "<lambda>".to_string()
-                }
+                if let ObjData::Str(ref s) = (*ptr).data { s.clone() }
+                else { "<lambda>".to_string() }
             }
         } else {
             "<lambda>".to_string()
@@ -3353,7 +3278,7 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                         match c {
                             '\\' => escaped.push_str("\\\\"),
                             '\'' if !use_double => escaped.push_str("\\'"),
-                            '"' if use_double => escaped.push_str("\\\""),
+                            '"'  if use_double => escaped.push_str("\\\""),
                             '\n' => escaped.push_str("\\n"),
                             '\r' => escaped.push_str("\\r"),
                             '\t' => escaped.push_str("\\t"),
@@ -3381,12 +3306,17 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                     let data = lock.read().unwrap();
                     format!("bytearray(b{})", format_bytes_inner(&data))
                 }
-                ObjData::Instance {
-                    class_name,
-                    ref fields,
-                } => {
+                ObjData::Instance { class_name, ref fields } => {
                     if class_name == "UnionType" {
                         return MbValue::from_ptr(MbObject::new_str(union_type_repr(val)));
+                    }
+                    // weakref.ref CPython-style repr: `<weakref at 0x..; to
+                    // 'CLASS' at 0x..>`, naming the referent's class (gh-99184).
+                    if class_name == "ReferenceType" {
+                        let r = super::stdlib::weakref_mod::reference_repr(val);
+                        if !r.is_none() {
+                            return r;
+                        }
                     }
                     // Counter has its own CPython-style repr: sort by count
                     // descending, ties by insertion order. (#1638)
@@ -3452,19 +3382,16 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             }
                             "None".to_string()
                         };
-                        return MbValue::from_ptr(MbObject::new_str(format!(
-                            "slice({}, {}, {})",
-                            part(s),
-                            part(e),
-                            part(st)
-                        )));
+                        return MbValue::from_ptr(MbObject::new_str(
+                            format!("slice({}, {}, {})", part(s), part(e), part(st))
+                        ));
                     }
                     // Exception classes default to `ClassName(repr(args[0]))`
                     // when no custom __repr__ is defined — mirrors CPython's
                     // BaseException.__repr__.
-                    let is_exception_class =
-                        super::exception::is_subclass_of(class_name, "Exception")
-                            || class_name == "BaseException";
+                    let is_exception_class = super::exception::is_subclass_of(
+                        class_name, "Exception",
+                    ) || class_name == "BaseException";
                     // __repr__ dunder dispatch
                     let repr_method = super::class::lookup_method(class_name, "__repr__");
                     if !repr_method.is_none() {
@@ -3480,32 +3407,20 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                         // with a direct self-reference shown as `namespace(...)`.
                         let self_ptr = val.as_ptr();
                         let guard = fields.read().unwrap();
-                        let parts: Vec<String> = guard
-                            .iter()
-                            .map(|(k, v)| {
-                                if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
-                                    format!("{k}=namespace(...)")
-                                } else {
-                                    let r = mb_repr(*v);
-                                    let rs = r
-                                        .as_ptr()
-                                        .and_then(|p| {
-                                            if let ObjData::Str(ref s) = (*p).data {
-                                                Some(s.clone())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or_default();
-                                    format!("{k}={rs}")
-                                }
-                            })
-                            .collect();
+                        let parts: Vec<String> = guard.iter().map(|(k, v)| {
+                            if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
+                                format!("{k}=namespace(...)")
+                            } else {
+                                let r = mb_repr(*v);
+                                let rs = r.as_ptr().and_then(|p| {
+                                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                                }).unwrap_or_default();
+                                format!("{k}={rs}")
+                            }
+                        }).collect();
                         drop(guard);
-                        return MbValue::from_ptr(MbObject::new_str(format!(
-                            "namespace({})",
-                            parts.join(", ")
-                        )));
+                        return MbValue::from_ptr(MbObject::new_str(
+                            format!("namespace({})", parts.join(", "))));
                     }
                     if is_exception_class {
                         // CPython repr: ClassName(repr(arg0), repr(arg1), ...)
@@ -3516,51 +3431,48 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                         let args_val = guard.get("args").copied();
                         let msg_val = guard.get("message").copied();
                         drop(guard);
-                        let arg_items: Option<Vec<MbValue>> =
-                            args_val.and_then(|v| v.as_ptr()).and_then(|p| {
+                        let arg_items: Option<Vec<MbValue>> = args_val
+                            .and_then(|v| v.as_ptr())
+                            .and_then(|p| {
                                 if let ObjData::Tuple(ref items) = (*p).data {
                                     Some(items.clone())
-                                } else {
-                                    None
-                                }
+                                } else { None }
                             });
                         if let Some(items) = arg_items {
                             if items.is_empty() {
-                                return MbValue::from_ptr(MbObject::new_str(format!(
-                                    "{class_name}()"
-                                )));
+                                return MbValue::from_ptr(MbObject::new_str(
+                                    format!("{class_name}()"),
+                                ));
                             }
-                            let parts: Vec<String> = items
-                                .iter()
-                                .map(|v| {
-                                    let r = mb_repr(*v);
-                                    r.as_ptr()
-                                        .and_then(|p| {
-                                            if let ObjData::Str(ref s) = (*p).data {
-                                                Some(s.clone())
-                                            } else {
-                                                None
-                                            }
-                                        })
-                                        .unwrap_or_else(|| "None".to_string())
-                                })
-                                .collect();
-                            return MbValue::from_ptr(MbObject::new_str(format!(
-                                "{class_name}({})",
-                                parts.join(", ")
-                            )));
+                            let parts: Vec<String> = items.iter().map(|v| {
+                                let r = mb_repr(*v);
+                                r.as_ptr().and_then(|p| {
+                                    if let ObjData::Str(ref s) = (*p).data {
+                                        Some(s.clone())
+                                    } else { None }
+                                }).unwrap_or_else(|| "None".to_string())
+                            }).collect();
+                            return MbValue::from_ptr(MbObject::new_str(
+                                format!("{class_name}({})", parts.join(", ")),
+                            ));
                         }
                         if let Some(msg) = msg_val {
                             let inner = mb_repr(msg);
                             if let Some(ptr) = inner.as_ptr() {
                                 if let ObjData::Str(ref s) = (*ptr).data {
-                                    return MbValue::from_ptr(MbObject::new_str(format!(
-                                        "{class_name}({s})"
-                                    )));
+                                    return MbValue::from_ptr(MbObject::new_str(
+                                        format!("{class_name}({s})"),
+                                    ));
                                 }
                             }
                         }
-                        return MbValue::from_ptr(MbObject::new_str(format!("{class_name}()")));
+                        return MbValue::from_ptr(MbObject::new_str(
+                            format!("{class_name}()"),
+                        ));
+                    }
+                    // functools.partial repr: `functools.partial(func, a, b, k=v)`.
+                    if class_name == "functools.partial" {
+                        return super::stdlib::functools_mod::mb_functools_partial_repr(val);
                     }
                     super::string_ops::value_to_string(val)
                 }
@@ -3571,6 +3483,33 @@ pub fn mb_repr(val: MbValue) -> MbValue {
         String::new()
     };
     MbValue::from_ptr(MbObject::new_str(s))
+}
+
+/// Order-independent hash of a frozenset's elements, mirroring CPython's
+/// `frozenset_hash` (Objects/setobject.c). Each element hash is scrambled
+/// individually and folded in with XOR — which is commutative, so two
+/// frozensets with equal elements hash equal regardless of insertion order.
+/// The previous running-multiply accumulator was order-dependent
+/// (`hash(frozenset([1,2,3])) != hash(frozenset([3,2,1]))`), which broke
+/// frozenset-keyed dict lookups and hash-quality invariants. Computed in u64
+/// then masked to Mamba's 48-bit signed int payload; XOR survives masking so
+/// order-independence is preserved.
+fn frozenset_hash(items: &[MbValue]) -> i64 {
+    // CPython's per-element bit-shuffle: spreads low-entropy element hashes.
+    fn shuffle_bits(h: u64) -> u64 {
+        ((h ^ 89_869_747_u64) ^ (h << 16)).wrapping_mul(3_644_798_167_u64)
+    }
+    let mut hash: u64 = 0;
+    for item in items {
+        let eh = mb_hash(*item).as_int().unwrap_or(0) as u64;
+        hash ^= shuffle_bits(eh);
+    }
+    // Fold in the cardinality and finalize (CPython's avalanche tail).
+    hash ^= ((items.len() as u64).wrapping_add(1)).wrapping_mul(1_927_868_237_u64);
+    hash ^= (hash >> 11) ^ (hash >> 25);
+    hash = hash.wrapping_mul(69_069_u64).wrapping_add(907_133_923_u64);
+    // Mask to the 48-bit signed payload Mamba ints carry.
+    (hash & 0x0000_7FFF_FFFF_FFFF) as i64
 }
 
 /// hash(value) — return hash of a value.
@@ -3604,20 +3543,19 @@ pub fn mb_hash(val: MbValue) -> MbValue {
             match &(*ptr).data {
                 ObjData::Str(_) => super::string_ops::mb_str_hash(val),
                 ObjData::Tuple(_) => super::tuple_ops::mb_tuple_hash(val),
-                ObjData::FrozenSet(items) => {
-                    // REQ: R3 — content-based hash so equal frozensets hash equal.
-                    // XOR is commutative (order-independent). Multiply-then-XOR
-                    // with a prime avoids the collisions that plain XOR causes
-                    // (e.g. frozenset({1,2}) == frozenset({3}) via 1^2==3).
-                    const PRIME: i64 = 0x517C_C1B7_2722_0A95_u64 as i64;
-                    let mut acc: i64 = items.len() as i64;
-                    for item in items {
-                        let h = mb_hash(*item).as_int().unwrap_or(0);
-                        acc = acc.wrapping_mul(PRIME) ^ h;
-                    }
-                    MbValue::from_int(acc & 0x0000_7FFF_FFFF_FFFF)
-                }
+                ObjData::FrozenSet(items) => MbValue::from_int(frozenset_hash(items)),
                 ObjData::Instance { class_name, .. } => {
+                    // functools.cmp_to_key key objects set __hash__ = None and are
+                    // therefore unhashable (CPython raises TypeError).
+                    if class_name == "functools.cmp_to_key_obj" {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "unhashable type: 'functools.KeyWrapper'".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
+                    }
                     // __hash__ dunder dispatch
                     let hash_method = super::class::lookup_method(class_name, "__hash__");
                     if !hash_method.is_none() {
@@ -3661,12 +3599,8 @@ pub fn mb_input(prompt: MbValue) -> MbValue {
     match std::io::stdin().read_line(&mut line) {
         Ok(_) => {
             // Strip trailing newline
-            if line.ends_with('\n') {
-                line.pop();
-            }
-            if line.ends_with('\r') {
-                line.pop();
-            }
+            if line.ends_with('\n') { line.pop(); }
+            if line.ends_with('\r') { line.pop(); }
             MbValue::from_ptr(MbObject::new_str(line))
         }
         Err(_) => MbValue::from_ptr(MbObject::new_str(String::new())),
@@ -3702,11 +3636,7 @@ pub fn mb_ord(val: MbValue) -> MbValue {
 /// hex(x) — return hex string representation of an integer.
 pub fn mb_hex(val: MbValue) -> MbValue {
     if let Some(i) = val.as_int() {
-        let s = if i < 0 {
-            format!("-0x{:x}", -i)
-        } else {
-            format!("0x{:x}", i)
-        };
+        let s = if i < 0 { format!("-0x{:x}", -i) } else { format!("0x{:x}", i) };
         MbValue::from_ptr(MbObject::new_str(s))
     } else {
         MbValue::none()
@@ -3716,11 +3646,7 @@ pub fn mb_hex(val: MbValue) -> MbValue {
 /// oct(x) — return octal string representation of an integer.
 pub fn mb_oct(val: MbValue) -> MbValue {
     if let Some(i) = val.as_int() {
-        let s = if i < 0 {
-            format!("-0o{:o}", -i)
-        } else {
-            format!("0o{:o}", i)
-        };
+        let s = if i < 0 { format!("-0o{:o}", -i) } else { format!("0o{:o}", i) };
         MbValue::from_ptr(MbObject::new_str(s))
     } else {
         MbValue::none()
@@ -3730,11 +3656,7 @@ pub fn mb_oct(val: MbValue) -> MbValue {
 /// bin(x) — return binary string representation of an integer.
 pub fn mb_bin(val: MbValue) -> MbValue {
     if let Some(i) = val.as_int() {
-        let s = if i < 0 {
-            format!("-0b{:b}", -i)
-        } else {
-            format!("0b{:b}", i)
-        };
+        let s = if i < 0 { format!("-0b{:b}", -i) } else { format!("0b{:b}", i) };
         MbValue::from_ptr(MbObject::new_str(s))
     } else {
         MbValue::none()
@@ -3747,7 +3669,9 @@ pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
     // Either operand being `ObjData::Complex` promotes the whole op to
     // complex. (#1256 sub-priority 3 — complex arithmetic)
     if is_complex_obj(base) || is_complex_obj(exp) {
-        if let (Some((br, bi)), Some((er, ei))) = (as_complex_pair(base), as_complex_pair(exp)) {
+        if let (Some((br, bi)), Some((er, ei))) =
+            (as_complex_pair(base), as_complex_pair(exp))
+        {
             // Integer exponent on a complex base — exact via repeated
             // multiplication (avoids polar-form precision loss for the
             // common `c**2`, `c**3` cases).
@@ -3826,24 +3750,18 @@ pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
 /// Euclidean algorithm, returning `x` in `[0, m)` such that `a*x ≡ 1 (mod m)`.
 /// Returns `None` if `gcd(a, m) != 1` (CPython raises `ValueError` here).
 fn mod_inverse_i128(a: i128, m: i128) -> Option<i128> {
-    if m == 0 {
-        return None;
-    }
+    if m == 0 { return None; }
     let m_abs = m.abs();
     let (mut old_r, mut r) = (a.rem_euclid(m_abs), m_abs);
     let (mut old_s, mut s) = (1i128, 0i128);
     while r != 0 {
         let q = old_r / r;
         let nr = old_r - q * r;
-        old_r = r;
-        r = nr;
+        old_r = r; r = nr;
         let ns = old_s - q * s;
-        old_s = s;
-        s = ns;
+        old_s = s; s = ns;
     }
-    if old_r != 1 {
-        return None;
-    }
+    if old_r != 1 { return None; }
     Some(old_s.rem_euclid(m_abs))
 }
 
@@ -3886,9 +3804,7 @@ pub fn mb_int_base(val: MbValue, base: MbValue) -> MbValue {
     let Some(base_int) = base.as_int() else {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "int() base must be an integer".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("int() base must be an integer".to_string())),
         );
         return MbValue::none();
     };
@@ -3898,7 +3814,11 @@ pub fn mb_int_base(val: MbValue, base: MbValue) -> MbValue {
             if let ObjData::Str(ref s) = (*ptr).data {
                 let full = s.clone();
                 let trimmed = s.trim();
-                let try_parse = |t: &str| -> Option<i64> {
+                // Returns (sign, effective_base, stripped_digits) on a valid
+                // parse so the caller can build an inline i64 or, on overflow,
+                // a heap BigInt. Validation of digits is deferred to the
+                // numeric conversion step (i64/BigInt both reject bad digits).
+                let try_parse = |t: &str| -> Option<(i64, u32, String)> {
                     // Pull off optional sign first so the radix prefix
                     // detection sees `0x`/`0o`/`0b` rather than `-0x`.
                     let (sign, rest) = match t.as_bytes().first() {
@@ -3911,27 +3831,18 @@ pub fn mb_int_base(val: MbValue, base: MbValue) -> MbValue {
                     // Without a prefix the value cannot have leading zeros
                     // (CPython raises on `int("010", 0)`); we replicate that.
                     let (effective_base, digits, prefix_stripped) = if base_num == 0 {
-                        if let Some(d) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X"))
-                        {
+                        if let Some(d) = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")) {
                             (16u32, d, true)
-                        } else if let Some(d) =
-                            rest.strip_prefix("0o").or_else(|| rest.strip_prefix("0O"))
-                        {
+                        } else if let Some(d) = rest.strip_prefix("0o").or_else(|| rest.strip_prefix("0O")) {
                             (8, d, true)
-                        } else if let Some(d) =
-                            rest.strip_prefix("0b").or_else(|| rest.strip_prefix("0B"))
-                        {
+                        } else if let Some(d) = rest.strip_prefix("0b").or_else(|| rest.strip_prefix("0B")) {
                             (2, d, true)
                         } else {
                             // Decimal: forbid leading zeros except the literal
                             // `0` (or `0_0`, etc.) — match CPython.
                             let bare = rest.trim_start_matches('+');
                             let nonzero = bare.trim_start_matches('0').trim_start_matches('_');
-                            if !bare.is_empty()
-                                && bare != "0"
-                                && nonzero != bare
-                                && !nonzero.is_empty()
-                            {
+                            if !bare.is_empty() && bare != "0" && nonzero != bare && !nonzero.is_empty() {
                                 return None;
                             }
                             (10, rest, false)
@@ -3958,11 +3869,27 @@ pub fn mb_int_base(val: MbValue, base: MbValue) -> MbValue {
                     // after a radix prefix (e.g. `0x_FF`). Otherwise no
                     // leading/trailing/consecutive underscores.
                     let stripped = strip_pep515_underscores(digits, prefix_stripped)?;
-                    let mag = i64::from_str_radix(&stripped, effective_base).ok()?;
-                    Some(sign * mag)
+                    if stripped.is_empty() {
+                        return None;
+                    }
+                    Some((sign, effective_base, stripped))
                 };
-                if let Some(i) = try_parse(trimmed) {
-                    return MbValue::from_int(i);
+                if let Some((sign, effective_base, stripped)) = try_parse(trimmed) {
+                    // Fast path: fits in i64 inline range.
+                    if let Ok(mag) = i64::from_str_radix(&stripped, effective_base) {
+                        if super::bigint_ops::fits_inline(sign * mag) {
+                            return MbValue::from_int(sign * mag);
+                        }
+                    }
+                    // Overflow path: parse as an arbitrary-precision BigInt so
+                    // values beyond the 48-bit inline range (e.g. a 128-bit
+                    // `int(uuid.hex, 16)`) round-trip exactly.
+                    if let Some(big) = num_bigint::BigInt::parse_bytes(
+                        stripped.as_bytes(), effective_base,
+                    ) {
+                        let signed = if sign < 0 { -big } else { big };
+                        return super::bigint_ops::bigint_from_big(signed);
+                    }
                 }
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
@@ -3984,11 +3911,7 @@ pub fn mb_print_kwargs(args_list: MbValue, sep: MbValue, end: MbValue) -> MbValu
         " ".to_string()
     } else if let Some(ptr) = sep.as_ptr() {
         unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                s.clone()
-            } else {
-                " ".to_string()
-            }
+            if let ObjData::Str(ref s) = (*ptr).data { s.clone() } else { " ".to_string() }
         }
     } else {
         " ".to_string()
@@ -3998,11 +3921,7 @@ pub fn mb_print_kwargs(args_list: MbValue, sep: MbValue, end: MbValue) -> MbValu
         "\n".to_string()
     } else if let Some(ptr) = end.as_ptr() {
         unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                s.clone()
-            } else {
-                "\n".to_string()
-            }
+            if let ObjData::Str(ref s) = (*ptr).data { s.clone() } else { "\n".to_string() }
         }
     } else {
         "\n".to_string()
@@ -4013,9 +3932,7 @@ pub fn mb_print_kwargs(args_list: MbValue, sep: MbValue, end: MbValue) -> MbValu
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        mb_out!("{}", sep_str);
-                    }
+                    if i > 0 { mb_out!("{}", sep_str); }
                     print_value_str(*item);
                 }
                 mb_out!("{}", end_str);
@@ -4048,39 +3965,21 @@ fn is_stderr_file(file: MbValue) -> bool {
 /// `print(*args, sep=, end=, file=)` — like mb_print_kwargs but honors the
 /// `file=` kwarg. Routes to stderr when `file is sys.stderr`; all other files
 /// (None, sys.stdout, unrecognized) keep the existing stdout behavior.
-pub fn mb_print_kwargs_file(
-    args_list: MbValue,
-    sep: MbValue,
-    end: MbValue,
-    file: MbValue,
-) -> MbValue {
+pub fn mb_print_kwargs_file(args_list: MbValue, sep: MbValue, end: MbValue, file: MbValue) -> MbValue {
     if !is_stderr_file(file) {
         // stdout — unchanged behavior.
         return mb_print_kwargs(args_list, sep, end);
     }
     // stderr — build the line via str() of each item and write to stderr.
-    let sep_str = sep
-        .as_ptr()
-        .and_then(|p| unsafe {
-            if let ObjData::Str(ref s) = (*p).data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| " ".to_string());
+    let sep_str = sep.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+    }).unwrap_or_else(|| " ".to_string());
     let end_str = if end.is_none() {
         "\n".to_string()
     } else {
-        end.as_ptr()
-            .and_then(|p| unsafe {
-                if let ObjData::Str(ref s) = (*p).data {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "\n".to_string())
+        end.as_ptr().and_then(|p| unsafe {
+            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+        }).unwrap_or_else(|| "\n".to_string())
     };
     let mut line = String::new();
     if let Some(ptr) = args_list.as_ptr() {
@@ -4088,20 +3987,20 @@ pub fn mb_print_kwargs_file(
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 for (i, item) in items.iter().enumerate() {
-                    if i > 0 {
-                        line.push_str(&sep_str);
-                    }
+                    if i > 0 { line.push_str(&sep_str); }
                     let s = mb_str(*item);
                     if let Some(sp) = s.as_ptr() {
-                        if let ObjData::Str(ref st) = (*sp).data {
-                            line.push_str(st);
-                        }
+                        if let ObjData::Str(ref st) = (*sp).data { line.push_str(st); }
                     }
                 }
             }
         }
     }
     line.push_str(&end_str);
+    // contextlib.redirect_stderr: route into the active redirect target.
+    if super::output::try_write_stderr_redirect(&line) {
+        return MbValue::none();
+    }
     eprint!("{line}");
     MbValue::none()
 }
@@ -4117,58 +4016,47 @@ pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> Mb
         let key_fn_addr = resolve_callable(key);
         let named_key = if key_fn_addr.is_none() {
             key.as_ptr().and_then(|ptr| unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    Some(s.clone())
-                } else {
-                    None
-                }
+                if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
             })
         } else {
             None
         };
 
-        let mut indexed: Vec<(MbValue, MbValue)> = items
-            .iter()
-            .map(|&item| {
-                let k = if let Some(addr) = key_fn_addr {
-                    let _ = addr;
-                    super::class::mb_call1_val(key, item)
-                } else if let Some(ref name) = named_key {
-                    call_named_callable(name, item).unwrap_or(item)
-                } else if key.as_ptr().is_some() {
-                    // Instance-based callables (unbound method wrappers,
-                    // functools.partial, @dataclass callables, __call__ protocol,
-                    // ...) — route through the dynamic 1-arg dispatcher.
-                    super::class::mb_call1_val(key, item)
-                } else {
-                    item
-                };
-                (item, k)
-            })
-            .collect();
+        let mut indexed: Vec<(MbValue, MbValue)> = items.iter().map(|&item| {
+            let k = if let Some(addr) = key_fn_addr {
+                let _ = addr;
+                super::class::mb_call1_val(key, item)
+            } else if let Some(ref name) = named_key {
+                call_named_callable(name, item).unwrap_or(item)
+            } else if key.as_ptr().is_some() {
+                // Instance-based callables (unbound method wrappers,
+                // functools.partial, @dataclass callables, __call__ protocol,
+                // ...) — route through the dynamic 1-arg dispatcher.
+                super::class::mb_call1_val(key, item)
+            } else {
+                item
+            };
+            (item, k)
+        }).collect();
 
         indexed.sort_by(|a, b| mb_value_cmp(a.1, b.1));
-        if do_reverse {
-            indexed.reverse();
-        }
+        if do_reverse { indexed.reverse(); }
         let sorted_items: Vec<MbValue> = indexed.into_iter().map(|(v, _)| v).collect();
         // Items borrowed from source container — retain.
         MbValue::from_ptr(MbObject::new_list_borrowed(sorted_items))
     } else {
         let mut sorted_items = items;
         // Type-specialized sort for no-key case (same logic as mb_sorted).
-        if !sorted_items.is_empty()
-            && sorted_items[0].is_int()
+        if !sorted_items.is_empty() && sorted_items[0].is_int()
             && sorted_items.iter().all(|v| v.is_int())
         {
-            sorted_items
-                .sort_unstable_by(|a, b| a.as_int().unwrap_or(0).cmp(&b.as_int().unwrap_or(0)));
+            sorted_items.sort_unstable_by(|a, b| {
+                a.as_int().unwrap_or(0).cmp(&b.as_int().unwrap_or(0))
+            });
         } else {
             sorted_items.sort_by(|a, b| mb_value_cmp(*a, *b));
         }
-        if do_reverse {
-            sorted_items.reverse();
-        }
+        if do_reverse { sorted_items.reverse(); }
         // Items borrowed from source container — retain.
         MbValue::from_ptr(MbObject::new_list_borrowed(sorted_items))
     }
@@ -4178,22 +4066,14 @@ pub fn mb_sorted_kwargs(iterable: MbValue, key: MbValue, reverse: MbValue) -> Mb
 pub fn mb_min_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
     let items = extract_items(args);
     if items.is_empty() {
-        return if default.is_none() {
-            MbValue::none()
-        } else {
-            default
-        };
+        return if default.is_none() { MbValue::none() } else { default };
     }
     let has_key = !key.is_none();
     let result = if has_key {
         let key_fn_addr = resolve_callable(key);
         let named_key = if key_fn_addr.is_none() {
             key.as_ptr().and_then(|ptr| unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    Some(s.clone())
-                } else {
-                    None
-                }
+                if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
             })
         } else {
             None
@@ -4208,27 +4088,17 @@ pub fn mb_min_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
                 item
             }
         };
-        items
-            .into_iter()
-            .reduce(|a, b| {
-                if compare_values(apply_key(a), apply_key(b)) {
-                    a
-                } else {
-                    b
-                }
-            })
-            .unwrap_or(default)
+        items.into_iter().reduce(|a, b| {
+            if compare_values(apply_key(a), apply_key(b)) { a } else { b }
+        }).unwrap_or(default)
     } else {
-        items
-            .into_iter()
-            .reduce(|a, b| if compare_values(a, b) { a } else { b })
-            .unwrap_or(default)
+        items.into_iter().reduce(|a, b| {
+            if compare_values(a, b) { a } else { b }
+        }).unwrap_or(default)
     };
     // Honor NEW-contract: returned value must be independently owned —
     // the iterable still holds its own ref, so retain on the way out.
-    unsafe {
-        super::rc::retain_if_ptr(result);
-    }
+    unsafe { super::rc::retain_if_ptr(result); }
     result
 }
 
@@ -4236,22 +4106,14 @@ pub fn mb_min_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
 pub fn mb_max_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
     let items = extract_items(args);
     if items.is_empty() {
-        return if default.is_none() {
-            MbValue::none()
-        } else {
-            default
-        };
+        return if default.is_none() { MbValue::none() } else { default };
     }
     let has_key = !key.is_none();
     let result = if has_key {
         let key_fn_addr = resolve_callable(key);
         let named_key = if key_fn_addr.is_none() {
             key.as_ptr().and_then(|ptr| unsafe {
-                if let ObjData::Str(ref s) = (*ptr).data {
-                    Some(s.clone())
-                } else {
-                    None
-                }
+                if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
             })
         } else {
             None
@@ -4266,25 +4128,15 @@ pub fn mb_max_kwargs(args: MbValue, key: MbValue, default: MbValue) -> MbValue {
                 item
             }
         };
-        items
-            .into_iter()
-            .reduce(|a, b| {
-                if compare_values(apply_key(b), apply_key(a)) {
-                    a
-                } else {
-                    b
-                }
-            })
-            .unwrap_or(default)
+        items.into_iter().reduce(|a, b| {
+            if compare_values(apply_key(b), apply_key(a)) { a } else { b }
+        }).unwrap_or(default)
     } else {
-        items
-            .into_iter()
-            .reduce(|a, b| if compare_values(b, a) { a } else { b })
-            .unwrap_or(default)
+        items.into_iter().reduce(|a, b| {
+            if compare_values(b, a) { a } else { b }
+        }).unwrap_or(default)
     };
-    unsafe {
-        super::rc::retain_if_ptr(result);
-    }
+    unsafe { super::rc::retain_if_ptr(result); }
     result
 }
 
@@ -4331,11 +4183,7 @@ fn bankers_round(f: f64) -> f64 {
     let frac = f - floor;
     if frac == 0.5 {
         // Exactly halfway: round to nearest even integer.
-        if (floor as i64) % 2 == 0 {
-            floor
-        } else {
-            floor + 1.0
-        }
+        if (floor as i64) % 2 == 0 { floor } else { floor + 1.0 }
     } else {
         f.round()
     }
@@ -4375,9 +4223,7 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
     } else {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "type str doesn't define __round__ method".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("type str doesn't define __round__ method".to_string())),
         );
         MbValue::none()
     }
@@ -4442,9 +4288,7 @@ pub fn mb_format(val: MbValue, spec: MbValue) -> MbValue {
     if !matches!(spec.as_ptr(), Some(ptr) if unsafe { matches!(&(*ptr).data, ObjData::Str(_)) }) {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "format() argument 2 must be str".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("format() argument 2 must be str".to_string())),
         );
         return MbValue::none();
     }
@@ -4466,7 +4310,16 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
                     if class_name == "__unbound_method__" {
                         return MbValue::from_bool(true);
                     }
-                    if class_name == "collections.abc._register_bound" {
+                    // A `functools.partial` (and partial-shaped bound methods,
+                    // e.g. the bound `Struct.pack` / `Struct.unpack` methods)
+                    // is callable: `mb_call_spread` knows how to prepend the
+                    // bound args and dispatch the wrapped func.
+                    if class_name == "functools.partial" {
+                        return MbValue::from_bool(true);
+                    }
+                    if class_name == "collections.abc._register_bound"
+                        || class_name == "abc._user_register_bound"
+                    {
                         return MbValue::from_bool(true);
                     }
                     // A type object (the value bound to a class name like `C`
@@ -4489,39 +4342,13 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
                     // as callable type constructors at runtime.
                     if matches!(
                         s.as_str(),
-                        "int"
-                            | "str"
-                            | "float"
-                            | "bool"
-                            | "list"
-                            | "dict"
-                            | "set"
-                            | "frozenset"
-                            | "tuple"
-                            | "bytes"
-                            | "bytearray"
-                            | "complex"
-                            | "type"
-                            | "object"
-                            | "range"
-                            | "enumerate"
-                            | "zip"
-                            | "map"
-                            | "filter"
-                            | "iter"
-                            | "reversed"
-                            | "abs"
-                            | "len"
-                            | "repr"
-                            | "chr"
-                            | "ord"
-                            | "print"
-                            | "sorted"
-                            | "sum"
-                            | "min"
-                            | "max"
-                            | "any"
-                            | "all"
+                        "int" | "str" | "float" | "bool" | "list" | "dict"
+                            | "set" | "frozenset" | "tuple" | "bytes"
+                            | "bytearray" | "complex" | "type" | "object"
+                            | "range" | "enumerate" | "zip" | "map" | "filter"
+                            | "iter" | "reversed" | "abs" | "len" | "repr"
+                            | "chr" | "ord" | "print" | "sorted" | "sum"
+                            | "min" | "max" | "any" | "all"
                     ) {
                         return MbValue::from_bool(true);
                     }
@@ -4629,17 +4456,13 @@ pub fn mb_sum_with_start(iterable: MbValue, start: MbValue) -> MbValue {
 fn resolve_callable(func: MbValue) -> Option<usize> {
     // Direct function pointer (TAG_FUNC = 4)
     if let Some(addr) = func.as_func() {
-        if addr > 4096 {
-            return Some(addr);
-        }
+        if addr > 4096 { return Some(addr); }
     }
     // Closure handle (TAG_INT): look up embedded function pointer
     if func.as_int().is_some() {
         let fn_val = super::closure::mb_closure_get_func(func);
         if let Some(addr) = fn_val.as_func() {
-            if addr > 4096 {
-                return Some(addr);
-            }
+            if addr > 4096 { return Some(addr); }
         }
     }
     None
@@ -4650,15 +4473,15 @@ fn resolve_callable(func: MbValue) -> Option<usize> {
 /// Used by mb_map/mb_filter when func is a string type-name (e.g. "str", "abs").
 fn call_named_callable(name: &str, item: MbValue) -> Option<MbValue> {
     match name {
-        "str" => Some(mb_str(item)),
-        "int" => Some(mb_int(item)),
+        "str"   => Some(mb_str(item)),
+        "int"   => Some(mb_int(item)),
         "float" => Some(mb_float(item)),
-        "bool" => Some(mb_bool(item)),
-        "abs" => Some(mb_abs(item)),
-        "len" => Some(mb_len(item)),
-        "repr" => Some(mb_repr(item)),
-        "chr" => Some(mb_chr(item)),
-        "ord" => Some(mb_ord(item)),
+        "bool"  => Some(mb_bool(item)),
+        "abs"   => Some(mb_abs(item)),
+        "len"   => Some(mb_len(item)),
+        "repr"  => Some(mb_repr(item)),
+        "chr"   => Some(mb_chr(item)),
+        "ord"   => Some(mb_ord(item)),
         _ => None,
     }
 }
@@ -4673,22 +4496,15 @@ pub fn callable_as_type_name(func: MbValue) -> Option<String> {
         unsafe {
             match &(*ptr).data {
                 ObjData::Str(ref s) => Some(s.clone()),
-                ObjData::Instance {
-                    class_name: ref cn,
-                    ref fields,
-                } if cn == "type" => fields.read().ok().and_then(|f| {
-                    f.get("__name__").and_then(|v| {
-                        if let Some(vp) = v.as_ptr() {
-                            if let ObjData::Str(ref s) = (*vp).data {
-                                Some(s.clone())
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
+                ObjData::Instance { class_name: ref cn, ref fields } if cn == "type" => {
+                    fields.read().ok().and_then(|f| {
+                        f.get("__name__").and_then(|v| {
+                            if let Some(vp) = v.as_ptr() {
+                                if let ObjData::Str(ref s) = (*vp).data { Some(s.clone()) } else { None }
+                            } else { None }
+                        })
                     })
-                }),
+                }
                 _ => None,
             }
         }
@@ -4778,16 +4594,10 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
             // `str.lower(x)` / `list.append(xs, v)` — unbound method wrapper
             // produced by mb_getattr when invoked on a type-name string.
             // Dispatch as `args[0].method(args[1:])`.
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 if class_name == "__unbound_method__" {
                     let guard = fields.read().unwrap();
-                    let method_name = guard
-                        .get("__method__")
-                        .copied()
+                    let method_name = guard.get("__method__").copied()
                         .unwrap_or_else(MbValue::none);
                     drop(guard);
                     if items.is_empty() {
@@ -4797,7 +4607,10 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     let rest_list = MbValue::from_ptr(MbObject::new_list(items[1..].to_vec()));
                     return super::class::mb_call_method(receiver, method_name, rest_list);
                 }
-                if class_name == "collections.abc._register_bound" {
+                if class_name == "collections.abc._register_bound"
+                    || class_name == "abc._user_register_bound"
+                {
+                    let is_user = class_name == "abc._user_register_bound";
                     let parent_name = fields
                         .read()
                         .unwrap()
@@ -4809,6 +4622,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         })
                         .unwrap_or_default();
                     let child = items.first().copied().unwrap_or_else(MbValue::none);
+                    if is_user {
+                        return super::class::mb_user_abc_register(&parent_name, child);
+                    }
                     return super::class::mb_collections_abc_register(&parent_name, child);
                 }
                 if class_name == "UnionType" {
@@ -4821,25 +4637,16 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     return MbValue::none();
                 }
             }
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 // `weakref.ref(obj[, cb])` — the `ref` attribute is a type
                 // stub (class_name="type", __name__="ReferenceType"); calling
                 // it constructs a new ReferenceType instance.
                 if class_name == "type" {
-                    let name = fields
-                        .read()
-                        .unwrap()
-                        .get("__name__")
-                        .and_then(|v| {
-                            v.as_ptr().and_then(|p| match &(*p).data {
-                                super::rc::ObjData::Str(ref s) => Some(s.clone()),
-                                _ => None,
-                            })
-                        })
+                    let name = fields.read().unwrap().get("__name__")
+                        .and_then(|v| v.as_ptr().and_then(|p| match &(*p).data {
+                            super::rc::ObjData::Str(ref s) => Some(s.clone()),
+                            _ => None,
+                        }))
                         .unwrap_or_default();
                     if let Some(result) =
                         super::class::mb_collections_abc_reject_abstract_instantiation(&name)
@@ -4856,33 +4663,25 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     {
                         let arg0 = items.first().copied().unwrap_or_else(MbValue::none);
                         let result = match name.as_str() {
-                            "int" => Some(mb_int(arg0)),
+                            "int"   => Some(mb_int(arg0)),
                             "float" => Some(mb_float(arg0)),
-                            "str" => Some(mb_str(arg0)),
-                            "bool" => Some(mb_bool(arg0)),
-                            "list" => Some(super::list_ops::mb_list_from_iterable(arg0)),
+                            "str"   => Some(mb_str(arg0)),
+                            "bool"  => Some(mb_bool(arg0)),
+                            "list"  => Some(super::list_ops::mb_list_from_iterable(arg0)),
                             "tuple" => Some(super::tuple_ops::mb_tuple_from_iterable(arg0)),
-                            "dict" => Some(super::dict_ops::mb_dict_from_pairs(arg0)),
-                            "set" => Some(mb_set_from_iterable(arg0)),
+                            "dict"  => Some(super::dict_ops::mb_dict_from_pairs(arg0)),
+                            "set"   => Some(mb_set_from_iterable(arg0)),
                             "frozenset" => Some(mb_frozenset_new(arg0)),
                             "complex" => Some(mb_complex(
-                                items
-                                    .first()
-                                    .copied()
-                                    .unwrap_or_else(|| MbValue::from_int(0)),
-                                items
-                                    .get(1)
-                                    .copied()
-                                    .unwrap_or_else(|| MbValue::from_int(0)),
+                                items.first().copied().unwrap_or_else(|| MbValue::from_int(0)),
+                                items.get(1).copied().unwrap_or_else(|| MbValue::from_int(0)),
                             )),
                             "type" => Some(match items.len() {
                                 1 => mb_type(items[0]),
                                 3 => mb_type3(items[0], items[1], items[2]),
                                 _ => {
                                     super::exception::mb_raise(
-                                        MbValue::from_ptr(MbObject::new_str(
-                                            "TypeError".to_string(),
-                                        )),
+                                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                                         MbValue::from_ptr(MbObject::new_str(
                                             "type() takes 1 or 3 arguments".to_string(),
                                         )),
@@ -4893,9 +4692,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             "range" => Some(match items.len() {
                                 0 => {
                                     super::exception::mb_raise(
-                                        MbValue::from_ptr(MbObject::new_str(
-                                            "TypeError".to_string(),
-                                        )),
+                                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                                         MbValue::from_ptr(MbObject::new_str(
                                             "range expected at least 1 argument, got 0".to_string(),
                                         )),
@@ -4908,17 +4705,12 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             }),
                             "enumerate" => Some(super::iter::mb_enumerate(
                                 items.first().copied().unwrap_or_else(MbValue::none),
-                                items
-                                    .get(1)
-                                    .copied()
-                                    .unwrap_or_else(|| MbValue::from_int(0)),
+                                items.get(1).copied().unwrap_or_else(|| MbValue::from_int(0)),
                             )),
                             "zip" => Some(if items.len() == 2 {
                                 super::iter::mb_zip(items[0], items[1])
                             } else {
-                                super::iter::mb_zip_n(MbValue::from_ptr(MbObject::new_list(
-                                    items.clone(),
-                                )))
+                                super::iter::mb_zip_n(MbValue::from_ptr(MbObject::new_list(items.clone())))
                             }),
                             "map" => Some(mb_map(
                                 items.first().copied().unwrap_or_else(MbValue::none),
@@ -4962,6 +4754,24 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         }
                     }
                     if !name.is_empty() {
+                        // If `name` is a registered native class that has a
+                        // registered `__init__`, run the REAL constructor so
+                        // the instance is properly initialised (e.g. unittest
+                        // TestSuite/TestResult/TestLoader seed their lists,
+                        // TestCase stores its method name) rather than the bare
+                        // `_argN` stub below. Classes registered WITHOUT an
+                        // `__init__` still fall through to the generic stub,
+                        // preserving the ZoneInfo/Path/... `_arg0`/`key` shape.
+                        if super::class::class_is_registered(&name)
+                            && !super::class::lookup_method(&name, "__init__").is_none()
+                        {
+                            let args_list =
+                                MbValue::from_ptr(MbObject::new_list(items.clone()));
+                            return super::class::mb_instance_new_with_init(
+                                MbValue::from_ptr(MbObject::new_str(name.clone())),
+                                args_list,
+                            );
+                        }
                         // Generic type-stub construction: produce a fresh
                         // Instance whose class_name matches the type's
                         // `__name__`. Constructor positional args are stored
@@ -4972,19 +4782,15 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                         // round-trips through `inst.name`.
                         let inst = MbObject::new_instance(name.clone());
                         let kwargs_idx = items.iter().rposition(|v| {
-                            v.as_ptr()
-                                .is_some_and(|p| matches!((*p).data, super::rc::ObjData::Dict(_)))
+                            v.as_ptr().is_some_and(|p|
+                                matches!((*p).data, super::rc::ObjData::Dict(_)))
                         });
                         let trailing_dict_is_kwargs = kwargs_idx
                             .filter(|&i| i + 1 == items.len())
                             .and_then(|i| items[i].as_ptr().map(|p| (i, p)));
-                        if let super::rc::ObjData::Instance {
-                            fields: ref iflds, ..
-                        } = (*inst).data
-                        {
+                        if let super::rc::ObjData::Instance { fields: ref iflds, .. } = (*inst).data {
                             let mut g = iflds.write().unwrap();
-                            let last_pos = trailing_dict_is_kwargs
-                                .map(|(i, _)| i)
+                            let last_pos = trailing_dict_is_kwargs.map(|(i, _)| i)
                                 .unwrap_or(items.len());
                             for (i, arg) in items.iter().take(last_pos).enumerate() {
                                 g.insert(format!("_arg{i}"), *arg);
@@ -4994,10 +4800,8 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             // stdlib classes whose first arg names the
                             // resource (ZoneInfo.key, Path, Connection...).
                             if let Some(arg0) = items.first().copied() {
-                                if matches!(
-                                    arg0.as_ptr().map(|p| &(*p).data),
-                                    Some(super::rc::ObjData::Str(_))
-                                ) {
+                                if matches!(arg0.as_ptr().map(|p| &(*p).data),
+                                            Some(super::rc::ObjData::Str(_))) {
                                     g.insert("key".to_string(), arg0);
                                 }
                             }
@@ -5017,11 +4821,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     }
                 }
             }
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 // traceback.TracebackException.format() — bound shell.
                 if class_name == "traceback._TracebackException_format_bound" {
                     let f = fields.read().unwrap();
@@ -5043,39 +4843,23 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                 // functools.lru_cache wrapper: look up cache or invoke inner.
                 if class_name == "functools.lru_cache_wrapper" {
                     let _ = fields;
-                    return super::stdlib::functools_mod::mb_functools_lru_cache_invoke(
-                        func, items,
-                    );
+                    return super::stdlib::functools_mod::mb_functools_lru_cache_invoke(func, items);
                 }
                 // functools.lru_cache factory: one arg (the callable) → wrap.
                 if class_name == "functools.lru_cache_factory" {
-                    return super::stdlib::functools_mod::mb_functools_lru_cache_factory_apply(
-                        func, items,
-                    );
+                    return super::stdlib::functools_mod::mb_functools_lru_cache_factory_apply(func, items);
                 }
                 // functools._lru_bound_method: dispatch cache_info / cache_clear.
                 if class_name == "functools._lru_bound_method" {
                     let f = fields.read().unwrap();
-                    let method_name = f
-                        .get("_method")
-                        .and_then(|v| v.as_ptr())
-                        .and_then(|p| {
-                            if let ObjData::Str(ref s) = (*p).data {
-                                Some(s.clone())
-                            } else {
-                                None
-                            }
-                        })
+                    let method_name = f.get("_method").and_then(|v| v.as_ptr())
+                        .and_then(|p| if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None })
                         .unwrap_or_default();
                     let wrapper = f.get("_wrapper").copied().unwrap_or_else(MbValue::none);
                     drop(f);
                     return match method_name.as_str() {
-                        "cache_info" => {
-                            super::stdlib::functools_mod::mb_functools_lru_cache_info(wrapper)
-                        }
-                        "cache_clear" => {
-                            super::stdlib::functools_mod::mb_functools_lru_cache_clear(wrapper)
-                        }
+                        "cache_info" => super::stdlib::functools_mod::mb_functools_lru_cache_info(wrapper),
+                        "cache_clear" => super::stdlib::functools_mod::mb_functools_lru_cache_clear(wrapper),
                         _ => MbValue::none(),
                     };
                 }
@@ -5089,6 +4873,11 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     let combined_list = MbValue::from_ptr(MbObject::new_list(combined));
                     return mb_call_spread(inner_func, combined_list);
                 }
+                // functools.cmp_to_key(mycmp)(value) → build a key object.
+                if class_name == "functools.cmp_to_key" {
+                    let _ = fields;
+                    return super::stdlib::functools_mod::mb_functools_cmp_to_key_apply(func, items);
+                }
                 // __call__ dunder dispatch for callable instances
                 let call_method = super::class::lookup_method(class_name, "__call__");
                 if !call_method.is_none() {
@@ -5097,9 +4886,25 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     return super::class::mb_call_method(func, method_name, args_val);
                 }
             }
+            // A bare class-name string that names a registered user class is a
+            // constructor when called indirectly (through a variable, a dict
+            // slot, or an imported module attr — e.g. `F = Foo; F(5)` or
+            // `plistlib.UID(1)`). The direct `ClassName(args)` call site lowers
+            // to mb_instance_new_with_init, but the indirect value path lands
+            // here; without this it returns None and __init__ never fires.
+            if let ObjData::Str(ref s) = (*ptr).data {
+                if super::class::class_is_registered(s) {
+                    let args_val = MbValue::from_ptr(MbObject::new_list(items));
+                    return super::class::mb_instance_new_with_init(func, args_val);
+                }
+            }
         }
     }
     if let Some(raw_addr) = resolve_callable(func) {
+        // An any/object-returning callee hands back an already-boxed MbValue
+        // (e.g. a float, whose untagged bits lack a NaN-prefix), so the re-box
+        // steps below must pass it through rather than mis-boxing it as an int.
+        let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
         // Partial-default dispatch for closure handles: if the closure
         // declares more params than the call supplies, fill the missing
         // trailing slots from `defaults`. Skipped for variadic / native /
@@ -5161,6 +4966,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     }
                 }
             };
+            if is_boxed_ret {
+                return raw_result;
+            }
             let bits = raw_result.to_bits();
             const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
             return if bits & NAN_PREFIX == NAN_PREFIX {
@@ -5185,65 +4993,32 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     f(items[0])
                 }
                 2 => {
-                    let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
+                    let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
                     f(items[0], items[1])
                 }
                 3 => {
-                    let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
+                    let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
                     f(items[0], items[1], items[2])
                 }
                 4 => {
-                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
+                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
                     f(items[0], items[1], items[2], items[3])
                 }
                 5 => {
-                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue =
-                        std::mem::transmute(raw_addr);
+                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
                     f(items[0], items[1], items[2], items[3], items[4])
                 }
                 6 => {
-                    let f: extern "C" fn(
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                    ) -> MbValue = std::mem::transmute(raw_addr);
+                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
                     f(items[0], items[1], items[2], items[3], items[4], items[5])
                 }
                 7 => {
-                    let f: extern "C" fn(
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                    ) -> MbValue = std::mem::transmute(raw_addr);
-                    f(
-                        items[0], items[1], items[2], items[3], items[4], items[5], items[6],
-                    )
+                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
+                    f(items[0], items[1], items[2], items[3], items[4], items[5], items[6])
                 }
                 8 => {
-                    let f: extern "C" fn(
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                        MbValue,
-                    ) -> MbValue = std::mem::transmute(raw_addr);
-                    f(
-                        items[0], items[1], items[2], items[3], items[4], items[5], items[6],
-                        items[7],
-                    )
+                    let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
+                    f(items[0], items[1], items[2], items[3], items[4], items[5], items[6], items[7])
                 }
                 _ => MbValue::none(),
             }
@@ -5251,6 +5026,11 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
         // Re-box: JIT functions may return raw i64 for ints (unboxed by
         // CheckedAdd). If the result has no NaN prefix, treat it as a raw int.
         // Already-boxed values (NaN-boxed ints, ptrs, bools, none) pass through.
+        // An any/object-returning callee's result is already a valid MbValue
+        // (possibly a no-NaN-prefix float) → pass through untouched.
+        if is_boxed_ret {
+            return raw_result;
+        }
         let bits = raw_result.to_bits();
         const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
         if bits & NAN_PREFIX == NAN_PREFIX {
@@ -5278,9 +5058,7 @@ pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
         // ZeroDivisionError: integer division or modulo by zero
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(
-                "integer division or modulo by zero".to_string(),
-            )),
+            MbValue::from_ptr(MbObject::new_str("integer division or modulo by zero".to_string())),
         );
         return MbValue::none();
     }
@@ -5293,9 +5071,7 @@ pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
             // ZeroDivisionError: float floor division by zero
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(
-                    "float floor division by zero".to_string(),
-                )),
+                MbValue::from_ptr(MbObject::new_str("float floor division by zero".to_string())),
             );
             MbValue::none()
         }
@@ -5316,6 +5092,12 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
             }
         }
     }
+    // functools.total_ordering: derive __gt__ from the class's seed op.
+    if super::stdlib::functools_mod::is_total_ordering_instance(a) {
+        if let Some(r) = super::stdlib::functools_mod::mb_functools_total_ordering_richcmp(a, b, "gt") {
+            return MbValue::from_bool(r);
+        }
+    }
     mb_lt(b, a)
 }
 
@@ -5332,9 +5114,17 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
             }
         }
     }
+    // functools.total_ordering: derive __le__ from the class's seed op.
+    if super::stdlib::functools_mod::is_total_ordering_instance(a) {
+        if let Some(r) = super::stdlib::functools_mod::mb_functools_total_ordering_richcmp(a, b, "le") {
+            return MbValue::from_bool(r);
+        }
+    }
     let lt_result = mb_lt(a, b);
     let eq_result = mb_eq(a, b);
-    MbValue::from_bool(lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false))
+    MbValue::from_bool(
+        lt_result.as_bool().unwrap_or(false) || eq_result.as_bool().unwrap_or(false),
+    )
 }
 
 /// ge comparison: a >= b
@@ -5350,6 +5140,12 @@ pub fn mb_ge(a: MbValue, b: MbValue) -> MbValue {
             }
         }
     }
+    // functools.total_ordering: derive __ge__ from the class's seed op.
+    if super::stdlib::functools_mod::is_total_ordering_instance(a) {
+        if let Some(r) = super::stdlib::functools_mod::mb_functools_total_ordering_richcmp(a, b, "ge") {
+            return MbValue::from_bool(r);
+        }
+    }
     mb_le(b, a)
 }
 
@@ -5362,96 +5158,26 @@ pub fn mb_ne(a: MbValue, b: MbValue) -> MbValue {
 /// Python truthiness for any MbValue — returns 1 (true) or 0 (false) as raw i64.
 /// Used by guards in match/case and other conditions where the value may be a heap object.
 pub fn mb_is_truthy(val: MbValue) -> i64 {
-    if val.is_none() {
-        return 0;
-    }
-    if val.is_bool() {
-        return if val.as_bool() == Some(true) { 1 } else { 0 };
-    }
-    if val.is_int() {
-        return if val.as_int().unwrap_or(0) != 0 { 1 } else { 0 };
-    }
-    if val.is_float() {
-        return if val.as_float().unwrap_or(0.0) != 0.0 {
-            1
-        } else {
-            0
-        };
-    }
+    if val.is_none() { return 0; }
+    if val.is_bool() { return if val.as_bool() == Some(true) { 1 } else { 0 }; }
+    if val.is_int() { return if val.as_int().unwrap_or(0) != 0 { 1 } else { 0 }; }
+    if val.is_float() { return if val.as_float().unwrap_or(0.0) != 0.0 { 1 } else { 0 }; }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
             return match &(*ptr).data {
-                ObjData::Str(s) => {
-                    if s.is_empty() {
-                        0
-                    } else {
-                        1
-                    }
-                }
-                ObjData::List(l) => {
-                    if l.read().unwrap().is_empty() {
-                        0
-                    } else {
-                        1
-                    }
-                }
-                ObjData::Tuple(t) => {
-                    if t.is_empty() {
-                        0
-                    } else {
-                        1
-                    }
-                }
-                ObjData::Dict(d) => {
-                    if d.read().unwrap().is_empty() {
-                        0
-                    } else {
-                        1
-                    }
-                }
-                ObjData::Set(s) => {
-                    if s.read().unwrap().is_empty() {
-                        0
-                    } else {
-                        1
-                    }
-                }
-                ObjData::Bytes(b) => {
-                    if b.is_empty() {
-                        0
-                    } else {
-                        1
-                    }
-                }
-                ObjData::ByteArray(b) => {
-                    if b.read().unwrap().is_empty() {
-                        0
-                    } else {
-                        1
-                    }
-                }
-                ObjData::FrozenSet(s) => {
-                    if s.is_empty() {
-                        0
-                    } else {
-                        1
-                    }
-                }
+                ObjData::Str(s) => if s.is_empty() { 0 } else { 1 },
+                ObjData::List(l) => if l.read().unwrap().is_empty() { 0 } else { 1 },
+                ObjData::Tuple(t) => if t.is_empty() { 0 } else { 1 },
+                ObjData::Dict(d) => if d.read().unwrap().is_empty() { 0 } else { 1 },
+                ObjData::Set(s) => if s.read().unwrap().is_empty() { 0 } else { 1 },
+                ObjData::Bytes(b) => if b.is_empty() { 0 } else { 1 },
+                ObjData::ByteArray(b) => if b.read().unwrap().is_empty() { 0 } else { 1 },
+                ObjData::FrozenSet(s) => if s.is_empty() { 0 } else { 1 },
                 ObjData::BigInt(b) => {
                     use num_traits::Zero;
-                    if b.is_zero() {
-                        0
-                    } else {
-                        1
-                    }
+                    if b.is_zero() { 0 } else { 1 }
                 }
-                ObjData::Complex(re, im) => {
-                    if *re == 0.0 && *im == 0.0 {
-                        0
-                    } else {
-                        1
-                    }
-                }
+                ObjData::Complex(re, im) => if *re == 0.0 && *im == 0.0 { 0 } else { 1 },
                 ObjData::Instance { class_name, .. } => {
                     // __bool__ dunder: Python calls __bool__() for truthiness
                     let bool_method = super::class::lookup_method(class_name, "__bool__");
@@ -5565,9 +5291,9 @@ pub fn mb_assertion_error_no_msg() {
 /// surface; the full scope-bound eval that CPython exposes still
 /// needs the parser+interpreter integration tracked under #1256.
 pub fn mb_eval(expr: MbValue) -> MbValue {
-    use crate::lexer;
-    use crate::parser::Parser;
     use crate::source::SourceMap;
+    use crate::parser::Parser;
+    use crate::lexer;
 
     let source = if let Some(ptr) = expr.as_ptr() {
         unsafe {
@@ -5601,7 +5327,9 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
         Expr::NoneLit => MbValue::none(),
         Expr::StrLit(s) => MbValue::from_ptr(MbObject::new_str(s.clone())),
         Expr::BytesLit(b) => MbValue::from_ptr(MbObject::new_bytes(b.clone())),
-        Expr::ComplexLit(imag) => MbValue::from_ptr(MbObject::new_complex(0.0, *imag)),
+        Expr::ComplexLit(imag) => {
+            MbValue::from_ptr(MbObject::new_complex(0.0, *imag))
+        }
         Expr::Ellipsis => MbValue::none(),
         Expr::BinOp { op, lhs, rhs } => {
             let l = eval_expr(&lhs.node);
@@ -5635,11 +5363,7 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
             }
             d
         }
-        Expr::IfExpr {
-            body,
-            condition,
-            else_body,
-        } => {
+        Expr::IfExpr { body, condition, else_body } => {
             let c = eval_expr(&condition.node);
             if c.as_bool().unwrap_or(false) || c.as_int().unwrap_or(0) != 0 {
                 eval_expr(&body.node)
@@ -5700,37 +5424,27 @@ fn eval_binop(op: crate::parser::ast::BinOp, l: MbValue, r: MbValue) -> MbValue 
         B::BitAnd => {
             if let (Some(a), Some(b)) = (l.as_int(), r.as_int()) {
                 MbValue::from_int(a & b)
-            } else {
-                MbValue::none()
-            }
+            } else { MbValue::none() }
         }
         B::BitOr => {
             if let (Some(a), Some(b)) = (l.as_int(), r.as_int()) {
                 MbValue::from_int(a | b)
-            } else {
-                MbValue::none()
-            }
+            } else { MbValue::none() }
         }
         B::BitXor => {
             if let (Some(a), Some(b)) = (l.as_int(), r.as_int()) {
                 MbValue::from_int(a ^ b)
-            } else {
-                MbValue::none()
-            }
+            } else { MbValue::none() }
         }
         B::LShift => {
             if let (Some(a), Some(b)) = (l.as_int(), r.as_int()) {
                 MbValue::from_int(a.wrapping_shl(b as u32))
-            } else {
-                MbValue::none()
-            }
+            } else { MbValue::none() }
         }
         B::RShift => {
             if let (Some(a), Some(b)) = (l.as_int(), r.as_int()) {
                 MbValue::from_int(a.wrapping_shr(b as u32))
-            } else {
-                MbValue::none()
-            }
+            } else { MbValue::none() }
         }
         B::Is => mb_is_identity(l, r),
         B::IsNot => mb_is_not_identity(l, r),
@@ -5745,11 +5459,7 @@ fn eval_unaryop(op: crate::parser::ast::UnaryOp, v: MbValue) -> MbValue {
         U::Neg => mb_neg(v),
         U::Not => mb_not(v),
         U::BitNot => {
-            if let Some(i) = v.as_int() {
-                MbValue::from_int(!i)
-            } else {
-                MbValue::none()
-            }
+            if let Some(i) = v.as_int() { MbValue::from_int(!i) } else { MbValue::none() }
         }
     }
 }
@@ -5766,9 +5476,9 @@ fn eval_unaryop(op: crate::parser::ast::UnaryOp, v: MbValue) -> MbValue {
 ///   * Successful parse with no side-effecting statements → None.
 /// Statements with side effects are still dropped on the floor; see #1256.
 pub fn mb_exec(code: MbValue) -> MbValue {
-    use crate::lexer;
-    use crate::parser::Parser;
     use crate::source::SourceMap;
+    use crate::parser::Parser;
+    use crate::lexer;
 
     let source = if let Some(ptr) = code.as_ptr() {
         unsafe {
@@ -5814,13 +5524,7 @@ pub fn mb_exec(code: MbValue) -> MbValue {
 /// - `SyntaxError` when eval mode source is a statement, not an expression.
 /// - `SyntaxError` when single mode source contains multiple statements.
 pub fn mb_compile(source: MbValue, filename: MbValue, mode: MbValue) -> MbValue {
-    mb_compile_impl(
-        source,
-        filename,
-        mode,
-        MbValue::from_int(0),
-        MbValue::from_bool(false),
-    )
+    mb_compile_impl(source, filename, mode, MbValue::from_int(0), MbValue::from_bool(false))
 }
 
 /// compile(source, filename, mode, flags, dont_inherit) — 5-argument form (R5).
@@ -5841,10 +5545,10 @@ fn mb_compile_impl(
     _flags: MbValue,
     _dont_inherit: MbValue,
 ) -> MbValue {
-    use super::rc::ObjData;
-    use crate::lexer;
-    use crate::parser::{ast::Module, Parser};
     use crate::source::SourceMap;
+    use crate::parser::{Parser, ast::Module};
+    use crate::lexer;
+    use super::rc::ObjData;
 
     // ── Extract source string (R1 / R6 bytes support) ──────────────────────
     let source_str: String = if let Some(ptr) = source.as_ptr() {
@@ -5953,11 +5657,12 @@ fn mb_compile_impl(
                     // Check that nothing remains after the expression
                     parser.skip_newlines();
                     let remaining = parser.peek_kind();
-                    if remaining.is_some() && remaining != Some(crate::lexer::token::TokenKind::Eof)
-                    {
+                    if remaining.is_some() && remaining != Some(crate::lexer::token::TokenKind::Eof) {
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str("invalid syntax".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "invalid syntax".to_string(),
+                            )),
                         );
                         return MbValue::none();
                     }
@@ -5966,14 +5671,19 @@ fn mb_compile_impl(
                     use crate::source::Spanned;
                     let span = expr.span;
                     Module {
-                        stmts: vec![Spanned::new(Stmt::ExprStmt(expr), span)],
+                        stmts: vec![Spanned::new(
+                            Stmt::ExprStmt(expr),
+                            span,
+                        )],
                     }
                 }
                 Err(_) => {
                     // Could be a statement — give the CPython-compatible message
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str("invalid syntax".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "invalid syntax".to_string(),
+                        )),
                     );
                     return MbValue::none();
                 }
@@ -5986,8 +5696,7 @@ fn mb_compile_impl(
                 Ok(stmt) => {
                     parser.skip_newlines();
                     let remaining = parser.peek_kind();
-                    if remaining.is_some() && remaining != Some(crate::lexer::token::TokenKind::Eof)
-                    {
+                    if remaining.is_some() && remaining != Some(crate::lexer::token::TokenKind::Eof) {
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
                             MbValue::from_ptr(MbObject::new_str(
@@ -6013,12 +5722,7 @@ fn mb_compile_impl(
     };
 
     // ── Return CodeObject (R1) ──────────────────────────────────────────────
-    MbValue::from_ptr(MbObject::new_code_object(
-        source_str,
-        filename_str,
-        mode_str,
-        ast,
-    ))
+    MbValue::from_ptr(MbObject::new_code_object(source_str, filename_str, mode_str, ast))
 }
 
 /// Format a MambaError as a SyntaxError message with file/line/col (R4).
@@ -6073,8 +5777,8 @@ pub fn mb_locals() -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::super::rc::mb_release;
     use super::*;
+    use super::super::rc::mb_release;
 
     #[test]
     fn test_arithmetic() {
@@ -6123,45 +5827,37 @@ mod tests {
 
     #[test]
     fn test_range() {
-        let result = mb_range(MbValue::from_int(3));
-        assert!(result.is_ptr());
-        unsafe {
-            let ptr = result.as_ptr().unwrap();
-            if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
-                assert_eq!(items.len(), 3);
-                assert_eq!(items[0].as_int(), Some(0));
-                assert_eq!(items[1].as_int(), Some(1));
-                assert_eq!(items[2].as_int(), Some(2));
-            } else {
-                panic!("expected list");
-            }
-            mb_release(ptr);
-        }
+        // CPython `range(3)` is a lazy range; mb_range returns an iterator
+        // handle (int id) that yields 0, 1, 2 then exhausts.
+        let handle = mb_range(MbValue::from_int(3));
+        assert!(handle.as_int().is_some(), "range() returns a lazy handle id");
+        assert_eq!(super::super::iter::mb_next(handle).as_int(), Some(0));
+        assert_eq!(super::super::iter::mb_next(handle).as_int(), Some(1));
+        assert_eq!(super::super::iter::mb_next(handle).as_int(), Some(2));
+        assert!(super::super::iter::mb_next(handle).is_none(), "range(3) exhausted");
     }
 
     #[test]
     fn test_range_zero() {
-        let result = mb_range(MbValue::from_int(0));
-        unsafe {
-            let ptr = result.as_ptr().unwrap();
-            if let ObjData::List(ref lock) = (*ptr).data {
-                assert_eq!(lock.read().unwrap().len(), 0);
-            }
-            mb_release(ptr);
-        }
+        // `range(0)` yields nothing.
+        let handle = mb_range(MbValue::from_int(0));
+        assert!(handle.as_int().is_some(), "range() returns a lazy handle id");
+        assert!(super::super::iter::mb_next(handle).is_none(), "range(0) is empty");
     }
 
     #[test]
     fn test_range_non_int() {
+        // CPython 3.12: `range(3.0)` raises
+        // TypeError: 'float' object cannot be interpreted as an integer.
+        // mamba is type-strict and must raise too (never silently coerce).
+        super::super::exception::mb_clear_exception();
         let result = mb_range(MbValue::from_float(3.0));
-        unsafe {
-            let ptr = result.as_ptr().unwrap();
-            if let ObjData::List(ref lock) = (*ptr).data {
-                assert_eq!(lock.read().unwrap().len(), 0);
-            }
-            mb_release(ptr);
-        }
+        assert!(result.is_none());
+        assert_eq!(
+            super::super::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
+        );
+        super::super::exception::mb_clear_exception();
     }
 
     #[test]
@@ -6296,10 +5992,7 @@ mod tests {
 
     #[test]
     fn test_len_list() {
-        let l = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(2),
-        ]));
+        let l = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(2)]));
         assert_eq!(mb_len(l).as_int(), Some(2));
     }
 
@@ -6326,9 +6019,7 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref text) = (*s.as_ptr().unwrap()).data {
                 assert_eq!(text, "42");
-            } else {
-                panic!("expected str");
-            }
+            } else { panic!("expected str"); }
         }
     }
 
@@ -6338,9 +6029,7 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref text) = (*s.as_ptr().unwrap()).data {
                 assert_eq!(text, "True");
-            } else {
-                panic!("expected str");
-            }
+            } else { panic!("expected str"); }
         }
     }
 
@@ -6350,9 +6039,7 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref text) = (*s.as_ptr().unwrap()).data {
                 assert_eq!(text, "None");
-            } else {
-                panic!("expected str");
-            }
+            } else { panic!("expected str"); }
         }
     }
 
@@ -6411,28 +6098,17 @@ mod tests {
 
     #[test]
     fn test_type_str() {
-        assert_eq!(
-            type_name(mb_type(MbValue::from_ptr(MbObject::new_str(
-                "hi".to_string()
-            )))),
-            "str"
-        );
+        assert_eq!(type_name(mb_type(MbValue::from_ptr(MbObject::new_str("hi".to_string())))), "str");
     }
 
     #[test]
     fn test_type_list() {
-        assert_eq!(
-            type_name(mb_type(MbValue::from_ptr(MbObject::new_list(vec![])))),
-            "list"
-        );
+        assert_eq!(type_name(mb_type(MbValue::from_ptr(MbObject::new_list(vec![])))), "list");
     }
 
     #[test]
     fn test_type_tuple() {
-        assert_eq!(
-            type_name(mb_type(MbValue::from_ptr(MbObject::new_tuple(vec![])))),
-            "tuple"
-        );
+        assert_eq!(type_name(mb_type(MbValue::from_ptr(MbObject::new_tuple(vec![])))), "tuple");
     }
 
     #[test]
@@ -6450,62 +6126,38 @@ mod tests {
 
     #[test]
     fn test_type_dict() {
-        assert_eq!(
-            type_name(mb_type(MbValue::from_ptr(MbObject::new_dict()))),
-            "dict"
-        );
+        assert_eq!(type_name(mb_type(MbValue::from_ptr(MbObject::new_dict()))), "dict");
     }
 
     #[test]
     fn test_type_set() {
-        assert_eq!(
-            type_name(mb_type(MbValue::from_ptr(MbObject::new_set(vec![])))),
-            "set"
-        );
+        assert_eq!(type_name(mb_type(MbValue::from_ptr(MbObject::new_set(vec![])))), "set");
     }
 
     #[test]
     fn test_type_frozenset() {
-        assert_eq!(
-            type_name(mb_type(MbValue::from_ptr(MbObject::new_frozenset(vec![])))),
-            "frozenset"
-        );
+        assert_eq!(type_name(mb_type(MbValue::from_ptr(MbObject::new_frozenset(vec![])))), "frozenset");
     }
 
     #[test]
     fn test_type_bytes() {
-        assert_eq!(
-            type_name(mb_type(MbValue::from_ptr(MbObject::new_bytes(vec![1, 2])))),
-            "bytes"
-        );
+        assert_eq!(type_name(mb_type(MbValue::from_ptr(MbObject::new_bytes(vec![1, 2])))), "bytes");
     }
 
     #[test]
     fn test_type_bytearray() {
-        assert_eq!(
-            type_name(mb_type(MbValue::from_ptr(MbObject::new_bytearray(vec![1])))),
-            "bytearray"
-        );
+        assert_eq!(type_name(mb_type(MbValue::from_ptr(MbObject::new_bytearray(vec![1])))), "bytearray");
     }
 
     #[test]
     fn test_lt_float() {
-        assert_eq!(
-            mb_lt(MbValue::from_float(1.0), MbValue::from_float(2.0)).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_lt(MbValue::from_float(2.0), MbValue::from_float(1.0)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_lt(MbValue::from_float(1.0), MbValue::from_float(2.0)).as_bool(), Some(true));
+        assert_eq!(mb_lt(MbValue::from_float(2.0), MbValue::from_float(1.0)).as_bool(), Some(false));
     }
 
     #[test]
     fn test_lt_non_comparable() {
-        assert_eq!(
-            mb_lt(MbValue::none(), MbValue::from_int(1)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_lt(MbValue::none(), MbValue::from_int(1)).as_bool(), Some(false));
     }
 
     #[test]
@@ -6532,9 +6184,7 @@ mod tests {
     #[test]
     fn test_min() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(3),
-            MbValue::from_int(1),
-            MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(1), MbValue::from_int(2),
         ]));
         assert_eq!(mb_min(list).as_int(), Some(1));
     }
@@ -6542,9 +6192,7 @@ mod tests {
     #[test]
     fn test_max() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(3),
-            MbValue::from_int(1),
-            MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(1), MbValue::from_int(2),
         ]));
         assert_eq!(mb_max(list).as_int(), Some(3));
     }
@@ -6560,9 +6208,7 @@ mod tests {
     #[test]
     fn test_sum_ints() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(2),
-            MbValue::from_int(3),
+            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
         ]));
         assert_eq!(mb_sum(list).as_int(), Some(6));
     }
@@ -6570,8 +6216,7 @@ mod tests {
     #[test]
     fn test_sum_floats() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_float(1.5),
-            MbValue::from_float(2.5),
+            MbValue::from_float(1.5), MbValue::from_float(2.5),
         ]));
         assert_eq!(mb_sum(list).as_float(), Some(4.0));
     }
@@ -6579,8 +6224,7 @@ mod tests {
     #[test]
     fn test_sum_mixed() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_float(2.5),
+            MbValue::from_int(1), MbValue::from_float(2.5),
         ]));
         assert_eq!(mb_sum(list).as_float(), Some(3.5));
     }
@@ -6588,9 +6232,7 @@ mod tests {
     #[test]
     fn test_sorted() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(3),
-            MbValue::from_int(1),
-            MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(1), MbValue::from_int(2),
         ]));
         let sorted = mb_sorted(list, MbValue::none());
         unsafe {
@@ -6607,26 +6249,22 @@ mod tests {
     #[test]
     fn test_any_all() {
         let truthy = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(0),
-            MbValue::from_int(1),
+            MbValue::from_int(0), MbValue::from_int(1),
         ]));
         assert_eq!(mb_any(truthy).as_bool(), Some(true));
 
         let all_false = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(0),
-            MbValue::from_int(0),
+            MbValue::from_int(0), MbValue::from_int(0),
         ]));
         assert_eq!(mb_any(all_false).as_bool(), Some(false));
 
         let all_true = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(2),
+            MbValue::from_int(1), MbValue::from_int(2),
         ]));
         assert_eq!(mb_all(all_true).as_bool(), Some(true));
 
         let not_all = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(0),
+            MbValue::from_int(1), MbValue::from_int(0),
         ]));
         assert_eq!(mb_all(not_all).as_bool(), Some(false));
     }
@@ -6773,10 +6411,7 @@ mod tests {
 
     #[test]
     fn test_pow_int() {
-        assert_eq!(
-            mb_pow(MbValue::from_int(2), MbValue::from_int(10)).as_int(),
-            Some(1024)
-        );
+        assert_eq!(mb_pow(MbValue::from_int(2), MbValue::from_int(10)).as_int(), Some(1024));
     }
 
     #[test]
@@ -6796,34 +6431,19 @@ mod tests {
     fn test_round_float() {
         // CPython: `round(f, n)` (ndigits given) preserves the float type,
         // even when n == 0. Only `round(f)` with no ndigits returns int.
-        assert_eq!(
-            mb_round(MbValue::from_float(3.7), MbValue::from_int(0)).as_float(),
-            Some(4.0)
-        );
-        assert_eq!(
-            mb_round(MbValue::from_float(3.14159), MbValue::from_int(2)).as_float(),
-            Some(3.14)
-        );
-        assert_eq!(
-            mb_round(MbValue::from_float(3.7), MbValue::none()).as_int(),
-            Some(4)
-        );
+        assert_eq!(mb_round(MbValue::from_float(3.7), MbValue::from_int(0)).as_float(), Some(4.0));
+        assert_eq!(mb_round(MbValue::from_float(3.14159), MbValue::from_int(2)).as_float(), Some(3.14));
+        assert_eq!(mb_round(MbValue::from_float(3.7), MbValue::none()).as_int(), Some(4));
     }
 
     #[test]
     fn test_round_int() {
-        assert_eq!(
-            mb_round(MbValue::from_int(42), MbValue::from_int(0)).as_int(),
-            Some(42)
-        );
+        assert_eq!(mb_round(MbValue::from_int(42), MbValue::from_int(0)).as_int(), Some(42));
     }
 
     #[test]
     fn test_round_negative_ndigits() {
-        assert_eq!(
-            mb_round(MbValue::from_int(1234), MbValue::from_int(-2)).as_int(),
-            Some(1200)
-        );
+        assert_eq!(mb_round(MbValue::from_int(1234), MbValue::from_int(-2)).as_int(), Some(1200));
     }
 
     #[test]
@@ -6833,9 +6453,7 @@ mod tests {
             if let ObjData::Tuple(ref items) = (*result.as_ptr().unwrap()).data {
                 assert_eq!(items[0].as_int(), Some(2));
                 assert_eq!(items[1].as_int(), Some(1));
-            } else {
-                panic!("expected tuple");
-            }
+            } else { panic!("expected tuple"); }
         }
     }
 
@@ -6855,18 +6473,12 @@ mod tests {
 
     #[test]
     fn test_floordiv_int() {
-        assert_eq!(
-            mb_floordiv(MbValue::from_int(7), MbValue::from_int(2)).as_int(),
-            Some(3)
-        );
+        assert_eq!(mb_floordiv(MbValue::from_int(7), MbValue::from_int(2)).as_int(), Some(3));
     }
 
     #[test]
     fn test_floordiv_float() {
-        assert_eq!(
-            mb_floordiv(MbValue::from_float(7.0), MbValue::from_float(2.0)).as_float(),
-            Some(3.0)
-        );
+        assert_eq!(mb_floordiv(MbValue::from_float(7.0), MbValue::from_float(2.0)).as_float(), Some(3.0));
     }
 
     #[test]
@@ -6880,10 +6492,7 @@ mod tests {
     fn test_floordiv_zero_raises_zerodivision_error() {
         crate::runtime::exception::mb_clear_exception();
         let result = mb_floordiv(MbValue::from_int(5), MbValue::from_int(0));
-        assert!(
-            result.is_none(),
-            "mb_floordiv by zero should return the none sentinel"
-        );
+        assert!(result.is_none(), "mb_floordiv by zero should return the none sentinel");
         assert_eq!(
             crate::runtime::exception::mb_has_exception().as_bool(),
             Some(true),
@@ -6898,17 +6507,13 @@ mod tests {
     #[test]
     fn test_frozenset_new() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(2),
-            MbValue::from_int(1),
+            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(1),
         ]));
         let fs = mb_frozenset_new(list);
         unsafe {
             if let ObjData::FrozenSet(ref items) = (*fs.as_ptr().unwrap()).data {
                 assert_eq!(items.len(), 2);
-            } else {
-                panic!("expected frozenset");
-            }
+            } else { panic!("expected frozenset"); }
         }
     }
 
@@ -6918,26 +6523,20 @@ mod tests {
         unsafe {
             if let ObjData::FrozenSet(ref items) = (*fs.as_ptr().unwrap()).data {
                 assert_eq!(items.len(), 0);
-            } else {
-                panic!("expected frozenset");
-            }
+            } else { panic!("expected frozenset"); }
         }
     }
 
     #[test]
     fn test_set_from_iterable() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(2),
-            MbValue::from_int(2),
+            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(2),
         ]));
         let s = mb_set_from_iterable(list);
         unsafe {
             if let ObjData::Set(ref lock) = (*s.as_ptr().unwrap()).data {
                 assert_eq!(lock.read().unwrap().len(), 2);
-            } else {
-                panic!("expected set");
-            }
+            } else { panic!("expected set"); }
         }
     }
 
@@ -6947,9 +6546,7 @@ mod tests {
         unsafe {
             if let ObjData::Set(ref lock) = (*s.as_ptr().unwrap()).data {
                 assert_eq!(lock.read().unwrap().len(), 0);
-            } else {
-                panic!("expected set");
-            }
+            } else { panic!("expected set"); }
         }
     }
 
@@ -7107,12 +6704,7 @@ mod tests {
         assert!(!result.is_none(), "eval should return a code object");
         assert!(result.is_ptr(), "result should be a pointer");
         unsafe {
-            if let ObjData::CodeObject {
-                ref mode,
-                ref filename,
-                ..
-            } = (*result.as_ptr().unwrap()).data
-            {
+            if let ObjData::CodeObject { ref mode, ref filename, .. } = (*result.as_ptr().unwrap()).data {
                 assert_eq!(mode, "eval");
                 assert_eq!(filename, "<test>");
             } else {
@@ -7125,15 +6717,8 @@ mod tests {
     #[test]
     fn test_compile_exec_multi_stmt_ok() {
         crate::runtime::exception::mb_clear_exception();
-        let result = mb_compile(
-            make_str("x = 1\ny = 2"),
-            make_str("<test>"),
-            make_str("exec"),
-        );
-        assert!(
-            !result.is_none(),
-            "exec should succeed for multi-statement source"
-        );
+        let result = mb_compile(make_str("x = 1\ny = 2"), make_str("<test>"), make_str("exec"));
+        assert!(!result.is_none(), "exec should succeed for multi-statement source");
         assert!(result.is_ptr());
     }
 
@@ -7178,15 +6763,8 @@ mod tests {
     #[test]
     fn test_compile_single_multi_stmt_error() {
         crate::runtime::exception::mb_clear_exception();
-        let result = mb_compile(
-            make_str("x = 1\ny = 2"),
-            make_str("<test>"),
-            make_str("single"),
-        );
-        assert!(
-            result.is_none(),
-            "single mode should reject multi-statement"
-        );
+        let result = mb_compile(make_str("x = 1\ny = 2"), make_str("<test>"), make_str("single"));
+        assert!(result.is_none(), "single mode should reject multi-statement");
         assert_eq!(
             crate::runtime::exception::mb_has_exception().as_bool(),
             Some(true),
@@ -7224,11 +6802,8 @@ mod tests {
     fn test_compile_5_arg_form() {
         crate::runtime::exception::mb_clear_exception();
         let result = mb_compile_5(
-            make_str("1+2"),
-            make_str("<test>"),
-            make_str("eval"),
-            MbValue::from_int(0),
-            MbValue::from_bool(false),
+            make_str("1+2"), make_str("<test>"), make_str("eval"),
+            MbValue::from_int(0), MbValue::from_bool(false),
         );
         assert!(!result.is_none(), "5-arg compile should work");
         assert!(result.is_ptr());
@@ -7244,35 +6819,26 @@ mod tests {
 
     #[test]
     fn test_filter_none_func() {
+        // CPython `filter(None, [0,1,0,2])` lazily yields the truthy elements
+        // 1, 2. mb_filter returns an iterator handle (int id) driven by mb_next.
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(0),
-            MbValue::from_int(1),
-            MbValue::from_int(0),
-            MbValue::from_int(2),
+            MbValue::from_int(0), MbValue::from_int(1), MbValue::from_int(0), MbValue::from_int(2),
         ]));
-        let result = mb_filter(MbValue::none(), list);
-        unsafe {
-            if let ObjData::List(ref lock) = (*result.as_ptr().unwrap()).data {
-                let items = lock.read().unwrap();
-                assert_eq!(items.len(), 2);
-                assert_eq!(items[0].as_int(), Some(1));
-                assert_eq!(items[1].as_int(), Some(2));
-            }
-        }
+        let handle = mb_filter(MbValue::none(), list);
+        assert!(handle.as_int().is_some(), "filter() returns a lazy handle id");
+        assert_eq!(super::super::iter::mb_next(handle).as_int(), Some(1));
+        assert_eq!(super::super::iter::mb_next(handle).as_int(), Some(2));
+        assert!(super::super::iter::mb_next(handle).is_none(), "filter exhausted");
     }
 
     #[test]
     fn test_min_max_from_tuple() {
         let tup = MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_int(5),
-            MbValue::from_int(2),
-            MbValue::from_int(8),
+            MbValue::from_int(5), MbValue::from_int(2), MbValue::from_int(8),
         ]));
         assert_eq!(mb_min(tup).as_int(), Some(2));
         let tup2 = MbValue::from_ptr(MbObject::new_tuple(vec![
-            MbValue::from_int(5),
-            MbValue::from_int(2),
-            MbValue::from_int(8),
+            MbValue::from_int(5), MbValue::from_int(2), MbValue::from_int(8),
         ]));
         assert_eq!(mb_max(tup2).as_int(), Some(8));
     }
@@ -7301,10 +6867,7 @@ mod tests {
         let prev = begin_capture();
         let ret = mb_print(MbValue::from_int(42));
         let _ = end_capture(prev);
-        assert!(
-            ret.is_none(),
-            "mb_print must return MbValue::none(), got non-none for int input"
-        );
+        assert!(ret.is_none(), "mb_print must return MbValue::none(), got non-none for int input");
         assert!(!ret.is_int(), "mb_print must not return TAG_INT(0)");
     }
 
@@ -7313,10 +6876,7 @@ mod tests {
         let prev = begin_capture();
         let ret = mb_print(MbValue::from_float(3.14));
         let _ = end_capture(prev);
-        assert!(
-            ret.is_none(),
-            "mb_print must return MbValue::none() for float input"
-        );
+        assert!(ret.is_none(), "mb_print must return MbValue::none() for float input");
     }
 
     #[test]
@@ -7324,10 +6884,7 @@ mod tests {
         let prev = begin_capture();
         let ret = mb_print(MbValue::from_bool(true));
         let _ = end_capture(prev);
-        assert!(
-            ret.is_none(),
-            "mb_print must return MbValue::none() for bool input"
-        );
+        assert!(ret.is_none(), "mb_print must return MbValue::none() for bool input");
     }
 
     #[test]
@@ -7335,10 +6892,7 @@ mod tests {
         let prev = begin_capture();
         let ret = mb_print(MbValue::none());
         let _ = end_capture(prev);
-        assert!(
-            ret.is_none(),
-            "mb_print must return MbValue::none() for None input"
-        );
+        assert!(ret.is_none(), "mb_print must return MbValue::none() for None input");
     }
 
     #[test]
@@ -7347,13 +6901,8 @@ mod tests {
         let s = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
         let ret = mb_print(s);
         let _ = end_capture(prev);
-        assert!(
-            ret.is_none(),
-            "mb_print must return MbValue::none() for string input"
-        );
-        unsafe {
-            mb_release(s.as_ptr().unwrap());
-        }
+        assert!(ret.is_none(), "mb_print must return MbValue::none() for string input");
+        unsafe { mb_release(s.as_ptr().unwrap()); }
     }
 
     /// mb_print_args must also return MbValue::none(), not TAG_INT(0).
@@ -7366,14 +6915,9 @@ mod tests {
         ]));
         let ret = mb_print_args(list);
         let _ = end_capture(prev);
-        assert!(
-            ret.is_none(),
-            "mb_print_args must return MbValue::none() for list input"
-        );
+        assert!(ret.is_none(), "mb_print_args must return MbValue::none() for list input");
         assert!(!ret.is_int(), "mb_print_args must not return TAG_INT(0)");
-        unsafe {
-            mb_release(list.as_ptr().unwrap());
-        }
+        unsafe { mb_release(list.as_ptr().unwrap()); }
     }
 
     #[test]
@@ -7382,10 +6926,7 @@ mod tests {
         let prev = begin_capture();
         let ret = mb_print_args(MbValue::from_int(99));
         let _ = end_capture(prev);
-        assert!(
-            ret.is_none(),
-            "mb_print_args fallback must return MbValue::none()"
-        );
+        assert!(ret.is_none(), "mb_print_args fallback must return MbValue::none()");
     }
 
     /// breakpoint() must evaluate without erroring and return None,
@@ -7408,22 +6949,13 @@ mod tests {
         // SAFETY: tests run in-process; restoring below keeps other
         // tests in this module unaffected. The variable is only read
         // by `mb_breakpoint` itself.
-        unsafe {
-            std::env::set_var("PYTHONBREAKPOINT", "0");
-        }
+        unsafe { std::env::set_var("PYTHONBREAKPOINT", "0"); }
         let ret = mb_breakpoint();
         match prev {
-            Some(v) => unsafe {
-                std::env::set_var("PYTHONBREAKPOINT", v);
-            },
-            None => unsafe {
-                std::env::remove_var("PYTHONBREAKPOINT");
-            },
+            Some(v) => unsafe { std::env::set_var("PYTHONBREAKPOINT", v); },
+            None => unsafe { std::env::remove_var("PYTHONBREAKPOINT"); },
         }
-        assert!(
-            ret.is_none(),
-            "breakpoint() with PYTHONBREAKPOINT=0 must return None"
-        );
+        assert!(ret.is_none(), "breakpoint() with PYTHONBREAKPOINT=0 must return None");
     }
 
     // --- mb_print output correctness tests ---
@@ -7484,9 +7016,7 @@ mod tests {
         mb_print(s);
         let out = end_capture(prev);
         assert_eq!(out, "hello world\n");
-        unsafe {
-            mb_release(s.as_ptr().unwrap());
-        }
+        unsafe { mb_release(s.as_ptr().unwrap()); }
     }
 
     // --- mb_print_args output correctness tests ---
@@ -7502,21 +7032,19 @@ mod tests {
         mb_print_args(list);
         let out = end_capture(prev);
         assert_eq!(out, "1 2 3\n");
-        unsafe {
-            mb_release(list.as_ptr().unwrap());
-        }
+        unsafe { mb_release(list.as_ptr().unwrap()); }
     }
 
     #[test]
     fn test_mb_print_args_output_single() {
         let prev = begin_capture();
-        let list = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(42)]));
+        let list = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(42),
+        ]));
         mb_print_args(list);
         let out = end_capture(prev);
         assert_eq!(out, "42\n");
-        unsafe {
-            mb_release(list.as_ptr().unwrap());
-        }
+        unsafe { mb_release(list.as_ptr().unwrap()); }
     }
 
     #[test]
@@ -7526,9 +7054,7 @@ mod tests {
         mb_print_args(list);
         let out = end_capture(prev);
         assert_eq!(out, "\n");
-        unsafe {
-            mb_release(list.as_ptr().unwrap());
-        }
+        unsafe { mb_release(list.as_ptr().unwrap()); }
     }
 
     // ── R3: mb_print_kwargs tests (sep/end) ──
@@ -7550,9 +7076,9 @@ mod tests {
     #[test]
     fn test_print_kwargs_end() {
         let prev = begin_capture();
-        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("hello".to_string()),
-        )]));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("hello".to_string())),
+        ]));
         let end = MbValue::from_ptr(MbObject::new_str("!!!\n".to_string()));
         mb_print_kwargs(args, MbValue::none(), end);
         let out = end_capture(prev);
@@ -7576,9 +7102,9 @@ mod tests {
     #[test]
     fn test_print_kwargs_empty_end() {
         let prev = begin_capture();
-        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("x".to_string()),
-        )]));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        ]));
         let end = MbValue::from_ptr(MbObject::new_str(String::new()));
         mb_print_kwargs(args, MbValue::none(), end);
         let out = end_capture(prev);
@@ -7611,9 +7137,7 @@ mod tests {
     #[test]
     fn test_sorted_kwargs_reverse() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(3),
-            MbValue::from_int(1),
-            MbValue::from_int(2),
+            MbValue::from_int(3), MbValue::from_int(1), MbValue::from_int(2),
         ]));
         let result = mb_sorted_kwargs(list, MbValue::none(), MbValue::from_bool(true));
         unsafe {
@@ -7623,18 +7147,14 @@ mod tests {
                 assert_eq!(items[0].as_int(), Some(3));
                 assert_eq!(items[1].as_int(), Some(2));
                 assert_eq!(items[2].as_int(), Some(1));
-            } else {
-                panic!("expected list");
-            }
+            } else { panic!("expected list"); }
         }
     }
 
     #[test]
     fn test_sorted_kwargs_no_key_no_reverse() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(5),
-            MbValue::from_int(1),
-            MbValue::from_int(3),
+            MbValue::from_int(5), MbValue::from_int(1), MbValue::from_int(3),
         ]));
         let result = mb_sorted_kwargs(list, MbValue::none(), MbValue::none());
         unsafe {
@@ -7644,9 +7164,7 @@ mod tests {
                 assert_eq!(items[0].as_int(), Some(1));
                 assert_eq!(items[1].as_int(), Some(3));
                 assert_eq!(items[2].as_int(), Some(5));
-            } else {
-                panic!("expected list");
-            }
+            } else { panic!("expected list"); }
         }
     }
 
@@ -7662,9 +7180,7 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref s) = (*result.as_ptr().unwrap()).data {
                 assert_eq!(s, "empty");
-            } else {
-                panic!("expected str default");
-            }
+            } else { panic!("expected str default"); }
         }
     }
 
@@ -7677,18 +7193,14 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref s) = (*result.as_ptr().unwrap()).data {
                 assert_eq!(s, "empty");
-            } else {
-                panic!("expected str default");
-            }
+            } else { panic!("expected str default"); }
         }
     }
 
     #[test]
     fn test_min_kwargs_no_key() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(5),
-            MbValue::from_int(2),
-            MbValue::from_int(8),
+            MbValue::from_int(5), MbValue::from_int(2), MbValue::from_int(8),
         ]));
         let result = mb_min_kwargs(list, MbValue::none(), MbValue::none());
         assert_eq!(result.as_int(), Some(2));
@@ -7697,9 +7209,7 @@ mod tests {
     #[test]
     fn test_max_kwargs_no_key() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(5),
-            MbValue::from_int(2),
-            MbValue::from_int(8),
+            MbValue::from_int(5), MbValue::from_int(2), MbValue::from_int(8),
         ]));
         let result = mb_max_kwargs(list, MbValue::none(), MbValue::none());
         assert_eq!(result.as_int(), Some(8));
@@ -7710,9 +7220,7 @@ mod tests {
     #[test]
     fn test_sum_with_start_int() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(2),
-            MbValue::from_int(3),
+            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
         ]));
         let result = mb_sum_with_start(list, MbValue::from_int(10));
         assert_eq!(result.as_int(), Some(16));
@@ -7721,8 +7229,7 @@ mod tests {
     #[test]
     fn test_sum_with_start_float() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_float(1.5),
-            MbValue::from_float(2.5),
+            MbValue::from_float(1.5), MbValue::from_float(2.5),
         ]));
         let result = mb_sum_with_start(list, MbValue::from_float(10.0));
         assert_eq!(result.as_float(), Some(14.0));
@@ -7731,8 +7238,7 @@ mod tests {
     #[test]
     fn test_sum_with_start_mixed() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(2),
+            MbValue::from_int(1), MbValue::from_int(2),
         ]));
         let result = mb_sum_with_start(list, MbValue::from_float(0.5));
         assert_eq!(result.as_float(), Some(3.5));
@@ -7883,9 +7389,7 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref s) = (*c.as_ptr().unwrap()).data {
                 assert_eq!(s, "😊");
-            } else {
-                panic!("expected str");
-            }
+            } else { panic!("expected str"); }
         }
     }
 
@@ -7896,9 +7400,7 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref s) = (*c.as_ptr().unwrap()).data {
                 assert_eq!(s, "中");
-            } else {
-                panic!("expected str");
-            }
+            } else { panic!("expected str"); }
         }
     }
 
@@ -7908,9 +7410,7 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref s) = (*c.as_ptr().unwrap()).data {
                 assert_eq!(s, "\0");
-            } else {
-                panic!("expected str");
-            }
+            } else { panic!("expected str"); }
         }
     }
 
@@ -7945,11 +7445,8 @@ mod tests {
         for codepoint in [65, 233, 8364, 20013, 128522] {
             let ch = mb_chr(MbValue::from_int(codepoint));
             let ord_val = mb_ord(ch);
-            assert_eq!(
-                ord_val.as_int(),
-                Some(codepoint),
-                "chr/ord roundtrip failed for codepoint {codepoint}"
-            );
+            assert_eq!(ord_val.as_int(), Some(codepoint),
+                "chr/ord roundtrip failed for codepoint {codepoint}");
         }
     }
 
@@ -7961,9 +7458,9 @@ mod tests {
 
         // type('MyClass', (object,), {'x': 42})
         let name = MbValue::from_ptr(MbObject::new_str("TestType3Basic".to_string()));
-        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
-            MbObject::new_str("object".to_string()),
-        )]));
+        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("object".to_string())),
+        ]));
         let dict = super::super::dict_ops::mb_dict_new();
         super::super::dict_ops::mb_dict_setitem(
             dict,
@@ -7976,20 +7473,12 @@ mod tests {
         assert!(type_obj.as_ptr().is_some());
         unsafe {
             let ptr = type_obj.as_ptr().unwrap();
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 assert_eq!(class_name, "type");
                 let f = fields.read().unwrap();
                 let name_val = f.get("__name__").unwrap();
                 let name_str = name_val.as_ptr().and_then(|p| {
-                    if let ObjData::Str(ref s) = (*p).data {
-                        Some(s.clone())
-                    } else {
-                        None
-                    }
+                    if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
                 });
                 assert_eq!(name_str, Some("TestType3Basic".to_string()));
             } else {
@@ -8005,9 +7494,9 @@ mod tests {
         super::super::class::cleanup_all_classes();
 
         let name = MbValue::from_ptr(MbObject::new_str("TestType3Empty".to_string()));
-        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
-            MbObject::new_str("object".to_string()),
-        )]));
+        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("object".to_string())),
+        ]));
         let dict = super::super::dict_ops::mb_dict_new();
 
         let type_obj = mb_type3(name, bases, dict);
@@ -8036,9 +7525,9 @@ mod tests {
         // Dunder keys should be classified as methods even if value is not TAG_FUNC.
         // We use an int value as a stand-in; in real usage this would be a closure handle.
         let name = MbValue::from_ptr(MbObject::new_str("TestType3Dunder".to_string()));
-        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
-            MbObject::new_str("object".to_string()),
-        )]));
+        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("object".to_string())),
+        ]));
         let dict = super::super::dict_ops::mb_dict_new();
         // __repr__ with a non-None value (int as placeholder)
         super::super::dict_ops::mb_dict_setitem(
@@ -8072,9 +7561,9 @@ mod tests {
         super::super::class::cleanup_all_classes();
 
         let name = MbValue::from_ptr(MbObject::new_str("TestType3Inst".to_string()));
-        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
-            MbObject::new_str("object".to_string()),
-        )]));
+        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("object".to_string())),
+        ]));
         let dict = super::super::dict_ops::mb_dict_new();
         let type_obj = mb_type3(name, bases, dict);
 
@@ -8122,9 +7611,9 @@ mod tests {
 
         // Create child via type() 3-arg
         let name = MbValue::from_ptr(MbObject::new_str("TestType3Child".to_string()));
-        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_ptr(
-            MbObject::new_str("TestType3Base".to_string()),
-        )]));
+        let bases = MbValue::from_ptr(MbObject::new_tuple(vec![
+            MbValue::from_ptr(MbObject::new_str("TestType3Base".to_string())),
+        ]));
         let dict = super::super::dict_ops::mb_dict_new();
         super::super::dict_ops::mb_dict_setitem(
             dict,

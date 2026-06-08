@@ -16,12 +16,7 @@ impl SourceFile {
         let line_starts = std::iter::once(0)
             .chain(source.match_indices('\n').map(|(i, _)| (i + 1) as u32))
             .collect();
-        Self {
-            id,
-            name,
-            source,
-            line_starts,
-        }
+        Self { id, name, source, line_starts }
     }
 
     pub fn line_col(&self, offset: u32) -> (u32, u32) {
@@ -36,9 +31,7 @@ impl SourceFile {
             return "";
         }
         let start = self.line_starts[idx] as usize;
-        let end = self
-            .line_starts
-            .get(idx + 1)
+        let end = self.line_starts.get(idx + 1)
             .map(|&e| e as usize)
             .unwrap_or(self.source.len());
         &self.source[start..end].trim_end_matches('\n')
@@ -78,10 +71,10 @@ mod tests {
         let f = SourceFile::new(FileId(0), "t.py".into(), "a\nbb\nccc".into());
 
         // 1-based (line, col)
-        assert_eq!(f.line_col(0), (1, 1)); // 'a'
-        assert_eq!(f.line_col(2), (2, 1)); // 'b' at start of line 2
-        assert_eq!(f.line_col(3), (2, 2)); // 'b' mid-line-2
-        assert_eq!(f.line_col(5), (3, 1)); // 'c' at start of line 3
+        assert_eq!(f.line_col(0), (1, 1));  // 'a'
+        assert_eq!(f.line_col(2), (2, 1));  // 'b' at start of line 2
+        assert_eq!(f.line_col(3), (2, 2));  // 'b' mid-line-2
+        assert_eq!(f.line_col(5), (3, 1));  // 'c' at start of line 3
 
         // line_text trims trailing newline
         assert_eq!(f.line_text(1), "a");

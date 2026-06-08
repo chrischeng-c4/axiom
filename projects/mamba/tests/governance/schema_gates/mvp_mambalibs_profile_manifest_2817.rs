@@ -51,16 +51,9 @@ fn umbrella_path() -> PathBuf {
         .join("mvp.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn mambalibs_profile_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("profile").and_then(|v| v.as_str()),
@@ -87,7 +80,7 @@ fn mambalibs_profile_manifest_header_is_well_formed() {
 
 #[test]
 fn mambalibs_profile_declares_all_pipeline_families() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let families = doc
         .get("families")
         .and_then(|v| v.as_table())
@@ -110,7 +103,7 @@ fn mambalibs_profile_declares_all_pipeline_families() {
 
 #[test]
 fn mambalibs_profile_pairs_build_with_import() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let policy = doc
         .get("policy")
@@ -169,7 +162,7 @@ fn mambalibs_profile_pairs_build_with_import() {
 
 #[test]
 fn mambalibs_profile_diagnostics_must_not_silently_pass() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let policy = doc
         .get("policy")
@@ -220,7 +213,7 @@ fn mambalibs_profile_diagnostics_must_not_silently_pass() {
 
 #[test]
 fn mambalibs_profile_summary_names_dependency_and_artifact() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let summary = doc
         .get("summary")
         .and_then(|v| v.as_table())
@@ -244,7 +237,7 @@ fn mambalibs_profile_summary_names_dependency_and_artifact() {
 
 #[test]
 fn mambalibs_profile_isolates_from_global_caches() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let policy = doc
         .get("policy")
         .and_then(|v| v.as_table())
@@ -265,7 +258,7 @@ fn mambalibs_profile_isolates_from_global_caches() {
 
 #[test]
 fn mvp_umbrella_links_to_mambalibs_manifest() {
-    let doc = load_toml(&umbrella_path());
+    let doc = crate::common::load_toml(&umbrella_path());
     let entry = doc
         .get("profiles")
         .and_then(|v| v.get("mambalibs"))

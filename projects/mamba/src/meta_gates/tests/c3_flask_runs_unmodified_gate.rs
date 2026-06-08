@@ -23,10 +23,16 @@ fn manifest() -> Value {
 fn header_is_well_formed() {
     let m = manifest();
     assert_eq!(m["version"].as_integer(), Some(1));
-    assert_eq!(m["fixture"].as_str(), Some("c3_flask_runs_unmodified_gate"));
+    assert_eq!(
+        m["fixture"].as_str(),
+        Some("c3_flask_runs_unmodified_gate")
+    );
     assert_eq!(m["issue"].as_integer(), Some(1257));
     assert_eq!(m["profile"].as_str(), Some("third_party"));
-    assert_eq!(m["family"].as_str(), Some("c3_flask_runs_unmodified_gate"));
+    assert_eq!(
+        m["family"].as_str(),
+        Some("c3_flask_runs_unmodified_gate")
+    );
     assert_eq!(m["network"].as_str(), Some("offline"));
     let related: Vec<_> = m["related_issues"]
         .as_array()
@@ -104,7 +110,10 @@ fn r1_flask_import_and_app_construction() {
         c["flask_import_failure_kind"].as_str(),
         Some("c3_flask_import_failed")
     );
-    assert_eq!(c["flask_import_failure_exit_code"].as_integer(), Some(277));
+    assert_eq!(
+        c["flask_import_failure_exit_code"].as_integer(),
+        Some(277)
+    );
     assert_eq!(
         c["flask_app_construction_failure_kind"].as_str(),
         Some("c3_flask_app_construction_failed")
@@ -229,7 +238,7 @@ fn r4_conformance_fixture_spawns_server_curls_and_asserts() {
     }
     assert_eq!(
         c["fixture_relative_path"].as_str(),
-        Some("projects/mamba/tests/cpython/fixtures/3rd-libs/flask_hello_world")
+        Some("projects/mamba/tests/cpython/3rd-libs/flask_hello_world")
     );
     assert_eq!(
         c["fixture_relative_path_field_name"].as_str(),
@@ -250,12 +259,18 @@ fn r4_conformance_fixture_spawns_server_curls_and_asserts() {
         c["fixture_curl_skipped_failure_kind"].as_str(),
         Some("c3_flask_fixture_curl_skipped")
     );
-    assert_eq!(c["fixture_curl_skipped_exit_code"].as_integer(), Some(283));
+    assert_eq!(
+        c["fixture_curl_skipped_exit_code"].as_integer(),
+        Some(283)
+    );
     assert_eq!(
         c["fixture_server_leaked_failure_kind"].as_str(),
         Some("c3_flask_fixture_dev_server_leaked")
     );
-    assert_eq!(c["fixture_server_leaked_exit_code"].as_integer(), Some(284));
+    assert_eq!(
+        c["fixture_server_leaked_exit_code"].as_integer(),
+        Some(284)
+    );
 }
 
 #[test]

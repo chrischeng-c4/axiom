@@ -7,7 +7,7 @@
 //! ```toml
 //! issue = 1447
 //! lib   = "abc"
-//! fixture = "tests/cpython/fixtures/std-libs/abc/bench/get_cache_token_hot.py"
+//! fixture = "tests/cpython/std-libs/abc/bench/get_cache_token_hot.py"
 //! floor   = 1.0
 //! mem_floor = 1.0
 //! samples = 1            # 1 = single shot; N>=3 = median-of-N
@@ -32,13 +32,15 @@
 //! Each pin's emitted test name is `perf_pin::<lib>_<issue>` which lets the
 //! `perf_pin` substring filter match every pin in one go.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use datatest_stable::harness;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
+
+#[path = "harness_common.rs"]
+mod common;
+use common::{fixture_sha256, mamba_bin, python3_available, python3_can_import};
 
 #[derive(Debug, Deserialize)]
 struct Pin {
@@ -80,26 +82,6 @@ struct CpythonPerfBaseline {
 
 fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-fn mamba_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_mamba"))
-}
-
-fn python3_available() -> bool {
-    Command::new("python3")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-fn python3_can_import(module: &str) -> bool {
-    Command::new("python3")
-        .args(["-c", &format!("import {module}")])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 /// Parse a `/usr/bin/time` stderr blob for the child's peak RSS in bytes.
@@ -293,20 +275,6 @@ fn baseline_required() -> bool {
 
 fn baseline_tool() -> PathBuf {
     manifest_dir().join("tests/harness/cpython/tools/perf_baseline.py")
-}
-
-fn fixture_sha256(path: &Path) -> std::io::Result<String> {
-    let mut file = std::fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buf = [0_u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn load_cpython_baseline(toml_path: &Path) -> Option<CpythonPerfBaseline> {
@@ -522,8 +490,4 @@ fn run_pin(toml_path: &Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-harness!(
-    run_pin,
-    "tests/harness/cpython/config/perf/pins",
-    r"^.*\.toml$"
-);
+harness!(run_pin, "tests/harness/cpython/config/perf/pins", r"^.*\.toml$");

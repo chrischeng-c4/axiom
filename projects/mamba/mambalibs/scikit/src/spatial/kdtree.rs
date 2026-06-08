@@ -87,16 +87,14 @@ impl KdTree {
 
         let (left_slice, right_slice) = {
             let (left, rest) = indices.split_at_mut(mid);
-            let right = if rest.len() > 1 {
-                &mut rest[1..]
-            } else {
-                &mut []
-            };
+            let right = if rest.len() > 1 { &mut rest[1..] } else { &mut [] };
             (left.to_vec(), right.to_vec())
         };
 
-        let left = Self::build_recursive(points, &mut left_slice.clone(), depth + 1, nodes, dim);
-        let right = Self::build_recursive(points, &mut right_slice.clone(), depth + 1, nodes, dim);
+        let left =
+            Self::build_recursive(points, &mut left_slice.clone(), depth + 1, nodes, dim);
+        let right =
+            Self::build_recursive(points, &mut right_slice.clone(), depth + 1, nodes, dim);
 
         nodes[node_idx].left = left;
         nodes[node_idx].right = right;
@@ -121,7 +119,13 @@ impl KdTree {
         best
     }
 
-    fn query_recursive(&self, node_idx: usize, point: &[f64], k: usize, best: &mut Vec<Neighbor>) {
+    fn query_recursive(
+        &self,
+        node_idx: usize,
+        point: &[f64],
+        k: usize,
+        best: &mut Vec<Neighbor>,
+    ) {
         let node = &self.nodes[node_idx];
         let node_point = &self.points[node.point_idx];
 

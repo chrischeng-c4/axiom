@@ -22,24 +22,16 @@ fn get<'a>(v: &'a Value, key: &str) -> &'a Value {
     v.get(key).unwrap_or_else(|| panic!("missing key: {key}"))
 }
 fn b(v: &Value, key: &str) -> bool {
-    get(v, key)
-        .as_bool()
-        .unwrap_or_else(|| panic!("{key} not bool"))
+    get(v, key).as_bool().unwrap_or_else(|| panic!("{key} not bool"))
 }
 fn s<'a>(v: &'a Value, key: &str) -> &'a str {
-    get(v, key)
-        .as_str()
-        .unwrap_or_else(|| panic!("{key} not str"))
+    get(v, key).as_str().unwrap_or_else(|| panic!("{key} not str"))
 }
 fn i(v: &Value, key: &str) -> i64 {
-    get(v, key)
-        .as_integer()
-        .unwrap_or_else(|| panic!("{key} not int"))
+    get(v, key).as_integer().unwrap_or_else(|| panic!("{key} not int"))
 }
 fn a<'a>(v: &'a Value, key: &str) -> &'a Vec<Value> {
-    get(v, key)
-        .as_array()
-        .unwrap_or_else(|| panic!("{key} not array"))
+    get(v, key).as_array().unwrap_or_else(|| panic!("{key} not array"))
 }
 
 fn leaf_libs(arr: &[Value]) -> Vec<&str> {
@@ -91,14 +83,8 @@ fn surface_pins_the_five_required_axes() {
     let sf = get(&m, "surface");
     assert!(b(sf, "must_cover_aws_leaf_set_and_hello_world"));
     assert!(b(sf, "must_cover_azure_leaf_set_and_hello_world"));
-    assert!(b(
-        sf,
-        "must_cover_gcp_leaf_set_via_grpclib_path_and_hello_world"
-    ));
-    assert!(b(
-        sf,
-        "must_cover_grpcio_deferred_and_out_of_scope_carveouts"
-    ));
+    assert!(b(sf, "must_cover_gcp_leaf_set_via_grpclib_path_and_hello_world"));
+    assert!(b(sf, "must_cover_grpcio_deferred_and_out_of_scope_carveouts"));
     assert!(b(sf, "must_cover_stdlib_dependency_edges_recorded"));
     assert!(b(sf, "must_be_offline_or_loopback_only"));
     assert!(b(sf, "must_be_deterministic"));
@@ -120,16 +106,10 @@ fn r1_aws_leaf_set_and_hello_world() {
     for issue in &[1500_i64, 1501, 1502, 1503] {
         assert!(issues.contains(issue), "missing aws issue: {issue}");
     }
-    assert_eq!(
-        s(r, "expected_aws_hello_world"),
-        "boto3.client('s3').list_buckets()"
-    );
+    assert_eq!(s(r, "expected_aws_hello_world"), "boto3.client('s3').list_buckets()");
     assert_eq!(i(r, "aws_leaf_dropped_exit_code"), 500);
     assert_eq!(i(r, "aws_hello_modified_exit_code"), 501);
-    assert!(b(
-        r,
-        "must_distinguish_aws_leaf_dropped_from_hello_modified"
-    ));
+    assert!(b(r, "must_distinguish_aws_leaf_dropped_from_hello_modified"));
 }
 
 #[test]
@@ -140,12 +120,7 @@ fn r2_azure_leaf_set_and_hello_world() {
     assert!(b(r, "must_enumerate_azure_leaf_set"));
     let leafs = a(r, "azure_leafs");
     let libs = leaf_libs(leafs);
-    for lib in &[
-        "azure-core",
-        "azure-identity",
-        "azure-storage-blob",
-        "azure-keyvault-secrets",
-    ] {
+    for lib in &["azure-core", "azure-identity", "azure-storage-blob", "azure-keyvault-secrets"] {
         assert!(libs.contains(lib), "missing azure leaf: {lib}");
     }
     let issues = leaf_issues(leafs);
@@ -158,19 +133,13 @@ fn r2_azure_leaf_set_and_hello_world() {
     );
     assert_eq!(i(r, "azure_leaf_dropped_exit_code"), 502);
     assert_eq!(i(r, "azure_hello_modified_exit_code"), 503);
-    assert!(b(
-        r,
-        "must_distinguish_azure_leaf_dropped_from_hello_modified"
-    ));
+    assert!(b(r, "must_distinguish_azure_leaf_dropped_from_hello_modified"));
 }
 
 #[test]
 fn r3_gcp_leaf_set_via_grpclib_path() {
     let m = manifest();
-    let r = get(
-        &m,
-        "r3_gcp_leaf_set_via_grpclib_path_and_hello_world_contract",
-    );
+    let r = get(&m, "r3_gcp_leaf_set_via_grpclib_path_and_hello_world_contract");
     assert_eq!(s(r, "requirement_id"), "R3");
     assert!(b(r, "must_enumerate_gcp_leaf_set"));
     assert!(b(r, "must_pin_gcp_grpclib_path"));
@@ -217,10 +186,7 @@ fn r4_grpcio_deferred_and_carveouts() {
     assert!(b(r, "must_record_grpcio_deferred"));
     assert!(b(r, "must_carve_out_grpc_server_side"));
     assert!(b(r, "must_carve_out_cloud_regional_federation_oddities"));
-    assert!(b(
-        r,
-        "must_carve_out_per_lib_perf_vs_cpython_at_umbrella_level"
-    ));
+    assert!(b(r, "must_carve_out_per_lib_perf_vs_cpython_at_umbrella_level"));
     let deferred = a(r, "deferred_libs");
     let dnames: Vec<&str> = deferred
         .iter()
@@ -234,19 +200,12 @@ fn r4_grpcio_deferred_and_carveouts() {
     assert!(dissues.contains(&1515));
     let carved = a(r, "carved_out_axes");
     let cnames: Vec<&str> = carved.iter().filter_map(|v| v.as_str()).collect();
-    for axis in &[
-        "grpc_server_side",
-        "cloud_regional_federation_oddities",
-        "per_lib_perf_vs_cpython",
-    ] {
+    for axis in &["grpc_server_side", "cloud_regional_federation_oddities", "per_lib_perf_vs_cpython"] {
         assert!(cnames.contains(axis), "missing carve-out: {axis}");
     }
     assert_eq!(i(r, "grpcio_unblocked_in_umbrella_exit_code"), 507);
     assert_eq!(i(r, "carve_out_violated_exit_code"), 508);
-    assert!(b(
-        r,
-        "must_distinguish_grpcio_unblocked_from_carve_out_violation"
-    ));
+    assert!(b(r, "must_distinguish_grpcio_unblocked_from_carve_out_violation"));
 }
 
 #[test]
@@ -260,14 +219,7 @@ fn r5_stdlib_dependency_edges_recorded() {
         .iter()
         .filter_map(|v| v.get("stdlib").and_then(|x| x.as_str()))
         .collect();
-    for lib in &[
-        "ssl",
-        "socket",
-        "asyncio",
-        "urllib.parse",
-        "hashlib",
-        "hmac",
-    ] {
+    for lib in &["ssl", "socket", "asyncio", "urllib.parse", "hashlib", "hmac"] {
         assert!(names.contains(lib), "missing stdlib edge: {lib}");
     }
     let issues: Vec<i64> = edges
@@ -279,10 +231,7 @@ fn r5_stdlib_dependency_edges_recorded() {
     }
     assert_eq!(i(r, "stdlib_edge_dropped_exit_code"), 509);
     assert_eq!(i(r, "stdlib_edge_unrelated_added_exit_code"), 510);
-    assert!(b(
-        r,
-        "must_distinguish_edge_dropped_from_unrelated_edge_added"
-    ));
+    assert!(b(r, "must_distinguish_edge_dropped_from_unrelated_edge_added"));
 }
 
 #[test]

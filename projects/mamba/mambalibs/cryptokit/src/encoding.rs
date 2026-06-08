@@ -53,13 +53,11 @@ pub fn random_hex(byte_len: usize) -> String {
 /// Generate a random string from a given charset.
 pub fn random_string(len: usize, charset: Option<&str>) -> String {
     use rand::Rng;
-    let charset =
-        charset.unwrap_or("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+    let charset = charset
+        .unwrap_or("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
     let chars: Vec<char> = charset.chars().collect();
     let mut rng = rand::thread_rng();
-    (0..len)
-        .map(|_| chars[rng.gen_range(0..chars.len())])
-        .collect()
+    (0..len).map(|_| chars[rng.gen_range(0..chars.len())]).collect()
 }
 
 #[cfg(test)]

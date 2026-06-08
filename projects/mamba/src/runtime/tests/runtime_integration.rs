@@ -1,9 +1,10 @@
 #![cfg(test)]
 
-use crate::runtime::rc::MbObject;
 /// Cross-module integration tests for the Mamba runtime.
 /// Exercises Value, GC, Module, Builtins, String/List/Dict ops together.
+
 use crate::runtime::value::MbValue;
+use crate::runtime::rc::MbObject;
 
 // ── Helpers ──
 
@@ -18,9 +19,7 @@ fn str_val(s: &str) -> MbValue {
 /// Create a list, add as GC root, collect — object must not be freed.
 #[test]
 fn test_list_value_gc_root_survives_collect() {
-    use crate::runtime::gc::{
-        collect, gc_add_root, gc_clear_roots, gc_disable, gc_enable, gc_remove_root,
-    };
+    use crate::runtime::gc::{gc_add_root, gc_remove_root, gc_clear_roots, collect, gc_disable, gc_enable};
     use crate::runtime::list_ops::mb_list_new;
 
     gc_disable();
@@ -34,10 +33,7 @@ fn test_list_value_gc_root_survives_collect() {
 
     // The list was rooted, so it should NOT be among the freed objects.
     // We verify indirectly: the value is still a valid ptr.
-    assert!(
-        list.is_ptr(),
-        "rooted list should still be a valid ptr after collect"
-    );
+    assert!(list.is_ptr(), "rooted list should still be a valid ptr after collect");
     let _ = freed; // may be 0 or positive depending on other objects
 
     gc_remove_root(list);
@@ -47,10 +43,8 @@ fn test_list_value_gc_root_survives_collect() {
 /// Create a dict, add as GC root, collect — object must not be freed.
 #[test]
 fn test_dict_value_gc_root_survives_collect() {
+    use crate::runtime::gc::{gc_add_root, gc_remove_root, gc_clear_roots, collect, gc_disable, gc_enable};
     use crate::runtime::dict_ops::mb_dict_new;
-    use crate::runtime::gc::{
-        collect, gc_add_root, gc_clear_roots, gc_disable, gc_enable, gc_remove_root,
-    };
 
     gc_disable();
     gc_clear_roots();
@@ -61,10 +55,7 @@ fn test_dict_value_gc_root_survives_collect() {
     gc_enable();
     let _freed = collect();
 
-    assert!(
-        dict.is_ptr(),
-        "rooted dict should still be a valid ptr after collect"
-    );
+    assert!(dict.is_ptr(), "rooted dict should still be a valid ptr after collect");
 
     gc_remove_root(dict);
     gc_clear_roots();
@@ -73,9 +64,7 @@ fn test_dict_value_gc_root_survives_collect() {
 /// Create a list, add as root, remove root, collect — freed count increases.
 #[test]
 fn test_list_remove_root_collected() {
-    use crate::runtime::gc::{
-        collect, gc_add_root, gc_clear_roots, gc_disable, gc_enable, gc_get_count, gc_remove_root,
-    };
+    use crate::runtime::gc::{gc_add_root, gc_remove_root, gc_clear_roots, collect, gc_disable, gc_enable, gc_get_count};
     use crate::runtime::list_ops::mb_list_new;
 
     gc_disable();
@@ -94,18 +83,15 @@ fn test_list_remove_root_collected() {
 
     // Freed count is >= 0; tracked count should not grow.
     let _ = freed;
-    assert!(
-        after <= before,
-        "tracked count should not grow after collect"
-    );
+    assert!(after <= before, "tracked count should not grow after collect");
 }
 
 /// Add multiple roots, clear all roots, collect — freed count > 0 possible.
 #[test]
 fn test_gc_clear_roots_allows_collection() {
-    use crate::runtime::dict_ops::mb_dict_new;
-    use crate::runtime::gc::{collect, gc_add_root, gc_clear_roots, gc_disable, gc_enable};
+    use crate::runtime::gc::{gc_add_root, gc_clear_roots, collect, gc_disable, gc_enable};
     use crate::runtime::list_ops::mb_list_new;
+    use crate::runtime::dict_ops::mb_dict_new;
 
     gc_disable();
     gc_clear_roots();
@@ -128,10 +114,8 @@ fn test_gc_clear_roots_allows_collection() {
 /// Outer list contains inner list; only outer is rooted — both survive collect.
 #[test]
 fn test_nested_list_reachability() {
-    use crate::runtime::gc::{
-        collect, gc_add_root, gc_clear_roots, gc_disable, gc_enable, gc_remove_root,
-    };
-    use crate::runtime::list_ops::{mb_list_append, mb_list_getitem, mb_list_new};
+    use crate::runtime::gc::{gc_add_root, gc_remove_root, gc_clear_roots, collect, gc_disable, gc_enable};
+    use crate::runtime::list_ops::{mb_list_new, mb_list_append, mb_list_getitem};
 
     gc_disable();
     gc_clear_roots();
@@ -152,10 +136,7 @@ fn test_nested_list_reachability() {
     assert!(outer.is_ptr());
     // inner is reachable through outer — verify its content is intact.
     let fetched_inner = mb_list_getitem(outer, MbValue::from_int(0));
-    assert!(
-        fetched_inner.is_ptr(),
-        "inner list reachable from outer must survive"
-    );
+    assert!(fetched_inner.is_ptr(), "inner list reachable from outer must survive");
 
     gc_remove_root(outer);
     gc_clear_roots();
@@ -168,7 +149,7 @@ fn test_nested_list_reachability() {
 /// Register a custom module with an int attr, import it, get the attr.
 #[test]
 fn test_register_and_import_custom_module() {
-    use crate::runtime::module::{mb_import, mb_module_getattr, mb_module_register};
+    use crate::runtime::module::{mb_module_register, mb_import, mb_module_getattr};
     use std::collections::HashMap;
 
     let mut attrs = HashMap::new();
@@ -187,57 +168,45 @@ fn test_register_and_import_custom_module() {
 /// After register_builtins, import "sys" — result is a ptr (not none).
 #[test]
 fn test_import_builtin_after_register_builtins() {
-    use crate::runtime::module::{mb_import, mb_register_builtins};
+    use crate::runtime::module::{mb_register_builtins, mb_import};
 
     mb_register_builtins();
 
     let result = mb_import(str_val("sys"));
-    assert!(
-        result.is_ptr(),
-        "sys module should be importable after register_builtins"
-    );
+    assert!(result.is_ptr(), "sys module should be importable after register_builtins");
 }
 
 /// After register_builtins, import "json", getattr "dumps" — not none.
 #[test]
 fn test_builtin_json_accessible() {
-    use crate::runtime::module::{mb_module_getattr, mb_register_builtins};
+    use crate::runtime::module::{mb_register_builtins, mb_module_getattr};
 
     mb_register_builtins();
 
     let attr = mb_module_getattr(str_val("json"), str_val("dumps"));
-    assert!(
-        !attr.is_none(),
-        "json.dumps should be accessible after register_builtins"
-    );
+    assert!(!attr.is_none(), "json.dumps should be accessible after register_builtins");
 }
 
 /// After register_builtins, import "os", getattr "getcwd" — not none.
 #[test]
 fn test_builtin_os_accessible() {
-    use crate::runtime::module::{mb_module_getattr, mb_register_builtins};
+    use crate::runtime::module::{mb_register_builtins, mb_module_getattr};
 
     mb_register_builtins();
 
     let attr = mb_module_getattr(str_val("os"), str_val("getcwd"));
-    assert!(
-        !attr.is_none(),
-        "os.getcwd should be accessible after register_builtins"
-    );
+    assert!(!attr.is_none(), "os.getcwd should be accessible after register_builtins");
 }
 
 /// After register_builtins, import "math", getattr "sqrt" — not none.
 #[test]
 fn test_builtin_math_accessible() {
-    use crate::runtime::module::{mb_module_getattr, mb_register_builtins};
+    use crate::runtime::module::{mb_register_builtins, mb_module_getattr};
 
     mb_register_builtins();
 
     let attr = mb_module_getattr(str_val("math"), str_val("sqrt"));
-    assert!(
-        !attr.is_none(),
-        "math.sqrt should be accessible after register_builtins"
-    );
+    assert!(!attr.is_none(), "math.sqrt should be accessible after register_builtins");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -258,7 +227,7 @@ fn test_mb_len_on_empty_list() {
 #[test]
 fn test_mb_len_on_nonempty_list() {
     use crate::runtime::builtins::mb_len;
-    use crate::runtime::list_ops::{mb_list_append, mb_list_new};
+    use crate::runtime::list_ops::{mb_list_new, mb_list_append};
 
     let list = mb_list_new();
     mb_list_append(list, MbValue::from_int(1));
@@ -382,10 +351,7 @@ fn test_box_float_pi() {
 
     let val = mb_box_float(3.14);
     let f = val.as_float().expect("should be a float");
-    assert!(
-        (f - 3.14).abs() < 1e-9,
-        "float should be approx 3.14, got {f}"
-    );
+    assert!((f - 3.14).abs() < 1e-9, "float should be approx 3.14, got {f}");
 }
 
 /// MbValue::from_int(99), mb_unbox_int → 99.

@@ -28,11 +28,14 @@ pub fn convex_hull(points: &[(f64, f64)]) -> Vec<usize> {
     indices[1..].sort_by(|&a, &b| {
         let angle_a = (points[a].1 - p0.1).atan2(points[a].0 - p0.0);
         let angle_b = (points[b].1 - p0.1).atan2(points[b].0 - p0.0);
-        angle_a.partial_cmp(&angle_b).unwrap().then_with(|| {
-            let da = sq_dist_2d(p0, points[a]);
-            let db = sq_dist_2d(p0, points[b]);
-            da.partial_cmp(&db).unwrap()
-        })
+        angle_a
+            .partial_cmp(&angle_b)
+            .unwrap()
+            .then_with(|| {
+                let da = sq_dist_2d(p0, points[a]);
+                let db = sq_dist_2d(p0, points[b]);
+                da.partial_cmp(&db).unwrap()
+            })
     });
 
     // Graham scan
@@ -115,7 +118,12 @@ mod tests {
 
     #[test]
     fn test_convex_hull_area_square() {
-        let points = vec![(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)];
+        let points = vec![
+            (0.0, 0.0),
+            (2.0, 0.0),
+            (2.0, 2.0),
+            (0.0, 2.0),
+        ];
         let area = convex_hull_area(&points);
         assert!((area - 4.0).abs() < 1e-10);
     }

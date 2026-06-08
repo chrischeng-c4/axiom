@@ -31,7 +31,7 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent
 CPYTHON_DIR = TOOLS_DIR.parents[2] / "cpython"  # tests/cpython (fixtures + .cache)
 MAMBA_DIR = CPYTHON_DIR.parent.parent
-FIXTURES_ROOT = CPYTHON_DIR / "fixtures"
+FIXTURES_ROOT = CPYTHON_DIR
 
 
 @dataclass(frozen=True)
@@ -172,6 +172,7 @@ def run_one(
             env["TMPDIR"] = tmp
             env["TEMP"] = tmp
             env["TMP"] = tmp
+            env["PYTHONBREAKPOINT"] = "0"  # parity with the other oracle runners — no breakpoint() hang
             result = subprocess.run(
                 [python, str(path.resolve())],
                 cwd=tmp,

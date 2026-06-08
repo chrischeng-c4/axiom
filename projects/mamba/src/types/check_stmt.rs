@@ -1,11 +1,94 @@
-use super::check::TypeChecker;
-use super::{Ty, TypeId};
 use crate::parser::ast::*;
 use crate::resolve::SymbolKind;
 use crate::source::span::Spanned;
+use super::{Ty, TypeId};
+use super::check::TypeChecker;
 
 /// Statement type checking, function body checking, and helpers.
 impl TypeChecker {
+    /// ① Type-wall PoC: is `cls` a from-imported name that names a stdlib *class*
+    /// carrying at least one `Method` signature in the sig table (curated OR
+    /// generated)? Used to bind instance provenance so that a later
+    /// `obj.method(arg)` can resolve a `Method` signature and apply the same
+    /// guarded scalar check.
+    ///
+    /// The import-time qualifier in `import_origins` only reflects the *curated*
+    /// table (see `is_known_stdlib_class`), so generated stdlib classes are bound
+    /// with an empty qualifier and the old `qual == cls` test misses them. We
+    /// therefore consult the sig table directly: `cls` must be a from-imported
+    /// name (present in `import_origins`) whose `(module, cls)` owns a `Method`
+    /// row. A from-imported *module function* never owns a `Method` row keyed on
+    /// its own name, so this never mis-binds a module fn as an instance class.
+    fn stdlib_method_class(&self, cls: &str) -> Option<String> {
+        use super::stdlib_sigs::{SigKind, STDLIB_SIGS};
+        use super::stdlib_sigs_generated::STDLIB_SIGS_GENERATED;
+        let (module, _qual) = self.import_origins.get(cls)?;
+        let owns_method = |s: &super::stdlib_sigs::StdlibSig| {
+            matches!(s.kind, SigKind::Method) && s.module == module && s.qualifier == cls
+        };
+        if STDLIB_SIGS.iter().any(owns_method)
+            || STDLIB_SIGS_GENERATED.iter().any(owns_method)
+        {
+            Some(cls.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// ① Type-wall PoC: if `value` constructs an instance of a known imported
+    /// stdlib class, return that class's qualifier. Recognizes
+    /// `object.__new__(Cls)` and `Cls(...)` where `Cls` is a from-imported stdlib
+    /// class with a `Method` signature in the sig table.
+    fn stdlib_instance_class(&self, value: &Spanned<Expr>) -> Option<String> {
+        let Expr::Call { func, args } = &value.node else { return None };
+        // `Cls(...)` — direct constructor call.
+        if let Expr::Ident(cls) = &func.node {
+            return self.stdlib_method_class(cls);
+        }
+        // `object.__new__(Cls)` — bare allocation. func is `object.__new__`.
+        if let Expr::Attr { object, attr } = &func.node {
+            if attr == "__new__" {
+                if let Expr::Ident(base) = &object.node {
+                    if base == "object" {
+                        if let Some(CallArg::Positional(arg0)) = args.first() {
+                            if let Expr::Ident(cls) = &arg0.node {
+                                return self.stdlib_method_class(cls);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// ① Type-wall PoC: walk a statement sequence with one-statement lookahead so
+    /// the "expected to raise at runtime" carve-out can fire. When an `ExprStmt`
+    /// is immediately followed by a `raise`, the probe call's value-vs-annotation
+    /// enforcement (constructor/method/module-fn arg check) is SUPPRESSED for that
+    /// statement only — the program's correct behavior depends on the call raising
+    /// at runtime, so a compile-time rejection would abort it (see
+    /// `SUPPRESS_STDLIB_ARG_CHECK` in check_expr.rs). Every other statement is
+    /// checked exactly as before. Used for block bodies that can host the
+    /// auto-ported manual-`assertRaises` idiom (`try`/function/module bodies).
+    pub(crate) fn check_stmt_seq(&mut self, body: &[Spanned<Stmt>]) {
+        for (i, s) in body.iter().enumerate() {
+            let next_is_raise = body
+                .get(i + 1)
+                .map(|n| matches!(n.node, Stmt::Raise { .. }))
+                .unwrap_or(false);
+            if next_is_raise && matches!(s.node, Stmt::ExprStmt(_)) {
+                // Suppress value-vs-annotation arg enforcement for THIS probe
+                // statement only, then restore.
+                let prev = super::check_expr::set_stdlib_arg_check_suppressed(true);
+                self.check_stmt(s);
+                super::check_expr::restore_stdlib_arg_check(prev);
+            } else {
+                self.check_stmt(s);
+            }
+        }
+    }
+
     pub(crate) fn check_stmt(&mut self, stmt: &Spanned<Stmt>) {
         match &stmt.node {
             Stmt::VarDecl { name, ty, value } => {
@@ -20,11 +103,30 @@ impl TypeChecker {
                             self.ty_name(value_ty),
                         ),
                     );
+                } else {
+                    // Element-level check for container literals: a heterogeneous
+                    // literal like `[1, "two"]` widens to `list[Any]`, which
+                    // passes the whole-value compatibility check above. Verify
+                    // each literal element against the declared element type so
+                    // `xs: list[int] = [1, "two"]` is rejected.
+                    self.check_container_literal_elements(declared_ty, value);
                 }
                 let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                 self.set_sym_type(sym.0, declared_ty);
             }
             Stmt::Assign { target, value } => {
+                // ① Type-wall PoC: record stdlib-instance provenance so that a
+                // later `obj.method(arg)` can resolve a `Method` signature.
+                // `obj = object.__new__(Cls)` or `obj = Cls(...)` where `Cls` is
+                // a known imported stdlib class binds `obj` -> class qualifier.
+                if let Expr::Ident(var) = &target.node {
+                    if let Some(cls) = self.stdlib_instance_class(value) {
+                        self.instance_origins.insert(var.clone(), cls);
+                    } else {
+                        // Reassignment to something else clears the origin.
+                        self.instance_origins.remove(var);
+                    }
+                }
                 // Implicit variable declaration: bare `x = val` where x is not
                 // yet in scope behaves like Python — declares x with the
                 // inferred type of val.
@@ -44,17 +146,14 @@ impl TypeChecker {
                         match expr {
                             Expr::Ident(name) => {
                                 if checker.symbols.lookup(name).is_none() {
-                                    let sym =
-                                        checker.symbols.define(name.clone(), SymbolKind::Variable);
+                                    let sym = checker.symbols.define(name.clone(), SymbolKind::Variable);
                                     let any_ty = checker.tcx.any();
                                     checker.set_sym_type(sym.0, any_ty);
                                 }
                             }
                             Expr::Starred(inner) => define_unpack_targets(checker, &inner.node),
                             Expr::TupleLit(elems) | Expr::UnpackTarget(elems) => {
-                                for elem in elems {
-                                    define_unpack_targets(checker, &elem.node);
-                                }
+                                for elem in elems { define_unpack_targets(checker, &elem.node); }
                             }
                             _ => {}
                         }
@@ -87,108 +186,57 @@ impl TypeChecker {
                     );
                 }
             }
-            Stmt::FnDef {
-                name,
-                type_params,
-                params,
-                return_ty,
-                body,
-                ..
-            }
-            | Stmt::AsyncFnDef {
-                name,
-                type_params,
-                params,
-                return_ty,
-                body,
-                ..
-            } => {
+            Stmt::FnDef { name, type_params, params, return_ty, body, .. }
+            | Stmt::AsyncFnDef { name, type_params, params, return_ty, body, .. } => {
                 // Re-register type params for body checking scope
                 let _gp = self.register_type_params(type_params);
                 self.check_fn_body(name, params, return_ty.as_ref(), body);
                 self.unregister_type_params(type_params);
             }
-            Stmt::If {
-                condition,
-                body,
-                elif_clauses,
-                else_body,
-            } => {
+            Stmt::If { condition, body, elif_clauses, else_body } => {
                 let _cond_ty = self.check_expr(condition);
                 // Python: any type can be used in a condition (truthiness via __bool__/__len__)
-                for s in body {
-                    self.check_stmt(s);
-                }
+                for s in body { self.check_stmt(s); }
 
                 for (cond, elif_body) in elif_clauses {
                     let _ct = self.check_expr(cond);
-                    for s in elif_body {
-                        self.check_stmt(s);
-                    }
+                    for s in elif_body { self.check_stmt(s); }
                 }
 
                 if let Some(eb) = else_body {
-                    for s in eb {
-                        self.check_stmt(s);
-                    }
+                    for s in eb { self.check_stmt(s); }
                 }
             }
-            Stmt::While {
-                condition,
-                body,
-                else_body,
-            } => {
+            Stmt::While { condition, body, else_body } => {
                 let _cond_ty = self.check_expr(condition);
                 // Python: any type can be used in a while condition
                 self.symbols.push_scope();
-                for s in body {
-                    self.check_stmt(s);
-                }
+                for s in body { self.check_stmt(s); }
                 self.symbols.pop_scope();
                 if let Some(eb) = else_body {
                     self.symbols.push_scope();
-                    for s in eb {
-                        self.check_stmt(s);
-                    }
+                    for s in eb { self.check_stmt(s); }
                     self.symbols.pop_scope();
                 }
             }
-            Stmt::For {
-                targets,
-                var_ty,
-                iter,
-                body,
-                else_body,
-            }
-            | Stmt::AsyncFor {
-                targets,
-                var_ty,
-                iter,
-                body,
-                else_body,
-            } => {
+            Stmt::For { targets, var_ty, iter, body, else_body }
+            | Stmt::AsyncFor { targets, var_ty, iter, body, else_body } => {
                 self.symbols.push_scope();
-                let ty = var_ty
-                    .as_ref()
+                let ty = var_ty.as_ref()
                     .map(|t| self.resolve_type_expr(t))
                     .unwrap_or_else(|| self.infer_iter_element(iter));
                 for var in targets {
                     let sym = self.symbols.define(var.clone(), SymbolKind::Variable);
                     self.set_sym_type(sym.0, ty);
                 }
-                for s in body {
-                    self.check_stmt(s);
-                }
+                for s in body { self.check_stmt(s); }
                 if let Some(eb) = else_body {
-                    for s in eb {
-                        self.check_stmt(s);
-                    }
+                    for s in eb { self.check_stmt(s); }
                 }
                 self.symbols.pop_scope();
             }
             Stmt::Return(value) => {
-                let val_ty = value
-                    .as_ref()
+                let val_ty = value.as_ref()
                     .map(|v| self.check_expr(v))
                     .unwrap_or(self.tcx.none());
                 if let Some(expected) = self.current_return_ty {
@@ -228,24 +276,15 @@ impl TypeChecker {
                             self.error(guard.span, "match guard condition must be bool");
                         }
                     }
-                    for s in &arm.body {
-                        self.check_stmt(s);
-                    }
+                    for s in &arm.body { self.check_stmt(s); }
                     self.symbols.pop_scope();
                 }
             }
-            Stmt::ClassDef {
-                name,
-                type_params,
-                body,
-                ..
-            } => {
+            Stmt::ClassDef { name, type_params, body, .. } => {
                 let _gp = self.register_type_params(type_params);
                 let prev_class = self.current_class.replace(name.clone());
                 self.symbols.push_scope();
-                for s in body {
-                    self.check_stmt(s);
-                }
+                for s in body { self.check_stmt(s); }
                 self.symbols.pop_scope();
                 self.current_class = prev_class;
                 self.unregister_type_params(type_params);
@@ -255,18 +294,17 @@ impl TypeChecker {
                 self.check_expr(target);
                 self.check_expr(value);
             }
-            Stmt::Try {
-                body,
-                handlers,
-                else_body,
-                finally_body,
-            } => {
+            Stmt::Try { body, handlers, else_body, finally_body } => {
                 // Python semantics: variables assigned inside try/except/else/finally
                 // are visible in the enclosing scope after the block — no new scope
                 // is pushed for the block bodies themselves.
-                for s in body {
-                    self.check_stmt(s);
-                }
+                //
+                // Use the sibling-aware walker: a `try` body is where the
+                // auto-ported manual-`assertRaises` idiom (`probe(); raise ...`)
+                // lives, so a probe immediately followed by a `raise` has its
+                // value-vs-annotation arg enforcement suppressed (it must raise at
+                // runtime, not be rejected at compile time).
+                self.check_stmt_seq(body);
                 for handler in handlers {
                     // The exception alias (`as exc`) is defined in the outer scope.
                     // In CPython it's deleted at the end of the except clause, but
@@ -276,28 +314,18 @@ impl TypeChecker {
                         let sym = self.symbols.define(name.clone(), SymbolKind::Variable);
                         self.set_sym_type(sym.0, any_ty);
                     }
-                    for s in &handler.body {
-                        self.check_stmt(s);
-                    }
+                    for s in &handler.body { self.check_stmt(s); }
                 }
                 if let Some(eb) = else_body {
-                    for s in eb {
-                        self.check_stmt(s);
-                    }
+                    for s in eb { self.check_stmt(s); }
                 }
                 if let Some(fb) = finally_body {
-                    for s in fb {
-                        self.check_stmt(s);
-                    }
+                    for s in fb { self.check_stmt(s); }
                 }
             }
             Stmt::Raise { value, from } => {
-                if let Some(v) = value {
-                    self.check_expr(v);
-                }
-                if let Some(f) = from {
-                    self.check_expr(f);
-                }
+                if let Some(v) = value { self.check_expr(v); }
+                if let Some(f) = from { self.check_expr(f); }
             }
             Stmt::With { items, body } | Stmt::AsyncWith { items, body } => {
                 // Python's `with` is NOT a scope — `as v` aliases bind in the
@@ -312,19 +340,13 @@ impl TypeChecker {
                         self.set_sym_type(sym.0, self.tcx.any());
                     }
                 }
-                for s in body {
-                    self.check_stmt(s);
-                }
+                for s in body { self.check_stmt(s); }
             }
             Stmt::Assert { test, msg } => {
                 self.check_expr(test);
-                if let Some(m) = msg {
-                    self.check_expr(m);
-                }
+                if let Some(m) = msg { self.check_expr(m); }
             }
-            Stmt::Del(expr) => {
-                self.check_expr(expr);
-            }
+            Stmt::Del(expr) => { self.check_expr(expr); }
             Stmt::Global(names) => {
                 use crate::resolve::VariableClass;
                 for name in names {
@@ -345,9 +367,7 @@ impl TypeChecker {
                     while let Some(si) = scope_idx {
                         if let Some(outer_id) = self.symbols.lookup_in_scope(si, name) {
                             self.symbols.set_var_class(outer_id, VariableClass::Cell);
-                            let inner_id = if let Some(existing) =
-                                self.symbols.lookup_in_scope(current, name)
-                            {
+                            let inner_id = if let Some(existing) = self.symbols.lookup_in_scope(current, name) {
                                 existing
                             } else {
                                 self.symbols.define(name.clone(), SymbolKind::Variable)
@@ -366,11 +386,7 @@ impl TypeChecker {
             }
             Stmt::TypeAlias { .. } => { /* handled in first pass */ }
             Stmt::Pass | Stmt::Break | Stmt::Continue => {}
-            Stmt::Import {
-                names,
-                module_alias,
-                module,
-            } => {
+            Stmt::Import { names, module_alias, module } => {
                 // Imported names get type Any — external modules are not resolved.
                 // This prevents false "undefined name" errors for third-party imports.
                 let any_ty = self.tcx.any();
@@ -408,12 +424,36 @@ impl TypeChecker {
         return_ty: Option<&Spanned<TypeExpr>>,
         body: &[Spanned<Stmt>],
     ) {
+        // A parameter default value must satisfy the parameter's annotation
+        // (`def f(c: int = "3")` is a type error). Mirrors the var-decl
+        // `x: int = "3"` check. Defaults are evaluated in the *enclosing*
+        // scope (Python semantics), so check them before pushing the function
+        // scope and before any params are defined. Only `Regular` params can
+        // carry defaults; `*args`/`**kwargs` annotate the element/value type,
+        // not the collection, so they are skipped.
+        for param in params {
+            if param.kind != crate::parser::ast::ParamKind::Regular {
+                continue;
+            }
+            if let Some(default) = &param.default {
+                let declared_ty = self.resolve_type_expr(&param.ty);
+                let default_ty = self.check_expr(default);
+                if !self.types_compatible(declared_ty, default_ty) {
+                    self.error(
+                        default.span,
+                        format!(
+                            "type mismatch: expected `{}`, got `{}`",
+                            self.ty_name(declared_ty),
+                            self.ty_name(default_ty),
+                        ),
+                    );
+                }
+            }
+        }
         self.symbols.push_scope();
         for param in params {
             let ty = self.resolve_type_expr(&param.ty);
-            let sym = self
-                .symbols
-                .define(param.name.clone(), SymbolKind::Parameter);
+            let sym = self.symbols.define(param.name.clone(), SymbolKind::Parameter);
             self.set_sym_type(sym.0, ty);
         }
         // Python scoping rule: any name assigned anywhere in the body is
@@ -427,12 +467,8 @@ impl TypeChecker {
         crate::resolve::pass::collect_walrus_targets_in_stmts(body, &mut assigned);
         let any_ty = self.tcx.any();
         for n in &assigned {
-            if declared.iter().any(|d| d == n) {
-                continue;
-            }
-            if params.iter().any(|p| &p.name == n) {
-                continue;
-            }
+            if declared.iter().any(|d| d == n) { continue; }
+            if params.iter().any(|p| &p.name == n) { continue; }
             let sym = self.symbols.define(n.clone(), SymbolKind::Variable);
             self.set_sym_type(sym.0, any_ty);
         }
@@ -444,33 +480,140 @@ impl TypeChecker {
             }
         };
         let prev_ret = self.current_return_ty.replace(ret_ty);
-        for s in body {
-            self.check_stmt(s);
-        }
+        self.check_stmt_seq(body);
         self.current_return_ty = prev_ret;
         self.symbols.pop_scope();
         if self.symbols.lookup(name).is_none() {
             // Detect *args variadic and only include pre-star positional params in type.
-            let star_pos = params
-                .iter()
-                .position(|p| p.kind == crate::parser::ast::ParamKind::Star);
-            let is_variadic = star_pos.is_some()
-                || params
-                    .iter()
-                    .any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
+            let star_pos = params.iter().position(|p| p.kind == crate::parser::ast::ParamKind::Star);
+            let is_variadic = star_pos.is_some() || params.iter().any(|p| p.kind == crate::parser::ast::ParamKind::DoubleStar);
             let effective_params = star_pos.map_or(params, |pos| &params[..pos]);
-            let param_types: Vec<TypeId> = effective_params
-                .iter()
+            let param_types: Vec<TypeId> = effective_params.iter()
                 .filter(|p| p.kind == crate::parser::ast::ParamKind::Regular)
                 .map(|p| self.resolve_type_expr(&p.ty))
                 .collect();
-            let fn_ty = self.tcx.intern(Ty::Fn {
-                params: param_types,
-                ret: ret_ty,
-                variadic: is_variadic,
-            });
+            let fn_ty = self.tcx.intern(Ty::Fn { params: param_types, ret: ret_ty, variadic: is_variadic });
             let sym = self.symbols.define(name.to_string(), SymbolKind::Function);
             self.set_sym_type(sym.0, fn_ty);
+        }
+    }
+
+    /// Verify each literal element of a container against its declared element
+    /// type (`xs: list[int] = [1, "two"]` must be rejected).
+    ///
+    /// A heterogeneous literal widens to `list[Any]`/`dict[Any, Any]`, which
+    /// passes the whole-value `types_compatible` check, so the element mismatch
+    /// is invisible there. This walks the matching literal shape and reuses the
+    /// SAME `types_compatible` relation per element — so int->float promotion,
+    /// bool->int, and `Any` element annotations remain accepted (zero false
+    /// positives). The check only fires when the literal shape matches the
+    /// declared container shape and the declared element type is concrete; any
+    /// other case (non-literal value, `Any` element, shape mismatch) is left to
+    /// the whole-value check.
+    pub(crate) fn check_container_literal_elements(
+        &mut self,
+        declared_ty: TypeId,
+        value: &Spanned<Expr>,
+    ) {
+        match (self.tcx.get(declared_ty).clone(), &value.node) {
+            (Ty::List(elem_ty), Expr::ListLit(elems)) => {
+                if self.tcx.get(elem_ty).is_any() {
+                    return;
+                }
+                for elem in elems {
+                    // Skip starred unpacks (`*rest`) — their element type is not
+                    // a single value we can directly compare.
+                    if matches!(elem.node, Expr::Starred(_)) {
+                        continue;
+                    }
+                    let et = self.check_expr(elem);
+                    if !self.types_compatible(elem_ty, et) {
+                        self.error(
+                            elem.span,
+                            format!(
+                                "type mismatch: expected `{}`, got `{}`",
+                                self.ty_name(elem_ty),
+                                self.ty_name(et),
+                            ),
+                        );
+                    } else {
+                        // Recurse for nested containers (`list[list[int]]`).
+                        self.check_container_literal_elements(elem_ty, elem);
+                    }
+                }
+            }
+            (Ty::Dict(key_ty, val_ty), Expr::DictLit(pairs)) => {
+                let key_any = self.tcx.get(key_ty).is_any();
+                let val_any = self.tcx.get(val_ty).is_any();
+                if key_any && val_any {
+                    return;
+                }
+                for (k, v) in pairs {
+                    // Skip `**other` dict unpacks (key is None).
+                    let Some(k) = k else { continue };
+                    if !key_any {
+                        let kt = self.check_expr(k);
+                        if !self.types_compatible(key_ty, kt) {
+                            self.error(
+                                k.span,
+                                format!(
+                                    "type mismatch: expected `{}`, got `{}`",
+                                    self.ty_name(key_ty),
+                                    self.ty_name(kt),
+                                ),
+                            );
+                        }
+                    }
+                    if !val_any {
+                        let vt = self.check_expr(v);
+                        if !self.types_compatible(val_ty, vt) {
+                            self.error(
+                                v.span,
+                                format!(
+                                    "type mismatch: expected `{}`, got `{}`",
+                                    self.ty_name(val_ty),
+                                    self.ty_name(vt),
+                                ),
+                            );
+                        } else {
+                            self.check_container_literal_elements(val_ty, v);
+                        }
+                    }
+                }
+            }
+            (Ty::Tuple(elem_tys), Expr::TupleLit(elems)) => {
+                // Only check fixed-arity tuple annotations whose element count
+                // matches the literal (`tuple[int, str]`). A bare `tuple` (empty
+                // element list) or any arity mismatch is left to the whole-value
+                // check to avoid false positives on variadic forms.
+                if elem_tys.is_empty() || elem_tys.len() != elems.len() {
+                    return;
+                }
+                // Skip if any element is starred (variadic unpack in the literal).
+                if elems.iter().any(|e| matches!(e.node, Expr::Starred(_))) {
+                    return;
+                }
+                for (decl_elem, elem) in elem_tys.iter().zip(elems.iter()) {
+                    let decl_elem = *decl_elem;
+                    if self.tcx.get(decl_elem).is_any() {
+                        continue;
+                    }
+                    let et = self.check_expr(elem);
+                    if !self.types_compatible(decl_elem, et) {
+                        self.error(
+                            elem.span,
+                            format!(
+                                "type mismatch: expected `{}`, got `{}`",
+                                self.ty_name(decl_elem),
+                                self.ty_name(et),
+                            ),
+                        );
+                    } else {
+                        self.check_container_literal_elements(decl_elem, elem);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -486,16 +629,10 @@ impl TypeChecker {
     ) {
         // Unwrap outer AS layer if present
         let (inner_pat, alias_name) = match &pattern.node {
-            Pattern::As {
-                pattern: inner,
-                name: alias,
-            } => (inner.as_ref(), Some(alias.clone())),
+            Pattern::As { pattern: inner, name: alias } => (inner.as_ref(), Some(alias.clone())),
             other_pat => {
                 // Wrap in a temporary spanned shell so we can recurse uniformly
-                let tmp = Spanned {
-                    node: other_pat.clone(),
-                    span: pattern.span,
-                };
+                let tmp = Spanned { node: other_pat.clone(), span: pattern.span };
                 return self.narrow_match_subject_pat(subject, &tmp, None);
             }
         };
@@ -508,18 +645,14 @@ impl TypeChecker {
         pattern: &Spanned<Pattern>,
         alias_name: Option<String>,
     ) {
-        let Expr::Ident(subject_name) = &subject.node else {
-            return;
-        };
+        let Expr::Ident(subject_name) = &subject.node else { return };
         // Extract class name from either ClassPattern or Constructor (#827 R4)
         let class_name = match &pattern.node {
             Pattern::ClassPattern { cls, .. } => cls.last().map(|s| s.as_str()).unwrap_or(""),
             Pattern::Constructor { path, .. } => path.last().map(|s| s.as_str()).unwrap_or(""),
             _ => return,
         };
-        if class_name.is_empty() {
-            return;
-        }
+        if class_name.is_empty() { return; }
 
         // Built-in self-subject patterns: narrow to the built-in type directly.
         let builtin_narrow_ty = match class_name {
@@ -533,35 +666,25 @@ impl TypeChecker {
             _ => None,
         };
         if let Some(narrow_ty) = builtin_narrow_ty {
-            let sym = self
-                .symbols
-                .define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
+            let sym = self.symbols.define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
             self.set_sym_type(sym.0, narrow_ty);
             if let Some(alias) = alias_name {
-                let alias_sym = self
-                    .symbols
-                    .define(alias, crate::resolve::SymbolKind::Variable);
+                let alias_sym = self.symbols.define(alias, crate::resolve::SymbolKind::Variable);
                 self.set_sym_type(alias_sym.0, narrow_ty);
             }
             return;
         }
 
-        let Some(class_sym) = self.symbols.lookup(class_name) else {
-            return;
-        };
+        let Some(class_sym) = self.symbols.lookup(class_name) else { return };
         let class_ty = self.get_sym_type(class_sym.0);
         // Only narrow if the looked-up type is actually a class (not error/any)
         if matches!(self.tcx.get(class_ty), super::Ty::Class { .. }) {
             // Re-define the subject variable in the current scope with the narrowed type
-            let sym = self
-                .symbols
-                .define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
+            let sym = self.symbols.define(subject_name.clone(), crate::resolve::SymbolKind::Variable);
             self.set_sym_type(sym.0, class_ty);
             // Also narrow the AS-alias to the same class type (#827)
             if let Some(alias) = alias_name {
-                let alias_sym = self
-                    .symbols
-                    .define(alias, crate::resolve::SymbolKind::Variable);
+                let alias_sym = self.symbols.define(alias, crate::resolve::SymbolKind::Variable);
                 self.set_sym_type(alias_sym.0, class_ty);
             }
         }
@@ -587,25 +710,22 @@ impl TypeChecker {
     /// Returns:
     /// - `Some(names)` when explicit `__match_args__` found (even `Some(vec![])` for `= ()`).
     /// - `None` when not found; callers fall back to `__init__` param order or field order.
-    pub(crate) fn collect_match_args(&self, body: &[Spanned<Stmt>]) -> Option<Vec<String>> {
+    pub(crate) fn collect_match_args(
+        &self,
+        body: &[Spanned<Stmt>],
+    ) -> Option<Vec<String>> {
         for stmt in body {
             match &stmt.node {
                 // `__match_args__ = ("x", "y")` — bare assignment
                 Stmt::Assign { target, value } => {
-                    if let (Expr::Ident(name), Expr::TupleLit(elems)) = (&target.node, &value.node)
-                    {
+                    if let (Expr::Ident(name), Expr::TupleLit(elems)) = (&target.node, &value.node) {
                         if name == "__match_args__" {
-                            let names: Vec<String> = elems
-                                .iter()
+                            let names: Vec<String> = elems.iter()
                                 .filter_map(|e| {
-                                    if let Expr::StrLit(s) = &e.node {
-                                        Some(s.clone())
-                                    } else {
-                                        None
-                                    }
+                                    if let Expr::StrLit(s) = &e.node { Some(s.clone()) } else { None }
                                 })
                                 .collect();
-                            return Some(names); // authoritative even if empty
+                            return Some(names);  // authoritative even if empty
                         }
                     }
                 }
@@ -613,24 +733,19 @@ impl TypeChecker {
                 Stmt::VarDecl { name, value, .. } => {
                     if name == "__match_args__" {
                         if let Expr::TupleLit(elems) = &value.node {
-                            let names: Vec<String> = elems
-                                .iter()
+                            let names: Vec<String> = elems.iter()
                                 .filter_map(|e| {
-                                    if let Expr::StrLit(s) = &e.node {
-                                        Some(s.clone())
-                                    } else {
-                                        None
-                                    }
+                                    if let Expr::StrLit(s) = &e.node { Some(s.clone()) } else { None }
                                 })
                                 .collect();
-                            return Some(names); // authoritative even if empty
+                            return Some(names);  // authoritative even if empty
                         }
                     }
                 }
                 _ => {}
             }
         }
-        None // no explicit __match_args__
+        None  // no explicit __match_args__
     }
 
     /// Infer element type from an iterable expression (#248).

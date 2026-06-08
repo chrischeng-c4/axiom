@@ -21,24 +21,15 @@
 //!     3. Policy is referenced by release profile manifests.
 
 use std::path::PathBuf;
-use std::process::Command;
 
 use serde_json::Value;
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn policy_path() -> PathBuf {
-    project_root()
-        .join("validation")
-        .join("baseline_update_policy.toml")
+    crate::common::project_root().join("validation").join("baseline_update_policy.toml")
 }
 
 fn validator_script() -> PathBuf {
-    project_root()
-        .join("scripts")
-        .join("baseline_policy_check.py")
+    crate::common::project_root().join("scripts").join("baseline_policy_check.py")
 }
 
 fn unique_dir(tag: &str) -> PathBuf {
@@ -56,12 +47,7 @@ fn read_policy() -> String {
 }
 
 fn run_validator(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new("python3")
-        .arg(validator_script())
-        .args(args)
-        .current_dir(project_root())
-        .output()
-        .expect("invoke baseline_policy_check.py");
+    let output = crate::common::run_python_script(&validator_script(), args);
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -95,14 +81,8 @@ fn policy_declares_every_governed_baseline_family() {
 #[test]
 fn policy_separates_weaker_and_stronger_directions() {
     let body = read_policy();
-    assert!(
-        body.contains("[direction.weaker]"),
-        "policy missing [direction.weaker]"
-    );
-    assert!(
-        body.contains("[direction.stronger]"),
-        "policy missing [direction.stronger]"
-    );
+    assert!(body.contains("[direction.weaker]"), "policy missing [direction.weaker]");
+    assert!(body.contains("[direction.stronger]"), "policy missing [direction.stronger]");
     // The section header appears as a line on its own ("\n[direction.X]\n").
     // The header also appears INSIDE comment lines as documentation; split on
     // the newline-anchored form so we only see the real TOML section.
@@ -119,7 +99,10 @@ fn policy_separates_weaker_and_stronger_directions() {
             "weaker required_fields must include {fld:?}; block was: <<<{weaker_block}>>>",
         );
     }
-    let stronger_block = body.split("\n[direction.stronger]\n").last().unwrap_or("");
+    let stronger_block = body
+        .split("\n[direction.stronger]\n")
+        .last()
+        .unwrap_or("");
     assert!(
         stronger_block.contains("\"summary\""),
         "stronger required_fields must include \"summary\"; block was: <<<{stronger_block}>>>",
@@ -147,7 +130,7 @@ fn policy_validation_block_pins_issue_link_regex_and_changelog_path() {
 
 #[test]
 fn each_governed_profile_manifest_references_the_policy() {
-    let profiles_dir = project_root().join("validation").join("profiles");
+    let profiles_dir = crate::common::project_root().join("validation").join("profiles");
     for profile in ["performance", "correctness", "ecosystem", "smoke"] {
         let path = profiles_dir.join(format!("{profile}.toml"));
         let body = std::fs::read_to_string(&path)
@@ -185,47 +168,36 @@ fn write_changelog(dir: &PathBuf, body: &str) -> PathBuf {
 fn weaker_entry_missing_reason_fails_validation() {
     let dir = unique_dir("weaker-missing-reason");
     // reason intentionally absent
-    let body = entry(
-        "weaker",
-        &[
-            ("family", "performance"),
-            ("before", "1.0x"),
-            ("after", "0.5x"),
-            ("tracking_issue", "#2096"),
-        ],
-    );
+    let body = entry("weaker", &[
+        ("family", "performance"),
+        ("before", "1.0x"),
+        ("after", "0.5x"),
+        ("tracking_issue", "#2096"),
+    ]);
     let path = write_changelog(&dir, &body);
-    let (code, _, stderr) =
-        run_validator(&["--changelog", path.to_str().unwrap(), "--format", "text"]);
-    assert_eq!(
-        code, 1,
-        "weaker entry without `reason` must fail (stderr={stderr})"
-    );
-    assert!(
-        stderr.contains("reason"),
-        "error message must name the missing field"
-    );
+    let (code, _, stderr) = run_validator(&[
+        "--changelog", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
+    assert_eq!(code, 1, "weaker entry without `reason` must fail (stderr={stderr})");
+    assert!(stderr.contains("reason"), "error message must name the missing field");
 }
 
 #[test]
 fn weaker_entry_missing_tracking_issue_fails_validation() {
     let dir = unique_dir("weaker-missing-issue");
-    let body = entry(
-        "weaker",
-        &[
-            ("family", "performance"),
-            ("before", "1.0x"),
-            ("after", "0.5x"),
-            ("reason", "Lowered floor for new arm64 baseline"),
-        ],
-    );
+    let body = entry("weaker", &[
+        ("family", "performance"),
+        ("before", "1.0x"),
+        ("after", "0.5x"),
+        ("reason", "Lowered floor for new arm64 baseline"),
+    ]);
     let path = write_changelog(&dir, &body);
-    let (code, _, stderr) =
-        run_validator(&["--changelog", path.to_str().unwrap(), "--format", "text"]);
-    assert_eq!(
-        code, 1,
-        "weaker entry without tracking_issue must fail (stderr={stderr})"
-    );
+    let (code, _, stderr) = run_validator(&[
+        "--changelog", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
+    assert_eq!(code, 1, "weaker entry without tracking_issue must fail (stderr={stderr})");
     assert!(
         stderr.contains("tracking_issue"),
         "error message must name the missing tracking_issue field",
@@ -235,25 +207,23 @@ fn weaker_entry_missing_tracking_issue_fails_validation() {
 #[test]
 fn weaker_entry_with_invalid_issue_link_fails_validation() {
     let dir = unique_dir("weaker-bad-issue");
-    let body = entry(
-        "weaker",
-        &[
-            ("family", "performance"),
-            ("before", "1.0x"),
-            ("after", "0.5x"),
-            ("reason", "Floor lowered while we investigate"),
-            ("tracking_issue", "TODO"),
-        ],
-    );
+    let body = entry("weaker", &[
+        ("family", "performance"),
+        ("before", "1.0x"),
+        ("after", "0.5x"),
+        ("reason", "Floor lowered while we investigate"),
+        ("tracking_issue", "TODO"),
+    ]);
     let path = write_changelog(&dir, &body);
-    let (code, stdout, _) =
-        run_validator(&["--changelog", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_validator(&[
+        "--changelog", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     assert_eq!(code, 1, "tracking_issue=TODO must fail the policy regex");
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
     let errs = v["errors"].as_array().expect("errors is array");
     assert!(
-        errs.iter()
-            .any(|e| e["message"].as_str().unwrap_or("").contains("regex")),
+        errs.iter().any(|e| e["message"].as_str().unwrap_or("").contains("regex")),
         "error report must explain regex mismatch: {errs:?}",
     );
 }
@@ -263,23 +233,16 @@ fn weaker_entry_with_invalid_issue_link_fails_validation() {
 #[test]
 fn stronger_entry_with_summary_passes() {
     let dir = unique_dir("stronger-ok");
-    let body = entry(
-        "stronger",
-        &[
-            ("family", "performance"),
-            (
-                "summary",
-                "Raised per-benchmark floor to 1.5x after JIT improvements",
-            ),
-        ],
-    );
+    let body = entry("stronger", &[
+        ("family", "performance"),
+        ("summary", "Raised per-benchmark floor to 1.5x after JIT improvements"),
+    ]);
     let path = write_changelog(&dir, &body);
-    let (code, _, stderr) =
-        run_validator(&["--changelog", path.to_str().unwrap(), "--format", "text"]);
-    assert_eq!(
-        code, 0,
-        "stronger entry with summary must pass (stderr={stderr})"
-    );
+    let (code, _, stderr) = run_validator(&[
+        "--changelog", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
+    assert_eq!(code, 0, "stronger entry with summary must pass (stderr={stderr})");
 }
 
 #[test]
@@ -287,12 +250,11 @@ fn stronger_entry_without_summary_fails() {
     let dir = unique_dir("stronger-missing");
     let body = entry("stronger", &[("family", "ecosystem")]);
     let path = write_changelog(&dir, &body);
-    let (code, _, stderr) =
-        run_validator(&["--changelog", path.to_str().unwrap(), "--format", "text"]);
-    assert_eq!(
-        code, 1,
-        "stronger entry without summary must fail (stderr={stderr})"
-    );
+    let (code, _, stderr) = run_validator(&[
+        "--changelog", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
+    assert_eq!(code, 1, "stronger entry without summary must fail (stderr={stderr})");
     assert!(stderr.contains("summary"));
 }
 
@@ -301,10 +263,8 @@ fn stronger_entry_without_summary_fails() {
 #[test]
 fn missing_changelog_warns_but_does_not_fail() {
     let (code, _, _) = run_validator(&[
-        "--changelog",
-        "/nonexistent/path/missing.toml",
-        "--format",
-        "json",
+        "--changelog", "/nonexistent/path/missing.toml",
+        "--format", "json",
     ]);
     assert_eq!(
         code, 0,
@@ -324,56 +284,51 @@ fn validator_help_documents_policy_and_changelog_flags() {
 #[test]
 fn unknown_family_fails_validation() {
     let dir = unique_dir("unknown-family");
-    let body = entry(
-        "weaker",
-        &[
-            ("family", "made_up_family"),
-            ("reason", "x"),
-            ("tracking_issue", "#1"),
-            ("before", "0"),
-            ("after", "1"),
-        ],
-    );
+    let body = entry("weaker", &[
+        ("family", "made_up_family"),
+        ("reason", "x"),
+        ("tracking_issue", "#1"),
+        ("before", "0"),
+        ("after", "1"),
+    ]);
     let path = write_changelog(&dir, &body);
-    let (code, _, _) = run_validator(&["--changelog", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, _) = run_validator(&[
+        "--changelog", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
     assert_eq!(code, 1, "entries with unknown family must be rejected");
 }
 
 #[test]
 fn duplicate_entries_with_same_after_hash_are_rejected() {
     let dir = unique_dir("dup");
-    let mut body = entry(
-        "weaker",
-        &[
-            ("family", "performance"),
-            ("reason", "first waiver"),
-            ("tracking_issue", "#2096"),
-            ("before", "1.0x"),
-            ("after", "0.5x"),
-            ("after_hash", "deadbeef"),
-        ],
-    );
+    let mut body = entry("weaker", &[
+        ("family", "performance"),
+        ("reason", "first waiver"),
+        ("tracking_issue", "#2096"),
+        ("before", "1.0x"),
+        ("after", "0.5x"),
+        ("after_hash", "deadbeef"),
+    ]);
     body.push('\n');
-    body.push_str(&entry(
-        "weaker",
-        &[
-            ("family", "performance"),
-            ("reason", "duplicate of above"),
-            ("tracking_issue", "#2096"),
-            ("before", "1.0x"),
-            ("after", "0.5x"),
-            ("after_hash", "deadbeef"),
-        ],
-    ));
+    body.push_str(&entry("weaker", &[
+        ("family", "performance"),
+        ("reason", "duplicate of above"),
+        ("tracking_issue", "#2096"),
+        ("before", "1.0x"),
+        ("after", "0.5x"),
+        ("after_hash", "deadbeef"),
+    ]));
     let path = write_changelog(&dir, &body);
-    let (code, stdout, _) =
-        run_validator(&["--changelog", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_validator(&[
+        "--changelog", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     assert_eq!(code, 1, "duplicate after_hash must be rejected");
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
     let errs = v["errors"].as_array().expect("errors");
     assert!(
-        errs.iter()
-            .any(|e| e["message"].as_str().unwrap_or("").contains("duplicate")),
+        errs.iter().any(|e| e["message"].as_str().unwrap_or("").contains("duplicate")),
         "error must call out duplicate entry: {errs:?}",
     );
 }

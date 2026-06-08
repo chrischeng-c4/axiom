@@ -4,11 +4,12 @@
 //!
 //! @spec .aw/tech-design/projects/jet/wasm-renderer/text-shaping.md#scenarios
 //!
-//! L0 pure-Rust tier. The full font-dependent assertion is
-//! `#[ignore]`'d; the structural error variant + display contract
-//! are exercised inline.
+//! L0 pure-Rust tier. The structural error variant, display contract,
+//! and real-font missing-glyph path are exercised inline.
 
-use jet_wasm::text::FontError;
+use jet_wasm::text::{shape_text, FontError};
+
+mod common;
 
 #[test]
 fn s3_glyph_missing_carries_codepoint() {
@@ -27,10 +28,9 @@ fn s3_glyph_missing_display_format() {
 }
 
 #[test]
-#[ignore = "S3 end-to-end — needs an embedded TEST_FONT_BYTES that lacks U+1F600"]
 fn s3_shape_with_missing_glyph_returns_error() {
-    // GIVEN a Latin-only font lacking emoji glyphs.
-    // WHEN  shape_text(font, "\u{1F600}", 16.0) is called.
-    // THEN  Result is Err(FontError::GlyphMissing(0x1F600)).
+    let font = common::tuffy_regular();
+    let err = shape_text(&font, "\u{1F600}", 16.0).unwrap_err();
+    assert!(matches!(err, FontError::GlyphMissing(0x1F600)));
 }
 // CODEGEN-END

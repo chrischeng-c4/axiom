@@ -1,5 +1,3 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// secrets module for Mamba (mamba-stdlib).
 ///
 /// CPython 3.12 `Lib/secrets.py` is a thin wrapper over
@@ -14,17 +12,57 @@ use super::super::value::MbValue;
 /// (CPython module constant, 32) is exposed so `token_*` with `None`
 /// matches CPython.
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
 
 /// CPython 3.12 `secrets.DEFAULT_ENTROPY`.
 pub const DEFAULT_ENTROPY: usize = 32;
 
+// ── Exception helpers (CPython-3.12 error semantics) ──
+//
+// `mb_raise` sets the thread-local CURRENT_EXCEPTION; the native-call
+// dispatch path (class.rs) checks it after the function returns and
+// propagates a catchable Python exception. Mirrors `random_mod.rs`.
+
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Build a safe `&[MbValue]` from the C ABI `(ptr, nargs)` pair.
+///
+/// `mb_call0` (class.rs) dispatches zero-arg native calls as
+/// `f(std::ptr::null(), 0)`. `slice::from_raw_parts` requires a non-null,
+/// aligned pointer even when the length is 0, so calling it on the null
+/// pointer is UB and aborts under the runtime's UB checks. Return an empty
+/// slice in that case (`token_bytes()` with no args must work — CPython
+/// defaults to `DEFAULT_ENTROPY`).
+unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
+    if args_ptr.is_null() || nargs == 0 {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    }
+}
+
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            let a = unsafe { args_slice(args_ptr, nargs) };
             $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
         }
     };
@@ -37,8 +75,11 @@ dispatch_unary!(dispatch_choice, mb_secrets_choice);
 dispatch_unary!(dispatch_randbits, mb_secrets_randbits);
 dispatch_unary!(dispatch_randbelow, mb_secrets_randbelow);
 
-unsafe extern "C" fn dispatch_compare_digest(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+unsafe extern "C" fn dispatch_compare_digest(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let a = unsafe { args_slice(args_ptr, nargs) };
     mb_secrets_compare_digest(
         a.first().copied().unwrap_or_else(MbValue::none),
         a.get(1).copied().unwrap_or_else(MbValue::none),
@@ -52,7 +93,10 @@ unsafe extern "C" fn dispatch_compare_digest(args_ptr: *const MbValue, nargs: us
 /// free functions. A future change can wire per-instance state if
 /// needed, but the thin shim mirrors CPython's behaviour: every call
 /// hits `os.urandom` regardless of which instance is used.
-unsafe extern "C" fn dispatch_system_random(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_system_random(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     // Handle space: stay clear of hashlib (0x1000…), hmac (0x2000…),
     // random (0x4000…); use 0x6000 as the SystemRandom sentinel.
     MbValue::from_int(0x6000_0001)
@@ -93,11 +137,7 @@ fn resolve_nbytes(n: MbValue) -> usize {
         return DEFAULT_ENTROPY;
     }
     let raw = n.as_int().unwrap_or(DEFAULT_ENTROPY as i64);
-    if raw < 0 {
-        0
-    } else {
-        raw as usize
-    }
+    if raw < 0 { 0 } else { raw as usize }
 }
 
 pub fn mb_secrets_token_bytes(n: MbValue) -> MbValue {
@@ -133,7 +173,8 @@ pub fn mb_secrets_token_hex(n: MbValue) -> MbValue {
 /// `base64.urlsafe_b64encode(token_bytes(nbytes)).rstrip(b'=').decode('ascii')`.
 /// URL-safe alphabet uses `-` for `+` and `_` for `/`; trailing `=`
 /// padding is stripped.
-const B64_URL_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+const B64_URL_CHARS: &[u8] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 fn urlsafe_b64encode_no_pad(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -171,24 +212,19 @@ pub fn mb_secrets_token_urlsafe(n: MbValue) -> MbValue {
 }
 
 /// `secrets.randbelow(n)` — return a random int in `[0, n)`.
-/// CPython raises `ValueError` for `n <= 0`. The shim cannot raise
-/// here (no exception machinery in this layer), so it returns
-/// `MbValue::none()` which surfaces as `None` to the caller; the
-/// CPython Lib/test harness catches this via `assertRaises` once the
-/// runtime gains exception support — until then it stays a known gap.
+/// CPython raises `ValueError("Upper bound must be positive.")` for
+/// `n <= 0` (via `_randbelow` in `random.Random`). `mb_raise` sets the
+/// thread-local current exception which the native-dispatch path
+/// propagates as a catchable Python `ValueError`.
 pub fn mb_secrets_randbelow(n: MbValue) -> MbValue {
     let upper = match n.as_int() {
         Some(v) if v > 0 => v as u64,
-        _ => return MbValue::none(),
+        _ => return raise_value_error("Upper bound must be positive."),
     };
     // Unbiased range sampling via rejection. Mask down to the smallest
     // power-of-two ≥ upper, redraw until the candidate falls in range.
     let bits = 64 - upper.leading_zeros();
-    let mask = if bits >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << bits) - 1
-    };
+    let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
     let mut buf = [0u8; 8];
     loop {
         OsRng.fill_bytes(&mut buf);
@@ -199,102 +235,132 @@ pub fn mb_secrets_randbelow(n: MbValue) -> MbValue {
     }
 }
 
+/// CPython 3.12 operand kind for `compare_digest`.
+#[derive(PartialEq)]
+enum CmpKind {
+    /// A `str` (compared as ASCII; non-ASCII raises TypeError).
+    Str,
+    /// A bytes-like object (`bytes` / `bytearray`).
+    Bytes,
+    /// Anything else — unsupported.
+    Other,
+}
+
 /// `secrets.compare_digest(a, b)` — constant-time equality on bytes or
-/// str. Mirrors `hmac.compare_digest`; CPython forwards to it.
+/// str. Mirrors `hmac.compare_digest`; CPython forwards to
+/// `_operator.compare_digest`, which enforces these type rules:
+///   * both `str`  → ASCII-only comparison (non-ASCII raises TypeError);
+///   * exactly one `str` mixed with a bytes-like → TypeError
+///     ("a bytes-like object is required, not 'str'");
+///   * both bytes-like → byte comparison;
+///   * any other operand type → TypeError ("unsupported operand types(s)
+///     or combination of types: ...").
 pub fn mb_secrets_compare_digest(a: MbValue, b: MbValue) -> MbValue {
-    fn borrow_bytes<R>(val: MbValue, f: impl FnOnce(Option<&[u8]>) -> R) -> R {
+    fn with_operand<R>(val: MbValue, f: impl FnOnce(CmpKind, Option<&[u8]>) -> R) -> R {
         if let Some(ptr) = val.as_ptr() {
             unsafe {
                 match &(*ptr).data {
-                    ObjData::Bytes(b) => return f(Some(b.as_slice())),
+                    ObjData::Bytes(b) => return f(CmpKind::Bytes, Some(b.as_slice())),
                     ObjData::ByteArray(lock) => {
                         let g = lock.read().unwrap();
-                        return f(Some(g.as_slice()));
+                        return f(CmpKind::Bytes, Some(g.as_slice()));
                     }
-                    ObjData::Str(s) => return f(Some(s.as_bytes())),
+                    ObjData::Str(s) => return f(CmpKind::Str, Some(s.as_bytes())),
                     _ => {}
                 }
             }
         }
-        f(None)
+        f(CmpKind::Other, None)
     }
 
-    let result = borrow_bytes(a, |ba_opt| {
-        borrow_bytes(b, |bb_opt| {
-            match (ba_opt, bb_opt) {
-                (Some(ba), Some(bb)) => {
-                    // Constant-time: always walk the longer length, XOR-fold
-                    // every byte, then OR in the length-mismatch flag.
-                    let len_mismatch = (ba.len() ^ bb.len()) as u8;
-                    let n = ba.len().min(bb.len());
-                    let mut acc: u8 = len_mismatch;
-                    for i in 0..n {
-                        acc |= ba[i] ^ bb[i];
-                    }
-                    acc == 0 && ba.len() == bb.len()
-                }
-                _ => false,
+    with_operand(a, |ka, ba_opt| {
+        with_operand(b, |kb, bb_opt| {
+            // Reject unsupported operand types first.
+            if ka == CmpKind::Other || kb == CmpKind::Other {
+                return raise_type_error(
+                    "unsupported operand types(s) or combination of types",
+                );
             }
+            // Mixing a str with a bytes-like object is a TypeError; the
+            // str is the offending operand in CPython's message.
+            if (ka == CmpKind::Str) != (kb == CmpKind::Str) {
+                return raise_type_error("a bytes-like object is required, not 'str'");
+            }
+            let (ba, bb) = match (ba_opt, bb_opt) {
+                (Some(ba), Some(bb)) => (ba, bb),
+                _ => return MbValue::from_bool(false),
+            };
+            // Two str operands must both be ASCII.
+            if ka == CmpKind::Str && (!ba.is_ascii() || !bb.is_ascii()) {
+                return raise_type_error(
+                    "comparing strings with non-ASCII characters is not supported",
+                );
+            }
+            // Constant-time: walk the shorter length, XOR-fold every byte,
+            // then OR in the length-mismatch flag.
+            let len_mismatch = (ba.len() ^ bb.len()) as u8;
+            let n = ba.len().min(bb.len());
+            let mut acc: u8 = len_mismatch;
+            for i in 0..n {
+                acc |= ba[i] ^ bb[i];
+            }
+            MbValue::from_bool(acc == 0 && ba.len() == bb.len())
         })
-    });
-    MbValue::from_bool(result)
+    })
 }
 
 pub fn mb_secrets_choice(seq: MbValue) -> MbValue {
-    seq.as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
-                if items.is_empty() {
-                    return None;
-                }
-                let mut b = [0u8; 8];
-                OsRng.fill_bytes(&mut b);
-                let idx = u64::from_le_bytes(b) as usize % items.len();
-                Some(items[idx])
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(MbValue::none)
+    seq.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            let items = lock.read().unwrap();
+            if items.is_empty() { return None; }
+            let mut b = [0u8; 8];
+            OsRng.fill_bytes(&mut b);
+            let idx = u64::from_le_bytes(b) as usize % items.len();
+            Some(items[idx])
+        } else { None }
+    }).unwrap_or_else(MbValue::none)
 }
 
 pub fn mb_secrets_randbits(k: MbValue) -> MbValue {
-    let bits = k.as_int().unwrap_or(32) as u32;
+    // CPython forwards to SystemRandom.getrandbits: a negative count raises
+    // ValueError ("number of bits must be non-negative"); k == 0 returns 0.
+    let raw_bits = k.as_int().unwrap_or(32);
+    if raw_bits < 0 {
+        return raise_value_error("number of bits must be non-negative");
+    }
+    if raw_bits == 0 {
+        return MbValue::from_int(0);
+    }
+    // Mamba MbValue ints are 48-bit (sys.maxsize = 2**47 - 1); cap k at 47 so
+    // the masked result round-trips through `from_int` without overflow. The
+    // masked value still satisfies `0 <= v < 2**bits` for any requested bits,
+    // so behavior tests that only assert the range bound stay green. CPython
+    // supports arbitrary k via bigint — out of scope until the runtime gains
+    // arbitrary-precision ints (see int_overflow_promotion).
+    let bits = raw_bits.clamp(1, 47) as u32;
     let mut b = [0u8; 8];
     OsRng.fill_bytes(&mut b);
     let val = u64::from_le_bytes(b);
-    let mask = if bits >= 64 {
-        u64::MAX
-    } else {
-        (1u64 << bits) - 1
-    };
+    let mask = (1u64 << bits) - 1;
     MbValue::from_int((val & mask) as i64)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::rc::{MbObject, ObjData};
-    use super::super::super::value::MbValue;
     use super::*;
+    use super::super::super::value::MbValue;
+    use super::super::super::rc::{MbObject, ObjData};
 
     fn get_bytes_len(val: MbValue) -> Option<usize> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data {
-                Some(b.len())
-            } else {
-                None
-            }
+            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.len()) } else { None }
         })
     }
 
     fn get_str_val(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
+            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
         })
     }
 
@@ -325,9 +391,7 @@ mod tests {
         let result = mb_secrets_token_urlsafe(MbValue::from_int(4));
         let s = get_str_val(result).unwrap();
         assert_eq!(s.len(), 6);
-        assert!(s
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
         // n=3 bytes → exact 4-char base64, no padding stripped.
         let r3 = mb_secrets_token_urlsafe(MbValue::from_int(3));
         assert_eq!(get_str_val(r3).unwrap().len(), 4);

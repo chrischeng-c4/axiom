@@ -384,12 +384,10 @@ fn split_inline_hashes(line: &str) -> (String, Vec<String>) {
 }
 
 fn attach_hash(out: &mut [RequirementLine], hashes: Vec<String>) -> Result<(), IndexError> {
-    let target = out.iter_mut().rev().find(|l| {
-        matches!(
-            l,
-            RequirementLine::Package(_) | RequirementLine::Editable(_)
-        )
-    });
+    let target = out
+        .iter_mut()
+        .rev()
+        .find(|l| matches!(l, RequirementLine::Package(_) | RequirementLine::Editable(_)));
     let Some(target) = target else {
         return parse_err("--hash= continuation has no preceding requirement");
     };
@@ -639,7 +637,8 @@ mod tests {
 
     #[test]
     fn parses_marker() {
-        let r = parse_requirements_txt("tomli==2.0.1 ; python_version < \"3.11\"\n").unwrap();
+        let r =
+            parse_requirements_txt("tomli==2.0.1 ; python_version < \"3.11\"\n").unwrap();
         let RequirementLine::Package(p) = &r[0] else {
             panic!()
         };
@@ -648,15 +647,13 @@ mod tests {
 
     #[test]
     fn parses_direct_url_git() {
-        let r = parse_requirements_txt("mypkg @ git+https://example.com/mypkg.git@v1.0\n").unwrap();
+        let r =
+            parse_requirements_txt("mypkg @ git+https://example.com/mypkg.git@v1.0\n").unwrap();
         let RequirementLine::Package(p) = &r[0] else {
             panic!()
         };
         assert_eq!(p.name, "mypkg");
-        assert_eq!(
-            p.direct_url.as_deref(),
-            Some("git+https://example.com/mypkg.git@v1.0")
-        );
+        assert_eq!(p.direct_url.as_deref(), Some("git+https://example.com/mypkg.git@v1.0"));
         assert!(p.specifiers.is_empty());
     }
 
@@ -666,16 +663,15 @@ mod tests {
         let RequirementLine::Package(p) = &r[0] else {
             panic!()
         };
-        assert_eq!(
-            p.direct_url.as_deref(),
-            Some("file:///tmp/wheels/local.whl")
-        );
+        assert_eq!(p.direct_url.as_deref(), Some("file:///tmp/wheels/local.whl"));
     }
 
     #[test]
     fn parses_inline_hashes() {
-        let r = parse_requirements_txt("requests==2.31.0 --hash=sha256:aaaa --hash=sha256:bbbb\n")
-            .unwrap();
+        let r = parse_requirements_txt(
+            "requests==2.31.0 --hash=sha256:aaaa --hash=sha256:bbbb\n",
+        )
+        .unwrap();
         let RequirementLine::Package(p) = &r[0] else {
             panic!()
         };
@@ -706,17 +702,18 @@ mod tests {
     fn parses_include_directive() {
         let r = parse_requirements_txt("-r common.txt\n").unwrap();
         assert_eq!(r, vec![RequirementLine::Include("common.txt".into())]);
-        let r = parse_requirements_txt("--requirement=other/base.txt\n").unwrap();
-        assert_eq!(r, vec![RequirementLine::Include("other/base.txt".into())]);
+        let r =
+            parse_requirements_txt("--requirement=other/base.txt\n").unwrap();
+        assert_eq!(
+            r,
+            vec![RequirementLine::Include("other/base.txt".into())]
+        );
     }
 
     #[test]
     fn parses_constraint_directive() {
         let r = parse_requirements_txt("-c constraints.txt\n").unwrap();
-        assert_eq!(
-            r,
-            vec![RequirementLine::Constraint("constraints.txt".into())]
-        );
+        assert_eq!(r, vec![RequirementLine::Constraint("constraints.txt".into())]);
     }
 
     #[test]
@@ -743,8 +740,10 @@ mod tests {
 
     #[test]
     fn parses_editable_git_url() {
-        let r =
-            parse_requirements_txt("--editable git+https://example.com/pkg.git@main\n").unwrap();
+        let r = parse_requirements_txt(
+            "--editable git+https://example.com/pkg.git@main\n",
+        )
+        .unwrap();
         let RequirementLine::Editable(e) = &r[0] else {
             panic!()
         };
@@ -769,7 +768,10 @@ mod tests {
         let RequirementLine::Package(p) = &r[0] else {
             panic!()
         };
-        assert_eq!(p.marker.as_deref(), Some("sys_platform == \"linux#weird\""));
+        assert_eq!(
+            p.marker.as_deref(),
+            Some("sys_platform == \"linux#weird\"")
+        );
     }
 
     #[test]
@@ -827,7 +829,8 @@ mod tests {
 
     #[test]
     fn parses_extra_index_url_flag() {
-        let r = parse_requirements_txt("--extra-index-url https://mirror.example.com/\n").unwrap();
+        let r =
+            parse_requirements_txt("--extra-index-url https://mirror.example.com/\n").unwrap();
         assert_eq!(
             r,
             vec![RequirementLine::IndexFlag(IndexFlag::ExtraIndexUrl(
@@ -888,9 +891,7 @@ mod tests {
         let r = parse_requirements_txt("--no-binary :all:\n").unwrap();
         assert_eq!(
             r,
-            vec![RequirementLine::IndexFlag(IndexFlag::NoBinary(
-                ":all:".into()
-            ))]
+            vec![RequirementLine::IndexFlag(IndexFlag::NoBinary(":all:".into()))]
         );
     }
 
@@ -1055,10 +1056,7 @@ mypkg @ git+https://example.com/m.git@v1.0
         let RequirementLine::Package(p5) = &r[5] else {
             panic!()
         };
-        assert_eq!(
-            p5.direct_url.as_deref(),
-            Some("git+https://example.com/m.git@v1.0")
-        );
+        assert_eq!(p5.direct_url.as_deref(), Some("git+https://example.com/m.git@v1.0"));
         let RequirementLine::Editable(e6) = &r[6] else {
             panic!()
         };

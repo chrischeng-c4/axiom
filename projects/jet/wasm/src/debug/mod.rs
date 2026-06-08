@@ -3,7 +3,7 @@
 //! Runtime introspection surface for jet-wasm apps.
 //!
 //! Feature-gated on `debug`. Exposes a `JetDebug` wasm-bindgen handle
-//! that `canvas_app::run` registers on `window.__jet_debug` when the
+//! that the live app runtime registers on `window.__jet_debug` when the
 //! feature is enabled, giving `jet browser` (and by extension any JS
 //! eval) a serializable view of:
 //!
@@ -15,7 +15,7 @@
 //! - Overlay highlighting (`highlight(Some(idx))` / `highlight(None)`).
 //! - Forced re-render (`force_rerender()`).
 //!
-//! No hook into the event loop beyond what `canvas_app` wires in when
+//! No hook into the event loop beyond what the app runtime wires in when
 //! constructing the bridge — this module is data-only.
 
 #![cfg(feature = "debug")]
@@ -32,8 +32,8 @@ use crate::renderer::{
 };
 use crate::Element;
 
-/// Shared state between `JetDebug` and `canvas_app::run`. Both sides
-/// hold `Rc` clones of these cells; `canvas_app` writes the live
+/// Shared state between `JetDebug` and the app runtime. Both sides hold
+/// `Rc` clones of these cells; the runtime writes the live
 /// layout tree + paint ops after each repaint, and reads the
 /// `highlight_index` before drawing the overlay pass.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src-debug.md#schema
@@ -44,7 +44,7 @@ pub struct DebugBridgeState {
 }
 
 /// Trigger a repaint from outside the normal click-driven flow. The
-/// closure captures `canvas_app`'s repaint loop so `force_rerender`
+/// closure captures the app runtime's repaint loop so `force_rerender`
 /// doesn't need renderer access from here.
 pub type RepaintTrigger = Rc<dyn Fn()>;
 
@@ -222,6 +222,7 @@ impl DebugElement {
                     placeholder: props.placeholder.clone(),
                     checked: props.checked,
                     aria_label: props.aria_label.clone(),
+                    html_for: props.html_for.clone(),
                     has_on_click: props.on_click.is_some(),
                     has_on_change: props.on_change.is_some(),
                 },
@@ -247,6 +248,7 @@ struct DebugProps {
     placeholder: Option<String>,
     checked: Option<bool>,
     aria_label: Option<String>,
+    html_for: Option<String>,
     has_on_click: bool,
     has_on_change: bool,
 }
@@ -284,7 +286,9 @@ impl DebugLaidOutNode {
                     id: props.id.clone(),
                     has_on_click: props.on_click.is_some(),
                 },
-                LaidOutKind::Text(s) => DebugLaidOutKind::Text { text: s.clone() },
+                LaidOutKind::Text { content, .. } => DebugLaidOutKind::Text {
+                    text: content.clone(),
+                },
             },
         }
     }

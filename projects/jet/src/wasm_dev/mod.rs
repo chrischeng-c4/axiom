@@ -22,14 +22,14 @@ use axum::body::Body;
 use axum::extract::{Path as AxumPath, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::Router;
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-dev.md#schema
 pub struct DevOptions {
@@ -41,6 +41,12 @@ pub struct DevOptions {
     pub debug: bool,
 }
 
+#[derive(Clone)]
+struct WasmDevState {
+    dist: Arc<PathBuf>,
+    shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+}
+
 /// Start the WASM dev loop. Blocks until Ctrl-C.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-dev.md#schema
 pub async fn serve(root_dir: &Path, opts: DevOptions) -> Result<()> {
@@ -50,7 +56,6 @@ pub async fn serve(root_dir: &Path, opts: DevOptions) -> Result<()> {
     } else {
         crate::wasm_build::Profile::Release
     };
-    crate::dev_session::clear_shutdown_request(root_dir);
 
     eprintln!(
         "[jet dev --wasm] initial build ({})…",
@@ -83,57 +88,78 @@ pub async fn serve(root_dir: &Path, opts: DevOptions) -> Result<()> {
         .await
         .with_context(|| format!("binding {addr}"))?;
     let bound = listener.local_addr().context("resolving bound addr")?;
-    crate::dev_session::write(
-        root_dir,
-        &crate::dev_session::DevSession {
-            mode: if opts.debug {
-                crate::dev_session::DevSessionMode::WasmDebug
-            } else {
-                crate::dev_session::DevSessionMode::Wasm
-            },
-            url: format!("http://{bound}/"),
-            host: bound.ip().to_string(),
-            port: bound.port(),
-            pid: std::process::id(),
-            started_at: crate::dev_session::now_unix(),
-        },
-    )?;
 
     // Fire-and-forget watcher task. Holds the RecommendedWatcher alive
     // for the lifetime of the server (drops when this fn returns).
     let _watcher_guard = spawn_watcher(root_dir.to_path_buf(), profile)?;
 
-    let app = build_router(Arc::new(dist.clone()));
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let app = build_router(WasmDevState {
+        dist: Arc::new(dist.clone()),
+        shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
+    });
     eprintln!(
         "[jet dev --wasm] serving {} at http://{}/",
         dist.display(),
         bound
     );
-    let server_result = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(root_dir.to_path_buf()))
+    if let Err(err) = crate::dev_server::session::write_from_env(
+        root_dir,
+        bound,
+        crate::dev_server::session::TARGET_WASM,
+    ) {
+        eprintln!("[jet dev --wasm] failed to write serve session: {err:#}");
+    }
+    let ctrl_c = shutdown_signal();
+    let shutdown = async {
+        let reason = tokio::select! {
+            _ = shutdown_rx => "jet dev shutdown",
+            reason = ctrl_c => reason,
+        };
+        eprintln!("[jet dev --wasm] shutting down ({reason})...");
+    };
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
         .await
-        .context("HTTP server error");
-    crate::dev_session::clear_shutdown_request(root_dir);
-    crate::dev_session::clear(root_dir);
-    server_result?;
+        .context("HTTP server error")?;
     eprintln!("[jet dev --wasm] stopped.");
     Ok(())
 }
 
-fn build_router(dist: Arc<PathBuf>) -> Router {
+fn build_router(state: WasmDevState) -> Router {
     Router::new()
         .route("/", get(handle_index))
+        .route("/__jet_shutdown", post(handle_shutdown))
         .route("/{*path}", get(handle_static))
-        .with_state(dist)
+        .with_state(state)
 }
 
-async fn handle_index(State(dist): State<Arc<PathBuf>>) -> Response {
-    serve_file(&dist.join("index.html"))
+async fn handle_index(State(state): State<WasmDevState>) -> Response {
+    serve_file(&state.dist.join("index.html"))
+}
+
+async fn handle_shutdown(State(state): State<WasmDevState>) -> Response {
+    let mut shutdown_tx = state.shutdown_tx.lock().await;
+    if let Some(tx) = shutdown_tx.take() {
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            let _ = tx.send(());
+        });
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from("jet dev shutdown requested\n"))
+            .expect("valid shutdown response")
+    } else {
+        Response::builder()
+            .status(StatusCode::OK)
+            .body(Body::from("jet dev shutdown already requested\n"))
+            .expect("valid shutdown response")
+    }
 }
 
 async fn handle_static(
     AxumPath(path): AxumPath<String>,
-    State(dist): State<Arc<PathBuf>>,
+    State(state): State<WasmDevState>,
 ) -> Response {
     // Clamp the request path under dist/. We normalize via
     // `components()` — any `..` component makes the request 404
@@ -144,7 +170,7 @@ async fn handle_static(
             return not_found();
         }
     }
-    let abs = dist.join(&rel);
+    let abs = state.dist.join(&rel);
     // Fast path: the file exists on disk — serve it (any 4xx beyond
     // that is a hard error, e.g. a static-asset bundle the build
     // failed to emit).
@@ -157,7 +183,7 @@ async fn handle_static(
     // extension (.js / .css / .wasm / .png …) keep their hard 404 so
     // missing bundles surface clearly to the developer.
     if should_spa_fallback(&rel) {
-        return serve_file(&dist.join("index.html"));
+        return serve_file(&state.dist.join("index.html"));
     }
     not_found()
 }
@@ -385,35 +411,18 @@ async fn debounce_and_rebuild(
 /// GH #3730-tagged warn and park forever so the server keeps serving
 /// until the OS kills it (better UX than silent immediate exit).
 /// Sibling of the `dev_server::Server::start` fix in GH #3725.
-async fn shutdown_signal(root_dir: PathBuf) {
-    let ctrl_c = async {
-        match tokio::signal::ctrl_c().await {
-            Ok(()) => "Ctrl-C",
-            Err(err) => {
-                tracing::warn!(
-                    target: "jet::wasm_dev",
-                    error = %err,
-                    "{}",
-                    format_wasm_dev_ctrl_c_warn(&err)
-                );
-                std::future::pending::<&'static str>().await
-            }
+async fn shutdown_signal() -> &'static str {
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => "Ctrl-C",
+        Err(err) => {
+            tracing::warn!(
+                target: "jet::wasm_dev",
+                error = %err,
+                "{}",
+                format_wasm_dev_ctrl_c_warn(&err)
+            );
+            std::future::pending::<&'static str>().await
         }
-    };
-    let shutdown_request = wait_for_shutdown_request(root_dir);
-    let reason = tokio::select! {
-        reason = ctrl_c => reason,
-        _ = shutdown_request => "jet dev shutdown",
-    };
-    eprintln!("[jet dev --wasm] shutting down ({reason}).");
-}
-
-async fn wait_for_shutdown_request(root_dir: PathBuf) {
-    loop {
-        if crate::dev_session::shutdown_requested(&root_dir) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
@@ -486,8 +495,16 @@ mod tests {
         )
         .unwrap();
         std::fs::write(dist.join("app.js"), "console.log('app');").unwrap();
-        let router = build_router(Arc::new(dist));
+        let router = build_router(test_state(dist));
         (tmp, router)
+    }
+
+    fn test_state(dist: PathBuf) -> WasmDevState {
+        let (shutdown_tx, _shutdown_rx) = oneshot::channel();
+        WasmDevState {
+            dist: Arc::new(dist),
+            shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
+        }
     }
 
     async fn get(router: &Router, uri: &str) -> (StatusCode, String, String) {
@@ -653,7 +670,7 @@ mod tests {
             return;
         }
 
-        let router = build_router(Arc::new(dist));
+        let router = build_router(test_state(dist));
         let (status, _ct, _body) = get(&router, "/locked.js").await;
 
         // Restore perms so tempdir cleanup works.

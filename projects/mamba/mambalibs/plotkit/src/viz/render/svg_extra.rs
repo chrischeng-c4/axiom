@@ -59,14 +59,7 @@ impl SvgRenderer {
             } else {
                 "end"
             };
-            self.text(
-                lx,
-                ly + 4.0,
-                label,
-                &style.text_color.to_hex(),
-                style.font_size * 0.85,
-                anchor,
-            );
+            self.text(lx, ly + 4.0, label, &style.text_color.to_hex(), style.font_size * 0.85, anchor);
         }
 
         // Draw each dataset as a filled polygon
@@ -163,12 +156,9 @@ impl SvgRenderer {
             if i < labels.len() && sweep > 0.15 {
                 // Only show label if slice is big enough
                 self.text(
-                    lx,
-                    ly + 4.0,
-                    &labels[i],
-                    &style.text_color.to_hex(),
-                    style.font_size * 0.8,
-                    "middle",
+                    lx, ly + 4.0,
+                    &labels[i], &style.text_color.to_hex(),
+                    style.font_size * 0.8, "middle",
                 );
             }
 
@@ -222,21 +212,9 @@ impl SvgRenderer {
         for row in 0..n_rows.saturating_sub(1) {
             for col in 0..n_cols.saturating_sub(1) {
                 let z00 = z.get(row).and_then(|r| r.get(col)).copied().unwrap_or(0.0);
-                let z10 = z
-                    .get(row + 1)
-                    .and_then(|r| r.get(col))
-                    .copied()
-                    .unwrap_or(0.0);
-                let z01 = z
-                    .get(row)
-                    .and_then(|r| r.get(col + 1))
-                    .copied()
-                    .unwrap_or(0.0);
-                let z11 = z
-                    .get(row + 1)
-                    .and_then(|r| r.get(col + 1))
-                    .copied()
-                    .unwrap_or(0.0);
+                let z10 = z.get(row + 1).and_then(|r| r.get(col)).copied().unwrap_or(0.0);
+                let z01 = z.get(row).and_then(|r| r.get(col + 1)).copied().unwrap_or(0.0);
+                let z11 = z.get(row + 1).and_then(|r| r.get(col + 1)).copied().unwrap_or(0.0);
 
                 let (x0, y0) = project(col, row, z00);
                 let (x1, y1) = project(col + 1, row, z01);

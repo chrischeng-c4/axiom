@@ -17,7 +17,7 @@ internals. The behavior contract is:
   semantically equivalent across the two interpreters.
 
 These complement, not replace, the behavior fixtures already in
-`tests/cpython/fixtures/std-libs/<lib>_*.py` (which are mamba-specific
+`tests/cpython/std-libs/<lib>_*.py` (which are mamba-specific
 golden tests).
 
 ## Directory layout
@@ -150,7 +150,7 @@ Hard constraints:
 ## Runner contract
 
 `projects/mamba/tests/harness/cpython/real_world.rs` is the Rust integration
-test that walks `tests/cpython/fixtures/{std-libs,3rd-libs}/*/real_world/`
+test that walks `tests/cpython/{std-libs,3rd-libs}/*/real_world/`
 and shells out for every `*.py` it finds.
 
 For each scenario file the runner:
@@ -175,7 +175,7 @@ patrol explicitly invoke the real-world gate.
 ## Bench harness (Phase 1.C)
 
 `projects/mamba/benches/3p/cross_runtime.rs` is the cross-runtime bench
-that walks `tests/cpython/fixtures/{std-libs,3rd-libs}/*/bench/` and runs
+that walks `tests/cpython/{std-libs,3rd-libs}/*/bench/` and runs
 each `*.py` under both `python3` and `mamba run`, picking the minimum
 wall-clock per side (best-of-N) and emitting one line per fixture:
 
@@ -212,7 +212,7 @@ deterministic / English-only rules above):
 ## Adding a new fixture (checklist)
 
 1. Pick `<lib>` and `<scenario>`.
-2. Create `tests/cpython/fixtures/{std-libs|3rd-libs}/<lib>/real_world/<scenario>.py`
+2. Create `tests/cpython/{std-libs|3rd-libs}/<lib>/real_world/<scenario>.py`
    following the shape above.
 3. Confirm locally: `python3 <file>` exits `0`.
 4. Confirm under mamba: `mamba <file>` exits `0` (or document the
@@ -222,5 +222,5 @@ deterministic / English-only rules above):
 ## DoD (per conformance issue R4)
 
 A conformance issue's R4 gate is **green** when at least one fixture
-under `tests/cpython/fixtures/{std-libs|3rd-libs}/<lib>/real_world/` runs
+under `tests/cpython/{std-libs|3rd-libs}/<lib>/real_world/` runs
 to exit-0 success under both CPython and mamba via the runner above.

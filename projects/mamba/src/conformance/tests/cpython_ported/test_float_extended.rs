@@ -55,32 +55,26 @@ fn test_float_str_negative_zero() {
 
 #[test]
 fn test_float_is_integer_true() {
-    let out = jit_capture(
-        r#"print((3.0).is_integer())
+    let out = jit_capture(r#"print((3.0).is_integer())
 print((0.0).is_integer())
 print((-7.0).is_integer())
-"#,
-    );
+"#);
     assert_output(&out, "True\nTrue\nTrue\n");
 }
 
 #[test]
 fn test_float_is_integer_false() {
-    let out = jit_capture(
-        r#"print((3.5).is_integer())
+    let out = jit_capture(r#"print((3.5).is_integer())
 print((0.1).is_integer())
-"#,
-    );
+"#);
     assert_output(&out, "False\nFalse\n");
 }
 
 #[test]
 fn test_float_modulo() {
-    let out = jit_capture(
-        r#"print(7.5 % 2.0)
+    let out = jit_capture(r#"print(7.5 % 2.0)
 print(-7.5 % 2.0)
-"#,
-    );
+"#);
     assert_output(&out, "1.5\n0.5\n");
 }
 
@@ -104,34 +98,28 @@ fn test_float_sum_of_floats() {
 
 #[test]
 fn test_float_inf_arithmetic() {
-    let out = jit_capture(
-        r#"x = float("inf")
+    let out = jit_capture(r#"x = float("inf")
 print(x + 1.0)
 print(x * 2.0)
 print(-x)
-"#,
-    );
+"#);
     assert_output(&out, "inf\ninf\n-inf\n");
 }
 
 #[test]
 fn test_float_repr_simple() {
-    let out = jit_capture(
-        r#"print(repr(1.5))
+    let out = jit_capture(r#"print(repr(1.5))
 print(repr(-2.0))
-"#,
-    );
+"#);
     assert_output(&out, "1.5\n-2.0\n");
 }
 
 #[test]
 fn test_float_comparison_inf() {
-    let out = jit_capture(
-        r#"inf = float("inf")
+    let out = jit_capture(r#"inf = float("inf")
 print(inf > 1.0)
 print(inf > 1e308)
 print(-inf < -1.0)
-"#,
-    );
+"#);
     assert_output(&out, "True\nTrue\nTrue\n");
 }

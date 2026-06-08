@@ -2,8 +2,9 @@
   "name": "jet-production-build-regression",
   "version": "0.0.0",
   "private": true,
-  "aw_spec": "SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures.md#component",
-  "aw_ownership": "CODEGEN-BEGIN tracker=\"#4125\" reason=\"Static production build regression fixture manifest is covered by the Jet tests fixture semantic TD.\"",
+  "aw_spec_marker": "SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures-production-build-regression.md#manifest",
+  "aw_spec": ".aw/tech-design/projects/jet/semantic/jet-tests-fixtures-production-build-regression.md#manifest",
+  "aw_ownership": "CODEGEN-BEGIN tracker=jet-readme-capabilities reason=Production build regression package manifest fixture is preserved as generated fixture output.",
   "type": "module",
   "scripts": {
     "build": "jet build"

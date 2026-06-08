@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-use super::{ChordMeta, Group, GroupResult, TaskOptions, TaskSignature};
 use crate::{Broker, ResultBackend, TaskError, TaskId, TaskMessage, TaskState};
+use super::{ChordMeta, Group, GroupResult, TaskOptions, TaskSignature};
 
 /// A chord: group of parallel tasks followed by a callback
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,8 +65,8 @@ impl Chord {
         );
 
         let meta_key = format!("chord:{}", self.id);
-        let meta_json =
-            serde_json::to_vec(&chord_meta).map_err(|e| TaskError::Serialization(e.to_string()))?;
+        let meta_json = serde_json::to_vec(&chord_meta)
+            .map_err(|e| TaskError::Serialization(e.to_string()))?;
 
         // Store metadata in backend
         // TODO: Add set_metadata to ResultBackend trait
@@ -145,9 +145,7 @@ impl AsyncChordResult {
                 .result
                 .ok_or_else(|| TaskError::Internal("Success state but no result".to_string())),
             TaskState::Failure => Err(TaskError::Internal(
-                result
-                    .error
-                    .unwrap_or_else(|| "Callback failed".to_string()),
+                result.error.unwrap_or_else(|| "Callback failed".to_string()),
             )),
             other => Err(TaskError::Internal(format!(
                 "Unexpected callback state: {:?}",
@@ -255,7 +253,8 @@ mod tests {
             TaskSignature::new("b", serde_json::json!([2])),
         ]);
         let callback = TaskSignature::new("aggregate", serde_json::json!([]));
-        let chord = Chord::new(header, callback).with_options(TaskOptions::new().with_queue("q"));
+        let chord = Chord::new(header, callback)
+            .with_options(TaskOptions::new().with_queue("q"));
         assert_eq!(chord.header.tasks.len(), 2);
         assert_eq!(chord.callback.task_name, "aggregate");
     }
@@ -281,10 +280,9 @@ mod tests {
 
     #[test]
     fn test_chord_single_header_task() {
-        let header = Group::new(vec![TaskSignature::new(
-            "only_task",
-            serde_json::json!(["data"]),
-        )]);
+        let header = Group::new(vec![
+            TaskSignature::new("only_task", serde_json::json!(["data"])),
+        ]);
         let callback = TaskSignature::new("process", serde_json::json!([]));
         let chord = Chord::new(header, callback);
         assert_eq!(chord.header.tasks.len(), 1);
@@ -307,9 +305,10 @@ mod tests {
     #[test]
     fn test_chord_callback_with_queue() {
         let header = Group::new(vec![TaskSignature::new("t", serde_json::json!([]))]);
-        let callback = TaskSignature::new("cb", serde_json::json!([])).set_queue("callback-queue");
-        let chord =
-            Chord::new(header, callback).with_options(TaskOptions::new().with_queue("chord-queue"));
+        let callback = TaskSignature::new("cb", serde_json::json!([]))
+            .set_queue("callback-queue");
+        let chord = Chord::new(header, callback)
+            .with_options(TaskOptions::new().with_queue("chord-queue"));
         // Callback and chord have independent queue settings
         assert_eq!(
             chord.callback.options.queue,
@@ -341,8 +340,8 @@ mod tests {
                 .with_kwargs(serde_json::json!({"timeout": 30})),
         ]);
         let callback = TaskSignature::new("merge", serde_json::json!([]));
-        let chord =
-            Chord::new(header, callback).with_options(TaskOptions::new().with_queue("io-bound"));
+        let chord = Chord::new(header, callback)
+            .with_options(TaskOptions::new().with_queue("io-bound"));
 
         let json = serde_json::to_string(&chord).expect("serialize");
         let deserialized: Chord = serde_json::from_str(&json).expect("deserialize");
@@ -374,7 +373,9 @@ mod tests {
 
     #[test]
     fn test_chord_serde_json_value_roundtrip() {
-        let header = Group::new(vec![TaskSignature::new("t1", serde_json::json!([1]))]);
+        let header = Group::new(vec![
+            TaskSignature::new("t1", serde_json::json!([1])),
+        ]);
         let callback = TaskSignature::new("cb", serde_json::json!([]));
         let chord = Chord::new(header, callback);
 
@@ -389,9 +390,12 @@ mod tests {
 
     #[test]
     fn test_chord_clone() {
-        let header = Group::new(vec![TaskSignature::new("t1", serde_json::json!([1]))]);
+        let header = Group::new(vec![
+            TaskSignature::new("t1", serde_json::json!([1])),
+        ]);
         let callback = TaskSignature::new("cb", serde_json::json!([]));
-        let chord = Chord::new(header, callback).with_options(TaskOptions::new().with_queue("q"));
+        let chord = Chord::new(header, callback)
+            .with_options(TaskOptions::new().with_queue("q"));
         let cloned = chord.clone();
         assert_eq!(cloned.id, chord.id);
         assert_eq!(cloned.header.tasks.len(), chord.header.tasks.len());
@@ -418,7 +422,10 @@ mod tests {
         let task_ids = vec![TaskId::new(), TaskId::new()];
         let callback_task_id = TaskId::new();
 
-        let header_result = GroupResult { group_id, task_ids };
+        let header_result = GroupResult {
+            group_id,
+            task_ids,
+        };
 
         let result = AsyncChordResult {
             chord_id: chord_id.clone(),

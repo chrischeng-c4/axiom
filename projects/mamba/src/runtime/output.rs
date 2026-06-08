@@ -6,11 +6,73 @@
 ///
 /// Generator threads use a shared capture buffer (from generator.rs) since
 /// they run on separate OS threads and don't share the caller's thread-local.
+
 use std::cell::RefCell;
 use std::io::Write;
 
+use super::value::MbValue;
+
 thread_local! {
     static CAPTURE_BUF: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+    /// contextlib.redirect_stdout target stack. Each entry is the NaN-boxed
+    /// bits of a writable stream (e.g. an io.StringIO). When non-empty, stdout
+    /// output is routed to the top stream via `mb_stringio_write` instead of
+    /// the process stdout / capture buffer. Pushed by `redirect_stdout.__enter__`
+    /// and popped by `__exit__`.
+    static STDOUT_REDIRECT: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+    /// contextlib.redirect_stderr target stack (mirror of STDOUT_REDIRECT for
+    /// `sys.stderr` writes).
+    static STDERR_REDIRECT: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Push a stderr redirect target.
+pub fn push_stderr_redirect(target: MbValue) {
+    STDERR_REDIRECT.with(|s| s.borrow_mut().push(target.to_bits()));
+}
+
+/// Pop the most recent stderr redirect target.
+pub fn pop_stderr_redirect() {
+    STDERR_REDIRECT.with(|s| {
+        s.borrow_mut().pop();
+    });
+}
+
+/// If a stderr redirect is active, write `s` to the top target stream and
+/// return true. Otherwise return false. Used by `print(..., file=sys.stderr)`.
+pub fn try_write_stderr_redirect(s: &str) -> bool {
+    let target_bits = STDERR_REDIRECT.with(|stk| stk.borrow().last().copied());
+    if let Some(bits) = target_bits {
+        let target = MbValue::from_bits(bits);
+        let data = MbValue::from_ptr(super::rc::MbObject::new_str(s.to_string()));
+        let _ = super::stdlib::io_mod::mb_stringio_write(target, data);
+        return true;
+    }
+    false
+}
+
+/// Push a stdout redirect target (an io.StringIO-like stream value).
+pub fn push_stdout_redirect(target: MbValue) {
+    STDOUT_REDIRECT.with(|s| s.borrow_mut().push(target.to_bits()));
+}
+
+/// Pop the most recent stdout redirect target.
+pub fn pop_stdout_redirect() {
+    STDOUT_REDIRECT.with(|s| {
+        s.borrow_mut().pop();
+    });
+}
+
+/// If a stdout redirect is active, write `s` to the top target stream and
+/// return true. Otherwise return false.
+fn try_write_redirect(s: &str) -> bool {
+    let target_bits = STDOUT_REDIRECT.with(|stk| stk.borrow().last().copied());
+    if let Some(bits) = target_bits {
+        let target = MbValue::from_bits(bits);
+        let data = MbValue::from_ptr(super::rc::MbObject::new_str(s.to_string()));
+        let _ = super::stdlib::io_mod::mb_stringio_write(target, data);
+        return true;
+    }
+    false
 }
 
 /// Begin capturing stdout output to an internal buffer.
@@ -30,8 +92,9 @@ pub fn end_capture(prev: Option<Vec<u8>>) -> String {
         *b = prev;
         result
     });
-    String::from_utf8(captured)
-        .unwrap_or_else(|e| String::from_utf8_lossy(&e.into_bytes()).into_owned())
+    String::from_utf8(captured).unwrap_or_else(|e| {
+        String::from_utf8_lossy(&e.into_bytes()).into_owned()
+    })
 }
 
 /// Write a string to the capture buffer if active, otherwise to stdout.
@@ -40,6 +103,11 @@ pub fn end_capture(prev: Option<Vec<u8>>) -> String {
 /// Falls back to the generator shared capture buffer if this thread is a
 /// generator thread (no local CAPTURE_BUF but has a shared capture set).
 pub fn write_captured(s: &str) -> bool {
+    // contextlib.redirect_stdout: route the program's stdout into the active
+    // redirect target before any capture/stdout handling.
+    if try_write_redirect(s) {
+        return true;
+    }
     let local = CAPTURE_BUF.with(|buf| {
         let mut b = buf.borrow_mut();
         if let Some(ref mut vec) = *b {
@@ -49,9 +117,7 @@ pub fn write_captured(s: &str) -> bool {
             false
         }
     });
-    if local {
-        return true;
-    }
+    if local { return true; }
     // Fallback: try generator shared capture buffer
     super::generator::write_shared_capture(s)
 }
@@ -59,6 +125,12 @@ pub fn write_captured(s: &str) -> bool {
 /// Write a line (with newline) to the capture buffer if active, else stdout.
 /// Returns `true` if written to capture buffer.
 pub fn writeln_captured(s: &str) -> bool {
+    // contextlib.redirect_stdout: route the program's stdout (with the newline
+    // print() adds) into the active redirect target.
+    if STDOUT_REDIRECT.with(|stk| !stk.borrow().is_empty()) {
+        let line = format!("{s}\n");
+        return try_write_redirect(&line);
+    }
     let local = CAPTURE_BUF.with(|buf| {
         let mut b = buf.borrow_mut();
         if let Some(ref mut vec) = *b {
@@ -68,9 +140,7 @@ pub fn writeln_captured(s: &str) -> bool {
             false
         }
     });
-    if local {
-        return true;
-    }
+    if local { return true; }
     // Fallback: try generator shared capture buffer
     let line = format!("{s}\n");
     super::generator::write_shared_capture(&line)

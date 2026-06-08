@@ -1,14 +1,15 @@
 #![cfg(test)]
 
-use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
-use crate::codegen::cranelift::CraneliftBackend;
-use crate::codegen::{CodegenBackend, CodegenOutput};
-use crate::lower::{lower_hir_to_mir, lower_hir_to_mir_with_symbols, lower_module};
 /// JIT execution integration tests (#296).
 /// Tests the full pipeline: parse → typecheck → lower → JIT compile → execute.
+
 use crate::parser;
 use crate::source::span::FileId;
 use crate::types::TypeChecker;
+use crate::lower::{lower_module, lower_hir_to_mir, lower_hir_to_mir_with_symbols};
+use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
+use crate::codegen::cranelift::CraneliftBackend;
+use crate::codegen::{CodegenBackend, CodegenOutput};
 
 fn jit_run(src: &str) -> i64 {
     let _jit_guard = JIT_LOCK.lock().unwrap();
@@ -21,9 +22,7 @@ fn jit_run(src: &str) -> i64 {
     let mir = lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
 
     let mut backend = CraneliftJitBackend::new().expect("JIT init failed");
-    let output = backend
-        .codegen(&mir, &checker.tcx)
-        .expect("JIT codegen failed");
+    let output = backend.codegen(&mir, &checker.tcx).expect("JIT codegen failed");
 
     match output {
         CodegenOutput::Jit { entry } => {
@@ -76,8 +75,7 @@ fn test_jit_backend_initializes() {
 #[test]
 fn test_jit_while_loop_sum() {
     // sum 0..9 = 45
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     s: int = 0
     i: int = 0
@@ -85,23 +83,20 @@ def f() -> int:
         s = s + i
         i = i + 1
     return s
-"#,
-    );
+"#);
     assert_eq!(result, 45);
 }
 
 #[test]
 fn test_jit_range_loop_sum() {
     // sum 0..4 = 10 — range loop accumulation with loop counter (#1197)
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     total: int = 0
     for i in range(5):
         total = total + i
     return total
-"#,
-    );
+"#);
     assert_eq!(result, 10);
 }
 
@@ -114,8 +109,7 @@ fn test_jit_range_loop_bound_from_max_call() {
     // an unbox-if-boxed step the boxed bit pattern read as a signed i64
     // is a huge negative number → `var < stop` is false at entry and
     // the body silently elides. Expected: full N iterations.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def iters_for(size: int) -> int:
     return max(50, size)
 
@@ -125,31 +119,27 @@ def f() -> int:
     for _ in range(iters):
         count = count + 1
     return count
-"#,
-    );
+"#);
     assert_eq!(result, 100);
 }
 
 #[test]
 fn test_jit_range_loop_product() {
     // 5! = 120 — range(1, N) with multiplication (#1197)
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     product: int = 1
     for i in range(1, 6):
         product = product * i
     return product
-"#,
-    );
+"#);
     assert_eq!(result, 120);
 }
 
 #[test]
 fn test_jit_fibonacci() {
     // fib(10) = 55
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     a: int = 0
     b: int = 1
@@ -160,15 +150,13 @@ def f() -> int:
         a = temp
         n = n - 1
     return a
-"#,
-    );
+"#);
     assert_eq!(result, 55);
 }
 
 #[test]
 fn test_jit_if_else() {
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: int = 10
     result: int = 0
@@ -177,16 +165,14 @@ def f() -> int:
     else:
         result = 0
     return result
-"#,
-    );
+"#);
     assert_eq!(result, 42);
 }
 
 #[test]
 fn test_jit_nested_while() {
     // 100 iterations of fib(20) = 6765, total = 100 * 6765 = 676500
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     total: int = 0
     rep: int = 0
@@ -202,8 +188,7 @@ def f() -> int:
         total = total + a
         rep = rep + 1
     return total
-"#,
-    );
+"#);
     assert_eq!(result, 676500);
 }
 
@@ -212,64 +197,56 @@ def f() -> int:
 #[test]
 fn test_jit_is_identity_true() {
     // Same integer values: `is` checks bit-identical NaN-boxed values
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: int = 42
     y: int = 42
     if x is y:
         return 1
     return 0
-"#,
-    );
+"#);
     assert_eq!(result, 1);
 }
 
 #[test]
 fn test_jit_is_identity_false() {
     // Different integer values: `is` should return false
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: int = 42
     y: int = 99
     if x is y:
         return 1
     return 0
-"#,
-    );
+"#);
     assert_eq!(result, 0);
 }
 
 #[test]
 fn test_jit_is_not_identity() {
     // `is not` should be the logical inverse of `is`
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: int = 42
     y: int = 99
     if x is not y:
         return 1
     return 0
-"#,
-    );
+"#);
     assert_eq!(result, 1);
 }
 
 #[test]
 fn test_jit_is_not_same_value() {
     // Same value: `is not` should return false (0)
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: int = 42
     y: int = 42
     if x is not y:
         return 1
     return 0
-"#,
-    );
+"#);
     assert_eq!(result, 0);
 }
 
@@ -278,8 +255,7 @@ def f() -> int:
 #[test]
 fn test_jit_class_simple_init_and_getattr() {
     // Verify class instantiation + __init__ + getattr works end-to-end
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
@@ -290,8 +266,7 @@ def f() -> int:
     return 1
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 1, "class simple init: expected 1");
 }
 
@@ -300,8 +275,7 @@ f()
 #[test]
 fn test_jit_isinstance_basic() {
     // Test that isinstance check works for class instances
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
@@ -314,16 +288,14 @@ def f() -> int:
     return 0
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 1, "isinstance: expected 1");
 }
 
 #[test]
 fn test_jit_getattr_basic() {
     // Test that getattr works for instance attributes set in __init__
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
@@ -334,16 +306,16 @@ def f() -> int:
     return getattr(p, "x")
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 42, "getattr: expected 42");
 }
+
+
 
 #[test]
 fn test_jit_class_pattern_inline() {
     // Inline: create Point in f() then match it
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
@@ -357,16 +329,14 @@ def f() -> int:
     return 0
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 43, "class pattern inline: expected 43");
 }
 
 #[test]
 fn test_jit_class_pattern_param() {
     // Parametric: pass Point to a function and match it there
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
@@ -383,8 +353,7 @@ def f() -> int:
     return classify(p)
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 43, "class pattern param: expected 43");
 }
 
@@ -398,9 +367,7 @@ fn aot_compile(src: &str) -> Vec<u8> {
     let mir = lower_hir_to_mir(&hir, &checker.tcx);
 
     let mut backend = CraneliftBackend::new().expect("AOT init failed");
-    let output = backend
-        .codegen(&mir, &checker.tcx)
-        .expect("AOT codegen failed");
+    let output = backend.codegen(&mir, &checker.tcx).expect("AOT codegen failed");
 
     match output {
         CodegenOutput::ObjectFile(bytes) => bytes,
@@ -410,12 +377,10 @@ fn aot_compile(src: &str) -> Vec<u8> {
 
 #[test]
 fn test_aot_pure_numeric_object() {
-    let bytes = aot_compile(
-        r#"
+    let bytes = aot_compile(r#"
 def f() -> int:
     return 42
-"#,
-    );
+"#);
     // Object file should be non-empty and contain no mb_* symbols
     assert!(!bytes.is_empty());
     // Check that the bytes contain "main" (the entry point we generate)
@@ -436,10 +401,7 @@ fn test_aot_rejects_runtime_deps() {
     match result {
         Err(e) => {
             let err_msg = format!("{e}");
-            assert!(
-                err_msg.contains("runtime library"),
-                "unexpected error: {err_msg}"
-            );
+            assert!(err_msg.contains("runtime library"), "unexpected error: {err_msg}");
         }
         Ok(_) => panic!("expected error for runtime-dependent program"),
     }
@@ -448,19 +410,21 @@ fn test_aot_rejects_runtime_deps() {
 #[test]
 #[ignore] // Requires cc linker on host
 fn test_aot_build_and_execute() {
-    let bytes = aot_compile(
-        r#"
+    let bytes = aot_compile(r#"
 def f() -> int:
     return 42
-"#,
-    );
+"#);
     let tmp_dir = std::env::temp_dir();
     let obj_path = tmp_dir.join("mamba_test_aot.o");
     let exe_path = tmp_dir.join("mamba_test_aot");
 
     std::fs::write(&obj_path, &bytes).expect("write .o");
     let status = std::process::Command::new("cc")
-        .args([obj_path.to_str().unwrap(), "-o", exe_path.to_str().unwrap()])
+        .args([
+            obj_path.to_str().unwrap(),
+            "-o",
+            exe_path.to_str().unwrap(),
+        ])
         .status()
         .expect("invoke cc");
     assert!(status.success(), "linker failed");
@@ -480,8 +444,7 @@ def f() -> int:
 #[test]
 fn test_jit_class_pattern_diagnostic() {
     // Diagnostic: does the arm execute at all? Return 100 (not a+1) to isolate.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
@@ -495,16 +458,14 @@ def f() -> int:
     return 0
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 100, "diagnostic: arm should be reached");
 }
 
 #[test]
 fn test_jit_class_pattern_isinstance_only() {
     // Diagnostic: test isinstance inside match arm
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
@@ -518,16 +479,14 @@ def f() -> int:
     return 0
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 100, "isinstance check in match should work");
 }
 
 #[test]
 fn test_jit_class_pattern_hasattr_diagnostic() {
     // Diagnostic: test just the hasattr part via a Wildcard capture
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Point:
     def __init__(self, x: int, y: int) -> None:
         self.x = x
@@ -541,16 +500,14 @@ def f() -> int:
     return 0
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 100, "hasattr check in match should work");
 }
 
 #[test]
 fn test_jit_setattr_direct() {
     // Test that SetAttr (self.x = x) is actually working in __init__
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Counter:
     def __init__(self) -> None:
         self.count = 99
@@ -560,16 +517,14 @@ def f() -> int:
     return getattr(c, "count")
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 99, "setattr in __init__ should set count=99");
 }
 
 #[test]
 fn test_jit_init_no_args() {
     // Absolute minimal: no-arg init that sets a hardcoded attribute
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Box:
     def __init__(self) -> None:
         self.val = 55
@@ -579,49 +534,43 @@ def f() -> int:
     return getattr(b, "val")
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 55, "no-arg init: expected 55");
 }
 
 /// Verify mb_setattr and mb_getattr work directly (without JIT).
 #[test]
 fn test_runtime_setattr_getattr_direct() {
-    use crate::runtime::class::{mb_class_register, mb_getattr, mb_instance_new_with_init};
+    use crate::runtime::class::{mb_class_register, mb_instance_new_with_init, mb_getattr};
     use crate::runtime::rc::MbObject;
     use crate::runtime::value::MbValue;
     use std::collections::HashMap;
-
+    
     // Register a simple class
     mb_class_register("TestBox", vec![], HashMap::new());
-
+    
     // Create instance
     let class_name = MbValue::from_ptr(MbObject::new_str("TestBox".to_string()));
     let empty_list = MbValue::from_ptr(MbObject::new_list(vec![]));
     let instance = mb_instance_new_with_init(class_name, empty_list);
-
+    
     // Manually set attribute using SetAttr → mb_setattr
     let attr_name = MbValue::from_ptr(MbObject::new_str("count".to_string()));
     let value = MbValue::from_int(99);
     crate::runtime::class::mb_setattr(instance, attr_name, value);
-
+    
     // Get the attribute back
     let attr_name2 = MbValue::from_ptr(MbObject::new_str("count".to_string()));
     let result = mb_getattr(instance, attr_name2);
-
+    
     // Should return MbValue::from_int(99)
-    assert!(
-        result.is_int(),
-        "result should be int, got bits: {:#x}",
-        result.to_bits()
-    );
+    assert!(result.is_int(), "result should be int, got bits: {:#x}", result.to_bits());
     assert_eq!(result.as_int(), Some(99), "should be 99");
 }
 
 #[test]
 fn test_jit_seq_param_debug() {
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def first(xs: list[int]) -> int:
     match xs:
         case [x]:
@@ -632,16 +581,14 @@ def f() -> int:
     return first([10])
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 10, "seq param: expected 10, got {}", result);
 }
 
 #[test]
 fn test_jit_seq_inline_match() {
     // Test: sequence match INLINE (not a param) - does the match arm work?
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     xs = [10]
     match xs:
@@ -650,16 +597,14 @@ def f() -> int:
     return 0
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 10, "seq inline match: expected 10, got {}", result);
 }
 
 #[test]
 fn test_jit_first_simple() {
     // Simplified: just check if first() returns at all
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def first(xs: list[int]) -> int:
     return 99
 
@@ -667,8 +612,7 @@ def f() -> int:
     return first([10])
 
 f()
-"#,
-    );
+"#);
     assert_eq!(result, 99, "first simple: expected 99, got {}", result);
 }
 
@@ -697,71 +641,51 @@ fn decode_jit_result(raw: i64) -> i64 {
 #[test]
 fn test_bigint_overflow_add_no_silent_wrap() {
     // INT48_MAX + 1 must not silently wrap to INT48_MIN; it must produce a BigInt.
-    let result = jit_run(&format!(
-        r#"
+    let result = jit_run(&format!(r#"
 def f(a: int, b: int) -> int:
     return a + b
 
 f({INT48_MAX}, 1)
-"#
-    ));
+"#));
     let decoded = decode_jit_result(result);
-    assert_eq!(
-        decoded,
-        i64::MAX,
-        "expected BigInt sentinel on overflow, got {result}"
-    );
+    assert_eq!(decoded, i64::MAX, "expected BigInt sentinel on overflow, got {result}");
 }
 
 #[test]
 fn test_bigint_overflow_sub_no_silent_wrap() {
     // INT48_MIN - 1 must promote to BigInt.
-    let result = jit_run(&format!(
-        r#"
+    let result = jit_run(&format!(r#"
 def f(a: int, b: int) -> int:
     return a - b
 
 f({INT48_MIN}, 1)
-"#
-    ));
+"#));
     let decoded = decode_jit_result(result);
-    assert_eq!(
-        decoded,
-        i64::MAX,
-        "expected BigInt sentinel on underflow, got {result}"
-    );
+    assert_eq!(decoded, i64::MAX, "expected BigInt sentinel on underflow, got {result}");
 }
 
 #[test]
 fn test_bigint_overflow_mul_no_silent_wrap() {
     // 1_000_000_000 * 1_000_000_000 = 1e18 > INT48_MAX (~1.4e14) → BigInt.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f(a: int, b: int) -> int:
     return a * b
 
 f(1000000000, 1000000000)
-"#,
-    );
+"#);
     let decoded = decode_jit_result(result);
-    assert_eq!(
-        decoded,
-        i64::MAX,
-        "expected BigInt sentinel on mul overflow, got {result}"
-    );
+    assert_eq!(decoded, i64::MAX, "expected BigInt sentinel on mul overflow, got {result}");
 }
 
 #[test]
 fn test_bigint_no_overflow_small_values() {
     // Small values must not be affected — result must be exact.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f(a: int, b: int) -> int:
     return a + b * 2 - 1
 
 f(10, 5)
-"#,
-    );
+"#);
     assert_eq!(result, 19, "expected 19, got {result}");
 }
 
@@ -783,8 +707,7 @@ fn decode_mbvalue_int(raw: i64) -> i64 {
 /// With the fix, the result is NaN-boxed before being stored in the dest VReg.
 #[test]
 fn test_jit_recursive_fib() {
-    let raw = jit_run(
-        r#"
+    let raw = jit_run(r#"
 def fib(n: int) -> int:
     if n == 0:
         return 0
@@ -796,22 +719,17 @@ def f() -> int:
     return fib(30)
 
 f()
-"#,
-    );
+"#);
     // Result may be raw i64 (typed path) or NaN-boxed i64 (dynamic dispatch path).
     let result = decode_mbvalue_int(raw);
-    assert_eq!(
-        result, 832040,
-        "fib(30) should be 832040 (got raw={raw:#x})"
-    );
+    assert_eq!(result, 832040, "fib(30) should be 832040 (got raw={raw:#x})");
 }
 
 /// Smaller fib(10) = 55 sanity check — faster than fib(30) and verifies
 /// the NaN-boxing fix applies at all recursion depths.
 #[test]
 fn test_jit_recursive_fib_small() {
-    let raw = jit_run(
-        r#"
+    let raw = jit_run(r#"
 def fib(n: int) -> int:
     if n == 0:
         return 0
@@ -823,8 +741,7 @@ def f() -> int:
     return fib(10)
 
 f()
-"#,
-    );
+"#);
     let result = decode_mbvalue_int(raw);
     assert_eq!(result, 55, "fib(10) should be 55 (got raw={raw:#x})");
 }
@@ -839,19 +756,14 @@ f()
 fn test_jit_void_extern_result_is_none() {
     // mb_print is a void extern. Capturing its return and then proceeding
     // must not crash; the captured dest VReg is set to MbValue::none().
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     print(42)
     return 0
 
 f()
-"#,
-    );
-    assert_eq!(
-        result, 0,
-        "void extern call should not crash; expected 0 (got {result})"
-    );
+"#);
+    assert_eq!(result, 0, "void extern call should not crash; expected 0 (got {result})");
 }
 
 #[test]
@@ -865,8 +777,7 @@ fn test_jit_truediv_any_operand_returns_boxed_float() {
     // to 0 (or the float bits) instead of 12500. The fix marks the binop's
     // static result as Any when either operand is Any, so downstream lowering
     // emits the right unbox path before printing / coercing.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     total: int = 0
     for size in [16, 32, 64]:
@@ -875,13 +786,9 @@ def f() -> int:
     return total
 
 f()
-"#,
-    );
+"#);
     // 200_000/16 + 200_000/32 + 200_000/64 = 12500 + 6250 + 3125 = 21875
-    assert_eq!(
-        result, 21875,
-        "int(int/any) inside for-loop must yield correct value (got {result})"
-    );
+    assert_eq!(result, 21875, "int(int/any) inside for-loop must yield correct value (got {result})");
 }
 
 #[test]
@@ -889,8 +796,7 @@ fn test_jit_truediv_any_operand_range_bound() {
     // Companion regression for #2104: `int(200_000 / size)` used directly as
     // a `range()` bound. Before the fix the bound was reinterpreted bits and
     // the inner loop either elided or ran a garbage number of iterations.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     count: int = 0
     for size in [16]:
@@ -900,12 +806,8 @@ def f() -> int:
     return count
 
 f()
-"#,
-    );
-    assert_eq!(
-        result, 12500,
-        "range(int(int/any)) inside for-loop must iterate 12500 times (got {result})"
-    );
+"#);
+    assert_eq!(result, 12500, "range(int(int/any)) inside for-loop must iterate 12500 times (got {result})");
 }
 
 // =====================================================================
@@ -952,8 +854,7 @@ fn test_jit_issue_2129_fraction_handle_add_bypasses_dunder() {
     // handle ids (~2^40 and ~2^40+1), so the resulting "Fraction" is a
     // bogus handle whose `.numerator` is whatever int the wrapping_add
     // produced (or panics / dereferences garbage on `.numerator` lookup).
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 import fractions
 
 def f() -> int:
@@ -963,12 +864,8 @@ def f() -> int:
     return s.numerator
 
 f()
-"#,
-    );
-    assert_eq!(
-        result, 1,
-        "Fraction(1,3) + Fraction(1,6) must reduce to 1/2 via __add__ (got {result})"
-    );
+"#);
+    assert_eq!(result, 1, "Fraction(1,3) + Fraction(1,6) must reduce to 1/2 via __add__ (got {result})");
 }
 
 #[test]
@@ -984,8 +881,7 @@ fn test_jit_issue_2129_user_class_int_subclass_add_bypasses_dunder() {
     //
     // Once the fix lands, this asserts that handle-typed ints route
     // through `mb_dispatch_binop` (or equivalent) so the dunder fires.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 class Tagged:
     def __add__(self, other: int) -> int:
         return 42
@@ -998,13 +894,10 @@ def f() -> int:
     return a + b
 
 f()
-"#,
-    );
-    assert_eq!(
-        result, 42,
-        "handle-typed int + int must dispatch through __add__ (got {result})"
-    );
+"#);
+    assert_eq!(result, 42, "handle-typed int + int must dispatch through __add__ (got {result})");
 }
+
 
 /// Regression for #1696: a `MirInst::CallExtern` whose `args.len()`
 /// diverges from the declared `ext.params.len()` previously emitted a
@@ -1064,10 +957,10 @@ f()
     let hir = lower_module(&module, &checker).unwrap();
     let mir = lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
     let mut backend = CraneliftJitBackend::new().expect("JIT init failed");
-    let _output = backend
-        .codegen(&mir, &checker.tcx)
+    let _output = backend.codegen(&mir, &checker.tcx)
         .expect("#1696 regression: JIT codegen must not abort with verifier error");
 }
+
 
 /// Regression for #2098: Cranelift variadic-call verifier fail
 /// (func_id=554) on `assertRaises(exc_type, callable, *args)`-shaped

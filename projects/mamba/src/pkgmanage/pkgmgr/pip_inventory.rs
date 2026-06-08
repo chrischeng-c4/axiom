@@ -59,10 +59,7 @@ pub struct ListOptions {
 
 impl Default for ListOptions {
     fn default() -> Self {
-        ListOptions {
-            include_header: true,
-            sort_by_version: false,
-        }
+        ListOptions { include_header: true, sort_by_version: false }
     }
 }
 
@@ -343,16 +340,10 @@ Long description follows...
         assert_eq!(dist.canonical_name, "requests");
         assert_eq!(dist.version, "2.31.0");
         assert_eq!(dist.summary.as_deref(), Some("Python HTTP for Humans."));
-        assert_eq!(
-            dist.author.as_deref(),
-            Some("Kenneth Reitz <me@kennethreitz.org>")
-        );
+        assert_eq!(dist.author.as_deref(), Some("Kenneth Reitz <me@kennethreitz.org>"));
         assert_eq!(dist.license.as_deref(), Some("Apache 2.0"));
         assert_eq!(dist.requires.len(), 2);
-        assert_eq!(
-            dist.home_page.as_deref(),
-            Some("https://requests.readthedocs.io")
-        );
+        assert_eq!(dist.home_page.as_deref(), Some("https://requests.readthedocs.io"));
     }
 
     #[test]
@@ -433,7 +424,10 @@ Project-URL: docs, https://example.org/docs
 
     #[test]
     fn render_list_pads_columns_to_widest_value() {
-        let dists = vec![fake_dist("a", "1.0"), fake_dist("longer-name", "11.22.33")];
+        let dists = vec![
+            fake_dist("a", "1.0"),
+            fake_dist("longer-name", "11.22.33"),
+        ];
         let out = render_list(&dists, &ListOptions::default());
         // Both columns must be at least as wide as the widest entry +
         // the header.
@@ -449,10 +443,7 @@ Project-URL: docs, https://example.org/docs
         let dists = vec![fake_dist("a", "1.0")];
         let out = render_list(
             &dists,
-            &ListOptions {
-                include_header: false,
-                ..Default::default()
-            },
+            &ListOptions { include_header: false, ..Default::default() },
         );
         assert!(!out.contains("Package"));
         assert!(out.contains("a"));
@@ -467,10 +458,7 @@ Project-URL: docs, https://example.org/docs
         ];
         let out = render_list(
             &dists,
-            &ListOptions {
-                include_header: false,
-                sort_by_version: true,
-            },
+            &ListOptions { include_header: false, sort_by_version: true },
         );
         let body_lines: Vec<&str> = out.lines().collect();
         // First listed = version 1.0 (b), then 5.0, then 9.0.
@@ -486,10 +474,7 @@ Project-URL: docs, https://example.org/docs
         d.home_page = Some("https://requests.readthedocs.io".into());
         d.author = Some("Kenneth Reitz <me@kennethreitz.org>".into());
         d.license = Some("Apache 2.0".into());
-        d.requires = vec![
-            "charset-normalizer (<4,>=2)".into(),
-            "idna (<4,>=2.5)".into(),
-        ];
+        d.requires = vec!["charset-normalizer (<4,>=2)".into(), "idna (<4,>=2.5)".into()];
 
         let out = render_show(&d);
         assert!(out.contains("Name: Requests"));
@@ -537,21 +522,18 @@ Project-URL: docs, https://example.org/docs
 
     #[test]
     fn extract_requirement_name_stops_at_specifier() {
-        assert_eq!(
-            extract_requirement_name("charset-normalizer (<4,>=2)"),
-            "charset-normalizer"
-        );
+        assert_eq!(extract_requirement_name("charset-normalizer (<4,>=2)"), "charset-normalizer");
         assert_eq!(extract_requirement_name("idna>=2.5"), "idna");
-        assert_eq!(
-            extract_requirement_name("flask ; python_version>='3.7'"),
-            "flask"
-        );
+        assert_eq!(extract_requirement_name("flask ; python_version>='3.7'"), "flask");
         assert_eq!(extract_requirement_name("a.b.c"), "a.b.c");
     }
 
     #[test]
     fn freeze_then_render_round_trip_matches_alphabetical_canonical_order() {
-        let dists = vec![fake_dist("Zeta", "1.0"), fake_dist("alpha", "2.0")];
+        let dists = vec![
+            fake_dist("Zeta", "1.0"),
+            fake_dist("alpha", "2.0"),
+        ];
         let body = render_freeze(&dists);
         // Re-sort the expected canonical order: alpha (a) < zeta (z).
         let lines: Vec<&str> = body.lines().collect();

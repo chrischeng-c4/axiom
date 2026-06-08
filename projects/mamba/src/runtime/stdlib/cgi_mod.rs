@@ -1,5 +1,3 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// cgi module for Mamba (#1261 long-tail).
 ///
 /// Replaces the long_tail stub which returned empty dicts/lists for all
@@ -13,7 +11,10 @@ use super::super::value::MbValue;
 ///
 /// `cgi` is deprecated in CPython 3.13+ but plenty of older code still
 /// uses `cgi.escape` and `cgi.parse_header`, so it remains worth porting.
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 || args_ptr.is_null() {
@@ -59,23 +60,23 @@ fn html_escape(input: &str, quote: bool) -> String {
 
 unsafe extern "C" fn dispatch_escape(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(|v| as_str(v))
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(|v| as_str(v)).unwrap_or_default();
     let quote = args.get(1).copied().map(as_truthy).unwrap_or(false);
     MbValue::from_ptr(MbObject::new_str(html_escape(&s, quote)))
 }
 
 unsafe extern "C" fn dispatch_parse_qs(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    super::http_mod::mb_urllib_parse_qs(args.first().copied().unwrap_or_else(MbValue::none))
+    super::http_mod::mb_urllib_parse_qs(
+        args.first().copied().unwrap_or_else(MbValue::none),
+    )
 }
 
 unsafe extern "C" fn dispatch_parse_qsl(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    super::http_mod::mb_urllib_parse_qsl(args.first().copied().unwrap_or_else(MbValue::none))
+    super::http_mod::mb_urllib_parse_qsl(
+        args.first().copied().unwrap_or_else(MbValue::none),
+    )
 }
 
 /// Tokenize a content-type-style header value on `;` boundaries, while
@@ -137,10 +138,7 @@ fn unquote_param(value: &str) -> String {
 /// lowercased; values are unquoted.
 fn parse_header(line: &str) -> (String, Vec<(String, String)>) {
     let segments = split_header_segments(line);
-    let main = segments
-        .first()
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
+    let main = segments.first().map(|s| s.trim().to_string()).unwrap_or_default();
     let mut params = Vec::new();
     for seg in segments.iter().skip(1) {
         let seg = seg.trim();
@@ -160,11 +158,7 @@ fn parse_header(line: &str) -> (String, Vec<(String, String)>) {
 
 unsafe extern "C" fn dispatch_parse_header(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let line = args
-        .first()
-        .copied()
-        .and_then(|v| as_str(v))
-        .unwrap_or_default();
+    let line = args.first().copied().and_then(|v| as_str(v)).unwrap_or_default();
     let (main, params) = parse_header(&line);
     let dict = MbObject::new_dict();
     if let ObjData::Dict(ref lock) = (*dict).data {
@@ -197,47 +191,23 @@ pub fn register() {
     let mut attrs: HashMap<String, MbValue> = HashMap::new();
 
     // Real pure-function ports.
-    attrs.insert(
-        "escape".into(),
-        MbValue::from_func(dispatch_escape as *const () as usize),
-    );
-    attrs.insert(
-        "parse_qs".into(),
-        MbValue::from_func(dispatch_parse_qs as *const () as usize),
-    );
-    attrs.insert(
-        "parse_qsl".into(),
-        MbValue::from_func(dispatch_parse_qsl as *const () as usize),
-    );
-    attrs.insert(
-        "parse_header".into(),
-        MbValue::from_func(dispatch_parse_header as *const () as usize),
-    );
+    attrs.insert("escape".into(),        MbValue::from_func(dispatch_escape as *const () as usize));
+    attrs.insert("parse_qs".into(),      MbValue::from_func(dispatch_parse_qs as *const () as usize));
+    attrs.insert("parse_qsl".into(),     MbValue::from_func(dispatch_parse_qsl as *const () as usize));
+    attrs.insert("parse_header".into(),  MbValue::from_func(dispatch_parse_header as *const () as usize));
 
     // Class shells (file-IO and bound-method dispatch not yet supported).
     for cls in [
-        "FieldStorage",
-        "MiniFieldStorage",
-        "FormContentDict",
-        "InterpFormContentDict",
-        "FormContent",
-        "SvFormContentDict",
+        "FieldStorage", "MiniFieldStorage", "FormContentDict",
+        "InterpFormContentDict", "FormContent", "SvFormContentDict",
     ] {
-        attrs.insert(
-            cls.into(),
-            MbValue::from_func(dispatch_class_shell as *const () as usize),
-        );
+        attrs.insert(cls.into(), MbValue::from_func(dispatch_class_shell as *const () as usize));
     }
 
     // Stub helpers (CPython prints them to stdout in CGI handlers).
     for name in [
-        "parse",
-        "parse_multipart",
-        "test",
-        "print_environ",
-        "print_form",
-        "print_directory",
-        "print_arguments",
+        "parse", "parse_multipart", "test", "print_environ",
+        "print_form", "print_directory", "print_arguments",
         "print_environ_usage",
     ] {
         let dispatch = if name == "parse" || name == "parse_multipart" {
@@ -248,15 +218,9 @@ pub fn register() {
         attrs.insert(name.into(), MbValue::from_func(dispatch));
     }
 
-    attrs.insert("maxlen".into(), MbValue::from_int(0));
-    attrs.insert(
-        "logfile".into(),
-        MbValue::from_ptr(MbObject::new_str(String::new())),
-    );
-    attrs.insert(
-        "logfp".into(),
-        MbValue::from_ptr(MbObject::new_str(String::new())),
-    );
+    attrs.insert("maxlen".into(),  MbValue::from_int(0));
+    attrs.insert("logfile".into(), MbValue::from_ptr(MbObject::new_str(String::new())));
+    attrs.insert("logfp".into(),   MbValue::from_ptr(MbObject::new_str(String::new())));
 
     super::register_module("cgi", attrs);
 }
@@ -267,10 +231,7 @@ mod tests {
 
     #[test]
     fn escape_basic_chars() {
-        assert_eq!(
-            html_escape("<a href='x'>&", false),
-            "&lt;a href='x'&gt;&amp;"
-        );
+        assert_eq!(html_escape("<a href='x'>&", false), "&lt;a href='x'&gt;&amp;");
     }
 
     #[test]
@@ -303,23 +264,17 @@ mod tests {
     fn parse_header_quoted_value() {
         let (main, params) = parse_header("attachment; filename=\"foo bar.txt\"");
         assert_eq!(main, "attachment");
-        assert_eq!(
-            params,
-            vec![("filename".to_string(), "foo bar.txt".to_string())]
-        );
+        assert_eq!(params, vec![("filename".to_string(), "foo bar.txt".to_string())]);
     }
 
     #[test]
     fn parse_header_quoted_semicolon() {
         let (main, params) = parse_header("form-data; name=\"a;b\"; filename=foo");
         assert_eq!(main, "form-data");
-        assert_eq!(
-            params,
-            vec![
-                ("name".to_string(), "a;b".to_string()),
-                ("filename".to_string(), "foo".to_string()),
-            ]
-        );
+        assert_eq!(params, vec![
+            ("name".to_string(), "a;b".to_string()),
+            ("filename".to_string(), "foo".to_string()),
+        ]);
     }
 
     #[test]
@@ -331,10 +286,7 @@ mod tests {
     #[test]
     fn parse_header_handles_escaped_quote() {
         let (_, params) = parse_header("form-data; name=\"he said \\\"hi\\\"\"");
-        assert_eq!(
-            params,
-            vec![("name".to_string(), "he said \"hi\"".to_string())]
-        );
+        assert_eq!(params, vec![("name".to_string(), "he said \"hi\"".to_string())]);
     }
 
     #[test]

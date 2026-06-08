@@ -609,5 +609,22 @@ import './styles.css';
         assert!(!html.contains("/src/main.tsx"));
         assert!(!html.contains(r#"id="root""#));
     }
+
+    #[test]
+    fn wasm_index_can_emit_dom_mount() {
+        let template = r#"<!doctype html>
+<html>
+  <head></head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>"#;
+
+        let html = render_wasm_index_html(template, "App", None, true);
+
+        assert!(html.contains(r#"<div id="jet-root"></div>"#));
+        assert!(!html.contains(r#"<canvas id="jet-canvas"></canvas>"#));
+        assert!(!html.contains(r#"id="root""#));
+    }
 }
 // CODEGEN-END

@@ -5,7 +5,7 @@
 //! oracle (D5.6 capstone proved this reproduces the retired `.expected` goldens).
 //!
 //! Generator / iterator protocol conformance (#756) lives in a sister
-//! binary: `tests/cpython_generators.rs` + `tests/cpython/fixtures/core/generators/`.
+//! binary: `tests/cpython_generators.rs` + `tests/cpython/core/generators/`.
 //! That binary uses the default `#[test]` harness (not datatest_stable) so
 //! it can express per-scenario Python-source assertions rather than golden
 //! file diffs. Run it with:
@@ -21,7 +21,7 @@
 //!   - `builtin-libs/` — methods on builtin types
 //!   - `std-libs/` — json, math, re, collections, etc.
 //!   - `3rd-libs/` — third-party PyPI libraries
-//!   - `type-strict/` — runtime-typing contract (mamba MUST raise where
+//!   - `type/` — runtime-typing contract (mamba MUST raise where
 //!     CPython accepts); driven by `# mamba-strict-type:` directives
 //!
 //! Directives (in `.py` file comments):
@@ -35,7 +35,10 @@ use datatest_stable::harness;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Output, Stdio};
-use std::time::{Duration, Instant};
+
+#[path = "harness_common.rs"]
+mod common;
+use common::{mamba_bin, wait_with_timeout, TimeoutPolicy, WaitOutcome};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_CPU_SECS: u64 = DEFAULT_TIMEOUT_SECS * 2;
@@ -68,14 +71,6 @@ fn has_pipeline_run_directive(src: &str) -> bool {
 }
 
 // ── CLI execution with output capture ─────────────────────────────
-
-fn mamba_bin() -> PathBuf {
-    option_env!("CARGO_BIN_EXE_mamba")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/mamba")
-        })
-}
 
 fn status_detail(status: ExitStatus) -> String {
     #[cfg(unix)]
@@ -118,11 +113,11 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-fn timeout() -> Duration {
-    Duration::from_secs(env_u64(
-        "MAMBA_CONFORMANCE_TIMEOUT_SECS",
-        DEFAULT_TIMEOUT_SECS,
-    ))
+/// The conformance timeout budget. The single `MAMBA_CONFORMANCE_TIMEOUT_SECS`
+/// env-var lookup lives in [`TimeoutPolicy::from_env`]; the 20ms poll cadence
+/// matches the pre-consolidation `spawn_mamba` / `spawn_python` loops.
+fn timeout_policy() -> TimeoutPolicy {
+    TimeoutPolicy::from_env("MAMBA_CONFORMANCE_TIMEOUT_SECS", DEFAULT_TIMEOUT_SECS)
 }
 
 #[cfg(unix)]
@@ -199,7 +194,7 @@ fn has_line_prefix(text: &str, prefix: &str) -> bool {
 
 fn is_type_strict_path(path: &Path) -> bool {
     path.components()
-        .any(|component| component.as_os_str() == "type-strict")
+        .any(|component| component.as_os_str() == "type")
 }
 
 fn is_compile_time_type_error(output: &Output) -> bool {
@@ -294,44 +289,21 @@ fn spawn_mamba(path: &Path) -> Result<Output, String> {
         .stderr(Stdio::piped());
     apply_child_limits(&mut command);
 
-    let mut child = command
+    let child = command
         .spawn()
         .map_err(|err| format!("{}: failed to execute mamba: {err}", path.display()))?;
 
-    let timeout = timeout();
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                return child.wait_with_output().map_err(|err| {
-                    format!("{}: failed to collect mamba output: {err}", path.display())
-                });
-            }
-            Ok(None) if start.elapsed() > timeout => {
-                let _ = child.kill();
-                let output = child.wait_with_output().map_err(|err| {
-                    format!(
-                        "{}: TIMEOUT after {}s; failed to collect mamba output: {err}",
-                        path.display(),
-                        timeout.as_secs()
-                    )
-                })?;
-                return Err(format!(
-                    "{}: TIMEOUT after {}s\nstdout:\n{}\nstderr:\n{}",
-                    path.display(),
-                    timeout.as_secs(),
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(err) => {
-                return Err(format!(
-                    "{}: failed to wait for mamba: {err}",
-                    path.display()
-                ));
-            }
-        }
+    let policy = timeout_policy();
+    match wait_with_timeout(child, policy) {
+        Ok(WaitOutcome::Finished(output)) => Ok(output),
+        Ok(WaitOutcome::TimedOut(output)) => Err(format!(
+            "{}: TIMEOUT after {}s\nstdout:\n{}\nstderr:\n{}",
+            path.display(),
+            policy.timeout().as_secs(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )),
+        Err(err) => Err(format!("{}: failed to wait for mamba: {err}", path.display())),
     }
 }
 
@@ -350,47 +322,24 @@ fn spawn_python(path: &Path) -> Result<Output, String> {
         .stderr(Stdio::piped());
     apply_child_limits(&mut command);
 
-    let mut child = command
+    let child = command
         .spawn()
         .map_err(|err| format!("{}: failed to execute python3: {err}", path.display()))?;
 
-    let timeout = timeout();
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                return child.wait_with_output().map_err(|err| {
-                    format!(
-                        "{}: failed to collect python3 output: {err}",
-                        path.display()
-                    )
-                });
-            }
-            Ok(None) if start.elapsed() > timeout => {
-                let _ = child.kill();
-                let output = child.wait_with_output().map_err(|err| {
-                    format!(
-                        "{}: TIMEOUT after {}s; failed to collect python3 output: {err}",
-                        path.display(),
-                        timeout.as_secs()
-                    )
-                })?;
-                return Err(format!(
-                    "{}: CPython TIMEOUT after {}s\nstdout:\n{}\nstderr:\n{}",
-                    path.display(),
-                    timeout.as_secs(),
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(err) => {
-                return Err(format!(
-                    "{}: failed to wait for python3: {err}",
-                    path.display()
-                ));
-            }
-        }
+    let policy = timeout_policy();
+    match wait_with_timeout(child, policy) {
+        Ok(WaitOutcome::Finished(output)) => Ok(output),
+        Ok(WaitOutcome::TimedOut(output)) => Err(format!(
+            "{}: CPython TIMEOUT after {}s\nstdout:\n{}\nstderr:\n{}",
+            path.display(),
+            policy.timeout().as_secs(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        )),
+        Err(err) => Err(format!(
+            "{}: failed to wait for python3: {err}",
+            path.display()
+        )),
     }
 }
 
@@ -519,4 +468,4 @@ fn format_diff(expected: &str, actual: &str) -> String {
     out
 }
 
-harness!(run_conformance, "tests/cpython/fixtures", r".*\.py$");
+harness!(run_conformance, "tests/cpython", r".*\.py$");

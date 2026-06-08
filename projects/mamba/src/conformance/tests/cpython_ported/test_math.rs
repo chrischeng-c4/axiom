@@ -243,11 +243,9 @@ fn test_math_perm() {
 
 #[test]
 fn test_math_isnan_true() {
-    let out = jit_capture(
-        r#"import math
+    let out = jit_capture(r#"import math
 print(math.isnan(float("nan")))
-"#,
-    );
+"#);
     assert_output(&out, "True\n");
 }
 
@@ -259,11 +257,9 @@ fn test_math_isnan_false() {
 
 #[test]
 fn test_math_isinf_true() {
-    let out = jit_capture(
-        r#"import math
+    let out = jit_capture(r#"import math
 print(math.isinf(float("inf")))
-"#,
-    );
+"#);
     assert_output(&out, "True\n");
 }
 

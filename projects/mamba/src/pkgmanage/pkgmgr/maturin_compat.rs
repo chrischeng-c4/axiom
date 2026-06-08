@@ -299,7 +299,10 @@ include = ["py.typed"]
         assert_eq!(r.bindings, Some(MaturinBindings::PyO3));
         assert_eq!(r.module_name.as_deref(), Some("demo_native._core"));
         assert_eq!(r.python_source.as_deref(), Some("python"));
-        assert_eq!(r.features, vec!["pyo3/extension-module", "pyo3/abi3-py39"]);
+        assert_eq!(
+            r.features,
+            vec!["pyo3/extension-module", "pyo3/abi3-py39"]
+        );
         assert_eq!(r.strip, Some(true));
         assert_eq!(r.include, vec!["py.typed"]);
         assert!(r.is_python_extension());

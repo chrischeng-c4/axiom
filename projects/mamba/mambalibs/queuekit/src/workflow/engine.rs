@@ -120,8 +120,8 @@ impl<R: ResultBackend, B: Broker> WorkflowEngine<R, B> {
             next_msg.parent_id = None; // Could track parent if needed
 
             // Save updated chain metadata (always use root_id as key)
-            let meta_value =
-                serde_json::to_value(&meta).map_err(|e| TaskError::Serialization(e.to_string()))?;
+            let meta_value = serde_json::to_value(&meta)
+                .map_err(|e| TaskError::Serialization(e.to_string()))?;
             self.backend
                 .set_metadata(&chain_key, meta_value, None)
                 .await?;
@@ -206,8 +206,8 @@ impl<R: ResultBackend, B: Broker> WorkflowEngine<R, B> {
             );
         } else {
             // Save updated metadata
-            let meta_value =
-                serde_json::to_value(&meta).map_err(|e| TaskError::Serialization(e.to_string()))?;
+            let meta_value = serde_json::to_value(&meta)
+                .map_err(|e| TaskError::Serialization(e.to_string()))?;
             self.backend
                 .set_metadata(&chord_key, meta_value, None)
                 .await?;
@@ -239,11 +239,9 @@ impl<R: ResultBackend, B: Broker> WorkflowEngine<R, B> {
         };
 
         let chain_key = format!("chain:{}", root_id);
-        let meta_value =
-            serde_json::to_value(&meta).map_err(|e| TaskError::Serialization(e.to_string()))?;
-        self.backend
-            .set_metadata(&chain_key, meta_value, None)
-            .await?;
+        let meta_value = serde_json::to_value(&meta)
+            .map_err(|e| TaskError::Serialization(e.to_string()))?;
+        self.backend.set_metadata(&chain_key, meta_value, None).await?;
 
         Ok(())
     }
@@ -268,11 +266,9 @@ impl<R: ResultBackend, B: Broker> WorkflowEngine<R, B> {
         };
 
         let chord_key = format!("chord:{}", root_id);
-        let meta_value =
-            serde_json::to_value(&meta).map_err(|e| TaskError::Serialization(e.to_string()))?;
-        self.backend
-            .set_metadata(&chord_key, meta_value, None)
-            .await?;
+        let meta_value = serde_json::to_value(&meta)
+            .map_err(|e| TaskError::Serialization(e.to_string()))?;
+        self.backend.set_metadata(&chord_key, meta_value, None).await?;
 
         Ok(())
     }
@@ -314,10 +310,7 @@ mod tests {
         let deserialized: ChordMeta = serde_json::from_str(&json).unwrap();
 
         assert_eq!(meta.root_id, deserialized.root_id);
-        assert_eq!(
-            meta.header_task_ids.len(),
-            deserialized.header_task_ids.len()
-        );
+        assert_eq!(meta.header_task_ids.len(), deserialized.header_task_ids.len());
     }
 
     // -----------------------------------------------------------------------
@@ -327,10 +320,10 @@ mod tests {
     #[cfg(feature = "redis")]
     mod integration {
         use super::*;
+        use std::sync::Mutex;
+        use async_trait::async_trait;
         use crate::broker::{BrokerCapabilities, DeliveryModel};
         use crate::{RedisBackend, RedisBackendConfig};
-        use async_trait::async_trait;
-        use std::sync::Mutex;
 
         /// Mock broker that records all published messages for assertion.
         /// Implements Broker only (not PullBroker).
@@ -399,9 +392,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_init_chain() {
-            let Some((engine, backend, _broker)) = make_engine().await else {
-                return;
-            };
+            let Some((engine, backend, _broker)) = make_engine().await else { return };
             let root_id = TaskId::new();
             let tasks = vec![
                 serde_json::to_value(&TaskMessage::new("task1", serde_json::json!([]))).unwrap(),
@@ -431,9 +422,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_chain_continues_next_step() {
-            let Some((engine, backend, broker)) = make_engine().await else {
-                return;
-            };
+            let Some((engine, backend, broker)) = make_engine().await else { return };
             let root_id = TaskId::new();
             let task_id = TaskId::new();
 
@@ -472,10 +461,7 @@ mod tests {
             let next_msg = &published[0].1;
             assert_eq!(next_msg.task_name, "task2");
             if let serde_json::Value::Array(ref args) = next_msg.args {
-                assert_eq!(
-                    args[0], result,
-                    "previous result should be prepended to args"
-                );
+                assert_eq!(args[0], result, "previous result should be prepended to args");
             } else {
                 panic!("expected args to be an array");
             }
@@ -486,9 +472,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_chain_last_step_cleanup() {
-            let Some((engine, backend, broker)) = make_engine().await else {
-                return;
-            };
+            let Some((engine, backend, broker)) = make_engine().await else { return };
             let root_id = TaskId::new();
 
             let tasks = vec![
@@ -534,9 +518,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_chain_result_accumulation() {
-            let Some((engine, backend, _broker)) = make_engine().await else {
-                return;
-            };
+            let Some((engine, backend, _broker)) = make_engine().await else { return };
             let root_id = TaskId::new();
 
             let tasks = vec![
@@ -559,9 +541,10 @@ mod tests {
                 .unwrap();
 
             // After step 1: results should have 1 entry
-            let meta: ChainMeta =
-                serde_json::from_value(backend.get_metadata(&chain_key).await.unwrap().unwrap())
-                    .unwrap();
+            let meta: ChainMeta = serde_json::from_value(
+                backend.get_metadata(&chain_key).await.unwrap().unwrap(),
+            )
+            .unwrap();
             assert_eq!(meta.results, vec![serde_json::json!(10)]);
 
             // Complete step 2
@@ -571,9 +554,10 @@ mod tests {
                 .unwrap();
 
             // After step 2: results should have 2 entries
-            let meta: ChainMeta =
-                serde_json::from_value(backend.get_metadata(&chain_key).await.unwrap().unwrap())
-                    .unwrap();
+            let meta: ChainMeta = serde_json::from_value(
+                backend.get_metadata(&chain_key).await.unwrap().unwrap(),
+            )
+            .unwrap();
             assert_eq!(
                 meta.results,
                 vec![serde_json::json!(10), serde_json::json!(20)]
@@ -587,17 +571,12 @@ mod tests {
 
             // After step 3: metadata should be cleaned up (engine deletes on final step)
             let meta_value = backend.get_metadata(&chain_key).await.unwrap();
-            assert!(
-                meta_value.is_none(),
-                "metadata should be deleted after final step"
-            );
+            assert!(meta_value.is_none(), "metadata should be deleted after final step");
         }
 
         #[tokio::test]
         async fn test_on_task_complete_no_chain_or_chord() {
-            let Some((engine, _backend, broker)) = make_engine().await else {
-                return;
-            };
+            let Some((engine, _backend, broker)) = make_engine().await else { return };
             let task_id = TaskId::new();
 
             // Call on_task_complete with a task_id that has no chain or chord metadata
@@ -618,14 +597,11 @@ mod tests {
 
         #[tokio::test]
         async fn test_init_chord() {
-            let Some((engine, backend, _broker)) = make_engine().await else {
-                return;
-            };
+            let Some((engine, backend, _broker)) = make_engine().await else { return };
             let root_id = TaskId::new();
             let header_ids = vec![TaskId::new(), TaskId::new(), TaskId::new()];
             let callback =
-                serde_json::to_value(&TaskMessage::new("aggregate", serde_json::json!([])))
-                    .unwrap();
+                serde_json::to_value(&TaskMessage::new("aggregate", serde_json::json!([]))).unwrap();
 
             engine
                 .init_chord(
@@ -657,14 +633,11 @@ mod tests {
 
         #[tokio::test]
         async fn test_chord_partial_completion() {
-            let Some((engine, backend, broker)) = make_engine().await else {
-                return;
-            };
+            let Some((engine, backend, broker)) = make_engine().await else { return };
             let root_id = TaskId::new();
             let header_ids = vec![TaskId::new(), TaskId::new(), TaskId::new()];
             let callback =
-                serde_json::to_value(&TaskMessage::new("aggregate", serde_json::json!([])))
-                    .unwrap();
+                serde_json::to_value(&TaskMessage::new("aggregate", serde_json::json!([]))).unwrap();
 
             engine
                 .init_chord(
@@ -705,14 +678,11 @@ mod tests {
 
         #[tokio::test]
         async fn test_chord_all_complete() {
-            let Some((engine, backend, broker)) = make_engine().await else {
-                return;
-            };
+            let Some((engine, backend, broker)) = make_engine().await else { return };
             let root_id = TaskId::new();
             let header_ids = vec![TaskId::new(), TaskId::new()];
             let callback =
-                serde_json::to_value(&TaskMessage::new("aggregate", serde_json::json!([])))
-                    .unwrap();
+                serde_json::to_value(&TaskMessage::new("aggregate", serde_json::json!([]))).unwrap();
 
             engine
                 .init_chord(
@@ -763,9 +733,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_chord_missing_metadata() {
-            let Some((engine, _backend, _broker)) = make_engine().await else {
-                return;
-            };
+            let Some((engine, _backend, _broker)) = make_engine().await else { return };
             let root_id = TaskId::new();
             let task_id = TaskId::new();
 
@@ -774,10 +742,7 @@ mod tests {
                 .on_chord_task_complete(&root_id, &task_id, serde_json::json!("val"))
                 .await;
 
-            assert!(
-                result.is_err(),
-                "should return an error for missing metadata"
-            );
+            assert!(result.is_err(), "should return an error for missing metadata");
             let err = result.unwrap_err();
             match err {
                 TaskError::Internal(msg) => {

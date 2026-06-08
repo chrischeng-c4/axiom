@@ -108,7 +108,12 @@ impl<'a> Session<'a> {
     }
 
     /// Stage an UPDATE.
-    pub fn touch_dyn(&mut self, table: &str, pk: i64, values: Vec<(String, ExtractedValue)>) {
+    pub fn touch_dyn(
+        &mut self,
+        table: &str,
+        pk: i64,
+        values: Vec<(String, ExtractedValue)>,
+    ) {
         self.inner.touch_dyn(table, pk, values)
     }
 
@@ -164,7 +169,12 @@ pub struct SessionQuery<'a, 'sess, M: SessionModel> {
 }
 
 impl<'a, 'sess, M: SessionModel> SessionQuery<'a, 'sess, M> {
-    pub fn filter(mut self, field: &str, op: Operator, value: ExtractedValue) -> Result<Self> {
+    pub fn filter(
+        mut self,
+        field: &str,
+        op: Operator,
+        value: ExtractedValue,
+    ) -> Result<Self> {
         self.builder = self.builder.where_clause(field, op, value)?;
         Ok(self)
     }

@@ -77,7 +77,11 @@ impl WheelFilename {
             ),
             None => format!(
                 "{}-{}-{}-{}-{}.whl",
-                self.distribution, self.version, self.python_tag, self.abi_tag, self.platform_tag
+                self.distribution,
+                self.version,
+                self.python_tag,
+                self.abi_tag,
+                self.platform_tag
             ),
         }
     }
@@ -241,7 +245,8 @@ mod tests {
 
     #[test]
     fn rejects_too_many_segments() {
-        let err = parse_wheel_filename("foo-1.0-1-2-py3-none-any.whl").unwrap_err();
+        let err =
+            parse_wheel_filename("foo-1.0-1-2-py3-none-any.whl").unwrap_err();
         assert!(err.to_string().contains("5 or 6"));
         assert!(err.to_string().contains("got 7"));
     }
@@ -277,12 +282,17 @@ mod tests {
 
     #[test]
     fn expand_tags_multi_platform() {
-        let f =
-            parse_wheel_filename("x-1.0-cp312-cp312-manylinux1_x86_64.manylinux2014_x86_64.whl")
-                .unwrap();
+        let f = parse_wheel_filename(
+            "x-1.0-cp312-cp312-manylinux1_x86_64.manylinux2014_x86_64.whl",
+        )
+        .unwrap();
         let combos = f.expand_tags();
         assert_eq!(combos.len(), 2);
-        assert!(combos.contains(&("cp312".into(), "cp312".into(), "manylinux1_x86_64".into())));
+        assert!(combos.contains(&(
+            "cp312".into(),
+            "cp312".into(),
+            "manylinux1_x86_64".into()
+        )));
         assert!(combos.contains(&(
             "cp312".into(),
             "cp312".into(),
@@ -323,13 +333,19 @@ mod tests {
 
     #[test]
     fn musllinux_wheel() {
-        let f = parse_wheel_filename("cffi-1.16.0-cp312-cp312-musllinux_1_1_aarch64.whl").unwrap();
+        let f = parse_wheel_filename(
+            "cffi-1.16.0-cp312-cp312-musllinux_1_1_aarch64.whl",
+        )
+        .unwrap();
         assert_eq!(f.platform_tag, "musllinux_1_1_aarch64");
     }
 
     #[test]
     fn macos_universal_wheel() {
-        let f = parse_wheel_filename("pillow-10.2.0-cp312-cp312-macosx_11_0_arm64.whl").unwrap();
+        let f = parse_wheel_filename(
+            "pillow-10.2.0-cp312-cp312-macosx_11_0_arm64.whl",
+        )
+        .unwrap();
         assert_eq!(f.platform_tag, "macosx_11_0_arm64");
     }
 

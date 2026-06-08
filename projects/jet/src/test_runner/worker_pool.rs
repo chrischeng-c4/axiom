@@ -203,6 +203,9 @@ impl WorkerPool {
                     summary.skipped += file_summary.skipped;
                     summary.duration_ms += file_summary.duration_ms;
                     summary.reports.extend(file_summary.reports);
+                    summary
+                        .browser_sessions
+                        .extend(file_summary.browser_sessions);
                 }
                 Ok((spec, Err(err))) => {
                     // Worker error (non-panic): surface as errored test.
@@ -270,6 +273,9 @@ impl WorkerPool {
                     summary.skipped += file_summary.skipped;
                     summary.duration_ms += file_summary.duration_ms;
                     summary.reports.extend(file_summary.reports);
+                    summary
+                        .browser_sessions
+                        .extend(file_summary.browser_sessions);
                 }
                 Err(err) => {
                     summary.failed += 1;

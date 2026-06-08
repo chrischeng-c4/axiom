@@ -51,7 +51,9 @@ impl ContentDisposition {
     /// Best filename per RFC 6266 §4.3 — prefer `filename*` if both
     /// are present, fall back to plain `filename=`, then to None.
     pub fn effective_filename(&self) -> Option<&str> {
-        self.filename_star.as_deref().or(self.filename.as_deref())
+        self.filename_star
+            .as_deref()
+            .or(self.filename.as_deref())
     }
 }
 
@@ -67,7 +69,9 @@ pub fn parse_content_disposition(header: &str) -> Result<ContentDisposition, Ind
         i += 1;
     }
     if i == 0 {
-        return Err(pe(&format!("expected disposition-type token, got {s:?}")));
+        return Err(pe(&format!(
+            "expected disposition-type token, got {s:?}"
+        )));
     }
     let disposition = s[..i].to_ascii_lowercase();
 
@@ -106,7 +110,9 @@ pub fn parse_content_disposition(header: &str) -> Result<ContentDisposition, Ind
             i += 1;
         }
         if i == bytes.len() || bytes[i] != b'=' {
-            return Err(pe(&format!("expected '=' after parameter name {name:?}")));
+            return Err(pe(&format!(
+                "expected '=' after parameter name {name:?}"
+            )));
         }
         i += 1; // consume '='.
         while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
@@ -121,7 +127,11 @@ pub fn parse_content_disposition(header: &str) -> Result<ContentDisposition, Ind
             // and (per RFC 5987) the small set of "attr-char"
             // punctuation. We're permissive and accept anything
             // that's not `;`, whitespace, or end-of-string.
-            while i < bytes.len() && bytes[i] != b';' && bytes[i] != b' ' && bytes[i] != b'\t' {
+            while i < bytes.len()
+                && bytes[i] != b';'
+                && bytes[i] != b' '
+                && bytes[i] != b'\t'
+            {
                 i += 1;
             }
             if i == v_start {
@@ -195,10 +205,7 @@ fn from_hex(b: u8) -> Result<u8, IndexError> {
         b'0'..=b'9' => Ok(b - b'0'),
         b'a'..=b'f' => Ok(b - b'a' + 10),
         b'A'..=b'F' => Ok(b - b'A' + 10),
-        _ => Err(pe(&format!(
-            "non-hex digit in percent-escape: {:?}",
-            b as char
-        ))),
+        _ => Err(pe(&format!("non-hex digit in percent-escape: {:?}", b as char))),
     }
 }
 
@@ -230,22 +237,9 @@ fn read_quoted(s: &str, i: &mut usize) -> Result<String, IndexError> {
 }
 
 fn is_tchar(b: u8) -> bool {
-    matches!(
-        b,
-        b'!' | b'#'
-            | b'$'
-            | b'%'
-            | b'&'
-            | b'\''
-            | b'*'
-            | b'+'
-            | b'-'
-            | b'.'
-            | b'^'
-            | b'_'
-            | b'`'
-            | b'|'
-            | b'~'
+    matches!(b,
+        b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*' | b'+' | b'-' | b'.'
+        | b'^' | b'_' | b'`' | b'|' | b'~'
     ) || b.is_ascii_alphanumeric()
 }
 
@@ -301,8 +295,10 @@ mod tests {
     #[test]
     fn parses_rfc5987_utf8_filename_star() {
         // `filename*=UTF-8''req%C3%BBests-1.0.whl` → "reqûests-1.0.whl"
-        let cd = parse_content_disposition("attachment; filename*=UTF-8''req%C3%BBests-1.0.whl")
-            .unwrap();
+        let cd = parse_content_disposition(
+            "attachment; filename*=UTF-8''req%C3%BBests-1.0.whl",
+        )
+        .unwrap();
         assert_eq!(cd.filename_star.as_deref(), Some("reqûests-1.0.whl"));
     }
 
@@ -310,13 +306,15 @@ mod tests {
     fn parses_rfc5987_iso_8859_1_filename_star() {
         // `filename*=ISO-8859-1''na%EFve-1.0.whl` → "naïve-1.0.whl"
         let cd =
-            parse_content_disposition("attachment; filename*=ISO-8859-1''na%EFve-1.0.whl").unwrap();
+            parse_content_disposition("attachment; filename*=ISO-8859-1''na%EFve-1.0.whl")
+                .unwrap();
         assert_eq!(cd.filename_star.as_deref(), Some("naïve-1.0.whl"));
     }
 
     #[test]
     fn rfc5987_charset_case_insensitive() {
-        let cd = parse_content_disposition("attachment; filename*=utf-8''r%C3%BBn.whl").unwrap();
+        let cd =
+            parse_content_disposition("attachment; filename*=utf-8''r%C3%BBn.whl").unwrap();
         assert_eq!(cd.filename_star.as_deref(), Some("rûn.whl"));
     }
 
@@ -324,7 +322,8 @@ mod tests {
     fn rfc5987_language_segment_tolerated() {
         // `filename*=UTF-8'en'na%C3%AFve-1.0.whl`
         let cd =
-            parse_content_disposition("attachment; filename*=UTF-8'en'na%C3%AFve-1.0.whl").unwrap();
+            parse_content_disposition("attachment; filename*=UTF-8'en'na%C3%AFve-1.0.whl")
+                .unwrap();
         assert_eq!(cd.filename_star.as_deref(), Some("naïve-1.0.whl"));
     }
 
@@ -430,7 +429,8 @@ mod tests {
     #[test]
     fn quoted_filename_unescapes_backslash_quote() {
         // `filename="weird\\\"name.whl"` → `weird"name.whl`
-        let cd = parse_content_disposition("attachment; filename=\"weird\\\"name.whl\"").unwrap();
+        let cd =
+            parse_content_disposition("attachment; filename=\"weird\\\"name.whl\"").unwrap();
         assert_eq!(cd.filename.as_deref(), Some(r#"weird"name.whl"#));
     }
 

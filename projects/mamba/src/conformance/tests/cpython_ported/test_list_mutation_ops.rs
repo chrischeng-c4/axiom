@@ -42,7 +42,10 @@ print(first)
 print(xs)
 "#,
     );
-    assert_output(&out, "[10, 20, 40, 50]\n50\n[10, 20, 40]\n10\n[20, 40]\n");
+    assert_output(
+        &out,
+        "[10, 20, 40, 50]\n50\n[10, 20, 40]\n10\n[20, 40]\n",
+    );
 }
 
 #[test]

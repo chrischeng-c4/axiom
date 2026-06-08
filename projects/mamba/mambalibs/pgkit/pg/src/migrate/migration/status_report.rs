@@ -1,7 +1,7 @@
 //! Query the migrations tracking table and format the status for stdout.
 
-use super::{MigrationEntry, MigrationRunner, MigrationSource};
 use crate::{Connection, Result};
+use super::{MigrationEntry, MigrationRunner, MigrationSource};
 use std::path::Path;
 
 // -- MigrationStatusReport ----------------------------------------------------
@@ -50,14 +50,8 @@ impl MigrationStatusReport {
         lines.push(format!(
             "Applied: {}  (legacy: {}, native: {})",
             self.applied.len(),
-            self.applied
-                .iter()
-                .filter(|e| e.source == MigrationSource::Legacy)
-                .count(),
-            self.applied
-                .iter()
-                .filter(|e| e.source == MigrationSource::Native)
-                .count(),
+            self.applied.iter().filter(|e| e.source == MigrationSource::Legacy).count(),
+            self.applied.iter().filter(|e| e.source == MigrationSource::Native).count(),
         ));
         lines.push(format!("Pending: {}", self.pending.len()));
         lines.push(String::new());
@@ -124,10 +118,7 @@ mod tests {
 
     #[test]
     fn status_table_empty() {
-        let status = MigrationStatusReport {
-            applied: vec![],
-            pending: vec![],
-        };
+        let status = MigrationStatusReport { applied: vec![], pending: vec![] };
         let table = status.to_table();
         assert!(table.contains("Applied: 0"));
         assert!(table.contains("Pending: 0"));

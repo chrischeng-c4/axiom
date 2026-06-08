@@ -1,0 +1,1 @@
+TestFieldNoAnnotation::test_is_dataclass_when_getattr_always_returns: ok

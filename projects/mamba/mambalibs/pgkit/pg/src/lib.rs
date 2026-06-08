@@ -196,13 +196,6 @@ pub use cli::{CliResult, MigrationCli, MigrationCliConfig, MigrationCommand};
 // Validation re-exports from cclab-shield (new API)
 // These provide Pydantic-style validation with Rust performance
 pub use cclab_schema::{
-    coerce_value,
-    custom_error,
-    field_error,
-    // Validation functions
-    validate,
-    validate_value,
-    validate_with_context,
     BoxedComputedField,
     BoxedFieldValidator,
     BoxedModelValidator,
@@ -232,6 +225,13 @@ pub use cclab_schema::{
     ValidatorContext,
     ValidatorMode,
     Value,
+    coerce_value,
+    custom_error,
+    field_error,
+    // Validation functions
+    validate,
+    validate_value,
+    validate_with_context,
 };
 
 // Re-export shield's ValidationError/ValidationErrors with different names

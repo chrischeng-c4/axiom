@@ -28,7 +28,7 @@
 
 use std::time::Instant;
 
-use crate::runtime::rc::{MbList, MbObject};
+use crate::runtime::rc::{MbObject, MbList};
 use crate::runtime::value::MbValue;
 use smallvec::smallvec;
 
@@ -51,9 +51,7 @@ fn bench_vec_backed() -> u128 {
         // Drop the resulting list so the GC can free it; without this
         // the loop builds 1M live lists and the allocator's free-list
         // pressure dominates the measurement.
-        unsafe {
-            crate::runtime::rc::mb_release(ptr);
-        }
+        unsafe { crate::runtime::rc::mb_release(ptr); }
     }
     t0.elapsed().as_nanos()
 }
@@ -72,9 +70,7 @@ fn bench_inline() -> u128 {
         let buf: MbList = smallvec![a, b, c, d];
         let ptr = MbObject::new_list_inline(buf);
         std::hint::black_box(ptr);
-        unsafe {
-            crate::runtime::rc::mb_release(ptr);
-        }
+        unsafe { crate::runtime::rc::mb_release(ptr); }
     }
     t0.elapsed().as_nanos()
 }

@@ -62,23 +62,23 @@
 //! // Result: "DELETE FROM users WHERE id = $1"
 //! ```
 
-mod builder;
-mod execute;
-mod helpers;
-mod join;
-mod modify;
-mod select;
 mod types;
+mod join;
 mod window;
+mod helpers;
+mod builder;
+mod select;
+mod modify;
+mod execute;
 
 #[cfg(test)]
 mod tests;
 
 // Re-export all public types
-pub use builder::QueryBuilder;
-pub use join::{JoinClause, JoinCondition};
 pub use types::{
-    AggregateFunction, CommonTableExpression, HavingCondition, JoinType, Operator, OrderDirection,
-    SetOperation, SetQuery, Subquery,
+    CommonTableExpression, Subquery, Operator, AggregateFunction, HavingCondition,
+    OrderDirection, JoinType, SetOperation, SetQuery,
 };
-pub use window::{WindowExpression, WindowFunction, WindowSpec};
+pub use join::{JoinCondition, JoinClause};
+pub use window::{WindowFunction, WindowSpec, WindowExpression};
+pub use builder::QueryBuilder;

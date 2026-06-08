@@ -16,23 +16,18 @@
 //!     3. Manifest location and update command are documented.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde_json::Value;
 use toml::Value as TomlValue;
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn shipped_manifest_path() -> PathBuf {
-    project_root()
+    crate::common::project_root()
         .join("validation")
         .join("perf_benchmark_manifest.toml")
 }
 
 fn checker_script() -> PathBuf {
-    project_root()
+    crate::common::project_root()
         .join("scripts")
         .join("perf_benchmark_manifest_check.py")
 }
@@ -48,7 +43,8 @@ fn unique_dir(tag: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!("mamba-perf-bench-manifest-{tag}-{nanos}"));
+    let dir = std::env::temp_dir()
+        .join(format!("mamba-perf-bench-manifest-{tag}-{nanos}"));
     std::fs::create_dir_all(&dir).expect("create tempdir");
     dir
 }
@@ -60,12 +56,7 @@ fn write_manifest(dir: &Path, name: &str, body: &str) -> PathBuf {
 }
 
 fn run_checker(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new("python3")
-        .arg(checker_script())
-        .args(args)
-        .current_dir(project_root())
-        .output()
-        .expect("invoke perf_benchmark_manifest_check.py");
+    let output = crate::common::run_python_script(&checker_script(), args);
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -178,7 +169,7 @@ fn shipped_manifest_lists_at_least_one_required_benchmark() {
 #[test]
 fn every_shipped_required_benchmark_has_an_existing_fixture() {
     let manifest = read_manifest();
-    let root = project_root().join("validation").join(
+    let root = crate::common::project_root().join("validation").join(
         manifest
             .get("fixture_root")
             .and_then(|v| v.as_str())
@@ -234,10 +225,7 @@ command = "y"
     let path = write_manifest(&dir, "manifest.toml", body);
     let (code, _stdout, stderr) =
         run_checker(&["--manifest", path.to_str().unwrap(), "--format", "text"]);
-    assert_eq!(
-        code, 1,
-        "missing required fixture must exit 1; stderr={stderr}"
-    );
+    assert_eq!(code, 1, "missing required fixture must exit 1; stderr={stderr}");
     assert!(
         stderr.contains("ghost.py"),
         "stderr must name the missing fixture; got {stderr}"
@@ -274,7 +262,10 @@ location = "x"
 command = "y"
 "#;
     let path = write_manifest(&dir, "manifest.toml", body);
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, payload) = run_checker_json(&[
+        "--manifest",
+        path.to_str().unwrap(),
+    ]);
     assert_eq!(code, 0, "valid manifest must exit 0; payload={payload}");
     assert_eq!(payload["required_missing"].as_array().unwrap().len(), 0);
     assert_eq!(payload["checked_count"], 1);

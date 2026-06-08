@@ -273,8 +273,10 @@ fn yule_walker(data: &[f64], p: usize) -> Result<Vec<f64>> {
     phi[1][1] = acf[1];
 
     for k in 2..=p {
-        let num = acf[k] - (1..k).map(|j| phi[k - 1][j] * acf[k - j]).sum::<f64>();
-        let den = 1.0 - (1..k).map(|j| phi[k - 1][j] * acf[j]).sum::<f64>();
+        let num = acf[k]
+            - (1..k).map(|j| phi[k - 1][j] * acf[k - j]).sum::<f64>();
+        let den = 1.0
+            - (1..k).map(|j| phi[k - 1][j] * acf[j]).sum::<f64>();
 
         if den.abs() < 1e-15 {
             // Near-singular: return what we have so far

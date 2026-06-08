@@ -94,7 +94,11 @@ pub fn parse_egg_info_requires(src: &str) -> Result<EggInfoRequires, IndexError>
 
         match &current_extras {
             None => out.base.push(req_text),
-            Some(name) => out.extras.entry(name.clone()).or_default().push(req_text),
+            Some(name) => out
+                .extras
+                .entry(name.clone())
+                .or_default()
+                .push(req_text),
         }
     }
 
@@ -184,7 +188,10 @@ mod tests {
     fn top_level_marker_only_section_appends_marker_to_base() {
         let src = "[:python_version<\"3.10\"]\nimportlib-metadata\n";
         let r = parse_egg_info_requires(src).unwrap();
-        assert_eq!(r.base, vec!["importlib-metadata ; python_version<\"3.10\""]);
+        assert_eq!(
+            r.base,
+            vec!["importlib-metadata ; python_version<\"3.10\""]
+        );
     }
 
     #[test]

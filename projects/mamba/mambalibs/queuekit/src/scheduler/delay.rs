@@ -3,18 +3,18 @@
 //! Polls scheduled messages and republishes them when ETA is reached.
 
 #[cfg(feature = "nats")]
-use chrono::{DateTime, Utc};
-#[cfg(feature = "nats")]
 use std::sync::Arc;
 #[cfg(feature = "nats")]
 use std::time::Duration;
 #[cfg(feature = "nats")]
+use chrono::{DateTime, Utc};
+#[cfg(feature = "nats")]
 use tokio_util::sync::CancellationToken;
 
 #[cfg(feature = "nats")]
-use crate::Broker;
-#[cfg(feature = "nats")]
 use crate::{BrokerMessage, MessageHandler, NatsBroker, PullBroker, TaskError};
+#[cfg(feature = "nats")]
+use crate::Broker;
 
 /// Configuration for delayed task scheduler
 #[cfg(feature = "nats")]
@@ -87,14 +87,10 @@ impl DelayedTaskScheduler {
                                 target_queue
                             );
 
-                            self.broker
-                                .publish(target_queue, message.payload.clone())
-                                .await?;
+                            self.broker.publish(target_queue, message.payload.clone()).await?;
                         } else {
                             tracing::error!("Scheduled message missing target-queue header");
-                            return Err(TaskError::Internal(
-                                "Missing target-queue header".to_string(),
-                            ));
+                            return Err(TaskError::Internal("Missing target-queue header".to_string()));
                         }
                     } else {
                         // Not ready yet, nack to requeue

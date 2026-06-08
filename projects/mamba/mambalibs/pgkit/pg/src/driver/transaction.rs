@@ -203,10 +203,7 @@ impl Transaction {
     ///     .deferrable(true);
     /// let tx = Transaction::begin_with_options(&conn, options).await?;
     /// ```
-    pub async fn begin_with_options(
-        conn: &Connection,
-        options: TransactionOptions,
-    ) -> Result<Self> {
+    pub async fn begin_with_options(conn: &Connection, options: TransactionOptions) -> Result<Self> {
         // Begin transaction from pool
         let mut tx = conn.pool().begin().await?;
 

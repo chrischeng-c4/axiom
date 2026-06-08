@@ -1,6 +1,3 @@
-use super::rc::{MbObject, ObjData};
-use super::value::MbValue;
-use rustc_hash::FxHashMap;
 /// Class system for the Mamba runtime (#287, #288).
 ///
 /// Implements Python-compatible classes with:
@@ -11,11 +8,15 @@ use rustc_hash::FxHashMap;
 /// - Operator overloading (__add__, __sub__, __eq__, etc.)
 /// - super() support
 /// - Property descriptors
+
 use std::cell::Cell;
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::collections::HashSet;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use super::value::MbValue;
+use super::rc::{MbObject, ObjData};
 
 /// A class definition stored at runtime.
 pub struct MbClass {
@@ -75,15 +76,169 @@ thread_local! {
     /// Entries are (registered child class name, ABC parent name).
     static ABC_VIRTUAL_SUBCLASSES: std::cell::RefCell<HashSet<(String, String)>> =
         std::cell::RefCell::new(HashSet::new());
+    /// abc: per-class set of method names declared with `@abc.abstractmethod`
+    /// (and the abstract{property,classmethod,staticmethod} variants). Used to
+    /// compute `cls.__abstractmethods__` and to block instantiation of classes
+    /// that still carry un-overridden abstract methods.
+    static USER_ABC_OWN_ABSTRACT: std::cell::RefCell<HashMap<String, HashSet<String>>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// abc: record the names declared `@abc.abstractmethod` on a class. Called by
+/// the class-definition lowering immediately after `mb_class_define_multi`.
+pub fn mb_class_set_abstractmethods(class_name: MbValue, names: MbValue) {
+    let name = match extract_str(class_name) {
+        Some(n) if !n.is_empty() => n,
+        _ => return,
+    };
+    let mut set = HashSet::new();
+    if let Some(ptr) = names.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                for item in lock.read().unwrap().iter() {
+                    if let Some(s) = extract_str(*item) {
+                        set.insert(s);
+                    }
+                }
+            }
+        }
+    }
+    USER_ABC_OWN_ABSTRACT.with(|reg| {
+        reg.borrow_mut().insert(name, set);
+    });
+}
+
+/// abc: does `class_name` derive (transitively) from `abc.ABC` or use
+/// `abc.ABCMeta` as its metaclass? Such classes get abstract-method
+/// enforcement and the `register()` / `__subclasshook__` virtual-subclass
+/// protocol.
+pub fn is_user_abc(class_name: &str) -> bool {
+    CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let Some(cls) = reg.get(class_name) else { return false };
+        // Direct or inherited `ABC` base, or an explicit `ABCMeta` metaclass.
+        if cls.metaclass.as_deref() == Some("ABCMeta") {
+            return true;
+        }
+        // Walk own MRO: an `ABC` base/ancestor marks this class abstract-capable.
+        for ancestor in std::iter::once(class_name).chain(cls.mro.iter().map(|s| s.as_str())) {
+            if ancestor == "ABC" {
+                return true;
+            }
+            if let Some(acls) = reg.get(ancestor) {
+                if acls.metaclass.as_deref() == Some("ABCMeta")
+                    || acls.bases.iter().any(|b| b == "ABC")
+                {
+                    return true;
+                }
+            } else if ancestor == "ABC" {
+                return true;
+            }
+        }
+        false
+    })
+}
+
+/// abc: compute the still-abstract method names of `class_name` — the union of
+/// abstract names declared anywhere in its MRO, minus any that a more-derived
+/// class in the MRO concretely overrides. Mirrors CPython's `ABCMeta.__new__`
+/// `__abstractmethods__` calculation. Returns names in sorted order for
+/// deterministic output.
+fn compute_user_abstractmethods(class_name: &str) -> Vec<String> {
+    CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let Some(cls) = reg.get(class_name) else { return Vec::new() };
+        // MRO front-to-back (most-derived first).
+        let chain: Vec<&str> = std::iter::once(class_name)
+            .chain(cls.mro.iter().map(|s| s.as_str()))
+            .collect();
+        USER_ABC_OWN_ABSTRACT.with(|own| {
+            let own = own.borrow();
+            // Candidate abstract names: every abstract name declared anywhere in
+            // the MRO.
+            let mut candidates: HashSet<String> = HashSet::new();
+            for c in &chain {
+                if let Some(s) = own.get(*c) {
+                    candidates.extend(s.iter().cloned());
+                }
+            }
+            let mut still_abstract: Vec<String> = Vec::new();
+            for m in candidates {
+                // Find the most-derived class in the MRO that *defines* `m`
+                // (either a concrete method or an abstract declaration). The
+                // first such class decides whether `m` is still abstract.
+                let mut decided = false;
+                for c in &chain {
+                    let cls_c = reg.get(*c);
+                    let declares_abstract =
+                        own.get(*c).map_or(false, |s| s.contains(&m));
+                    let has_concrete = cls_c.map_or(false, |cc| {
+                        cc.methods.contains_key(&m) || cc.class_attrs.contains_key(&m)
+                    }) && !declares_abstract;
+                    if declares_abstract {
+                        still_abstract.push(m.clone());
+                        decided = true;
+                        break;
+                    }
+                    if has_concrete {
+                        // Concrete override in a more-derived class — no longer
+                        // abstract.
+                        decided = true;
+                        break;
+                    }
+                }
+                let _ = decided;
+            }
+            still_abstract.sort();
+            still_abstract
+        })
+    })
+}
+
+/// abc: if `class_name` is a user ABC with un-overridden abstract methods,
+/// raise `TypeError` (matching CPython's message) and return `Some(None)` so
+/// the instance-creation path bails out. Returns `None` when the class is
+/// instantiable.
+pub fn mb_user_abc_reject_abstract_instantiation(class_name: &str) -> Option<MbValue> {
+    if !is_user_abc(class_name) {
+        return None;
+    }
+    let abstracts = compute_user_abstractmethods(class_name);
+    if abstracts.is_empty() {
+        return None;
+    }
+    // CPython 3.12: "Can't instantiate abstract class X without an implementation
+    // for abstract method[s] 'a', 'b'".
+    let quoted: Vec<String> = abstracts.iter().map(|m| format!("'{m}'")).collect();
+    let (word, joined) = if quoted.len() == 1 {
+        ("method", quoted[0].clone())
+    } else {
+        ("methods", quoted.join(", "))
+    };
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "Can't instantiate abstract class {class_name} without an implementation for abstract {word} {joined}",
+        ))),
+    );
+    Some(MbValue::none())
+}
+
+/// abc: build a frozenset MbValue of `class_name`'s abstract method names.
+fn user_abstractmethods_frozenset(class_name: &str) -> MbValue {
+    let names = compute_user_abstractmethods(class_name);
+    let items: Vec<MbValue> = names
+        .into_iter()
+        .map(|n| MbValue::from_ptr(MbObject::new_str(n)))
+        .collect();
+    MbValue::from_ptr(MbObject::new_frozenset(items))
 }
 
 /// Mark a class name as a `@runtime_checkable` Protocol (called by the
 /// typing.runtime_checkable decorator).
 pub fn mark_runtime_checkable(name: &str) {
     if !name.is_empty() {
-        RUNTIME_CHECKABLE_PROTOCOLS.with(|s| {
-            s.borrow_mut().insert(name.to_string());
-        });
+        RUNTIME_CHECKABLE_PROTOCOLS.with(|s| { s.borrow_mut().insert(name.to_string()); });
     }
 }
 
@@ -97,13 +252,9 @@ pub fn is_runtime_checkable_protocol(name: &str) -> bool {
 fn protocol_structural_match(obj_class: &str, proto: &str) -> bool {
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
-        let Some(pcls) = reg.get(proto) else {
-            return false;
-        };
+        let Some(pcls) = reg.get(proto) else { return false };
         // Required members: the Protocol's own non-dunder method/attr names.
-        let required: Vec<String> = pcls
-            .methods
-            .keys()
+        let required: Vec<String> = pcls.methods.keys()
             .chain(pcls.class_attrs.keys())
             .filter(|n| !(n.starts_with("__") && n.ends_with("__")))
             .cloned()
@@ -115,8 +266,7 @@ fn protocol_structural_match(obj_class: &str, proto: &str) -> bool {
         }
         // The candidate's MRO (itself + ancestors); fall back to just itself
         // when unregistered.
-        let chain: Vec<String> = reg
-            .get(obj_class)
+        let chain: Vec<String> = reg.get(obj_class)
             .map(|c| {
                 let mut v = vec![obj_class.to_string()];
                 v.extend(c.mro.iter().cloned());
@@ -124,18 +274,60 @@ fn protocol_structural_match(obj_class: &str, proto: &str) -> bool {
             })
             .unwrap_or_else(|| vec![obj_class.to_string()]);
         let provides = |member: &str| -> bool {
-            chain.iter().any(|cn| {
-                reg.get(cn).map_or(false, |c| {
-                    c.methods.contains_key(member) || c.class_attrs.contains_key(member)
-                })
-            })
+            chain.iter().any(|cn| reg.get(cn).map_or(false, |c|
+                c.methods.contains_key(member) || c.class_attrs.contains_key(member)))
         };
         required.iter().all(|m| provides(m))
     })
 }
 
 fn has_method(class_name: &str, name: &str) -> bool {
-    !lookup_method(class_name, name).is_none()
+    if !lookup_method(class_name, name).is_none() {
+        return true;
+    }
+    builtin_type_has_dunder(class_name, name)
+}
+
+/// abc/structural: does the named builtin type provide `dunder`? Builtin types
+/// are not registered in `CLASS_REGISTRY`, so structural ABC checks
+/// (`hasattr(C, "__len__")` → Sized) need this table. Only the dunders that
+/// drive ABC membership are modelled.
+pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
+    // Every Python object carries `__format__` (object.__format__) — surface
+    // fixtures probe e.g. `hasattr(str, "__format__")`.
+    if dunder == "__format__" {
+        return true;
+    }
+    match type_name {
+        "list" => matches!(dunder,
+            "__len__" | "__getitem__" | "__setitem__" | "__delitem__"
+            | "__contains__" | "__iter__" | "__reversed__" | "__add__"
+            | "__mul__" | "__eq__" | "__ne__"),
+        "tuple" => matches!(dunder,
+            "__len__" | "__getitem__" | "__contains__" | "__iter__"
+            | "__add__" | "__mul__" | "__eq__" | "__ne__"),
+        "str" => matches!(dunder,
+            "__len__" | "__getitem__" | "__contains__" | "__iter__"
+            | "__add__" | "__mul__" | "__eq__" | "__ne__"),
+        "bytes" | "bytearray" => matches!(dunder,
+            "__len__" | "__getitem__" | "__contains__" | "__iter__"
+            | "__eq__" | "__ne__"),
+        "dict" => matches!(dunder,
+            "__len__" | "__getitem__" | "__setitem__" | "__delitem__"
+            | "__contains__" | "__iter__" | "__eq__" | "__ne__"),
+        "set" | "frozenset" => matches!(dunder,
+            "__len__" | "__contains__" | "__iter__" | "__eq__" | "__ne__"),
+        "range" => matches!(dunder,
+            "__len__" | "__getitem__" | "__contains__" | "__iter__"
+            | "__reversed__"),
+        // `types.UnionType` (the `X | Y` runtime type) exposes `__args__`
+        // (its member types) plus the union-combining operators.
+        "UnionType" => matches!(dunder,
+            "__args__" | "__or__" | "__ror__" | "__parameters__"),
+        // int / float / bool / NoneType expose no container dunders relevant
+        // to ABC structural membership (notably no __len__).
+        _ => false,
+    }
 }
 
 fn collections_abc_structural_match(obj_class: &str, target: &str) -> bool {
@@ -259,13 +451,11 @@ fn collections_abc_is_subclass(child: &str, parent: &str) -> bool {
 
 fn collections_abc_virtual_match(child: &str, parent: &str) -> bool {
     ABC_VIRTUAL_SUBCLASSES.with(|reg| {
-        reg.borrow()
-            .iter()
-            .any(|(registered_child, registered_parent)| {
-                registered_child == child
-                    && (registered_parent == parent
-                        || collections_abc_is_subclass(registered_parent, parent))
-            })
+        reg.borrow().iter().any(|(registered_child, registered_parent)| {
+            registered_child == child
+                && (registered_parent == parent
+                    || collections_abc_is_subclass(registered_parent, parent))
+        })
     })
 }
 
@@ -360,14 +550,11 @@ pub fn mb_int_from_bytes(
             match &(*ptr).data {
                 ObjData::Bytes(b) => b.clone(),
                 ObjData::ByteArray(lock) => lock.read().unwrap().clone(),
-                ObjData::List(lock) => lock
-                    .read()
-                    .unwrap()
+                ObjData::List(lock) => lock.read().unwrap()
                     .iter()
                     .filter_map(|v| v.as_int().map(|i| i as u8))
                     .collect(),
-                ObjData::Tuple(items) => items
-                    .iter()
+                ObjData::Tuple(items) => items.iter()
                     .filter_map(|v| v.as_int().map(|i| i as u8))
                     .collect(),
                 _ => return MbValue::from_int(0),
@@ -379,26 +566,32 @@ pub fn mb_int_from_bytes(
     if bytes.is_empty() {
         return MbValue::from_int(0);
     }
-    let ordered: Vec<u8> = if byteorder == "big" {
-        bytes.iter().rev().copied().collect()
-    } else {
+    // Big-endian byte order for the magnitude computation. CPython supports
+    // arbitrary-width integers here, so use a BigInt accumulator and promote
+    // the result to a heap BigInt whenever it exceeds the 48-bit inline range
+    // (e.g. plistlib's binary int decode of 0x13 8-byte signed words).
+    use num_bigint::BigInt;
+    use num_traits::{ToPrimitive, Zero};
+    let be: Vec<u8> = if byteorder == "big" {
         bytes.clone()
-    };
-    // Build up to 16 bytes (i128) so we can honor `signed` semantics, then
-    // truncate to i64 for storage.
-    let mut acc: u128 = 0;
-    for (i, b) in ordered.iter().enumerate().take(16) {
-        acc |= (*b as u128) << (8 * i);
-    }
-    let bit_len = (ordered.len().min(16)) * 8;
-    let result = if signed && bit_len > 0 && (acc >> (bit_len - 1)) & 1 == 1 {
-        let mask = (1u128 << bit_len) - 1;
-        let inv = (!acc) & mask;
-        -((inv as i128) + 1)
     } else {
-        acc as i128
+        bytes.iter().rev().copied().collect()
     };
-    MbValue::from_int(result as i64)
+    let mut result = BigInt::from_bytes_be(num_bigint::Sign::Plus, &be);
+    if signed && !be.is_empty() && (be[0] & 0x80) != 0 {
+        // Two's-complement: subtract 2**(8*len).
+        let modulus = BigInt::from(1) << (8 * be.len());
+        result -= modulus;
+    }
+    if result.is_zero() {
+        return MbValue::from_int(0);
+    }
+    if let Some(i) = result.to_i64() {
+        if i >= -(1i64 << 47) && i < (1i64 << 47) {
+            return MbValue::from_int(i);
+        }
+    }
+    super::bigint_ops::bigint_from_big(result)
 }
 
 /// Returns true iff `name` is a class name registered via `mb_class_register`.
@@ -408,7 +601,11 @@ pub fn class_is_registered(name: &str) -> bool {
     CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(name))
 }
 
-pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String, MbValue>) {
+pub fn mb_class_register(
+    name: &str,
+    bases: Vec<String>,
+    methods: HashMap<String, MbValue>,
+) {
     // Register all method addresses as valid callables.
     // R1 P1: Also unwrap classmethod/staticmethod wrappers to register
     // the underlying function address (not the wrapper pointer).
@@ -431,18 +628,15 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
     // Clone bases before moving into MbClass so we can iterate for __init_subclass__
     let bases_for_hook = bases.clone();
     CLASS_REGISTRY.with(|reg| {
-        reg.borrow_mut().insert(
-            name.to_string(),
-            MbClass {
-                name: name.to_string(),
-                bases,
-                mro,
-                methods,
-                class_attrs: HashMap::new(),
-                metaclass: None,
-                cached_init: None,
-            },
-        );
+        reg.borrow_mut().insert(name.to_string(), MbClass {
+            name: name.to_string(),
+            bases,
+            mro,
+            methods,
+            class_attrs: HashMap::new(),
+            metaclass: None,
+            cached_init: None,
+        });
     });
 
     // Invalidate method cache — new class may shadow inherited methods.
@@ -463,8 +657,9 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
         }
     }
     // R10: Retrieve class keyword arguments (set by mb_class_set_kwargs before registration).
-    let class_kwargs: HashMap<String, MbValue> =
-        KWARGS_REGISTRY.with(|reg| reg.borrow_mut().remove(name).unwrap_or_default());
+    let class_kwargs: HashMap<String, MbValue> = KWARGS_REGISTRY.with(|reg| {
+        reg.borrow_mut().remove(name).unwrap_or_default()
+    });
 
     // Call __init_subclass__ on each direct base (PEP 487)
     let cls_val = MbValue::from_ptr(MbObject::new_str(name.to_string()));
@@ -517,9 +712,7 @@ pub fn mb_class_register(name: &str, bases: Vec<String>, methods: HashMap<String
     });
     for attr_name in &class_attr_names {
         let attr_val = CLASS_REGISTRY.with(|reg| {
-            reg.borrow()
-                .get(name)
-                .and_then(|cls| cls.class_attrs.get(attr_name).copied())
+            reg.borrow().get(name).and_then(|cls| cls.class_attrs.get(attr_name).copied())
         });
         if let Some(val) = attr_val {
             if let Some(set_name_method) = try_get_dunder_on_value(val, "__set_name__") {
@@ -707,22 +900,16 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
     }
     // Fix C-prime: registry takes its own +1 so JIT epilogue release of the
     // source VReg cannot UAF the raw reference in `class_attrs`.
-    unsafe {
-        super::rc::retain_if_ptr(value);
-    }
+    unsafe { super::rc::retain_if_ptr(value); }
     CLASS_REGISTRY.with(|reg| {
         let mut reg = reg.borrow_mut();
         if let Some(cls) = reg.get_mut(&name) {
             if let Some(prev) = cls.class_attrs.insert(attr, value) {
-                unsafe {
-                    super::rc::release_if_ptr(prev);
-                }
+                unsafe { super::rc::release_if_ptr(prev); }
             }
         } else {
             // No matching class — drop the retain we just took.
-            unsafe {
-                super::rc::release_if_ptr(value);
-            }
+            unsafe { super::rc::release_if_ptr(value); }
         }
     });
     // Invalidate method cache — class attribute change may affect method resolution.
@@ -768,10 +955,7 @@ fn raise_invalid_generator_throw_arg(value: MbValue) -> MbValue {
     MbValue::none()
 }
 
-fn resolve_generator_throw_args(
-    exc_type: MbValue,
-    exc_msg: MbValue,
-) -> Result<(String, String), MbValue> {
+fn resolve_generator_throw_args(exc_type: MbValue, exc_msg: MbValue) -> Result<(String, String), MbValue> {
     if let Some(s) = extract_str(exc_type) {
         // Plain string type name is retained for mamba's legacy
         // `g.throw("TypeError", "msg")` lowering path.
@@ -780,16 +964,10 @@ fn resolve_generator_throw_args(
 
     if let Some(ptr) = exc_type.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 if class_name == "type" {
                     let fields_guard = fields.read().unwrap();
-                    let Some(type_name) =
-                        fields_guard.get("__name__").and_then(|v| extract_str(*v))
-                    else {
+                    let Some(type_name) = fields_guard.get("__name__").and_then(|v| extract_str(*v)) else {
                         return Err(raise_invalid_generator_throw_arg(exc_type));
                     };
                     if !super::exception::is_subclass_of(&type_name, "BaseException") {
@@ -806,8 +984,7 @@ fn resolve_generator_throw_args(
                 let msg = if !exc_msg.is_none() {
                     extract_str(exc_msg).unwrap_or_default()
                 } else {
-                    fields_guard
-                        .get("message")
+                    fields_guard.get("message")
                         .and_then(|v| extract_str(*v))
                         .unwrap_or_default()
                 };
@@ -844,7 +1021,9 @@ fn dispatch_generator_method(gen: MbValue, method: &str, args: MbValue) -> MbVal
             super::generator::mb_generator_close(gen);
             MbValue::none()
         }
-        "__next__" => super::generator::mb_generator_next(gen),
+        "__next__" => {
+            super::generator::mb_generator_next(gen)
+        }
         // Async-generator protocol: `async def f(): yield` is routed
         // through the sync generator path (see ast_to_hir.rs AsyncFnDef
         // arm), so the same handle must answer both sync and async
@@ -919,9 +1098,9 @@ fn dispatch_generator_method(gen: MbValue, method: &str, args: MbValue) -> MbVal
         _ => {
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                MbValue::from_ptr(MbObject::new_str(format!(
-                    "'generator' object has no attribute '{method}'"
-                ))),
+                MbValue::from_ptr(MbObject::new_str(
+                    format!("'generator' object has no attribute '{method}'"),
+                )),
             );
             MbValue::none()
         }
@@ -955,12 +1134,7 @@ enum DescriptorKind {
 fn unwrap_descriptor_method(method: MbValue) -> (MbValue, DescriptorKind) {
     if let Some(ptr) = method.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-                ..
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
                 if class_name == "__classmethod__" || class_name == "__staticmethod__" {
                     let kind = if class_name == "__classmethod__" {
                         DescriptorKind::ClassMethod
@@ -1008,6 +1182,9 @@ pub fn mb_instance_new(class_name: MbValue, _args: MbValue) -> MbValue {
     if let Some(result) = mb_collections_abc_reject_abstract_instantiation(&name) {
         return result;
     }
+    if let Some(result) = mb_user_abc_reject_abstract_instantiation(&name) {
+        return result;
+    }
     let instance = MbValue::from_ptr(MbObject::new_instance(name.clone()));
 
     // __init__ is called by the compiled code after instance creation.
@@ -1021,6 +1198,30 @@ pub fn mb_instance_new(class_name: MbValue, _args: MbValue) -> MbValue {
 /// Uses a single RwLock read to get both the arg count and arg values.
 #[inline]
 fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
+    // Variadic native `__init__(self, args_list)`: the registered function
+    // always expects exactly two arguments — `self` plus a list of the
+    // remaining positional args — regardless of how many were supplied at the
+    // call site. This lets native constructors model optional parameters
+    // (e.g. `TestCase(methodName="runTest")`) without one typed entry point
+    // per arity. Built classes never register a variadic `__init__`, so this
+    // branch is inert for them.
+    if super::module::is_variadic_func(addr) {
+        let packed: Vec<MbValue> = args_list
+            .as_ptr()
+            .map(|ptr| unsafe {
+                if let ObjData::List(ref lock) = (*ptr).data {
+                    lock.read().unwrap().iter().copied().collect()
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
+        let list = MbValue::from_ptr(MbObject::new_list(packed));
+        let func: extern "C" fn(MbValue, MbValue) -> MbValue =
+            unsafe { std::mem::transmute(addr as usize) };
+        func(instance, list);
+        return;
+    }
     if let Some(ptr) = args_list.as_ptr() {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
@@ -1061,20 +1262,9 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
                         all_args.extend(items.iter());
                         drop(items); // Release the lock before calling.
                         if all_args.len() == 5 {
-                            let func: extern "C" fn(
-                                MbValue,
-                                MbValue,
-                                MbValue,
-                                MbValue,
-                                MbValue,
-                            ) -> MbValue = std::mem::transmute(addr as usize);
-                            func(
-                                all_args[0],
-                                all_args[1],
-                                all_args[2],
-                                all_args[3],
-                                all_args[4],
-                            );
+                            let func: extern "C" fn(MbValue, MbValue, MbValue, MbValue, MbValue) -> MbValue =
+                                std::mem::transmute(addr as usize);
+                            func(all_args[0], all_args[1], all_args[2], all_args[3], all_args[4]);
                         }
                     }
                 }
@@ -1084,7 +1274,8 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
     }
     // No args list — call with just instance (zero-arg __init__).
     // REQ: JIT-compiled functions use SystemV/C calling convention.
-    let func: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr as usize) };
+    let func: extern "C" fn(MbValue) -> MbValue =
+        unsafe { std::mem::transmute(addr as usize) };
     func(instance);
 }
 
@@ -1094,6 +1285,9 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
 pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbValue {
     let name = extract_str(class_name).unwrap_or_else(|| "object".to_string());
     if let Some(result) = mb_collections_abc_reject_abstract_instantiation(&name) {
+        return result;
+    }
+    if let Some(result) = mb_user_abc_reject_abstract_instantiation(&name) {
         return result;
     }
 
@@ -1171,17 +1365,12 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 lock.read().unwrap().len()
-            } else {
-                0
-            }
+            } else { 0 }
         }
-    } else {
-        0
-    };
-    let instance = MbValue::from_ptr(MbObject::new_instance_with_capacity(
-        name.clone(),
-        field_capacity,
-    ));
+    } else { 0 };
+    let instance = MbValue::from_ptr(
+        MbObject::new_instance_with_capacity(name.clone(), field_capacity)
+    );
 
     // Fast path: use cached __init__ from MbClass to avoid MRO walk.
     // cached_init was already fetched in the single registry access above.
@@ -1193,9 +1382,7 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
             // mb_release_value for all I64-typed vreg params including self, dropping
             // rc from 1→0 and freeing the instance. We pre-retain (rc 1→2) so the
             // JIT release only brings rc to 1, leaving the instance alive for the caller.
-            unsafe {
-                super::rc::retain_if_ptr(instance);
-            }
+            unsafe { super::rc::retain_if_ptr(instance); }
             call_init_with_args(addr, instance, args_list);
         }
         true
@@ -1208,9 +1395,7 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
                 let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                 if is_registered {
                     // Same retain guard as the cached path above.
-                    unsafe {
-                        super::rc::retain_if_ptr(instance);
-                    }
+                    unsafe { super::rc::retain_if_ptr(instance); }
                     call_init_with_args(addr, instance, args_list);
                 }
             }
@@ -1226,8 +1411,7 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
         let is_exception = CLASS_REGISTRY.with(|reg| {
             if let Some(cls) = reg.borrow().get(&name) {
                 cls.mro.iter().any(|c| {
-                    c == "Exception"
-                        || c == "BaseException"
+                    c == "Exception" || c == "BaseException"
                         || super::exception::is_subclass_of(c, "Exception")
                 })
             } else {
@@ -1243,36 +1427,27 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
                         // Set message to first arg (Python convention)
                         if let Some(first) = items.first() {
                             let msg = super::builtins::mb_str(*first);
-                            mb_setattr(
-                                instance,
+                            mb_setattr(instance,
                                 MbValue::from_ptr(MbObject::new_str("message".to_string())),
-                                msg,
-                            );
+                                msg);
                         }
                         // Set __type__ to class name
-                        mb_setattr(
-                            instance,
+                        mb_setattr(instance,
                             MbValue::from_ptr(MbObject::new_str("__type__".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(name.clone())),
-                        );
+                            MbValue::from_ptr(MbObject::new_str(name.clone())));
                         // Store args as tuple — items borrowed from args list.
-                        let args_tuple =
-                            MbValue::from_ptr(MbObject::new_tuple_borrowed(items.to_vec()));
-                        mb_setattr(
-                            instance,
+                        let args_tuple = MbValue::from_ptr(MbObject::new_tuple_borrowed(items.to_vec()));
+                        mb_setattr(instance,
                             MbValue::from_ptr(MbObject::new_str("args".to_string())),
-                            args_tuple,
-                        );
+                            args_tuple);
                         // StopIteration stores the first arg as `.value` (CPython semantics).
                         if name == "StopIteration" {
                             eprintln!("[DBG] StopIteration init branch taken");
                             let value_val = items.first().copied().unwrap_or_else(MbValue::none);
                             super::rc::retain_if_ptr(value_val);
-                            mb_setattr(
-                                instance,
+                            mb_setattr(instance,
                                 MbValue::from_ptr(MbObject::new_str("value".to_string())),
-                                value_val,
-                            );
+                                value_val);
                         }
                     }
                 }
@@ -1289,14 +1464,9 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
 pub fn mb_raise_instance(instance: MbValue) {
     if let Some(ptr) = instance.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 let fields_guard = fields.read().unwrap();
-                let msg = fields_guard
-                    .get("message")
+                let msg = fields_guard.get("message")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_default();
                 let exc = super::exception::MbException::new(class_name, &msg);
@@ -1332,25 +1502,18 @@ pub fn mb_raise_instance_with_context(instance: MbValue, context: MbValue) {
     }
     if let Some(ptr) = instance.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 let fields_guard = fields.read().unwrap();
-                let msg = fields_guard
-                    .get("message")
+                let msg = fields_guard.get("message")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_default();
                 let mut exc = super::exception::MbException::new(class_name, &msg);
                 if !context.is_none() {
                     let ctx_type = super::exception::get_exception_type_pub(context)
                         .unwrap_or_else(|| "Exception".to_string());
-                    let ctx_msg =
-                        super::exception::get_exception_message_pub(context).unwrap_or_default();
-                    exc.context = Some(Box::new(super::exception::MbException::new(
-                        &ctx_type, &ctx_msg,
-                    )));
+                    let ctx_msg = super::exception::get_exception_message_pub(context)
+                        .unwrap_or_default();
+                    exc.context = Some(Box::new(super::exception::MbException::new(&ctx_type, &ctx_msg)));
                 }
                 super::exception::set_current_exception(exc);
                 LAST_RAISED_INSTANCE.with(|cell| {
@@ -1376,14 +1539,9 @@ pub fn mb_raise_instance_from(instance: MbValue, cause: MbValue) {
     // Also set __cause__ and suppress_context on the MbException in thread-local state
     if let Some(ptr) = instance.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 let fields_guard = fields.read().unwrap();
-                let msg = fields_guard
-                    .get("message")
+                let msg = fields_guard.get("message")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_default();
                 let mut exc = super::exception::MbException::new(class_name, &msg);
@@ -1391,12 +1549,9 @@ pub fn mb_raise_instance_from(instance: MbValue, cause: MbValue) {
                 if !cause.is_none() {
                     let cause_type = super::exception::get_exception_type_pub(cause)
                         .unwrap_or_else(|| "Exception".to_string());
-                    let cause_msg =
-                        super::exception::get_exception_message_pub(cause).unwrap_or_default();
-                    exc.cause = Some(Box::new(super::exception::MbException::new(
-                        &cause_type,
-                        &cause_msg,
-                    )));
+                    let cause_msg = super::exception::get_exception_message_pub(cause)
+                        .unwrap_or_default();
+                    exc.cause = Some(Box::new(super::exception::MbException::new(&cause_type, &cause_msg)));
                 }
                 super::exception::set_current_exception(exc);
                 LAST_RAISED_INSTANCE.with(|cell| {
@@ -1421,14 +1576,9 @@ pub fn mb_raise_instance_from_with_context(instance: MbValue, cause: MbValue, co
     mb_setattr(instance, context_key, context);
     if let Some(ptr) = instance.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 let fields_guard = fields.read().unwrap();
-                let msg = fields_guard
-                    .get("message")
+                let msg = fields_guard.get("message")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_default();
                 let mut exc = super::exception::MbException::new(class_name, &msg);
@@ -1436,21 +1586,16 @@ pub fn mb_raise_instance_from_with_context(instance: MbValue, cause: MbValue, co
                 if !cause.is_none() {
                     let cause_type = super::exception::get_exception_type_pub(cause)
                         .unwrap_or_else(|| "Exception".to_string());
-                    let cause_msg =
-                        super::exception::get_exception_message_pub(cause).unwrap_or_default();
-                    exc.cause = Some(Box::new(super::exception::MbException::new(
-                        &cause_type,
-                        &cause_msg,
-                    )));
+                    let cause_msg = super::exception::get_exception_message_pub(cause)
+                        .unwrap_or_default();
+                    exc.cause = Some(Box::new(super::exception::MbException::new(&cause_type, &cause_msg)));
                 }
                 if !context.is_none() {
                     let ctx_type = super::exception::get_exception_type_pub(context)
                         .unwrap_or_else(|| "Exception".to_string());
-                    let ctx_msg =
-                        super::exception::get_exception_message_pub(context).unwrap_or_default();
-                    exc.context = Some(Box::new(super::exception::MbException::new(
-                        &ctx_type, &ctx_msg,
-                    )));
+                    let ctx_msg = super::exception::get_exception_message_pub(context)
+                        .unwrap_or_default();
+                    exc.context = Some(Box::new(super::exception::MbException::new(&ctx_type, &ctx_msg)));
                 }
                 super::exception::set_current_exception(exc);
                 LAST_RAISED_INSTANCE.with(|cell| {
@@ -1478,9 +1623,7 @@ pub fn mb_catch_exception_instance() -> MbValue {
         // the same frame then misreads it as immediate exhaustion. Clear
         // it here so catching a StopIteration is a clean reset.
         super::iter::check_and_clear_stop();
-        unsafe {
-            super::rc::retain_if_ptr(inst);
-        }
+        unsafe { super::rc::retain_if_ptr(inst); }
         return inst;
     }
     // Fallback to standard catch (already retains internally)
@@ -1533,6 +1676,76 @@ fn make_abc_register_method(parent_name: &str) -> MbValue {
     MbValue::from_ptr(inst)
 }
 
+/// abc: bound `ABCMeta.register` method for a user-defined ABC. Calling it
+/// records `child` as a virtual subclass of `parent_name`.
+fn make_user_abc_register_method(parent_name: &str) -> MbValue {
+    let inst = MbObject::new_instance("abc._user_register_bound".to_string());
+    if let ObjData::Instance { fields, .. } = unsafe { &(*inst).data } {
+        fields.write().unwrap().insert(
+            "_abc_parent".to_string(),
+            MbValue::from_ptr(MbObject::new_str(parent_name.to_string())),
+        );
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// abc: register `child` as a virtual subclass of user ABC `parent_name`.
+pub fn mb_user_abc_register(parent_name: &str, child: MbValue) -> MbValue {
+    let Some(child_name) = resolve_class_name(child) else {
+        return child;
+    };
+    if !child_name.is_empty() {
+        ABC_VIRTUAL_SUBCLASSES.with(|reg| {
+            reg.borrow_mut()
+                .insert((child_name, parent_name.to_string()));
+        });
+    }
+    unsafe { super::rc::retain_if_ptr(child) };
+    child
+}
+
+/// abc: a user ABC with a custom `__subclasshook__` drives structural
+/// `issubclass`/`isinstance`. Returns `Some(true/false)` when the hook gives a
+/// definite answer, or `None` (NotImplemented / no hook) to fall through to
+/// nominal matching. `parent` must be a user ABC; `child_name` is the candidate
+/// class (may be a builtin like "list"/"int").
+fn user_abc_subclasshook(parent: &str, child_name: &str) -> Option<bool> {
+    // Only ABCs whose own MRO defines `__subclasshook__` participate; the hook
+    // is a classmethod, so we look it up via the normal MRO walk but must skip
+    // the default (there is no default in our runtime, so any presence counts).
+    let hook = lookup_method(parent, "__subclasshook__");
+    if hook.is_none() {
+        return None;
+    }
+    // `__subclasshook__` is a @classmethod — unwrap the descriptor to get the
+    // underlying function pointer before invoking it.
+    let (hook_fn, _dk) = unwrap_descriptor_method(hook);
+    let addr = extract_func_addr(hook_fn);
+    if addr == 0 {
+        return None;
+    }
+    let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+    if !is_registered {
+        return None;
+    }
+    // Call __subclasshook__(cls, C). mamba's @classmethod convention passes the
+    // owning class as a bare class-name string for `cls` (so an identity guard
+    // `if cls is Sized` works against the registered-class string). The
+    // candidate `C` is passed as a *type object* so `hasattr(C, "__len__")`
+    // queries the type's methods rather than treating a class-name string as a
+    // plain str (which would itself answer hasattr("__len__") truthily).
+    let cls_obj = MbValue::from_ptr(MbObject::new_str(parent.to_string()));
+    let cand_obj = make_type_object(child_name);
+    let func: extern "C" fn(MbValue, MbValue) -> MbValue =
+        unsafe { std::mem::transmute(addr as usize) };
+    let result = func(cls_obj, cand_obj);
+    // NotImplemented → fall through.
+    if result.is_not_implemented() {
+        return None;
+    }
+    result.as_bool()
+}
+
 fn dispatch_mutable_sequence_mixin(
     receiver: MbValue,
     method_name: &str,
@@ -1570,12 +1783,18 @@ fn dispatch_mutable_sequence_mixin(
                 mb_call_method(
                     receiver,
                     setitem_name,
-                    MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(left_idx), right])),
+                    MbValue::from_ptr(MbObject::new_list(vec![
+                        MbValue::from_int(left_idx),
+                        right,
+                    ])),
                 );
                 mb_call_method(
                     receiver,
                     setitem_name,
-                    MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(right_idx), left])),
+                    MbValue::from_ptr(MbObject::new_list(vec![
+                        MbValue::from_int(right_idx),
+                        left,
+                    ])),
                 );
                 left_idx += 1;
                 right_idx -= 1;
@@ -1615,13 +1834,26 @@ fn collections_abc_abstract_methods(name: &str) -> &'static [&'static str] {
 }
 
 fn missing_collections_abc_abstract_method(class_name: &str) -> Option<&'static str> {
+    // Collect the ABC names that impose abstract-method requirements on this
+    // class. A class is "abstract" only when it reaches a real
+    // `collections.abc` ABC *through inheritance* — not merely because the user
+    // happened to name their own class `Collection`, `Sequence`, etc. CPython
+    // treats `class Collection:` (no ABC base) as an ordinary, instantiable
+    // class; only the native ABC itself or a subclass of it is abstract.
+    //
+    // Discriminator:
+    //   - User-defined class registered in CLASS_REGISTRY: the class's own name
+    //     is NOT an ABC source (the user shadowed the name); only the inherited
+    //     MRO ancestors (`mro[1..]`, which excludes the class itself) count.
+    //   - No registered class (e.g. instantiating the native `Sequence()` /
+    //     `Collection()` ABC type object directly): the name itself is the ABC,
+    //     so it must still be rejected.
     let abc_names = CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
         if let Some(cls) = reg.get(class_name) {
-            let mut names = Vec::with_capacity(cls.mro.len() + 1);
-            names.push(class_name.to_string());
-            names.extend(cls.mro.iter().cloned());
-            names
+            // `mro[0]` is always the class itself (see `compute_mro`); skip it
+            // so a user class merely *named* like an ABC is not abstract.
+            cls.mro.iter().skip(1).cloned().collect::<Vec<_>>()
         } else {
             vec![class_name.to_string()]
         }
@@ -1655,22 +1887,9 @@ pub fn mb_collections_abc_reject_abstract_instantiation(class_name: &str) -> Opt
 fn is_array_unbound_method(name: &str) -> bool {
     matches!(
         name,
-        "append"
-            | "extend"
-            | "fromlist"
-            | "frombytes"
-            | "tobytes"
-            | "fromunicode"
-            | "tolist"
-            | "tounicode"
-            | "buffer_info"
-            | "byteswap"
-            | "count"
-            | "index"
-            | "insert"
-            | "pop"
-            | "remove"
-            | "reverse"
+        "append" | "extend" | "fromlist" | "frombytes" | "tobytes"
+            | "fromunicode" | "tolist" | "tounicode" | "buffer_info" | "byteswap"
+            | "count" | "index" | "insert" | "pop" | "remove" | "reverse"
     )
 }
 
@@ -1732,8 +1951,13 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
 
     if obj.is_int() {
         let id = obj.as_int().unwrap_or(0) as u64;
-        if super::file_io::is_file_handle(id) && attr_name == "name" {
-            return super::file_io::mb_file_name(obj);
+        if super::file_io::is_file_handle(id) {
+            if attr_name == "name" {
+                return super::file_io::mb_file_name(obj);
+            }
+            if attr_name == "closed" {
+                return MbValue::from_bool(super::file_io::is_file_closed(obj));
+            }
         }
     }
 
@@ -1756,16 +1980,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         // TAG_FUNC direct pointer
         if obj.as_func().is_some() {
             let name = super::closure::mb_func_get_name(obj);
-            if !name.is_none() {
-                return name;
-            }
+            if !name.is_none() { return name; }
         }
         // Closure handle (integer ID)
         if obj.as_int().is_some() && !super::generator::is_known_generator(obj) {
             let name = super::closure::mb_func_get_name(obj);
-            if !name.is_none() {
-                return name;
-            }
+            if !name.is_none() { return name; }
         }
     }
 
@@ -1795,6 +2015,27 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         }
     }
 
+    // __wrapped__ on functions: set by functools.wraps / update_wrapper. Only
+    // returns a value when the wrapper actually recorded one.
+    if attr_name == "__wrapped__" {
+        let wrapped = super::stdlib::functools_mod::get_func_wrapped(obj);
+        if !wrapped.is_none() {
+            unsafe { super::rc::retain_if_ptr(wrapped); }
+            return wrapped;
+        }
+    }
+
+    // __code__ on functions (CORE #3): build a code object exposing the
+    // compiled signature metadata. Gated on the function metadata registry so
+    // we never fabricate a code object for arbitrary ints / values.
+    // `f.__code__.co_name` → name, `.co_argcount` → arity, `.co_varnames` →
+    // parameter-name tuple. The synthetic code object is a plain Instance
+    // (class_name "code"); its `co_*` fields resolve through the normal
+    // Instance attribute path.
+    if attr_name == "__code__" && super::closure::mb_func_is_registered(obj) {
+        return make_code_object(obj);
+    }
+
     // Generator handles are int-tagged values. Handle generator-specific attributes.
     if obj.is_int() && super::generator::is_known_generator(obj) {
         match attr_name.as_str() {
@@ -1817,9 +2058,7 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         if super::stdlib::hashlib_mod::is_hashlib_handle(id) {
             match attr_name.as_str() {
                 "name" => return super::stdlib::hashlib_mod::mb_hashlib_name(obj),
-                "digest_size" => {
-                    return super::stdlib::hashlib_mod::mb_hashlib_digest_size_attr(obj)
-                }
+                "digest_size" => return super::stdlib::hashlib_mod::mb_hashlib_digest_size_attr(obj),
                 "block_size" => return super::stdlib::hashlib_mod::mb_hashlib_block_size_attr(obj),
                 _ => {}
             }
@@ -1854,10 +2093,24 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     }
 
     if let Some(addr) = obj.as_func() {
-        let native_type =
-            super::module::NATIVE_TYPE_NAMES.with(|map| map.borrow().get(&(addr as u64)).cloned());
-        if native_type.as_deref() == Some("array") && is_array_unbound_method(&attr_name) {
-            return make_unbound_method("array", &attr_name);
+        let native_type = super::module::NATIVE_TYPE_NAMES.with(|map| {
+            map.borrow().get(&(addr as u64)).cloned()
+        });
+        if let Some(nt) = native_type {
+            if nt == "array" && is_array_unbound_method(&attr_name) {
+                return make_unbound_method("array", &attr_name);
+            }
+            // A native class's constructor is bound to its name as a func value
+            // (`pathlib.Path` via NATIVE_TYPE_NAMES). Accessing one of the class's
+            // REGISTERED methods on that func (`pathlib.Path.joinpath`) is an
+            // unbound method — callable, and dispatchable when invoked. Validate
+            // against the class method table (lookup_method → CLASS_REGISTRY, the
+            // same registry mb_class_register populates for native classes) so
+            // ONLY a real method bridges — a missing attr falls through to the
+            // normal path and stays absent/None, never a spurious callable.
+            if !lookup_method(&nt, &attr_name).is_none() {
+                return make_unbound_method(&nt, &attr_name);
+            }
         }
     }
 
@@ -1870,11 +2123,32 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         let id = obj.as_int().unwrap_or(0) as u64;
         if super::stdlib::random_mod::is_random_handle(id) {
             match attr_name.as_str() {
-                "random" | "seed" | "randint" | "randrange" | "uniform" | "triangular"
-                | "choice" | "shuffle" | "sample" | "choices" | "gauss" | "normalvariate"
-                | "expovariate" | "lognormvariate" | "vonmisesvariate" | "gammavariate"
-                | "betavariate" | "paretovariate" | "weibullvariate" | "getrandbits"
+                "random" | "seed" | "randint" | "randrange" | "uniform"
+                | "triangular" | "choice" | "shuffle" | "sample" | "choices"
+                | "gauss" | "normalvariate" | "expovariate" | "lognormvariate"
+                | "vonmisesvariate" | "gammavariate" | "betavariate"
+                | "paretovariate" | "weibullvariate" | "getrandbits"
                 | "randbytes" | "getstate" | "setstate" => return obj,
+                _ => {}
+            }
+        }
+    }
+
+    // Queue handles are int-tagged values registered by queue_mod. Method
+    // *calls* (`q.put(1)`) route through the call-method protocol directly
+    // (never this getattr path — proven by `q.put(1)` working while bare
+    // `callable(q.put)` was False), so the bare-attribute value only needs
+    // to report callable: return an `__unbound_method__` Instance (which
+    // mb_callable recognizes) rather than the bare int handle (which it
+    // does not). Satisfies `callable(queue.Queue().<m>)` surface probes.
+    if obj.is_int() {
+        let id = obj.as_int().unwrap_or(0) as u64;
+        if super::stdlib::queue_mod::is_queue_handle(id) {
+            match attr_name.as_str() {
+                "put" | "put_nowait" | "get" | "get_nowait" | "empty"
+                | "full" | "qsize" | "task_done" | "join" => {
+                    return make_unbound_method("Queue", &attr_name);
+                }
                 _ => {}
             }
         }
@@ -1894,9 +2168,8 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 "denominator" => return super::stdlib::fractions_mod::mb_fraction_denominator(obj),
                 "real" => return super::stdlib::fractions_mod::mb_fraction_real(obj),
                 "imag" => return super::stdlib::fractions_mod::mb_fraction_imag(obj),
-                "conjugate" | "is_integer" | "as_integer_ratio" | "limit_denominator" => {
-                    return obj
-                }
+                "conjugate" | "is_integer" | "as_integer_ratio"
+                | "limit_denominator" => return obj,
                 _ => {}
             }
         }
@@ -1920,6 +2193,15 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 "bytes" => return super::stdlib::uuid_mod::mb_uuid_bytes_attr(obj),
                 "bytes_le" => return super::stdlib::uuid_mod::mb_uuid_bytes_le_attr(obj),
                 "fields" => return super::stdlib::uuid_mod::mb_uuid_fields_attr(obj),
+                "time_low" => return super::stdlib::uuid_mod::mb_uuid_time_low(obj),
+                "time_mid" => return super::stdlib::uuid_mod::mb_uuid_time_mid(obj),
+                "time_hi_version" => return super::stdlib::uuid_mod::mb_uuid_time_hi_version(obj),
+                "clock_seq_hi_variant" => return super::stdlib::uuid_mod::mb_uuid_clock_seq_hi_variant(obj),
+                "clock_seq_low" => return super::stdlib::uuid_mod::mb_uuid_clock_seq_low(obj),
+                "clock_seq" => return super::stdlib::uuid_mod::mb_uuid_clock_seq(obj),
+                "node" => return super::stdlib::uuid_mod::mb_uuid_node(obj),
+                "time" => return super::stdlib::uuid_mod::mb_uuid_time(obj),
+                "is_safe" => return super::stdlib::uuid_mod::mb_uuid_is_safe(obj),
                 _ => {}
             }
         }
@@ -1948,20 +2230,10 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             // this wrapper and dispatches the method against args[0] as
             // receiver, consuming the remaining args.
             if let ObjData::Str(ref s) = (*ptr).data {
-                if matches!(
-                    s.as_str(),
-                    "str"
-                        | "list"
-                        | "dict"
-                        | "tuple"
-                        | "set"
-                        | "frozenset"
-                        | "int"
-                        | "float"
-                        | "bool"
-                        | "bytes"
-                        | "bytearray"
-                ) {
+                if matches!(s.as_str(),
+                    "str" | "list" | "dict" | "tuple" | "set" | "frozenset"
+                    | "int" | "float" | "bool" | "bytes" | "bytearray")
+                {
                     let inst = MbObject::new_instance("__unbound_method__".to_string());
                     if let ObjData::Instance { fields, .. } = &(*inst).data {
                         let mut guard = fields.write().unwrap();
@@ -1981,55 +2253,30 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             // to support the unbound-method pattern for calls like `int.from_bytes(…)`.
             // But only for method accesses — NOT for dunder/own fields (__name__, __doc__,
             // __module__) which should be returned directly from the Instance fields below.
-            if let ObjData::Instance {
-                class_name: ref cn,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { class_name: ref cn, ref fields } = (*ptr).data {
                 if cn == "type" {
                     // Skip attributes that are actual fields of the type object.
-                    let is_own_field = matches!(
-                        attr_name.as_str(),
-                        "__name__"
-                            | "__doc__"
-                            | "__module__"
-                            | "__qualname__"
-                            | "__bases__"
-                            | "__mro__"
-                            | "__dict__"
-                            | "__abstractmethods__"
-                            | "__subclasscheck__"
-                            | "__instancecheck__"
-                    );
+                    let is_own_field = matches!(attr_name.as_str(),
+                        "__name__" | "__doc__" | "__module__" | "__qualname__"
+                        | "__bases__" | "__mro__" | "__dict__" | "__abstractmethods__"
+                        | "__subclasscheck__" | "__instancecheck__");
                     if !is_own_field {
                         // Try to get the type name from __name__ field.
-                        if let Some(type_name_str) = fields
-                            .read()
-                            .ok()
-                            .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
-                        {
+                        if let Some(type_name_str) = fields.read().ok().and_then(|f| {
+                            f.get("__name__").and_then(|v| extract_str(*v))
+                        }) {
                             if attr_name == "register" && is_collections_abc_name(&type_name_str) {
                                 return make_abc_register_method(&type_name_str);
                             }
-                            if matches!(
-                                type_name_str.as_str(),
-                                "str"
-                                    | "list"
-                                    | "dict"
-                                    | "tuple"
-                                    | "set"
-                                    | "frozenset"
-                                    | "int"
-                                    | "float"
-                                    | "bool"
-                                    | "bytes"
-                                    | "bytearray"
-                            ) {
+                            if attr_name == "register" && is_user_abc(&type_name_str) {
+                                return make_user_abc_register_method(&type_name_str);
+                            }
+                            if matches!(type_name_str.as_str(),
+                                "str" | "list" | "dict" | "tuple" | "set" | "frozenset"
+                                | "int" | "float" | "bool" | "bytes" | "bytearray")
+                            {
                                 let inst = MbObject::new_instance("__unbound_method__".to_string());
-                                if let ObjData::Instance {
-                                    fields: ifields, ..
-                                } = &(*inst).data
-                                {
+                                if let ObjData::Instance { fields: ifields, .. } = &(*inst).data {
                                     let mut guard = ifields.write().unwrap();
                                     guard.insert(
                                         "__type__".to_string(),
@@ -2046,6 +2293,18 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 super::rc::retain_if_ptr(val);
                                 return val;
                             }
+                            // A registered native class's method accessed on its
+                            // type-object (`unittest.TestCase.assertEqual`) is an
+                            // unbound method — callable and dispatchable when
+                            // invoked. Validate against the class method table
+                            // (lookup_method → CLASS_REGISTRY, the same registry
+                            // the func->method bridge uses) so ONLY a real method
+                            // bridges; a miss falls through and stays absent.
+                            if class_is_registered(&type_name_str)
+                                && !lookup_method(&type_name_str, &attr_name).is_none()
+                            {
+                                return make_unbound_method(&type_name_str, &attr_name);
+                            }
                         }
                     }
                 }
@@ -2060,38 +2319,53 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         return v;
                     }
                 }
-                ObjData::Instance {
-                    class_name,
-                    ref fields,
-                } => {
-                    // memoryview: expose nbytes / format / readonly / itemsize / ndim.
+                ObjData::Instance { class_name, ref fields } => {
+                    // io in-memory streams: `.closed` reflects the _closed flag.
+                    if matches!(class_name.as_str(),
+                        "StringIO" | "BytesIO" | "BufferedReader" | "BufferedWriter" | "TextIOWrapper")
+                        && attr_name == "closed"
+                    {
+                        let closed = fields.read().unwrap()
+                            .get("_closed").and_then(|v| v.as_bool()).unwrap_or(false);
+                        return MbValue::from_bool(closed);
+                    }
+                    // memoryview: expose nbytes / format / readonly / itemsize /
+                    // ndim / shape / strides. Mamba models the byte-flat case
+                    // (format='B', itemsize=1, ndim=1), so shape == (nbytes,)
+                    // and strides == (1,).
                     if class_name == "memoryview" {
                         match attr_name.as_str() {
-                            "nbytes" | "itemsize" | "ndim" => {
-                                if attr_name == "ndim" || attr_name == "itemsize" {
-                                    return MbValue::from_int(1);
-                                }
+                            "itemsize" | "ndim" => return MbValue::from_int(1),
+                            "nbytes" => {
                                 let buf = fields.read().unwrap().get("_buffer").copied();
                                 if let Some(b) = buf {
                                     if let Some(bp) = b.as_ptr() {
                                         match (*bp).data {
-                                            ObjData::Bytes(ref data) => {
-                                                return MbValue::from_int(data.len() as i64)
-                                            }
-                                            ObjData::ByteArray(ref lock) => {
-                                                return MbValue::from_int(
-                                                    lock.read().unwrap().len() as i64,
-                                                )
-                                            }
+                                            ObjData::Bytes(ref data) => return MbValue::from_int(data.len() as i64),
+                                            ObjData::ByteArray(ref lock) => return MbValue::from_int(lock.read().unwrap().len() as i64),
                                             _ => return MbValue::from_int(0),
                                         }
                                     }
                                 }
                                 return MbValue::from_int(0);
                             }
-                            "format" => {
-                                return MbValue::from_ptr(MbObject::new_str("B".to_string()))
+                            "shape" => {
+                                // Resolve the underlying bytes-like length via the
+                                // canonical try_bytes_like coercion so a memoryview
+                                // wrapping a nested memoryview or array('B'/'b') still
+                                // reports its real length (CPython:
+                                // memoryview(memoryview(b'abc')).shape == (3,)).
+                                let buf = fields.read().unwrap().get("_buffer").copied();
+                                let nbytes = buf
+                                    .and_then(super::builtins::try_bytes_like)
+                                    .map(|data| data.len() as i64)
+                                    .unwrap_or(0);
+                                return MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(nbytes)]));
                             }
+                            "strides" => {
+                                return MbValue::from_ptr(MbObject::new_tuple(vec![MbValue::from_int(1)]));
+                            }
+                            "format" => return MbValue::from_ptr(MbObject::new_str("B".to_string())),
                             "readonly" => return MbValue::from_bool(true),
                             _ => {}
                         }
@@ -2104,10 +2378,8 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         let mut bound_fields = FxHashMap::default();
                         super::rc::retain_if_ptr(obj);
                         bound_fields.insert("_wrapper".to_string(), obj);
-                        bound_fields.insert(
-                            "_method".to_string(),
-                            MbValue::from_ptr(MbObject::new_str(attr_name.clone())),
-                        );
+                        bound_fields.insert("_method".to_string(),
+                            MbValue::from_ptr(MbObject::new_str(attr_name.clone())));
                         let bound = Box::new(MbObject {
                             header: super::rc::MbObjectHeader {
                                 rc: std::sync::atomic::AtomicU32::new(1),
@@ -2123,17 +2395,32 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     // R13: __dict__ access suppression.
                     // If class defines __slots__ without '__dict__', raise AttributeError for __dict__.
                     if attr_name == "__dict__" {
-                        let suppressed =
-                            DICT_SUPPRESSED.with(|reg| reg.borrow().contains(class_name.as_str()));
+                        let suppressed = DICT_SUPPRESSED.with(|reg| {
+                            reg.borrow().contains(class_name.as_str())
+                        });
                         if suppressed {
                             super::exception::mb_raise(
                                 MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                                MbValue::from_ptr(MbObject::new_str(format!(
-                                    "'{}' object has no attribute '__dict__'",
-                                    class_name
-                                ))),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    format!("'{}' object has no attribute '__dict__'", class_name),
+                                )),
                             );
                             return MbValue::none();
+                        }
+                        // Materialize the instance __dict__ as a real dict over
+                        // the instance fields, unless a user shadowed `__dict__`
+                        // as an explicit field (handled by the lookup below).
+                        let has_field = fields.read().unwrap().contains_key("__dict__");
+                        if !has_field {
+                            let guard = fields.read().unwrap();
+                            let dict = super::dict_ops::mb_dict_new();
+                            for (k, v) in guard.iter() {
+                                let key = MbValue::from_ptr(
+                                    super::rc::MbObject::new_str(k.clone()),
+                                );
+                                super::dict_ops::mb_dict_setitem(dict, key, *v);
+                            }
+                            return dict;
                         }
                     }
                     // Python descriptor protocol:
@@ -2169,8 +2456,9 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         if let Some(addr) = getattr_dunder.as_func() {
                             // JIT-compiled function: call __getattr__(self, name)
                             // REQ: JIT-compiled functions use SystemV/C calling convention.
-                            let attr_str =
-                                MbValue::from_ptr(super::rc::MbObject::new_str(attr_name.clone()));
+                            let attr_str = MbValue::from_ptr(
+                                super::rc::MbObject::new_str(attr_name.clone())
+                            );
                             let func: extern "C" fn(MbValue, MbValue) -> MbValue =
                                 std::mem::transmute(addr);
                             return func(obj, attr_str);
@@ -2180,15 +2468,16 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         return getattr_dunder;
                     }
                 }
-                ObjData::Complex(re, im) => match attr_name.as_str() {
-                    "real" => return MbValue::from_float(*re),
-                    "imag" => return MbValue::from_float(*im),
-                    _ => {}
-                },
+                ObjData::Complex(re, im) => {
+                    match attr_name.as_str() {
+                        "real" => return MbValue::from_float(*re),
+                        "imag" => return MbValue::from_float(*im),
+                        _ => {}
+                    }
+                }
                 ObjData::Str(ref s) => {
                     // Class-name strings: support class-level attributes like __mro__, __name__
-                    let class_found =
-                        CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(s.as_str()));
+                    let class_found = CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(s.as_str()));
                     if class_found {
                         match attr_name.as_str() {
                             "__mro__" => {
@@ -2196,17 +2485,33 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                     reg.borrow().get(s.as_str()).map(|cls| cls.mro.clone())
                                 });
                                 if let Some(mro_names) = mro {
-                                    let items: Vec<MbValue> = mro_names
-                                        .iter()
-                                        .map(|name| make_type_object(name))
-                                        .collect();
-                                    return MbValue::from_ptr(super::rc::MbObject::new_tuple(
-                                        items,
-                                    ));
+                                    let items: Vec<MbValue> = mro_names.iter().map(|name| {
+                                        make_type_object(name)
+                                    }).collect();
+                                    return MbValue::from_ptr(super::rc::MbObject::new_tuple(items));
                                 }
                             }
                             "__name__" => {
                                 return MbValue::from_ptr(super::rc::MbObject::new_str(s.clone()));
+                            }
+                            "__abstractmethods__" if is_user_abc(s) => {
+                                return user_abstractmethods_frozenset(s);
+                            }
+                            "__bases__" => {
+                                let bases = CLASS_REGISTRY.with(|reg| {
+                                    reg.borrow().get(s.as_str()).map(|cls| cls.bases.clone())
+                                });
+                                if let Some(base_names) = bases {
+                                    let items: Vec<MbValue> = if base_names.is_empty() {
+                                        vec![make_type_object("object")]
+                                    } else {
+                                        base_names.iter().map(|n| make_type_object(n)).collect()
+                                    };
+                                    return MbValue::from_ptr(super::rc::MbObject::new_tuple(items));
+                                }
+                            }
+                            "register" if is_user_abc(s) => {
+                                return make_user_abc_register_method(s);
                             }
                             _ => {
                                 // Class methods and class attributes via MRO
@@ -2281,6 +2586,51 @@ fn make_type_object(name: &str) -> MbValue {
         },
         data: ObjData::Instance {
             class_name: "type".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// Build a function's `__code__` object (CORE #3). Returns a plain Instance
+/// (class_name "code") whose `co_name` / `co_argcount` / `co_varnames` fields
+/// carry the compiled signature metadata pulled from the function registries.
+/// Unregistered metadata defaults (empty name, argcount 0, empty varnames)
+/// so attribute access never returns a bare None for a real function.
+fn make_code_object(func: MbValue) -> MbValue {
+    let co_name = {
+        let n = super::closure::mb_func_get_name(func);
+        if n.is_none() {
+            MbValue::from_ptr(super::rc::MbObject::new_str(String::new()))
+        } else {
+            n
+        }
+    };
+    let co_argcount = {
+        let a = super::closure::mb_func_get_argcount(func);
+        if a.is_none() { MbValue::from_int(0) } else { a }
+    };
+    let co_varnames = {
+        let v = super::closure::mb_func_get_varnames(func);
+        if v.is_none() {
+            MbValue::from_ptr(super::rc::MbObject::new_tuple(Vec::new()))
+        } else {
+            v
+        }
+    };
+
+    let mut fields = FxHashMap::default();
+    fields.insert("co_name".to_string(), co_name);
+    fields.insert("co_argcount".to_string(), co_argcount);
+    fields.insert("co_varnames".to_string(), co_varnames);
+
+    let obj = Box::new(super::rc::MbObject {
+        header: super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "code".to_string(),
             fields: crate::runtime::rc::MbRwLock::new(fields),
         },
     });
@@ -2383,7 +2733,7 @@ fn invoke_descriptor_set(desc: MbValue, instance: MbValue, value: MbValue) {
         let addr = extract_func_addr(method);
         if addr != 0 {
             // REQ: JIT-compiled functions use SystemV/C calling convention.
-            let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
+        let func: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
                 unsafe { std::mem::transmute(addr as usize) };
             func(desc, instance, value);
         }
@@ -2406,7 +2756,8 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
                     }
                     if let Some(addr) = deleter.as_func() {
                         if addr > 4096 {
-                            let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr);
+                            let f: extern "C" fn(MbValue) -> MbValue =
+                                std::mem::transmute(addr);
                             f(instance);
                             return;
                         }
@@ -2430,7 +2781,7 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
         let addr = extract_func_addr(method);
         if addr != 0 {
             // REQ: JIT-compiled functions use SystemV/C calling convention.
-            let func: extern "C" fn(MbValue, MbValue) -> MbValue =
+        let func: extern "C" fn(MbValue, MbValue) -> MbValue =
                 unsafe { std::mem::transmute(addr as usize) };
             func(desc, instance);
         }
@@ -2440,11 +2791,14 @@ fn invoke_descriptor_delete(desc: MbValue, instance: MbValue) {
 /// getattr(obj, name, default) — returns default if attribute not found.
 pub fn mb_getattr_default(obj: MbValue, attr: MbValue, default: MbValue) -> MbValue {
     let result = mb_getattr(obj, attr);
-    if result.is_none() {
-        default
-    } else {
-        result
+    // A `__getattr__` that raises AttributeError signals "no such attribute";
+    // the 3-arg form swallows *only* AttributeError and yields the default
+    // (CPython semantics). Any other exception propagates unchanged.
+    if super::exception::current_exception_type().as_deref() == Some("AttributeError") {
+        super::exception::mb_clear_exception();
+        return default;
     }
+    if result.is_none() { default } else { result }
 }
 
 /// vars(obj) → dict of instance __dict__.
@@ -2467,6 +2821,23 @@ pub fn mb_vars(obj: MbValue) -> MbValue {
                     super::dict_ops::mb_dict_setitem(dict, key, *v);
                 }
                 return dict;
+            }
+            // vars(module): a module namespace is surfaced as a Dict; CPython
+            // returns the module's __dict__. Return a snapshot of its str-keyed
+            // entries. Gated on the `__name__` module marker so a plain dict
+            // still hits the TypeError path below (CPython: vars(dict) raises).
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let guard = lock.read().unwrap();
+                if guard.contains_key("__name__") {
+                    let dict = super::dict_ops::mb_dict_new();
+                    for (k, v) in guard.iter() {
+                        if let super::dict_ops::DictKey::Str(s) = k {
+                            let key = MbValue::from_ptr(super::rc::MbObject::new_str(s.clone()));
+                            super::dict_ops::mb_dict_setitem(dict, key, *v);
+                        }
+                    }
+                    return dict;
+                }
             }
         }
     }
@@ -2534,141 +2905,50 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
         unsafe {
             match (*ptr).data {
                 ObjData::List(_) => vec![
-                    "append",
-                    "extend",
-                    "insert",
-                    "pop",
-                    "remove",
-                    "clear",
-                    "reverse",
-                    "sort",
-                    "copy",
-                    "index",
-                    "count",
-                    "__iter__",
-                    "__len__",
-                    "__contains__",
-                    "__getitem__",
-                    "__setitem__",
-                    "__delitem__",
+                    "append", "extend", "insert", "pop", "remove", "clear",
+                    "reverse", "sort", "copy", "index", "count",
+                    "__iter__", "__len__", "__contains__", "__getitem__",
+                    "__setitem__", "__delitem__",
                 ],
                 ObjData::Dict(_) => vec![
-                    "keys",
-                    "values",
-                    "items",
-                    "get",
-                    "pop",
-                    "popitem",
-                    "setdefault",
-                    "update",
-                    "clear",
-                    "copy",
-                    "__iter__",
-                    "__len__",
-                    "__contains__",
-                    "__getitem__",
-                    "__setitem__",
-                    "__delitem__",
+                    "keys", "values", "items", "get", "pop", "popitem",
+                    "setdefault", "update", "clear", "copy",
+                    "__iter__", "__len__", "__contains__", "__getitem__",
+                    "__setitem__", "__delitem__",
                 ],
                 ObjData::Str(_) => vec![
-                    "upper",
-                    "lower",
-                    "title",
-                    "capitalize",
-                    "swapcase",
-                    "strip",
-                    "lstrip",
-                    "rstrip",
-                    "split",
-                    "rsplit",
-                    "splitlines",
-                    "join",
-                    "replace",
-                    "find",
-                    "rfind",
-                    "index",
-                    "rindex",
-                    "startswith",
-                    "endswith",
-                    "count",
-                    "encode",
-                    "format",
-                    "format_map",
-                    "isdigit",
-                    "isalpha",
-                    "isalnum",
-                    "isspace",
-                    "isupper",
-                    "islower",
-                    "istitle",
-                    "zfill",
-                    "ljust",
-                    "rjust",
-                    "center",
-                    "__iter__",
-                    "__len__",
-                    "__contains__",
-                    "__getitem__",
+                    "upper", "lower", "title", "capitalize", "swapcase",
+                    "strip", "lstrip", "rstrip", "split", "rsplit",
+                    "splitlines", "join", "replace", "find", "rfind",
+                    "index", "rindex", "startswith", "endswith", "count",
+                    "encode", "format", "format_map", "isdigit", "isalpha",
+                    "isalnum", "isspace", "isupper", "islower", "istitle",
+                    "zfill", "ljust", "rjust", "center",
+                    "__iter__", "__len__", "__contains__", "__getitem__",
                 ],
                 ObjData::Set(_) => vec![
-                    "add",
-                    "discard",
-                    "remove",
-                    "pop",
-                    "clear",
-                    "copy",
-                    "union",
-                    "intersection",
-                    "difference",
-                    "symmetric_difference",
-                    "update",
-                    "intersection_update",
-                    "difference_update",
-                    "isdisjoint",
-                    "issubset",
-                    "issuperset",
-                    "__iter__",
-                    "__len__",
-                    "__contains__",
+                    "add", "discard", "remove", "pop", "clear", "copy",
+                    "union", "intersection", "difference", "symmetric_difference",
+                    "update", "intersection_update", "difference_update",
+                    "isdisjoint", "issubset", "issuperset",
+                    "__iter__", "__len__", "__contains__",
                 ],
                 ObjData::Tuple(_) => vec![
-                    "count",
-                    "index",
-                    "__iter__",
-                    "__len__",
-                    "__contains__",
-                    "__getitem__",
+                    "count", "index",
+                    "__iter__", "__len__", "__contains__", "__getitem__",
                 ],
                 _ => Vec::new(),
             }
         }
     } else if obj.is_int() || obj.is_float() {
         vec![
-            "bit_length",
-            "to_bytes",
-            "from_bytes",
-            "__add__",
-            "__sub__",
-            "__mul__",
-            "__truediv__",
-            "__floordiv__",
-            "__mod__",
-            "__pow__",
-            "__neg__",
-            "__abs__",
-            "__eq__",
-            "__lt__",
-            "__le__",
-            "__gt__",
-            "__ge__",
-            "__hash__",
-            "__repr__",
-            "__str__",
+            "bit_length", "to_bytes", "from_bytes",
+            "__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
+            "__mod__", "__pow__", "__neg__", "__abs__", "__eq__", "__lt__",
+            "__le__", "__gt__", "__ge__", "__hash__", "__repr__", "__str__",
         ]
     } else if obj.is_bool() {
-        vec![
-            "__and__", "__or__", "__xor__", "__bool__", "__repr__", "__str__",
-        ]
+        vec!["__and__", "__or__", "__xor__", "__bool__", "__repr__", "__str__"]
     } else {
         Vec::new()
     }
@@ -2718,6 +2998,21 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
         }
     };
 
+    // A native class exposed as its constructor func (e.g.
+    // tempfile.SpooledTemporaryFile, pathlib.Path) — `dir()` must list the
+    // class's registered methods, resolved through NATIVE_TYPE_NAMES into the
+    // CLASS_REGISTRY MRO. ADDITIVE: only ever adds names for funcs registered
+    // as native types; an unregistered func falls through unchanged.
+    if let Some(addr) = obj.as_func() {
+        let native_type = super::module::NATIVE_TYPE_NAMES
+            .with(|map| map.borrow().get(&(addr as u64)).cloned());
+        if let Some(nt) = native_type {
+            for k in mb_dir_mro_keys(&nt) {
+                push(k, &mut names, &mut seen);
+            }
+        }
+    }
+
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -2742,8 +3037,14 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
                         }
                     }
                     drop(guard);
-                    for k in builtin_type_method_names(&obj) {
-                        push(k.to_string(), &mut names, &mut seen);
+                    // A module is surfaced as a Dict, but `dir(module)` must NOT
+                    // leak the dict-protocol method names (clear/copy/get/items/
+                    // keys/pop/...): a CPython module namespace has none of them.
+                    // Only a genuine dict object exposes dict methods via dir().
+                    if !looks_like_module {
+                        for k in builtin_type_method_names(&obj) {
+                            push(k.to_string(), &mut names, &mut seen);
+                        }
                     }
                 }
                 _ => {
@@ -2777,19 +3078,32 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
             // Fast path for Instance objects (most common case: self.x = value in __init__).
             // Check Instance first before trying the Str/class-attr path, since instance
             // setattr is by far the hottest path during object construction.
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-                ..
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
+                // weakref.ref.__callback__ is a read-only attribute in CPython:
+                // `r.__callback__ = ...` raises AttributeError.
+                if class_name == "ReferenceType" {
+                    if let Some(kp) = attr.as_ptr() {
+                        if let ObjData::Str(ref attr_s) = (*kp).data {
+                            if attr_s == "__callback__" {
+                                super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                                    MbValue::from_ptr(MbObject::new_str(
+                                        "attribute '__callback__' of 'weakref.ReferenceType' objects is not writable".to_string(),
+                                    )),
+                                );
+                                return;
+                            }
+                        }
+                    }
+                }
                 // Ultra-fast path for "simple" classes: classes that have no descriptors
                 // and no __slots__. For these classes we skip the descriptor protocol
                 // check and slots registry check entirely. Most user-defined classes
                 // (e.g., `class Point:`) take this path.
                 // This also avoids extract_str() which clones the attribute name String.
-                let is_simple =
-                    SIMPLE_CLASS_CACHE.with(|c| c.borrow().contains(class_name.as_str()));
+                let is_simple = SIMPLE_CLASS_CACHE.with(|c| {
+                    c.borrow().contains(class_name.as_str())
+                });
                 if is_simple {
                     // Retain value — Instance fields are released by release_contained_values.
                     super::rc::retain_if_ptr(value);
@@ -2812,9 +3126,7 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                     // Fallback: extract_str for non-pointer attr (very rare)
                     let attr_name = extract_str(attr).unwrap_or_default();
                     let old = fields.write().unwrap().insert(attr_name, value);
-                    if let Some(prev) = old {
-                        super::rc::release_if_ptr(prev);
-                    }
+                    if let Some(prev) = old { super::rc::release_if_ptr(prev); }
                     return;
                 }
 
@@ -2832,11 +3144,13 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                 // R13: Check __slots__ constraint with inheritance merge.
                 // Combine both thread_local checks into a single scope for the common
                 // case where there are no slots (most classes).
-                let has_own_slots =
-                    SLOTS_REGISTRY.with(|reg| reg.borrow().contains_key(class_name.as_str()));
+                let has_own_slots = SLOTS_REGISTRY.with(|reg| {
+                    reg.borrow().contains_key(class_name.as_str())
+                });
                 if has_own_slots {
-                    let dict_suppressed =
-                        DICT_SUPPRESSED.with(|reg| reg.borrow().contains(class_name.as_str()));
+                    let dict_suppressed = DICT_SUPPRESSED.with(|reg| {
+                        reg.borrow().contains(class_name.as_str())
+                    });
                     if dict_suppressed {
                         let in_slots = SLOTS_REGISTRY.with(|reg| {
                             let reg = reg.borrow();
@@ -2849,10 +3163,9 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                         if !in_slots {
                             super::exception::mb_raise(
                                 MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                                MbValue::from_ptr(MbObject::new_str(format!(
-                                    "'{}' object has no attribute '{}'",
-                                    class_name, attr_name
-                                ))),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    format!("'{}' object has no attribute '{}'", class_name, attr_name),
+                                )),
                             );
                             return;
                         }
@@ -2882,17 +3195,14 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                 // Retain so value survives JIT epilogue VReg release.
                 super::rc::retain_if_ptr(value);
                 let old = fields.write().unwrap().insert(attr_name, value);
-                if let Some(prev) = old {
-                    super::rc::release_if_ptr(prev);
-                }
+                if let Some(prev) = old { super::rc::release_if_ptr(prev); }
                 return;
             }
 
             // Class name string: `cls.attr = value` where cls is a class name.
             // Stores as a class-level attribute accessible to all instances.
             if let ObjData::Str(ref class_name) = (*ptr).data {
-                let is_class =
-                    CLASS_REGISTRY.with(|r| r.borrow().contains_key(class_name.as_str()));
+                let is_class = CLASS_REGISTRY.with(|r| r.borrow().contains_key(class_name.as_str()));
                 if is_class {
                     mb_class_set_class_attr(obj, attr, value);
                     return;
@@ -2924,10 +3234,7 @@ pub fn mb_register_slots(class_name: MbValue, slots: MbValue) {
     // R13: Merge parent slots from MRO into effective slot set.
     let mut effective_slots: Vec<String> = own_slot_names.clone();
     let mro = CLASS_REGISTRY.with(|reg| {
-        reg.borrow()
-            .get(&name)
-            .map(|cls| cls.mro.clone())
-            .unwrap_or_default()
+        reg.borrow().get(&name).map(|cls| cls.mro.clone()).unwrap_or_default()
     });
     for base_name in &mro {
         if base_name == &name || base_name == "object" {
@@ -2975,19 +3282,22 @@ pub fn mb_delattr(obj: MbValue, attr: MbValue) {
     let attr_name = extract_str(attr).unwrap_or_default();
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-                ..
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
                 // Descriptor protocol: data descriptor __delete__ takes priority
                 let class_attr = lookup_method(class_name, &attr_name);
                 if !class_attr.is_none() && is_data_descriptor(class_attr) {
                     invoke_descriptor_delete(class_attr, obj);
                     return;
                 }
-                fields.write().unwrap().remove(&attr_name);
+                let removed = fields.write().unwrap().remove(&attr_name).is_some();
+                // types.SimpleNamespace mirrors object.__delattr__: deleting an
+                // attribute that does not exist raises AttributeError. (#654)
+                if !removed && class_name == "SimpleNamespace" {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(attr_name.clone())),
+                    );
+                }
             }
         }
     }
@@ -3003,7 +3313,52 @@ pub fn mb_check_delattr_dunder(obj: MbValue) -> MbValue {
 
 /// Check if an object has an attribute.
 pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
+    // Type objects: `hasattr(SomeType, "__len__")` must report whether the
+    // *named type* actually provides the dunder. `mb_getattr` on a type object
+    // is deliberately permissive (it returns an unbound-method wrapper for any
+    // name to support `int.from_bytes(...)`-style calls), so for dunder queries
+    // we answer from the structural table / MRO directly. This drives ABC
+    // `__subclasshook__` structural checks (`hasattr(C, "__len__")` → Sized).
+    {
+        let attr_name = extract_str(attr).unwrap_or_default();
+        if attr_name.starts_with("__") && attr_name.ends_with("__") {
+            if let Some(type_name) = type_object_name(obj) {
+                if builtin_type_has_dunder(&type_name, &attr_name)
+                    || has_method(&type_name, &attr_name)
+                {
+                    return MbValue::from_bool(true);
+                }
+                // A stdlib exception modeled as a type-object Instance (e.g.
+                // ET.ParseError) may seed chaining dunders (__cause__ /
+                // __context__ / __suppress_context__) directly in its OWN
+                // fields, which the structural dunder table does not model.
+                // Read those fields directly — NOT the permissive mb_getattr,
+                // which synthesizes an unbound-method wrapper for ANY name on a
+                // type-object and would wrongly report every dunder present,
+                // breaking ABC structural negative checks (hasattr(C, "__len__")
+                // must stay False for a non-Sized type). Only a genuinely seeded
+                // field reports True.
+                if let Some(ptr) = obj.as_ptr() {
+                    unsafe {
+                        if let ObjData::Instance { fields, .. } = &(*ptr).data {
+                            if fields.read().unwrap().contains_key(&attr_name) {
+                                return MbValue::from_bool(true);
+                            }
+                        }
+                    }
+                }
+                return MbValue::from_bool(false);
+            }
+        }
+    }
     let result = mb_getattr(obj, attr);
+    // A `__getattr__` that raises AttributeError means the attribute is absent;
+    // hasattr swallows *only* AttributeError and reports False (CPython
+    // semantics). Any other exception propagates unchanged.
+    if super::exception::current_exception_type().as_deref() == Some("AttributeError") {
+        super::exception::mb_clear_exception();
+        return MbValue::from_bool(false);
+    }
     if !result.is_none() {
         return MbValue::from_bool(true);
     }
@@ -3012,123 +3367,53 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             let has = match &(*ptr).data {
-                ObjData::List(_) => matches!(
-                    attr_name.as_str(),
-                    "append"
-                        | "extend"
-                        | "insert"
-                        | "remove"
-                        | "pop"
-                        | "clear"
-                        | "index"
-                        | "count"
-                        | "sort"
-                        | "reverse"
-                        | "copy"
-                        | "__getitem__"
-                        | "__setitem__"
-                        | "__delitem__"
-                        | "__contains__"
-                        | "__len__"
-                        | "__iter__"
-                        | "__add__"
-                        | "__radd__"
-                        | "__mul__"
-                        | "__rmul__"
-                        | "__eq__"
-                        | "__ne__"
-                        | "__repr__"
-                        | "__str__"
-                ),
-                ObjData::Dict(_) => matches!(
-                    attr_name.as_str(),
-                    "keys"
-                        | "values"
-                        | "items"
-                        | "get"
-                        | "pop"
-                        | "update"
-                        | "setdefault"
-                        | "clear"
-                        | "copy"
-                        | "fromkeys"
-                        | "__getitem__"
-                        | "__setitem__"
-                        | "__delitem__"
-                        | "__contains__"
-                        | "__len__"
-                        | "__iter__"
-                        | "__or__"
-                        | "__ror__"
-                        | "__eq__"
-                        | "__ne__"
-                        | "__repr__"
-                        | "__str__"
-                ),
-                ObjData::Set(_) => matches!(
-                    attr_name.as_str(),
-                    "add"
-                        | "remove"
-                        | "discard"
-                        | "pop"
-                        | "clear"
-                        | "copy"
-                        | "union"
-                        | "intersection"
-                        | "difference"
-                        | "symmetric_difference"
-                        | "issubset"
-                        | "issuperset"
-                        | "isdisjoint"
-                        | "update"
-                        | "intersection_update"
-                        | "difference_update"
-                        | "symmetric_difference_update"
-                ),
-                ObjData::Str(_) => matches!(
-                    attr_name.as_str(),
-                    "upper"
-                        | "lower"
-                        | "strip"
-                        | "lstrip"
-                        | "rstrip"
-                        | "split"
-                        | "join"
-                        | "replace"
-                        | "find"
-                        | "rfind"
-                        | "index"
-                        | "rindex"
-                        | "startswith"
-                        | "endswith"
-                        | "count"
-                        | "format"
-                        | "encode"
-                        | "isdigit"
-                        | "isalpha"
-                        | "isalnum"
-                        | "isspace"
-                        | "isupper"
-                        | "islower"
-                        | "title"
-                        | "capitalize"
-                        | "swapcase"
-                        | "center"
-                        | "ljust"
-                        | "rjust"
-                        | "zfill"
-                        | "expandtabs"
-                        | "partition"
-                        | "rpartition"
-                        | "maketrans"
-                        | "translate"
-                ),
+                ObjData::List(_) => matches!(attr_name.as_str(),
+                    "append" | "extend" | "insert" | "remove" | "pop" | "clear"
+                    | "index" | "count" | "sort" | "reverse" | "copy"
+                    | "__getitem__" | "__setitem__" | "__delitem__"
+                    | "__contains__" | "__len__" | "__iter__"
+                    | "__add__" | "__radd__"
+                    | "__mul__" | "__rmul__"
+                    | "__eq__" | "__ne__" | "__repr__" | "__str__"),
+                ObjData::Dict(lock) => {
+                    // A module is a dict carrying `__name__`; its keys ARE its
+                    // attributes, so a present key — even one whose value is
+                    // None (e.g. `None`, `Ellipsis`, `os.path.altsep`) — means
+                    // hasattr is True. A plain user dict has no `__name__`, so
+                    // this only fires for module-dicts and never makes a user
+                    // dict's items masquerade as attributes (CPython:
+                    // `hasattr({"x": 1}, "x")` is False).
+                    let guard = lock.read().unwrap();
+                    if guard.contains_key("__name__") && guard.contains_key(attr_name.as_str()) {
+                        true
+                    } else {
+                        matches!(attr_name.as_str(),
+                            "keys" | "values" | "items" | "get" | "pop" | "update"
+                            | "setdefault" | "clear" | "copy" | "fromkeys"
+                            | "__getitem__" | "__setitem__" | "__delitem__"
+                            | "__contains__" | "__len__" | "__iter__"
+                            | "__or__" | "__ror__"
+                            | "__eq__" | "__ne__" | "__repr__" | "__str__")
+                    }
+                }
+                ObjData::Set(_) => matches!(attr_name.as_str(),
+                    "add" | "remove" | "discard" | "pop" | "clear" | "copy"
+                    | "union" | "intersection" | "difference" | "symmetric_difference"
+                    | "issubset" | "issuperset" | "isdisjoint" | "update"
+                    | "intersection_update" | "difference_update"
+                    | "symmetric_difference_update"),
+                ObjData::Str(_) => matches!(attr_name.as_str(),
+                    "upper" | "lower" | "strip" | "lstrip" | "rstrip" | "split"
+                    | "join" | "replace" | "find" | "rfind" | "index" | "rindex"
+                    | "startswith" | "endswith" | "count" | "format" | "encode"
+                    | "isdigit" | "isalpha" | "isalnum" | "isspace" | "isupper"
+                    | "islower" | "title" | "capitalize" | "swapcase" | "center"
+                    | "ljust" | "rjust" | "zfill" | "expandtabs" | "partition"
+                    | "rpartition" | "maketrans" | "translate"),
                 ObjData::Tuple(_) => matches!(attr_name.as_str(), "count" | "index"),
                 _ => false,
             };
-            if has {
-                return MbValue::from_bool(true);
-            }
+            if has { return MbValue::from_bool(true); }
         }
     }
     // Iterator handles are stored as integer IDs (not heap objects).
@@ -3139,7 +3424,43 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
             return MbValue::from_bool(true);
         }
     }
+    // File handles are stored as integer IDs in the file table (not heap
+    // objects), with their method surface dispatched structurally in
+    // mb_call_method. `hasattr(file, 'read'/'write'/...)` must report True to
+    // match CPython's file-object protocol (e.g. tempfile.TemporaryFile()
+    // probed via hasattr, csv writers checking for `write`).
+    if obj.is_int() {
+        let id = obj.as_int().unwrap_or(0) as u64;
+        if super::file_io::is_file_handle(id) {
+            let is_file_method = matches!(attr_name.as_str(),
+                "read" | "write" | "readline" | "readlines" | "readinto"
+                | "writelines" | "tell" | "seek" | "flush" | "truncate"
+                | "close" | "name" | "fileno" | "mode" | "closed"
+                | "readable" | "writable" | "seekable"
+                | "__enter__" | "__exit__" | "__iter__" | "__next__");
+            if is_file_method {
+                return MbValue::from_bool(true);
+            }
+        }
+    }
     MbValue::from_bool(false)
+}
+
+/// abc/structural: extract the type name from a type object (Instance with
+/// class_name == "type" and a `__name__` field). Returns `None` for non-type
+/// values.
+fn type_object_name(obj: MbValue) -> Option<String> {
+    if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { class_name: ref cn, ref fields } = (*ptr).data {
+                if cn == "type" {
+                    return fields.read().ok()
+                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)));
+                }
+            }
+        }
+    }
+    None
 }
 
 // ── Method Lookup via MRO ──
@@ -3154,7 +3475,9 @@ pub(crate) fn lookup_method(class_name: &str, method_name: &str) -> MbValue {
     let cache_key = (class_hash, method_hash);
 
     // Check cache first.
-    let cached = METHOD_CACHE.with(|c| c.borrow().get(&cache_key).copied());
+    let cached = METHOD_CACHE.with(|c| {
+        c.borrow().get(&cache_key).copied()
+    });
     if let Some(val) = cached {
         return val;
     }
@@ -3179,7 +3502,9 @@ pub(crate) fn lookup_method(class_name: &str, method_name: &str) -> MbValue {
     });
 
     // Insert into cache.
-    let _ = METHOD_CACHE.with(|c| c.try_borrow_mut().map(|mut m| m.insert(cache_key, result)));
+    let _ = METHOD_CACHE.with(|c| {
+        c.try_borrow_mut().map(|mut m| m.insert(cache_key, result))
+    });
 
     result
 }
@@ -3259,9 +3584,7 @@ fn c3_merge(lists: &mut Vec<Vec<String>>) -> Result<Vec<String>, String> {
     loop {
         // Remove empty lists
         lists.retain(|l| !l.is_empty());
-        if lists.is_empty() {
-            break;
-        }
+        if lists.is_empty() { break; }
 
         // Find a candidate: head of some list that doesn't appear in tail of any list
         let mut found = None;
@@ -3284,8 +3607,9 @@ fn c3_merge(lists: &mut Vec<Vec<String>>) -> Result<Vec<String>, String> {
                 }
             }
             None => {
-                let remaining: Vec<String> =
-                    lists.iter().filter_map(|l| l.first().cloned()).collect();
+                let remaining: Vec<String> = lists.iter()
+                    .filter_map(|l| l.first().cloned())
+                    .collect();
                 return Err(format!(
                     "inconsistent hierarchy, remaining heads: [{}]",
                     remaining.join(", ")
@@ -3306,12 +3630,14 @@ fn c3_merge(lists: &mut Vec<Vec<String>>) -> Result<Vec<String>, String> {
 /// Note: Is/IsNot are identity checks (no dunder). In/NotIn use __contains__ on RHS.
 /// The codegen handles these specially and should not route them here.
 const BINOP_DUNDERS: &[&str] = &[
-    "add", "sub", "mul", "truediv", "floordiv", "mod", "pow", "eq", "ne", "lt", "gt", "le", "ge",
-    "and", "or", "and", "or", "xor", "lshift", "rshift",
-    "", // Is — identity, not dunder-dispatched
-    "", // IsNot — identity, not dunder-dispatched
-    "", // In — uses RHS __contains__, handled by mb_obj_contains
-    "", // NotIn — uses RHS __contains__, handled by mb_obj_contains
+    "add", "sub", "mul", "truediv", "floordiv", "mod", "pow",
+    "eq", "ne", "lt", "gt", "le", "ge",
+    "and", "or",
+    "and", "or", "xor", "lshift", "rshift",
+    "",  // Is — identity, not dunder-dispatched
+    "",  // IsNot — identity, not dunder-dispatched
+    "",  // In — uses RHS __contains__, handled by mb_obj_contains
+    "",  // NotIn — uses RHS __contains__, handled by mb_obj_contains
 ];
 
 /// Dispatch a binary operation through dunder methods.
@@ -3341,17 +3667,15 @@ pub fn mb_dispatch_binop(op_code: i64, lhs: MbValue, rhs: MbValue) -> MbValue {
             13 | 15 => return super::builtins::mb_bitand(lhs, rhs),
             14 | 16 => return super::builtins::mb_bitor(lhs, rhs),
             17 => return super::builtins::mb_bitxor(lhs, rhs),
-            // 18 (lshift), 19 (rshift), and 20+ (Is/IsNot/In/NotIn) have no
-            // primitive entry in the slow path's `match op_name` — fall through
-            // so they hit the existing `MbValue::none()` (NotImplemented)
-            // terminal, which BinOp lshift/rshift have a separate handler for.
+            18 => return super::builtins::mb_lshift(lhs, rhs),
+            19 => return super::builtins::mb_rshift(lhs, rhs),
+            // 20+ (Is/IsNot/In/NotIn) have no primitive entry in the slow
+            // path's `match op_name` — fall through to the NotImplemented
+            // terminal, which their dedicated handlers take over.
             _ => {}
         }
     }
-    let op_name = BINOP_DUNDERS
-        .get(op_code as usize)
-        .copied()
-        .unwrap_or("add");
+    let op_name = BINOP_DUNDERS.get(op_code as usize).copied().unwrap_or("add");
     let dunder = format!("__{op_name}__");
     let rdunder = format!("__r{op_name}__");
 
@@ -3392,6 +3716,8 @@ pub fn mb_dispatch_binop(op_code: i64, lhs: MbValue, rhs: MbValue) -> MbValue {
         "and" => return super::builtins::mb_bitand(lhs, rhs),
         "or" => return super::builtins::mb_bitor(lhs, rhs),
         "xor" => return super::builtins::mb_bitxor(lhs, rhs),
+        "lshift" => return super::builtins::mb_lshift(lhs, rhs),
+        "rshift" => return super::builtins::mb_rshift(lhs, rhs),
         _ => {}
     }
     MbValue::none() // NotImplemented
@@ -3475,16 +3801,9 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
     // and __name__ field containing the actual type name.
     let target = if let Some(ptr) = class_name.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                class_name: ref cn,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { class_name: ref cn, ref fields } = (*ptr).data {
                 if cn == "type" {
-                    fields
-                        .read()
-                        .unwrap()
-                        .get("__name__")
+                    fields.read().unwrap().get("__name__")
                         .and_then(|v| extract_str(*v))
                         .unwrap_or_default()
                 } else {
@@ -3500,14 +3819,22 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
         // `threading.Thread` is a constructor dispatcher rather than a real
         // class. Look up the recorded class name for the pointer.
         super::module::NATIVE_TYPE_NAMES.with(|map| {
-            map.borrow()
-                .get(&(addr as u64))
-                .cloned()
-                .unwrap_or_default()
+            map.borrow().get(&(addr as u64)).cloned().unwrap_or_default()
         })
     } else {
         extract_str(class_name).unwrap_or_default()
     };
+    // abc: isinstance(obj, ABC) defers to ABCMeta.__subclasscheck__ semantics —
+    // nominal subclass, custom __subclasshook__ (structural), or registered
+    // virtual subclass. Handles both instances and builtin objects (e.g.
+    // isinstance([1, 2], Sized)).
+    if is_user_abc(&target) {
+        if let Some(obj_cls) = abc_runtime_class_name(obj) {
+            if let Some(result) = user_abc_issubclass(&obj_cls, &target) {
+                return MbValue::from_bool(result);
+            }
+        }
+    }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
@@ -3562,33 +3889,44 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
                     | "Container"
             ));
         }
+        // hmac handles: `isinstance(h, hmac.HMAC)` (target resolved to "HMAC"
+        // via NATIVE_TYPE_NAMES) — the constructor returns an int handle, so
+        // it cannot match through the Instance path.
+        if super::stdlib::hmac_mod::is_hmac_handle(id) {
+            return MbValue::from_bool(matches!(target.as_str(), "HMAC" | "object"));
+        }
+        // uuid handles: `isinstance(u, uuid.UUID)` (target resolved to
+        // "UUID" via NATIVE_TYPE_NAMES). The constructor returns an int
+        // handle, so it cannot match through the Instance path.
+        if super::stdlib::uuid_mod::is_uuid_handle(id) {
+            return MbValue::from_bool(matches!(target.as_str(), "UUID" | "object"));
+        }
     }
     // Check primitive types and built-in containers
-    let type_name = if obj.is_bool() {
-        "bool"
-    } else if obj.is_int() {
-        "int"
-    } else if obj.is_float() {
-        "float"
-    } else if obj.is_none() {
-        "NoneType"
-    } else if let Some(ptr) = obj.as_ptr() {
-        unsafe {
-            match &(*ptr).data {
-                ObjData::Str(_) => "str",
-                ObjData::List(_) => "list",
-                ObjData::Dict(_) => "dict",
-                ObjData::Tuple(_) => "tuple",
-                ObjData::Set(_) => "set",
-                ObjData::FrozenSet(_) => "frozenset",
-                ObjData::Bytes(_) => "bytes",
-                ObjData::ByteArray(_) => "bytearray",
-                _ => "",
+    let type_name = if obj.is_bool() { "bool" }
+        else if obj.is_int() { "int" }
+        else if obj.is_float() { "float" }
+        else if obj.is_none() { "NoneType" }
+        else if let Some(ptr) = obj.as_ptr() {
+            unsafe {
+                match &(*ptr).data {
+                    ObjData::Str(_) => "str",
+                    ObjData::List(_) => "list",
+                    ObjData::Dict(_) => "dict",
+                    ObjData::Tuple(_) => "tuple",
+                    ObjData::Set(_) => "set",
+                    ObjData::FrozenSet(_) => "frozenset",
+                    ObjData::Bytes(_) => "bytes",
+                    ObjData::ByteArray(_) => "bytearray",
+                    // Heap-allocated big integers (literals beyond the 48-bit
+                    // inline range, e.g. 2**64) are still `int` instances.
+                    // Without this, isinstance(2**64, int) returns False and
+                    // plistlib's UID range check / test_int round-trips break.
+                    ObjData::BigInt(_) => "int",
+                    _ => "",
+                }
             }
-        }
-    } else {
-        ""
-    };
+        } else { "" };
     // bool is a subclass of int in Python
     let matches = type_name == target
         || (type_name == "bool" && target == "int")
@@ -3611,7 +3949,10 @@ fn builtin_abc_instance_match(type_name: &str, target: &str) -> bool {
             type_name,
             "str" | "list" | "dict" | "tuple" | "bytes" | "bytearray"
         ),
-        "Sequence" => matches!(type_name, "str" | "list" | "tuple" | "bytes" | "bytearray"),
+        "Sequence" => matches!(
+            type_name,
+            "str" | "list" | "tuple" | "bytes" | "bytearray"
+        ),
         "MutableSequence" => type_name == "list" || type_name == "bytearray",
         "Mapping" | "MutableMapping" => type_name == "dict",
         "Set" => type_name == "set" || type_name == "frozenset",
@@ -3628,30 +3969,30 @@ fn is_builtin_self_subject(class_name: &str, obj: MbValue) -> bool {
         "bool" => obj.is_bool(),
         "int" => obj.is_int(),
         "float" => obj.is_float(),
-        "str" => obj
-            .as_ptr()
-            .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Str(_)) }),
-        "bytes" => obj
-            .as_ptr()
-            .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Bytes(_)) }),
-        "bytearray" => obj
-            .as_ptr()
-            .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::ByteArray(_)) }),
-        "list" => obj
-            .as_ptr()
-            .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::List(_)) }),
-        "tuple" => obj
-            .as_ptr()
-            .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Tuple(_)) }),
-        "dict" => obj
-            .as_ptr()
-            .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) }),
-        "set" => obj
-            .as_ptr()
-            .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::Set(_)) }),
-        "frozenset" => obj
-            .as_ptr()
-            .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::FrozenSet(_)) }),
+        "str" => obj.as_ptr().is_some_and(|ptr| unsafe {
+            matches!((*ptr).data, ObjData::Str(_))
+        }),
+        "bytes" => obj.as_ptr().is_some_and(|ptr| unsafe {
+            matches!((*ptr).data, ObjData::Bytes(_))
+        }),
+        "bytearray" => obj.as_ptr().is_some_and(|ptr| unsafe {
+            matches!((*ptr).data, ObjData::ByteArray(_))
+        }),
+        "list" => obj.as_ptr().is_some_and(|ptr| unsafe {
+            matches!((*ptr).data, ObjData::List(_))
+        }),
+        "tuple" => obj.as_ptr().is_some_and(|ptr| unsafe {
+            matches!((*ptr).data, ObjData::Tuple(_))
+        }),
+        "dict" => obj.as_ptr().is_some_and(|ptr| unsafe {
+            matches!((*ptr).data, ObjData::Dict(_))
+        }),
+        "set" => obj.as_ptr().is_some_and(|ptr| unsafe {
+            matches!((*ptr).data, ObjData::Set(_))
+        }),
+        "frozenset" => obj.as_ptr().is_some_and(|ptr| unsafe {
+            matches!((*ptr).data, ObjData::FrozenSet(_))
+        }),
         // range, memoryview, type — not natively represented; fall through
         _ => false,
     }
@@ -3666,11 +4007,7 @@ pub fn mb_match_pos_arg(obj: MbValue, class_name_val: MbValue, pos: i64) -> MbVa
         Some(n) => n,
         None => return MbValue::none(),
     };
-    let pos = if pos >= 0 {
-        pos as usize
-    } else {
-        return MbValue::none();
-    };
+    let pos = if pos >= 0 { pos as usize } else { return MbValue::none() };
 
     // PEP 634: built-in self-subject types — positional arg 0 captures the subject itself.
     if pos == 0 && is_builtin_self_subject(&class_name, obj) {
@@ -3687,29 +4024,17 @@ pub fn mb_match_pos_arg(obj: MbValue, class_name_val: MbValue, pos: i64) -> MbVa
                 match &(*ptr).data {
                     ObjData::List(ref lock) => {
                         let items = lock.read().unwrap();
-                        if pos < items.len() {
-                            extract_str(items[pos])
-                        } else {
-                            None
-                        }
+                        if pos < items.len() { extract_str(items[pos]) } else { None }
                     }
                     ObjData::Tuple(ref items) => {
                         // ObjData::Tuple holds Vec<MbValue> directly (no RwLock)
-                        if pos < items.len() {
-                            extract_str(items[pos])
-                        } else {
-                            None
-                        }
+                        if pos < items.len() { extract_str(items[pos]) } else { None }
                     }
                     _ => None,
                 }
             }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+        } else { None }
+    } else { None };
 
     match attr_name {
         Some(name) => {
@@ -3728,11 +4053,7 @@ pub fn mb_instance_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
     let attr_name = extract_str(attr).unwrap_or_default();
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 // Check instance __dict__
                 if fields.read().unwrap().contains_key(&attr_name) {
                     return MbValue::from_bool(true);
@@ -3760,11 +4081,7 @@ pub fn mb_class_has_pos_match(obj: MbValue, class_name_val: MbValue, pos: i64) -
         Some(n) => n,
         None => return MbValue::from_bool(false),
     };
-    let pos = if pos >= 0 {
-        pos as usize
-    } else {
-        return MbValue::from_bool(false);
-    };
+    let pos = if pos >= 0 { pos as usize } else { return MbValue::from_bool(false) };
 
     // PEP 634: built-in self-subject types — positional arg 0 always matches if type matches.
     if pos == 0 && is_builtin_self_subject(&class_name, obj) {
@@ -3781,27 +4098,19 @@ pub fn mb_class_has_pos_match(obj: MbValue, class_name_val: MbValue, pos: i64) -
                             let items = items.read().unwrap();
                             if pos < items.len() {
                                 extract_str(items[pos])
-                            } else {
-                                None
-                            }
+                            } else { None }
                         }
                         ObjData::Tuple(ref items) => {
                             // ObjData::Tuple holds Vec<MbValue> directly (no RwLock)
                             if pos < items.len() {
                                 extract_str(items[pos])
-                            } else {
-                                None
-                            }
+                            } else { None }
                         }
                         _ => None,
                     }
                 }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+            } else { None }
+        } else { None }
     };
     // Verify the instance also has the resolved attribute
     match attr_name {
@@ -3823,9 +4132,7 @@ pub fn mb_class_set_match_args(class_name: MbValue, args_list: MbValue) {
     CLASS_REGISTRY.with(|reg| {
         if let Some(cls) = reg.borrow_mut().get_mut(&name) {
             // Only set if not already explicitly defined — preserve explicit __match_args__
-            cls.class_attrs
-                .entry("__match_args__".to_string())
-                .or_insert(args_list);
+            cls.class_attrs.entry("__match_args__".to_string()).or_insert(args_list);
         }
     });
 }
@@ -3859,6 +4166,25 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
     // so that issubclass(type_obj, base_type_obj) works correctly (#974).
     let child_name = resolve_class_name(child).unwrap_or_default();
     let parent_name = resolve_class_name(parent).unwrap_or_default();
+    // contextlib.AbstractContextManager / AbstractAsyncContextManager use a
+    // structural __subclasshook__: a class is a virtual subclass iff it defines
+    // both __enter__ and __exit__ (sync) / __aenter__ and __aexit__ (async),
+    // and neither is shadowed by a class attribute set to None.
+    if parent_name == "AbstractContextManager"
+        || parent_name == "AbstractAsyncContextManager"
+    {
+        let (m1, m2) = if parent_name == "AbstractAsyncContextManager" {
+            ("__aenter__", "__aexit__")
+        } else {
+            ("__enter__", "__exit__")
+        };
+        return MbValue::from_bool(
+            class_defines_non_none(&child_name, m1) && class_defines_non_none(&child_name, m2),
+        );
+    }
+    if let Some(result) = user_abc_issubclass(&child_name, &parent_name) {
+        return MbValue::from_bool(result);
+    }
     CLASS_REGISTRY.with(|reg| {
         if let Some(cls) = reg.borrow().get(&child_name) {
             MbValue::from_bool(
@@ -3869,7 +4195,7 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
                     || cls
                         .mro
                         .iter()
-                        .any(|base| collections_abc_type_or_virtual_match(base, &parent_name)),
+                        .any(|base| collections_abc_type_or_virtual_match(base, &parent_name))
             )
         } else {
             MbValue::from_bool(
@@ -3877,10 +4203,107 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
                 || parent_name == "object" // all types are subclasses of object
                 || (child_name == "bool" && parent_name == "int") // bool is subclass of int
                 || collections_abc_type_or_virtual_match(&child_name, &parent_name)
-                || super::exception::is_subclass_of(&child_name, &parent_name),
+                || super::exception::is_subclass_of(&child_name, &parent_name)
             )
         }
     })
+}
+
+/// True iff `class_name` (walking its MRO) defines `member` as a real method
+/// or as a class attribute whose value is not None. The first MRO class that
+/// defines the name wins: if it binds the name to `None` (the CPython
+/// "opt-out" idiom, e.g. `__enter__ = None`), this returns false. Used by the
+/// contextlib AbstractContextManager structural `__subclasshook__`.
+fn class_defines_non_none(class_name: &str, member: &str) -> bool {
+    CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let mro: Vec<String> = match reg.get(class_name) {
+            Some(cls) => {
+                if cls.mro.is_empty() {
+                    vec![class_name.to_string()]
+                } else {
+                    cls.mro.clone()
+                }
+            }
+            None => return false,
+        };
+        for name in &mro {
+            if let Some(cls) = reg.get(name) {
+                if cls.methods.contains_key(member) {
+                    return true;
+                }
+                if let Some(val) = cls.class_attrs.get(member) {
+                    // First MRO class to bind the name decides; None opts out.
+                    return !val.is_none();
+                }
+            }
+        }
+        false
+    })
+}
+
+/// abc: the runtime class name of a value, for ABC isinstance dispatch.
+/// Instances report their stored class name; builtins map to their type name.
+fn abc_runtime_class_name(obj: MbValue) -> Option<String> {
+    if obj.is_bool() {
+        return Some("bool".to_string());
+    }
+    if obj.is_int() {
+        return Some("int".to_string());
+    }
+    if obj.is_float() {
+        return Some("float".to_string());
+    }
+    if obj.is_none() {
+        return Some("NoneType".to_string());
+    }
+    if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            return Some(match &(*ptr).data {
+                ObjData::Instance { class_name, .. } => class_name.clone(),
+                ObjData::Str(_) => "str".to_string(),
+                ObjData::List(_) => "list".to_string(),
+                ObjData::Dict(_) => "dict".to_string(),
+                ObjData::Tuple(_) => "tuple".to_string(),
+                ObjData::Set(_) => "set".to_string(),
+                ObjData::FrozenSet(_) => "frozenset".to_string(),
+                ObjData::Bytes(_) => "bytes".to_string(),
+                ObjData::ByteArray(_) => "bytearray".to_string(),
+                _ => return None,
+            });
+        }
+    }
+    None
+}
+
+/// abc: ABCMeta-style `__subclasscheck__` for user ABCs. Returns `Some(bool)`
+/// when `parent_name` is a user ABC (so the caller should use the answer), or
+/// `None` to fall through to the generic nominal check.
+fn user_abc_issubclass(child_name: &str, parent_name: &str) -> Option<bool> {
+    if child_name.is_empty() || parent_name.is_empty() {
+        return None;
+    }
+    if !is_user_abc(parent_name) {
+        return None;
+    }
+    // 1. Nominal subclass (own MRO contains the parent) — always true.
+    let nominal = CLASS_REGISTRY.with(|reg| {
+        reg.borrow().get(child_name).map_or(child_name == parent_name, |cls| {
+            child_name == parent_name || cls.mro.iter().any(|b| b == parent_name)
+        })
+    });
+    if nominal {
+        return Some(true);
+    }
+    // 2. Custom __subclasshook__ (structural check). A definite answer wins.
+    if let Some(hook_result) = user_abc_subclasshook(parent_name, child_name) {
+        return Some(hook_result);
+    }
+    // 3. Explicitly registered virtual subclasses (ABCMeta.register).
+    if collections_abc_virtual_match(child_name, parent_name) {
+        return Some(true);
+    }
+    Some(false)
 }
 
 /// Check if `child` class is a subclass of `parent` class via the CLASS_REGISTRY MRO.
@@ -3948,9 +4371,7 @@ pub fn mb_property_get(prop: MbValue, instance: MbValue) -> MbValue {
     // registered as func pointers.
     let val = mb_call_method1(getter, instance);
     if !val.is_none() {
-        unsafe {
-            super::rc::retain_if_ptr(val);
-        }
+        unsafe { super::rc::retain_if_ptr(val); }
         return val;
     }
     // Direct TAG_FUNC / raw address dispatch for class methods compiled
@@ -3960,9 +4381,7 @@ pub fn mb_property_get(prop: MbValue, instance: MbValue) -> MbValue {
         if addr > 4096 {
             let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
             let result = f(instance);
-            unsafe {
-                super::rc::retain_if_ptr(result);
-            }
+            unsafe { super::rc::retain_if_ptr(result); }
             return result;
         }
     }
@@ -3970,9 +4389,7 @@ pub fn mb_property_get(prop: MbValue, instance: MbValue) -> MbValue {
     if addr > 4096 {
         let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr as usize) };
         let result = f(instance);
-        unsafe {
-            super::rc::retain_if_ptr(result);
-        }
+        unsafe { super::rc::retain_if_ptr(result); }
         return result;
     }
     MbValue::none()
@@ -3989,8 +4406,7 @@ pub fn mb_property_set(prop: MbValue, instance: MbValue, value: MbValue) {
         // REQ: JIT-compiled functions use SystemV/C calling convention.
         if let Some(addr) = setter.as_func() {
             if addr > 4096 {
-                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                    unsafe { std::mem::transmute(addr) };
+                let f: extern "C" fn(MbValue, MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
                 f(instance, value);
                 return;
             }
@@ -4045,8 +4461,7 @@ pub fn mb_cached_property_get(desc: MbValue, instance: MbValue) -> MbValue {
         if val.is_none() {
             let addr = extract_func_addr(getter);
             if addr > 4096 {
-                let f: extern "C" fn(MbValue) -> MbValue =
-                    unsafe { std::mem::transmute(addr as usize) };
+                let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr as usize) };
                 val = f(instance);
             }
         }
@@ -4057,9 +4472,7 @@ pub fn mb_cached_property_get(desc: MbValue, instance: MbValue) -> MbValue {
         if !name_val.is_none() {
             mb_setattr(instance, name_val, val);
         }
-        unsafe {
-            super::rc::retain_if_ptr(val);
-        }
+        unsafe { super::rc::retain_if_ptr(val); }
     }
     val
 }
@@ -4176,10 +4589,8 @@ pub fn mb_super(class_name: MbValue, instance: MbValue) -> MbValue {
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*proxy).data {
             let mut fields = fields.write().unwrap();
-            fields.insert(
-                "__super_class__".to_string(),
-                MbValue::from_ptr(MbObject::new_str(name)),
-            );
+            fields.insert("__super_class__".to_string(),
+                MbValue::from_ptr(MbObject::new_str(name)));
             super::rc::retain_if_ptr(instance);
             fields.insert("__super_self__".to_string(), instance);
         }
@@ -4195,12 +4606,10 @@ pub fn mb_super_getattr(proxy: MbValue, attr: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let fields = fields.read().unwrap();
-                let super_class = fields
-                    .get("__super_class__")
+                let super_class = fields.get("__super_class__")
                     .and_then(|v| extract_str(*v))
                     .unwrap_or_default();
-                let super_self = fields
-                    .get("__super_self__")
+                let super_self = fields.get("__super_self__")
                     .copied()
                     .unwrap_or(MbValue::none());
 
@@ -4261,17 +4670,10 @@ const UNARYOP_DUNDERS: &[&str] = &["pos", "neg", "not", "invert"];
 pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
     // ── Primitive fast path ──
     match op_code {
-        0 => {
-            // pos (+x)
-            if let Some(i) = obj.as_int() {
-                return MbValue::from_int(i);
-            }
-            if let Some(f) = obj.as_float() {
-                return MbValue::from_float(f);
-            }
-            if let Some(b) = obj.as_bool() {
-                return MbValue::from_int(b as i64);
-            }
+        0 => { // pos (+x)
+            if let Some(i) = obj.as_int()  { return MbValue::from_int(i); }
+            if let Some(f) = obj.as_float() { return MbValue::from_float(f); }
+            if let Some(b) = obj.as_bool()  { return MbValue::from_int(b as i64); }
             // +complex → fresh complex (unary plus is identity). (#1256)
             if let Some(ptr) = obj.as_ptr() {
                 unsafe {
@@ -4281,17 +4683,10 @@ pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
                 }
             }
         }
-        1 => {
-            // neg (-x)
-            if let Some(i) = obj.as_int() {
-                return MbValue::from_int(-i);
-            }
-            if let Some(f) = obj.as_float() {
-                return MbValue::from_float(-f);
-            }
-            if let Some(b) = obj.as_bool() {
-                return MbValue::from_int(-(b as i64));
-            }
+        1 => { // neg (-x)
+            if let Some(i) = obj.as_int()  { return MbValue::from_int(-i); }
+            if let Some(f) = obj.as_float() { return MbValue::from_float(-f); }
+            if let Some(b) = obj.as_bool()  { return MbValue::from_int(-(b as i64)); }
             // -complex → both components negated. (#1256)
             if let Some(ptr) = obj.as_ptr() {
                 unsafe {
@@ -4301,31 +4696,18 @@ pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
                 }
             }
         }
-        2 => {
-            // not (not x)
-            if let Some(b) = obj.as_bool() {
-                return MbValue::from_bool(!b);
-            }
-            if let Some(i) = obj.as_int() {
-                return MbValue::from_bool(i == 0);
-            }
+        2 => { // not (not x)
+            if let Some(b) = obj.as_bool() { return MbValue::from_bool(!b); }
+            if let Some(i) = obj.as_int()  { return MbValue::from_bool(i == 0); }
         }
-        3 => {
-            // invert (~x)
-            if let Some(i) = obj.as_int() {
-                return MbValue::from_int(!i);
-            }
-            if let Some(b) = obj.as_bool() {
-                return MbValue::from_int(!(b as i64));
-            }
+        3 => { // invert (~x)
+            if let Some(i) = obj.as_int()  { return MbValue::from_int(!i); }
+            if let Some(b) = obj.as_bool()  { return MbValue::from_int(!(b as i64)); }
         }
         _ => {}
     }
     // ── Dunder method fallback ──
-    let op_name = UNARYOP_DUNDERS
-        .get(op_code as usize)
-        .copied()
-        .unwrap_or("neg");
+    let op_name = UNARYOP_DUNDERS.get(op_code as usize).copied().unwrap_or("neg");
     let dunder = format!("__{op_name}__");
     if let Some(method) = try_get_dunder(obj, &dunder) {
         return method; // Caller invokes with (obj)
@@ -4427,10 +4809,9 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                             // packs `mv[1:4]` as a 3-tuple key, so it lands
                             // here rather than the slice-Instance path
                             // below. (#1256 sub-priority 4)
-                            super::rc::ObjData::Instance {
-                                ref class_name,
-                                ref fields,
-                            } if class_name == "memoryview" => {
+                            super::rc::ObjData::Instance { ref class_name, ref fields }
+                                if class_name == "memoryview" =>
+                            {
                                 let buf = fields.read().unwrap().get("_buffer").copied();
                                 if let Some(b) = buf {
                                     if !b.is_none() {
@@ -4468,8 +4849,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         if !getitem_method.is_none() {
                             let addr = extract_func_addr(getitem_method);
                             if addr != 0 {
-                                let is_registered =
-                                    CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+                                let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
                                 if is_registered {
                                     // REQ: JIT-compiled functions use SystemV/C calling convention.
                                     let func: extern "C" fn(MbValue, MbValue) -> MbValue =
@@ -4481,9 +4861,9 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         // No __class_getitem__ → raise TypeError
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-                            MbValue::from_ptr(MbObject::new_str(format!(
-                                "'type' object is not subscriptable"
-                            ))),
+                            MbValue::from_ptr(MbObject::new_str(
+                                format!("'type' object is not subscriptable"),
+                            )),
                         );
                         return MbValue::none();
                     }
@@ -4492,15 +4872,14 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                 super::rc::ObjData::Bytes(_) | super::rc::ObjData::ByteArray(_) => {
                     return super::bytes_ops::mb_bytes_getitem(obj, key);
                 }
-                super::rc::ObjData::Instance {
-                    ref class_name,
-                    ref fields,
-                } => {
+                super::rc::ObjData::Instance { ref class_name, ref fields } => {
                     // namedtuple instances: int / slice indexing dispatches via
                     // an ephemeral tuple of the ordered field values so the
                     // existing tuple_ops paths handle bounds, negatives, and
                     // slices uniformly.
-                    if let Some(vals) = super::stdlib::collections_mod::namedtuple_values(obj) {
+                    if let Some(vals) =
+                        super::stdlib::collections_mod::namedtuple_values(obj)
+                    {
                         let t = MbValue::from_ptr(MbObject::new_tuple(vals));
                         return super::tuple_ops::mb_tuple_getitem(t, key);
                     }
@@ -4511,11 +4890,7 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     // handle — it's integer-only).
                     // (#1256 sub-priority 4 — memoryview indexing gap)
                     if class_name == "memoryview" {
-                        let buf = fields
-                            .read()
-                            .unwrap()
-                            .get("_buffer")
-                            .copied()
+                        let buf = fields.read().unwrap().get("_buffer").copied()
                             .unwrap_or(MbValue::none());
                         if buf.is_none() {
                             return MbValue::none();
@@ -4524,20 +4899,14 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         // bytes slice path so `mv[a:b:c]` returns the same
                         // shape as `bytes(b)[a:b:c]`.
                         if let Some(kp) = key.as_ptr() {
-                            if let ObjData::Instance {
-                                class_name: ref kn,
-                                fields: ref kf,
-                            } = (*kp).data
-                            {
+                            if let ObjData::Instance { class_name: ref kn, fields: ref kf } = (*kp).data {
                                 if kn == "slice" {
                                     let g = kf.read().unwrap();
                                     let start = g.get("start").copied().unwrap_or(MbValue::none());
                                     let stop = g.get("stop").copied().unwrap_or(MbValue::none());
                                     let step = g.get("step").copied().unwrap_or(MbValue::none());
                                     drop(g);
-                                    return super::bytes_ops::mb_bytes_slice_full(
-                                        buf, start, stop, step,
-                                    );
+                                    return super::bytes_ops::mb_bytes_slice_full(buf, start, stop, step);
                                 }
                             }
                         }
@@ -4586,19 +4955,30 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         let factory_name = super::builtins::callable_as_type_name(factory);
                         let default = if let Some(ref s) = factory_name {
                             match s.as_str() {
-                                "int" => MbValue::from_int(0),
+                                "int"   => MbValue::from_int(0),
                                 "float" => MbValue::from_float(0.0),
-                                "str" => MbValue::from_ptr(MbObject::new_str(String::new())),
-                                "list" => MbValue::from_ptr(MbObject::new_list(vec![])),
-                                "dict" => MbValue::from_ptr(MbObject::new_dict()),
-                                "bool" => MbValue::from_bool(false),
-                                _ => mb_call0(factory),
+                                "str"   => MbValue::from_ptr(MbObject::new_str(String::new())),
+                                "list"  => MbValue::from_ptr(MbObject::new_list(vec![])),
+                                "dict"  => MbValue::from_ptr(MbObject::new_dict()),
+                                "bool"  => MbValue::from_bool(false),
+                                _       => mb_call0(factory),
                             }
                         } else {
                             mb_call0(factory)
                         };
                         super::dict_ops::mb_dict_setitem(data, key, default);
                         return default;
+                    }
+                    // types.SimpleNamespace is not a mapping: subscripting it
+                    // raises TypeError (it defines no __getitem__). (#654)
+                    if class_name == "SimpleNamespace" {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "'types.SimpleNamespace' object is not subscriptable".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
                     }
                 }
                 _ => {}
@@ -4647,10 +5027,7 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                     super::list_ops::mb_list_setitem(obj, key, value);
                     return MbValue::none();
                 }
-                super::rc::ObjData::Instance {
-                    ref class_name,
-                    ref fields,
-                } => {
+                super::rc::ObjData::Instance { ref class_name, ref fields } => {
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"
                         || class_name == "collections.OrderedDict"
@@ -4711,6 +5088,14 @@ pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
 /// For file objects (int IDs): returns self (the file handle).
 /// For class instances: dispatches __enter__ dunder.
 pub fn mb_context_enter(obj: MbValue) -> MbValue {
+    // @contextlib.contextmanager: the decorated call returns a generator
+    // handle (a plain int). Drive the generator to its first `yield` and
+    // return the yielded value. A raw generator in a `with` is always an
+    // error in CPython (no __enter__), so treating live generator handles as
+    // contextmanager-driven here is safe.
+    if super::generator::is_known_generator(obj) {
+        return super::stdlib::contextlib_mod::cm_gen_enter(obj);
+    }
     // File objects: __enter__ returns self
     if obj.is_int() {
         let id = obj.as_int().unwrap_or(0) as u64;
@@ -4744,9 +5129,7 @@ pub fn mb_context_enter(obj: MbValue) -> MbValue {
         // allocation. Without this retain, the JIT epilogue double-releases the
         // object → UAF.
         if result.to_bits() == obj.to_bits() {
-            unsafe {
-                super::rc::retain_if_ptr(result);
-            }
+            unsafe { super::rc::retain_if_ptr(result); }
         }
         return result;
     }
@@ -4766,9 +5149,7 @@ pub fn mb_async_context_enter(obj: MbValue) -> MbValue {
         // actual entered value (e.g. `async def __aenter__(self): return ...`).
         let result = super::async_task::mb_await(coro);
         if result.to_bits() == obj.to_bits() {
-            unsafe {
-                super::rc::retain_if_ptr(result);
-            }
+            unsafe { super::rc::retain_if_ptr(result); }
         }
         return result;
     }
@@ -4844,6 +5225,31 @@ pub fn mb_context_exit(obj: MbValue, _has_exc: MbValue) -> MbValue {
         // (mb_call_method, attribute lookup, mb_print, ...) do not short-
         // circuit. Restored below if __exit__ does not suppress.
         super::exception::mb_clear_exception();
+    }
+
+    // @contextlib.contextmanager: drive the generator's exit. cm_gen_exit may
+    // leave a *new* exception pending (when the generator raises a different
+    // exception in its except/finally); in that case it returns truthy so we
+    // do NOT re-raise the original `pending` and let the new one propagate.
+    if super::generator::is_known_generator(obj) {
+        let none = MbValue::none();
+        let (exc_type, exc_val, exc_tb) = if has_pending {
+            (pending, pending, none)
+        } else {
+            (none, none, none)
+        };
+        let result =
+            super::stdlib::contextlib_mod::cm_gen_exit(obj, exc_type, exc_val, exc_tb);
+        if has_pending {
+            // If the generator left a *new* exception pending (different from
+            // the original), it is already in the runtime slot — leave it.
+            let new_pending = super::exception::mb_has_exception().as_bool() == Some(true);
+            let suppressed = super::builtins::mb_is_truthy(result) != 0;
+            if !suppressed && !new_pending {
+                super::exception::mb_reraise(pending);
+            }
+        }
+        return result;
     }
 
     // File objects: __exit__ closes the file
@@ -4932,17 +5338,13 @@ pub fn mb_obj_contains(obj: MbValue, item: MbValue) -> MbValue {
     // CPython's range.__contains__ — O(1) math check, never iterates.
     if let Some((current, stop, step)) = super::iter::mb_iter_range_params(obj) {
         if let Some(v) = item.as_int() {
-            if step == 0 {
-                return MbValue::from_bool(false);
-            }
+            if step == 0 { return MbValue::from_bool(false); }
             let in_bounds = if step > 0 {
                 v >= current && v < stop
             } else {
                 v <= current && v > stop
             };
-            if !in_bounds {
-                return MbValue::from_bool(false);
-            }
+            if !in_bounds { return MbValue::from_bool(false); }
             return MbValue::from_bool((v - current).rem_euclid(step.abs()) == 0);
         }
         return MbValue::from_bool(false);
@@ -4973,11 +5375,7 @@ pub fn mb_obj_len(obj: MbValue) -> MbValue {
 pub(crate) fn unwrap_dictlike_data(obj: MbValue) -> Option<MbValue> {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
-            if let super::rc::ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let super::rc::ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 if class_name == "collections.defaultdict"
                     || class_name == "collections.Counter"
                     || class_name == "collections.OrderedDict"
@@ -5009,7 +5407,9 @@ pub fn mb_obj_str(obj: MbValue) -> MbValue {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                return MbValue::from_ptr(MbObject::new_str(format!("<{class_name} instance>")));
+                return MbValue::from_ptr(MbObject::new_str(
+                    format!("<{class_name} instance>"),
+                ));
             }
         }
     }
@@ -5094,8 +5494,14 @@ pub fn mb_call_method1(method: MbValue, arg: MbValue) -> MbValue {
 /// are detected via `is_native_func` and dispatched with the correct ABI (#1132).
 pub fn mb_call0(func: MbValue) -> MbValue {
     super::gc::gc_safepoint();
-    // Re-box raw i64 returns from JIT-compiled functions.
-    fn rebox(raw: MbValue) -> MbValue {
+    // Re-box raw i64 returns from JIT-compiled functions. `is_boxed` (from
+    // is_boxed_return_func(addr), set for any/object-returning callees)
+    // disambiguates a non-NaN-prefixed raw return: those return a valid MbValue
+    // (e.g. a float) and must pass through untouched. See mb_call1_val::rebox.
+    fn rebox(raw: MbValue, is_boxed: bool) -> MbValue {
+        if is_boxed {
+            return raw;
+        }
         let bits = raw.to_bits();
         const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
         if bits & NAN_PREFIX == NAN_PREFIX {
@@ -5121,8 +5527,9 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                 return super::builtins::mb_call_spread(func, args_list);
             }
             // REQ: JIT-compiled functions use SystemV/C calling convention.
+            let is_boxed = super::module::is_boxed_return_func(addr as u64);
             let f: extern "C" fn() -> MbValue = unsafe { std::mem::transmute(addr) };
-            return rebox(f());
+            return rebox(f(), is_boxed);
         }
     }
     // Try closure handle (integer ID → lookup inner function)
@@ -5130,6 +5537,7 @@ pub fn mb_call0(func: MbValue) -> MbValue {
         let fn_val = super::closure::mb_closure_get_func(func);
         if let Some(addr) = fn_val.as_func() {
             if addr > 4096 {
+                let is_boxed = super::module::is_boxed_return_func(addr as u64);
                 // If the closure carries default argument values (e.g.
                 // `lambda x=i: ...`), dispatch using those defaults so the
                 // callee sees the frozen values instead of uninitialized
@@ -5139,25 +5547,22 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                     // REQ: JIT-compiled functions use SystemV/C calling convention.
                     match defaults.len() {
                         1 => {
-                            let f: extern "C" fn(MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr) };
-                            return rebox(f(defaults[0]));
+                            let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
+                            return rebox(f(defaults[0]), is_boxed);
                         }
                         2 => {
-                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr) };
-                            return rebox(f(defaults[0], defaults[1]));
+                            let f: extern "C" fn(MbValue, MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
+                            return rebox(f(defaults[0], defaults[1]), is_boxed);
                         }
                         3 => {
-                            let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                                unsafe { std::mem::transmute(addr) };
-                            return rebox(f(defaults[0], defaults[1], defaults[2]));
+                            let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
+                            return rebox(f(defaults[0], defaults[1], defaults[2]), is_boxed);
                         }
                         _ => { /* fall through to 0-arg call */ }
                     }
                 }
                 let f: extern "C" fn() -> MbValue = unsafe { std::mem::transmute(addr) };
-                return rebox(f());
+                return rebox(f(), is_boxed);
             }
         }
     }
@@ -5179,17 +5584,11 @@ pub fn mb_call0(func: MbValue) -> MbValue {
     // Type object as constructor: type('MyClass', bases, dict)() → instance creation
     if let Some(ptr) = func.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 if class_name == "type" {
-                    if let Some(type_name) = fields
-                        .read()
-                        .ok()
-                        .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
-                    {
+                    if let Some(type_name) = fields.read().ok().and_then(|f| {
+                        f.get("__name__").and_then(|v| extract_str(*v))
+                    }) {
                         let name_val = MbValue::from_ptr(MbObject::new_str(type_name));
                         let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
                         return mb_instance_new_with_init(name_val, args_list);
@@ -5215,10 +5614,19 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                 if !call_method.is_none() {
                     let addr = extract_func_addr(call_method);
                     if addr > 4096 {
+                        let is_boxed = super::module::is_boxed_return_func(addr as u64);
                         let f: extern "C" fn(MbValue) -> MbValue =
                             std::mem::transmute(addr as usize);
-                        return rebox(f(func));
+                        return rebox(f(func), is_boxed);
                     }
+                }
+            }
+            // Bare class-name string naming a registered class → zero-arg
+            // construction (`from M import C; C()`).
+            if let ObjData::Str(ref s) = (*ptr).data {
+                if class_is_registered(s) {
+                    let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
+                    return mb_instance_new_with_init(func, args_list);
                 }
             }
         }
@@ -5235,8 +5643,18 @@ pub fn mb_call0(func: MbValue) -> MbValue {
 pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
     super::gc::gc_safepoint();
     // Re-box raw i64 returns from JIT-compiled functions that declared a
-    // primitive return type — mb_call_spread has the same logic.
-    fn rebox(raw: MbValue) -> MbValue {
+    // primitive (int) return type — mb_call_spread has the same logic.
+    //
+    // A non-NaN-prefixed raw return is AMBIGUOUS: it is either a raw machine int
+    // (int fast-path return, needs boxing) OR a float MbValue (untagged raw f64
+    // bits, already correct). `is_boxed` — from is_boxed_return_func(addr), set
+    // for any/object-returning callees — disambiguates: those return a valid
+    // MbValue (a float, or an already-boxed value), so pass it through untouched
+    // rather than mis-boxing the bit pattern as a giant int.
+    fn rebox(raw: MbValue, is_boxed: bool) -> MbValue {
+        if is_boxed {
+            return raw;
+        }
         let bits = raw.to_bits();
         const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
         if bits & NAN_PREFIX == NAN_PREFIX {
@@ -5248,11 +5666,7 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
     // functools.partial / functools.wraps dispatch on Instance class_name.
     if let Some(ptr) = func.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 // Unbound method wrapper: route through mb_call_spread so
                 // the 1-arg form `str.lower("HELLO")` dispatches correctly.
                 if class_name == "__unbound_method__" {
@@ -5260,32 +5674,27 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
                 }
-                if class_name == "collections.abc._register_bound" {
+                if class_name == "collections.abc._register_bound"
+                    || class_name == "abc._user_register_bound"
+                {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
                 }
                 if class_name == "functools.partial"
                     || class_name == "functools.lru_cache_wrapper"
                     || class_name == "functools.lru_cache_factory"
+                    || class_name == "functools.cmp_to_key"
                 {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
                 }
                 if class_name == "functools.wraps" {
-                    // @wraps(f) applied to wrapper: copy f's __name__ to wrapper
-                    let wrapped = fields
-                        .read()
-                        .unwrap()
-                        .get("_wrapped")
-                        .copied()
-                        .unwrap_or(MbValue::none());
-                    let name = super::closure::mb_func_get_name(wrapped);
-                    if !name.is_none() {
-                        super::closure::mb_func_set_name(arg, name);
-                    }
-                    // Retain: JIT releases both arg VReg and result VReg.
-                    super::rc::retain_if_ptr(arg);
-                    return arg; // return wrapper unchanged
+                    // @wraps(f) applied to wrapper: copy __name__/__doc__/__module__
+                    // /__qualname__ from f, set __wrapped__ = f, then return the
+                    // wrapper. Full copy lives in functools_mod.
+                    let wrapped = fields.read().unwrap()
+                        .get("_wrapped").copied().unwrap_or(MbValue::none());
+                    return super::stdlib::functools_mod::mb_functools_wraps_apply(arg, wrapped);
                 }
                 if class_name == "UnionType" {
                     super::exception::mb_raise(
@@ -5331,8 +5740,9 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                 return super::builtins::mb_call_spread(func, args_list);
             }
             // REQ: JIT-compiled functions use SystemV/C calling convention.
+            let is_boxed = super::module::is_boxed_return_func(addr as u64);
             let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
-            return rebox(f(arg));
+            return rebox(f(arg), is_boxed);
         }
     }
     // Try closure handle (integer ID → lookup inner function)
@@ -5340,6 +5750,7 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
         let fn_val = super::closure::mb_closure_get_func(func);
         if let Some(addr) = fn_val.as_func() {
             if addr > 4096 {
+                let is_boxed = super::module::is_boxed_return_func(addr as u64);
                 if super::module::is_variadic_func(addr as u64)
                     || super::module::is_kwargs_func(addr as u64)
                 {
@@ -5361,21 +5772,17 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                             2 => {
                                 let f: extern "C" fn(MbValue, MbValue) -> MbValue =
                                     unsafe { std::mem::transmute(addr) };
-                                return rebox(f(arg, fill[0]));
+                                return rebox(f(arg, fill[0]), is_boxed);
                             }
                             3 => {
                                 let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
                                     unsafe { std::mem::transmute(addr) };
-                                return rebox(f(arg, fill[0], fill[1]));
+                                return rebox(f(arg, fill[0], fill[1]), is_boxed);
                             }
                             4 => {
-                                let f: extern "C" fn(
-                                    MbValue,
-                                    MbValue,
-                                    MbValue,
-                                    MbValue,
-                                ) -> MbValue = unsafe { std::mem::transmute(addr) };
-                                return rebox(f(arg, fill[0], fill[1], fill[2]));
+                                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
+                                    unsafe { std::mem::transmute(addr) };
+                                return rebox(f(arg, fill[0], fill[1], fill[2]), is_boxed);
                             }
                             _ => { /* arity > 4: fall through to plain 1-arg dispatch */ }
                         }
@@ -5383,7 +5790,20 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                 }
                 // REQ: JIT-compiled functions use SystemV/C calling convention.
                 let f: extern "C" fn(MbValue) -> MbValue = unsafe { std::mem::transmute(addr) };
-                return rebox(f(arg));
+                return rebox(f(arg), is_boxed);
+            }
+        }
+    }
+    // A bare class-name string naming a registered user class is a constructor
+    // when called through a value binding (e.g. `from plistlib import UID;
+    // UID(1)`). Route to mb_call_spread, which fires __init__.
+    if let Some(ptr) = func.as_ptr() {
+        unsafe {
+            if let ObjData::Str(ref s) = (*ptr).data {
+                if class_is_registered(s) {
+                    let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
+                    return super::builtins::mb_call_spread(func, args_list);
+                }
             }
         }
     }
@@ -5439,8 +5859,8 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     // other receiver shape are unchanged.
     if let (Some(recv_ptr), Some(name_ptr)) = (receiver.as_ptr(), method_name.as_ptr()) {
         unsafe {
-            if let (ObjData::Dict(ref lock), ObjData::Str(ref name_s)) =
-                (&(*recv_ptr).data, &(*name_ptr).data)
+            if let (ObjData::Dict(ref lock), ObjData::Str(ref name_s))
+                = (&(*recv_ptr).data, &(*name_ptr).data)
             {
                 let callable = {
                     let guard = lock.read().unwrap();
@@ -5468,6 +5888,43 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
 
     let name = extract_str(method_name).unwrap_or_default();
 
+    // statistics.NormalDist behavioral methods (cdf / pdf / inv_cdf / zscore /
+    // quantiles). The constructor lives in statistics_mod; the methods are
+    // delegated here so the instance stays a plain Instance. Returns None for
+    // method names the module does not model, falling through to the generic
+    // path below.
+    // contextlib.ExitStack / AsyncExitStack stateful methods (enter_context,
+    // callback, push, pop_all, close, plus the dunders). Route to the
+    // contextlib module so the receiver's `_callbacks` list is mutated.
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "contextlib.ExitStack"
+                    || class_name == "contextlib.AsyncExitStack"
+                {
+                    return super::stdlib::contextlib_mod::mb_exitstack_method(
+                        receiver, &name, args,
+                    );
+                }
+            }
+        }
+    }
+
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "NormalDist" {
+                    let items = super::builtins::extract_items(args);
+                    if let Some(result) = super::stdlib::statistics_mod::mb_statistics_normaldist_method(
+                        receiver, &name, &items,
+                    ) {
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
@@ -5486,11 +5943,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     // neither a __class__ method table nor a field named cache_info.
     if let Some(ptr) = receiver.as_ptr() {
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 if class_name == "memoryview" {
                     match name.as_str() {
                         "tobytes" => {
@@ -5520,16 +5973,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 if let Some(bp) = b.as_ptr() {
                                     let bytes_vec: Option<Vec<u8>> = match (*bp).data {
                                         ObjData::Bytes(ref data) => Some(data.clone()),
-                                        ObjData::ByteArray(ref lock) => {
-                                            Some(lock.read().unwrap().clone())
-                                        }
+                                        ObjData::ByteArray(ref lock) => Some(lock.read().unwrap().clone()),
                                         _ => None,
                                     };
                                     if let Some(bv) = bytes_vec {
-                                        let items: Vec<MbValue> = bv
-                                            .iter()
-                                            .map(|byte| MbValue::from_int(*byte as i64))
-                                            .collect();
+                                        let items: Vec<MbValue> = bv.iter().map(|byte| MbValue::from_int(*byte as i64)).collect();
                                         return MbValue::from_ptr(MbObject::new_list(items));
                                     }
                                 }
@@ -5545,14 +5993,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "functools.lru_cache_wrapper" {
                     match name.as_str() {
                         "cache_info" => {
-                            return super::stdlib::functools_mod::mb_functools_lru_cache_info(
-                                receiver,
-                            );
+                            return super::stdlib::functools_mod::mb_functools_lru_cache_info(receiver);
                         }
                         "cache_clear" => {
-                            return super::stdlib::functools_mod::mb_functools_lru_cache_clear(
-                                receiver,
-                            );
+                            return super::stdlib::functools_mod::mb_functools_lru_cache_clear(receiver);
                         }
                         _ => {}
                     }
@@ -5561,14 +6005,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // slice.indices(length) — CPython 3.12 returns the (start, stop,
             // step) tuple a Python sequence would use for `seq[s]` against a
             // sequence of length `length`. Filed under #1256 long-tail.
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 if class_name == "slice" && name == "indices" {
                     let arg_items = super::builtins::extract_items(args);
-                    let length = arg_items.first().and_then(|v| v.as_int()).unwrap_or(0);
+                    let length = arg_items.first()
+                        .and_then(|v| v.as_int())
+                        .unwrap_or(0);
                     let (start_v, stop_v, step_v) = {
                         let f = fields.read().unwrap();
                         (
@@ -5577,11 +6019,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             f.get("step").copied().unwrap_or(MbValue::none()),
                         )
                     };
-                    let step = if step_v.is_none() {
-                        1
-                    } else {
-                        step_v.as_int().unwrap_or(1)
-                    };
+                    let step = if step_v.is_none() { 1 } else { step_v.as_int().unwrap_or(1) };
                     let step = if step == 0 { 1 } else { step };
                     let (default_start, default_stop) = if step > 0 {
                         (0i64, length)
@@ -5593,37 +6031,39 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         // [lower, upper] where bounds depend on step sign.
                         let mut x = if v < 0 { v + length } else { v };
                         if step > 0 {
-                            if x < 0 {
-                                x = 0;
-                            }
-                            if x > length {
-                                x = length;
-                            }
+                            if x < 0 { x = 0; }
+                            if x > length { x = length; }
                         } else {
-                            if x < -1 {
-                                x = -1;
-                            }
-                            if x > length - 1 {
-                                x = length - 1;
-                            }
+                            if x < -1 { x = -1; }
+                            if x > length - 1 { x = length - 1; }
                         }
                         x
                     };
-                    let start = if start_v.is_none() {
-                        default_start
-                    } else {
-                        clamp(start_v.as_int().unwrap_or(default_start))
-                    };
-                    let stop = if stop_v.is_none() {
-                        default_stop
-                    } else {
-                        clamp(stop_v.as_int().unwrap_or(default_stop))
-                    };
+                    let start = if start_v.is_none() { default_start } else { clamp(start_v.as_int().unwrap_or(default_start)) };
+                    let stop = if stop_v.is_none() { default_stop } else { clamp(stop_v.as_int().unwrap_or(default_stop)) };
                     return MbValue::from_ptr(super::rc::MbObject::new_tuple(vec![
                         MbValue::from_int(start),
                         MbValue::from_int(stop),
                         MbValue::from_int(step),
                     ]));
+                }
+            }
+            // ExceptionGroup (PEP 654) subgroup / split. These groups are
+            // Instances carrying an `exceptions` field; their methods are not in
+            // the class method table, so route them to the exception runtime
+            // before the generic lookup raises AttributeError.
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if (class_name == "ExceptionGroup"
+                    || class_name == "BaseExceptionGroup"
+                    || fields.read().unwrap().contains_key("exceptions"))
+                    && matches!(name.as_str(), "subgroup" | "split")
+                {
+                    let items = super::builtins::extract_items(args);
+                    let arg = items.first().copied().unwrap_or_else(MbValue::none);
+                    return match name.as_str() {
+                        "subgroup" => super::exception::mb_exception_group_subgroup(receiver, arg),
+                        _ => super::exception::mb_exception_group_split(receiver, arg),
+                    };
                 }
             }
             // threading.Lock / RLock / Event / Condition stubs are Instances
@@ -5636,14 +6076,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "Lock" {
                     match name.as_str() {
                         "acquire" | "__enter__" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_acquire(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_lock_acquire(receiver);
                         }
                         "release" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_release(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_lock_release(receiver);
                         }
                         "__exit__" => {
                             super::stdlib::threading_mod::mb_threading_lock_release(receiver);
@@ -5664,14 +6100,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "RLock" {
                     match name.as_str() {
                         "acquire" | "__enter__" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_acquire(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_lock_acquire(receiver);
                         }
                         "release" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_release(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_lock_release(receiver);
                         }
                         "__exit__" => {
                             super::stdlib::threading_mod::mb_threading_lock_release(receiver);
@@ -5686,20 +6118,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             return super::stdlib::threading_mod::mb_threading_event_set(receiver);
                         }
                         "clear" => {
-                            return super::stdlib::threading_mod::mb_threading_event_clear(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_event_clear(receiver);
                         }
                         "is_set" => {
-                            return super::stdlib::threading_mod::mb_threading_event_is_set(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_event_is_set(receiver);
                         }
                         "wait" => {
                             // Sync stub: report set state without blocking.
-                            return super::stdlib::threading_mod::mb_threading_event_is_set(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_event_is_set(receiver);
                         }
                         _ => {}
                     }
@@ -5707,14 +6133,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "Condition" {
                     match name.as_str() {
                         "acquire" | "__enter__" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_acquire(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_lock_acquire(receiver);
                         }
                         "release" => {
-                            return super::stdlib::threading_mod::mb_threading_lock_release(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_lock_release(receiver);
                         }
                         "__exit__" => {
                             super::stdlib::threading_mod::mb_threading_lock_release(receiver);
@@ -5735,20 +6157,37 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             let d = arg_items.first().copied().unwrap_or_else(MbValue::none);
                             return super::stdlib::io_mod::mb_stringio_write(receiver, d);
                         }
-                        "read" | "readline" | "readlines" => {
-                            return super::stdlib::io_mod::mb_stringio_read(receiver);
+                        "read" => {
+                            let n = arg_items.first().copied().unwrap_or_else(MbValue::none);
+                            return super::stdlib::io_mod::mb_stringio_read_n(receiver, n);
+                        }
+                        "readline" => {
+                            return super::stdlib::io_mod::mb_stringio_readline(receiver);
+                        }
+                        "readlines" => {
+                            return super::stdlib::io_mod::mb_stringio_readlines(receiver);
+                        }
+                        "__iter__" => {
+                            return super::stdlib::io_mod::dispatch_stringio_iter(receiver);
                         }
                         "getvalue" => {
                             return super::stdlib::io_mod::mb_stringio_getvalue(receiver);
                         }
                         "seek" => {
                             let p = arg_items.first().copied().unwrap_or_else(MbValue::none);
-                            return super::stdlib::io_mod::mb_stringio_seek(receiver, p);
+                            let w = arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_int(0));
+                            return super::stdlib::io_mod::mb_stringio_seek_whence(receiver, p, w);
                         }
                         "tell" => {
                             return super::stdlib::io_mod::mb_stringio_tell(receiver);
                         }
-                        "close" | "flush" => return MbValue::none(),
+                        "truncate" => {
+                            let n = arg_items.first().copied().unwrap_or_else(MbValue::none);
+                            return super::stdlib::io_mod::mb_stringio_truncate(receiver, n);
+                        }
+                        "readable" | "writable" | "seekable" => return MbValue::from_bool(true),
+                        "close" => return super::stdlib::io_mod::mb_stringio_close(receiver),
+                        "flush" => return MbValue::none(),
                         "__enter__" => {
                             super::rc::retain_if_ptr(receiver);
                             return receiver;
@@ -5764,12 +6203,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             let d = arg_items.first().copied().unwrap_or_else(MbValue::none);
                             return super::stdlib::io_mod::mb_bytesio_write(receiver, d);
                         }
-                        "read" => {
+                        "read" | "read1" => {
                             let n = arg_items.first().copied().unwrap_or_else(MbValue::none);
                             return super::stdlib::io_mod::mb_bytesio_read_n(receiver, n);
                         }
-                        "readline" | "readlines" => {
-                            return super::stdlib::io_mod::mb_bytesio_read(receiver);
+                        "readline" => {
+                            let n = arg_items.first().copied().unwrap_or_else(MbValue::none);
+                            return super::stdlib::io_mod::mb_bytesio_readline(receiver, n);
+                        }
+                        "readlines" => {
+                            return super::stdlib::io_mod::mb_bytesio_readlines(receiver);
+                        }
+                        "__iter__" => {
+                            return super::stdlib::io_mod::dispatch_bytesio_iter(receiver);
                         }
                         "readinto" => {
                             let d = arg_items.first().copied().unwrap_or_else(MbValue::none);
@@ -5780,14 +6226,39 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         }
                         "seek" => {
                             let p = arg_items.first().copied().unwrap_or_else(MbValue::none);
-                            let w = arg_items.get(1).copied().unwrap_or_else(MbValue::none);
-                            return super::stdlib::io_mod::mb_bytesio_seek_with_whence(
-                                receiver, p, w,
-                            );
+                            let w = arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_int(0));
+                            return super::stdlib::io_mod::mb_bytesio_seek_with_whence(receiver, p, w);
                         }
                         "tell" => {
                             return super::stdlib::io_mod::mb_bytesio_tell(receiver);
                         }
+                        "truncate" => {
+                            let n = arg_items.first().copied().unwrap_or_else(MbValue::none);
+                            return super::stdlib::io_mod::mb_bytesio_truncate(receiver, n);
+                        }
+                        "readable" | "seekable" | "writable" => return MbValue::from_bool(true),
+                        "close" => return super::stdlib::io_mod::mb_bytesio_close(receiver),
+                        "flush" => return MbValue::none(),
+                        "__enter__" => {
+                            super::rc::retain_if_ptr(receiver);
+                            return receiver;
+                        }
+                        "__exit__" => return MbValue::from_bool(false),
+                        _ => {}
+                    }
+                }
+                if class_name == "BufferedWriter" {
+                    let arg_items = super::builtins::extract_items(args);
+                    match name.as_str() {
+                        "write" => {
+                            let d = arg_items.first().copied().unwrap_or_else(MbValue::none);
+                            return super::stdlib::io_mod::mb_bufferedwriter_write(receiver, d);
+                        }
+                        "read" | "read1" | "peek" | "readline" | "readlines" => {
+                            return super::stdlib::io_mod::mb_bufferedwriter_read(receiver);
+                        }
+                        "readable" => return MbValue::from_bool(false),
+                        "writable" | "seekable" => return MbValue::from_bool(true),
                         "close" | "flush" => return MbValue::none(),
                         "__enter__" => {
                             super::rc::retain_if_ptr(receiver);
@@ -5850,26 +6321,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "Thread" {
                     match name.as_str() {
                         "start" | "run" => {
-                            return super::stdlib::threading_mod::mb_threading_thread_start(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_thread_start(receiver);
                         }
                         "join" => {
-                            return super::stdlib::threading_mod::mb_threading_thread_join(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_thread_join(receiver);
                         }
                         "is_alive" | "isAlive" => {
-                            return super::stdlib::threading_mod::mb_threading_thread_is_alive(
-                                receiver,
-                            );
+                            return super::stdlib::threading_mod::mb_threading_thread_is_alive(receiver);
                         }
                         "getName" => {
                             unsafe {
                                 if let Some(ptr) = receiver.as_ptr() {
                                     if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                                        if let Some(v) = fields.read().unwrap().get("name").copied()
-                                        {
+                                        if let Some(v) = fields.read().unwrap().get("name").copied() {
                                             return v;
                                         }
                                     }
@@ -5878,6 +6342,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             return MbValue::none();
                         }
                         "setName" | "setDaemon" => return MbValue::none(),
+                        _ => {}
+                    }
+                }
+                if class_name == "Barrier" {
+                    match name.as_str() {
+                        "wait" => {
+                            return super::stdlib::threading_mod::mb_threading_barrier_wait(receiver);
+                        }
+                        "reset" => {
+                            return super::stdlib::threading_mod::mb_threading_barrier_reset(receiver);
+                        }
+                        "abort" => {
+                            return super::stdlib::threading_mod::mb_threading_barrier_abort(receiver);
+                        }
                         _ => {}
                     }
                 }
@@ -5902,14 +6380,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             unsafe {
                 match &(*ptr).data {
                     ObjData::Str(ref s) => Some(s.clone()),
-                    ObjData::Instance {
-                        class_name: ref cn,
-                        ref fields,
-                    } if cn == "type" => fields
-                        .read()
-                        .unwrap()
-                        .get("__name__")
-                        .and_then(|v| extract_str(*v)),
+                    ObjData::Instance { class_name: ref cn, ref fields } if cn == "type" => {
+                        fields.read().unwrap()
+                            .get("__name__")
+                            .and_then(|v| extract_str(*v))
+                    }
                     _ => None,
                 }
             }
@@ -5918,53 +6393,53 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         };
 
         if let Some(ref s) = type_name_opt {
+            // <type>.__new__(cls) — allocate a BARE instance of `cls` without
+            // running __init__ (CPython's object.__new__). The type wall builds a
+            // receiver for instance-method checks via `obj = object.__new__(C)`.
+            // `cls` is the first arg (a type object carrying __name__, or a bare
+            // class-name string); the bound type `s` (usually "object") is ignored.
+            if name == "__new__" {
+                let items = super::builtins::extract_items(args);
+                if let Some(cls) = items.first().copied() {
+                    // `resolve_class_name` recovers the class name from a bare
+                    // name string, a `type` object, OR a native constructor func
+                    // pointer (defaultdict/OrderedDict/date are dispatcher funcs
+                    // registered in NATIVE_TYPE_NAMES) — the latter is what the
+                    // type-wall `obj = object.__new__(StdlibClass)` idiom needs.
+                    // The old inline extraction only handled Str / `type` objects
+                    // and returned None for a func pointer, dropping to a getattr
+                    // fallback that raised "'type' has no attribute '__new__'".
+                    if let Some(cn) = resolve_class_name(cls) {
+                        return MbValue::from_ptr(MbObject::new_instance(cn));
+                    }
+                }
+            }
             if name == "register" && is_collections_abc_name(s) {
                 let items = super::builtins::extract_items(args);
                 let child = items.first().copied().unwrap_or_else(MbValue::none);
                 return mb_collections_abc_register(s, child);
             }
-            let is_type_name = matches!(
-                s.as_str(),
-                "str"
-                    | "list"
-                    | "dict"
-                    | "tuple"
-                    | "set"
-                    | "frozenset"
-                    | "int"
-                    | "float"
-                    | "bool"
-                    | "bytes"
-                    | "bytearray"
-            );
-            let is_classmethod_name = matches!(
-                name.as_str(),
-                "maketrans"
-                    | "fromkeys"
-                    | "fromhex"
-                    | "fromisoformat"
-                    | "from_bytes"
-                    | "fromtimestamp"
-                    | "fromordinal"
-                    | "from_float"
-                    | "utcfromtimestamp"
-                    | "today"
-                    | "now"
-                    | "utcnow"
-            );
+            if name == "register" && is_user_abc(s) {
+                let items = super::builtins::extract_items(args);
+                let child = items.first().copied().unwrap_or_else(MbValue::none);
+                return mb_user_abc_register(s, child);
+            }
+            let is_type_name = matches!(s.as_str(),
+                "str" | "list" | "dict" | "tuple" | "set" | "frozenset"
+                | "int" | "float" | "bool" | "bytes" | "bytearray");
+            let is_classmethod_name = matches!(name.as_str(),
+                "maketrans" | "fromkeys" | "fromhex" | "fromisoformat"
+                | "from_bytes" | "fromtimestamp" | "fromordinal"
+                | "from_float" | "utcfromtimestamp" | "today" | "now"
+                | "utcnow");
             if is_type_name && is_classmethod_name {
                 // Classmethod dispatch — intercept the ones we implement
                 // and pass the type arg along so callees can specialize.
-                let arg_items: Vec<MbValue> = args
-                    .as_ptr()
-                    .and_then(|p| unsafe {
-                        if let ObjData::List(ref lk) = (*p).data {
-                            Some(lk.read().unwrap().to_vec())
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_default();
+                let arg_items: Vec<MbValue> = args.as_ptr().and_then(|p| unsafe {
+                    if let ObjData::List(ref lk) = (*p).data {
+                        Some(lk.read().unwrap().to_vec())
+                    } else { None }
+                }).unwrap_or_default();
                 if s == "int" && name == "from_bytes" {
                     return mb_int_from_bytes(
                         arg_items.first().copied().unwrap_or_else(MbValue::none),
@@ -5983,9 +6458,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 break;
                             }
                             let k = super::iter::mb_next(handle);
-                            unsafe {
-                                super::rc::retain_if_ptr(value);
-                            }
+                            unsafe { super::rc::retain_if_ptr(value); }
                             super::dict_ops::mb_dict_setitem(dict, k, value);
                         }
                     }
@@ -5997,16 +6470,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 return super::string_ops::dispatch_str_method(&name, str_recv, args);
             }
             if is_type_name && !is_classmethod_name {
-                let items = args
-                    .as_ptr()
-                    .and_then(|p| unsafe {
-                        if let ObjData::List(ref lk) = (*p).data {
-                            Some(lk.read().unwrap().clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_default();
+                let items = args.as_ptr().and_then(|p| unsafe {
+                    if let ObjData::List(ref lk) = (*p).data {
+                        Some(lk.read().unwrap().clone())
+                    } else { None }
+                }).unwrap_or_default();
                 if !items.is_empty() {
                     let new_recv = items[0];
                     let rest = MbValue::from_ptr(MbObject::new_list(items[1..].to_vec()));
@@ -6029,14 +6497,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::stdlib::hashlib_mod::is_hashlib_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
             match name.as_str() {
@@ -6058,14 +6523,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::stdlib::hmac_mod::is_hmac_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
             match name.as_str() {
@@ -6088,14 +6550,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::stdlib::decimal_mod::is_decimal_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
             match name.as_str() {
@@ -6129,14 +6588,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::stdlib::array_mod::is_array_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
             match name.as_str() {
@@ -6199,14 +6655,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::stdlib::queue_mod::is_queue_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
             match name.as_str() {
@@ -6233,14 +6686,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::stdlib::random_mod::is_random_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
             let a0 = || arg_items.first().copied().unwrap_or(MbValue::none());
@@ -6249,191 +6699,71 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             match name.as_str() {
                 "random" => return super::stdlib::random_mod::mb_random_method_random(receiver),
                 "seed" => return super::stdlib::random_mod::mb_random_method_seed(receiver, a0()),
-                "randint" => {
-                    return super::stdlib::random_mod::mb_random_method_randint(
-                        receiver,
-                        a0(),
-                        a1(),
-                    )
-                }
-                "randrange" => {
-                    return super::stdlib::random_mod::mb_random_method_randrange(
-                        receiver,
-                        a0(),
-                        a1(),
-                        arg_items
-                            .get(2)
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_int(1)),
-                    )
-                }
-                "uniform" => {
-                    return super::stdlib::random_mod::mb_random_method_uniform(
-                        receiver,
-                        a0(),
-                        a1(),
-                    )
-                }
-                "triangular" => {
-                    return super::stdlib::random_mod::mb_random_method_triangular(
-                        receiver,
-                        a0(),
-                        a1(),
-                        a2(),
-                    )
-                }
-                "choice" => {
-                    return super::stdlib::random_mod::mb_random_method_choice(receiver, a0())
-                }
-                "shuffle" => {
-                    return super::stdlib::random_mod::mb_random_method_shuffle(receiver, a0())
-                }
-                "sample" => {
-                    return super::stdlib::random_mod::mb_random_method_sample(receiver, a0(), a1())
-                }
-                "choices" => {
-                    return super::stdlib::random_mod::mb_random_method_choices(
-                        receiver,
-                        a0(),
-                        arg_items
-                            .get(1)
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_int(1)),
-                    )
-                }
-                "gauss" => {
-                    return super::stdlib::random_mod::mb_random_method_gauss(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(0.0)),
-                        arg_items
-                            .get(1)
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                    )
-                }
-                "normalvariate" => {
-                    return super::stdlib::random_mod::mb_random_method_normalvariate(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(0.0)),
-                        arg_items
-                            .get(1)
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                    )
-                }
-                "expovariate" => {
-                    return super::stdlib::random_mod::mb_random_method_expovariate(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                    )
-                }
-                "lognormvariate" => {
-                    return super::stdlib::random_mod::mb_random_method_lognormvariate(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(0.0)),
-                        arg_items
-                            .get(1)
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                    )
-                }
-                "vonmisesvariate" => {
-                    return super::stdlib::random_mod::mb_random_method_vonmisesvariate(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(0.0)),
-                        arg_items
-                            .get(1)
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(0.0)),
-                    )
-                }
-                "gammavariate" => {
-                    return super::stdlib::random_mod::mb_random_method_gammavariate(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                        arg_items
-                            .get(1)
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                    )
-                }
-                "betavariate" => {
-                    return super::stdlib::random_mod::mb_random_method_betavariate(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                        arg_items
-                            .get(1)
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                    )
-                }
-                "paretovariate" => {
-                    return super::stdlib::random_mod::mb_random_method_paretovariate(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                    )
-                }
-                "weibullvariate" => {
-                    return super::stdlib::random_mod::mb_random_method_weibullvariate(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                        arg_items
-                            .get(1)
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_float(1.0)),
-                    )
-                }
-                "getrandbits" => {
-                    return super::stdlib::random_mod::mb_random_method_getrandbits(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_int(32)),
-                    )
-                }
-                "randbytes" => {
-                    return super::stdlib::random_mod::mb_random_method_randbytes(
-                        receiver,
-                        arg_items
-                            .first()
-                            .copied()
-                            .unwrap_or_else(|| MbValue::from_int(0)),
-                    )
-                }
-                "getstate" => {
-                    return super::stdlib::random_mod::mb_random_method_getstate(receiver)
-                }
-                "setstate" => {
-                    return super::stdlib::random_mod::mb_random_method_setstate(receiver, a0())
-                }
+                "randint" => return super::stdlib::random_mod::mb_random_method_randint(receiver, a0(), a1()),
+                "randrange" => return super::stdlib::random_mod::mb_random_method_randrange(
+                    receiver, a0(), a1(),
+                    arg_items.get(2).copied().unwrap_or_else(|| MbValue::from_int(1)),
+                ),
+                "uniform" => return super::stdlib::random_mod::mb_random_method_uniform(receiver, a0(), a1()),
+                "triangular" => return super::stdlib::random_mod::mb_random_method_triangular(
+                    receiver, a0(), a1(), a2(),
+                ),
+                "choice" => return super::stdlib::random_mod::mb_random_method_choice(receiver, a0()),
+                "shuffle" => return super::stdlib::random_mod::mb_random_method_shuffle(receiver, a0()),
+                "sample" => return super::stdlib::random_mod::mb_random_method_sample(receiver, a0(), a1()),
+                "choices" => return super::stdlib::random_mod::mb_random_method_choices(
+                    receiver, a0(),
+                    arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_int(1)),
+                ),
+                "gauss" => return super::stdlib::random_mod::mb_random_method_gauss(
+                    receiver,
+                    arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(0.0)),
+                    arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                ),
+                "normalvariate" => return super::stdlib::random_mod::mb_random_method_normalvariate(
+                    receiver,
+                    arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(0.0)),
+                    arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                ),
+                "expovariate" => return super::stdlib::random_mod::mb_random_method_expovariate(
+                    receiver, arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                ),
+                "lognormvariate" => return super::stdlib::random_mod::mb_random_method_lognormvariate(
+                    receiver,
+                    arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(0.0)),
+                    arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                ),
+                "vonmisesvariate" => return super::stdlib::random_mod::mb_random_method_vonmisesvariate(
+                    receiver,
+                    arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(0.0)),
+                    arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_float(0.0)),
+                ),
+                "gammavariate" => return super::stdlib::random_mod::mb_random_method_gammavariate(
+                    receiver,
+                    arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                    arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                ),
+                "betavariate" => return super::stdlib::random_mod::mb_random_method_betavariate(
+                    receiver,
+                    arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                    arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                ),
+                "paretovariate" => return super::stdlib::random_mod::mb_random_method_paretovariate(
+                    receiver, arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                ),
+                "weibullvariate" => return super::stdlib::random_mod::mb_random_method_weibullvariate(
+                    receiver,
+                    arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                    arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_float(1.0)),
+                ),
+                "getrandbits" => return super::stdlib::random_mod::mb_random_method_getrandbits(
+                    receiver, arg_items.first().copied().unwrap_or_else(|| MbValue::from_int(32)),
+                ),
+                "randbytes" => return super::stdlib::random_mod::mb_random_method_randbytes(
+                    receiver, arg_items.first().copied().unwrap_or_else(|| MbValue::from_int(0)),
+                ),
+                "getstate" => return super::stdlib::random_mod::mb_random_method_getstate(receiver),
+                "setstate" => return super::stdlib::random_mod::mb_random_method_setstate(receiver, a0()),
                 _ => {}
             }
         }
@@ -6447,18 +6777,16 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::stdlib::fractions_mod::is_fraction_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
-            let result =
-                super::stdlib::fractions_mod::dispatch_method(receiver, name.as_str(), &arg_items);
+            let result = super::stdlib::fractions_mod::dispatch_method(
+                receiver, name.as_str(), &arg_items,
+            );
             if !result.is_none() {
                 return result;
             }
@@ -6471,14 +6799,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::stdlib::json_mod::is_json_encoder_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
             match name.as_str() {
@@ -6498,14 +6823,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             }
         }
         if super::stdlib::json_mod::is_json_decoder_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
             match name.as_str() {
@@ -6530,14 +6852,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::file_io::is_file_handle(id) {
-            let arg_items: Vec<MbValue> = args
-                .as_ptr()
+            let arg_items: Vec<MbValue> = args.as_ptr()
                 .and_then(|p| unsafe {
                     if let ObjData::List(ref lk) = (*p).data {
                         Some(lk.read().unwrap().to_vec())
-                    } else {
-                        None
-                    }
+                    } else { None }
                 })
                 .unwrap_or_default();
             match name.as_str() {
@@ -6546,17 +6865,38 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     return super::file_io::mb_file_write(receiver, text);
                 }
                 "read" => {
-                    return super::file_io::mb_file_read(receiver);
+                    let n = arg_items.first().copied().unwrap_or(MbValue::none());
+                    return super::file_io::mb_file_read_n(receiver, n);
                 }
                 "readline" => {
-                    return super::file_io::mb_file_readline(receiver);
+                    let n = arg_items.first().copied().unwrap_or(MbValue::none());
+                    return super::file_io::mb_file_readline_n(receiver, n);
                 }
                 "readlines" => {
                     return super::file_io::mb_file_readlines(receiver);
                 }
+                "readinto" => {
+                    let dst = arg_items.first().copied().unwrap_or(MbValue::none());
+                    return super::file_io::mb_file_readinto(receiver, dst);
+                }
                 "writelines" => {
                     let lst = arg_items.first().copied().unwrap_or(MbValue::none());
                     return super::file_io::mb_file_writelines(receiver, lst);
+                }
+                "tell" => {
+                    return super::file_io::mb_file_tell(receiver);
+                }
+                "seek" => {
+                    let off = arg_items.first().copied().unwrap_or(MbValue::none());
+                    let w = arg_items.get(1).copied().unwrap_or(MbValue::from_int(0));
+                    return super::file_io::mb_file_seek(receiver, off, w);
+                }
+                "flush" => {
+                    return super::file_io::mb_file_flush(receiver);
+                }
+                "truncate" => {
+                    let n = arg_items.first().copied().unwrap_or(MbValue::none());
+                    return super::file_io::mb_file_truncate(receiver, n);
                 }
                 "close" => {
                     super::file_io::mb_file_close(receiver);
@@ -6585,61 +6925,39 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 return MbValue::from_int(val.unsigned_abs().count_ones() as i64);
             }
             "to_bytes" => {
-                let arg_items: Vec<MbValue> = args
-                    .as_ptr()
-                    .and_then(|p| unsafe {
-                        if let ObjData::List(ref lk) = (*p).data {
-                            Some(lk.read().unwrap().to_vec())
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_default();
+                let arg_items: Vec<MbValue> = args.as_ptr().and_then(|p| unsafe {
+                    if let ObjData::List(ref lk) = (*p).data {
+                        Some(lk.read().unwrap().to_vec())
+                    } else { None }
+                }).unwrap_or_default();
                 // Default `length=1`, `byteorder='big'`, `signed=False`
                 // (CPython 3.11+ defaults).
-                let length = arg_items
-                    .first()
-                    .and_then(|v| v.as_int())
-                    .unwrap_or(1)
-                    .max(0) as usize;
-                let byteorder = arg_items
-                    .get(1)
+                let length = arg_items.first()
+                    .and_then(|v| v.as_int()).unwrap_or(1).max(0) as usize;
+                let byteorder = arg_items.get(1)
                     .and_then(|v| v.as_ptr())
                     .and_then(|p| unsafe {
-                        if let ObjData::Str(ref s) = (*p).data {
-                            Some(s.clone())
-                        } else {
-                            None
-                        }
+                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
                     })
                     .unwrap_or_else(|| "big".to_string());
                 // `signed=True` may arrive positionally (arg 2) or packed
                 // into a trailing kwargs dict (my #107 method-kwargs fix).
-                let signed = arg_items
-                    .iter()
-                    .find_map(|v| {
-                        if let Some(b) = v.as_bool() {
-                            return Some(b);
-                        }
-                        if let Some(ptr) = v.as_ptr() {
-                            unsafe {
-                                if let ObjData::Dict(ref lock) = (*ptr).data {
-                                    let guard = lock.read().unwrap();
-                                    let k = super::dict_ops::DictKey::Str("signed".to_string());
-                                    return guard.get(&k).and_then(|v2| v2.as_bool());
-                                }
+                let signed = arg_items.iter().find_map(|v| {
+                    if let Some(b) = v.as_bool() { return Some(b); }
+                    if let Some(ptr) = v.as_ptr() {
+                        unsafe {
+                            if let ObjData::Dict(ref lock) = (*ptr).data {
+                                let guard = lock.read().unwrap();
+                                let k = super::dict_ops::DictKey::Str("signed".to_string());
+                                return guard.get(&k).and_then(|v2| v2.as_bool());
                             }
                         }
-                        None
-                    })
-                    .unwrap_or(false);
+                    }
+                    None
+                }).unwrap_or(false);
                 // Encode val as two's-complement in `length` bytes.
                 let mut buf = vec![0u8; length];
-                let raw = if signed {
-                    val as i128
-                } else {
-                    val as i128 & ((1i128 << (length * 8).min(127)) - 1)
-                };
+                let raw = if signed { val as i128 } else { val as i128 & ((1i128 << (length * 8).min(127)) - 1) };
                 let bits = if signed && val < 0 {
                     // Two's complement — fill top with 0xFF then write LE digits.
                     let mut b = vec![0xFFu8; length];
@@ -6680,18 +6998,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // Arithmetic dunders — let `(5).__add__(3)` / `int.__mul__(a, b)`
             // work as method calls. Fall back to builtins::mb_* so the same
             // logic drives both operator form and method form.
-            "__add__" | "__sub__" | "__mul__" | "__floordiv__" | "__mod__" | "__pow__"
-            | "__and__" | "__or__" | "__xor__" | "__truediv__" => {
-                let arg = args
-                    .as_ptr()
-                    .and_then(|p| unsafe {
-                        if let ObjData::List(ref lk) = (*p).data {
-                            lk.read().unwrap().first().copied()
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_else(MbValue::none);
+            "__add__" | "__sub__" | "__mul__" | "__floordiv__" | "__mod__"
+            | "__pow__" | "__and__" | "__or__" | "__xor__" | "__truediv__" => {
+                let arg = args.as_ptr().and_then(|p| unsafe {
+                    if let ObjData::List(ref lk) = (*p).data {
+                        lk.read().unwrap().first().copied()
+                    } else { None }
+                }).unwrap_or_else(MbValue::none);
                 let receiver_boxed = MbValue::from_int(val);
                 return match name.as_str() {
                     "__add__" => super::builtins::mb_add(receiver_boxed, arg),
@@ -6730,17 +7043,21 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 // CPython: returns (num, den) such that f == num/den, gcd(num,den)==1.
                 // NaN → ValueError; inf → OverflowError; 0.0 → (0, 1).
                 if f.is_nan() {
-                    super::exception::set_current_exception(super::exception::MbException::new(
-                        "ValueError",
-                        "cannot convert NaN to integer ratio",
-                    ));
+                    super::exception::set_current_exception(
+                        super::exception::MbException::new(
+                            "ValueError",
+                            "cannot convert NaN to integer ratio",
+                        ),
+                    );
                     return MbValue::none();
                 }
                 if f.is_infinite() {
-                    super::exception::set_current_exception(super::exception::MbException::new(
-                        "OverflowError",
-                        "cannot convert Infinity to integer ratio",
-                    ));
+                    super::exception::set_current_exception(
+                        super::exception::MbException::new(
+                            "OverflowError",
+                            "cannot convert Infinity to integer ratio",
+                        ),
+                    );
                     return MbValue::none();
                 }
                 if f == 0.0 {
@@ -6766,10 +7083,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 // when either component would not fit (see #-int-i48-overflow).
                 const I48_MAX: u64 = (1u64 << 47) - 1;
                 let overflow = || {
-                    super::exception::set_current_exception(super::exception::MbException::new(
-                        "OverflowError",
-                        "as_integer_ratio result exceeds mamba's i48 int range",
-                    ));
+                    super::exception::set_current_exception(
+                        super::exception::MbException::new(
+                            "OverflowError",
+                            "as_integer_ratio result exceeds mamba's i48 int range",
+                        ),
+                    );
                 };
                 let (num_abs, den): (u64, u64) = if e_off >= 0 {
                     let shift = e_off as u32;
@@ -6813,29 +7132,18 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             "__round__" => {
                 // Banker's rounding (round half to even). 0-arg form returns int;
                 // 1-arg form returns float (the ndigits argument).
-                let arg_items: Vec<MbValue> = args
-                    .as_ptr()
-                    .and_then(|p| unsafe {
-                        if let ObjData::List(ref lk) = (*p).data {
-                            Some(lk.read().unwrap().to_vec())
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_default();
+                let arg_items: Vec<MbValue> = args.as_ptr().and_then(|p| unsafe {
+                    if let ObjData::List(ref lk) = (*p).data {
+                        Some(lk.read().unwrap().to_vec())
+                    } else { None }
+                }).unwrap_or_default();
                 let banker_round = |x: f64| -> f64 {
                     let r = x.round();
                     // f64::round uses half-away-from-zero; switch to half-to-even.
                     if (x - x.trunc()).abs() == 0.5 {
                         let t = x.trunc();
-                        if (t as i64) % 2 == 0 {
-                            t
-                        } else {
-                            r
-                        }
-                    } else {
-                        r
-                    }
+                        if (t as i64) % 2 == 0 { t } else { r }
+                    } else { r }
                 };
                 if arg_items.is_empty() {
                     return MbValue::from_int(banker_round(f) as i64);
@@ -6852,18 +7160,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             "__int__" => return MbValue::from_int(f as i64),
             "__float__" => return MbValue::from_float(f),
             "__bool__" => return MbValue::from_bool(f != 0.0),
-            "__add__" | "__sub__" | "__mul__" | "__truediv__" | "__floordiv__" | "__mod__"
-            | "__pow__" => {
-                let arg = args
-                    .as_ptr()
-                    .and_then(|p| unsafe {
-                        if let ObjData::List(ref lk) = (*p).data {
-                            lk.read().unwrap().first().copied()
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_else(MbValue::none);
+            "__add__" | "__sub__" | "__mul__" | "__truediv__" | "__floordiv__"
+            | "__mod__" | "__pow__" => {
+                let arg = args.as_ptr().and_then(|p| unsafe {
+                    if let ObjData::List(ref lk) = (*p).data {
+                        lk.read().unwrap().first().copied()
+                    } else { None }
+                }).unwrap_or_else(MbValue::none);
                 let receiver_boxed = MbValue::from_float(f);
                 return match name.as_str() {
                     "__add__" => super::builtins::mb_add(receiver_boxed, arg),
@@ -6882,20 +7185,15 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
 
     // Primitives — no heap deref needed
     if receiver.is_int() || receiver.is_bool() || receiver.is_none() || receiver.is_float() {
-        let type_name = if receiver.is_int() {
-            "int"
-        } else if receiver.is_float() {
-            "float"
-        } else if receiver.is_bool() {
-            "bool"
-        } else {
-            "NoneType"
-        };
+        let type_name = if receiver.is_int() { "int" }
+            else if receiver.is_float() { "float" }
+            else if receiver.is_bool() { "bool" }
+            else { "NoneType" };
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str(format!(
-                "'{type_name}' object has no attribute '{name}'"
-            ))),
+            MbValue::from_ptr(MbObject::new_str(
+                format!("'{type_name}' object has no attribute '{name}'"),
+            )),
         );
         return MbValue::none();
     }
@@ -6906,44 +7204,26 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // Native stdlib instances with fixed method tables (re.Match,
             // datetime.datetime, functools.partial, ...) short-circuit before
             // the MRO lookup.
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 // Dict-like collections classes: forward dict methods (keys, values,
                 // items, get, pop, update, setdefault, clear, copy, __contains__,
                 // __len__) to the backing `_data` dict.
                 if class_name == "collections.defaultdict"
                     || class_name == "collections.OrderedDict"
                     || (class_name == "collections.Counter"
-                        && matches!(
-                            name.as_str(),
-                            "keys"
-                                | "values"
-                                | "items"
-                                | "get"
-                                | "pop"
-                                | "update"
-                                | "setdefault"
-                                | "clear"
-                                | "copy"
-                        ))
+                        && matches!(name.as_str(),
+                            "keys" | "values" | "items" | "get" | "pop"
+                            | "update" | "setdefault" | "clear" | "copy"))
                 {
                     let data = {
                         let guard = fields.read().unwrap();
                         guard.get("_data").copied().unwrap_or(MbValue::none())
                     };
                     if !data.is_none() {
-                        let arg_items: Vec<MbValue> = args
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(lk.read().unwrap().to_vec())
-                                } else {
-                                    None
-                                }
-                            })
+                        let arg_items: Vec<MbValue> = args.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().to_vec())
+                            } else { None })
                             .unwrap_or_default();
                         let a0 = arg_items.first().copied().unwrap_or(MbValue::none());
                         let a1 = arg_items.get(1).copied().unwrap_or(MbValue::none());
@@ -6953,40 +7233,23 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             "items" => return super::dict_ops::mb_dict_items(data),
                             "get" => return super::dict_ops::mb_dict_get(data, a0, a1),
                             "pop" => return super::dict_ops::mb_dict_pop(data, a0, a1),
-                            "setdefault" => {
-                                return super::dict_ops::mb_dict_setdefault(data, a0, a1)
-                            }
-                            "update" => {
-                                super::dict_ops::mb_dict_update(data, a0);
-                                return MbValue::none();
-                            }
-                            "clear" => {
-                                super::dict_ops::mb_dict_clear(data);
-                                return MbValue::none();
-                            }
+                            "setdefault" => return super::dict_ops::mb_dict_setdefault(data, a0, a1),
+                            "update" => { super::dict_ops::mb_dict_update(data, a0); return MbValue::none(); }
+                            "clear" => { super::dict_ops::mb_dict_clear(data); return MbValue::none(); }
                             "copy" => return super::dict_ops::mb_dict_copy(data),
                             // OrderedDict-specific reordering.
                             "move_to_end" if class_name == "collections.OrderedDict" => {
                                 let last = if arg_items.len() > 1 {
                                     a1.as_bool().unwrap_or(true)
-                                } else {
-                                    true
-                                };
-                                return super::stdlib::collections_mod::mb_ordereddict_move_to_end(
-                                    data, a0, last,
-                                );
+                                } else { true };
+                                return super::stdlib::collections_mod::mb_ordereddict_move_to_end(data, a0, last);
                             }
                             "popitem" if class_name == "collections.OrderedDict" => {
                                 // OrderedDict.popitem(last=True): LIFO by default,
                                 // FIFO when last=False.
-                                let last = if arg_items.is_empty() {
-                                    true
-                                } else {
-                                    a0.as_bool().unwrap_or(true)
-                                };
-                                return super::stdlib::collections_mod::mb_ordereddict_popitem(
-                                    data, last,
-                                );
+                                let last = if arg_items.is_empty() { true }
+                                    else { a0.as_bool().unwrap_or(true) };
+                                return super::stdlib::collections_mod::mb_ordereddict_popitem(data, last);
                             }
                             _ => {}
                         }
@@ -6995,15 +7258,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "datetime.datetime" {
                     // `.strftime(fmt)` → formatted string
                     if name == "strftime" {
-                        let arg_items: Vec<MbValue> = args
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(lk.read().unwrap().to_vec())
-                                } else {
-                                    None
-                                }
-                            })
+                        let arg_items: Vec<MbValue> = args.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().to_vec())
+                            } else { None })
                             .unwrap_or_default();
                         let fmt = arg_items.first().copied().unwrap_or(MbValue::none());
                         return super::stdlib::datetime_mod::mb_datetime_strftime(receiver, fmt);
@@ -7013,10 +7271,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         return super::stdlib::datetime_mod::mb_datetime_timestamp(receiver);
                     }
                     // Attribute-like getters: year / month / day / hour / minute / second
-                    if matches!(
-                        name.as_str(),
-                        "year" | "month" | "day" | "hour" | "minute" | "second"
-                    ) {
+                    if matches!(name.as_str(), "year" | "month" | "day" | "hour" | "minute" | "second") {
                         let guard = fields.read().unwrap();
                         return guard.get(&name).copied().unwrap_or(MbValue::none());
                     }
@@ -7026,15 +7281,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     let items = guard.get("_items").copied().unwrap_or(MbValue::none());
                     let maxlen = guard.get("_maxlen").and_then(|v| v.as_int());
                     drop(guard);
-                    let arg_items: Vec<MbValue> = args
-                        .as_ptr()
-                        .and_then(|p| {
-                            if let ObjData::List(ref lk) = (*p).data {
-                                Some(lk.read().unwrap().to_vec())
-                            } else {
-                                None
-                            }
-                        })
+                    let arg_items: Vec<MbValue> = args.as_ptr()
+                        .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                            Some(lk.read().unwrap().to_vec())
+                        } else { None })
                         .unwrap_or_default();
                     if name == "appendleft" || name == "append" {
                         let val = arg_items.first().copied().unwrap_or(MbValue::none());
@@ -7044,16 +7294,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 if name == "appendleft" {
                                     list.insert(0, val);
                                     if let Some(ml) = maxlen {
-                                        while list.len() > ml as usize {
-                                            list.pop();
-                                        }
+                                        while list.len() > ml as usize { list.pop(); }
                                     }
                                 } else {
                                     list.push(val);
                                     if let Some(ml) = maxlen {
-                                        while list.len() > ml as usize {
-                                            list.remove(0);
-                                        }
+                                        while list.len() > ml as usize { list.remove(0); }
                                     }
                                 }
                             }
@@ -7083,22 +7329,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         // Materialize the iterable into a Vec<MbValue>.
                         let new_items: Vec<MbValue> = if let Some(ip) = iterable.as_ptr() {
                             match &(*ip).data {
-                                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-                                ObjData::Tuple(ref tup) => tup.clone(),
+                                ObjData::List(ref lock) =>
+                                    lock.read().unwrap().to_vec(),
+                                ObjData::Tuple(ref tup) =>
+                                    tup.clone(),
                                 _ => Vec::new(),
                             }
-                        } else {
-                            Vec::new()
-                        };
+                        } else { Vec::new() };
                         if let Some(ptr) = items.as_ptr() {
                             if let ObjData::List(ref lock) = (*ptr).data {
                                 let mut list = lock.write().unwrap();
                                 if name == "extend" {
                                     list.extend(new_items);
                                     if let Some(ml) = maxlen {
-                                        while list.len() > ml as usize {
-                                            list.remove(0);
-                                        }
+                                        while list.len() > ml as usize { list.remove(0); }
                                     }
                                 } else {
                                     // extendleft: each element pushed individually
@@ -7106,9 +7350,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     for v in new_items {
                                         list.insert(0, v);
                                         if let Some(ml) = maxlen {
-                                            while list.len() > ml as usize {
-                                                list.pop();
-                                            }
+                                            while list.len() > ml as usize { list.pop(); }
                                         }
                                     }
                                 }
@@ -7119,15 +7361,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 }
                 if class_name == "collections.Counter" {
                     if name == "most_common" {
-                        let arg_items: Vec<MbValue> = args
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(lk.read().unwrap().to_vec())
-                                } else {
-                                    None
-                                }
-                            })
+                        let arg_items: Vec<MbValue> = args.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().to_vec())
+                            } else { None })
                             .unwrap_or_default();
                         let n = arg_items.first().copied().unwrap_or(MbValue::none());
                         return super::stdlib::collections_mod::mb_counter_most_common(receiver, n);
@@ -7141,26 +7378,28 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         let guard = fields.read().unwrap();
                         guard.get("pattern").copied().unwrap_or(MbValue::none())
                     };
-                    let arg_items: Vec<MbValue> = args
-                        .as_ptr()
-                        .and_then(|p| {
-                            if let ObjData::List(ref lk) = (*p).data {
-                                Some(lk.read().unwrap().to_vec())
-                            } else {
-                                None
-                            }
-                        })
+                    let arg_items: Vec<MbValue> = args.as_ptr()
+                        .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                            Some(lk.read().unwrap().to_vec())
+                        } else { None })
                         .unwrap_or_default();
                     let a0 = arg_items.first().copied().unwrap_or(MbValue::none());
                     let a1 = arg_items.get(1).copied().unwrap_or(MbValue::none());
                     match name.as_str() {
-                        "match" | "match_" => return super::stdlib::re_mod::mb_re_match(pat, a0),
-                        "search" => return super::stdlib::re_mod::mb_re_search(pat, a0),
-                        "findall" => return super::stdlib::re_mod::mb_re_findall(pat, a0),
-                        "sub" => return super::stdlib::re_mod::mb_re_sub(pat, a0, a1),
-                        "subn" => return super::stdlib::re_mod::mb_re_subn(pat, a0, a1),
-                        "split" => return super::stdlib::re_mod::mb_re_split(pat, a0),
-                        "finditer" => return super::stdlib::re_mod::mb_re_finditer(pat, a0),
+                        "match" | "match_" =>
+                            return super::stdlib::re_mod::mb_re_match(pat, a0),
+                        "search" =>
+                            return super::stdlib::re_mod::mb_re_search(pat, a0),
+                        "findall" =>
+                            return super::stdlib::re_mod::mb_re_findall(pat, a0),
+                        "sub" =>
+                            return super::stdlib::re_mod::mb_re_sub(pat, a0, a1),
+                        "subn" =>
+                            return super::stdlib::re_mod::mb_re_subn(pat, a0, a1),
+                        "split" =>
+                            return super::stdlib::re_mod::mb_re_split(pat, a0),
+                        "finditer" =>
+                            return super::stdlib::re_mod::mb_re_finditer(pat, a0),
                         _ => {}
                     }
                 }
@@ -7170,15 +7409,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     // the given group (0 = full match), or the full match when
                     // called with no args.
                     if name == "group" {
-                        let arg_items: Vec<MbValue> = args
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(lk.read().unwrap().to_vec())
-                                } else {
-                                    None
-                                }
-                            })
+                        let arg_items: Vec<MbValue> = args.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().to_vec())
+                            } else { None })
                             .unwrap_or_default();
                         let key = arg_items.first().copied().unwrap_or(MbValue::from_int(0));
                         if let Some(i) = key.as_int() {
@@ -7192,17 +7426,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         return MbValue::none();
                     }
                     if name == "start" || name == "end" {
-                        let arg_items: Vec<MbValue> = args
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(lk.read().unwrap().to_vec())
-                                } else {
-                                    None
-                                }
-                            })
+                        let arg_items: Vec<MbValue> = args.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().to_vec())
+                            } else { None })
                             .unwrap_or_default();
-                        let i = arg_items.first().and_then(|v| v.as_int()).unwrap_or(0);
+                        let i = arg_items.first()
+                            .and_then(|v| v.as_int())
+                            .unwrap_or(0);
                         let key = if i == 0 {
                             (if name == "start" { "_start" } else { "_end" }).to_string()
                         } else if name == "start" {
@@ -7214,19 +7445,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     }
                     // .groups([default]) — tuple of group_1..N (None for unmatched).
                     if name == "groups" {
-                        let n = guard
-                            .get("_group_count")
-                            .and_then(|v| v.as_int())
-                            .unwrap_or(0);
-                        let arg_items: Vec<MbValue> = args
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(lk.read().unwrap().to_vec())
-                                } else {
-                                    None
-                                }
-                            })
+                        let n = guard.get("_group_count")
+                            .and_then(|v| v.as_int()).unwrap_or(0);
+                        let arg_items: Vec<MbValue> = args.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().to_vec())
+                            } else { None })
                             .unwrap_or_default();
                         let default = arg_items.first().copied().unwrap_or(MbValue::none());
                         let mut elems = Vec::with_capacity(n as usize);
@@ -7239,21 +7463,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     }
                     // .groupdict([default]) — dict of named-group → value.
                     if name == "groupdict" {
-                        let arg_items: Vec<MbValue> = args
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(lk.read().unwrap().to_vec())
-                                } else {
-                                    None
-                                }
-                            })
+                        let arg_items: Vec<MbValue> = args.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().to_vec())
+                            } else { None })
                             .unwrap_or_default();
                         let default = arg_items.first().copied().unwrap_or(MbValue::none());
-                        let names_val = guard
-                            .get("_group_names")
-                            .copied()
-                            .unwrap_or(MbValue::none());
+                        let names_val = guard.get("_group_names").copied().unwrap_or(MbValue::none());
                         let d = super::dict_ops::mb_dict_new();
                         if let Some(p) = names_val.as_ptr() {
                             if let ObjData::List(ref lk) = (*p).data {
@@ -7273,17 +7489,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     // returns the full-match span; positive group args read
                     // the per-group offsets stored at construction time.
                     if name == "span" {
-                        let arg_items: Vec<MbValue> = args
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(lk.read().unwrap().to_vec())
-                                } else {
-                                    None
-                                }
-                            })
+                        let arg_items: Vec<MbValue> = args.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().to_vec())
+                            } else { None })
                             .unwrap_or_default();
-                        let i = arg_items.first().and_then(|v| v.as_int()).unwrap_or(0);
+                        let i = arg_items.first()
+                            .and_then(|v| v.as_int())
+                            .unwrap_or(0);
                         let (sk, ek) = if i == 0 {
                             ("_start".to_string(), "_end".to_string())
                         } else {
@@ -7296,15 +7509,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     // .expand(template) — substitute backrefs in template (#1620).
                     if name == "expand" {
                         drop(guard);
-                        let arg_items: Vec<MbValue> = args
-                            .as_ptr()
-                            .and_then(|p| {
-                                if let ObjData::List(ref lk) = (*p).data {
-                                    Some(lk.read().unwrap().to_vec())
-                                } else {
-                                    None
-                                }
-                            })
+                        let arg_items: Vec<MbValue> = args.as_ptr()
+                            .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                                Some(lk.read().unwrap().to_vec())
+                            } else { None })
                             .unwrap_or_default();
                         let tmpl = arg_items.first().copied().unwrap_or(MbValue::none());
                         return super::stdlib::re_mod::mb_re_match_expand(receiver, tmpl);
@@ -7316,15 +7524,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     // R1 P1: Class-level method dispatch (e.g. Dog.get_species()).
                     // If the string is a registered class name, look up the method.
                     let class_name_str = s.clone();
-                    let is_class =
-                        CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(&class_name_str));
+                    let is_class = CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(&class_name_str));
                     if is_class {
                         let method = lookup_method(&class_name_str, &name);
                         if !method.is_none() {
                             let (actual_method, dk) = unwrap_descriptor_method(method);
-                            let call_method = if actual_method.as_func().is_some()
-                                || actual_method.as_int().is_some()
-                            {
+                            let call_method = if actual_method.as_func().is_some() || actual_method.as_int().is_some() {
                                 actual_method
                             } else {
                                 method
@@ -7339,9 +7544,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     let mut all_args = Vec::new();
                                     if dk != DescriptorKind::StaticMethod {
                                         let first_arg = if dk == DescriptorKind::ClassMethod {
-                                            MbValue::from_ptr(MbObject::new_str(
-                                                class_name_str.clone(),
-                                            ))
+                                            MbValue::from_ptr(MbObject::new_str(class_name_str.clone()))
                                         } else {
                                             receiver
                                         };
@@ -7356,37 +7559,23 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     // REQ: JIT-compiled functions use SystemV/C calling convention.
                                     return match all_args.len() {
                                         0 => {
-                                            let f: extern "C" fn() -> MbValue =
-                                                std::mem::transmute(addr as usize);
+                                            let f: extern "C" fn() -> MbValue = std::mem::transmute(addr as usize);
                                             f()
                                         }
                                         1 => {
-                                            let f: extern "C" fn(MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
+                                            let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                             f(all_args[0])
                                         }
                                         2 => {
-                                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
+                                            let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                             f(all_args[0], all_args[1])
                                         }
                                         3 => {
-                                            let f: extern "C" fn(
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                            )
-                                                -> MbValue = std::mem::transmute(addr as usize);
+                                            let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                             f(all_args[0], all_args[1], all_args[2])
                                         }
                                         4 => {
-                                            let f: extern "C" fn(
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                            )
-                                                -> MbValue = std::mem::transmute(addr as usize);
+                                            let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                             f(all_args[0], all_args[1], all_args[2], all_args[3])
                                         }
                                         _ => MbValue::none(),
@@ -7396,7 +7585,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         }
                     }
                     super::string_ops::dispatch_str_method(&name, receiver, args)
-                }
+                },
                 ObjData::List(_) => super::list_ops::dispatch_list_method(&name, receiver, args),
                 ObjData::Dict(ref lock) => {
                     // Module dicts may have callable TAG_FUNC entries.
@@ -7420,28 +7609,18 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         }
                     }
                     super::dict_ops::dispatch_dict_method(&name, receiver, args)
-                }
+                },
                 ObjData::Tuple(_) => super::tuple_ops::dispatch_tuple_method(&name, receiver, args),
-                ObjData::Set(_) | ObjData::FrozenSet(_) => {
-                    super::set_ops::dispatch_set_method(&name, receiver, args)
-                }
-                ObjData::Bytes(_) | ObjData::ByteArray(_) => {
-                    super::bytes_ops::dispatch_bytes_method(&name, receiver, args)
-                }
-                ObjData::Instance {
-                    class_name,
-                    ref fields,
-                    ..
-                } => {
+                ObjData::Set(_) | ObjData::FrozenSet(_) => super::set_ops::dispatch_set_method(&name, receiver, args),
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => super::bytes_ops::dispatch_bytes_method(&name, receiver, args),
+                ObjData::Instance { class_name, ref fields, .. } => {
                     // Super proxy: dispatch through MRO after the current class
                     if class_name == "__super__" {
                         let fields_guard = fields.read().unwrap();
-                        let super_class = fields_guard
-                            .get("__super_class__")
+                        let super_class = fields_guard.get("__super_class__")
                             .and_then(|v| extract_str(*v))
                             .unwrap_or_default();
-                        let super_self = fields_guard
-                            .get("__super_self__")
+                        let super_self = fields_guard.get("__super_self__")
                             .copied()
                             .unwrap_or(MbValue::none());
                         drop(fields_guard);
@@ -7449,19 +7628,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         let instance_class = if let Some(self_ptr) = super_self.as_ptr() {
                             if let ObjData::Instance { ref class_name, .. } = (*self_ptr).data {
                                 class_name.clone()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
+                            } else { String::new() }
+                        } else { String::new() };
                         let method = lookup_method_after(&instance_class, &super_class, &name);
                         if !method.is_none() {
                             // R1 P1: Unwrap classmethod/staticmethod descriptors for super dispatch.
                             let (actual_method, dk) = unwrap_descriptor_method(method);
-                            let call_method = if actual_method.as_func().is_some()
-                                || actual_method.as_int().is_some()
-                            {
+                            let call_method = if actual_method.as_func().is_some() || actual_method.as_int().is_some() {
                                 actual_method
                             } else {
                                 method
@@ -7473,9 +7646,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     let mut all_args = Vec::new();
                                     if dk != DescriptorKind::StaticMethod {
                                         let first_arg = if dk == DescriptorKind::ClassMethod {
-                                            MbValue::from_ptr(MbObject::new_str(
-                                                instance_class.clone(),
-                                            ))
+                                            MbValue::from_ptr(MbObject::new_str(instance_class.clone()))
                                         } else {
                                             super_self
                                         };
@@ -7490,38 +7661,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                     // REQ: JIT-compiled functions use SystemV/C calling convention.
                                     match all_args.len() {
                                         1 => {
-                                            let f: extern "C" fn(MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
+                                            let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                             return f(all_args[0]);
                                         }
                                         2 => {
-                                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                                std::mem::transmute(addr as usize);
+                                            let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                             return f(all_args[0], all_args[1]);
                                         }
                                         3 => {
-                                            let f: extern "C" fn(
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                            )
-                                                -> MbValue = std::mem::transmute(addr as usize);
+                                            let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                             return f(all_args[0], all_args[1], all_args[2]);
                                         }
                                         4 => {
-                                            let f: extern "C" fn(
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                                MbValue,
-                                            )
-                                                -> MbValue = std::mem::transmute(addr as usize);
-                                            return f(
-                                                all_args[0],
-                                                all_args[1],
-                                                all_args[2],
-                                                all_args[3],
-                                            );
+                                            let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
+                                            return f(all_args[0], all_args[1], all_args[2], all_args[3]);
                                         }
                                         _ => {}
                                     }
@@ -7533,13 +7686,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         // sets message, __type__, and args on the instance.
                         if name == "__init__" {
                             let mro = CLASS_REGISTRY.with(|reg| {
-                                reg.borrow()
-                                    .get(&instance_class)
+                                reg.borrow().get(&instance_class)
                                     .map(|c| c.mro.clone())
                                     .unwrap_or_default()
                             });
-                            let is_exc =
-                                mro.iter().any(|c| c == "Exception" || c == "BaseException");
+                            let is_exc = mro.iter().any(|c| c == "Exception" || c == "BaseException");
                             if is_exc {
                                 // Extract args from the args list
                                 let mut arg_items = Vec::new();
@@ -7550,25 +7701,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 }
                                 // Set message from first arg
                                 if let Some(first) = arg_items.first() {
-                                    mb_setattr(
-                                        super_self,
+                                    mb_setattr(super_self,
                                         MbValue::from_ptr(MbObject::new_str("message".to_string())),
-                                        *first,
-                                    );
+                                        *first);
                                 }
                                 // Set __type__
-                                mb_setattr(
-                                    super_self,
+                                mb_setattr(super_self,
                                     MbValue::from_ptr(MbObject::new_str("__type__".to_string())),
-                                    MbValue::from_ptr(MbObject::new_str(instance_class.clone())),
-                                );
+                                    MbValue::from_ptr(MbObject::new_str(instance_class.clone())));
                                 // Set args as tuple
                                 let args_tuple = MbValue::from_ptr(MbObject::new_tuple(arg_items));
-                                mb_setattr(
-                                    super_self,
+                                mb_setattr(super_self,
                                     MbValue::from_ptr(MbObject::new_str("args".to_string())),
-                                    args_tuple,
-                                );
+                                    args_tuple);
                                 return MbValue::none();
                             }
                         }
@@ -7581,9 +7726,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         // For @classmethod, pass class name string as first arg instead of instance.
                         // For @staticmethod, skip self entirely.
                         let (actual_method, dk) = unwrap_descriptor_method(method);
-                        let call_method = if actual_method.as_func().is_some()
-                            || actual_method.as_int().is_some()
-                        {
+                        let call_method = if actual_method.as_func().is_some() || actual_method.as_int().is_some() {
                             actual_method
                         } else {
                             method
@@ -7614,12 +7757,9 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 let is_variadic = super::module::is_variadic_func(addr as u64);
                                 let has_kwargs = super::module::is_kwargs_func(addr as u64);
                                 if is_variadic || has_kwargs {
-                                    let pos: Vec<MbValue> =
-                                        all_args.drain(pos_args_start..).collect();
+                                    let pos: Vec<MbValue> = all_args.drain(pos_args_start..).collect();
                                     if is_variadic {
-                                        all_args.push(MbValue::from_ptr(MbObject::new_list(
-                                            pos.clone(),
-                                        )));
+                                        all_args.push(MbValue::from_ptr(MbObject::new_list(pos.clone())));
                                     }
                                     if has_kwargs {
                                         all_args.push(MbValue::from_ptr(MbObject::new_dict()));
@@ -7629,34 +7769,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 // REQ: JIT-compiled functions use SystemV/C calling convention.
                                 match all_args.len() {
                                     1 => {
-                                        let f: extern "C" fn(MbValue) -> MbValue =
-                                            std::mem::transmute(addr as usize);
+                                        let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                         return f(all_args[0]);
                                     }
                                     2 => {
-                                        let f: extern "C" fn(MbValue, MbValue) -> MbValue =
-                                            std::mem::transmute(addr as usize);
+                                        let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                         return f(all_args[0], all_args[1]);
                                     }
                                     3 => {
-                                        let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
-                                            std::mem::transmute(addr as usize);
+                                        let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
                                         return f(all_args[0], all_args[1], all_args[2]);
                                     }
                                     4 => {
-                                        let f: extern "C" fn(
-                                            MbValue,
-                                            MbValue,
-                                            MbValue,
-                                            MbValue,
-                                        )
-                                            -> MbValue = std::mem::transmute(addr as usize);
-                                        return f(
-                                            all_args[0],
-                                            all_args[1],
-                                            all_args[2],
-                                            all_args[3],
-                                        );
+                                        let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue = std::mem::transmute(addr as usize);
+                                        return f(all_args[0], all_args[1], all_args[2], all_args[3]);
                                     }
                                     _ => {}
                                 }
@@ -7671,20 +7797,37 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         }
                         return method;
                     }
+                    // CPython: when the class defines no such method, `obj.attr(args)`
+                    // consults the instance __dict__. A callable stored as an attribute
+                    // (e.g. `mod.func = fn` / `mod.Cls = C` on a types.ModuleType, or any
+                    // instance whose field holds a function/class) is retrieved as-is and
+                    // called with NO implicit self — instance-dict values are not bound
+                    // descriptors. mb_getattr already resolves these for the load form
+                    // (`obj.attr`); mirror it here so the call form matches.
+                    let field_val = {
+                        let guard = fields.read().unwrap();
+                        guard.get(name.as_str()).copied()
+                    };
+                    if let Some(fv) = field_val {
+                        if super::builtins::mb_callable(fv).as_bool() == Some(true) {
+                            super::rc::retain_if_ptr(fv);
+                            return super::builtins::mb_call_spread(fv, args);
+                        }
+                    }
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "'{class_name}' object has no attribute '{name}'"
-                        ))),
+                        MbValue::from_ptr(MbObject::new_str(
+                            format!("'{class_name}' object has no attribute '{name}'"),
+                        )),
                     );
                     MbValue::none()
                 }
                 ObjData::BigInt(_) => {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "'int' object has no attribute '{name}'"
-                        ))),
+                        MbValue::from_ptr(MbObject::new_str(
+                            format!("'int' object has no attribute '{name}'"),
+                        )),
                     );
                     MbValue::none()
                 }
@@ -7705,18 +7848,18 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     }
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "'complex' object has no attribute '{name}'"
-                        ))),
+                        MbValue::from_ptr(MbObject::new_str(
+                            format!("'complex' object has no attribute '{name}'"),
+                        )),
                     );
                     MbValue::none()
                 }
                 ObjData::CodeObject { .. } => {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
-                        MbValue::from_ptr(MbObject::new_str(format!(
-                            "'code' object has no attribute '{name}'"
-                        ))),
+                        MbValue::from_ptr(MbObject::new_str(
+                            format!("'code' object has no attribute '{name}'"),
+                        )),
                     );
                     MbValue::none()
                 }
@@ -7740,23 +7883,29 @@ fn extract_str(val: MbValue) -> Option<String> {
 /// Resolve a class name from a value that may be either a plain string or a type object
 /// (Instance with class_name="type" and __name__ field). This is the same resolution
 /// logic used in mb_isinstance, extended for use in mb_issubclass (#974).
-fn resolve_class_name(val: MbValue) -> Option<String> {
+pub(crate) fn resolve_class_name(val: MbValue) -> Option<String> {
     // Try plain string first (most common path)
     if let Some(s) = extract_str(val) {
         return Some(s);
     }
+    // Native-dispatcher function pointers used as types (e.g. io.StringIO is a
+    // constructor dispatcher). Map the pointer to its recorded class name so
+    // issubclass / type resolution see a real class.
+    if let Some(addr) = val.as_func() {
+        let name = super::module::NATIVE_TYPE_NAMES.with(|map| {
+            map.borrow().get(&(addr as u64)).cloned()
+        });
+        if name.is_some() {
+            return name;
+        }
+    }
     // Try type object: Instance with class_name="type" and __name__ field
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance {
-            class_name: ref cn,
-            ref fields,
-        } = (*ptr).data
-        {
+        if let ObjData::Instance { class_name: ref cn, ref fields } = (*ptr).data {
             if cn == "type" {
-                fields
-                    .read()
-                    .ok()
-                    .and_then(|f| f.get("__name__").and_then(|v| extract_str(*v)))
+                fields.read().ok().and_then(|f| {
+                    f.get("__name__").and_then(|v| extract_str(*v))
+                })
             } else {
                 None
             }
@@ -7768,11 +7917,7 @@ fn resolve_class_name(val: MbValue) -> Option<String> {
 
 fn union_type_args(val: MbValue) -> Option<Vec<MbValue>> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance {
-            class_name: ref cn,
-            ref fields,
-        } = (*ptr).data
-        {
+        if let ObjData::Instance { class_name: ref cn, ref fields } = (*ptr).data {
             if cn == "UnionType" {
                 return fields
                     .read()
@@ -7954,10 +8099,7 @@ mod tests {
         let inst = mb_instance_new(name, MbValue::none());
 
         let dunder = try_get_dunder(inst, "__setitem__");
-        assert!(
-            dunder.is_some(),
-            "__setitem__ should be found on MutableIdx"
-        );
+        assert!(dunder.is_some(), "__setitem__ should be found on MutableIdx");
         assert_eq!(dunder.unwrap().as_int(), Some(333));
     }
 
@@ -7973,11 +8115,7 @@ mod tests {
         // Access a nonexistent attribute — should fall back to __getattr__
         let attr = MbValue::from_ptr(MbObject::new_str("missing".to_string()));
         let result = mb_getattr(inst, attr);
-        assert_eq!(
-            result.as_int(),
-            Some(888),
-            "__getattr__ should be the fallback"
-        );
+        assert_eq!(result.as_int(), Some(888), "__getattr__ should be the fallback");
     }
 
     #[test]
@@ -8038,18 +8176,9 @@ mod tests {
         let d = MbValue::from_ptr(MbObject::new_dict());
         assert_eq!(mb_isinstance(d, dict_type).as_bool(), Some(true));
 
-        assert_eq!(
-            mb_isinstance(MbValue::from_float(1.0), float_type).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_isinstance(MbValue::from_bool(true), bool_type).as_bool(),
-            Some(true)
-        );
-        assert_eq!(
-            mb_isinstance(MbValue::none(), none_type).as_bool(),
-            Some(true)
-        );
+        assert_eq!(mb_isinstance(MbValue::from_float(1.0), float_type).as_bool(), Some(true));
+        assert_eq!(mb_isinstance(MbValue::from_bool(true), bool_type).as_bool(), Some(true));
+        assert_eq!(mb_isinstance(MbValue::none(), none_type).as_bool(), Some(true));
     }
 
     #[test]
@@ -8090,10 +8219,12 @@ mod tests {
     fn test_class_define() {
         let name = MbValue::from_ptr(MbObject::new_str("Defined".to_string()));
         let base = MbValue::none();
-        let method_names = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("greet".to_string()),
-        )]));
-        let method_values = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(42)]));
+        let method_names = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("greet".to_string())),
+        ]));
+        let method_values = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(42),
+        ]));
         mb_class_define(name, base, method_names, method_values);
 
         CLASS_REGISTRY.with(|reg| {
@@ -8225,9 +8356,9 @@ mod tests {
 
         // Register abstract method
         let name = MbValue::from_ptr(MbObject::new_str("ConcreteABC".to_string()));
-        let abs_methods = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("do_thing".to_string()),
-        )]));
+        let abs_methods = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("do_thing".to_string())),
+        ]));
         mb_register_abstract(name, abs_methods);
 
         let cls_name = MbValue::from_ptr(MbObject::new_str("ConcreteABC".to_string()));
@@ -8288,10 +8419,7 @@ mod tests {
         let name = MbValue::from_ptr(MbObject::new_str("NoContains".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
 
-        assert_eq!(
-            mb_obj_contains(inst, MbValue::from_int(1)).as_bool(),
-            Some(false)
-        );
+        assert_eq!(mb_obj_contains(inst, MbValue::from_int(1)).as_bool(), Some(false));
     }
 
     #[test]
@@ -8321,9 +8449,7 @@ mod tests {
     #[test]
     fn test_obj_delitem_list() {
         let list = MbValue::from_ptr(MbObject::new_list(vec![
-            MbValue::from_int(1),
-            MbValue::from_int(2),
-            MbValue::from_int(3),
+            MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
         ]));
         mb_obj_delitem(list, MbValue::from_int(1));
         unsafe {
@@ -8472,16 +8598,8 @@ mod tests {
     #[test]
     fn test_py312_c3_mro_linear_chain() {
         mb_class_register("MroBase", vec![], std::collections::HashMap::new());
-        mb_class_register(
-            "MroChild",
-            vec!["MroBase".to_string()],
-            std::collections::HashMap::new(),
-        );
-        mb_class_register(
-            "MroGrand",
-            vec!["MroChild".to_string()],
-            std::collections::HashMap::new(),
-        );
+        mb_class_register("MroChild", vec!["MroBase".to_string()], std::collections::HashMap::new());
+        mb_class_register("MroGrand", vec!["MroChild".to_string()], std::collections::HashMap::new());
         let mro = compute_mro("MroGrand", &["MroChild".to_string()]);
         assert!(mro.contains(&"MroGrand".to_string()));
         assert!(mro.contains(&"MroChild".to_string()));
@@ -8496,21 +8614,9 @@ mod tests {
     #[test]
     fn test_py312_c3_mro_diamond() {
         mb_class_register("DiaA", vec![], std::collections::HashMap::new());
-        mb_class_register(
-            "DiaB",
-            vec!["DiaA".to_string()],
-            std::collections::HashMap::new(),
-        );
-        mb_class_register(
-            "DiaC",
-            vec!["DiaA".to_string()],
-            std::collections::HashMap::new(),
-        );
-        mb_class_register(
-            "DiaD",
-            vec!["DiaB".to_string(), "DiaC".to_string()],
-            std::collections::HashMap::new(),
-        );
+        mb_class_register("DiaB", vec!["DiaA".to_string()], std::collections::HashMap::new());
+        mb_class_register("DiaC", vec!["DiaA".to_string()], std::collections::HashMap::new());
+        mb_class_register("DiaD", vec!["DiaB".to_string(), "DiaC".to_string()], std::collections::HashMap::new());
         let mro = compute_mro("DiaD", &["DiaB".to_string(), "DiaC".to_string()]);
         let ai = mro.iter().position(|x| x == "DiaA").unwrap();
         let bi = mro.iter().position(|x| x == "DiaB").unwrap();
@@ -8525,20 +8631,12 @@ mod tests {
         let mut parent_methods = std::collections::HashMap::new();
         parent_methods.insert("greet".to_string(), MbValue::from_int(42));
         mb_class_register("ParentCls", vec![], parent_methods);
-        mb_class_register(
-            "ChildCls",
-            vec!["ParentCls".to_string()],
-            std::collections::HashMap::new(),
-        );
+        mb_class_register("ChildCls", vec!["ParentCls".to_string()], std::collections::HashMap::new());
         let name = MbValue::from_ptr(MbObject::new_str("ChildCls".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
         let method_name = MbValue::from_ptr(MbObject::new_str("greet".to_string()));
         let result = mb_getattr(inst, method_name);
-        assert_eq!(
-            result.as_int(),
-            Some(42),
-            "child should inherit parent method"
-        );
+        assert_eq!(result.as_int(), Some(42), "child should inherit parent method");
     }
 
     #[test]
@@ -8580,11 +8678,7 @@ mod tests {
         mb_class_register("IscBase_T2", vec![], base_methods);
 
         // Register Child — this should trigger the hook
-        mb_class_register(
-            "IscChild_T2",
-            vec!["IscBase_T2".to_string()],
-            HashMap::new(),
-        );
+        mb_class_register("IscChild_T2", vec!["IscBase_T2".to_string()], HashMap::new());
 
         assert!(
             HOOK_INVOKED.load(std::sync::atomic::Ordering::SeqCst),
@@ -8687,10 +8781,7 @@ mod tests {
         mb_delattr(inst, attr2);
 
         let attr3 = MbValue::from_ptr(MbObject::new_str("y".to_string()));
-        assert!(
-            mb_getattr(inst, attr3).is_none(),
-            "deleted attr must be gone"
-        );
+        assert!(mb_getattr(inst, attr3).is_none(), "deleted attr must be gone");
     }
 
     #[test]
@@ -8778,22 +8869,16 @@ mod tests {
     fn test_slots_restricts_attrs() {
         mb_class_register("SlotsRestrict001", vec![], HashMap::new());
         let cls_name = MbValue::from_ptr(MbObject::new_str("SlotsRestrict001".to_string()));
-        let slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("x".to_string()),
-        )]));
+        let slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        ]));
         mb_register_slots(cls_name, slots);
 
         SLOTS_REGISTRY.with(|reg| {
             let reg = reg.borrow();
             let slot_list = reg.get("SlotsRestrict001").unwrap();
-            assert!(
-                slot_list.contains(&"x".to_string()),
-                "slot x must be allowed"
-            );
-            assert!(
-                !slot_list.contains(&"y".to_string()),
-                "slot y must not be present"
-            );
+            assert!(slot_list.contains(&"x".to_string()), "slot x must be allowed");
+            assert!(!slot_list.contains(&"y".to_string()), "slot y must not be present");
         });
     }
 
@@ -8863,11 +8948,7 @@ mod tests {
         let name = MbValue::from_ptr(MbObject::new_str("OvChild001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
         let attr = MbValue::from_ptr(MbObject::new_str("m".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr).as_int(),
-            Some(2),
-            "child override must win"
-        );
+        assert_eq!(mb_getattr(inst, attr).as_int(), Some(2), "child override must win");
     }
 
     #[test]
@@ -8901,9 +8982,7 @@ mod tests {
 
         CLASS_REGISTRY.with(|reg| {
             let reg = reg.borrow();
-            let cls = reg
-                .get("DefChild001")
-                .expect("DefChild001 should be registered");
+            let cls = reg.get("DefChild001").expect("DefChild001 should be registered");
             assert!(cls.bases.contains(&"DefBase001".to_string()));
         });
     }
@@ -8963,11 +9042,7 @@ mod tests {
 
         let attr2 = MbValue::from_ptr(MbObject::new_str("x".to_string()));
         let result = mb_getattr_default(inst, attr2, MbValue::from_int(999));
-        assert_eq!(
-            result.as_int(),
-            Some(123),
-            "present attr must not use default"
-        );
+        assert_eq!(result.as_int(), Some(123), "present attr must not use default");
     }
 
     #[test]
@@ -9001,11 +9076,7 @@ mod tests {
         let name = MbValue::from_ptr(MbObject::new_str("MILookD001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
         let attr = MbValue::from_ptr(MbObject::new_str("m".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr).as_int(),
-            Some(1),
-            "MRO: B.m should win over C.m"
-        );
+        assert_eq!(mb_getattr(inst, attr).as_int(), Some(1), "MRO: B.m should win over C.m");
     }
 
     #[test]
@@ -9015,10 +9086,12 @@ mod tests {
 
         let name = MbValue::from_ptr(MbObject::new_str("ClsAttrAccess001Def".to_string()));
         let base = MbValue::from_ptr(MbObject::new_str("ClsAttrAccess001".to_string()));
-        let method_names = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("run".to_string()),
-        )]));
-        let method_values = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(88)]));
+        let method_names = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("run".to_string())),
+        ]));
+        let method_values = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_int(88),
+        ]));
         mb_class_define(name, base, method_names, method_values);
 
         let inst_name = MbValue::from_ptr(MbObject::new_str("ClsAttrAccess001Def".to_string()));
@@ -9058,11 +9131,7 @@ mod tests {
 
         // Unwrap should return the original function
         let unwrapped = mb_descriptor_unwrap(cm);
-        assert_eq!(
-            unwrapped.as_int(),
-            Some(42),
-            "unwrapping classmethod must yield original func"
-        );
+        assert_eq!(unwrapped.as_int(), Some(42), "unwrapping classmethod must yield original func");
     }
 
     #[test]
@@ -9084,11 +9153,8 @@ mod tests {
         // invoke_descriptor_get which calls mb_descriptor_unwrap
         let result = mb_getattr(inst, attr);
         // The descriptor protocol for __classmethod__ returns the unwrapped __func__
-        assert_eq!(
-            result.as_int(),
-            Some(77),
-            "classmethod descriptor should unwrap to original function"
-        );
+        assert_eq!(result.as_int(), Some(77),
+            "classmethod descriptor should unwrap to original function");
     }
 
     #[test]
@@ -9100,22 +9166,15 @@ mod tests {
         let mut parent_methods = HashMap::new();
         parent_methods.insert("cm_method".to_string(), cm);
         mb_class_register("CmParent001", vec![], parent_methods);
-        mb_class_register(
-            "CmChild001",
-            vec!["CmParent001".to_string()],
-            HashMap::new(),
-        );
+        mb_class_register("CmChild001", vec!["CmParent001".to_string()], HashMap::new());
 
         // Child instance should inherit the classmethod
         let name = MbValue::from_ptr(MbObject::new_str("CmChild001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
         let attr = MbValue::from_ptr(MbObject::new_str("cm_method".to_string()));
         let result = mb_getattr(inst, attr);
-        assert_eq!(
-            result.as_int(),
-            Some(55),
-            "child should inherit classmethod from parent"
-        );
+        assert_eq!(result.as_int(), Some(55),
+            "child should inherit classmethod from parent");
     }
 
     #[test]
@@ -9125,16 +9184,8 @@ mod tests {
         let cm = mb_classmethod_new(func_val);
 
         let (unwrapped, dk) = unwrap_descriptor_method(cm);
-        assert_eq!(
-            unwrapped.as_int(),
-            Some(99),
-            "unwrapped function must match"
-        );
-        assert_eq!(
-            dk,
-            DescriptorKind::ClassMethod,
-            "must identify as classmethod"
-        );
+        assert_eq!(unwrapped.as_int(), Some(99), "unwrapped function must match");
+        assert_eq!(dk, DescriptorKind::ClassMethod, "must identify as classmethod");
     }
 
     #[test]
@@ -9144,16 +9195,8 @@ mod tests {
         let sm = mb_staticmethod_new(func_val);
 
         let (unwrapped, dk) = unwrap_descriptor_method(sm);
-        assert_eq!(
-            unwrapped.as_int(),
-            Some(88),
-            "unwrapped function must match"
-        );
-        assert_eq!(
-            dk,
-            DescriptorKind::StaticMethod,
-            "must identify as staticmethod"
-        );
+        assert_eq!(unwrapped.as_int(), Some(88), "unwrapped function must match");
+        assert_eq!(dk, DescriptorKind::StaticMethod, "must identify as staticmethod");
     }
 
     #[test]
@@ -9189,20 +9232,15 @@ mod tests {
         let result = mb_getattr(inst, attr);
         // With non-callable getter, mb_property_get calls mb_call_method1 which
         // returns MbValue::none() for unregistered addresses
-        assert!(
-            result.is_none() || result.as_int().is_some(),
-            "property getter descriptor protocol must be invoked without crash"
-        );
+        assert!(result.is_none() || result.as_int().is_some(),
+            "property getter descriptor protocol must be invoked without crash");
     }
 
     #[test]
     fn test_p1_t2_1_property_is_data_descriptor() {
         // T2.1: Verify property is recognized as a data descriptor
         let prop = mb_property_new(MbValue::from_int(1));
-        assert!(
-            is_data_descriptor(prop),
-            "@property must be a data descriptor"
-        );
+        assert!(is_data_descriptor(prop), "@property must be a data descriptor");
         assert!(is_descriptor(prop), "@property must be a descriptor");
     }
 
@@ -9264,11 +9302,8 @@ mod tests {
         let result = mb_getattr(inst, attr2);
         // The property getter (int 999) is not callable, so mb_property_get returns none
         // The key assertion: it does NOT return 42 (the instance dict value should not be stored)
-        assert_ne!(
-            result.as_int(),
-            Some(42),
-            "data descriptor must take priority over instance dict"
-        );
+        assert_ne!(result.as_int(), Some(42),
+            "data descriptor must take priority over instance dict");
     }
 
     // --- T3: getattr/setattr/delattr ---
@@ -9285,11 +9320,7 @@ mod tests {
 
         let attr2 = MbValue::from_ptr(MbObject::new_str("size".to_string()));
         let result = mb_getattr(inst, attr2);
-        assert_eq!(
-            result.as_int(),
-            Some(10),
-            "getattr must return existing attribute value"
-        );
+        assert_eq!(result.as_int(), Some(10), "getattr must return existing attribute value");
     }
 
     #[test]
@@ -9302,11 +9333,7 @@ mod tests {
         let attr = MbValue::from_ptr(MbObject::new_str("weight".to_string()));
         let default = MbValue::from_int(99);
         let result = mb_getattr_default(inst, attr, default);
-        assert_eq!(
-            result.as_int(),
-            Some(99),
-            "missing attr must return default"
-        );
+        assert_eq!(result.as_int(), Some(99), "missing attr must return default");
     }
 
     #[test]
@@ -9318,10 +9345,7 @@ mod tests {
 
         let attr = MbValue::from_ptr(MbObject::new_str("nonexistent".to_string()));
         let result = mb_getattr(inst, attr);
-        assert!(
-            result.is_none(),
-            "missing attr without default must return None"
-        );
+        assert!(result.is_none(), "missing attr without default must return None");
     }
 
     #[test]
@@ -9343,11 +9367,7 @@ mod tests {
         mb_setattr(inst, attr3, MbValue::from_int(20));
 
         let attr4 = MbValue::from_ptr(MbObject::new_str("size".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr4).as_int(),
-            Some(20),
-            "setattr must update existing attr"
-        );
+        assert_eq!(mb_getattr(inst, attr4).as_int(), Some(20), "setattr must update existing attr");
     }
 
     #[test]
@@ -9370,10 +9390,7 @@ mod tests {
 
         // Verify it's gone
         let attr4 = MbValue::from_ptr(MbObject::new_str("size".to_string()));
-        assert!(
-            mb_getattr(inst, attr4).is_none(),
-            "delattr must remove the attribute"
-        );
+        assert!(mb_getattr(inst, attr4).is_none(), "delattr must remove the attribute");
 
         // hasattr should return false
         let attr5 = MbValue::from_ptr(MbObject::new_str("size".to_string()));
@@ -9393,11 +9410,7 @@ mod tests {
 
         // Set
         let attr2 = MbValue::from_ptr(MbObject::new_str("color".to_string()));
-        mb_setattr(
-            inst,
-            attr2,
-            MbValue::from_ptr(MbObject::new_str("red".to_string())),
-        );
+        mb_setattr(inst, attr2, MbValue::from_ptr(MbObject::new_str("red".to_string())));
 
         // Now present
         let attr3 = MbValue::from_ptr(MbObject::new_str("color".to_string()));
@@ -9423,11 +9436,7 @@ mod tests {
 
         let mut child_methods = HashMap::new();
         child_methods.insert("value".to_string(), MbValue::from_int(43));
-        mb_class_register(
-            "SuperChild001",
-            vec!["SuperBase001".to_string()],
-            child_methods,
-        );
+        mb_class_register("SuperChild001", vec!["SuperBase001".to_string()], child_methods);
 
         // Create instance of SuperChild001
         let name = MbValue::from_ptr(MbObject::new_str("SuperChild001".to_string()));
@@ -9439,11 +9448,8 @@ mod tests {
         let attr = MbValue::from_ptr(MbObject::new_str("value".to_string()));
         let result = mb_super_getattr(proxy, attr);
 
-        assert_eq!(
-            result.as_int(),
-            Some(42),
-            "super() must return parent's method value, not child's"
-        );
+        assert_eq!(result.as_int(), Some(42),
+            "super() must return parent's method value, not child's");
     }
 
     #[test]
@@ -9468,11 +9474,8 @@ mod tests {
         let proxy_c = mb_super(cls_c, inst_c);
         let attr = MbValue::from_ptr(MbObject::new_str("compute".to_string()));
         let result_c = mb_super_getattr(proxy_c, attr);
-        assert_eq!(
-            result_c.as_int(),
-            Some(15),
-            "super() from C must find B.compute"
-        );
+        assert_eq!(result_c.as_int(), Some(15),
+            "super() from C must find B.compute");
 
         // From B, super should find A.compute
         let name_b = MbValue::from_ptr(MbObject::new_str("SuperB001".to_string()));
@@ -9481,11 +9484,8 @@ mod tests {
         let proxy_b = mb_super(cls_b, inst_b);
         let attr2 = MbValue::from_ptr(MbObject::new_str("compute".to_string()));
         let result_b = mb_super_getattr(proxy_b, attr2);
-        assert_eq!(
-            result_b.as_int(),
-            Some(10),
-            "super() from B must find A.compute"
-        );
+        assert_eq!(result_b.as_int(), Some(10),
+            "super() from B must find A.compute");
     }
 
     #[test]
@@ -9497,11 +9497,7 @@ mod tests {
 
         let mut child_methods = HashMap::new();
         child_methods.insert("__init__".to_string(), MbValue::from_int(888));
-        mb_class_register(
-            "SuperInitChild001",
-            vec!["SuperInitBase001".to_string()],
-            child_methods,
-        );
+        mb_class_register("SuperInitChild001", vec!["SuperInitBase001".to_string()], child_methods);
 
         let name = MbValue::from_ptr(MbObject::new_str("SuperInitChild001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -9510,11 +9506,8 @@ mod tests {
         let proxy = mb_super(cls, inst);
         let attr = MbValue::from_ptr(MbObject::new_str("__init__".to_string()));
         let result = mb_super_getattr(proxy, attr);
-        assert_eq!(
-            result.as_int(),
-            Some(777),
-            "super().__init__() must find parent's __init__"
-        );
+        assert_eq!(result.as_int(), Some(777),
+            "super().__init__() must find parent's __init__");
     }
 
     #[test]
@@ -9527,25 +9520,13 @@ mod tests {
         assert!(proxy.is_ptr(), "super proxy must be a pointer");
         if let Some(ptr) = proxy.as_ptr() {
             unsafe {
-                if let ObjData::Instance {
-                    ref class_name,
-                    ref fields,
-                    ..
-                } = (*ptr).data
-                {
-                    assert_eq!(
-                        class_name, "__super__",
-                        "super proxy class must be __super__"
-                    );
+                if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
+                    assert_eq!(class_name, "__super__", "super proxy class must be __super__");
                     let fields = fields.read().unwrap();
-                    assert!(
-                        fields.contains_key("__super_class__"),
-                        "proxy must have __super_class__ field"
-                    );
-                    assert!(
-                        fields.contains_key("__super_self__"),
-                        "proxy must have __super_self__ field"
-                    );
+                    assert!(fields.contains_key("__super_class__"),
+                        "proxy must have __super_class__ field");
+                    assert!(fields.contains_key("__super_self__"),
+                        "proxy must have __super_self__ field");
                 } else {
                     panic!("super proxy must be an Instance");
                 }
@@ -9559,11 +9540,7 @@ mod tests {
         let mut methods = HashMap::new();
         methods.insert("greet".to_string(), MbValue::from_int(1));
         mb_class_register("SuperNfBase001", vec![], methods);
-        mb_class_register(
-            "SuperNfChild001",
-            vec!["SuperNfBase001".to_string()],
-            HashMap::new(),
-        );
+        mb_class_register("SuperNfChild001", vec!["SuperNfBase001".to_string()], HashMap::new());
 
         let name = MbValue::from_ptr(MbObject::new_str("SuperNfChild001".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
@@ -9572,10 +9549,7 @@ mod tests {
         let proxy = mb_super(cls, inst);
         let attr = MbValue::from_ptr(MbObject::new_str("nonexistent".to_string()));
         let result = mb_super_getattr(proxy, attr);
-        assert!(
-            result.is_none(),
-            "super() looking up nonexistent method must return None"
-        );
+        assert!(result.is_none(), "super() looking up nonexistent method must return None");
     }
 
     // --- T5: MRO ---
@@ -9584,16 +9558,8 @@ mod tests {
     fn test_p1_t5_1_diamond_mro_exact_order() {
         // T5.1: D(B, C) where B(A), C(A) → MRO must be [D, B, C, A, object]
         mb_class_register("DiamondA001", vec![], HashMap::new());
-        mb_class_register(
-            "DiamondB001",
-            vec!["DiamondA001".to_string()],
-            HashMap::new(),
-        );
-        mb_class_register(
-            "DiamondC001",
-            vec!["DiamondA001".to_string()],
-            HashMap::new(),
-        );
+        mb_class_register("DiamondB001", vec!["DiamondA001".to_string()], HashMap::new());
+        mb_class_register("DiamondC001", vec!["DiamondA001".to_string()], HashMap::new());
         mb_class_register(
             "DiamondD001",
             vec!["DiamondB001".to_string(), "DiamondC001".to_string()],
@@ -9638,11 +9604,8 @@ mod tests {
         let inst = mb_instance_new(name, MbValue::none());
         let attr = MbValue::from_ptr(MbObject::new_str("who".to_string()));
         let result = mb_getattr(inst, attr);
-        assert_eq!(
-            result.as_int(),
-            Some(2),
-            "Diamond MRO must resolve D.who() to B.who() (first parent in MRO)"
-        );
+        assert_eq!(result.as_int(), Some(2),
+            "Diamond MRO must resolve D.who() to B.who() (first parent in MRO)");
     }
 
     #[test]
@@ -9693,10 +9656,7 @@ mod tests {
         // c3_merge with empty input returns empty result
         let mut lists: Vec<Vec<String>> = Vec::new();
         let result = c3_merge(&mut lists).unwrap();
-        assert!(
-            result.is_empty(),
-            "empty input to c3_merge must return empty result"
-        );
+        assert!(result.is_empty(), "empty input to c3_merge must return empty result");
     }
 
     #[test]
@@ -9750,11 +9710,7 @@ mod tests {
     fn test_p1_t5_single_base_mro_no_object_dup() {
         // Single-base MRO should not duplicate "object"
         mb_class_register("NoDupBase001", vec![], HashMap::new());
-        mb_class_register(
-            "NoDupChild001",
-            vec!["NoDupBase001".to_string()],
-            HashMap::new(),
-        );
+        mb_class_register("NoDupChild001", vec!["NoDupBase001".to_string()], HashMap::new());
 
         CLASS_REGISTRY.with(|reg| {
             let reg = reg.borrow();
@@ -9770,19 +9726,15 @@ mod tests {
     fn test_cleanup_all_classes_clears_registry() {
         mb_class_register("CleanupClassTest", vec![], HashMap::new());
         CLASS_REGISTRY.with(|reg| {
-            assert!(
-                reg.borrow().contains_key("CleanupClassTest"),
-                "class should exist before cleanup"
-            );
+            assert!(reg.borrow().contains_key("CleanupClassTest"),
+                "class should exist before cleanup");
         });
 
         cleanup_all_classes();
 
         CLASS_REGISTRY.with(|reg| {
-            assert!(
-                !reg.borrow().contains_key("CleanupClassTest"),
-                "CLASS_REGISTRY should be empty after cleanup"
-            );
+            assert!(!reg.borrow().contains_key("CleanupClassTest"),
+                "CLASS_REGISTRY should be empty after cleanup");
         });
     }
 
@@ -9790,18 +9742,16 @@ mod tests {
     fn test_cleanup_all_classes_clears_slots_registry() {
         mb_class_register("CleanupSlots", vec![], HashMap::new());
         let cls_name = MbValue::from_ptr(MbObject::new_str("CleanupSlots".to_string()));
-        let slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("x".to_string()),
-        )]));
+        let slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        ]));
         mb_register_slots(cls_name, slots);
 
         cleanup_all_classes();
 
         SLOTS_REGISTRY.with(|reg| {
-            assert!(
-                reg.borrow().is_empty(),
-                "SLOTS_REGISTRY should be empty after cleanup"
-            );
+            assert!(reg.borrow().is_empty(),
+                "SLOTS_REGISTRY should be empty after cleanup");
         });
     }
 
@@ -9809,18 +9759,16 @@ mod tests {
     fn test_cleanup_all_classes_clears_abstract_methods() {
         mb_class_register("CleanupABC", vec![], HashMap::new());
         let cls_name = MbValue::from_ptr(MbObject::new_str("CleanupABC".to_string()));
-        let abs_methods = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("do_thing".to_string()),
-        )]));
+        let abs_methods = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("do_thing".to_string())),
+        ]));
         mb_register_abstract(cls_name, abs_methods);
 
         cleanup_all_classes();
 
         ABSTRACT_METHODS.with(|reg| {
-            assert!(
-                reg.borrow().is_empty(),
-                "ABSTRACT_METHODS should be empty after cleanup"
-            );
+            assert!(reg.borrow().is_empty(),
+                "ABSTRACT_METHODS should be empty after cleanup");
         });
     }
 
@@ -9843,11 +9791,8 @@ mod tests {
         let name = MbValue::from_ptr(MbObject::new_str("CleanupRereg".to_string()));
         let inst = mb_instance_new(name, MbValue::none());
         let attr = MbValue::from_ptr(MbObject::new_str("new_method".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr).as_int(),
-            Some(42),
-            "re-registered class should work after cleanup"
-        );
+        assert_eq!(mb_getattr(inst, attr).as_int(), Some(42),
+            "re-registered class should work after cleanup");
     }
 
     // ── R13: isinstance with tuple-of-types ──
@@ -9927,11 +9872,8 @@ mod tests {
         mb_setattr(inst, attr, MbValue::from_int(99));
         let attr2 = MbValue::from_ptr(MbObject::new_str("x".to_string()));
         let result = mb_getattr_default(inst, attr2, MbValue::from_int(0));
-        assert_eq!(
-            result.as_int(),
-            Some(99),
-            "getattr should return existing attr, not default"
-        );
+        assert_eq!(result.as_int(), Some(99),
+            "getattr should return existing attr, not default");
     }
 
     #[test]
@@ -9942,11 +9884,8 @@ mod tests {
         let attr = MbValue::from_ptr(MbObject::new_str("nonexistent".to_string()));
         let default = MbValue::from_int(42);
         let result = mb_getattr_default(inst, attr, default);
-        assert_eq!(
-            result.as_int(),
-            Some(42),
-            "getattr should return default for missing attr"
-        );
+        assert_eq!(result.as_int(), Some(42),
+            "getattr should return default for missing attr");
     }
 
     #[test]
@@ -9960,9 +9899,7 @@ mod tests {
         unsafe {
             if let ObjData::Str(ref s) = (*result.as_ptr().unwrap()).data {
                 assert_eq!(s, "fallback");
-            } else {
-                panic!("expected str default");
-            }
+            } else { panic!("expected str default"); }
         }
     }
 
@@ -10009,12 +9946,12 @@ mod tests {
 
         // Set kwargs BEFORE registering child (as the lowering pass would do)
         let child_name_val = MbValue::from_ptr(MbObject::new_str("S1Child".to_string()));
-        let keys = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("registry".to_string()),
-        )]));
-        let values = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("users".to_string()),
-        )]));
+        let keys = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("registry".to_string())),
+        ]));
+        let values = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("users".to_string())),
+        ]));
         mb_class_set_kwargs(child_name_val, keys, values);
 
         // Register Child — triggers __init_subclass__ with kwargs
@@ -10053,12 +9990,12 @@ mod tests {
 
         // Set kwargs on the child
         let child_name_val = MbValue::from_ptr(MbObject::new_str("S3Child".to_string()));
-        let keys = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("key".to_string()),
-        )]));
-        let values = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("val".to_string()),
-        )]));
+        let keys = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("key".to_string())),
+        ]));
+        let values = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("val".to_string())),
+        ]));
         mb_class_set_kwargs(child_name_val, keys, values);
 
         // Register child — should raise TypeError
@@ -10110,10 +10047,7 @@ mod tests {
         unsafe {
             if let Some(ptr) = result.as_ptr() {
                 if let ObjData::Str(ref s) = (*ptr).data {
-                    assert_eq!(
-                        s, "MyList[int]",
-                        "S4: __class_getitem__ return value must propagate"
-                    );
+                    assert_eq!(s, "MyList[int]", "S4: __class_getitem__ return value must propagate");
                     return;
                 }
             }
@@ -10203,9 +10137,7 @@ mod tests {
         // mb_class_register does, since re-registration overrides the class.
         let class_attrs: HashMap<String, MbValue> = CLASS_REGISTRY.with(|reg| {
             let reg = reg.borrow();
-            reg.get("S6MyClass")
-                .map(|cls| cls.class_attrs.clone())
-                .unwrap_or_default()
+            reg.get("S6MyClass").map(|cls| cls.class_attrs.clone()).unwrap_or_default()
         });
 
         // Manually call __set_name__ on attrs (as mb_class_register does)
@@ -10241,30 +10173,26 @@ mod tests {
 
         mb_class_register("S7Base", vec![], HashMap::new());
         let base_name = MbValue::from_ptr(MbObject::new_str("S7Base".to_string()));
-        let base_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("x".to_string()),
-        )]));
+        let base_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        ]));
         mb_register_slots(base_name, base_slots);
 
         mb_class_register("S7Child", vec!["S7Base".to_string()], HashMap::new());
         let child_name = MbValue::from_ptr(MbObject::new_str("S7Child".to_string()));
-        let child_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("y".to_string()),
-        )]));
+        let child_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("y".to_string())),
+        ]));
         mb_register_slots(child_name, child_slots);
 
         // Verify effective slots include both x and y
         SLOTS_REGISTRY.with(|reg| {
             let reg = reg.borrow();
             let slots = reg.get("S7Child").unwrap();
-            assert!(
-                slots.contains(&"x".to_string()),
-                "S7: Child effective slots must include parent slot 'x'"
-            );
-            assert!(
-                slots.contains(&"y".to_string()),
-                "S7: Child effective slots must include own slot 'y'"
-            );
+            assert!(slots.contains(&"x".to_string()),
+                "S7: Child effective slots must include parent slot 'x'");
+            assert!(slots.contains(&"y".to_string()),
+                "S7: Child effective slots must include own slot 'y'");
         });
 
         // Create instance and test attribute access
@@ -10275,21 +10203,15 @@ mod tests {
         let attr_x = MbValue::from_ptr(MbObject::new_str("x".to_string()));
         mb_setattr(inst, attr_x, MbValue::from_int(1));
         let attr_x2 = MbValue::from_ptr(MbObject::new_str("x".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr_x2).as_int(),
-            Some(1),
-            "S7: c.x = 1 must succeed (inherited slot)"
-        );
+        assert_eq!(mb_getattr(inst, attr_x2).as_int(), Some(1),
+            "S7: c.x = 1 must succeed (inherited slot)");
 
         // c.y = 2 — should succeed (own slot)
         let attr_y = MbValue::from_ptr(MbObject::new_str("y".to_string()));
         mb_setattr(inst, attr_y, MbValue::from_int(2));
         let attr_y2 = MbValue::from_ptr(MbObject::new_str("y".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr_y2).as_int(),
-            Some(2),
-            "S7: c.y = 2 must succeed (own slot)"
-        );
+        assert_eq!(mb_getattr(inst, attr_y2).as_int(), Some(2),
+            "S7: c.y = 2 must succeed (own slot)");
 
         // c.z = 3 — should raise AttributeError (not in slots)
         crate::runtime::exception::mb_clear_exception();
@@ -10320,10 +10242,8 @@ mod tests {
 
         // Verify __dict__ is suppressed
         DICT_SUPPRESSED.with(|reg| {
-            assert!(
-                reg.borrow().contains("S8Compact"),
-                "S8: class with __slots__ (no '__dict__') must have __dict__ suppressed"
-            );
+            assert!(reg.borrow().contains("S8Compact"),
+                "S8: class with __slots__ (no '__dict__') must have __dict__ suppressed");
         });
 
         let inst_name = MbValue::from_ptr(MbObject::new_str("S8Compact".to_string()));
@@ -10357,10 +10277,8 @@ mod tests {
 
         // Verify __dict__ is NOT suppressed (because '__dict__' is in slots)
         DICT_SUPPRESSED.with(|reg| {
-            assert!(
-                !reg.borrow().contains("S9Hybrid"),
-                "S9: class with '__dict__' in __slots__ must NOT suppress __dict__"
-            );
+            assert!(!reg.borrow().contains("S9Hybrid"),
+                "S9: class with '__dict__' in __slots__ must NOT suppress __dict__");
         });
 
         let inst_name = MbValue::from_ptr(MbObject::new_str("S9Hybrid".to_string()));
@@ -10370,21 +10288,15 @@ mod tests {
         let attr_x = MbValue::from_ptr(MbObject::new_str("x".to_string()));
         mb_setattr(inst, attr_x, MbValue::from_int(1));
         let attr_x2 = MbValue::from_ptr(MbObject::new_str("x".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr_x2).as_int(),
-            Some(1),
-            "S9: obj.x = 1 must succeed (named slot)"
-        );
+        assert_eq!(mb_getattr(inst, attr_x2).as_int(), Some(1),
+            "S9: obj.x = 1 must succeed (named slot)");
 
         // obj.z = 3 (via __dict__, since not suppressed)
         let attr_z = MbValue::from_ptr(MbObject::new_str("z".to_string()));
         mb_setattr(inst, attr_z, MbValue::from_int(3));
         let attr_z2 = MbValue::from_ptr(MbObject::new_str("z".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr_z2).as_int(),
-            Some(3),
-            "S9: obj.z = 3 must succeed (via __dict__)"
-        );
+        assert_eq!(mb_getattr(inst, attr_z2).as_int(), Some(3),
+            "S9: obj.z = 3 must succeed (via __dict__)");
 
         assert_eq!(
             crate::runtime::exception::mb_has_exception().as_bool(),
@@ -10409,18 +10321,13 @@ mod tests {
         SLOTS_REGISTRY.with(|reg| {
             let reg = reg.borrow();
             let slot_list = reg.get("S10Empty").unwrap();
-            assert!(
-                slot_list.is_empty(),
-                "S10: empty __slots__ must have no entries"
-            );
+            assert!(slot_list.is_empty(), "S10: empty __slots__ must have no entries");
         });
 
         // Verify __dict__ is suppressed
         DICT_SUPPRESSED.with(|reg| {
-            assert!(
-                reg.borrow().contains("S10Empty"),
-                "S10: class with empty __slots__ must suppress __dict__"
-            );
+            assert!(reg.borrow().contains("S10Empty"),
+                "S10: class with empty __slots__ must suppress __dict__");
         });
 
         let inst_name = MbValue::from_ptr(MbObject::new_str("S10Empty".to_string()));
@@ -10454,19 +10361,9 @@ mod tests {
         SLOTS_REGISTRY.with(|reg| {
             let reg = reg.borrow();
             let slot_list = reg.get("S11Foo").unwrap();
-            assert_eq!(
-                slot_list.len(),
-                2,
-                "S11: SLOTS_REGISTRY must have 2 entries for S11Foo"
-            );
-            assert!(
-                slot_list.contains(&"a".to_string()),
-                "S11: slot 'a' must be present"
-            );
-            assert!(
-                slot_list.contains(&"b".to_string()),
-                "S11: slot 'b' must be present"
-            );
+            assert_eq!(slot_list.len(), 2, "S11: SLOTS_REGISTRY must have 2 entries for S11Foo");
+            assert!(slot_list.contains(&"a".to_string()), "S11: slot 'a' must be present");
+            assert!(slot_list.contains(&"b".to_string()), "S11: slot 'b' must be present");
         });
     }
 
@@ -10480,27 +10377,27 @@ mod tests {
 
         mb_class_register("S12Base", vec![], HashMap::new());
         let base_name = MbValue::from_ptr(MbObject::new_str("S12Base".to_string()));
-        let base_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("x".to_string()),
-        )]));
+        let base_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        ]));
         mb_register_slots(base_name, base_slots);
 
         // Register Child WITHOUT calling mb_register_slots (no __slots__ declaration)
         mb_class_register("S12Child", vec!["S12Base".to_string()], HashMap::new());
 
         // Child should NOT be in SLOTS_REGISTRY (it didn't define __slots__)
-        let child_has_own_slots = SLOTS_REGISTRY.with(|reg| reg.borrow().contains_key("S12Child"));
-        assert!(
-            !child_has_own_slots,
-            "S12: Child without __slots__ must NOT be in SLOTS_REGISTRY"
-        );
+        let child_has_own_slots = SLOTS_REGISTRY.with(|reg| {
+            reg.borrow().contains_key("S12Child")
+        });
+        assert!(!child_has_own_slots,
+            "S12: Child without __slots__ must NOT be in SLOTS_REGISTRY");
 
         // Child should NOT have __dict__ suppressed
-        let child_dict_suppressed = DICT_SUPPRESSED.with(|reg| reg.borrow().contains("S12Child"));
-        assert!(
-            !child_dict_suppressed,
-            "S12: Child without __slots__ must NOT suppress __dict__"
-        );
+        let child_dict_suppressed = DICT_SUPPRESSED.with(|reg| {
+            reg.borrow().contains("S12Child")
+        });
+        assert!(!child_dict_suppressed,
+            "S12: Child without __slots__ must NOT suppress __dict__");
 
         let inst_name = MbValue::from_ptr(MbObject::new_str("S12Child".to_string()));
         let inst = mb_instance_new(inst_name, MbValue::none());
@@ -10509,21 +10406,15 @@ mod tests {
         let attr_x = MbValue::from_ptr(MbObject::new_str("x".to_string()));
         mb_setattr(inst, attr_x, MbValue::from_int(1));
         let attr_x2 = MbValue::from_ptr(MbObject::new_str("x".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr_x2).as_int(),
-            Some(1),
-            "S12: c.x = 1 must succeed"
-        );
+        assert_eq!(mb_getattr(inst, attr_x2).as_int(), Some(1),
+            "S12: c.x = 1 must succeed");
 
         // c.z = 99 — succeeds (via __dict__, since Child has no __slots__)
         let attr_z = MbValue::from_ptr(MbObject::new_str("z".to_string()));
         mb_setattr(inst, attr_z, MbValue::from_int(99));
         let attr_z2 = MbValue::from_ptr(MbObject::new_str("z".to_string()));
-        assert_eq!(
-            mb_getattr(inst, attr_z2).as_int(),
-            Some(99),
-            "S12: c.z = 99 must succeed (via __dict__)"
-        );
+        assert_eq!(mb_getattr(inst, attr_z2).as_int(), Some(99),
+            "S12: c.z = 99 must succeed (via __dict__)");
 
         assert_eq!(
             crate::runtime::exception::mb_has_exception().as_bool(),
@@ -10558,11 +10449,7 @@ mod tests {
         mb_class_register("R10NoKwBase", vec![], base_methods);
 
         // Register child without kwargs
-        mb_class_register(
-            "R10NoKwChild",
-            vec!["R10NoKwBase".to_string()],
-            HashMap::new(),
-        );
+        mb_class_register("R10NoKwChild", vec!["R10NoKwBase".to_string()], HashMap::new());
 
         assert!(
             R10_NO_KW_CALLED.load(Ordering::SeqCst),
@@ -10605,40 +10492,34 @@ mod tests {
 
         mb_class_register("S13Base", vec![], HashMap::new());
         let base_name = MbValue::from_ptr(MbObject::new_str("S13Base".to_string()));
-        let base_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("x".to_string()),
-        )]));
+        let base_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        ]));
         mb_register_slots(base_name, base_slots);
 
         mb_class_register("S13Mid", vec!["S13Base".to_string()], HashMap::new());
         let mid_name = MbValue::from_ptr(MbObject::new_str("S13Mid".to_string()));
-        let mid_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("y".to_string()),
-        )]));
+        let mid_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("y".to_string())),
+        ]));
         mb_register_slots(mid_name, mid_slots);
 
         mb_class_register("S13Leaf", vec!["S13Mid".to_string()], HashMap::new());
         let leaf_name = MbValue::from_ptr(MbObject::new_str("S13Leaf".to_string()));
-        let leaf_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("z".to_string()),
-        )]));
+        let leaf_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("z".to_string())),
+        ]));
         mb_register_slots(leaf_name, leaf_slots);
 
         SLOTS_REGISTRY.with(|reg| {
             let reg = reg.borrow();
             let leaf_slots = reg.get("S13Leaf").unwrap();
-            assert!(
-                leaf_slots.contains(&"x".to_string()),
-                "R13: Leaf must inherit Base slot 'x'"
-            );
-            assert!(
-                leaf_slots.contains(&"y".to_string()),
-                "R13: Leaf must inherit Mid slot 'y'"
-            );
-            assert!(
-                leaf_slots.contains(&"z".to_string()),
-                "R13: Leaf must have own slot 'z'"
-            );
+            assert!(leaf_slots.contains(&"x".to_string()),
+                "R13: Leaf must inherit Base slot 'x'");
+            assert!(leaf_slots.contains(&"y".to_string()),
+                "R13: Leaf must inherit Mid slot 'y'");
+            assert!(leaf_slots.contains(&"z".to_string()),
+                "R13: Leaf must have own slot 'z'");
         });
 
         // Verify actual attribute access works
@@ -10651,12 +10532,8 @@ mod tests {
         }
         for (name, expected) in [("x", 10i64), ("y", 20), ("z", 30)] {
             let attr = MbValue::from_ptr(MbObject::new_str(name.to_string()));
-            assert_eq!(
-                mb_getattr(inst, attr).as_int(),
-                Some(expected),
-                "R13: three-level slot {} must be accessible",
-                name
-            );
+            assert_eq!(mb_getattr(inst, attr).as_int(), Some(expected),
+                "R13: three-level slot {} must be accessible", name);
         }
 
         // Unslotted attr must fail
@@ -10676,30 +10553,23 @@ mod tests {
         // If parent and child both declare slot 'x', effective set has only one 'x'
         mb_class_register("S13DupBase", vec![], HashMap::new());
         let base_name = MbValue::from_ptr(MbObject::new_str("S13DupBase".to_string()));
-        let base_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("x".to_string()),
-        )]));
+        let base_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        ]));
         mb_register_slots(base_name, base_slots);
 
-        mb_class_register(
-            "S13DupChild",
-            vec!["S13DupBase".to_string()],
-            HashMap::new(),
-        );
+        mb_class_register("S13DupChild", vec!["S13DupBase".to_string()], HashMap::new());
         let child_name = MbValue::from_ptr(MbObject::new_str("S13DupChild".to_string()));
-        let child_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("x".to_string()),
-        )]));
+        let child_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        ]));
         mb_register_slots(child_name, child_slots);
 
         SLOTS_REGISTRY.with(|reg| {
             let reg = reg.borrow();
             let slots = reg.get("S13DupChild").unwrap();
             let x_count = slots.iter().filter(|s| *s == "x").count();
-            assert_eq!(
-                x_count, 1,
-                "R13: duplicate slot 'x' must appear only once in effective set"
-            );
+            assert_eq!(x_count, 1, "R13: duplicate slot 'x' must appear only once in effective set");
         });
     }
 
@@ -10742,16 +10612,12 @@ mod tests {
     fn test_r12_try_get_dunder_on_value_for_non_instance() {
         // try_get_dunder_on_value should return None for non-instance values
         let result = try_get_dunder_on_value(MbValue::from_int(42), "__set_name__");
-        assert!(
-            result.is_none(),
-            "R12: try_get_dunder_on_value on int must return None"
-        );
+        assert!(result.is_none(),
+            "R12: try_get_dunder_on_value on int must return None");
 
         let result2 = try_get_dunder_on_value(MbValue::none(), "__set_name__");
-        assert!(
-            result2.is_none(),
-            "R12: try_get_dunder_on_value on None must return None"
-        );
+        assert!(result2.is_none(),
+            "R12: try_get_dunder_on_value on None must return None");
     }
 
     #[test]
@@ -10759,25 +10625,21 @@ mod tests {
         // After cleanup_all_classes, DICT_SUPPRESSED should be empty
         mb_class_register("R13CleanupDict", vec![], HashMap::new());
         let cls_name = MbValue::from_ptr(MbObject::new_str("R13CleanupDict".to_string()));
-        let slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("x".to_string()),
-        )]));
+        let slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("x".to_string())),
+        ]));
         mb_register_slots(cls_name, slots);
 
         DICT_SUPPRESSED.with(|reg| {
-            assert!(
-                reg.borrow().contains("R13CleanupDict"),
-                "R13: DICT_SUPPRESSED must contain class before cleanup"
-            );
+            assert!(reg.borrow().contains("R13CleanupDict"),
+                "R13: DICT_SUPPRESSED must contain class before cleanup");
         });
 
         cleanup_all_classes();
 
         DICT_SUPPRESSED.with(|reg| {
-            assert!(
-                reg.borrow().is_empty(),
-                "R13: DICT_SUPPRESSED must be empty after cleanup"
-            );
+            assert!(reg.borrow().is_empty(),
+                "R13: DICT_SUPPRESSED must be empty after cleanup");
         });
     }
 
@@ -10797,11 +10659,8 @@ mod tests {
         let child_type = make_type_object("T3Child");
         let base_type = make_type_object("T3Base");
         let result = mb_issubclass(child_type, base_type);
-        assert_eq!(
-            result.as_bool(),
-            Some(true),
-            "issubclass(Child_type_obj, Base_type_obj) must be True via MRO"
-        );
+        assert_eq!(result.as_bool(), Some(true),
+            "issubclass(Child_type_obj, Base_type_obj) must be True via MRO");
 
         cleanup_all_classes();
     }
@@ -10819,11 +10678,8 @@ mod tests {
         let my_class_type = make_type_object("T3MyClass");
         let object_str = MbValue::from_ptr(MbObject::new_str("object".to_string()));
         let result = mb_issubclass(my_class_type, object_str);
-        assert_eq!(
-            result.as_bool(),
-            Some(true),
-            "issubclass(type_obj, 'object') must be True"
-        );
+        assert_eq!(result.as_bool(), Some(true),
+            "issubclass(type_obj, 'object') must be True");
 
         cleanup_all_classes();
     }
@@ -10845,20 +10701,14 @@ mod tests {
         // isinstance(d, Animal) via type object
         let animal_type = make_type_object("T3Animal");
         let result = mb_isinstance(instance, animal_type);
-        assert_eq!(
-            result.as_bool(),
-            Some(true),
-            "isinstance(Dog(), Animal_type_obj) must be True via MRO"
-        );
+        assert_eq!(result.as_bool(), Some(true),
+            "isinstance(Dog(), Animal_type_obj) must be True via MRO");
 
         // isinstance(d, Animal) via string (should also work)
         let animal_str = MbValue::from_ptr(MbObject::new_str("T3Animal".to_string()));
         let result2 = mb_isinstance(instance, animal_str);
-        assert_eq!(
-            result2.as_bool(),
-            Some(true),
-            "isinstance(Dog(), 'Animal') must also be True"
-        );
+        assert_eq!(result2.as_bool(), Some(true),
+            "isinstance(Dog(), 'Animal') must also be True");
 
         cleanup_all_classes();
     }
@@ -10878,18 +10728,12 @@ mod tests {
         mb_class_register("T3Dunder", vec![], methods);
 
         let repr = lookup_method("T3Dunder", "__repr__");
-        assert_eq!(
-            repr.as_int(),
-            Some(777),
-            "__repr__ must be found via lookup_method"
-        );
+        assert_eq!(repr.as_int(), Some(777),
+            "__repr__ must be found via lookup_method");
 
         let eq = lookup_method("T3Dunder", "__eq__");
-        assert_eq!(
-            eq.as_int(),
-            Some(888),
-            "__eq__ must be found via lookup_method"
-        );
+        assert_eq!(eq.as_int(), Some(888),
+            "__eq__ must be found via lookup_method");
 
         cleanup_all_classes();
     }
@@ -10915,11 +10759,8 @@ mod tests {
         let instance = mb_instance_new(inst_name, MbValue::none());
         let attr = MbValue::from_ptr(MbObject::new_str("greet".to_string()));
         let result = mb_getattr(instance, attr);
-        assert_eq!(
-            result.as_int(),
-            Some(42),
-            "class_attr 'greet' must be accessible on instance via MRO fallback"
-        );
+        assert_eq!(result.as_int(), Some(42),
+            "class_attr 'greet' must be accessible on instance via MRO fallback");
 
         cleanup_all_classes();
     }
@@ -10934,20 +10775,13 @@ mod tests {
 
         mb_class_register("T3A", vec![], HashMap::new());
         mb_class_register("T3B", vec![], HashMap::new());
-        mb_class_register(
-            "T3C",
-            vec!["T3A".to_string(), "T3B".to_string()],
-            HashMap::new(),
-        );
+        mb_class_register("T3C", vec!["T3A".to_string(), "T3B".to_string()], HashMap::new());
 
         CLASS_REGISTRY.with(|reg| {
             let cls = reg.borrow();
             let c = cls.get("T3C").unwrap();
-            assert_eq!(
-                c.mro,
-                vec!["T3C", "T3A", "T3B", "object"],
-                "MRO must be [C, A, B, object] via C3 linearization"
-            );
+            assert_eq!(c.mro, vec!["T3C", "T3A", "T3B", "object"],
+                "MRO must be [C, A, B, object] via C3 linearization");
         });
 
         cleanup_all_classes();
@@ -10965,17 +10799,11 @@ mod tests {
         let y_type = make_type_object("T3Y");
 
         // issubclass(Y, X) -> True
-        assert_eq!(
-            mb_issubclass(y_type, x_type).as_bool(),
-            Some(true),
-            "issubclass(Y_type, X_type) must be True"
-        );
+        assert_eq!(mb_issubclass(y_type, x_type).as_bool(), Some(true),
+            "issubclass(Y_type, X_type) must be True");
         // issubclass(X, Y) -> False
-        assert_eq!(
-            mb_issubclass(x_type, y_type).as_bool(),
-            Some(false),
-            "issubclass(X_type, Y_type) must be False"
-        );
+        assert_eq!(mb_issubclass(x_type, y_type).as_bool(), Some(false),
+            "issubclass(X_type, Y_type) must be False");
 
         cleanup_all_classes();
     }
@@ -10989,11 +10817,8 @@ mod tests {
         let obj_type = make_type_object("T3Obj");
         let object_str = MbValue::from_ptr(MbObject::new_str("object".to_string()));
 
-        assert_eq!(
-            mb_issubclass(obj_type, object_str).as_bool(),
-            Some(true),
-            "issubclass(any_type_obj, 'object') must be True"
-        );
+        assert_eq!(mb_issubclass(obj_type, object_str).as_bool(), Some(true),
+            "issubclass(any_type_obj, 'object') must be True");
 
         cleanup_all_classes();
     }
@@ -11016,11 +10841,8 @@ mod tests {
     fn test_resolve_class_name_non_type_instance() {
         // resolve_class_name with a non-type instance should return None
         let inst = MbValue::from_ptr(MbObject::new_instance("SomeClass".to_string()));
-        assert_eq!(
-            resolve_class_name(inst),
-            None,
-            "non-type Instance should not resolve to a class name"
-        );
+        assert_eq!(resolve_class_name(inst), None,
+            "non-type Instance should not resolve to a class name");
     }
 
     #[test]
@@ -11038,30 +10860,20 @@ mod tests {
     fn test_slots_inheritance_merges_parent_slots() {
         mb_class_register("SlotsParent001", vec![], HashMap::new());
         let parent_name = MbValue::from_ptr(MbObject::new_str("SlotsParent001".to_string()));
-        let parent_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("a".to_string()),
-        )]));
+        let parent_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("a".to_string())),
+        ]));
         mb_register_slots(parent_name, parent_slots);
-        mb_class_register(
-            "SlotsChild001",
-            vec!["SlotsParent001".to_string()],
-            HashMap::new(),
-        );
+        mb_class_register("SlotsChild001", vec!["SlotsParent001".to_string()], HashMap::new());
         let child_name = MbValue::from_ptr(MbObject::new_str("SlotsChild001".to_string()));
-        let child_slots = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("b".to_string()),
-        )]));
+        let child_slots = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("b".to_string())),
+        ]));
         mb_register_slots(child_name, child_slots);
         SLOTS_REGISTRY.with(|reg| {
             let effective = reg.borrow().get("SlotsChild001").cloned().unwrap();
-            assert!(
-                effective.contains(&"b".to_string()),
-                "child's own slot b must be present"
-            );
-            assert!(
-                effective.contains(&"a".to_string()),
-                "R13: parent slot a must be merged"
-            );
+            assert!(effective.contains(&"b".to_string()), "child's own slot b must be present");
+            assert!(effective.contains(&"a".to_string()), "R13: parent slot a must be merged");
         });
     }
 }

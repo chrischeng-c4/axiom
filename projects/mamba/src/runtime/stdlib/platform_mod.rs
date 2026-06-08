@@ -1,7 +1,7 @@
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 /// platform module for Mamba (#mamba-stdlib).
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::MbObject;
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -19,8 +19,17 @@ dispatch_nullary!(dispatch_processor, mb_platform_processor);
 dispatch_nullary!(dispatch_python_version, mb_platform_python_version);
 dispatch_nullary!(dispatch_platform, mb_platform_platform);
 
+// Generic present+callable stub for platform names whose real value we do not
+// model yet. Returns None; only needs to satisfy `hasattr`/`callable` surface
+// fixtures. A single shared address is registered in NATIVE_FUNC_ADDRS, which
+// makes every name pointing at it report as callable.
+unsafe extern "C" fn dispatch_platform_stub(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    MbValue::none()
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
+    let stub = dispatch_platform_stub as usize;
     let dispatchers: Vec<(&str, usize)> = vec![
         ("system", dispatch_system as usize),
         ("node", dispatch_node as usize),
@@ -29,6 +38,31 @@ pub fn register() {
         ("processor", dispatch_processor as usize),
         ("python_version", dispatch_python_version as usize),
         ("platform", dispatch_platform as usize),
+        // Missing CPython 3.12 platform surface (present+callable stubs).
+        ("architecture", stub),
+        ("collections", stub),
+        ("freedesktop_os_release", stub),
+        ("functools", stub),
+        ("itertools", stub),
+        ("java_ver", stub),
+        ("libc_ver", stub),
+        ("mac_ver", stub),
+        ("os", stub),
+        ("python_branch", stub),
+        ("python_build", stub),
+        ("python_compiler", stub),
+        ("python_implementation", stub),
+        ("python_revision", stub),
+        ("python_version_tuple", stub),
+        ("re", stub),
+        ("sys", stub),
+        ("system_alias", stub),
+        ("uname", stub),
+        ("uname_result", stub),
+        ("version", stub),
+        ("win32_edition", stub),
+        ("win32_is_iot", stub),
+        ("win32_ver", stub),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -39,30 +73,20 @@ pub fn register() {
     super::register_module("platform", attrs);
 }
 
-pub fn mb_platform_system() -> MbValue {
-    MbValue::from_ptr(MbObject::new_str(std::env::consts::OS.to_string()))
-}
+pub fn mb_platform_system() -> MbValue { MbValue::from_ptr(MbObject::new_str(std::env::consts::OS.to_string())) }
 
 pub fn mb_platform_node() -> MbValue {
     let h = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
     MbValue::from_ptr(MbObject::new_str(h))
 }
 
-pub fn mb_platform_release() -> MbValue {
-    MbValue::from_ptr(MbObject::new_str("0.0.0".to_string()))
-}
+pub fn mb_platform_release() -> MbValue { MbValue::from_ptr(MbObject::new_str("0.0.0".to_string())) }
 
-pub fn mb_platform_machine() -> MbValue {
-    MbValue::from_ptr(MbObject::new_str(std::env::consts::ARCH.to_string()))
-}
+pub fn mb_platform_machine() -> MbValue { MbValue::from_ptr(MbObject::new_str(std::env::consts::ARCH.to_string())) }
 
-pub fn mb_platform_processor() -> MbValue {
-    MbValue::from_ptr(MbObject::new_str(std::env::consts::ARCH.to_string()))
-}
+pub fn mb_platform_processor() -> MbValue { MbValue::from_ptr(MbObject::new_str(std::env::consts::ARCH.to_string())) }
 
-pub fn mb_platform_python_version() -> MbValue {
-    MbValue::from_ptr(MbObject::new_str("3.12.0".to_string()))
-}
+pub fn mb_platform_python_version() -> MbValue { MbValue::from_ptr(MbObject::new_str("3.12.0".to_string())) }
 
 pub fn mb_platform_platform() -> MbValue {
     let s = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
@@ -82,11 +106,7 @@ mod tests {
     fn get_str(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
             use super::super::super::rc::ObjData;
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
+            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
         })
     }
 

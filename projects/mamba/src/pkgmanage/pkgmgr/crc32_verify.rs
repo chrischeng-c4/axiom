@@ -44,7 +44,11 @@ pub fn crc32(bytes: &[u8]) -> u32 {
 /// (streaming data descriptor) when the real CRC lives in a trailing
 /// Data Descriptor record. The caller should set `allow_zero = true`
 /// in that case, having already inspected the gp-flag.
-pub fn verify_crc32(bytes: &[u8], expected: u32, allow_zero: bool) -> Result<u32, IndexError> {
+pub fn verify_crc32(
+    bytes: &[u8],
+    expected: u32,
+    allow_zero: bool,
+) -> Result<u32, IndexError> {
     if expected == 0 && !allow_zero {
         return Err(IndexError::ParseError {
             url: String::new(),
@@ -63,7 +67,9 @@ pub fn verify_crc32(bytes: &[u8], expected: u32, allow_zero: bool) -> Result<u32
     if actual != expected {
         return Err(IndexError::ParseError {
             url: String::new(),
-            detail: format!("CRC-32 mismatch: expected 0x{expected:08x}, computed 0x{actual:08x}"),
+            detail: format!(
+                "CRC-32 mismatch: expected 0x{expected:08x}, computed 0x{actual:08x}"
+            ),
         });
     }
     Ok(actual)
@@ -186,10 +192,7 @@ mod tests {
 
     // ---- verify_against_lfh -------------------------------------------
 
-    fn lfh_with(
-        crc32_field: u32,
-        gp_flag: u16,
-    ) -> crate::pkgmanage::pkgmgr::zip_lfh::LocalFileHeader {
+    fn lfh_with(crc32_field: u32, gp_flag: u16) -> crate::pkgmanage::pkgmgr::zip_lfh::LocalFileHeader {
         crate::pkgmanage::pkgmgr::zip_lfh::LocalFileHeader {
             filename: "any".into(),
             compressed_size: 0,

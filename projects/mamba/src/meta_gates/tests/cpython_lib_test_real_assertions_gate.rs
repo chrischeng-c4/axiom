@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 // Locks the shape of the CPython Lib/test executes-assertions-not-
-// stub-pass parent gate pinned by tests/cpython/lib_test_seeds/
+// stub-pass parent gate pinned by tests/harness/cpython/config/seeds/
 // executes_assertions_not_stub_pass/manifest.toml. Closes #2528.
 // Parent: #2526.
 
@@ -12,7 +12,7 @@ use toml::Value;
 
 fn manifest_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/lib_test_seeds/executes_assertions_not_stub_pass/manifest.toml")
+        .join("tests/harness/cpython/config/seeds/executes_assertions_not_stub_pass/manifest.toml")
 }
 
 fn manifest() -> Value {

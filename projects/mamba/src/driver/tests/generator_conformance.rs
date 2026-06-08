@@ -14,6 +14,7 @@
 /// T10: Generator-based context manager (R10)
 /// T11: Generator lifecycle (R11)
 /// Regression: Existing generator fixtures
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -95,38 +96,13 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
             "output mismatch:\n--- expected ---\n{expected_trimmed}\n--- actual ---\n{actual_trimmed}\n--- diff ---\n{diff}"
         );
     }
-}
-
-/// Load a fixture file and its golden expected output, run through JIT, and compare.
-fn run_fixture(fixture_path: &str) {
-    let src = std::fs::read_to_string(fixture_path)
-        .unwrap_or_else(|e| panic!("read fixture {fixture_path}: {e}"));
-    let expected_path = fixture_path.replace(".py", ".expected");
-    let expected = std::fs::read_to_string(&expected_path)
-        .unwrap_or_else(|e| panic!("read expected {expected_path}: {e}"));
-
-    // Strip xfail directive from source before running
-    let src_clean: String = src
-        .lines()
-        .filter(|line| !line.trim().starts_with("# mamba-xfail:"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-
-    let output = jit_capture(&src_clean);
-    assert_output(&output, &expected);
 }
 
 // =============================================================================
@@ -157,7 +133,8 @@ fn test_t1_3_genexpr_sum() {
 /// T1.4: Nested generator expression.
 #[test]
 fn test_t1_4_genexpr_nested() {
-    let output = jit_capture("print(list((x, y) for x in range(3) for y in range(2)))\n");
+    let output =
+        jit_capture("print(list((x, y) for x in range(3) for y in range(2)))\n");
     assert_output(
         &output,
         "[(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]\n",
@@ -176,12 +153,6 @@ fn test_t1_5_genexpr_as_max_arg() {
 fn test_t1_6_genexpr_as_min_arg() {
     let output = jit_capture("print(min(abs(x) for x in [-5, 3, -1, 4]))\n");
     assert_output(&output, "1\n");
-}
-
-/// T1 fixture: Full genexpr.py fixture matches golden output.
-#[test]
-fn test_t1_fixture_genexpr() {
-    run_fixture("tests/cpython/fixtures/core/generators/genexpr.py");
 }
 
 // =============================================================================
@@ -256,12 +227,6 @@ print(gen.send(5))
 "#,
     );
     assert_output(&output, "1\n10\n");
-}
-
-/// T2 fixture: Full send_edge_cases.py (passing subset) fixture matches golden output.
-#[test]
-fn test_t2_fixture_send_edge_cases() {
-    run_fixture("tests/cpython/fixtures/core/generators/send_edge_cases.py");
 }
 
 // =============================================================================
@@ -350,12 +315,6 @@ print(gen.throw(ValueError('injected')))
     assert_output(&output, "1\ncaught: injected\n99\n");
 }
 
-/// T3 fixture: Full throw_edge_cases.py fixture matches golden output.
-#[test]
-fn test_t3_fixture_throw_edge_cases() {
-    run_fixture("tests/cpython/fixtures/core/generators/throw_edge_cases.py");
-}
-
 // =============================================================================
 // T4: Generator Close Edge Cases (R4) — close_edge_cases.py
 // =============================================================================
@@ -434,7 +393,10 @@ except RuntimeError:
     print('RuntimeError: generator ignored GeneratorExit')
 "#,
     );
-    assert_output(&output, "RuntimeError: generator ignored GeneratorExit\n");
+    assert_output(
+        &output,
+        "RuntimeError: generator ignored GeneratorExit\n",
+    );
 }
 
 /// T4.5: close() triggers finally block.
@@ -454,12 +416,6 @@ gen.close()
 "#,
     );
     assert_output(&output, "finally ran\n");
-}
-
-/// T4 fixture: close_edge_cases.py (passing subset) fixture matches golden output.
-#[test]
-fn test_t4_fixture_close_edge_cases() {
-    run_fixture("tests/cpython/fixtures/core/generators/close_edge_cases.py");
 }
 
 // =============================================================================
@@ -548,12 +504,6 @@ g.close()
     assert_output(&output, "inner closed\n");
 }
 
-/// T5 fixture: yield_from_passthrough.py (passing subset) fixture matches golden output.
-#[test]
-fn test_t5_fixture_yield_from_passthrough() {
-    run_fixture("tests/cpython/fixtures/core/generators/yield_from_passthrough.py");
-}
-
 // =============================================================================
 // T6: Generator State Attributes (R6) — state_attributes.py
 // =============================================================================
@@ -626,12 +576,6 @@ print(gen.gi_frame is None)
     assert_output(&output, "True\n");
 }
 
-/// T6 fixture: Full state_attributes.py fixture matches golden output.
-#[test]
-fn test_t6_fixture_state_attributes() {
-    run_fixture("tests/cpython/fixtures/core/generators/state_attributes.py");
-}
-
 // =============================================================================
 // T10: Generator-Based Context Manager (R10) — context_manager_pattern.py
 // =============================================================================
@@ -685,12 +629,6 @@ except ValueError:
     );
 }
 
-/// T10 fixture: context_manager_pattern.py (passing subset) fixture matches golden output.
-#[test]
-fn test_t10_fixture_context_manager_pattern() {
-    run_fixture("tests/cpython/fixtures/core/generators/context_manager_pattern.py");
-}
-
 // =============================================================================
 // T11: Generator Lifecycle (R11) — lifecycle.py
 // =============================================================================
@@ -730,44 +668,4 @@ gen.close()
 "#,
     );
     assert_output(&output, "finally ran\n");
-}
-
-/// T11 fixture: Full lifecycle.py fixture matches golden output.
-#[test]
-fn test_t11_fixture_lifecycle() {
-    run_fixture("tests/cpython/fixtures/core/generators/lifecycle.py");
-}
-
-// =============================================================================
-// Regression: Existing generator fixtures must continue to pass
-// =============================================================================
-
-/// Regression: existing generators/basic_yield.py fixture still passes.
-#[test]
-fn test_regression_generators_basic_yield() {
-    run_fixture("tests/cpython/fixtures/core/generators/basic_yield.py");
-}
-
-/// Regression: existing generators/send_throw.py fixture still passes.
-#[test]
-fn test_regression_generators_send_throw() {
-    run_fixture("tests/cpython/fixtures/core/generators/send_throw.py");
-}
-
-/// Regression: existing generators/stopiteration.py fixture still passes.
-#[test]
-fn test_regression_generators_stopiteration() {
-    run_fixture("tests/cpython/fixtures/core/generators/stopiteration.py");
-}
-
-/// Regression: existing generators/yield_from.py fixture still passes.
-#[test]
-fn test_regression_generators_yield_from() {
-    run_fixture("tests/cpython/fixtures/core/generators/yield_from.py");
-}
-
-/// Regression: existing language/generators.py fixture still passes.
-#[test]
-fn test_regression_language_generators() {
-    run_fixture("tests/cpython/fixtures/core/language/generators.py");
 }

@@ -173,7 +173,7 @@ mod tests {
     #[test]
     fn test_default_pool_config() {
         let config = PoolConfig::default();
-        assert_eq!(config.min_pool_size, Some(5)); // Optimized: warm connections
+        assert_eq!(config.min_pool_size, Some(5));  // Optimized: warm connections
         assert_eq!(config.max_pool_size, Some(20)); // Optimized: larger pool
         assert_eq!(config.app_name, Some("cclab".to_string()));
     }

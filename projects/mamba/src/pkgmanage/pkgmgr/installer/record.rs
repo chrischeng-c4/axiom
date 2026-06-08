@@ -5,6 +5,7 @@
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/installer.md#Schema
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/installer.md#Logic
+
 use std::fs;
 use std::path::Path;
 
@@ -58,18 +59,10 @@ pub fn parse(text: &str) -> Result<Vec<RecordEntry>, InstallerError> {
         let size = if size_field.is_empty() {
             None
         } else {
-            Some(
-                size_field
-                    .parse::<u64>()
-                    .map_err(|_| InstallerError::MalformedWheel {
-                        path: None,
-                        detail: format!(
-                            "RECORD line {}: invalid size '{}'",
-                            lineno + 1,
-                            size_field
-                        ),
-                    })?,
-            )
+            Some(size_field.parse::<u64>().map_err(|_| InstallerError::MalformedWheel {
+                path: None,
+                detail: format!("RECORD line {}: invalid size '{}'", lineno + 1, size_field),
+            })?)
         };
 
         out.push(RecordEntry {

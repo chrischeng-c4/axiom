@@ -10,6 +10,7 @@
 /// T3: Decorator return value propagation (R3)
 /// T4: Nested f-string evaluation (R4)
 /// T5: json.dumps return value (R5)
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -90,12 +91,7 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
@@ -107,10 +103,7 @@ fn assert_output(actual: &str, expected: &str) {
 /// Assert that parsing a given source fails (returns Err).
 fn assert_parse_error(src: &str) {
     let result = parser::parse(src, FileId(0));
-    assert!(
-        result.is_err(),
-        "expected parse error, but parsing succeeded"
-    );
+    assert!(result.is_err(), "expected parse error, but parsing succeeded");
 }
 
 // =============================================================================
@@ -399,70 +392,4 @@ print(len(s))
 "#,
     );
     assert_output(&output, "3\n");
-}
-
-// =============================================================================
-// T-fixture: Fixture file validation (golden file tests)
-// =============================================================================
-
-/// Validate semicolon_separator.py fixture matches golden output.
-#[test]
-fn test_fixture_semicolon_separator() {
-    let src =
-        std::fs::read_to_string("tests/cpython/fixtures/core/language/semicolon_separator.py")
-            .expect("read semicolon fixture");
-    let expected = std::fs::read_to_string(
-        "tests/cpython/fixtures/core/language/semicolon_separator.expected",
-    )
-    .expect("read semicolon expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// Validate floor_div_zero.py fixture matches golden output.
-#[test]
-fn test_fixture_floor_div_zero() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/core/arithmetic/floor_div_zero.py")
-        .expect("read floor_div_zero fixture");
-    let expected =
-        std::fs::read_to_string("tests/cpython/fixtures/core/arithmetic/floor_div_zero.expected")
-            .expect("read floor_div_zero expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// Validate decorator_return.py fixture matches golden output.
-#[test]
-fn test_fixture_decorator_return() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/core/language/decorator_return.py")
-        .expect("read decorator_return fixture");
-    let expected =
-        std::fs::read_to_string("tests/cpython/fixtures/core/language/decorator_return.expected")
-            .expect("read decorator_return expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// Validate nested_fstring.py fixture matches golden output.
-#[test]
-fn test_fixture_nested_fstring() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/core/language/nested_fstring.py")
-        .expect("read nested_fstring fixture");
-    let expected =
-        std::fs::read_to_string("tests/cpython/fixtures/core/language/nested_fstring.expected")
-            .expect("read nested_fstring expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// Validate json_dumps_return.py fixture matches golden output.
-#[test]
-fn test_fixture_json_dumps_return() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/std-libs/json/json_dumps_return.py")
-        .expect("read json_dumps_return fixture");
-    let expected =
-        std::fs::read_to_string("tests/cpython/fixtures/std-libs/json/json_dumps_return.expected")
-            .expect("read json_dumps_return expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
 }

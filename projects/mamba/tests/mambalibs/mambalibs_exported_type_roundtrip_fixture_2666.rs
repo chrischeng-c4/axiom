@@ -107,8 +107,7 @@ fn mambalibs_type_roundtrip_exported_function_block_is_complete() {
     // this exact function — pin it at the schema level so a future
     // edit can't sever the link.
     assert_eq!(
-        func.get("diagnostic_must_name_value")
-            .and_then(|v| v.as_str()),
+        func.get("diagnostic_must_name_value").and_then(|v| v.as_str()),
         Some(name),
         "`[exported_function].diagnostic_must_name_value` must equal `[exported_function].name`"
     );
@@ -166,9 +165,7 @@ fn mambalibs_type_roundtrip_pins_one_pass_case_per_primitive() {
              (roundtrip preserves the Python type)"
         );
         assert_eq!(
-            block
-                .get("roundtrip_is_symmetric")
-                .and_then(|v| v.as_bool()),
+            block.get("roundtrip_is_symmetric").and_then(|v| v.as_bool()),
             Some(true),
             "`[{block_name}].roundtrip_is_symmetric` must be true"
         );
@@ -190,13 +187,10 @@ fn mambalibs_type_roundtrip_pins_one_pass_case_per_primitive() {
 #[test]
 fn mambalibs_type_roundtrip_wrong_type_case_fails_and_names_function() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("wrong_type_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[wrong_type_case]` block \
+    let block = doc.get("wrong_type_case").and_then(|v| v.as_table()).expect(
+        "missing `[wrong_type_case]` block \
          (acceptance: \"Fixture fails on wrong type conversion ...\")",
-        );
+    );
 
     assert_eq!(
         block.get("case").and_then(|v| v.as_str()),
@@ -239,13 +233,10 @@ fn mambalibs_type_roundtrip_wrong_type_case_fails_and_names_function() {
 #[test]
 fn mambalibs_type_roundtrip_wrong_return_value_case_fails_and_names_function() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("wrong_return_value_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[wrong_return_value_case]` block \
+    let block = doc.get("wrong_return_value_case").and_then(|v| v.as_table()).expect(
+        "missing `[wrong_return_value_case]` block \
          (acceptance: \"Fixture fails on ... wrong return value.\")",
-        );
+    );
 
     assert_eq!(
         block.get("case").and_then(|v| v.as_str()),
@@ -288,13 +279,10 @@ fn mambalibs_type_roundtrip_wrong_return_value_case_fails_and_names_function() {
 #[test]
 fn mambalibs_type_roundtrip_fixture_performance_pins_fast_and_local() {
     let doc = load_toml(&manifest_path());
-    let perf = doc
-        .get("fixture_performance")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[fixture_performance]` block \
+    let perf = doc.get("fixture_performance").and_then(|v| v.as_table()).expect(
+        "missing `[fixture_performance]` block \
          (acceptance: \"The fixture remains fast and local.\")",
-        );
+    );
 
     for flag in &[
         "must_be_fast_and_local",
@@ -411,8 +399,7 @@ fn mambalibs_type_roundtrip_pins_out_of_scope_per_issue_2666() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("complex_object_ownership_or_async_bindings")
-            .and_then(|v| v.as_bool()),
+        oos.get("complex_object_ownership_or_async_bindings").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].complex_object_ownership_or_async_bindings` must be true \
          (issue text: \"Out of scope: complex object ownership or async bindings.\")"

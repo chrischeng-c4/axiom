@@ -3,7 +3,7 @@ name = "jet-wasm"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
-description = "Framework-agnostic browser-runtime substrate: Element tree + canvas renderer + event + (future) a11y / text. Framework-specific runtimes (React hooks, Vue reactivity, Angular signals) plug in via feature-gated modules."
+description = "Framework-agnostic browser-runtime substrate: Element tree + WebGPU paint planning + event + (future) a11y / text. Framework-specific runtimes (React hooks, Vue reactivity, Angular signals) plug in via feature-gated modules."
 publish = false
 
 [lib]
@@ -16,20 +16,6 @@ default = ["react"]
 # useEffect, useMemo, useCallback, useRef, useReducer), mount +
 # flush loop. Target of jet's TSX → Rust transpiler emit.
 react = []
-# Enables the CanvasRenderingContext2d backend for the renderer.
-# Off by the non-wasm cargo test path so `cargo test` on host
-# compiles without web-sys.
-canvas = ["dep:web-sys", "dep:wasm-bindgen"]
-# Canvas + a live event loop (click hit-test → callback → flush →
-# repaint). Only meaningful with `react` for now — MountHandle lives
-# there — but the event/hit-test code is framework-agnostic, so
-# future adapters can plug into the same loop.
-canvas-app = ["canvas", "react", "host-bridge"]
-# DOM + a live event loop (Element tree -> DOM nodes, click/change
-# callbacks -> flush -> rerender). This is the compatibility target
-# for real frontend apps that need form controls and CSS while the
-# canvas renderer matures.
-dom-app = ["react", "host-bridge"]
 # Thin browser host bridge for capabilities WASM cannot call
 # directly: fetch, console, localStorage. App/domain/render logic
 # stays in Rust/WASM; this feature only exposes imports from
@@ -40,9 +26,12 @@ host-bridge = [
   "dep:js-sys",
   "dep:web-sys",
 ]
+# DOM + a live event loop (Element tree -> DOM nodes, click/change
+# callbacks -> flush -> rerender). This is the compatibility target
+# for form-control and browser-native DOM parity gates.
+dom-app = ["react", "host-bridge"]
 # Enables the WebGPU paint-planning backend. The backend shares the
-# workspace grid WebGPU cell-rect contract so Jet's renderer can move
-# from Canvas 2D to the WebGPU frame loop without inventing a second
+# workspace grid WebGPU cell-rect contract without inventing a second
 # GPU primitive layout.
 webgpu = ["dep:cclab-grid-render-webgpu"]
 # WebGPU + a live browser event loop. This reuses the existing
@@ -59,12 +48,12 @@ webgpu-app = [
   "dep:web-sys",
 ]
 # Debug introspection: JetDebug struct + window.__jet_debug bridge +
-# serde derives on renderer types. Pulls in canvas-app (the bridge
-# needs MountHandle + LayoutTree from the live app) + serde for the
-# JS boundary. Only turned on by `jet build --wasm --debug` and
-# friends — release builds are unaffected.
+# serde derives on renderer types. The live app feature (`webgpu-app` for
+# `jet build --wasm`) supplies MountHandle + LayoutTree; debug itself only
+# supplies the JS-readable inspection model. Only turned on by
+# `jet build --wasm --debug` and friends — release builds are unaffected.
 debug = [
-  "canvas-app",
+  "dep:wasm-bindgen",
   "dep:serde",
   "dep:serde_json",
   "dep:serde-wasm-bindgen",
@@ -78,8 +67,9 @@ debug = [
 [dependencies]
 # Intentionally minimal. Generic runtime primitives (GC, closure,
 # async executor) arrive via `cclab-lang-runtime` (pending mamba
-# extraction) or jet-local reimpls. Browser APIs behind the
-# `canvas` feature so the pure-Rust test path needs no wasm target.
+# extraction) or jet-local reimpls. Browser APIs are pulled in only
+# by host-bridge/debug/webgpu-app features so the pure-Rust test path
+# needs no wasm target.
 # taffy: pure-Rust flexbox/block layout engine — see
 # .aw/tech-design/projects/jet/wasm-renderer/layout-runtime.md.
 # Pinned to the Dioxus stable series; pure-Rust, no_std-compatible,
@@ -112,7 +102,6 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 web-sys = { version = "0.3", optional = true, features = [
-  "CanvasRenderingContext2d",
   "HtmlCanvasElement",
   "HtmlElement",
   "HtmlInputElement",
@@ -128,6 +117,8 @@ web-sys = { version = "0.3", optional = true, features = [
   "EventTarget",
   "Event",
   "MouseEvent",
+  "WheelEvent",
+  "KeyboardEvent",
 ] }
 
 [dev-dependencies]

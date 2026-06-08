@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/os_path_1432.toml)
 issue = 1432
 lib = "os_path"
-fixture = "tests/cpython/fixtures/std-libs/os_path/bench/join_hot.py"
+fixture = "tests/cpython/_regression/std-libs/os_path/bench/join_hot.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 1

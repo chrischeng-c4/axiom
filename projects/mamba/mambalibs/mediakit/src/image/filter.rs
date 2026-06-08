@@ -6,15 +6,9 @@ use super::types::{Image, PixelFormat};
 pub fn gaussian_blur(img: &Image) -> Image {
     assert_eq!(img.format, PixelFormat::Gray, "input must be grayscale");
     let kernel = [
-        1.0 / 16.0,
-        2.0 / 16.0,
-        1.0 / 16.0,
-        2.0 / 16.0,
-        4.0 / 16.0,
-        2.0 / 16.0,
-        1.0 / 16.0,
-        2.0 / 16.0,
-        1.0 / 16.0,
+        1.0 / 16.0, 2.0 / 16.0, 1.0 / 16.0,
+        2.0 / 16.0, 4.0 / 16.0, 2.0 / 16.0,
+        1.0 / 16.0, 2.0 / 16.0, 1.0 / 16.0,
     ];
     convolve_gray(img, &kernel, 3)
 }
@@ -22,7 +16,11 @@ pub fn gaussian_blur(img: &Image) -> Image {
 /// Apply a sharpening filter (3x3) to a grayscale image.
 pub fn sharpen(img: &Image) -> Image {
     assert_eq!(img.format, PixelFormat::Gray, "input must be grayscale");
-    let kernel = [0.0, -1.0, 0.0, -1.0, 5.0, -1.0, 0.0, -1.0, 0.0];
+    let kernel = [
+        0.0, -1.0, 0.0,
+        -1.0, 5.0, -1.0,
+        0.0, -1.0, 0.0,
+    ];
     convolve_gray(img, &kernel, 3)
 }
 
@@ -31,8 +29,16 @@ pub fn sharpen(img: &Image) -> Image {
 /// Returns the magnitude of the gradient.
 pub fn sobel_edges(img: &Image) -> Image {
     assert_eq!(img.format, PixelFormat::Gray, "input must be grayscale");
-    let gx_kernel = [-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0];
-    let gy_kernel = [-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0];
+    let gx_kernel = [
+        -1.0, 0.0, 1.0,
+        -2.0, 0.0, 2.0,
+        -1.0, 0.0, 1.0,
+    ];
+    let gy_kernel = [
+        -1.0, -2.0, -1.0,
+         0.0,  0.0,  0.0,
+         1.0,  2.0,  1.0,
+    ];
 
     let w = img.width as usize;
     let h = img.height as usize;
@@ -79,8 +85,16 @@ pub fn canny(img: &Image, low_threshold: f64, high_threshold: f64) -> Image {
     let blurred = gaussian_blur(img);
 
     // Step 2: Sobel gradients (magnitude and direction)
-    let gx_kernel: [f64; 9] = [-1.0, 0.0, 1.0, -2.0, 0.0, 2.0, -1.0, 0.0, 1.0];
-    let gy_kernel: [f64; 9] = [-1.0, -2.0, -1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 1.0];
+    let gx_kernel: [f64; 9] = [
+        -1.0, 0.0, 1.0,
+        -2.0, 0.0, 2.0,
+        -1.0, 0.0, 1.0,
+    ];
+    let gy_kernel: [f64; 9] = [
+        -1.0, -2.0, -1.0,
+         0.0,  0.0,  0.0,
+         1.0,  2.0,  1.0,
+    ];
 
     let mut magnitude = vec![0.0f64; w * h];
     let mut direction = vec![0.0f64; w * h];
@@ -114,19 +128,13 @@ pub fn canny(img: &Image, low_threshold: f64, high_threshold: f64) -> Image {
                 (magnitude[y * w + x - 1], magnitude[y * w + x + 1])
             } else if angle < 67.5 {
                 // 45-degree: compare with top-right/bottom-left
-                (
-                    magnitude[(y - 1) * w + x + 1],
-                    magnitude[(y + 1) * w + x - 1],
-                )
+                (magnitude[(y - 1) * w + x + 1], magnitude[(y + 1) * w + x - 1])
             } else if angle < 112.5 {
                 // Vertical edge: compare with above/below
                 (magnitude[(y - 1) * w + x], magnitude[(y + 1) * w + x])
             } else {
                 // 135-degree: compare with top-left/bottom-right
-                (
-                    magnitude[(y - 1) * w + x - 1],
-                    magnitude[(y + 1) * w + x + 1],
-                )
+                (magnitude[(y - 1) * w + x - 1], magnitude[(y + 1) * w + x + 1])
             };
 
             let mag = magnitude[y * w + x];

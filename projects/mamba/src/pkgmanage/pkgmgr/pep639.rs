@@ -206,10 +206,7 @@ pub fn parse_license_expression(src: &str) -> Result<LicenseExpr, IndexError> {
     if p.pos < p.toks.len() {
         return Err(IndexError::ParseError {
             url: "<license-expression>".into(),
-            detail: format!(
-                "trailing tokens after SPDX expression at position {}",
-                p.pos
-            ),
+            detail: format!("trailing tokens after SPDX expression at position {}", p.pos),
         });
     }
     Ok(expr)
@@ -234,11 +231,7 @@ fn render_at(expr: &LicenseExpr, ctx: Prec) -> String {
             None => id.clone(),
         },
         LicenseExpr::And(a, b) => {
-            let s = format!(
-                "{} AND {}",
-                render_at(a, Prec::And),
-                render_at(b, Prec::And)
-            );
+            let s = format!("{} AND {}", render_at(a, Prec::And), render_at(b, Prec::And));
             // AND inside OR context needs no parens (AND binds tighter).
             // AND inside AND context is left-associative, also no parens.
             if ctx > Prec::And {
@@ -367,10 +360,7 @@ mod tests {
         // GPL-3.0 WITH Classpath-exception-2.0 AND MIT
         // parses as (GPL-3.0 WITH exc) AND MIT.
         let e = parse_license_expression("GPL-3.0 WITH Classpath-exception-2.0 AND MIT").unwrap();
-        assert_eq!(
-            e,
-            and(id_with("GPL-3.0", "Classpath-exception-2.0"), id("MIT"))
-        );
+        assert_eq!(e, and(id_with("GPL-3.0", "Classpath-exception-2.0"), id("MIT")));
     }
 
     #[test]

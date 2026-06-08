@@ -156,10 +156,7 @@ fn write_registry_artifact(out: &mut String, pkg: &Package) {
 }
 
 fn write_vcs_artifact(out: &mut String, pkg: &Package) {
-    let r = pkg
-        .source_ref
-        .as_ref()
-        .expect("vcs called on no source_ref");
+    let r = pkg.source_ref.as_ref().expect("vcs called on no source_ref");
     out.push_str("vcs = { type = \"git\"");
     if let Some(url) = &r.url {
         out.push_str(", url = \"");
@@ -175,10 +172,7 @@ fn write_vcs_artifact(out: &mut String, pkg: &Package) {
 }
 
 fn write_directory_artifact(out: &mut String, pkg: &Package) {
-    let r = pkg
-        .source_ref
-        .as_ref()
-        .expect("dir called on no source_ref");
+    let r = pkg.source_ref.as_ref().expect("dir called on no source_ref");
     if let Some(path) = &r.path {
         out.push_str("directory = { path = \"");
         out.push_str(&escape_string(path));
@@ -300,12 +294,7 @@ mod tests {
     #[test]
     fn packages_are_sorted_by_normalized_name() {
         let lf = lockfile_with(vec![
-            registry_pkg(
-                "Requests",
-                "2.31.0",
-                "https://e/Requests-2.31.0.tar.gz",
-                "r",
-            ),
+            registry_pkg("Requests", "2.31.0", "https://e/Requests-2.31.0.tar.gz", "r"),
             registry_pkg("click", "8.1.7", "https://e/click-8.1.7.tar.gz", "c"),
             registry_pkg("my_pkg", "1.0", "https://e/my_pkg-1.0.tar.gz", "m"),
         ]);
@@ -319,7 +308,12 @@ mod tests {
 
     #[test]
     fn renders_dependencies_sorted_and_inline() {
-        let mut pkg = registry_pkg("django", "5.0", "https://e/django-5.0.tar.gz", "deadbeef");
+        let mut pkg = registry_pkg(
+            "django",
+            "5.0",
+            "https://e/django-5.0.tar.gz",
+            "deadbeef",
+        );
         pkg.dependencies = vec!["sqlparse".into(), "asgiref".into()];
         let lf = lockfile_with(vec![pkg]);
         let body = render_pylock_toml(&lf, &PylockOptions::default());
@@ -331,7 +325,12 @@ mod tests {
 
     #[test]
     fn renders_marker_when_present() {
-        let mut pkg = registry_pkg("tomli", "2.0.1", "https://e/tomli-2.0.1.tar.gz", "abc");
+        let mut pkg = registry_pkg(
+            "tomli",
+            "2.0.1",
+            "https://e/tomli-2.0.1.tar.gz",
+            "abc",
+        );
         pkg.markers = Some("python_version < \"3.11\"".into());
         let lf = lockfile_with(vec![pkg]);
         let body = render_pylock_toml(&lf, &PylockOptions::default());
@@ -407,7 +406,12 @@ mod tests {
 
     #[test]
     fn string_escape_handles_quotes_and_backslashes() {
-        let mut pkg = registry_pkg("weird", "0.0", "https://e/x.tar.gz", "ab");
+        let mut pkg = registry_pkg(
+            "weird",
+            "0.0",
+            "https://e/x.tar.gz",
+            "ab",
+        );
         pkg.markers = Some("os_name == \"posix\" and name == 'a\\b'".into());
         let lf = lockfile_with(vec![pkg]);
         let body = render_pylock_toml(&lf, &PylockOptions::default());

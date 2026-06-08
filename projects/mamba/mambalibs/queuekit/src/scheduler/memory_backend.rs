@@ -77,10 +77,7 @@ mod tests {
         let backend = MemorySchedulerBackend::new();
 
         // Should acquire leadership
-        assert!(backend
-            .acquire_leader(Duration::from_secs(10))
-            .await
-            .unwrap());
+        assert!(backend.acquire_leader(Duration::from_secs(10)).await.unwrap());
 
         // Should be able to renew
         assert!(backend.renew_leader(Duration::from_secs(10)).await.unwrap());
@@ -129,10 +126,7 @@ mod tests {
     #[tokio::test]
     async fn test_renew_leader_after_acquire() {
         let backend = MemorySchedulerBackend::new();
-        backend
-            .acquire_leader(Duration::from_secs(10))
-            .await
-            .unwrap();
+        backend.acquire_leader(Duration::from_secs(10)).await.unwrap();
         let result = backend.renew_leader(Duration::from_secs(10)).await;
         assert_eq!(result.unwrap(), true);
     }
@@ -148,10 +142,7 @@ mod tests {
     #[tokio::test]
     async fn test_release_leader() {
         let backend = MemorySchedulerBackend::new();
-        backend
-            .acquire_leader(Duration::from_secs(10))
-            .await
-            .unwrap();
+        backend.acquire_leader(Duration::from_secs(10)).await.unwrap();
         let result = backend.release_leader().await;
         assert!(result.is_ok());
     }
@@ -159,10 +150,7 @@ mod tests {
     #[tokio::test]
     async fn test_renew_leader_after_release() {
         let backend = MemorySchedulerBackend::new();
-        backend
-            .acquire_leader(Duration::from_secs(10))
-            .await
-            .unwrap();
+        backend.acquire_leader(Duration::from_secs(10)).await.unwrap();
         backend.release_leader().await.unwrap();
         let result = backend.renew_leader(Duration::from_secs(10)).await;
         assert_eq!(result.unwrap(), false);
@@ -173,58 +161,28 @@ mod tests {
         let backend = MemorySchedulerBackend::new();
 
         // acquire -> true
-        assert_eq!(
-            backend
-                .acquire_leader(Duration::from_secs(10))
-                .await
-                .unwrap(),
-            true
-        );
+        assert_eq!(backend.acquire_leader(Duration::from_secs(10)).await.unwrap(), true);
         // renew -> true
-        assert_eq!(
-            backend.renew_leader(Duration::from_secs(10)).await.unwrap(),
-            true
-        );
+        assert_eq!(backend.renew_leader(Duration::from_secs(10)).await.unwrap(), true);
         // release -> ok
         backend.release_leader().await.unwrap();
         // renew after release -> false
-        assert_eq!(
-            backend.renew_leader(Duration::from_secs(10)).await.unwrap(),
-            false
-        );
+        assert_eq!(backend.renew_leader(Duration::from_secs(10)).await.unwrap(), false);
         // re-acquire -> true
-        assert_eq!(
-            backend
-                .acquire_leader(Duration::from_secs(10))
-                .await
-                .unwrap(),
-            true
-        );
+        assert_eq!(backend.acquire_leader(Duration::from_secs(10)).await.unwrap(), true);
     }
 
     #[tokio::test]
     async fn test_acquire_leader_ignores_ttl() {
         let backend = MemorySchedulerBackend::new();
         // 0s TTL still returns true
-        assert_eq!(
-            backend
-                .acquire_leader(Duration::from_secs(0))
-                .await
-                .unwrap(),
-            true
-        );
+        assert_eq!(backend.acquire_leader(Duration::from_secs(0)).await.unwrap(), true);
 
         // Reset for next check
         backend.release_leader().await.unwrap();
 
         // 1000s TTL also returns true
-        assert_eq!(
-            backend
-                .acquire_leader(Duration::from_secs(1000))
-                .await
-                .unwrap(),
-            true
-        );
+        assert_eq!(backend.acquire_leader(Duration::from_secs(1000)).await.unwrap(), true);
     }
 
     // -------------------------------------------------------------------
@@ -398,17 +356,8 @@ mod tests {
         assert_eq!(new_state.total_run_count, default_state.total_run_count);
 
         // Neither is leader
-        assert_eq!(
-            from_new.renew_leader(Duration::from_secs(1)).await.unwrap(),
-            false
-        );
-        assert_eq!(
-            from_default
-                .renew_leader(Duration::from_secs(1))
-                .await
-                .unwrap(),
-            false
-        );
+        assert_eq!(from_new.renew_leader(Duration::from_secs(1)).await.unwrap(), false);
+        assert_eq!(from_default.renew_leader(Duration::from_secs(1)).await.unwrap(), false);
     }
 
     #[tokio::test]

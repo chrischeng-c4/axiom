@@ -34,7 +34,9 @@ pub fn seasonal_decompose(
 ) -> Result<DecomposeResult> {
     let n = data.len();
     if period < 2 {
-        return Err(TsError::InvalidParameter("period must be >= 2".into()));
+        return Err(TsError::InvalidParameter(
+            "period must be >= 2".into(),
+        ));
     }
     if n < 2 * period {
         return Err(TsError::InsufficientData {
@@ -126,7 +128,11 @@ fn detrend(data: &[f64], trend: &[f64], model: DecomposeModel) -> Vec<f64> {
 }
 
 /// Average the detrended values at each position within the period.
-fn compute_seasonal_pattern(detrended: &[f64], period: usize, model: DecomposeModel) -> Vec<f64> {
+fn compute_seasonal_pattern(
+    detrended: &[f64],
+    period: usize,
+    model: DecomposeModel,
+) -> Vec<f64> {
     let mut sums = vec![0.0; period];
     let mut counts = vec![0usize; period];
 
@@ -206,21 +212,13 @@ impl DecomposeResult {
             .map(|(&o, &t)| match self.model {
                 DecomposeModel::Additive => o - t,
                 DecomposeModel::Multiplicative => {
-                    if t.abs() < 1e-15 {
-                        0.0
-                    } else {
-                        o / t
-                    }
+                    if t.abs() < 1e-15 { 0.0 } else { o / t }
                 }
             })
             .collect();
 
-        let residual_clean: Vec<f64> = self
-            .residual
-            .iter()
-            .filter(|r| !r.is_nan())
-            .copied()
-            .collect();
+        let residual_clean: Vec<f64> =
+            self.residual.iter().filter(|r| !r.is_nan()).copied().collect();
 
         let var_r = variance(&residual_clean);
         let var_d = variance(&detrended);
@@ -244,12 +242,8 @@ impl DecomposeResult {
             })
             .collect();
 
-        let residual_clean: Vec<f64> = self
-            .residual
-            .iter()
-            .filter(|r| !r.is_nan())
-            .copied()
-            .collect();
+        let residual_clean: Vec<f64> =
+            self.residual.iter().filter(|r| !r.is_nan()).copied().collect();
 
         let var_r = variance(&residual_clean);
         let var_rs = variance(&resid_plus_seasonal);
@@ -295,12 +289,7 @@ mod tests {
         // Seasonal component should repeat with period 12
         for i in 12..108 {
             let diff = (result.seasonal[i] - result.seasonal[i % 12]).abs();
-            assert!(
-                diff < 1e-10,
-                "seasonal not periodic at i={}: diff={}",
-                i,
-                diff
-            );
+            assert!(diff < 1e-10, "seasonal not periodic at i={}: diff={}", i, diff);
         }
     }
 
@@ -333,11 +322,7 @@ mod tests {
         let data = make_seasonal_data(120, 12);
         let result = seasonal_decompose(&data, 12, DecomposeModel::Additive).unwrap();
         let ss = result.seasonal_strength();
-        assert!(
-            ss > 0.5,
-            "seasonal_strength={} should be > 0.5 for strong seasonal data",
-            ss
-        );
+        assert!(ss > 0.5, "seasonal_strength={} should be > 0.5 for strong seasonal data", ss);
     }
 
     #[test]

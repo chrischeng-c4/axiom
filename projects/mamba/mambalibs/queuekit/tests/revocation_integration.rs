@@ -1,9 +1,11 @@
 // Test to verify RevocationStore integration with Worker
 
-use async_trait::async_trait;
-use queuekit::{RevocationStore, TaskError, TaskId, WorkerConfig};
-use std::collections::HashSet;
+use queuekit::{
+    WorkerConfig, RevocationStore, TaskId, TaskError,
+};
 use std::sync::Arc;
+use async_trait::async_trait;
+use std::collections::HashSet;
 use tokio::sync::RwLock;
 
 // Simple in-memory revocation store for testing

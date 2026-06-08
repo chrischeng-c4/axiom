@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use tokio::runtime::Runtime;
 
-use crate::{IsolationLevel, Result, Transaction as AsyncTransaction, TransactionOptions};
+use crate::{
+    IsolationLevel, Result, Transaction as AsyncTransaction, TransactionOptions,
+};
 
 use super::Connection;
 
@@ -21,15 +23,16 @@ pub struct Transaction {
 
 impl std::fmt::Debug for Transaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("blocking::Transaction")
-            .finish_non_exhaustive()
+        f.debug_struct("blocking::Transaction").finish_non_exhaustive()
     }
 }
 
 impl Transaction {
     /// Returns a mutable reference to the inner sqlx transaction.
     /// Use this to run sqlx queries against the transaction directly.
-    pub fn as_mut_transaction(&mut self) -> &mut sqlx::Transaction<'static, sqlx::Postgres> {
+    pub fn as_mut_transaction(
+        &mut self,
+    ) -> &mut sqlx::Transaction<'static, sqlx::Postgres> {
         self.inner
             .as_mut()
             .expect("transaction already consumed")
@@ -40,23 +43,20 @@ impl Transaction {
     pub fn begin(conn: &Connection, isolation_level: IsolationLevel) -> Result<Self> {
         let rt = conn.runtime();
         let inner = rt.block_on(AsyncTransaction::begin(conn.as_async(), isolation_level))?;
-        Ok(Self {
-            inner: Some(inner),
-            rt,
-        })
+        Ok(Self { inner: Some(inner), rt })
     }
 
     /// Begins a new transaction with full options control.
-    pub fn begin_with_options(conn: &Connection, options: TransactionOptions) -> Result<Self> {
+    pub fn begin_with_options(
+        conn: &Connection,
+        options: TransactionOptions,
+    ) -> Result<Self> {
         let rt = conn.runtime();
         let inner = rt.block_on(AsyncTransaction::begin_with_options(
             conn.as_async(),
             options,
         ))?;
-        Ok(Self {
-            inner: Some(inner),
-            rt,
-        })
+        Ok(Self { inner: Some(inner), rt })
     }
 
     /// Commits the transaction.

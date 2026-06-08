@@ -23,16 +23,11 @@
 //!        benchmark code (`#` directives, anywhere in the file).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde_json::Value;
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn checker_script() -> PathBuf {
-    project_root()
+    crate::common::project_root()
         .join("scripts")
         .join("perf_bench_header_check.py")
 }
@@ -42,18 +37,14 @@ fn unique_dir(tag: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!("mamba-perf-bench-header-{tag}-{nanos}"));
+    let dir = std::env::temp_dir()
+        .join(format!("mamba-perf-bench-header-{tag}-{nanos}"));
     std::fs::create_dir_all(&dir).expect("create tempdir");
     dir
 }
 
 fn run_checker(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new("python3")
-        .arg(checker_script())
-        .args(args)
-        .current_dir(project_root())
-        .output()
-        .expect("invoke perf_bench_header_check.py");
+    let output = crate::common::run_python_script(&checker_script(), args);
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -74,7 +65,11 @@ fn run_checker_json(args: &[&str]) -> (i32, Value) {
     (code, payload)
 }
 
-fn write_manifest_and_fixtures(dir: &Path, body: &str, fixtures: &[(&str, &str)]) -> PathBuf {
+fn write_manifest_and_fixtures(
+    dir: &Path,
+    body: &str,
+    fixtures: &[(&str, &str)],
+) -> PathBuf {
     let fx = dir.join("fixtures");
     std::fs::create_dir_all(&fx).unwrap();
     for (name, content) in fixtures {
@@ -100,9 +95,12 @@ timing_modes = ["internal", "process_wall"]
 
 #[test]
 fn shipped_required_fixtures_have_all_three_tier_headers() {
-    for (fixture, expected_tier) in &[("int_sum.py", "required"), ("range_sum.py", "required")] {
+    for (fixture, expected_tier) in &[
+        ("int_sum.py", "required"),
+        ("range_sum.py", "required"),
+    ] {
         let body = std::fs::read_to_string(
-            project_root()
+            crate::common::project_root()
                 .join("tests/cpython/fixtures/core/bench")
                 .join(fixture),
         )
@@ -155,21 +153,21 @@ command = "y"
         &dir,
         &body,
         // Has `# category:` and `# inclusion_reason:` but no `# tier:`
-        &[(
-            "naked.py",
-            concat!(
-                "# category: numeric\n",
-                "# inclusion_reason: synthetic\n",
-                "print('INTERNAL_TIME_NS=1')\n",
-            ),
-        )],
+        &[("naked.py", concat!(
+            "# category: numeric\n",
+            "# inclusion_reason: synthetic\n",
+            "print('INTERNAL_TIME_NS=1')\n",
+        ))],
     );
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 1, "missing tier header must gate");
     let v = payload["violations"].as_array().unwrap();
     assert!(
-        v.iter()
-            .any(|item| item["reason"].as_str().unwrap().contains("tier:")),
+        v.iter().any(|item| item["reason"]
+            .as_str()
+            .unwrap()
+            .contains("tier:")),
         "violation must name the missing tier header; got {payload}"
     );
 }
@@ -194,21 +192,20 @@ command = "y"
     let path = write_manifest_and_fixtures(
         &dir,
         &body,
-        &[(
-            "naked.py",
-            concat!(
-                "# tier: required\n",
-                "# inclusion_reason: synthetic\n",
-                "print('INTERNAL_TIME_NS=1')\n",
-            ),
-        )],
+        &[("naked.py", concat!(
+            "# tier: required\n",
+            "# inclusion_reason: synthetic\n",
+            "print('INTERNAL_TIME_NS=1')\n",
+        ))],
     );
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 1, "missing category header must gate");
     let v = payload["violations"].as_array().unwrap();
-    assert!(v
-        .iter()
-        .any(|item| item["reason"].as_str().unwrap().contains("category:")));
+    assert!(v.iter().any(|item| item["reason"]
+        .as_str()
+        .unwrap()
+        .contains("category:")));
 }
 
 #[test]
@@ -231,16 +228,14 @@ command = "y"
     let path = write_manifest_and_fixtures(
         &dir,
         &body,
-        &[(
-            "naked.py",
-            concat!(
-                "# tier: required\n",
-                "# category: numeric\n",
-                "print('INTERNAL_TIME_NS=1')\n",
-            ),
-        )],
+        &[("naked.py", concat!(
+            "# tier: required\n",
+            "# category: numeric\n",
+            "print('INTERNAL_TIME_NS=1')\n",
+        ))],
     );
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 1, "missing inclusion_reason header must gate");
     let v = payload["violations"].as_array().unwrap();
     assert!(v.iter().any(|item| item["reason"]
@@ -270,17 +265,15 @@ command = "y"
         &dir,
         &body,
         // Header says exploratory; manifest says required.
-        &[(
-            "lies.py",
-            concat!(
-                "# tier: exploratory\n",
-                "# category: numeric\n",
-                "# inclusion_reason: drifted from manifest\n",
-                "print('INTERNAL_TIME_NS=1')\n",
-            ),
-        )],
+        &[("lies.py", concat!(
+            "# tier: exploratory\n",
+            "# category: numeric\n",
+            "# inclusion_reason: drifted from manifest\n",
+            "print('INTERNAL_TIME_NS=1')\n",
+        ))],
     );
-    let (code, payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 1, "tier mismatch must gate");
     let v = payload["violations"].as_array().unwrap();
     assert!(v.iter().any(|item| item["reason"]
@@ -317,19 +310,17 @@ command = "y"
         &dir,
         &body,
         &[
-            (
-                "ok.py",
-                concat!(
-                    "# tier: required\n",
-                    "# category: numeric\n",
-                    "# inclusion_reason: synthetic\n",
-                    "print('INTERNAL_TIME_NS=1')\n",
-                ),
-            ),
+            ("ok.py", concat!(
+                "# tier: required\n",
+                "# category: numeric\n",
+                "# inclusion_reason: synthetic\n",
+                "print('INTERNAL_TIME_NS=1')\n",
+            )),
             ("legacy.py", "x = 1\n"),
         ],
     );
-    let (code, _payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, _payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(
         code, 0,
         "exploratory entries are not required to declare headers"
@@ -347,10 +338,8 @@ fn json_output_includes_parsed_tier_category_and_inclusion_reason() {
     for e in entries {
         assert!(e.get("id").is_some());
         assert!(e.get("tier").is_some());
-        assert!(
-            e.get("tier_header").is_some(),
-            "every entry must surface parsed tier_header (acceptance #2); got {e}"
-        );
+        assert!(e.get("tier_header").is_some(),
+            "every entry must surface parsed tier_header (acceptance #2); got {e}");
         assert!(e.get("category_header").is_some());
         assert!(e.get("inclusion_reason_header").is_some());
     }
@@ -360,7 +349,10 @@ fn json_output_includes_parsed_tier_category_and_inclusion_reason() {
 fn json_output_distinguishes_required_from_exploratory_entries() {
     let (_code, payload) = run_checker_json(&[]);
     let entries = payload["entries"].as_array().unwrap();
-    let required: Vec<&Value> = entries.iter().filter(|e| e["tier"] == "required").collect();
+    let required: Vec<&Value> = entries
+        .iter()
+        .filter(|e| e["tier"] == "required")
+        .collect();
     let exploratory: Vec<&Value> = entries
         .iter()
         .filter(|e| e["tier"] == "exploratory")
@@ -381,7 +373,7 @@ fn headers_are_pure_comment_lines_in_shipped_fixtures() {
     // adding the headers does not introduce executable statements.
     for fixture in &["int_sum.py", "range_sum.py", "fib30.py", "generator_sum.py"] {
         let body = std::fs::read_to_string(
-            project_root()
+            crate::common::project_root()
                 .join("tests/cpython/fixtures/core/bench")
                 .join(fixture),
         )
@@ -389,7 +381,10 @@ fn headers_are_pure_comment_lines_in_shipped_fixtures() {
         // Find each header line and assert it starts with '#'.
         for kw in &["# tier:", "# category:", "# inclusion_reason:"] {
             if let Some(start) = body.find(kw) {
-                let line_start = body[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let line_start = body[..start]
+                    .rfind('\n')
+                    .map(|i| i + 1)
+                    .unwrap_or(0);
                 let line = &body[line_start..start + kw.len()];
                 assert!(
                     line.trim_start().starts_with('#'),
@@ -422,19 +417,17 @@ command = "y"
     let path = write_manifest_and_fixtures(
         &dir,
         &body,
-        &[(
-            "late.py",
-            concat!(
-                "print('INTERNAL_TIME_NS=1')\n",
-                "x = 1\n",
-                "# Notes\n",
-                "# tier: required\n",
-                "# category: numeric\n",
-                "# inclusion_reason: late headers are still valid (acceptance #3)\n",
-            ),
-        )],
+        &[("late.py", concat!(
+            "print('INTERNAL_TIME_NS=1')\n",
+            "x = 1\n",
+            "# Notes\n",
+            "# tier: required\n",
+            "# category: numeric\n",
+            "# inclusion_reason: late headers are still valid (acceptance #3)\n",
+        ))],
     );
-    let (code, _payload) = run_checker_json(&["--manifest", path.to_str().unwrap()]);
+    let (code, _payload) =
+        run_checker_json(&["--manifest", path.to_str().unwrap()]);
     assert_eq!(code, 0, "headers anywhere in the file must validate");
 }
 
@@ -442,8 +435,10 @@ command = "y"
 
 #[test]
 fn checker_exits_101_when_manifest_missing() {
-    let (code, _stdout, stderr) =
-        run_checker(&["--manifest", "/tmp/perf-bench-header-does-not-exist.toml"]);
+    let (code, _stdout, stderr) = run_checker(&[
+        "--manifest",
+        "/tmp/perf-bench-header-does-not-exist.toml",
+    ]);
     assert_eq!(code, 101, "missing manifest must exit 101");
     assert!(
         stderr.contains("manifest missing"),

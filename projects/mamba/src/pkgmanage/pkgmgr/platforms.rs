@@ -199,14 +199,12 @@ pub fn evaluate_marker_across_envs<'a>(
     let mut matched = Vec::with_capacity(envs.len());
     for env in envs.as_slice() {
         let marker_env = env.to_marker_env();
-        let truth =
-            markers::evaluate(marker, &marker_env).map_err(|err| IndexError::ParseError {
+        let truth = markers::evaluate(marker, &marker_env).map_err(|err| {
+            IndexError::ParseError {
                 url: "<universal lock marker>".into(),
-                detail: format!(
-                    "evaluating marker {marker:?} against {}: {err}",
-                    env.label()
-                ),
-            })?;
+                detail: format!("evaluating marker {marker:?} against {}: {err}", env.label()),
+            }
+        })?;
         if truth {
             matched.push(env);
         }
@@ -216,14 +214,20 @@ pub fn evaluate_marker_across_envs<'a>(
 
 /// True iff the marker is true for at least one supported environment. This
 /// is the "include this requirement at all?" gate.
-pub fn applies_anywhere(marker: Option<&str>, envs: &EnvironmentSet) -> Result<bool, IndexError> {
+pub fn applies_anywhere(
+    marker: Option<&str>,
+    envs: &EnvironmentSet,
+) -> Result<bool, IndexError> {
     Ok(!evaluate_marker_across_envs(marker, envs)?.is_empty())
 }
 
 /// True iff the marker is true for *every* supported environment. When
 /// true, the lockfile entry is unconditional; when false, the entry needs
 /// the `markers` field populated so sync can filter by current host.
-pub fn applies_everywhere(marker: Option<&str>, envs: &EnvironmentSet) -> Result<bool, IndexError> {
+pub fn applies_everywhere(
+    marker: Option<&str>,
+    envs: &EnvironmentSet,
+) -> Result<bool, IndexError> {
     let matches = evaluate_marker_across_envs(marker, envs)?;
     Ok(matches.len() == envs.len())
 }
@@ -232,12 +236,7 @@ pub fn applies_everywhere(marker: Option<&str>, envs: &EnvironmentSet) -> Result
 mod tests {
     use super::*;
 
-    fn env(
-        py: (u32, u32),
-        sys: &str,
-        mach: &str,
-        libc: Option<LibcFamily>,
-    ) -> SupportedEnvironment {
+    fn env(py: (u32, u32), sys: &str, mach: &str, libc: Option<LibcFamily>) -> SupportedEnvironment {
         SupportedEnvironment {
             python_version: PythonVersion::new(py.0, py.1, 0),
             sys_platform: sys.into(),
@@ -318,7 +317,8 @@ mod tests {
     #[test]
     fn sys_platform_filter_subsets_envs() {
         let set = EnvironmentSet::standard_matrix();
-        let matches = evaluate_marker_across_envs(Some("sys_platform == 'linux'"), &set).unwrap();
+        let matches =
+            evaluate_marker_across_envs(Some("sys_platform == 'linux'"), &set).unwrap();
         // 4 python versions × 2 linux platforms = 8.
         assert_eq!(matches.len(), 8);
         assert!(matches.iter().all(|e| e.sys_platform == "linux"));
@@ -330,7 +330,8 @@ mod tests {
     #[test]
     fn python_version_floor_excludes_old_pythons() {
         let set = EnvironmentSet::standard_matrix();
-        let matches = evaluate_marker_across_envs(Some("python_version >= '3.12'"), &set).unwrap();
+        let matches =
+            evaluate_marker_across_envs(Some("python_version >= '3.12'"), &set).unwrap();
         // 2 python versions (3.12, 3.13) × 5 platforms = 10.
         assert_eq!(matches.len(), 10);
         assert!(matches.iter().all(|e| e.python_version.minor >= 12));
@@ -355,7 +356,8 @@ mod tests {
     #[test]
     fn never_true_marker_drops_all_envs() {
         let set = EnvironmentSet::standard_matrix();
-        let matches = evaluate_marker_across_envs(Some("sys_platform == 'haiku'"), &set).unwrap();
+        let matches =
+            evaluate_marker_across_envs(Some("sys_platform == 'haiku'"), &set).unwrap();
         assert!(matches.is_empty());
         assert!(!applies_anywhere(Some("sys_platform == 'haiku'"), &set).unwrap());
     }

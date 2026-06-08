@@ -50,12 +50,12 @@
 //!     returned as-is. CPython promotes generator-based coroutines to
 //!     real coroutine objects via this helper.
 
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
-use super::super::value::MbValue;
-use crate::runtime::rc::MbRwLock as RwLock;
-use rustc_hash::FxHashMap;
 use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 // Each generated dispatcher loads `stringify!($name)` through `black_box`
 // so LLVM's `mergefunc` pass keeps the bodies distinct. Without that, any
@@ -102,10 +102,7 @@ unsafe extern "C" fn dispatch_simplenamespace(args_ptr: *const MbValue, nargs: u
         }
     }
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
+        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
             class_name: "SimpleNamespace".to_string(),
             fields: RwLock::new(fields),
@@ -121,32 +118,32 @@ pub fn register() {
     // CPython exposes these as actual type objects; mamba models them as
     // Instance values with class_name="type" so attribute access works.
     let type_objs: &[(&str, &str)] = &[
-        ("FunctionType", "function"),
-        ("LambdaType", "function"), // alias of FunctionType
-        ("MethodType", "method"),
-        ("BuiltinFunctionType", "builtin_function_or_method"),
-        ("BuiltinMethodType", "builtin_function_or_method"), // alias
-        ("ModuleType", "module"),
-        ("GeneratorType", "generator"),
-        ("CoroutineType", "coroutine"),
-        ("AsyncGeneratorType", "async_generator"),
-        ("CodeType", "code"),
-        ("CellType", "cell"),
-        ("FrameType", "frame"),
-        ("TracebackType", "traceback"),
-        ("NoneType", "NoneType"),
-        ("NotImplementedType", "NotImplementedType"),
-        ("EllipsisType", "ellipsis"),
-        ("MappingProxyType", "mappingproxy"),
-        ("DynamicClassAttribute", "DynamicClassAttribute"),
-        ("GenericAlias", "GenericAlias"),
-        ("UnionType", "UnionType"),
+        ("FunctionType",              "function"),
+        ("LambdaType",                "function"),                    // alias of FunctionType
+        ("MethodType",                "method"),
+        ("BuiltinFunctionType",       "builtin_function_or_method"),
+        ("BuiltinMethodType",         "builtin_function_or_method"),  // alias
+        ("ModuleType",                "module"),
+        ("GeneratorType",             "generator"),
+        ("CoroutineType",             "coroutine"),
+        ("AsyncGeneratorType",        "async_generator"),
+        ("CodeType",                  "code"),
+        ("CellType",                  "cell"),
+        ("FrameType",                 "frame"),
+        ("TracebackType",             "traceback"),
+        ("NoneType",                  "NoneType"),
+        ("NotImplementedType",        "NotImplementedType"),
+        ("EllipsisType",              "ellipsis"),
+        ("MappingProxyType",          "mappingproxy"),
+        ("DynamicClassAttribute",     "DynamicClassAttribute"),
+        ("GenericAlias",              "GenericAlias"),
+        ("UnionType",                 "UnionType"),
         ("ClassMethodDescriptorType", "classmethod_descriptor"),
-        ("GetSetDescriptorType", "getset_descriptor"),
-        ("MemberDescriptorType", "member_descriptor"),
-        ("MethodDescriptorType", "method_descriptor"),
-        ("MethodWrapperType", "method-wrapper"),
-        ("WrapperDescriptorType", "wrapper_descriptor"),
+        ("GetSetDescriptorType",      "getset_descriptor"),
+        ("MemberDescriptorType",      "member_descriptor"),
+        ("MethodDescriptorType",      "method_descriptor"),
+        ("MethodWrapperType",         "method-wrapper"),
+        ("WrapperDescriptorType",     "wrapper_descriptor"),
     ];
     for (attr, type_name) in type_objs {
         attrs.insert(attr.to_string(), make_type_obj(type_name));
@@ -156,12 +153,12 @@ pub fn register() {
     let dispatchers: Vec<(&str, usize)> = vec![
         // SimpleNamespace is a constructor func so `types.SimpleNamespace(a=1)`
         // (a module-attr call) is dispatched and the kwargs wired into fields.
-        ("SimpleNamespace", dispatch_simplenamespace as usize),
-        ("new_class", dispatch_new_class as usize),
-        ("prepare_class", dispatch_prepare_class as usize),
-        ("resolve_bases", dispatch_resolve_bases as usize),
-        ("coroutine", dispatch_coroutine as usize),
-        ("get_original_bases", dispatch_get_original_bases as usize),
+        ("SimpleNamespace",     dispatch_simplenamespace     as usize),
+        ("new_class",           dispatch_new_class           as usize),
+        ("prepare_class",       dispatch_prepare_class       as usize),
+        ("resolve_bases",       dispatch_resolve_bases       as usize),
+        ("coroutine",           dispatch_coroutine           as usize),
+        ("get_original_bases",  dispatch_get_original_bases  as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -179,18 +176,12 @@ pub fn register() {
 fn make_type_obj(name: &str) -> MbValue {
     let fields = {
         let mut m = FxHashMap::default();
-        m.insert(
-            "__name__".to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())),
-        );
-        m.insert(
-            "__qualname__".to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())),
-        );
-        m.insert(
-            "__module__".to_string(),
-            MbValue::from_ptr(MbObject::new_str("builtins".to_string())),
-        );
+        m.insert("__name__".to_string(),
+            MbValue::from_ptr(MbObject::new_str(name.to_string())));
+        m.insert("__qualname__".to_string(),
+            MbValue::from_ptr(MbObject::new_str(name.to_string())));
+        m.insert("__module__".to_string(),
+            MbValue::from_ptr(MbObject::new_str("builtins".to_string())));
         if name == "UnionType" {
             m.insert(
                 "__args__".to_string(),
@@ -215,109 +206,57 @@ fn make_type_obj(name: &str) -> MbValue {
 // -- pub helpers — type object accessors (kept for back-compat callers) --
 
 #[allow(non_snake_case)]
-pub fn mb_types_FunctionType() -> MbValue {
-    make_type_obj("function")
-}
+pub fn mb_types_FunctionType() -> MbValue { make_type_obj("function") }
 #[allow(non_snake_case)]
-pub fn mb_types_LambdaType() -> MbValue {
-    make_type_obj("function")
-}
+pub fn mb_types_LambdaType() -> MbValue { make_type_obj("function") }
 #[allow(non_snake_case)]
-pub fn mb_types_MethodType() -> MbValue {
-    make_type_obj("method")
-}
+pub fn mb_types_MethodType() -> MbValue { make_type_obj("method") }
 #[allow(non_snake_case)]
-pub fn mb_types_BuiltinFunctionType() -> MbValue {
-    make_type_obj("builtin_function_or_method")
-}
+pub fn mb_types_BuiltinFunctionType() -> MbValue { make_type_obj("builtin_function_or_method") }
 #[allow(non_snake_case)]
-pub fn mb_types_BuiltinMethodType() -> MbValue {
-    make_type_obj("builtin_function_or_method")
-}
+pub fn mb_types_BuiltinMethodType() -> MbValue { make_type_obj("builtin_function_or_method") }
 #[allow(non_snake_case)]
-pub fn mb_types_ModuleType() -> MbValue {
-    make_type_obj("module")
-}
+pub fn mb_types_ModuleType() -> MbValue { make_type_obj("module") }
 #[allow(non_snake_case)]
-pub fn mb_types_GeneratorType() -> MbValue {
-    make_type_obj("generator")
-}
+pub fn mb_types_GeneratorType() -> MbValue { make_type_obj("generator") }
 #[allow(non_snake_case)]
-pub fn mb_types_CoroutineType() -> MbValue {
-    make_type_obj("coroutine")
-}
+pub fn mb_types_CoroutineType() -> MbValue { make_type_obj("coroutine") }
 #[allow(non_snake_case)]
-pub fn mb_types_AsyncGeneratorType() -> MbValue {
-    make_type_obj("async_generator")
-}
+pub fn mb_types_AsyncGeneratorType() -> MbValue { make_type_obj("async_generator") }
 #[allow(non_snake_case)]
-pub fn mb_types_CodeType() -> MbValue {
-    make_type_obj("code")
-}
+pub fn mb_types_CodeType() -> MbValue { make_type_obj("code") }
 #[allow(non_snake_case)]
-pub fn mb_types_CellType() -> MbValue {
-    make_type_obj("cell")
-}
+pub fn mb_types_CellType() -> MbValue { make_type_obj("cell") }
 #[allow(non_snake_case)]
-pub fn mb_types_FrameType() -> MbValue {
-    make_type_obj("frame")
-}
+pub fn mb_types_FrameType() -> MbValue { make_type_obj("frame") }
 #[allow(non_snake_case)]
-pub fn mb_types_TracebackType() -> MbValue {
-    make_type_obj("traceback")
-}
+pub fn mb_types_TracebackType() -> MbValue { make_type_obj("traceback") }
 #[allow(non_snake_case)]
-pub fn mb_types_NoneType() -> MbValue {
-    make_type_obj("NoneType")
-}
+pub fn mb_types_NoneType() -> MbValue { make_type_obj("NoneType") }
 #[allow(non_snake_case)]
-pub fn mb_types_NotImplementedType() -> MbValue {
-    make_type_obj("NotImplementedType")
-}
+pub fn mb_types_NotImplementedType() -> MbValue { make_type_obj("NotImplementedType") }
 #[allow(non_snake_case)]
-pub fn mb_types_EllipsisType() -> MbValue {
-    make_type_obj("ellipsis")
-}
+pub fn mb_types_EllipsisType() -> MbValue { make_type_obj("ellipsis") }
 #[allow(non_snake_case)]
-pub fn mb_types_MappingProxyType() -> MbValue {
-    make_type_obj("mappingproxy")
-}
+pub fn mb_types_MappingProxyType() -> MbValue { make_type_obj("mappingproxy") }
 #[allow(non_snake_case)]
-pub fn mb_types_GenericAlias() -> MbValue {
-    make_type_obj("GenericAlias")
-}
+pub fn mb_types_GenericAlias() -> MbValue { make_type_obj("GenericAlias") }
 #[allow(non_snake_case)]
-pub fn mb_types_UnionType() -> MbValue {
-    make_type_obj("UnionType")
-}
+pub fn mb_types_UnionType() -> MbValue { make_type_obj("UnionType") }
 #[allow(non_snake_case)]
-pub fn mb_types_DynamicClassAttribute() -> MbValue {
-    make_type_obj("DynamicClassAttribute")
-}
+pub fn mb_types_DynamicClassAttribute() -> MbValue { make_type_obj("DynamicClassAttribute") }
 #[allow(non_snake_case)]
-pub fn mb_types_ClassMethodDescriptorType() -> MbValue {
-    make_type_obj("classmethod_descriptor")
-}
+pub fn mb_types_ClassMethodDescriptorType() -> MbValue { make_type_obj("classmethod_descriptor") }
 #[allow(non_snake_case)]
-pub fn mb_types_GetSetDescriptorType() -> MbValue {
-    make_type_obj("getset_descriptor")
-}
+pub fn mb_types_GetSetDescriptorType() -> MbValue { make_type_obj("getset_descriptor") }
 #[allow(non_snake_case)]
-pub fn mb_types_MemberDescriptorType() -> MbValue {
-    make_type_obj("member_descriptor")
-}
+pub fn mb_types_MemberDescriptorType() -> MbValue { make_type_obj("member_descriptor") }
 #[allow(non_snake_case)]
-pub fn mb_types_MethodDescriptorType() -> MbValue {
-    make_type_obj("method_descriptor")
-}
+pub fn mb_types_MethodDescriptorType() -> MbValue { make_type_obj("method_descriptor") }
 #[allow(non_snake_case)]
-pub fn mb_types_MethodWrapperType() -> MbValue {
-    make_type_obj("method-wrapper")
-}
+pub fn mb_types_MethodWrapperType() -> MbValue { make_type_obj("method-wrapper") }
 #[allow(non_snake_case)]
-pub fn mb_types_WrapperDescriptorType() -> MbValue {
-    make_type_obj("wrapper_descriptor")
-}
+pub fn mb_types_WrapperDescriptorType() -> MbValue { make_type_obj("wrapper_descriptor") }
 
 /// types.SimpleNamespace(**kwargs) -> namespace object
 ///
@@ -343,16 +282,9 @@ pub fn mb_types_SimpleNamespace() -> MbValue {
 
 /// types.new_class(name, bases=(), kwds=None, exec_body=None) -> type
 pub fn mb_types_new_class(name: MbValue) -> MbValue {
-    let class_name = name
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| "NewClass".to_string());
+    let class_name = name.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+    }).unwrap_or_else(|| "NewClass".to_string());
     make_type_obj(&class_name)
 }
 
@@ -371,15 +303,24 @@ pub fn mb_types_prepare_class(_name: MbValue) -> MbValue {
 ///
 /// Identity passthrough — CPython unwraps `__mro_entries__` but mamba
 /// has no such protocol yet.
-pub fn mb_types_resolve_bases(bases: MbValue) -> MbValue {
-    bases
-}
+pub fn mb_types_resolve_bases(bases: MbValue) -> MbValue { bases }
 
 /// types.coroutine(func) -> func
 ///
 /// Identity decorator. CPython promotes generator-based functions to
-/// real coroutine objects; mamba returns the input unchanged.
+/// real coroutine objects; mamba returns the input unchanged. Like
+/// CPython, a non-callable argument raises TypeError with the message
+/// `types.coroutine() expects a callable`.
 pub fn mb_types_coroutine(func: MbValue) -> MbValue {
+    if super::super::builtins::mb_callable(func).as_bool() != Some(true) {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "types.coroutine() expects a callable".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     func
 }
 
@@ -399,9 +340,7 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     let f = fields.read().unwrap();
-                    if let Some(v) = f.get(field) {
-                        return *v;
-                    }
+                    if let Some(v) = f.get(field) { return *v; }
                 }
             }
         }
@@ -410,11 +349,7 @@ mod tests {
 
     fn get_str(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
+            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
         })
     }
 
@@ -433,48 +368,36 @@ mod tests {
     #[test]
     fn test_type_objects_carry_name_and_qualname() {
         for (helper, expected) in [
-            (mb_types_FunctionType() as MbValue, "function"),
-            (mb_types_LambdaType(), "function"),
-            (mb_types_MethodType(), "method"),
-            (mb_types_BuiltinFunctionType(), "builtin_function_or_method"),
-            (mb_types_BuiltinMethodType(), "builtin_function_or_method"),
-            (mb_types_ModuleType(), "module"),
-            (mb_types_GeneratorType(), "generator"),
-            (mb_types_CoroutineType(), "coroutine"),
-            (mb_types_AsyncGeneratorType(), "async_generator"),
-            (mb_types_CodeType(), "code"),
-            (mb_types_CellType(), "cell"),
-            (mb_types_FrameType(), "frame"),
-            (mb_types_TracebackType(), "traceback"),
-            (mb_types_NoneType(), "NoneType"),
-            (mb_types_NotImplementedType(), "NotImplementedType"),
-            (mb_types_EllipsisType(), "ellipsis"),
-            (mb_types_MappingProxyType(), "mappingproxy"),
-            (mb_types_GenericAlias(), "GenericAlias"),
-            (mb_types_UnionType(), "UnionType"),
-            (mb_types_DynamicClassAttribute(), "DynamicClassAttribute"),
-            (
-                mb_types_ClassMethodDescriptorType(),
-                "classmethod_descriptor",
-            ),
-            (mb_types_GetSetDescriptorType(), "getset_descriptor"),
-            (mb_types_MemberDescriptorType(), "member_descriptor"),
-            (mb_types_MethodDescriptorType(), "method_descriptor"),
-            (mb_types_MethodWrapperType(), "method-wrapper"),
-            (mb_types_WrapperDescriptorType(), "wrapper_descriptor"),
+            (mb_types_FunctionType()                as MbValue, "function"),
+            (mb_types_LambdaType(),                              "function"),
+            (mb_types_MethodType(),                              "method"),
+            (mb_types_BuiltinFunctionType(),                     "builtin_function_or_method"),
+            (mb_types_BuiltinMethodType(),                       "builtin_function_or_method"),
+            (mb_types_ModuleType(),                              "module"),
+            (mb_types_GeneratorType(),                           "generator"),
+            (mb_types_CoroutineType(),                           "coroutine"),
+            (mb_types_AsyncGeneratorType(),                      "async_generator"),
+            (mb_types_CodeType(),                                "code"),
+            (mb_types_CellType(),                                "cell"),
+            (mb_types_FrameType(),                               "frame"),
+            (mb_types_TracebackType(),                           "traceback"),
+            (mb_types_NoneType(),                                "NoneType"),
+            (mb_types_NotImplementedType(),                      "NotImplementedType"),
+            (mb_types_EllipsisType(),                            "ellipsis"),
+            (mb_types_MappingProxyType(),                        "mappingproxy"),
+            (mb_types_GenericAlias(),                            "GenericAlias"),
+            (mb_types_UnionType(),                               "UnionType"),
+            (mb_types_DynamicClassAttribute(),                   "DynamicClassAttribute"),
+            (mb_types_ClassMethodDescriptorType(),               "classmethod_descriptor"),
+            (mb_types_GetSetDescriptorType(),                    "getset_descriptor"),
+            (mb_types_MemberDescriptorType(),                    "member_descriptor"),
+            (mb_types_MethodDescriptorType(),                    "method_descriptor"),
+            (mb_types_MethodWrapperType(),                       "method-wrapper"),
+            (mb_types_WrapperDescriptorType(),                   "wrapper_descriptor"),
         ] {
-            assert_eq!(
-                get_str(get_field(helper, "__name__")).as_deref(),
-                Some(expected)
-            );
-            assert_eq!(
-                get_str(get_field(helper, "__qualname__")).as_deref(),
-                Some(expected)
-            );
-            assert_eq!(
-                get_str(get_field(helper, "__module__")).as_deref(),
-                Some("builtins")
-            );
+            assert_eq!(get_str(get_field(helper, "__name__")).as_deref(), Some(expected));
+            assert_eq!(get_str(get_field(helper, "__qualname__")).as_deref(), Some(expected));
+            assert_eq!(get_str(get_field(helper, "__module__")).as_deref(), Some("builtins"));
             assert_eq!(class_name_of(helper).as_deref(), Some("type"));
         }
     }
@@ -483,20 +406,16 @@ mod tests {
     fn test_lambda_aliases_function() {
         let ft = mb_types_FunctionType();
         let lt = mb_types_LambdaType();
-        assert_eq!(
-            get_str(get_field(ft, "__name__")),
-            get_str(get_field(lt, "__name__"))
-        );
+        assert_eq!(get_str(get_field(ft, "__name__")),
+                   get_str(get_field(lt, "__name__")));
     }
 
     #[test]
     fn test_builtin_method_aliases_builtin_function() {
         let a = mb_types_BuiltinFunctionType();
         let b = mb_types_BuiltinMethodType();
-        assert_eq!(
-            get_str(get_field(a, "__name__")),
-            get_str(get_field(b, "__name__"))
-        );
+        assert_eq!(get_str(get_field(a, "__name__")),
+                   get_str(get_field(b, "__name__")));
     }
 
     // -- SimpleNamespace --
@@ -510,13 +429,9 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     assert_eq!(fields.read().unwrap().len(), 0);
-                } else {
-                    panic!("expected Instance");
-                }
+                } else { panic!("expected Instance"); }
             }
-        } else {
-            panic!("expected ptr");
-        }
+        } else { panic!("expected ptr"); }
     }
 
     // -- Callable helpers --
@@ -525,19 +440,13 @@ mod tests {
     fn test_new_class_uses_provided_name() {
         let name = MbValue::from_ptr(MbObject::new_str("MyClass".to_string()));
         let cls = mb_types_new_class(name);
-        assert_eq!(
-            get_str(get_field(cls, "__name__")).as_deref(),
-            Some("MyClass")
-        );
+        assert_eq!(get_str(get_field(cls, "__name__")).as_deref(), Some("MyClass"));
     }
 
     #[test]
     fn test_new_class_defaults_when_name_missing() {
         let cls = mb_types_new_class(MbValue::none());
-        assert_eq!(
-            get_str(get_field(cls, "__name__")).as_deref(),
-            Some("NewClass")
-        );
+        assert_eq!(get_str(get_field(cls, "__name__")).as_deref(), Some("NewClass"));
     }
 
     #[test]
@@ -549,13 +458,9 @@ mod tests {
                     assert_eq!(items.len(), 3);
                     // first slot is None
                     assert!(items[0].as_ptr().is_none() || items[0].as_int().is_none());
-                } else {
-                    panic!("expected Tuple");
-                }
+                } else { panic!("expected Tuple"); }
             }
-        } else {
-            panic!("expected ptr");
-        }
+        } else { panic!("expected ptr"); }
     }
 
     #[test]
@@ -580,13 +485,9 @@ mod tests {
             unsafe {
                 if let ObjData::Tuple(ref items) = (*ptr).data {
                     assert_eq!(items.len(), 0);
-                } else {
-                    panic!("expected Tuple");
-                }
+                } else { panic!("expected Tuple"); }
             }
-        } else {
-            panic!("expected ptr");
-        }
+        } else { panic!("expected ptr"); }
     }
 
     // -- register() surface --
@@ -597,11 +498,9 @@ mod tests {
         // 5 dispatchers must each be registered into the global
         // native-func table; snapshot is monotonic across the test
         // process so we only assert presence (>=5).
-        let snap = super::super::super::module::NATIVE_FUNC_ADDRS.with(|s| s.borrow().len());
-        assert!(
-            snap >= 5,
-            "expected at least 5 native func addrs registered"
-        );
+        let snap = super::super::super::module::NATIVE_FUNC_ADDRS
+            .with(|s| s.borrow().len());
+        assert!(snap >= 5, "expected at least 5 native func addrs registered");
     }
 
     #[test]
@@ -609,38 +508,17 @@ mod tests {
         // The CPython 3.12 `types` module exposes exactly 32 non-dunder
         // entries. We list them here so a future drift surfaces loudly.
         let expected: &[&str] = &[
-            "AsyncGeneratorType",
-            "BuiltinFunctionType",
-            "BuiltinMethodType",
-            "CellType",
-            "ClassMethodDescriptorType",
-            "CodeType",
-            "CoroutineType",
-            "DynamicClassAttribute",
-            "EllipsisType",
-            "FrameType",
-            "FunctionType",
-            "GeneratorType",
-            "GenericAlias",
-            "GetSetDescriptorType",
-            "LambdaType",
-            "MappingProxyType",
-            "MemberDescriptorType",
-            "MethodDescriptorType",
-            "MethodType",
-            "MethodWrapperType",
-            "ModuleType",
-            "NoneType",
-            "NotImplementedType",
-            "SimpleNamespace",
-            "TracebackType",
-            "UnionType",
-            "WrapperDescriptorType",
-            "coroutine",
-            "get_original_bases",
-            "new_class",
-            "prepare_class",
-            "resolve_bases",
+            "AsyncGeneratorType", "BuiltinFunctionType", "BuiltinMethodType",
+            "CellType", "ClassMethodDescriptorType", "CodeType",
+            "CoroutineType", "DynamicClassAttribute", "EllipsisType",
+            "FrameType", "FunctionType", "GeneratorType", "GenericAlias",
+            "GetSetDescriptorType", "LambdaType", "MappingProxyType",
+            "MemberDescriptorType", "MethodDescriptorType", "MethodType",
+            "MethodWrapperType", "ModuleType", "NoneType",
+            "NotImplementedType", "SimpleNamespace", "TracebackType",
+            "UnionType", "WrapperDescriptorType",
+            "coroutine", "get_original_bases", "new_class",
+            "prepare_class", "resolve_bases",
         ];
         assert_eq!(expected.len(), 32);
     }

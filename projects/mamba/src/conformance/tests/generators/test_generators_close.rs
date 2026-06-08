@@ -28,7 +28,10 @@ except StopIteration:
     print('stopped after close')
 "#,
     );
-    assert_output(&output, "1\nclose returned: None\nstopped after close\n");
+    assert_output(
+        &output,
+        "1\nclose returned: None\nstopped after close\n",
+    );
 }
 
 /// AC4: GeneratorExit propagates to an `except GeneratorExit` handler inside

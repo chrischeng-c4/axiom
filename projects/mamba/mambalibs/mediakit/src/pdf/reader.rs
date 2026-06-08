@@ -364,11 +364,13 @@ fn parse_media_box(obj_text: &str) -> Option<PageSize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pdf::types::*;
     use crate::pdf::writer::generate;
+    use crate::pdf::types::*;
 
     fn make_test_pdf() -> Vec<u8> {
-        let mut doc = Document::new().with_title("Test Doc").with_author("Tester");
+        let mut doc = Document::new()
+            .with_title("Test Doc")
+            .with_author("Tester");
         let mut p1 = Page::new();
         p1.add(ContentElement::Text {
             content: "Hello from page one".into(),

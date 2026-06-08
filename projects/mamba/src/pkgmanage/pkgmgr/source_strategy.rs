@@ -63,7 +63,9 @@ impl SourceFilterSet {
             if p == ":all:" || p == ":none:" {
                 return Err(IndexError::ParseError {
                     url: DETAIL.into(),
-                    detail: format!("`{p}` must appear alone, not mixed with other names"),
+                    detail: format!(
+                        "`{p}` must appear alone, not mixed with other names"
+                    ),
                 });
             }
             set.insert(pep503_normalize(p));
@@ -342,7 +344,10 @@ mod tests {
             ArtifactKind::Other
         );
         // Case insensitive (uppercase suffixes happen on Windows mirrors).
-        assert_eq!(classify_artifact("FOO-1.0.TAR.GZ"), ArtifactKind::Sdist);
+        assert_eq!(
+            classify_artifact("FOO-1.0.TAR.GZ"),
+            ArtifactKind::Sdist
+        );
     }
 
     #[test]

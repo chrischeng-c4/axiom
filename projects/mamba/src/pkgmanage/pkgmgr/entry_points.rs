@@ -140,8 +140,10 @@ pub fn parse_pyproject_entry_points(src: &str) -> Result<EntryPointSet, IndexErr
                     ),
                 });
             }
-            let eps =
-                parse_group_table(&format!("project.entry-points.{group_name}"), group_value)?;
+            let eps = parse_group_table(
+                &format!("project.entry-points.{group_name}"),
+                group_value,
+            )?;
             if !eps.is_empty() {
                 out.groups.insert(group_name.clone(), eps);
             }
@@ -242,14 +244,10 @@ pub fn parse_entry_points_txt(src: &str) -> Result<EntryPointSet, IndexError> {
             continue;
         }
         if let Some(rest) = line.strip_prefix('[') {
-            let name = rest
-                .strip_suffix(']')
-                .ok_or_else(|| IndexError::ParseError {
-                    url: "<entry_points.txt>".into(),
-                    detail: format!(
-                        "entry_points.txt: line {lineno}: missing ']' on section header"
-                    ),
-                })?;
+            let name = rest.strip_suffix(']').ok_or_else(|| IndexError::ParseError {
+                url: "<entry_points.txt>".into(),
+                detail: format!("entry_points.txt: line {lineno}: missing ']' on section header"),
+            })?;
             let name = name.trim();
             if name.is_empty() {
                 return Err(IndexError::ParseError {
@@ -261,14 +259,12 @@ pub fn parse_entry_points_txt(src: &str) -> Result<EntryPointSet, IndexError> {
             out.groups.entry(name.to_string()).or_default();
             continue;
         }
-        let group = current_group
-            .as_ref()
-            .ok_or_else(|| IndexError::ParseError {
-                url: "<entry_points.txt>".into(),
-                detail: format!(
+        let group = current_group.as_ref().ok_or_else(|| IndexError::ParseError {
+            url: "<entry_points.txt>".into(),
+            detail: format!(
                 "entry_points.txt: line {lineno}: entry {line:?} appears before any [group] header"
             ),
-            })?;
+        })?;
         let (name, target) = line.split_once('=').ok_or_else(|| IndexError::ParseError {
             url: "<entry_points.txt>".into(),
             detail: format!("entry_points.txt: line {lineno}: missing '=' in {line:?}"),
@@ -457,9 +453,10 @@ mod tests {
 
     #[test]
     fn parse_rejects_non_table_scripts() {
-        let err =
-            parse_pyproject_entry_points("[project]\nname = \"x\"\nscripts = \"not a table\"\n")
-                .unwrap_err();
+        let err = parse_pyproject_entry_points(
+            "[project]\nname = \"x\"\nscripts = \"not a table\"\n",
+        )
+        .unwrap_err();
         assert!(format!("{err}").contains("must be a table"));
     }
 
@@ -518,7 +515,10 @@ mod tests {
                 attr: None,
             }],
         );
-        assert_eq!(render_entry_points_txt(&set), "[gui_scripts]\ng = m\n");
+        assert_eq!(
+            render_entry_points_txt(&set),
+            "[gui_scripts]\ng = m\n"
+        );
     }
 
     /// The whole point of this module: the renderer output must be
@@ -670,8 +670,8 @@ mod tests {
 
     #[test]
     fn parse_entry_points_txt_rejects_missing_equals() {
-        let err =
-            parse_entry_points_txt("[console_scripts]\nhttpie httpie.core:main\n").unwrap_err();
+        let err = parse_entry_points_txt("[console_scripts]\nhttpie httpie.core:main\n")
+            .unwrap_err();
         assert!(format!("{err}").contains("missing '='"));
     }
 

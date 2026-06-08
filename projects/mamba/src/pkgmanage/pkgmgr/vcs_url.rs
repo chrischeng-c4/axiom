@@ -117,11 +117,7 @@ impl VcsUrl {
         if rest.is_empty() {
             return Err(IndexError::ParseError {
                 url: VCS_URL_DETAIL.into(),
-                detail: format!(
-                    "{} URL has empty body after {}+ prefix",
-                    kind.as_str(),
-                    kind.as_str()
-                ),
+                detail: format!("{} URL has empty body after {}+ prefix", kind.as_str(), kind.as_str()),
             });
         }
 
@@ -212,7 +208,10 @@ fn split_url_and_rev(body: &str) -> Result<(&str, Option<String>), IndexError> {
         Some(end) => {
             // First `/` after the authority. If absent (e.g. `lp:foo`
             // bzr launchpad shorthand), scan from `end` directly.
-            body[end..].find('/').map(|rel| end + rel).unwrap_or(end)
+            body[end..]
+                .find('/')
+                .map(|rel| end + rel)
+                .unwrap_or(end)
         }
         None => {
             // Scheme-less body. Two variants to disambiguate:
@@ -272,10 +271,7 @@ fn normalize_scp_form(url: &str) -> String {
     // Heuristic: if tail starts with a digit and only digits up to '/' it
     // probably is host:port (uncommon for VCS). Leave alone.
     if tail.chars().next().is_some_and(|c| c.is_ascii_digit())
-        && tail
-            .split('/')
-            .next()
-            .is_some_and(|p| p.chars().all(|c| c.is_ascii_digit()))
+        && tail.split('/').next().is_some_and(|p| p.chars().all(|c| c.is_ascii_digit()))
     {
         return url.to_string();
     }
@@ -332,9 +328,7 @@ mod tests {
 
     #[test]
     fn returns_none_when_no_vcs_prefix() {
-        assert!(VcsUrl::parse("https://example.com/foo.tar.gz")
-            .unwrap()
-            .is_none());
+        assert!(VcsUrl::parse("https://example.com/foo.tar.gz").unwrap().is_none());
         assert!(VcsUrl::parse("file:///tmp/foo").unwrap().is_none());
         assert!(VcsUrl::parse("foo").unwrap().is_none());
     }
@@ -342,26 +336,10 @@ mod tests {
     #[test]
     fn recognizes_all_four_schemes() {
         let cases = [
-            (
-                "git+https://example.com/foo.git",
-                VcsKind::Git,
-                "https://example.com/foo.git",
-            ),
-            (
-                "hg+https://example.com/foo",
-                VcsKind::Hg,
-                "https://example.com/foo",
-            ),
-            (
-                "svn+https://example.com/svn/foo",
-                VcsKind::Svn,
-                "https://example.com/svn/foo",
-            ),
-            (
-                "bzr+https://example.com/foo",
-                VcsKind::Bzr,
-                "https://example.com/foo",
-            ),
+            ("git+https://example.com/foo.git", VcsKind::Git, "https://example.com/foo.git"),
+            ("hg+https://example.com/foo", VcsKind::Hg, "https://example.com/foo"),
+            ("svn+https://example.com/svn/foo", VcsKind::Svn, "https://example.com/svn/foo"),
+            ("bzr+https://example.com/foo", VcsKind::Bzr, "https://example.com/foo"),
         ];
         for (src, kind, url) in cases {
             let u = VcsUrl::parse(src).unwrap().unwrap();
@@ -435,10 +413,7 @@ mod tests {
         .unwrap();
         assert_eq!(u.egg.as_deref(), Some("bar"));
         assert_eq!(u.subdirectory.as_deref(), Some("pkgs/sub"));
-        assert_eq!(
-            u.extra_fragment.get("custom").map(String::as_str),
-            Some("xyz")
-        );
+        assert_eq!(u.extra_fragment.get("custom").map(String::as_str), Some("xyz"));
     }
 
     #[test]
@@ -463,9 +438,7 @@ mod tests {
 
     #[test]
     fn empty_fragment_is_ok() {
-        let u = VcsUrl::parse("git+https://example.com/foo.git#")
-            .unwrap()
-            .unwrap();
+        let u = VcsUrl::parse("git+https://example.com/foo.git#").unwrap().unwrap();
         assert_eq!(u.subdirectory, None);
         assert_eq!(u.egg, None);
         assert!(u.extra_fragment.is_empty());
@@ -473,9 +446,7 @@ mod tests {
 
     #[test]
     fn file_transport_is_supported() {
-        let u = VcsUrl::parse("git+file:///srv/repos/foo@v2.0")
-            .unwrap()
-            .unwrap();
+        let u = VcsUrl::parse("git+file:///srv/repos/foo@v2.0").unwrap().unwrap();
         assert_eq!(u.url, "file:///srv/repos/foo");
         assert_eq!(u.rev.as_deref(), Some("v2.0"));
     }
@@ -483,9 +454,7 @@ mod tests {
     #[test]
     fn normalizes_scp_form_to_ssh() {
         // scp-form `git@host:path` (no scheme) -> `ssh://git@host/path`.
-        let u = VcsUrl::parse("git+git@github.com:foo/bar.git")
-            .unwrap()
-            .unwrap();
+        let u = VcsUrl::parse("git+git@github.com:foo/bar.git").unwrap().unwrap();
         assert_eq!(u.url, "ssh://git@github.com/foo/bar.git");
         assert_eq!(u.rev, None);
     }
@@ -540,7 +509,8 @@ mod tests {
 
     #[test]
     fn round_trip_render_with_rev_and_fragment() {
-        let original = "git+https://github.com/foo/bar.git@main#subdirectory=pkgs/sub";
+        let original =
+            "git+https://github.com/foo/bar.git@main#subdirectory=pkgs/sub";
         let v = VcsUrl::parse(original).unwrap().unwrap();
         assert_eq!(v.render(), original);
     }
@@ -584,13 +554,7 @@ mod tests {
     fn realistic_pep440_direct_reference_examples() {
         // A handful of inputs the pip/uv test corpora ship.
         let cases = [
-            (
-                "git+https://github.com/pallets/flask.git@2.3.3",
-                "https://github.com/pallets/flask.git",
-                Some("2.3.3"),
-                None,
-                None,
-            ),
+            ("git+https://github.com/pallets/flask.git@2.3.3", "https://github.com/pallets/flask.git", Some("2.3.3"), None, None),
             (
                 "git+ssh://git@github.com/foo/bar.git@abc123#subdirectory=pkg",
                 "ssh://git@github.com/foo/bar.git",
@@ -624,11 +588,7 @@ mod tests {
             let u = VcsUrl::parse(src).unwrap().unwrap();
             assert_eq!(u.url, want_url, "url mismatch for {src}");
             assert_eq!(u.rev.as_deref(), want_rev, "rev mismatch for {src}");
-            assert_eq!(
-                u.subdirectory.as_deref(),
-                want_sub,
-                "sub mismatch for {src}"
-            );
+            assert_eq!(u.subdirectory.as_deref(), want_sub, "sub mismatch for {src}");
             assert_eq!(u.egg.as_deref(), want_egg, "egg mismatch for {src}");
         }
     }

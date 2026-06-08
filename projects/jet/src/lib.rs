@@ -20,7 +20,6 @@ pub mod ci_summary;
 pub mod cli;
 pub mod css;
 pub mod dev_server;
-pub mod dev_session;
 pub mod e2e;
 // Backward-compatibility aliases — `e2e_*` paths remain valid after the
 // 2026-05-21 reorg moved the 16 e2e_* modules under `crate::e2e::*`.

@@ -83,15 +83,19 @@ impl ColumnType {
             ColumnType::BigInt => "BIGINT".to_string(),
             ColumnType::Real => "REAL".to_string(),
             ColumnType::DoublePrecision => "DOUBLE PRECISION".to_string(),
-            ColumnType::Numeric(precision, scale) => match (precision, scale) {
-                (Some(p), Some(s)) => format!("NUMERIC({}, {})", p, s),
-                (Some(p), None) => format!("NUMERIC({})", p),
-                _ => "NUMERIC".to_string(),
-            },
-            ColumnType::Varchar(len) => match len {
-                Some(l) => format!("VARCHAR({})", l),
-                None => "VARCHAR".to_string(),
-            },
+            ColumnType::Numeric(precision, scale) => {
+                match (precision, scale) {
+                    (Some(p), Some(s)) => format!("NUMERIC({}, {})", p, s),
+                    (Some(p), None) => format!("NUMERIC({})", p),
+                    _ => "NUMERIC".to_string(),
+                }
+            }
+            ColumnType::Varchar(len) => {
+                match len {
+                    Some(l) => format!("VARCHAR({})", l),
+                    None => "VARCHAR".to_string(),
+                }
+            }
             ColumnType::Text => "TEXT".to_string(),
             ColumnType::Boolean => "BOOLEAN".to_string(),
             ColumnType::Bytea => "BYTEA".to_string(),
@@ -350,9 +354,7 @@ pub struct SchemaDiff {
 impl SchemaDiff {
     /// Creates a new empty schema diff.
     pub fn new() -> Self {
-        Self {
-            changes: Vec::new(),
-        }
+        Self { changes: Vec::new() }
     }
 
     /// Compares two sets of table info and generates the diff.
@@ -378,24 +380,15 @@ impl SchemaDiff {
             match current_tables.get(name) {
                 None => {
                     // New table
-                    diff.changes
-                        .push(TableChange::Created((*desired_table).clone()));
+                    diff.changes.push(TableChange::Created((*desired_table).clone()));
                 }
                 Some(current_table) => {
                     // Check for alterations
-                    let column_changes =
-                        Self::compare_columns(&current_table.columns, &desired_table.columns);
-                    let index_changes =
-                        Self::compare_indexes(&current_table.indexes, &desired_table.indexes);
-                    let fk_changes = Self::compare_foreign_keys(
-                        &current_table.foreign_keys,
-                        &desired_table.foreign_keys,
-                    );
+                    let column_changes = Self::compare_columns(&current_table.columns, &desired_table.columns);
+                    let index_changes = Self::compare_indexes(&current_table.indexes, &desired_table.indexes);
+                    let fk_changes = Self::compare_foreign_keys(&current_table.foreign_keys, &desired_table.foreign_keys);
 
-                    if !column_changes.is_empty()
-                        || !index_changes.is_empty()
-                        || !fk_changes.is_empty()
-                    {
+                    if !column_changes.is_empty() || !index_changes.is_empty() || !fk_changes.is_empty() {
                         diff.changes.push(TableChange::Altered {
                             table_name: name.to_string(),
                             column_changes,
@@ -477,10 +470,7 @@ impl SchemaDiff {
         changes
     }
 
-    fn compare_foreign_keys(
-        current: &[ForeignKeyInfo],
-        desired: &[ForeignKeyInfo],
-    ) -> Vec<ForeignKeyChange> {
+    fn compare_foreign_keys(current: &[ForeignKeyInfo], desired: &[ForeignKeyInfo]) -> Vec<ForeignKeyChange> {
         let mut changes = Vec::new();
 
         let current_fks: std::collections::HashMap<&str, &ForeignKeyInfo> =
@@ -518,12 +508,7 @@ impl SchemaDiff {
                     statements.push(Self::generate_create_table(table));
                     // Add indexes after table creation
                     for index in &table.indexes {
-                        if !index.is_unique
-                            || !table
-                                .columns
-                                .iter()
-                                .any(|c| c.is_primary_key && index.columns.contains(&c.name))
-                        {
+                        if !index.is_unique || !table.columns.iter().any(|c| c.is_primary_key && index.columns.contains(&c.name)) {
                             statements.push(Self::generate_create_index(&table.name, index));
                         }
                     }
@@ -535,12 +520,7 @@ impl SchemaDiff {
                 TableChange::Dropped(name) => {
                     statements.push(format!("DROP TABLE IF EXISTS \"{}\" CASCADE;", name));
                 }
-                TableChange::Altered {
-                    table_name,
-                    column_changes,
-                    index_changes,
-                    foreign_key_changes,
-                } => {
+                TableChange::Altered { table_name, column_changes, index_changes, foreign_key_changes } => {
                     for change in column_changes {
                         statements.push(Self::generate_column_change_sql(table_name, change));
                     }
@@ -573,30 +553,20 @@ impl SchemaDiff {
                 TableChange::Dropped(name) => {
                     // Reverse: would need to recreate, but we don't have the info
                     // Add a comment as placeholder
-                    statements.push(format!(
-                        "-- Cannot auto-generate: recreate table \"{}\"",
-                        name
-                    ));
+                    statements.push(format!("-- Cannot auto-generate: recreate table \"{}\"", name));
                 }
-                TableChange::Altered {
-                    table_name,
-                    column_changes,
-                    index_changes,
-                    foreign_key_changes,
-                } => {
+                TableChange::Altered { table_name, column_changes, index_changes, foreign_key_changes } => {
                     // Reverse foreign key changes
                     for change in foreign_key_changes.iter().rev() {
                         statements.push(Self::generate_fk_change_sql_reverse(table_name, change));
                     }
                     // Reverse index changes
                     for change in index_changes.iter().rev() {
-                        statements
-                            .push(Self::generate_index_change_sql_reverse(table_name, change));
+                        statements.push(Self::generate_index_change_sql_reverse(table_name, change));
                     }
                     // Reverse column changes
                     for change in column_changes.iter().rev() {
-                        statements
-                            .push(Self::generate_column_change_sql_reverse(table_name, change));
+                        statements.push(Self::generate_column_change_sql_reverse(table_name, change));
                     }
                 }
             }
@@ -648,11 +618,7 @@ impl SchemaDiff {
 
     fn generate_add_foreign_key(table_name: &str, fk: &ForeignKeyInfo) -> String {
         let columns: Vec<String> = fk.columns.iter().map(|c| format!("\"{}\"", c)).collect();
-        let ref_columns: Vec<String> = fk
-            .referenced_columns
-            .iter()
-            .map(|c| format!("\"{}\"", c))
-            .collect();
+        let ref_columns: Vec<String> = fk.referenced_columns.iter().map(|c| format!("\"{}\"", c)).collect();
         format!(
             "ALTER TABLE \"{}\" ADD CONSTRAINT \"{}\" FOREIGN KEY ({}) REFERENCES \"{}\" ({}) ON DELETE {} ON UPDATE {};",
             table_name,
@@ -670,9 +636,7 @@ impl SchemaDiff {
             ColumnChange::Added(col) => {
                 let mut sql = format!(
                     "ALTER TABLE \"{}\" ADD COLUMN \"{}\" {}",
-                    table_name,
-                    col.name,
-                    col.data_type.to_sql()
+                    table_name, col.name, col.data_type.to_sql()
                 );
                 if !col.nullable {
                     sql.push_str(" NOT NULL");
@@ -684,61 +648,45 @@ impl SchemaDiff {
                 sql
             }
             ColumnChange::Removed(col) => {
-                format!(
-                    "ALTER TABLE \"{}\" DROP COLUMN \"{}\";",
-                    table_name, col.name
-                )
+                format!("ALTER TABLE \"{}\" DROP COLUMN \"{}\";", table_name, col.name)
             }
             ColumnChange::TypeChanged { new, .. } => {
                 format!(
                     "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" TYPE {} USING \"{}\"::{};",
-                    table_name,
-                    new.name,
-                    new.data_type.to_sql(),
-                    new.name,
-                    new.data_type.to_sql()
+                    table_name, new.name, new.data_type.to_sql(), new.name, new.data_type.to_sql()
                 )
             }
             ColumnChange::NullabilityChanged { new, .. } => {
                 if new.nullable {
-                    format!(
-                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP NOT NULL;",
-                        table_name, new.name
-                    )
+                    format!("ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP NOT NULL;", table_name, new.name)
                 } else {
-                    format!(
-                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET NOT NULL;",
-                        table_name, new.name
-                    )
+                    format!("ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET NOT NULL;", table_name, new.name)
                 }
             }
-            ColumnChange::DefaultChanged { new, .. } => match &new.default {
-                Some(default) => format!(
-                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET DEFAULT {};",
-                    table_name, new.name, default
-                ),
-                None => format!(
-                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP DEFAULT;",
-                    table_name, new.name
-                ),
-            },
+            ColumnChange::DefaultChanged { new, .. } => {
+                match &new.default {
+                    Some(default) => format!(
+                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET DEFAULT {};",
+                        table_name, new.name, default
+                    ),
+                    None => format!(
+                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP DEFAULT;",
+                        table_name, new.name
+                    ),
+                }
+            }
         }
     }
 
     fn generate_column_change_sql_reverse(table_name: &str, change: &ColumnChange) -> String {
         match change {
             ColumnChange::Added(col) => {
-                format!(
-                    "ALTER TABLE \"{}\" DROP COLUMN \"{}\";",
-                    table_name, col.name
-                )
+                format!("ALTER TABLE \"{}\" DROP COLUMN \"{}\";", table_name, col.name)
             }
             ColumnChange::Removed(col) => {
                 let mut sql = format!(
                     "ALTER TABLE \"{}\" ADD COLUMN \"{}\" {}",
-                    table_name,
-                    col.name,
-                    col.data_type.to_sql()
+                    table_name, col.name, col.data_type.to_sql()
                 );
                 if !col.nullable {
                     sql.push_str(" NOT NULL");
@@ -752,36 +700,28 @@ impl SchemaDiff {
             ColumnChange::TypeChanged { old, .. } => {
                 format!(
                     "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" TYPE {} USING \"{}\"::{};",
-                    table_name,
-                    old.name,
-                    old.data_type.to_sql(),
-                    old.name,
-                    old.data_type.to_sql()
+                    table_name, old.name, old.data_type.to_sql(), old.name, old.data_type.to_sql()
                 )
             }
             ColumnChange::NullabilityChanged { old, .. } => {
                 if old.nullable {
-                    format!(
-                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP NOT NULL;",
-                        table_name, old.name
-                    )
+                    format!("ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP NOT NULL;", table_name, old.name)
                 } else {
-                    format!(
-                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET NOT NULL;",
-                        table_name, old.name
-                    )
+                    format!("ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET NOT NULL;", table_name, old.name)
                 }
             }
-            ColumnChange::DefaultChanged { old, .. } => match &old.default {
-                Some(default) => format!(
-                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET DEFAULT {};",
-                    table_name, old.name, default
-                ),
-                None => format!(
-                    "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP DEFAULT;",
-                    table_name, old.name
-                ),
-            },
+            ColumnChange::DefaultChanged { old, .. } => {
+                match &old.default {
+                    Some(default) => format!(
+                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" SET DEFAULT {};",
+                        table_name, old.name, default
+                    ),
+                    None => format!(
+                        "ALTER TABLE \"{}\" ALTER COLUMN \"{}\" DROP DEFAULT;",
+                        table_name, old.name
+                    ),
+                }
+            }
         }
     }
 
@@ -803,10 +743,7 @@ impl SchemaDiff {
         match change {
             ForeignKeyChange::Added(fk) => Self::generate_add_foreign_key(table_name, fk),
             ForeignKeyChange::Removed(fk) => {
-                format!(
-                    "ALTER TABLE \"{}\" DROP CONSTRAINT \"{}\";",
-                    table_name, fk.name
-                )
+                format!("ALTER TABLE \"{}\" DROP CONSTRAINT \"{}\";", table_name, fk.name)
             }
         }
     }
@@ -814,10 +751,7 @@ impl SchemaDiff {
     fn generate_fk_change_sql_reverse(table_name: &str, change: &ForeignKeyChange) -> String {
         match change {
             ForeignKeyChange::Added(fk) => {
-                format!(
-                    "ALTER TABLE \"{}\" DROP CONSTRAINT \"{}\";",
-                    table_name, fk.name
-                )
+                format!("ALTER TABLE \"{}\" DROP CONSTRAINT \"{}\";", table_name, fk.name)
             }
             ForeignKeyChange::Removed(fk) => Self::generate_add_foreign_key(table_name, fk),
         }
@@ -843,7 +777,7 @@ impl SchemaInspector {
         let rows = sqlx::query(
             "SELECT tablename FROM pg_tables
              WHERE schemaname = $1
-             ORDER BY tablename",
+             ORDER BY tablename"
         )
         .bind(schema_name)
         .fetch_all(self.conn.pool())
@@ -864,7 +798,7 @@ impl SchemaInspector {
         // Check if table exists
         if !self.table_exists(table, Some(schema_name)).await? {
             return Err(crate::DataBridgeError::Query(
-                "Table does not exist".to_string(),
+                "Table does not exist".to_string()
             ));
         }
 
@@ -890,7 +824,7 @@ impl SchemaInspector {
             "SELECT EXISTS (
                 SELECT 1 FROM pg_tables
                 WHERE tablename = $1 AND schemaname = $2
-             ) as exists",
+             ) as exists"
         )
         .bind(table)
         .bind(schema_name)
@@ -939,7 +873,7 @@ impl SchemaInspector {
                      AND tc.table_schema = $2
              ) u ON c.column_name = u.column_name
              WHERE c.table_name = $1 AND c.table_schema = $2
-             ORDER BY c.ordinal_position",
+             ORDER BY c.ordinal_position"
         )
         .bind(table)
         .bind(schema_name)
@@ -1033,7 +967,7 @@ impl SchemaInspector {
              JOIN pg_class ic ON ic.oid = ix.indexrelid
              JOIN pg_am am ON am.oid = ic.relam
              WHERE i.tablename = $1 AND i.schemaname = $2
-             ORDER BY i.indexname",
+             ORDER BY i.indexname"
         )
         .bind(table)
         .bind(schema_name)
@@ -1062,11 +996,7 @@ impl SchemaInspector {
     ///
     /// Queries PostgreSQL's information_schema to retrieve foreign key constraints
     /// and their associated metadata.
-    pub async fn get_foreign_keys(
-        &self,
-        table: &str,
-        schema: Option<&str>,
-    ) -> Result<Vec<ForeignKeyInfo>> {
+    pub async fn get_foreign_keys(&self, table: &str, schema: Option<&str>) -> Result<Vec<ForeignKeyInfo>> {
         let schema_name = schema.unwrap_or("public");
 
         let rows = sqlx::query(
@@ -1124,11 +1054,7 @@ impl SchemaInspector {
     ///
     /// Returns a list of back-references showing which tables have foreign keys
     /// pointing to the specified table.
-    pub async fn get_backreferences(
-        &self,
-        table: &str,
-        schema: Option<&str>,
-    ) -> Result<Vec<BackRef>> {
+    pub async fn get_backreferences(&self, table: &str, schema: Option<&str>) -> Result<Vec<BackRef>> {
         let schema_name = schema.unwrap_or("public");
 
         let query = r#"
@@ -1352,11 +1278,7 @@ mod tests {
         }
     }
 
-    fn create_test_foreign_key(
-        name: &str,
-        columns: Vec<&str>,
-        referenced_table: &str,
-    ) -> ForeignKeyInfo {
+    fn create_test_foreign_key(name: &str, columns: Vec<&str>, referenced_table: &str) -> ForeignKeyInfo {
         ForeignKeyInfo {
             name: name.to_string(),
             columns: columns.iter().map(|s| s.to_string()).collect(),
@@ -1452,11 +1374,7 @@ mod tests {
         let diff = SchemaDiff::compare(&current, &desired);
         assert_eq!(diff.changes.len(), 1);
         match &diff.changes[0] {
-            TableChange::Altered {
-                table_name,
-                column_changes,
-                ..
-            } => {
+            TableChange::Altered { table_name, column_changes, .. } => {
                 assert_eq!(table_name, "users");
                 assert_eq!(column_changes.len(), 1);
                 match &column_changes[0] {
@@ -1493,11 +1411,7 @@ mod tests {
         let diff = SchemaDiff::compare(&current, &desired);
         assert_eq!(diff.changes.len(), 1);
         match &diff.changes[0] {
-            TableChange::Altered {
-                table_name,
-                column_changes,
-                ..
-            } => {
+            TableChange::Altered { table_name, column_changes, .. } => {
                 assert_eq!(table_name, "users");
                 assert_eq!(column_changes.len(), 1);
                 match &column_changes[0] {
@@ -1660,20 +1574,13 @@ mod tests {
             schema: "public".to_string(),
             columns: vec![],
             indexes: vec![],
-            foreign_keys: vec![create_test_foreign_key(
-                "fk_author",
-                vec!["author_id"],
-                "users",
-            )],
+            foreign_keys: vec![create_test_foreign_key("fk_author", vec!["author_id"], "users")],
         }];
 
         let diff = SchemaDiff::compare(&current, &desired);
         assert_eq!(diff.changes.len(), 1);
         match &diff.changes[0] {
-            TableChange::Altered {
-                foreign_key_changes,
-                ..
-            } => {
+            TableChange::Altered { foreign_key_changes, .. } => {
                 assert_eq!(foreign_key_changes.len(), 1);
                 match &foreign_key_changes[0] {
                     ForeignKeyChange::Added(fk) => {
@@ -1744,12 +1651,7 @@ mod tests {
                     assert_eq!(name, "deprecated_table");
                     has_drop = true;
                 }
-                TableChange::Altered {
-                    table_name,
-                    column_changes,
-                    index_changes,
-                    ..
-                } => {
+                TableChange::Altered { table_name, column_changes, index_changes, .. } => {
                     assert_eq!(table_name, "users");
                     assert_eq!(column_changes.len(), 2); // removed old_field, added email
                     assert_eq!(index_changes.len(), 2); // removed old_idx, added idx_email
@@ -1777,16 +1679,10 @@ mod tests {
         assert_eq!(ColumnType::Uuid.to_sql(), "UUID");
         assert_eq!(ColumnType::Varchar(Some(255)).to_sql(), "VARCHAR(255)");
         assert_eq!(ColumnType::Varchar(None).to_sql(), "VARCHAR");
-        assert_eq!(
-            ColumnType::Numeric(Some(10), Some(2)).to_sql(),
-            "NUMERIC(10, 2)"
-        );
+        assert_eq!(ColumnType::Numeric(Some(10), Some(2)).to_sql(), "NUMERIC(10, 2)");
         assert_eq!(ColumnType::Numeric(Some(10), None).to_sql(), "NUMERIC(10)");
         assert_eq!(ColumnType::Numeric(None, None).to_sql(), "NUMERIC");
-        assert_eq!(
-            ColumnType::Array(Box::new(ColumnType::Integer)).to_sql(),
-            "INTEGER[]"
-        );
+        assert_eq!(ColumnType::Array(Box::new(ColumnType::Integer)).to_sql(), "INTEGER[]");
         assert_eq!(ColumnType::Custom("CITEXT".to_string()).to_sql(), "CITEXT");
     }
 
@@ -1912,20 +1808,14 @@ mod tests {
         let diff = SchemaDiff {
             changes: vec![TableChange::Altered {
                 table_name: "users".to_string(),
-                column_changes: vec![ColumnChange::TypeChanged {
-                    old: old_col,
-                    new: new_col,
-                }],
+                column_changes: vec![ColumnChange::TypeChanged { old: old_col, new: new_col }],
                 index_changes: vec![],
                 foreign_key_changes: vec![],
             }],
         };
 
         let sql = diff.generate_up_sql();
-        assert_eq!(
-            sql,
-            "ALTER TABLE \"users\" ALTER COLUMN \"age\" TYPE INTEGER USING \"age\"::INTEGER;"
-        );
+        assert_eq!(sql, "ALTER TABLE \"users\" ALTER COLUMN \"age\" TYPE INTEGER USING \"age\"::INTEGER;");
     }
 
     #[test]
@@ -1979,12 +1869,14 @@ mod tests {
                     is_unique: false,
                 },
             ],
-            indexes: vec![IndexInfo {
-                name: "idx_email".to_string(),
-                columns: vec!["email".to_string()],
-                is_unique: true,
-                index_type: "btree".to_string(),
-            }],
+            indexes: vec![
+                IndexInfo {
+                    name: "idx_email".to_string(),
+                    columns: vec!["email".to_string()],
+                    is_unique: true,
+                    index_type: "btree".to_string(),
+                },
+            ],
             foreign_keys: vec![],
         };
 
@@ -2021,14 +1913,16 @@ mod tests {
                 },
             ],
             indexes: vec![],
-            foreign_keys: vec![ForeignKeyInfo {
-                name: "fk_author".to_string(),
-                columns: vec!["author_id".to_string()],
-                referenced_table: "users".to_string(),
-                referenced_columns: vec!["id".to_string()],
-                on_delete: "CASCADE".to_string(),
-                on_update: "CASCADE".to_string(),
-            }],
+            foreign_keys: vec![
+                ForeignKeyInfo {
+                    name: "fk_author".to_string(),
+                    columns: vec!["author_id".to_string()],
+                    referenced_table: "users".to_string(),
+                    referenced_columns: vec!["id".to_string()],
+                    on_delete: "CASCADE".to_string(),
+                    on_update: "CASCADE".to_string(),
+                },
+            ],
         };
 
         let diff = SchemaDiff {
@@ -2046,10 +1940,7 @@ mod tests {
         assert_eq!(CascadeRule::from_sql("CASCADE"), CascadeRule::Cascade);
         assert_eq!(CascadeRule::from_sql("RESTRICT"), CascadeRule::Restrict);
         assert_eq!(CascadeRule::from_sql("SET NULL"), CascadeRule::SetNull);
-        assert_eq!(
-            CascadeRule::from_sql("SET DEFAULT"),
-            CascadeRule::SetDefault
-        );
+        assert_eq!(CascadeRule::from_sql("SET DEFAULT"), CascadeRule::SetDefault);
         assert_eq!(CascadeRule::from_sql("NO ACTION"), CascadeRule::NoAction);
         assert_eq!(CascadeRule::from_sql("unknown"), CascadeRule::NoAction);
 
@@ -2080,7 +1971,12 @@ mod tests {
     #[test]
     fn test_many_to_many_config_builder() {
         // Test basic creation with defaults
-        let config = ManyToManyConfig::new("user_tags", "user_id", "tag_id", "tags");
+        let config = ManyToManyConfig::new(
+            "user_tags",
+            "user_id",
+            "tag_id",
+            "tags",
+        );
 
         assert_eq!(config.join_table, "user_tags");
         assert_eq!(config.source_key, "user_id");
@@ -2094,10 +1990,15 @@ mod tests {
     #[test]
     fn test_many_to_many_config_builder_with_options() {
         // Test builder pattern with custom values
-        let config = ManyToManyConfig::new("user_roles", "user_uuid", "role_uuid", "roles")
-            .with_source_reference("uuid")
-            .with_target_reference("uuid")
-            .with_on_delete(CascadeRule::SetNull);
+        let config = ManyToManyConfig::new(
+            "user_roles",
+            "user_uuid",
+            "role_uuid",
+            "roles",
+        )
+        .with_source_reference("uuid")
+        .with_target_reference("uuid")
+        .with_on_delete(CascadeRule::SetNull);
 
         assert_eq!(config.join_table, "user_roles");
         assert_eq!(config.source_key, "user_uuid");

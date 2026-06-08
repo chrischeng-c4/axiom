@@ -17,6 +17,7 @@
 ///
 /// Tests marked `#[ignore]` require features not yet implemented (tracked as xfail
 /// in the fixture-based harness). Remove `#[ignore]` as features land.
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -97,12 +98,7 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
@@ -111,39 +107,9 @@ fn assert_output(actual: &str, expected: &str) {
     }
 }
 
-/// Load a fixture file and its expected output, run through JIT, compare.
-fn run_fixture(fixture_rel_path: &str) {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/fixtures")
-        .join(fixture_rel_path);
-    let py_path = base.with_extension("py");
-    let expected_path = base.with_extension("expected");
-
-    let src = std::fs::read_to_string(&py_path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", py_path.display()));
-    let expected = std::fs::read_to_string(&expected_path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", expected_path.display()));
-
-    let clean_src: String = src
-        .lines()
-        .filter(|l| !l.trim().starts_with("# mamba-xfail:"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-
-    let actual = jit_capture(&clean_src);
-    assert_output(&actual, &expected);
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // T13: Decorator Conformance (R14)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// T13 full fixture.
-#[test]
-fn test_t13_decorator_fixture() {
-    run_fixture("language/decorator_edge_cases");
-}
 
 /// T13.1: Stacked decorators apply bottom-up.
 #[test]
@@ -234,12 +200,6 @@ print(obj.greet())
 // T14: Class System Conformance (R15)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T14 full fixture.
-#[test]
-fn test_t14_class_system_fixture() {
-    run_fixture("class_system/mro_edge_cases");
-}
-
 /// T14.1: Diamond MRO — C3 linearization.
 #[test]
 fn test_t14_1_diamond_mro() {
@@ -327,12 +287,6 @@ class Child(Base):
 // T15: Exception Conformance (R16)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T15 full fixture.
-#[test]
-fn test_t15_exception_fixture() {
-    run_fixture("exceptions/chaining_edge_cases");
-}
-
 /// T15.1: raise ValueError from ZeroDivisionError — __cause__ set.
 #[test]
 fn test_t15_1_raise_from_cause() {
@@ -385,12 +339,6 @@ except ValueError as e:
 // ═══════════════════════════════════════════════════════════════════════════════
 // T16: Pattern Matching Conformance (R17)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// T16 full fixture.
-#[test]
-fn test_t16_pattern_matching_fixture() {
-    run_fixture("language/pattern_matching_edge_cases");
-}
 
 /// T16.1: Mapping pattern with capture.
 #[test]
@@ -464,12 +412,6 @@ fn test_t16_5_nested_pattern() {
 // T17: Comprehension Scope (R18)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T17 full fixture.
-#[test]
-fn test_t17_comprehension_scope_fixture() {
-    run_fixture("language/comprehension_scope_edge_cases");
-}
-
 /// T17.1: List comprehension variable does not leak to outer scope.
 #[test]
 fn test_t17_1_list_comp_no_leak() {
@@ -525,12 +467,6 @@ print(sorted(s))
 // ═══════════════════════════════════════════════════════════════════════════════
 // T18: Context Manager Conformance (R20)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// T18 full fixture.
-#[test]
-fn test_t18_context_manager_fixture() {
-    run_fixture("language/context_manager_edge_cases");
-}
 
 /// T18.1: __exit__ returns True suppresses exception.
 #[test]
@@ -696,12 +632,6 @@ with CM(10) as x, CM(20) as y:
 // T19: Lambda and Closure Conformance (R21)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T19 full fixture.
-#[test]
-fn test_t19_lambda_fixture() {
-    run_fixture("language/lambda_edge_cases");
-}
-
 /// T19.1: Closure over loop variable with default arg captures per-iteration.
 #[test]
 fn test_t19_1_closure_loop_default() {
@@ -764,172 +694,6 @@ print(f())
 // T20: CLI Runner (R22) — infrastructure-level checks
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T20.1: Verify all fixture files have matching .expected files.
-#[test]
-fn test_t20_1_all_fixtures_have_golden_files() {
-    let conformance_dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/fixtures");
-
-    let mut missing = Vec::new();
-    visit_py_files(&conformance_dir, &mut missing);
-    assert!(
-        missing.is_empty(),
-        "Fixture files missing .expected golden files:\n{}",
-        missing.join("\n")
-    );
-}
-
-fn visit_py_files(dir: &std::path::Path, missing: &mut Vec<String>) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                visit_py_files(&path, missing);
-            } else if path.extension().map_or(false, |ext| ext == "py") {
-                let expected = path.with_extension("expected");
-                if !expected.exists() {
-                    missing.push(path.display().to_string());
-                }
-            }
-        }
-    }
-}
-
-/// T20.2: Verify zero active xfail fixtures remain (xfail-zero milestone).
-/// Previously checked that xfail directives were well-formed; now verifies none exist.
-#[test]
-fn test_t20_2_xfail_fixtures_parseable() {
-    let conformance_dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/fixtures");
-
-    let mut count = 0;
-    let mut xfail_count = 0;
-    check_xfail_dir(&conformance_dir, &mut count, &mut xfail_count);
-
-    assert!(count > 0, "No .py fixture files found");
-    assert_eq!(
-        xfail_count, 0,
-        "Expected zero xfail fixtures (xfail-zero milestone), found {xfail_count}"
-    );
-}
-
-fn check_xfail_dir(dir: &std::path::Path, count: &mut usize, xfail_count: &mut usize) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                check_xfail_dir(&path, count, xfail_count);
-            } else if path.extension().map_or(false, |ext| ext == "py") {
-                *count += 1;
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    for line in content.lines() {
-                        if line.trim().starts_with("# mamba-xfail:") {
-                            *xfail_count += 1;
-                            let reason = line.trim().strip_prefix("# mamba-xfail:").unwrap().trim();
-                            assert!(
-                                !reason.is_empty(),
-                                "{}: xfail directive has empty reason",
-                                path.display()
-                            );
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// T20.3: Verify new edge-case fixture files exist for all test plan categories.
-#[test]
-fn test_t20_3_required_fixtures_exist() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/fixtures");
-
-    let required_fixtures = [
-        // T1: Numeric builtins
-        "builtins/numeric_edge_cases.py",
-        "builtins/numeric_edge_cases.expected",
-        // T2: Type introspection
-        "builtins/type_introspection_edge_cases.py",
-        "builtins/type_introspection_edge_cases.expected",
-        // T3: String/repr
-        "builtins/string_repr_edge_cases.py",
-        "builtins/string_repr_edge_cases.expected",
-        // T4: Collection builtins
-        "builtins/collection_edge_cases.py",
-        "builtins/collection_edge_cases.expected",
-        // T5: Print kwargs
-        "builtins/print_kwargs.py",
-        "builtins/print_kwargs.expected",
-        // T6: math
-        "stdlib/math/math_conformance.py",
-        "stdlib/math/math_conformance.expected",
-        // T7: json
-        "stdlib/json/json_conformance.py",
-        "stdlib/json/json_conformance.expected",
-        // T8: re
-        "stdlib/re/re_conformance.py",
-        "stdlib/re/re_conformance.expected",
-        // T9: collections
-        "stdlib/collections/collections_conformance.py",
-        "stdlib/collections/collections_conformance.expected",
-        // T10: datetime
-        "stdlib/datetime/datetime_conformance.py",
-        "stdlib/datetime/datetime_conformance.expected",
-        // T11: itertools
-        "stdlib/itertools/itertools_conformance.py",
-        "stdlib/itertools/itertools_conformance.expected",
-        // T12: functools
-        "stdlib/functools/functools_conformance.py",
-        "stdlib/functools/functools_conformance.expected",
-        // T13: Decorator
-        "language/decorator_edge_cases.py",
-        "language/decorator_edge_cases.expected",
-        // T14: Class system
-        "class_system/mro_edge_cases.py",
-        "class_system/mro_edge_cases.expected",
-        // T15: Exceptions
-        "exceptions/chaining_edge_cases.py",
-        "exceptions/chaining_edge_cases.expected",
-        // T16: Pattern matching
-        "language/pattern_matching_edge_cases.py",
-        "language/pattern_matching_edge_cases.expected",
-        // T17: Comprehension scope
-        "language/comprehension_scope_edge_cases.py",
-        "language/comprehension_scope_edge_cases.expected",
-        // T18: Context manager
-        "language/context_manager_edge_cases.py",
-        "language/context_manager_edge_cases.expected",
-        // T19: Lambda
-        "language/lambda_edge_cases.py",
-        "language/lambda_edge_cases.expected",
-        // R13 additional stdlib
-        "stdlib/io/io_conformance.py",
-        "stdlib/io/io_conformance.expected",
-        "stdlib/csv/csv_conformance.py",
-        "stdlib/csv/csv_conformance.expected",
-        "stdlib/hashlib/hashlib_conformance.py",
-        "stdlib/hashlib/hashlib_conformance.expected",
-        "stdlib/struct/struct_conformance.py",
-        "stdlib/struct/struct_conformance.expected",
-        "stdlib/random/random_conformance.py",
-        "stdlib/random/random_conformance.expected",
-    ];
-
-    let mut missing = Vec::new();
-    for fixture in &required_fixtures {
-        let path = base.join(fixture);
-        if !path.exists() {
-            missing.push(fixture.to_string());
-        }
-    }
-    assert!(
-        missing.is_empty(),
-        "Required fixture files missing:\n  {}",
-        missing.join("\n  ")
-    );
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Regression: Existing fixtures must compile/parse
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -938,14 +702,15 @@ fn test_t20_3_required_fixtures_exist() {
 #[test]
 fn test_regression_builtins_parse() {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/fixtures/builtin-libs/builtins");
+        .join(crate::conformance::FIXTURES_ROOT).join("builtin-libs/builtins");
     verify_all_parse(&base);
 }
 
 /// Regression: Verify existing stdlib fixtures parse successfully.
 #[test]
 fn test_regression_stdlib_parse() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/stdlib");
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/cpython/stdlib");
     verify_all_parse(&base);
 }
 
@@ -953,7 +718,7 @@ fn test_regression_stdlib_parse() {
 #[test]
 fn test_regression_language_parse() {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/fixtures/core/language");
+        .join(crate::conformance::FIXTURES_ROOT).join("core/language");
     verify_all_parse(&base);
 }
 
@@ -961,7 +726,7 @@ fn test_regression_language_parse() {
 #[test]
 fn test_regression_class_system_parse() {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/fixtures/core/class_system");
+        .join(crate::conformance::FIXTURES_ROOT).join("core/class_system");
     verify_all_parse(&base);
 }
 
@@ -969,7 +734,7 @@ fn test_regression_class_system_parse() {
 #[test]
 fn test_regression_exceptions_parse() {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/fixtures/core/exceptions");
+        .join(crate::conformance::FIXTURES_ROOT).join("core/exceptions");
     verify_all_parse(&base);
 }
 

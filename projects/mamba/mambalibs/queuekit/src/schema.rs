@@ -20,8 +20,8 @@ use schemars::schema_for;
 use serde_json::Value;
 
 use crate::message::TaskMessage;
+use crate::state::{TaskState, TaskResult};
 use crate::retry::RetryPolicy;
-use crate::state::{TaskResult, TaskState};
 
 /// Generate JSON schema for TaskMessage
 pub fn generate_task_message_schema() -> Value {

@@ -11,6 +11,7 @@
 /// TC-4: Stdlib functions return None fix (P0-R4)
 /// TC-5: Comprehension scope isolation (P0-R5) — end-to-end
 /// TC-6: Walrus operator := scope fix (P0-R6) — end-to-end
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -91,12 +92,7 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
@@ -114,7 +110,9 @@ fn assert_output(actual: &str, expected: &str) {
 /// THEN: stdout prints "25"
 #[test]
 fn test_p0_r1_simple_lambda() {
-    let output = jit_capture("square = lambda x: x * x\nprint(square(5))\n");
+    let output = jit_capture(
+        "square = lambda x: x * x\nprint(square(5))\n",
+    );
     assert_output(&output, "25\n");
 }
 
@@ -123,7 +121,9 @@ fn test_p0_r1_simple_lambda() {
 /// THEN: stdout prints "7"
 #[test]
 fn test_p0_r1_nested_lambda_closure() {
-    let output = jit_capture("adder = lambda x: lambda y: x + y\nprint(adder(3)(4))\n");
+    let output = jit_capture(
+        "adder = lambda x: lambda y: x + y\nprint(adder(3)(4))\n",
+    );
     assert_output(&output, "7\n");
 }
 
@@ -132,14 +132,18 @@ fn test_p0_r1_nested_lambda_closure() {
 /// THEN: stdout prints "20"
 #[test]
 fn test_p0_r1_lambda_capture_enclosing() {
-    let output = jit_capture("x = 10\nf = lambda: x * 2\nprint(f())\n");
+    let output = jit_capture(
+        "x = 10\nf = lambda: x * 2\nprint(f())\n",
+    );
     assert_output(&output, "20\n");
 }
 
 /// TC-1 supplemental: Lambda with multiple arguments.
 #[test]
 fn test_p0_r1_lambda_multiple_args() {
-    let output = jit_capture("add = lambda x, y: x + y\nprint(add(3, 4))\n");
+    let output = jit_capture(
+        "add = lambda x, y: x + y\nprint(add(3, 4))\n",
+    );
     assert_output(&output, "7\n");
 }
 
@@ -349,7 +353,9 @@ print(math.sqrt(16.0))
 /// THEN: stdout prints "[0, 1, 4, 9, 16]"
 #[test]
 fn test_p0_r5_list_comprehension_basic() {
-    let output = jit_capture("squares = [x * x for x in range(5)]\nprint(squares)\n");
+    let output = jit_capture(
+        "squares = [x * x for x in range(5)]\nprint(squares)\n",
+    );
     assert_output(&output, "[0, 1, 4, 9, 16]\n");
 }
 
@@ -358,7 +364,9 @@ fn test_p0_r5_list_comprehension_basic() {
 /// THEN: stdout prints "{0: 0, 1: 2, 2: 4, 3: 6}"
 #[test]
 fn test_p0_r5_dict_comprehension_basic() {
-    let output = jit_capture("d = {k: k * 2 for k in range(4)}\nprint(d)\n");
+    let output = jit_capture(
+        "d = {k: k * 2 for k in range(4)}\nprint(d)\n",
+    );
     assert_output(&output, "{0: 0, 1: 2, 2: 4, 3: 6}\n");
 }
 
@@ -367,7 +375,9 @@ fn test_p0_r5_dict_comprehension_basic() {
 /// THEN: stdout prints "55"
 #[test]
 fn test_p0_r5_generator_expr_sum() {
-    let output = jit_capture("total = sum(n * n for n in range(6))\nprint(total)\n");
+    let output = jit_capture(
+        "total = sum(n * n for n in range(6))\nprint(total)\n",
+    );
     assert_output(&output, "55\n");
 }
 
@@ -376,7 +386,9 @@ fn test_p0_r5_generator_expr_sum() {
 /// THEN: stdout prints "[0, 2, 4, 6, 8]"
 #[test]
 fn test_p0_r5_list_comp_with_condition() {
-    let output = jit_capture("evens = [n for n in range(10) if n % 2 == 0]\nprint(evens)\n");
+    let output = jit_capture(
+        "evens = [n for n in range(10) if n % 2 == 0]\nprint(evens)\n",
+    );
     assert_output(&output, "[0, 2, 4, 6, 8]\n");
 }
 
@@ -426,182 +438,4 @@ print(y)
 "#,
     );
     assert_output(&output, "[0, 2, 4, 6]\n6\n");
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// TC-7: Full fixture validation (matches golden files)
-// ═════════════════════════════════════════════════════════════════════════════
-
-/// TC-7.1: Lambda expressions fixture matches golden output.
-#[test]
-fn test_p0_fixture_lambda_expressions() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/core/language/lambda_expressions.py")
-        .expect("read lambda fixture");
-    let expected =
-        std::fs::read_to_string("tests/cpython/fixtures/core/language/lambda_expressions.expected")
-            .expect("read lambda expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.2: Context managers fixture matches golden output.
-#[test]
-fn test_p0_fixture_context_managers() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/core/language/context_managers.py")
-        .expect("read context_managers fixture");
-    let expected =
-        std::fs::read_to_string("tests/cpython/fixtures/core/language/context_managers.expected")
-            .expect("read context_managers expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.3: Decorator full fixture matches golden output.
-#[test]
-fn test_p0_fixture_decorator_full() {
-    let src =
-        std::fs::read_to_string("tests/cpython/fixtures/core/decorator_full/decorator_full.py")
-            .expect("read decorator fixture");
-    let expected = std::fs::read_to_string(
-        "tests/cpython/fixtures/core/decorator_full/decorator_full.expected",
-    )
-    .expect("read decorator expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.4: Comprehension scope fixture matches golden output.
-#[test]
-fn test_p0_fixture_comprehension_scope() {
-    let src =
-        std::fs::read_to_string("tests/cpython/fixtures/core/language/comprehension_scope.py")
-            .expect("read comprehension_scope fixture");
-    let expected = std::fs::read_to_string(
-        "tests/cpython/fixtures/core/language/comprehension_scope.expected",
-    )
-    .expect("read comprehension_scope expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.5: Stdlib itertools fixture matches golden output.
-#[test]
-fn test_p0_fixture_stdlib_itertools() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/std-libs/itertools/itertools_ops.py")
-        .expect("read itertools fixture");
-    let expected =
-        std::fs::read_to_string("tests/cpython/fixtures/std-libs/itertools/itertools_ops.expected")
-            .expect("read itertools expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.6: Stdlib collections fixture matches golden output.
-#[test]
-fn test_p0_fixture_stdlib_collections() {
-    let src =
-        std::fs::read_to_string("tests/cpython/fixtures/std-libs/collections/collections_ops.py")
-            .expect("read collections fixture");
-    let expected = std::fs::read_to_string(
-        "tests/cpython/fixtures/std-libs/collections/collections_ops.expected",
-    )
-    .expect("read collections expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.9: Stdlib glob fixture matches golden output (#1463).
-#[test]
-fn test_p0_fixture_stdlib_glob() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/std-libs/glob/glob_conformance.py")
-        .expect("read glob fixture");
-    let expected =
-        std::fs::read_to_string("tests/cpython/fixtures/std-libs/glob/glob_conformance.expected")
-            .expect("read glob expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.7: Stdlib math fixture matches golden output.
-#[test]
-fn test_p0_fixture_stdlib_math() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/std-libs/math/math_ops.py")
-        .expect("read math fixture");
-    let expected =
-        std::fs::read_to_string("tests/cpython/fixtures/std-libs/math/math_ops.expected")
-            .expect("read math expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.10: Stdlib time fixture matches golden output (#1435).
-#[test]
-fn test_p0_fixture_stdlib_time() {
-    let src = std::fs::read_to_string("tests/cpython/fixtures/std-libs/time_basic.py")
-        .expect("read time fixture");
-    let expected = std::fs::read_to_string("tests/cpython/fixtures/std-libs/time_basic.expected")
-        .expect("read time expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.11: Stdlib urllib.error fixture matches golden output (#1421).
-#[test]
-fn test_p0_fixture_stdlib_urllib_error() {
-    let src = std::fs::read_to_string(
-        "tests/cpython/fixtures/std-libs/urllib_error/urllib_error_basic.py",
-    )
-    .expect("read urllib.error fixture");
-    let expected = std::fs::read_to_string(
-        "tests/cpython/fixtures/std-libs/urllib_error/urllib_error_basic.expected",
-    )
-    .expect("read urllib.error expected");
-    let output = jit_capture(&src);
-    assert_output(&output, &expected);
-}
-
-/// TC-7.8: Retained xfail markers exist on expected-failing fixtures.
-/// ExceptionGroup (#755) and async generators (#800) should remain xfailed.
-#[test]
-fn test_p0_retained_xfails_not_active() {
-    // Verify that the P0 fixtures do NOT have mamba-xfail markers
-    let lambda_src =
-        std::fs::read_to_string("tests/cpython/fixtures/core/language/lambda_expressions.py")
-            .unwrap();
-    assert!(
-        !lambda_src
-            .lines()
-            .any(|l| l.trim().starts_with("# mamba-xfail:")),
-        "lambda_expressions.py should not have active mamba-xfail marker"
-    );
-
-    let ctx_src =
-        std::fs::read_to_string("tests/cpython/fixtures/core/language/context_managers.py")
-            .unwrap();
-    assert!(
-        !ctx_src
-            .lines()
-            .any(|l| l.trim().starts_with("# mamba-xfail:")),
-        "context_managers.py should not have active mamba-xfail marker"
-    );
-
-    let decorator_src =
-        std::fs::read_to_string("tests/cpython/fixtures/core/decorator_full/decorator_full.py")
-            .unwrap();
-    assert!(
-        !decorator_src
-            .lines()
-            .any(|l| l.trim().starts_with("# mamba-xfail:")),
-        "decorator_full.py should not have active mamba-xfail marker"
-    );
-
-    let comp_src =
-        std::fs::read_to_string("tests/cpython/fixtures/core/language/comprehension_scope.py")
-            .unwrap();
-    assert!(
-        !comp_src
-            .lines()
-            .any(|l| l.trim().starts_with("# mamba-xfail:")),
-        "comprehension_scope.py should not have active mamba-xfail marker"
-    );
 }

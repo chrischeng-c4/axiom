@@ -37,7 +37,6 @@ pub struct WasmConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum WasmRenderer {
-    Canvas,
     Dom,
     WebGpu,
 }
@@ -45,7 +44,7 @@ pub enum WasmRenderer {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
 impl Default for WasmRenderer {
     fn default() -> Self {
-        Self::Canvas
+        Self::WebGpu
     }
 }
 
@@ -67,6 +66,13 @@ const WASM_SECTION_KEYS: &[&str] = &["entry", "root_component", "renderer", "roo
 const TOP_LEVEL_KEYS: &[&str] = &[
     "wasm", "pipeline", "dev", "alias", "build", "resolve", "test",
 ];
+
+/// Shared config sections accepted by the WASM loader as raw TOML so
+/// one `jet.config.toml` can serve both build modes. A legacy
+/// `renderer` knob inside these sections is different: it is stale
+/// renderer selection state and must fail loudly instead of being
+/// accepted-and-discarded.
+const LEGACY_RENDERER_SHARED_SECTIONS: &[&str] = &["build", "dev", "resolve", "test"];
 
 /// One entry in the deprecated-key allowlist. `deprecated` is the
 /// source-of-truth path the user wrote (single-segment for now);
@@ -306,6 +312,7 @@ impl WasmConfig {
         path: &Path,
     ) -> Result<(Self, Vec<DeprecatedKeyWarning>), ConfigError> {
         let (effective, warnings) = apply_deprecated_remap(body, path, DEPRECATED_KEYS)?;
+        reject_legacy_renderer_keys_in_shared_sections(&effective, path)?;
         let cfg: ConfigFile =
             toml::from_str(&effective).map_err(|e| classify_toml_error(e, path, &effective))?;
         let wasm = cfg
@@ -313,6 +320,31 @@ impl WasmConfig {
             .ok_or_else(|| ConfigError::MissingWasmSection(path.to_path_buf()))?;
         Ok((wasm, warnings))
     }
+}
+
+fn reject_legacy_renderer_keys_in_shared_sections(
+    body: &str,
+    path: &Path,
+) -> Result<(), ConfigError> {
+    let value: toml::Value =
+        toml::from_str(body).map_err(|e| classify_toml_error(e, path, body))?;
+    let Some(root) = value.as_table() else {
+        return Ok(());
+    };
+    for section in LEGACY_RENDERER_SHARED_SECTIONS {
+        let Some(table) = root.get(*section).and_then(toml::Value::as_table) else {
+            continue;
+        };
+        if table.contains_key("renderer") {
+            return Err(ConfigError::UnknownKey {
+                path: path.to_path_buf(),
+                key: format!("{section}.renderer"),
+                suggestion: None,
+                span: find_section_key_span(body, section, "renderer"),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Convert a `toml::de::Error` into a `ConfigError`. When the message
@@ -561,6 +593,31 @@ fn find_key_span(body: &str, key: &str) -> ConfigSpan {
     ConfigSpan::default()
 }
 
+fn find_section_key_span(body: &str, section: &str, key: &str) -> ConfigSpan {
+    let mut current_section = "";
+    for (i, line) in body.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if let Some(header) = trimmed.strip_prefix('[').and_then(|s| s.split(']').next()) {
+            current_section = header.trim();
+            continue;
+        }
+        if current_section != section {
+            continue;
+        }
+        if let Some(after) = trimmed.strip_prefix(key) {
+            let next = after.trim_start();
+            if next.starts_with('=') {
+                let leading = line.len() - trimmed.len();
+                return ConfigSpan {
+                    line: i + 1,
+                    column: leading + 1,
+                };
+            }
+        }
+    }
+    ConfigSpan::default()
+}
+
 // Re-export for tests + integration callers (the CLI lint subcommand
 // in Slice 4 will format these structured errors).
 pub use ConfigError as JetConfigError;
@@ -584,8 +641,20 @@ mod tests {
         let cfg = WasmConfig::parse_str(src, &p()).unwrap();
         assert_eq!(cfg.entry, "src/Counter.tsx");
         assert_eq!(cfg.root_component, "Counter");
-        assert_eq!(cfg.renderer, WasmRenderer::Canvas);
+        assert_eq!(cfg.renderer, WasmRenderer::WebGpu);
         assert!(cfg.root_props.is_empty());
+    }
+
+    #[test]
+    fn parses_dom_renderer() {
+        let src = r#"
+            [wasm]
+            entry = "src/Counter.tsx"
+            root_component = "Counter"
+            renderer = "dom"
+        "#;
+        let cfg = WasmConfig::parse_str(src, &p()).unwrap();
+        assert_eq!(cfg.renderer, WasmRenderer::Dom);
     }
 
     #[test]
@@ -598,6 +667,41 @@ mod tests {
         "#;
         let cfg = WasmConfig::parse_str(src, &p()).unwrap();
         assert_eq!(cfg.renderer, WasmRenderer::WebGpu);
+    }
+
+    #[test]
+    fn legacy_build_renderer_key_is_rejected() {
+        let src = r#"
+            [build]
+            renderer = "dom"
+            out_dir = "dist"
+
+            [wasm]
+            entry = "src/Counter.tsx"
+            root_component = "Counter"
+        "#;
+        let err = WasmConfig::parse_str(src, &p()).unwrap_err();
+        match err {
+            ConfigError::UnknownKey { key, span, .. } => {
+                assert_eq!(key, "build.renderer");
+                assert!(span.line >= 3, "expected renderer span, got {span:?}");
+            }
+            other => panic!("expected UnknownKey, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn shared_build_out_dir_without_renderer_is_still_accepted() {
+        let src = r#"
+            [build]
+            out_dir = "dist"
+
+            [wasm]
+            entry = "src/Counter.tsx"
+            root_component = "Counter"
+        "#;
+        let cfg = WasmConfig::parse_str(src, &p()).unwrap();
+        assert_eq!(cfg.entry, "src/Counter.tsx");
     }
 
     #[test]

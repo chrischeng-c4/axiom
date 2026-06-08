@@ -2,7 +2,7 @@
 # under the `fstrings` lib name.
 #
 # One [[case]] per fixture. `fixture_gen.py` turns this into the files under
-# tests/cpython/fixtures/pep/fstrings/<dimension>/<case>.py:
+# tests/cpython/pep/fstrings/<dimension>/<case>.py:
 #   - mechanical surface/errors come out complete (status="filled")
 #   - semantic cases come out as fillable skeletons (status="generated")
 #

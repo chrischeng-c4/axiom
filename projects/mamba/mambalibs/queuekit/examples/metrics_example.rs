@@ -5,7 +5,7 @@
 //! Run with: cargo run --example metrics_example --features metrics
 
 #[cfg(feature = "metrics")]
-use queuekit::metrics::{gather_metrics, METRICS};
+use queuekit::metrics::{METRICS, gather_metrics};
 
 #[cfg(feature = "metrics")]
 fn main() {

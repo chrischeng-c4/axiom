@@ -59,12 +59,8 @@ fn remove_preserves_other_deps_and_project_fields() {
     let pdir = tmp.path().join("widget");
     std::fs::create_dir(&pdir).unwrap();
     assert!(run(&pdir, &["init"]).status.success());
-    assert!(run(&pdir, &["add", "foo==1.0.0", "--offline"])
-        .status
-        .success());
-    assert!(run(&pdir, &["add", "bar==2.0.0", "--offline"])
-        .status
-        .success());
+    assert!(run(&pdir, &["add", "foo==1.0.0", "--offline"]).status.success());
+    assert!(run(&pdir, &["add", "bar==2.0.0", "--offline"]).status.success());
 
     let out = run(&pdir, &["remove", "foo"]);
     assert!(out.status.success());
@@ -99,13 +95,21 @@ fn remove_is_byte_identical_on_replay() {
     std::fs::create_dir(&pdir).unwrap();
     init_with_one_dep(&pdir, "frozen_demo_pkg==0.1.0");
 
-    assert!(run(&pdir, &["remove", "frozen_demo_pkg"]).status.success());
+    assert!(
+        run(&pdir, &["remove", "frozen_demo_pkg"])
+            .status
+            .success()
+    );
     let m_a = std::fs::read(pdir.join("mamba.toml")).unwrap();
     let l_a = std::fs::read(pdir.join("mamba.lock")).unwrap();
 
     // Replaying remove against the now-stripped state must be a no-op
     // with byte-identical files.
-    assert!(run(&pdir, &["remove", "frozen_demo_pkg"]).status.success());
+    assert!(
+        run(&pdir, &["remove", "frozen_demo_pkg"])
+            .status
+            .success()
+    );
     let m_b = std::fs::read(pdir.join("mamba.toml")).unwrap();
     let l_b = std::fs::read(pdir.join("mamba.lock")).unwrap();
 
@@ -141,8 +145,5 @@ fn remove_requires_initialized_project() {
     let out = run(tmp.path(), &["remove", "foo"]);
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("mamba init"),
-        "stderr hints at init: {stderr:?}"
-    );
+    assert!(stderr.contains("mamba init"), "stderr hints at init: {stderr:?}");
 }

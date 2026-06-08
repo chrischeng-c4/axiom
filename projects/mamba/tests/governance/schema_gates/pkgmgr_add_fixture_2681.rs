@@ -35,16 +35,9 @@ fn profile_path() -> PathBuf {
         .join("package_manager.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_add_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -80,7 +73,7 @@ fn pkgmgr_add_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_add_setup_starts_from_empty_project() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let setup = doc
         .get("setup")
         .and_then(|v| v.as_table())
@@ -111,7 +104,7 @@ fn pkgmgr_add_setup_starts_from_empty_project() {
 
 #[test]
 fn pkgmgr_add_action_records_dep_and_version() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let action = doc
         .get("action")
         .and_then(|v| v.as_table())
@@ -151,9 +144,7 @@ fn pkgmgr_add_action_records_dep_and_version() {
     );
 
     assert_eq!(
-        action
-            .get("expected_exit_code")
-            .and_then(|v| v.as_integer()),
+        action.get("expected_exit_code").and_then(|v| v.as_integer()),
         Some(0),
         "`[action].expected_exit_code` must be 0 — happy path succeeds"
     );
@@ -161,7 +152,7 @@ fn pkgmgr_add_action_records_dep_and_version() {
 
 #[test]
 fn pkgmgr_add_metadata_assertion_is_deterministic() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let meta = doc
         .get("metadata_assertion")
         .and_then(|v| v.as_table())
@@ -207,8 +198,7 @@ fn pkgmgr_add_metadata_assertion_is_deterministic() {
         "`[metadata_assertion].deterministic` must be true (acceptance)"
     );
     assert_eq!(
-        meta.get("byte_identical_on_replay")
-            .and_then(|v| v.as_bool()),
+        meta.get("byte_identical_on_replay").and_then(|v| v.as_bool()),
         Some(true),
         "`[metadata_assertion].byte_identical_on_replay` must be true"
     );
@@ -216,7 +206,7 @@ fn pkgmgr_add_metadata_assertion_is_deterministic() {
 
 #[test]
 fn pkgmgr_add_lockfile_assertion_pins_version() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let lock = doc
         .get("lockfile_assertion")
         .and_then(|v| v.as_table())
@@ -238,8 +228,7 @@ fn pkgmgr_add_lockfile_assertion_pins_version() {
         "`[lockfile_assertion].deterministic` must be true"
     );
     assert_eq!(
-        lock.get("byte_identical_on_replay")
-            .and_then(|v| v.as_bool()),
+        lock.get("byte_identical_on_replay").and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_assertion].byte_identical_on_replay` must be true"
     );
@@ -261,20 +250,20 @@ fn pkgmgr_add_lockfile_assertion_pins_version() {
 
 #[test]
 fn pkgmgr_add_missing_package_case_fails_cleanly() {
-    let doc = load_toml(&manifest_path());
-    let miss = doc
-        .get("missing_package_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[missing_package_case]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let miss = doc.get("missing_package_case").and_then(|v| v.as_table()).expect(
+        "missing `[missing_package_case]` block \
          (acceptance: \"Missing package fails with a clear diagnostic.\")",
-        );
+    );
 
     let exit = miss
         .get("expected_exit_code")
         .and_then(|v| v.as_integer())
         .expect("`[missing_package_case].expected_exit_code` must be set");
-    assert_ne!(exit, 0, "missing package must NOT exit 0; got {exit}");
+    assert_ne!(
+        exit, 0,
+        "missing package must NOT exit 0; got {exit}"
+    );
 
     let diag = miss
         .get("expected_stderr_contains")
@@ -286,15 +275,13 @@ fn pkgmgr_add_missing_package_case_fails_cleanly() {
     );
 
     assert_eq!(
-        miss.get("must_not_mutate_metadata")
-            .and_then(|v| v.as_bool()),
+        miss.get("must_not_mutate_metadata").and_then(|v| v.as_bool()),
         Some(true),
         "`[missing_package_case].must_not_mutate_metadata` must be true — \
          a failed add must not partially touch mamba.toml"
     );
     assert_eq!(
-        miss.get("must_not_mutate_lockfile")
-            .and_then(|v| v.as_bool()),
+        miss.get("must_not_mutate_lockfile").and_then(|v| v.as_bool()),
         Some(true),
         "`[missing_package_case].must_not_mutate_lockfile` must be true — \
          a failed add must not write a half-baked lockfile"
@@ -303,7 +290,7 @@ fn pkgmgr_add_missing_package_case_fails_cleanly() {
 
 #[test]
 fn pkgmgr_add_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -325,7 +312,7 @@ fn pkgmgr_add_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_add_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -364,14 +351,12 @@ fn pkgmgr_add_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_add_pins_out_of_scope_per_issue_2681() {
-    let doc = load_toml(&manifest_path());
-    let oos = doc
-        .get("out_of_scope")
-        .and_then(|v| v.as_table())
-        .expect("missing `[out_of_scope]` block — issue #2681 excludes complex version selection");
+    let doc = crate::common::load_toml(&manifest_path());
+    let oos = doc.get("out_of_scope").and_then(|v| v.as_table()).expect(
+        "missing `[out_of_scope]` block — issue #2681 excludes complex version selection",
+    );
     assert_eq!(
-        oos.get("complex_version_selection")
-            .and_then(|v| v.as_bool()),
+        oos.get("complex_version_selection").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].complex_version_selection` must be true (issue text)"
     );
@@ -379,7 +364,7 @@ fn pkgmgr_add_pins_out_of_scope_per_issue_2681() {
 
 #[test]
 fn pkgmgr_profile_links_to_add_fixture_directory() {
-    let doc = load_toml(&profile_path());
+    let doc = crate::common::load_toml(&profile_path());
     let add = doc
         .get("families")
         .and_then(|v| v.get("add"))

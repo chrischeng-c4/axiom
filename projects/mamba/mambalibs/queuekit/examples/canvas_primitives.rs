@@ -17,10 +17,7 @@ fn main() {
 
     let group = map.to_group();
     println!("   Converted to group with {} tasks", group.tasks.len());
-    println!(
-        "   Task 0: {} with args: {}",
-        group.tasks[0].task_name, group.tasks[0].args
-    );
+    println!("   Task 0: {} with args: {}", group.tasks[0].task_name, group.tasks[0].args);
     println!();
 
     // Example 2: Map with helper function
@@ -40,39 +37,23 @@ fn main() {
     let starmap_obj = Starmap::new("add", tuples);
     let group3 = starmap_obj.to_group();
     println!("   Created {} tasks", group3.tasks.len());
-    println!(
-        "   Task 0: {} with args: {}",
-        group3.tasks[0].task_name, group3.tasks[0].args
-    );
-    println!(
-        "   Task 1: {} with args: {}",
-        group3.tasks[1].task_name, group3.tasks[1].args
-    );
+    println!("   Task 0: {} with args: {}", group3.tasks[0].task_name, group3.tasks[0].args);
+    println!("   Task 1: {} with args: {}", group3.tasks[1].task_name, group3.tasks[1].args);
     println!();
 
     // Example 4: Starmap with helper
     println!("4. Starmap using helper:");
-    let sm = starmap(
-        "multiply",
-        vec![vec![json!(2), json!(3)], vec![json!(4), json!(5)]],
-    );
+    let sm = starmap("multiply", vec![
+        vec![json!(2), json!(3)],
+        vec![json!(4), json!(5)],
+    ]);
     println!("   Created starmap with {} tasks", sm.items.len());
     println!();
 
     // Example 5: Chunks - split into batches
     println!("5. Chunks - Split 10 items into chunks of 3:");
-    let items = vec![
-        json!(1),
-        json!(2),
-        json!(3),
-        json!(4),
-        json!(5),
-        json!(6),
-        json!(7),
-        json!(8),
-        json!(9),
-        json!(10),
-    ];
+    let items = vec![json!(1), json!(2), json!(3), json!(4), json!(5),
+                     json!(6), json!(7), json!(8), json!(9), json!(10)];
     let chunks_obj = Chunks::new("batch_process", items, 3);
     println!("   Total items: {}", chunks_obj.items.len());
     println!("   Chunk size: {}", chunks_obj.chunk_size);

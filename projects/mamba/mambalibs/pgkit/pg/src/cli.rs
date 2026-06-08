@@ -39,8 +39,8 @@ impl MigrationCliConfig {
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("./migrations"));
 
-        let migrations_table =
-            std::env::var("MIGRATIONS_TABLE").unwrap_or_else(|_| "_migrations".to_string());
+        let migrations_table = std::env::var("MIGRATIONS_TABLE")
+            .unwrap_or_else(|_| "_migrations".to_string());
 
         Ok(Self {
             database_url,
@@ -331,10 +331,7 @@ impl MigrationCli {
                     migration.name.clone()
                 };
 
-                messages.push(format!(
-                    "{:<20} {:<30} {}",
-                    migration.version, name, applied_at
-                ));
+                messages.push(format!("{:<20} {:<30} {}", migration.version, name, applied_at));
             }
         }
 
@@ -375,9 +372,8 @@ impl MigrationCli {
         messages.push(String::new());
 
         for applied in &applied_migrations {
-            if let Some(file_migration) = file_migrations
-                .iter()
-                .find(|m| m.version == applied.version)
+            if let Some(file_migration) =
+                file_migrations.iter().find(|m| m.version == applied.version)
             {
                 if file_migration.checksum == applied.checksum {
                     messages.push(format!("  [✓] {} - checksum valid", applied.version));

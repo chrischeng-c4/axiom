@@ -69,10 +69,7 @@ pub const ALPHANUMERIC_CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*
 
 /// Look up alphanumeric character value. Returns None if not in charset.
 pub fn alphanumeric_value(ch: u8) -> Option<u8> {
-    ALPHANUMERIC_CHARS
-        .iter()
-        .position(|&c| c == ch)
-        .map(|p| p as u8)
+    ALPHANUMERIC_CHARS.iter().position(|&c| c == ch).map(|p| p as u8)
 }
 
 /// Detect the best encoding mode for the given data.

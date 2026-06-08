@@ -260,7 +260,13 @@ pub fn chisquare(observed: &[f64], expected: &[f64]) -> TestResult {
     let chi2: f64 = observed
         .iter()
         .zip(expected.iter())
-        .map(|(&o, &e)| if e > 0.0 { (o - e).powi(2) / e } else { 0.0 })
+        .map(|(&o, &e)| {
+            if e > 0.0 {
+                (o - e).powi(2) / e
+            } else {
+                0.0
+            }
+        })
         .sum();
 
     let df = (observed.len() - 1) as f64;

@@ -14,7 +14,7 @@ use super::polyfills;
 /// table changes in a way that should invalidate every project's cache.
 /// The marker's textual contents must contain this tag for the cache to be
 /// considered valid (see `check_cache_valid`). See jet#1908 AC R7.
-pub(crate) const CACHE_MARKER_VERSION: &str = "v10-react-singleton-cjs-peer";
+pub(crate) const CACHE_MARKER_VERSION: &str = "v8-peer-singleton-cjs-deps";
 
 /// Pre-bundler for CJS→ESM conversion of npm dependencies.
 ///
@@ -445,25 +445,11 @@ impl PreBundler {
             if !self.is_cjs_package(&nested_pkg_dir).unwrap_or(false) {
                 continue;
             }
-
-            if dep == "react" {
-                let root_pkg_dir = self.root_dir.join("node_modules").join(&dep);
-                if root_pkg_dir.exists() && self.is_cjs_package(&root_pkg_dir).unwrap_or(false) {
-                    let filename = dep_filename(&dep);
-                    if !jet_dir.join(&filename).exists() {
-                        if let Err(e) =
-                            self.bundle_cjs_dep_without_nested(&dep, &root_pkg_dir, jet_dir)
-                        {
-                            tracing::warn!(
-                                "Failed to pre-bundle canonical singleton dependency {} for {}: {}",
-                                dep,
-                                parent_specifier,
-                                e
-                            );
-                            continue;
-                        }
-                    }
-                    dep_imports.insert(dep, filename);
+            if let Some(root_pkg_dir) = resolve_root_package_dir(jet_dir, &dep) {
+                if package_versions_match(&root_pkg_dir, &nested_pkg_dir)
+                    && self.is_cjs_package(&root_pkg_dir).unwrap_or(false)
+                {
+                    dep_imports.insert(dep.clone(), dep_filename(&dep));
                     continue;
                 }
             }
@@ -1775,6 +1761,31 @@ fn resolve_nested_package_dir(parent_pkg_dir: &Path, dep: &str) -> Option<PathBu
     } else {
         None
     }
+}
+
+fn resolve_root_package_dir(jet_dir: &Path, dep: &str) -> Option<PathBuf> {
+    let node_modules = jet_dir.parent()?;
+    let candidate = node_modules.join(dep);
+    if candidate.join("package.json").exists() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn package_versions_match(left: &Path, right: &Path) -> bool {
+    package_version(left).is_some_and(|left_version| {
+        package_version(right).is_some_and(|right_version| left_version == right_version)
+    })
+}
+
+fn package_version(pkg_dir: &Path) -> Option<String> {
+    let content = fs::read_to_string(pkg_dir.join("package.json")).ok()?;
+    let parsed = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    parsed
+        .get("version")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
 }
 
 fn strip_js_comments_for_require_scan(source: &str) -> String {

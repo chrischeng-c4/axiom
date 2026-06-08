@@ -7,14 +7,14 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
+use crate::{
+    BrokerMessage, MessageHandler, PullBroker, ResultBackend, Task, TaskContext,
+    TaskOutcome, TaskRegistry, TaskResult, TaskState, TaskId,
+};
 use crate::ratelimit::RateLimitManager;
 use crate::revocation::RevocationStore;
-use crate::signals::{ShutdownReason, Signal, SignalDispatcher};
+use crate::signals::{Signal, SignalDispatcher, ShutdownReason};
 use crate::TaskError;
-use crate::{
-    BrokerMessage, MessageHandler, PullBroker, ResultBackend, Task, TaskContext, TaskId,
-    TaskOutcome, TaskRegistry, TaskResult, TaskState,
-};
 
 /// Worker configuration
 #[derive(Clone)]
@@ -41,13 +41,7 @@ impl std::fmt::Debug for WorkerConfig {
             .field("concurrency", &self.concurrency)
             .field("prefetch", &self.prefetch)
             .field("heartbeat", &self.heartbeat)
-            .field(
-                "revocation_store",
-                &self
-                    .revocation_store
-                    .as_ref()
-                    .map(|_| "Some(RevocationStore)"),
-            )
+            .field("revocation_store", &self.revocation_store.as_ref().map(|_| "Some(RevocationStore)"))
             .finish()
     }
 }
@@ -160,7 +154,9 @@ impl<R: ResultBackend> MessageHandler for TaskExecutor<R> {
                 task_name = %task_name,
                 "Task message has expired, skipping"
             );
-            self.backend.set_state(&task_id, TaskState::Revoked).await?;
+            self.backend
+                .set_state(&task_id, TaskState::Revoked)
+                .await?;
             return Ok(());
         }
 
@@ -183,7 +179,9 @@ impl<R: ResultBackend> MessageHandler for TaskExecutor<R> {
             }
 
             // Update state to REVOKED and ack message
-            self.backend.set_state(&task_id, TaskState::Revoked).await?;
+            self.backend
+                .set_state(&task_id, TaskState::Revoked)
+                .await?;
             return Ok(());
         }
 
@@ -260,7 +258,9 @@ impl<R: ResultBackend> MessageHandler for TaskExecutor<R> {
 
         // Update state to STARTED
         let start_time = Utc::now();
-        self.backend.set_state(&task_id, TaskState::Started).await?;
+        self.backend
+            .set_state(&task_id, TaskState::Started)
+            .await?;
 
         tracing::info!(
             task_id = %task_id,
@@ -323,7 +323,9 @@ impl<R: ResultBackend> MessageHandler for TaskExecutor<R> {
                 }
 
                 // Update state to SUCCESS
-                self.backend.set_state(&task_id, TaskState::Success).await?;
+                self.backend
+                    .set_state(&task_id, TaskState::Success)
+                    .await?;
 
                 // Store success result
                 let result = TaskResult {
@@ -384,7 +386,9 @@ impl<R: ResultBackend> MessageHandler for TaskExecutor<R> {
                 // trigger redelivery, which provides basic retry functionality.
                 // TODO: Implement proper retry logic with delay calculation
 
-                self.backend.set_state(&task_id, TaskState::Failure).await?;
+                self.backend
+                    .set_state(&task_id, TaskState::Failure)
+                    .await?;
 
                 let result = TaskResult {
                     task_id: task_id.clone(),
@@ -405,10 +409,7 @@ impl<R: ResultBackend> MessageHandler for TaskExecutor<R> {
                     return Err(TaskError::Internal(error));
                 }
             }
-            TaskOutcome::Retry {
-                reason,
-                countdown: _,
-            } => {
+            TaskOutcome::Retry { reason, countdown: _ } => {
                 tracing::info!(
                     task_id = %task_id,
                     task_name = %task_name,
@@ -419,9 +420,14 @@ impl<R: ResultBackend> MessageHandler for TaskExecutor<R> {
 
                 // Same issue as above - need broker for retry
                 // For now, return error to trigger nack
-                self.backend.set_state(&task_id, TaskState::Retry).await?;
+                self.backend
+                    .set_state(&task_id, TaskState::Retry)
+                    .await?;
 
-                return Err(TaskError::Internal(format!("Retry requested: {}", reason)));
+                return Err(TaskError::Internal(format!(
+                    "Retry requested: {}",
+                    reason
+                )));
             }
         }
 
@@ -444,7 +450,12 @@ pub struct Worker<B: PullBroker, R: ResultBackend> {
 
 impl<B: PullBroker, R: ResultBackend> Worker<B, R> {
     /// Create a new worker
-    pub fn new(config: WorkerConfig, broker: B, backend: R, registry: Arc<TaskRegistry>) -> Self {
+    pub fn new(
+        config: WorkerConfig,
+        broker: B,
+        backend: R,
+        registry: Arc<TaskRegistry>,
+    ) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.concurrency));
         let shutdown = CancellationToken::new();
         let revocation_store = config.revocation_store.clone();
@@ -672,8 +683,8 @@ mod tests {
     fn test_worker_with_rate_limiter() {
         use crate::ratelimit::TokenBucket;
 
-        let rate_limiter =
-            RateLimitManager::new().task_limit("slow_task", TokenBucket::per_second(1));
+        let rate_limiter = RateLimitManager::new()
+            .task_limit("slow_task", TokenBucket::per_second(1));
 
         // This is a compile-time verification test
         // We just check that we can construct a Worker with a rate limiter
@@ -710,7 +721,8 @@ mod tests {
             count: count.clone(),
         };
 
-        let dispatcher = SignalDispatcher::new().on_all(handler);
+        let dispatcher = SignalDispatcher::new()
+            .on_all(handler);
 
         // Verify that the dispatcher can be attached to WorkerConfig (future expansion)
         // For now, we test at the Worker level since WorkerConfig doesn't have signal_dispatcher
@@ -799,9 +811,7 @@ mod tests {
     #[cfg(all(feature = "nats", feature = "redis"))]
     mod integration {
         use super::*;
-        use crate::{
-            Broker, NatsBroker, NatsBrokerConfig, RedisBackend, RedisBackendConfig, TaskMessage,
-        };
+        use crate::{Broker, NatsBroker, NatsBrokerConfig, RedisBackend, RedisBackendConfig, TaskMessage};
 
         struct TestTask;
 
@@ -811,7 +821,11 @@ mod tests {
                 "test_task"
             }
 
-            async fn execute(&self, _ctx: TaskContext, args: serde_json::Value) -> TaskOutcome {
+            async fn execute(
+                &self,
+                _ctx: TaskContext,
+                args: serde_json::Value,
+            ) -> TaskOutcome {
                 // Simple echo task
                 TaskOutcome::Success(args)
             }
@@ -826,7 +840,11 @@ mod tests {
                 "failing_task"
             }
 
-            async fn execute(&self, _ctx: TaskContext, _args: serde_json::Value) -> TaskOutcome {
+            async fn execute(
+                &self,
+                _ctx: TaskContext,
+                _args: serde_json::Value,
+            ) -> TaskOutcome {
                 TaskOutcome::Failure {
                     error: "Task failed".to_string(),
                     retryable: false,
@@ -846,7 +864,11 @@ mod tests {
                 Some(Duration::from_secs(1))
             }
 
-            async fn execute(&self, _ctx: TaskContext, _args: serde_json::Value) -> TaskOutcome {
+            async fn execute(
+                &self,
+                _ctx: TaskContext,
+                _args: serde_json::Value,
+            ) -> TaskOutcome {
                 // Sleep longer than timeout
                 tokio::time::sleep(Duration::from_secs(5)).await;
                 TaskOutcome::Success(serde_json::json!(null))
@@ -859,16 +881,12 @@ mod tests {
 
             let broker_config = NatsBrokerConfig::default();
             let broker = NatsBroker::new(broker_config);
-            if broker.connect().await.is_err() {
-                return;
-            }
+            if broker.connect().await.is_err() { return; }
             let _ = broker.disconnect().await;
             let broker = NatsBroker::new(NatsBrokerConfig::default());
 
             let backend_config = RedisBackendConfig::default();
-            let Some(backend) = RedisBackend::new(backend_config).await.ok() else {
-                return;
-            };
+            let Some(backend) = RedisBackend::new(backend_config).await.ok() else { return };
 
             let registry = Arc::new(TaskRegistry::new());
             registry.register(TestTask);
@@ -912,16 +930,12 @@ mod tests {
 
             let broker_config = NatsBrokerConfig::default();
             let broker = NatsBroker::new(broker_config);
-            if broker.connect().await.is_err() {
-                return;
-            }
+            if broker.connect().await.is_err() { return; }
             let _ = broker.disconnect().await;
             let broker = NatsBroker::new(NatsBrokerConfig::default());
 
             let backend_config = RedisBackendConfig::default();
-            let Some(backend) = RedisBackend::new(backend_config).await.ok() else {
-                return;
-            };
+            let Some(backend) = RedisBackend::new(backend_config).await.ok() else { return };
 
             let registry = Arc::new(TaskRegistry::new());
             registry.register(TestTask);
@@ -935,7 +949,12 @@ mod tests {
                 revocation_store: None,
             };
 
-            let worker = Arc::new(Worker::new(worker_config, broker, backend, registry));
+            let worker = Arc::new(Worker::new(
+                worker_config,
+                broker,
+                backend,
+                registry,
+            ));
 
             // Connect broker
             worker.broker.connect().await.unwrap();
@@ -974,16 +993,12 @@ mod tests {
 
             let broker_config = NatsBrokerConfig::default();
             let broker = NatsBroker::new(broker_config);
-            if broker.connect().await.is_err() {
-                return;
-            }
+            if broker.connect().await.is_err() { return; }
             let _ = broker.disconnect().await;
             let broker = NatsBroker::new(NatsBrokerConfig::default());
 
             let backend_config = RedisBackendConfig::default();
-            let Some(backend) = RedisBackend::new(backend_config).await.ok() else {
-                return;
-            };
+            let Some(backend) = RedisBackend::new(backend_config).await.ok() else { return };
 
             let registry = Arc::new(TaskRegistry::new());
             registry.register(TimeoutTask);
@@ -997,7 +1012,12 @@ mod tests {
                 revocation_store: None,
             };
 
-            let worker = Arc::new(Worker::new(worker_config, broker, backend, registry));
+            let worker = Arc::new(Worker::new(
+                worker_config,
+                broker,
+                backend,
+                registry,
+            ));
 
             // Connect broker
             worker.broker.connect().await.unwrap();

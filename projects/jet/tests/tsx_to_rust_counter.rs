@@ -88,8 +88,8 @@ fn generated_emits_text_and_interpolation() {
         "static text should land as Element::text.\nGENERATED:\n{out}"
     );
     assert!(
-        out.contains("Element::from_number(n)"),
-        "{{n}} interpolation should lower to Element::from_number.\nGENERATED:\n{out}"
+        out.contains("Element::text(n.to_string())"),
+        "{{n}} interpolation should lower to text content.\nGENERATED:\n{out}"
     );
 }
 

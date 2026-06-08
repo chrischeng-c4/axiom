@@ -275,7 +275,10 @@ fn auth_from_url(url: &str) -> Result<Option<IndexAuth>, IndexError> {
     };
     let userinfo = &after_scheme[..host_start];
     let (user, pass) = match userinfo.find(':') {
-        Some(i) => (url_decode(&userinfo[..i]), url_decode(&userinfo[i + 1..])),
+        Some(i) => (
+            url_decode(&userinfo[..i]),
+            url_decode(&userinfo[i + 1..]),
+        ),
         None => (url_decode(userinfo), String::new()),
     };
     Ok(Some(IndexAuth::Basic {
@@ -287,13 +290,7 @@ fn auth_from_url(url: &str) -> Result<Option<IndexAuth>, IndexError> {
 /// Map index name to env-var-safe segment: uppercase + non-alphanumeric → `_`.
 fn name_to_env_segment(name: &str) -> String {
     name.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' })
         .collect()
 }
 

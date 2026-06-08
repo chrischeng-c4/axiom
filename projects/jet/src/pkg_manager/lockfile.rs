@@ -768,6 +768,11 @@ resolution:
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            format!(r#"{{"name":"{}","version":"{}"}}"#, name, version),
+        )
+        .unwrap();
         std::fs::write(pkg_dir.join(".jet-integrity"), shasum).unwrap();
         pkg_dir
     }

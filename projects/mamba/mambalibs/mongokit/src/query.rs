@@ -192,13 +192,17 @@ impl QueryExpr {
                 doc! { field: { "$regex": pattern.clone() } }
             }
             QueryExpr::And(exprs) => {
-                let bson_exprs: Vec<Bson> =
-                    exprs.iter().map(|e| Bson::Document(e.to_bson())).collect();
+                let bson_exprs: Vec<Bson> = exprs
+                    .iter()
+                    .map(|e| Bson::Document(e.to_bson()))
+                    .collect();
                 doc! { "$and": bson_exprs }
             }
             QueryExpr::Or(exprs) => {
-                let bson_exprs: Vec<Bson> =
-                    exprs.iter().map(|e| Bson::Document(e.to_bson())).collect();
+                let bson_exprs: Vec<Bson> = exprs
+                    .iter()
+                    .map(|e| Bson::Document(e.to_bson()))
+                    .collect();
                 doc! { "$or": bson_exprs }
             }
             QueryExpr::Raw(doc) => doc.clone(),
@@ -444,7 +448,8 @@ mod tests {
 
     #[test]
     fn test_query_builder_filter() {
-        let qb = QueryBuilder::new("users").filter(QueryExpr::eq("status", "active"));
+        let qb = QueryBuilder::new("users")
+            .filter(QueryExpr::eq("status", "active"));
 
         assert_eq!(qb.filter_count(), 1);
         let filter = qb.build_filter();
@@ -471,8 +476,8 @@ mod tests {
 
     #[test]
     fn test_query_builder_sort() {
-        let qb =
-            QueryBuilder::new("users").sort(vec![("name".to_string(), 1), ("age".to_string(), -1)]);
+        let qb = QueryBuilder::new("users")
+            .sort(vec![("name".to_string(), 1), ("age".to_string(), -1)]);
 
         assert!(qb.has_sort());
         let sort = qb.build_sort().unwrap();
@@ -481,7 +486,9 @@ mod tests {
 
     #[test]
     fn test_query_builder_skip_limit() {
-        let qb = QueryBuilder::new("users").skip(10).limit(20);
+        let qb = QueryBuilder::new("users")
+            .skip(10)
+            .limit(20);
 
         assert_eq!(qb.get_skip(), Some(10));
         assert_eq!(qb.get_limit(), Some(20));
@@ -489,8 +496,8 @@ mod tests {
 
     #[test]
     fn test_query_builder_projection() {
-        let qb =
-            QueryBuilder::new("users").projection(vec!["name".to_string(), "email".to_string()]);
+        let qb = QueryBuilder::new("users")
+            .projection(vec!["name".to_string(), "email".to_string()]);
 
         assert!(qb.has_projection());
         let proj = qb.build_projection().unwrap();

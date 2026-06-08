@@ -77,7 +77,9 @@ pub fn jwt_decode(
 
 /// Decode a JWT token WITHOUT verifying the signature.
 /// Useful for inspecting token contents.
-pub fn jwt_decode_insecure(token: &str) -> Result<HashMap<String, serde_json::Value>, CryptoError> {
+pub fn jwt_decode_insecure(
+    token: &str,
+) -> Result<HashMap<String, serde_json::Value>, CryptoError> {
     let mut validation = jsonwebtoken::Validation::default();
     validation.insecure_disable_signature_validation();
     validation.required_spec_claims.clear();

@@ -10,9 +10,9 @@
 //! - Type validation for document schemas
 
 use crate::Result;
-use bson::Bson;
 use cclab_core::DataBridgeError;
 use std::collections::HashMap;
+use bson::Bson;
 
 /// Maximum allowed length for collection names (MongoDB limit is 255, we're more conservative)
 const MAX_COLLECTION_NAME_LENGTH: usize = 120;
@@ -48,47 +48,45 @@ impl ValidatedCollectionName {
         // Check: Not empty
         if name.is_empty() {
             return Err(DataBridgeError::Validation(
-                "Collection name cannot be empty".to_string(),
+                "Collection name cannot be empty".to_string()
             ));
         }
 
         // Check: Length limit
         if name.len() > MAX_COLLECTION_NAME_LENGTH {
-            return Err(DataBridgeError::Validation(format!(
-                "Collection name exceeds maximum length of {} characters: '{}'",
-                MAX_COLLECTION_NAME_LENGTH, name
-            )));
+            return Err(DataBridgeError::Validation(
+                format!(
+                    "Collection name exceeds maximum length of {} characters: '{}'",
+                    MAX_COLLECTION_NAME_LENGTH,
+                    name
+                )
+            ));
         }
 
         // Check: No null bytes
         if name.contains('\0') {
             return Err(DataBridgeError::Validation(
-                "Collection name cannot contain null bytes".to_string(),
+                "Collection name cannot contain null bytes".to_string()
             ));
         }
 
         // Check: No "system." prefix (reserved for system collections)
         if name.starts_with("system.") {
-            return Err(DataBridgeError::Validation(format!(
-                "Collection name cannot start with 'system.' (reserved): '{}'",
-                name
-            )));
+            return Err(DataBridgeError::Validation(
+                format!("Collection name cannot start with 'system.' (reserved): '{}'", name)
+            ));
         }
 
         // Check: No $ characters (special MongoDB operators)
         if name.contains('$') {
-            return Err(DataBridgeError::Validation(format!(
-                "Collection name cannot contain '$' character: '{}'",
-                name
-            )));
+            return Err(DataBridgeError::Validation(
+                format!("Collection name cannot contain '$' character: '{}'", name)
+            ));
         }
 
         // Warn on suspicious patterns (but allow them)
         if name.contains("..") || name.contains("//") {
-            eprintln!(
-                "WARNING: Collection name contains suspicious pattern: '{}'",
-                name
-            );
+            eprintln!("WARNING: Collection name contains suspicious pattern: '{}'", name);
         }
 
         Ok(ValidatedCollectionName {
@@ -149,37 +147,42 @@ impl ValidatedFieldName {
         // Check: Not empty
         if name.is_empty() {
             return Err(DataBridgeError::Validation(
-                "Field name cannot be empty".to_string(),
+                "Field name cannot be empty".to_string()
             ));
         }
 
         // Check: Length limit
         if name.len() > MAX_FIELD_NAME_LENGTH {
-            return Err(DataBridgeError::Validation(format!(
-                "Field name exceeds maximum length of {} characters",
-                MAX_FIELD_NAME_LENGTH
-            )));
+            return Err(DataBridgeError::Validation(
+                format!(
+                    "Field name exceeds maximum length of {} characters",
+                    MAX_FIELD_NAME_LENGTH
+                )
+            ));
         }
 
         // Check: No null bytes
         if name.contains('\0') {
             return Err(DataBridgeError::Validation(
-                "Field name cannot contain null bytes".to_string(),
+                "Field name cannot contain null bytes".to_string()
             ));
         }
 
         // Check: $ prefix (only allowed for update operators)
         if name.starts_with('$') && !allow_operators {
-            return Err(DataBridgeError::Validation(format!(
-                "Field name cannot start with '$' (reserved for operators): '{}'",
-                name
-            )));
+            return Err(DataBridgeError::Validation(
+                format!(
+                    "Field name cannot start with '$' (reserved for operators): '{}'",
+                    name
+                )
+            ));
         }
 
         // If $ is allowed, verify it's a known operator
-        if name.starts_with('$') && allow_operators && !Self::is_known_operator(name) {
-            eprintln!("WARNING: Unknown MongoDB operator: '{}'", name);
-        }
+        if name.starts_with('$') && allow_operators
+            && !Self::is_known_operator(name) {
+                eprintln!("WARNING: Unknown MongoDB operator: '{}'", name);
+            }
 
         Ok(ValidatedFieldName {
             name: name.to_string(),
@@ -191,66 +194,23 @@ impl ValidatedFieldName {
     fn is_known_operator(name: &str) -> bool {
         // Common update operators
         const UPDATE_OPERATORS: &[&str] = &[
-            "$set",
-            "$unset",
-            "$inc",
-            "$mul",
-            "$rename",
-            "$setOnInsert",
-            "$min",
-            "$max",
-            "$currentDate",
-            "$addToSet",
-            "$pop",
-            "$pull",
-            "$push",
-            "$pullAll",
-            "$each",
-            "$slice",
-            "$sort",
-            "$position",
+            "$set", "$unset", "$inc", "$mul", "$rename", "$setOnInsert",
+            "$min", "$max", "$currentDate", "$addToSet", "$pop", "$pull",
+            "$push", "$pullAll", "$each", "$slice", "$sort", "$position",
         ];
 
         // Query operators (should not appear in field names, but listed for completeness)
         const QUERY_OPERATORS: &[&str] = &[
-            "$eq",
-            "$ne",
-            "$gt",
-            "$gte",
-            "$lt",
-            "$lte",
-            "$in",
-            "$nin",
-            "$and",
-            "$or",
-            "$not",
-            "$nor",
-            "$exists",
-            "$type",
-            "$mod",
-            "$regex",
-            "$text",
-            "$where",
-            "$expr",
-            "$jsonSchema",
-            "$all",
-            "$elemMatch",
-            "$size",
+            "$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin",
+            "$and", "$or", "$not", "$nor", "$exists", "$type", "$mod",
+            "$regex", "$text", "$where", "$expr", "$jsonSchema", "$all",
+            "$elemMatch", "$size",
         ];
 
         // Aggregation operators
         const AGGREGATION_OPERATORS: &[&str] = &[
-            "$match",
-            "$group",
-            "$project",
-            "$sort",
-            "$limit",
-            "$skip",
-            "$unwind",
-            "$lookup",
-            "$out",
-            "$merge",
-            "$addFields",
+            "$match", "$group", "$project", "$sort", "$limit", "$skip",
+            "$unwind", "$lookup", "$out", "$merge", "$addFields",
         ];
 
         UPDATE_OPERATORS.contains(&name)
@@ -351,10 +311,12 @@ pub fn validate_query(query: &bson::Bson) -> Result<()> {
             for (key, value) in doc.iter() {
                 // Check for dangerous operators
                 if DANGEROUS_OPERATORS.contains(&key.as_str()) {
-                    return Err(DataBridgeError::Validation(format!(
-                        "Dangerous operator '{}' is not allowed for security reasons",
-                        key
-                    )));
+                    return Err(DataBridgeError::Validation(
+                        format!(
+                            "Dangerous operator '{}' is not allowed for security reasons",
+                            key
+                        )
+                    ));
                 }
 
                 // Recursively validate nested documents
@@ -394,13 +356,13 @@ fn bson_to_validation_value(bson: &Bson) -> cclab_schema::Value {
     match bson {
         Bson::Double(f) => cclab_schema::Value::Float(*f),
         Bson::String(s) => cclab_schema::Value::String(s.clone()),
-        Bson::Array(arr) => {
-            cclab_schema::Value::List(arr.iter().map(bson_to_validation_value).collect())
-        }
+        Bson::Array(arr) => cclab_schema::Value::List(
+            arr.iter().map(bson_to_validation_value).collect()
+        ),
         Bson::Document(doc) => cclab_schema::Value::Object(
             doc.iter()
                 .map(|(k, v)| (k.clone(), bson_to_validation_value(v)))
-                .collect(),
+                .collect()
         ),
         Bson::Boolean(b) => cclab_schema::Value::Bool(*b),
         Bson::Null => cclab_schema::Value::Null,
@@ -482,9 +444,7 @@ pub enum BsonTypeDescriptor {
     /// Array with items of a specific type
     Array { items: Box<BsonTypeDescriptor> },
     /// Object/document with a schema
-    Object {
-        schema: HashMap<String, BsonTypeDescriptor>,
-    },
+    Object { schema: HashMap<String, BsonTypeDescriptor> },
     /// Optional type (value can be null or the inner type)
     Optional { inner: Box<BsonTypeDescriptor> },
     /// Any type (no validation)
@@ -518,10 +478,11 @@ impl BsonTypeDescriptor {
     /// MongoDB-specific validation.
     pub fn to_validation_type_desc(&self) -> Option<cclab_schema::TypeDescriptor> {
         match self {
-            BsonTypeDescriptor::String { constraints } => constraints
-                .string
-                .as_ref()
-                .map(|c| cclab_schema::TypeDescriptor::String(c.clone())),
+            BsonTypeDescriptor::String { constraints } => {
+                constraints.string.as_ref().map(|c| {
+                    cclab_schema::TypeDescriptor::String(c.clone())
+                })
+            }
             BsonTypeDescriptor::Int64 { constraints } => {
                 constraints.numeric.as_ref().map(|c| {
                     // Convert f64 constraints to i64
@@ -535,23 +496,26 @@ impl BsonTypeDescriptor {
                     cclab_schema::TypeDescriptor::Int64(i64_constraints)
                 })
             }
-            BsonTypeDescriptor::Double { constraints } => constraints
-                .numeric
-                .as_ref()
-                .map(|c| cclab_schema::TypeDescriptor::Float64(c.clone())),
+            BsonTypeDescriptor::Double { constraints } => {
+                constraints.numeric.as_ref().map(|c| {
+                    cclab_schema::TypeDescriptor::Float64(c.clone())
+                })
+            }
             BsonTypeDescriptor::Bool => Some(cclab_schema::TypeDescriptor::Bool),
             BsonTypeDescriptor::Null => Some(cclab_schema::TypeDescriptor::Null),
             BsonTypeDescriptor::Binary => Some(cclab_schema::TypeDescriptor::Bytes),
             BsonTypeDescriptor::Any => Some(cclab_schema::TypeDescriptor::Any),
-            BsonTypeDescriptor::Optional { inner } => inner
-                .to_validation_type_desc()
-                .map(|inner_desc| cclab_schema::TypeDescriptor::Optional(Box::new(inner_desc))),
+            BsonTypeDescriptor::Optional { inner } => {
+                inner.to_validation_type_desc().map(|inner_desc| {
+                    cclab_schema::TypeDescriptor::Optional(Box::new(inner_desc))
+                })
+            }
             // BSON-specific types need MongoDB-specific validation
-            BsonTypeDescriptor::DateTime
-            | BsonTypeDescriptor::Decimal128 { .. }
-            | BsonTypeDescriptor::ObjectId
-            | BsonTypeDescriptor::Array { .. }
-            | BsonTypeDescriptor::Object { .. } => None,
+            BsonTypeDescriptor::DateTime |
+            BsonTypeDescriptor::Decimal128 { .. } |
+            BsonTypeDescriptor::ObjectId |
+            BsonTypeDescriptor::Array { .. } |
+            BsonTypeDescriptor::Object { .. } => None,
         }
     }
 }
@@ -586,7 +550,11 @@ fn bson_type_name(value: &Bson) -> &'static str {
 ///
 /// # Errors
 /// Returns ValidationError if the value doesn't match the expected type
-pub fn validate_field(field_path: &str, value: &Bson, expected: &BsonTypeDescriptor) -> Result<()> {
+pub fn validate_field(
+    field_path: &str,
+    value: &Bson,
+    expected: &BsonTypeDescriptor,
+) -> Result<()> {
     match expected {
         BsonTypeDescriptor::Any => Ok(()), // Any type is always valid
 
@@ -604,17 +572,11 @@ pub fn validate_field(field_path: &str, value: &Bson, expected: &BsonTypeDescrip
                 // Use cclab-shield for common string validation
                 if let Some(ref string_constraints) = constraints.string {
                     let validation_value = cclab_schema::Value::String(s.clone());
-                    let type_desc =
-                        cclab_schema::TypeDescriptor::String(string_constraints.clone());
+                    let type_desc = cclab_schema::TypeDescriptor::String(string_constraints.clone());
                     let mut ctx = cclab_schema::ValidationContext::with_location(field_path);
                     let mut errors = cclab_schema::ValidationErrors::new();
 
-                    cclab_schema::validate_value(
-                        &validation_value,
-                        &type_desc,
-                        &mut ctx,
-                        &mut errors,
-                    );
+                    cclab_schema::validate_value(&validation_value, &type_desc, &mut ctx, &mut errors);
 
                     if !errors.is_empty() {
                         return Err(DataBridgeError::Validation(errors.to_string()));
@@ -646,12 +608,7 @@ pub fn validate_field(field_path: &str, value: &Bson, expected: &BsonTypeDescrip
                     let mut ctx = cclab_schema::ValidationContext::with_location(field_path);
                     let mut errors = cclab_schema::ValidationErrors::new();
 
-                    cclab_schema::validate_value(
-                        &validation_value,
-                        &type_desc,
-                        &mut ctx,
-                        &mut errors,
-                    );
+                    cclab_schema::validate_value(&validation_value, &type_desc, &mut ctx, &mut errors);
 
                     if !errors.is_empty() {
                         return Err(DataBridgeError::Validation(errors.to_string()));
@@ -674,12 +631,7 @@ pub fn validate_field(field_path: &str, value: &Bson, expected: &BsonTypeDescrip
                     let mut ctx = cclab_schema::ValidationContext::with_location(field_path);
                     let mut errors = cclab_schema::ValidationErrors::new();
 
-                    cclab_schema::validate_value(
-                        &validation_value,
-                        &type_desc,
-                        &mut ctx,
-                        &mut errors,
-                    );
+                    cclab_schema::validate_value(&validation_value, &type_desc, &mut ctx, &mut errors);
 
                     if !errors.is_empty() {
                         return Err(DataBridgeError::Validation(errors.to_string()));
@@ -699,17 +651,11 @@ pub fn validate_field(field_path: &str, value: &Bson, expected: &BsonTypeDescrip
                 // Use cclab-shield for common numeric validation
                 if let Some(ref numeric_constraints) = constraints.numeric {
                     let validation_value = cclab_schema::Value::Float(*n);
-                    let type_desc =
-                        cclab_schema::TypeDescriptor::Float64(numeric_constraints.clone());
+                    let type_desc = cclab_schema::TypeDescriptor::Float64(numeric_constraints.clone());
                     let mut ctx = cclab_schema::ValidationContext::with_location(field_path);
                     let mut errors = cclab_schema::ValidationErrors::new();
 
-                    cclab_schema::validate_value(
-                        &validation_value,
-                        &type_desc,
-                        &mut ctx,
-                        &mut errors,
-                    );
+                    cclab_schema::validate_value(&validation_value, &type_desc, &mut ctx, &mut errors);
 
                     if !errors.is_empty() {
                         return Err(DataBridgeError::Validation(errors.to_string()));
@@ -769,17 +715,11 @@ pub fn validate_field(field_path: &str, value: &Bson, expected: &BsonTypeDescrip
                     let d_str = d.to_string();
                     if let Ok(n) = d_str.parse::<f64>() {
                         let validation_value = cclab_schema::Value::Float(n);
-                        let type_desc =
-                            cclab_schema::TypeDescriptor::Float64(numeric_constraints.clone());
+                        let type_desc = cclab_schema::TypeDescriptor::Float64(numeric_constraints.clone());
                         let mut ctx = cclab_schema::ValidationContext::with_location(field_path);
                         let mut errors = cclab_schema::ValidationErrors::new();
 
-                        cclab_schema::validate_value(
-                            &validation_value,
-                            &type_desc,
-                            &mut ctx,
-                            &mut errors,
-                        );
+                        cclab_schema::validate_value(&validation_value, &type_desc, &mut ctx, &mut errors);
 
                         if !errors.is_empty() {
                             return Err(DataBridgeError::Validation(errors.to_string()));

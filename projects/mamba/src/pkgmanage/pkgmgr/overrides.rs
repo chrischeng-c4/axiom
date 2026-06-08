@@ -201,7 +201,10 @@ mod tests {
 
     #[test]
     fn parse_records_marker_text() {
-        let set = parse_overrides("flask>=2.0; python_version >= \"3.11\"\n").unwrap();
+        let set = parse_overrides(
+            "flask>=2.0; python_version >= \"3.11\"\n",
+        )
+        .unwrap();
         let entries = set.for_name("flask");
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -213,7 +216,8 @@ mod tests {
     #[test]
     fn parse_dedups_strictly_on_name_and_marker_pair() {
         // Same name, same marker → duplicate error.
-        let err = parse_overrides("flask==2.0\nflask==2.1\n").unwrap_err();
+        let err =
+            parse_overrides("flask==2.0\nflask==2.1\n").unwrap_err();
         assert!(format!("{err}").contains("duplicate override"));
     }
 
@@ -270,7 +274,10 @@ mod tests {
         let set = parse_overrides("flask==2.1; \\\n  python_version >= \"3.11\"\n").unwrap();
         assert_eq!(set.len(), 1);
         let e = &set.for_name("flask")[0];
-        assert_eq!(e.marker.as_deref(), Some("python_version >= \"3.11\""));
+        assert_eq!(
+            e.marker.as_deref(),
+            Some("python_version >= \"3.11\"")
+        );
     }
 
     #[test]

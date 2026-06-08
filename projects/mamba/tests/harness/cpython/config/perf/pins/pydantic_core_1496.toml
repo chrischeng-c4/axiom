@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/pydantic_core_1496.toml)
 issue = 1496
 lib = "pydantic_core"
-fixture = "tests/cpython/fixtures/3rd-libs/pydantic_core/bench/pydantic_core_type_read_hot.py"
+fixture = "tests/cpython/_regression/3rd-libs/pydantic_core/bench/pydantic_core_type_read_hot.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 9

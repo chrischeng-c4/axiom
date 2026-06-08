@@ -1,18 +1,19 @@
 #![cfg(test)]
 
-use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
-use crate::codegen::{CodegenBackend, CodegenOutput};
-use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
 /// JIT refcount integration tests (#1129).
 ///
 /// Validates that the Cranelift JIT backend correctly emits retain/release
 /// calls, uses immortal refcount for compile-time constants, and properly
 /// tracks compile-time allocations.
+
 use crate::parser;
-use crate::runtime::rc::{self, mb_refcount, MbObject, IMMORTAL_REFCOUNT};
-use crate::runtime::value::MbValue;
 use crate::source::span::FileId;
 use crate::types::TypeChecker;
+use crate::lower::{lower_module, lower_hir_to_mir_with_symbols};
+use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
+use crate::codegen::{CodegenBackend, CodegenOutput};
+use crate::runtime::value::MbValue;
+use crate::runtime::rc::{self, MbObject, IMMORTAL_REFCOUNT, mb_refcount};
 
 /// Compile and execute Mamba source via JIT, returning the i64 result.
 fn jit_run(src: &str) -> i64 {
@@ -25,9 +26,7 @@ fn jit_run(src: &str) -> i64 {
     let mir = lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
 
     let mut backend = CraneliftJitBackend::new().expect("JIT init failed");
-    let output = backend
-        .codegen(&mir, &checker.tcx)
-        .expect("JIT codegen failed");
+    let output = backend.codegen(&mir, &checker.tcx).expect("JIT codegen failed");
 
     match output {
         CodegenOutput::Jit { entry } => {
@@ -59,10 +58,7 @@ y: str = "world"
 
     let mut backend = CraneliftJitBackend::new().expect("JIT init failed");
     let output = backend.codegen(&mir, &checker.tcx);
-    assert!(
-        output.is_ok(),
-        "JIT compilation with string literals should succeed"
-    );
+    assert!(output.is_ok(), "JIT compilation with string literals should succeed");
 }
 
 // ── Integration: Variable reassignment (R2, S1) ──
@@ -72,14 +68,12 @@ fn test_jit_reassignment_releases() {
     // S1: Compile `x = 10; x = 20` — integer reassignment.
     // mb_release_value on the old integer value is a no-op (not a pointer).
     // This just verifies the pattern doesn't crash.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: int = 10
     x = 20
     return x
-"#,
-    );
+"#);
     assert_eq!(result, 20);
 }
 
@@ -87,8 +81,7 @@ def f() -> int:
 fn test_jit_multiple_reassignment() {
     // Multiple reassignments exercise the release-before-store pattern
     // for each overwrite.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: int = 1
     x = 2
@@ -96,8 +89,7 @@ def f() -> int:
     x = 4
     x = 5
     return x
-"#,
-    );
+"#);
     assert_eq!(result, 5);
 }
 
@@ -107,27 +99,23 @@ def f() -> int:
 fn test_jit_return_releases_locals() {
     // S2: Function with multiple locals — only return value survives.
     // Non-returned locals are released at return via mb_release_value.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     a: int = 100
     b: int = 200
     c: int = 300
     return a
-"#,
-    );
+"#);
     assert_eq!(result, 100);
 }
 
 #[test]
 fn test_jit_return_none_releases_all() {
     // S2: Return(None) releases all local variables.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 x: int = 42
 y: int = 99
-"#,
-    );
+"#);
     assert_eq!(result, 0); // module-level code returns 0
 }
 
@@ -137,30 +125,26 @@ y: int = 99
 fn test_jit_copy_retains() {
     // S8: Copy { dest, source } — the source value is retained (for ints,
     // retain is a no-op since they're not pointers). Verify correctness.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     a: int = 42
     b: int = a
     return b
-"#,
-    );
+"#);
     assert_eq!(result, 42);
 }
 
 #[test]
 fn test_jit_copy_chain() {
     // Multiple copies — each triggers retain on new value, release on old.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     a: int = 7
     b: int = a
     c: int = b
     d: int = c
     return d
-"#,
-    );
+"#);
     assert_eq!(result, 7);
 }
 
@@ -223,27 +207,23 @@ fn test_jit_compile_time_many_literals() {
 fn test_jit_list_allocation_no_leak() {
     // Create a list via JIT — exercises MakeList runtime calls.
     // With refcounting, the list should be properly managed.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: list = [1, 2, 3]
     return 42
-"#,
-    );
+"#);
     assert_eq!(result, 42);
 }
 
 #[test]
 fn test_jit_list_reassignment() {
     // S1 variant: list reassignment should release the old list.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: list = [1, 2]
     x = [3, 4, 5]
     return 99
-"#,
-    );
+"#);
     assert_eq!(result, 99);
 }
 
@@ -253,14 +233,12 @@ def f() -> int:
 fn test_jit_integer_reassignment_noop_release() {
     // S4: Integer reassignment — mb_release_value on old int is a no-op
     // because MbValue::from_int().is_ptr() returns false.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     x: int = 42
     x = 99
     return x
-"#,
-    );
+"#);
     assert_eq!(result, 99);
 }
 
@@ -268,12 +246,10 @@ def f() -> int:
 fn test_jit_uninitialized_vreg_safe() {
     // S10: VRegs default to 0. mb_release_value(0) at function return
     // is safe because MbValue(0).is_ptr() returns false.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     return 0
-"#,
-    );
+"#);
     assert_eq!(result, 0);
 }
 
@@ -286,7 +262,10 @@ fn test_jit_repeated_compilation_no_leak() {
     let _jit_guard = JIT_LOCK.lock().unwrap();
 
     for i in 0..20 {
-        let src = format!("x: str = \"iter_{}\"\ny: int = {}\n", i, i * 10);
+        let src = format!(
+            "x: str = \"iter_{}\"\ny: int = {}\n",
+            i, i * 10
+        );
         let module = parser::parse(&src, FileId(0)).expect("parse failed");
         let mut checker = TypeChecker::new();
         let _ = checker.check_module(&module);
@@ -305,8 +284,7 @@ fn test_jit_repeated_compilation_no_leak() {
 fn test_jit_loop_with_reassignment() {
     // Loop body reassigns variables many times — each iteration exercises
     // the release-before-store pattern. No crash means correctness.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     sum: int = 0
     i: int = 0
@@ -314,8 +292,7 @@ def f() -> int:
         sum = sum + i
         i = i + 1
     return sum
-"#,
-    );
+"#);
     // sum of 0..99 = 4950
     assert_eq!(result, 4950);
 }
@@ -324,8 +301,7 @@ def f() -> int:
 fn test_jit_nested_function_locals_released() {
     // Multiple locals in a function — all non-returned locals should be
     // released at return.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def f() -> int:
     a: int = 1
     b: int = 2
@@ -334,8 +310,7 @@ def f() -> int:
     e: int = 5
     total: int = a + b + c + d + e
     return total
-"#,
-    );
+"#);
     assert_eq!(result, 15);
 }
 
@@ -453,8 +428,7 @@ fn test_jit_hot_loop_rebound_release_2111() {
     // fresh list allocation; under the fix the live-object count at
     // module exit should match the live count after a single iteration
     // (a single residual list object plus invariants).
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 def hot_loop() -> int:
     out: list = [0]
     j: int = 0
@@ -463,8 +437,7 @@ def hot_loop() -> int:
         j = j + 1
     return len(out)
 hot_loop()
-"#,
-    );
+"#);
     // Sanity — the loop runs and the final list survives.
     let _ = result;
     // Memory parity gate is asserted at the bench layer:
@@ -513,8 +486,7 @@ fn test_jit_hot_loop_method_args_list_2111_module_scope() {
     // in here. ITERS deliberately small so a future fix can flip
     // `#[ignore]` off without burning CI time; the linear-scaling
     // signature is the diagnostic, not the absolute count.
-    let result = jit_run(
-        r#"
+    let result = jit_run(r#"
 import array
 ITERS = 8
 SRC = bytes([(i * 37 + 11) & 0xFF for i in range(64)])
@@ -525,8 +497,7 @@ for j in range(ITERS):
     out = a.tobytes()
     total += len(out)
 print(total)
-"#,
-    );
+"#);
     // Sanity — the loop completes and produces the expected total. The
     // leak is invisible at this scale (8 iters); the memory-ratio gate
     // lives at the bench layer (cross_runtime_3p --fixture typed_bulk).

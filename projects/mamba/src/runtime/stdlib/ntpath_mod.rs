@@ -1,5 +1,3 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// ntpath module for Mamba (#1261 long-tail).
 ///
 /// Real implementation of CPython 3.12 `Lib/ntpath.py`. The long_tail
@@ -17,7 +15,10 @@ use super::super::value::MbValue;
 ///     `\\.\` device prefixes preserve the entire 4-char marker as
 ///     drive.
 ///   - `normcase` lowercases AND converts `/` to `\`.
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 || args_ptr.is_null() {
@@ -30,7 +31,40 @@ unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue
 fn extract_str(val: MbValue) -> Option<String> {
     let p = val.as_ptr()?;
     unsafe {
-        if let ObjData::Str(ref s) = (*p).data {
+        match (*p).data {
+            ObjData::Str(ref s) => Some(s.clone()),
+            // os.PathLike: an instance exposing __fspath__ (e.g. the test
+            // suite's FakePath, or pathlib.PurePath). CPython's ntpath
+            // functions normalize their argument via os.fspath() before
+            // operating on it, so a FakePath(name) must behave identically
+            // to the plain str `name`.
+            ObjData::Instance { .. } => fspath_via_protocol(val),
+            _ => None,
+        }
+    }
+}
+
+/// Call `__fspath__` on an Instance and decode the result to a String.
+/// Mirrors `posixpath_mod::fspath_via_protocol` so ntpath functions accept
+/// os.PathLike arguments. Returns None for non-instances or instances
+/// without `__fspath__`.
+fn fspath_via_protocol(val: MbValue) -> Option<String> {
+    let ptr = val.as_ptr()?;
+    let class_name = unsafe {
+        match (*ptr).data {
+            ObjData::Instance { ref class_name, .. } => class_name.clone(),
+            _ => return None,
+        }
+    };
+    if super::super::class::lookup_method(&class_name, "__fspath__").is_none() {
+        return None;
+    }
+    let method = MbValue::from_ptr(MbObject::new_str("__fspath__".to_string()));
+    let empty = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    let result = super::super::class::mb_call_method(val, method, empty);
+    let rp = result.as_ptr()?;
+    unsafe {
+        if let ObjData::Str(ref s) = (*rp).data {
             Some(s.clone())
         } else {
             None
@@ -46,164 +80,176 @@ fn mk_tuple2(a: String, b: String) -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(vec![mk_str(a), mk_str(b)]))
 }
 
-fn is_sep(c: char) -> bool {
-    c == '\\' || c == '/'
+fn mk_tuple3(a: String, b: String, c: String) -> MbValue {
+    MbValue::from_ptr(MbObject::new_tuple(vec![mk_str(a), mk_str(b), mk_str(c)]))
+}
+
+fn is_sep(c: char) -> bool { c == '\\' || c == '/' }
+
+/// CPython 3.12 `ntpath.splitroot`: split into (drive, root, tail).
+/// `drive` is exactly as in `splitdrive`; `root` is a single separator or
+/// empty; `tail` is everything after the root. Works on byte indices
+/// because all the structural characters (`\`, `/`, `:`) are ASCII.
+fn nt_splitroot(p: &str) -> (String, String, String) {
+    let normp: String = p.chars().map(|c| if c == '/' { '\\' } else { c }).collect();
+    let nb = normp.as_bytes();
+    let pb = p.as_bytes();
+    if nb.first() == Some(&b'\\') {
+        if nb.get(1) == Some(&b'\\') {
+            // UNC drives, e.g. \\server\share or \\?\UNC\server\share
+            // Device drives, e.g. \\.\device or \\?\device
+            let unc_prefix = b"\\\\?\\UNC\\";
+            let start = if nb.len() >= 8
+                && normp[..8].eq_ignore_ascii_case("\\\\?\\UNC\\")
+            {
+                8
+            } else {
+                2
+            };
+            let _ = unc_prefix;
+            match nb[start..].iter().position(|&b| b == b'\\') {
+                None => (p.to_string(), String::new(), String::new()),
+                Some(rel) => {
+                    let index = start + rel;
+                    match nb[index + 1..].iter().position(|&b| b == b'\\') {
+                        None => (p.to_string(), String::new(), String::new()),
+                        Some(rel2) => {
+                            let index2 = index + 1 + rel2;
+                            (
+                                p[..index2].to_string(),
+                                p[index2..index2 + 1].to_string(),
+                                p[index2 + 1..].to_string(),
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            // Relative path with root, e.g. \Windows
+            (String::new(), p[..1].to_string(), p[1..].to_string())
+        }
+    } else if nb.get(1) == Some(&b':') {
+        if nb.get(2) == Some(&b'\\') {
+            // Absolute drive-letter path, e.g. X:\Windows
+            (p[..2].to_string(), p[2..3].to_string(), p[3..].to_string())
+        } else {
+            // Relative path with drive, e.g. X:Windows
+            (p[..2].to_string(), String::new(), p[2..].to_string())
+        }
+    } else {
+        // Relative path, e.g. Windows
+        let _ = pb;
+        (String::new(), String::new(), p.to_string())
+    }
 }
 
 // ── Pure-string Windows ops ──
 
 /// Split off a drive prefix from `path`. Returns (drive, rest).
-/// Drive forms:
-///   - Drive letter: "C:" (must be ASCII letter + ':').
-///   - UNC root: "\\server\share" — drive includes everything up through the share name.
-///   - Device prefix: "\\?\X" or "\\.\X" — drive is the 4-char prefix or the next component.
+/// Derived from `nt_splitroot`, exactly as CPython 3.12 does:
+/// `drive, root, tail = splitroot(p); return drive, root + tail`.
 fn nt_splitdrive(path: &str) -> (String, String) {
-    let bytes = path.as_bytes();
-    if bytes.len() < 2 {
-        return (String::new(), path.to_string());
-    }
-    // UNC / device prefixes
-    if bytes.len() >= 2 && is_sep(bytes[0] as char) && is_sep(bytes[1] as char) {
-        // Find the third separator. The drive is everything up to it.
-        // `\\?\` and `\\.\` are special — they keep their marker as part of drive.
-        let mut idx = 2usize;
-        while idx < bytes.len() && !is_sep(bytes[idx] as char) {
-            idx += 1;
-        }
-        if idx >= bytes.len() {
-            return (path.to_string(), String::new());
-        }
-        // Find the second separator (end of share name).
-        let mut idx2 = idx + 1;
-        while idx2 < bytes.len() && !is_sep(bytes[idx2] as char) {
-            idx2 += 1;
-        }
-        if idx2 == idx + 1 {
-            // Empty share name between separators — treat the whole path as the rest.
-            return (String::new(), path.to_string());
-        }
-        return (path[..idx2].to_string(), path[idx2..].to_string());
-    }
-    // Drive-letter form
-    if bytes[1] == b':' && (bytes[0] as char).is_ascii_alphabetic() {
-        return (path[..2].to_string(), path[2..].to_string());
-    }
-    (String::new(), path.to_string())
+    let (drive, root, tail) = nt_splitroot(path);
+    (drive, format!("{}{}", root, tail))
 }
 
 fn nt_isabs(path: &str) -> bool {
-    // CPython 3.13+ semantics: a path with both drive and root is absolute.
-    let (drive, rest) = nt_splitdrive(path);
-    if drive.starts_with('\\') || drive.starts_with('/') {
-        // UNC form: always absolute.
+    // CPython 3.12 ntpath.isabs: look at the first 3 chars (with / -> \).
+    // Absolute iff it starts with a separator (UNC/device/rooted) OR has a
+    // drive letter immediately followed by a separator (e.g. "C:\").
+    // LEGACY BUG (matched on purpose): isabs("/x") is True here because the
+    // 3.12 impl tests `startswith(sep)`.
+    let prefix: String = path.chars().take(3)
+        .map(|c| if c == '/' { '\\' } else { c })
+        .collect();
+    let pb = prefix.as_bytes();
+    if pb.first() == Some(&b'\\') {
         return true;
     }
-    // Drive-letter form: needs rest starting with sep to be absolute.
-    rest.starts_with('\\') || rest.starts_with('/')
+    // colon_sep == ":\\" checked at index 1
+    pb.get(1) == Some(&b':') && pb.get(2) == Some(&b'\\')
 }
 
 fn nt_normcase(path: &str) -> String {
-    let lowered: String = path
-        .chars()
-        .map(|c| {
-            if c == '/' {
-                '\\'
-            } else {
-                c.to_ascii_lowercase()
-            }
-        })
-        .collect();
+    let lowered: String = path.chars().map(|c| {
+        if c == '/' { '\\' } else { c.to_ascii_lowercase() }
+    }).collect();
     lowered
 }
 
-/// CPython ntpath.join: drive-aware concatenation.
+/// CPython 3.12 ntpath.join: drive/root-aware concatenation via splitroot.
 fn nt_join_strs(parts: &[String]) -> String {
-    if parts.is_empty() {
-        return String::new();
-    }
-    let (d, p) = nt_splitdrive(&parts[0]);
-    let mut result_drive = d;
-    let mut result_path = p;
+    if parts.is_empty() { return String::new(); }
+    let (mut result_drive, mut result_root, mut result_path) = nt_splitroot(&parts[0]);
     for tail in &parts[1..] {
-        let (p_drive, p_path) = nt_splitdrive(tail);
-        if p_path.starts_with('\\') || p_path.starts_with('/') {
-            // Second path is rooted — discard current path.
+        let (p_drive, p_root, p_path) = nt_splitroot(tail);
+        if !p_root.is_empty() {
+            // Second path is absolute.
             if !p_drive.is_empty() || result_drive.is_empty() {
                 result_drive = p_drive;
             }
+            result_root = p_root;
             result_path = p_path;
             continue;
-        }
-        if !p_drive.is_empty() && p_drive != result_drive {
-            if !p_drive.eq_ignore_ascii_case(&result_drive) {
-                // Different drive — second path wins entirely.
+        } else if !p_drive.is_empty() && p_drive != result_drive {
+            if p_drive.to_lowercase() != result_drive.to_lowercase() {
+                // Different drives => ignore the first path entirely.
                 result_drive = p_drive;
+                result_root = p_root;
                 result_path = p_path;
                 continue;
             }
+            // Same drive in different case.
             result_drive = p_drive;
         }
-        // Same drive (or no drive in tail) — concat.
-        if !result_path.is_empty() && !result_path.ends_with('\\') && !result_path.ends_with('/') {
+        // Second path is relative to the first.
+        if !result_path.is_empty()
+            && !result_path.ends_with('\\') && !result_path.ends_with('/')
+        {
             result_path.push('\\');
         }
         result_path.push_str(&p_path);
     }
-    // If the path is non-empty and has a drive but no separator after it,
-    // CPython leaves it as-is (e.g. "C:foo").
-    let needs_sep_after_drive = !result_drive.is_empty()
-        && !result_path.is_empty()
-        && !result_path.starts_with('\\')
-        && !result_path.starts_with('/')
-        && !result_drive.ends_with(':');
-    if needs_sep_after_drive {
-        result_path.insert(0, '\\');
+    // Add separator between UNC and non-absolute path.
+    if !result_path.is_empty()
+        && result_root.is_empty()
+        && !result_drive.is_empty()
+        && !result_drive.ends_with(':')
+        && !result_drive.ends_with('\\')
+        && !result_drive.ends_with('/')
+    {
+        return format!("{}\\{}", result_drive, result_path);
     }
-    format!("{}{}", result_drive, result_path)
+    format!("{}{}{}", result_drive, result_root, result_path)
 }
 
 fn nt_split(path: &str) -> (String, String) {
-    let (drive, rest) = nt_splitdrive(path);
-    // Find last separator in rest.
-    let last_sep = rest.bytes().rposition(|b| b == b'\\' || b == b'/');
-    let (head_rest, tail) = match last_sep {
-        Some(i) => (&rest[..i + 1], &rest[i + 1..]),
-        None => ("", rest.as_str()),
-    };
-    // Strip trailing separators from head, unless head is all separators.
-    let all_seps = !head_rest.is_empty() && head_rest.bytes().all(|b| b == b'\\' || b == b'/');
-    let head_trimmed = if all_seps {
-        head_rest.to_string()
-    } else {
-        let mut end = head_rest.len();
-        while end > 0 {
-            let b = head_rest.as_bytes()[end - 1];
-            if b == b'\\' || b == b'/' {
-                end -= 1;
-            } else {
-                break;
-            }
-        }
-        head_rest[..end].to_string()
-    };
-    (format!("{}{}", drive, head_trimmed), tail.to_string())
+    // CPython 3.12: d, r, p = splitroot(p); split p at last sep; the head
+    // is d + r + (head before last sep, with trailing seps stripped).
+    let (drive, root, rest) = nt_splitroot(path);
+    let rb = rest.as_bytes();
+    let mut i = rb.len();
+    while i > 0 && rb[i - 1] != b'\\' && rb[i - 1] != b'/' {
+        i -= 1;
+    }
+    let head = &rest[..i];
+    let tail = &rest[i..];
+    // Strip trailing separators from head.
+    let mut end = head.len();
+    while end > 0 {
+        let b = head.as_bytes()[end - 1];
+        if b == b'\\' || b == b'/' { end -= 1; } else { break; }
+    }
+    (format!("{}{}{}", drive, root, &head[..end]), tail.to_string())
 }
 
-fn nt_basename(path: &str) -> String {
-    nt_split(path).1
-}
-fn nt_dirname(path: &str) -> String {
-    nt_split(path).0
-}
+fn nt_basename(path: &str) -> String { nt_split(path).1 }
+fn nt_dirname(path: &str) -> String { nt_split(path).0 }
 
 fn nt_splitext(path: &str) -> (String, String) {
     // Find the basename — search after the last sep AND drive prefix.
     let (drive, rest) = nt_splitdrive(path);
-    let base_start_in_rest = rest
-        .bytes()
-        .rposition(|b| b == b'\\' || b == b'/')
-        .map(|i| i + 1)
-        .unwrap_or(0);
+    let base_start_in_rest = rest.bytes().rposition(|b| b == b'\\' || b == b'/').map(|i| i + 1).unwrap_or(0);
     let base = &rest[base_start_in_rest..];
     let dot_search_start = base.bytes().position(|b| b != b'.').unwrap_or(base.len());
     if let Some(rel_pos) = base[dot_search_start..].rfind('.') {
@@ -215,122 +261,81 @@ fn nt_splitext(path: &str) -> (String, String) {
 }
 
 fn nt_normpath(path: &str) -> String {
-    if path.is_empty() {
-        return ".".to_string();
-    }
-    // First convert all `/` to `\`.
-    let unified: String = path
-        .chars()
-        .map(|c| if c == '/' { '\\' } else { c })
-        .collect();
-    let (drive, rest) = nt_splitdrive(&unified);
-    let is_absolute = rest.starts_with('\\');
-    let trimmed = rest.trim_start_matches('\\');
-    let parts: Vec<&str> = trimmed
-        .split('\\')
-        .filter(|p| !p.is_empty() && *p != ".")
-        .collect();
-    let mut comps: Vec<&str> = Vec::new();
-    for part in parts {
-        if part == ".." {
-            if !comps.is_empty() && *comps.last().unwrap() != ".." {
-                comps.pop();
-            } else if !is_absolute {
-                comps.push("..");
+    // CPython 3.12 pure-python normpath fallback.
+    let unified: String = path.chars().map(|c| if c == '/' { '\\' } else { c }).collect();
+    let (drive, root, rest) = nt_splitroot(&unified);
+    let prefix = format!("{}{}", drive, root);
+    let root_nonempty = !root.is_empty();
+    let mut comps: Vec<String> = rest.split('\\').map(|s| s.to_string()).collect();
+    let mut i = 0usize;
+    while i < comps.len() {
+        if comps[i].is_empty() || comps[i] == "." {
+            comps.remove(i);
+        } else if comps[i] == ".." {
+            if i > 0 && comps[i - 1] != ".." {
+                comps.drain(i - 1..=i);
+                i -= 1;
+            } else if i == 0 && root_nonempty {
+                comps.remove(i);
+            } else {
+                i += 1;
             }
         } else {
-            comps.push(part);
+            i += 1;
         }
     }
-    let joined = comps.join("\\");
-    let prefix = if is_absolute { "\\" } else { "" };
-    let body = format!("{}{}", prefix, joined);
-    let result = format!("{}{}", drive, body);
-    if result.is_empty() {
-        ".".to_string()
-    } else if !drive.is_empty() && body.is_empty() {
-        // Bare drive like "C:" stays as "C:.".
-        format!("{}.", drive)
-    } else {
-        result
+    // If the path is now empty, substitute '.'.
+    if prefix.is_empty() && comps.is_empty() {
+        comps.push(".".to_string());
     }
+    format!("{}{}", prefix, comps.join("\\"))
 }
 
 fn nt_commonprefix_strs(strs: &[String]) -> String {
-    if strs.is_empty() {
-        return String::new();
-    }
+    if strs.is_empty() { return String::new(); }
     let first = &strs[0];
     let mut end = first.len();
     for s in &strs[1..] {
         let f = first.as_bytes();
         let p = s.as_bytes();
         let mut i = 0;
-        while i < end && i < p.len() && f[i] == p[i] {
-            i += 1;
-        }
+        while i < end && i < p.len() && f[i] == p[i] { i += 1; }
         end = i;
-        if end == 0 {
-            break;
-        }
+        if end == 0 { break; }
     }
-    while end > 0 && !first.is_char_boundary(end) {
-        end -= 1;
-    }
+    while end > 0 && !first.is_char_boundary(end) { end -= 1; }
     first[..end].to_string()
 }
 
 fn nt_commonpath_strs(strs: &[String]) -> Option<String> {
-    if strs.is_empty() {
-        return Some(String::new());
-    }
+    if strs.is_empty() { return Some(String::new()); }
     // Unify path separators and split off drive.
     let unified: Vec<String> = strs.iter().map(|s| s.replace('/', "\\")).collect();
     let drives_paths: Vec<(String, String)> = unified.iter().map(|p| nt_splitdrive(p)).collect();
     let first_drive = drives_paths[0].0.to_lowercase();
     for (d, _) in &drives_paths[1..] {
-        if d.to_lowercase() != first_drive {
-            return None;
-        }
+        if d.to_lowercase() != first_drive { return None; }
     }
     let abs = drives_paths[0].1.starts_with('\\');
     for (_, rest) in &drives_paths {
-        if rest.starts_with('\\') != abs {
-            return None;
-        }
+        if rest.starts_with('\\') != abs { return None; }
     }
-    let split_parts: Vec<Vec<&str>> = drives_paths
-        .iter()
-        .map(|(_, r)| {
-            r.split('\\')
-                .filter(|s| !s.is_empty() && *s != ".")
-                .collect()
-        })
+    let split_parts: Vec<Vec<&str>> = drives_paths.iter()
+        .map(|(_, r)| r.split('\\').filter(|s| !s.is_empty() && *s != ".").collect())
         .collect();
     let min_len = split_parts.iter().map(|v| v.len()).min().unwrap_or(0);
     let mut common: Vec<&str> = Vec::new();
     for i in 0..min_len {
         let part = split_parts[0][i];
         let same = split_parts.iter().all(|v| v[i].eq_ignore_ascii_case(part));
-        if same {
-            common.push(part);
-        } else {
-            break;
-        }
+        if same { common.push(part); } else { break; }
     }
     let prefix = if abs { "\\" } else { "" };
-    Some(format!(
-        "{}{}{}",
-        drives_paths[0].0,
-        prefix,
-        common.join("\\")
-    ))
+    Some(format!("{}{}{}", drives_paths[0].0, prefix, common.join("\\")))
 }
 
 fn expand_user(path: &str) -> String {
-    if !path.starts_with('~') {
-        return path.to_string();
-    }
+    if !path.starts_with('~') { return path.to_string(); }
     let split_idx = path.find(|c| c == '\\' || c == '/').unwrap_or(path.len());
     let user_part = &path[..split_idx];
     let rest = &path[split_idx..];
@@ -403,12 +408,8 @@ fn metadata_time<F>(p: &str, getter: F) -> f64
 where
     F: Fn(&std::fs::Metadata) -> std::io::Result<std::time::SystemTime>,
 {
-    let Ok(meta) = std::fs::metadata(p) else {
-        return 0.0;
-    };
-    let Ok(t) = getter(&meta) else {
-        return 0.0;
-    };
+    let Ok(meta) = std::fs::metadata(p) else { return 0.0; };
+    let Ok(t) = getter(&meta) else { return 0.0; };
     match t.duration_since(std::time::UNIX_EPOCH) {
         Ok(d) => d.as_secs_f64(),
         Err(_) => 0.0,
@@ -427,8 +428,7 @@ fn relpath(start: &str, target: &str) -> String {
     let s_parts: Vec<&str> = s_rest.split('\\').filter(|s| !s.is_empty()).collect();
     let t_parts: Vec<&str> = t_rest.split('\\').filter(|s| !s.is_empty()).collect();
     let mut common = 0;
-    while common < s_parts.len()
-        && common < t_parts.len()
+    while common < s_parts.len() && common < t_parts.len()
         && s_parts[common].eq_ignore_ascii_case(t_parts[common])
     {
         common += 1;
@@ -462,73 +462,52 @@ unsafe extern "C" fn dispatch_split(args_ptr: *const MbValue, nargs: usize) -> M
 
 unsafe extern "C" fn dispatch_basename(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     mk_str(nt_basename(&s))
 }
 
 unsafe extern "C" fn dispatch_dirname(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     mk_str(nt_dirname(&s))
 }
 
 unsafe extern "C" fn dispatch_splitext(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     let (a, b) = nt_splitext(&s);
     mk_tuple2(a, b)
 }
 
 unsafe extern "C" fn dispatch_splitdrive(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     let (a, b) = nt_splitdrive(&s);
     mk_tuple2(a, b)
 }
 
+unsafe extern "C" fn dispatch_splitroot(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = args_slice(args_ptr, nargs);
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let (a, b, c) = nt_splitroot(&s);
+    mk_tuple3(a, b, c)
+}
+
 unsafe extern "C" fn dispatch_isabs(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     MbValue::from_bool(nt_isabs(&s))
 }
 
 unsafe extern "C" fn dispatch_normpath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     mk_str(nt_normpath(&s))
 }
 
 unsafe extern "C" fn dispatch_normcase(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     mk_str(nt_normcase(&s))
 }
 
@@ -538,20 +517,13 @@ unsafe extern "C" fn dispatch_commonprefix(args_ptr: *const MbValue, nargs: usiz
         if let Some(p) = args[0].as_ptr() {
             unsafe {
                 match &(*p).data {
-                    ObjData::List(lock) => lock
-                        .read()
-                        .unwrap()
-                        .iter()
-                        .filter_map(|v| extract_str(*v))
-                        .collect(),
+                    ObjData::List(lock) => lock.read().unwrap().iter().filter_map(|v| extract_str(*v)).collect(),
                     ObjData::Tuple(items) => items.iter().filter_map(|v| extract_str(*v)).collect(),
                     ObjData::Str(_) => vec![extract_str(args[0]).unwrap()],
                     _ => Vec::new(),
                 }
             }
-        } else {
-            Vec::new()
-        }
+        } else { Vec::new() }
     } else {
         args.iter().filter_map(|v| extract_str(*v)).collect()
     };
@@ -564,20 +536,13 @@ unsafe extern "C" fn dispatch_commonpath(args_ptr: *const MbValue, nargs: usize)
         if let Some(p) = args[0].as_ptr() {
             unsafe {
                 match &(*p).data {
-                    ObjData::List(lock) => lock
-                        .read()
-                        .unwrap()
-                        .iter()
-                        .filter_map(|v| extract_str(*v))
-                        .collect(),
+                    ObjData::List(lock) => lock.read().unwrap().iter().filter_map(|v| extract_str(*v)).collect(),
                     ObjData::Tuple(items) => items.iter().filter_map(|v| extract_str(*v)).collect(),
                     ObjData::Str(_) => vec![extract_str(args[0]).unwrap()],
                     _ => Vec::new(),
                 }
             }
-        } else {
-            Vec::new()
-        }
+        } else { Vec::new() }
     } else {
         args.iter().filter_map(|v| extract_str(*v)).collect()
     };
@@ -597,41 +562,25 @@ unsafe extern "C" fn dispatch_commonpath(args_ptr: *const MbValue, nargs: usize)
 
 unsafe extern "C" fn dispatch_exists(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     MbValue::from_bool(std::path::Path::new(&s).exists())
 }
 
 unsafe extern "C" fn dispatch_isfile(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     MbValue::from_bool(std::path::Path::new(&s).is_file())
 }
 
 unsafe extern "C" fn dispatch_isdir(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     MbValue::from_bool(std::path::Path::new(&s).is_dir())
 }
 
 unsafe extern "C" fn dispatch_islink(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     let is_link = std::fs::symlink_metadata(&s)
         .map(|m| m.file_type().is_symlink())
         .unwrap_or(false);
@@ -640,11 +589,7 @@ unsafe extern "C" fn dispatch_islink(args_ptr: *const MbValue, nargs: usize) -> 
 
 unsafe extern "C" fn dispatch_ismount(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     // Windows ismount: a drive root like "C:\" or a UNC share root.
     let normalized = nt_normpath(&s);
     let (drive, rest) = nt_splitdrive(&normalized);
@@ -654,11 +599,7 @@ unsafe extern "C" fn dispatch_ismount(args_ptr: *const MbValue, nargs: usize) ->
 
 unsafe extern "C" fn dispatch_getsize(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     match std::fs::metadata(&s) {
         Ok(m) => MbValue::from_int(m.len() as i64),
         Err(_) => MbValue::from_int(-1),
@@ -667,31 +608,19 @@ unsafe extern "C" fn dispatch_getsize(args_ptr: *const MbValue, nargs: usize) ->
 
 unsafe extern "C" fn dispatch_getmtime(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     MbValue::from_float(metadata_time(&s, |m| m.modified()))
 }
 
 unsafe extern "C" fn dispatch_getatime(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     MbValue::from_float(metadata_time(&s, |m| m.accessed()))
 }
 
 unsafe extern "C" fn dispatch_getctime(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     MbValue::from_float(metadata_time(&s, |m| m.created()))
 }
 
@@ -720,18 +649,11 @@ unsafe extern "C" fn dispatch_samefile(args_ptr: *const MbValue, nargs: usize) -
 
 unsafe extern "C" fn dispatch_abspath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     let resolved = if nt_isabs(&s) {
         nt_normpath(&s)
     } else {
-        let cwd = std::env::current_dir()
-            .ok()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|| ".".to_string());
+        let cwd = std::env::current_dir().ok().map(|p| p.display().to_string()).unwrap_or_else(|| ".".to_string());
         nt_normpath(&nt_join_strs(&[cwd, s]))
     };
     mk_str(resolved)
@@ -739,21 +661,14 @@ unsafe extern "C" fn dispatch_abspath(args_ptr: *const MbValue, nargs: usize) ->
 
 unsafe extern "C" fn dispatch_realpath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     match std::fs::canonicalize(&s) {
         Ok(p) => mk_str(p.display().to_string()),
         Err(_) => {
             let resolved = if nt_isabs(&s) {
                 nt_normpath(&s)
             } else {
-                let cwd = std::env::current_dir()
-                    .ok()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| ".".to_string());
+                let cwd = std::env::current_dir().ok().map(|p| p.display().to_string()).unwrap_or_else(|| ".".to_string());
                 nt_normpath(&nt_join_strs(&[cwd, s]))
             };
             mk_str(resolved)
@@ -763,74 +678,55 @@ unsafe extern "C" fn dispatch_realpath(args_ptr: *const MbValue, nargs: usize) -
 
 unsafe extern "C" fn dispatch_relpath(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let target = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
-    let start = args
-        .get(1)
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .ok()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| ".".to_string())
-        });
+    let target = args.first().copied().and_then(extract_str).unwrap_or_default();
+    let start = args.get(1).copied().and_then(extract_str)
+        .unwrap_or_else(|| std::env::current_dir().ok().map(|p| p.display().to_string()).unwrap_or_else(|| ".".to_string()));
     mk_str(relpath(&start, &target))
 }
 
 unsafe extern "C" fn dispatch_expanduser(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     mk_str(expand_user(&s))
 }
 
 unsafe extern "C" fn dispatch_expandvars(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let s = args
-        .first()
-        .copied()
-        .and_then(extract_str)
-        .unwrap_or_default();
+    let s = args.first().copied().and_then(extract_str).unwrap_or_default();
     mk_str(expand_vars(&s))
 }
 
 pub fn register() {
     let mut attrs: HashMap<String, MbValue> = HashMap::new();
     let dispatchers: &[(&str, usize)] = &[
-        ("join", dispatch_join as *const () as usize),
-        ("split", dispatch_split as *const () as usize),
-        ("splitext", dispatch_splitext as *const () as usize),
-        ("splitdrive", dispatch_splitdrive as *const () as usize),
-        ("basename", dispatch_basename as *const () as usize),
-        ("dirname", dispatch_dirname as *const () as usize),
-        ("isabs", dispatch_isabs as *const () as usize),
-        ("normpath", dispatch_normpath as *const () as usize),
-        ("normcase", dispatch_normcase as *const () as usize),
+        ("join",         dispatch_join         as *const () as usize),
+        ("split",        dispatch_split        as *const () as usize),
+        ("splitext",     dispatch_splitext     as *const () as usize),
+        ("splitdrive",   dispatch_splitdrive   as *const () as usize),
+        ("splitroot",    dispatch_splitroot    as *const () as usize),
+        ("basename",     dispatch_basename     as *const () as usize),
+        ("dirname",      dispatch_dirname      as *const () as usize),
+        ("isabs",        dispatch_isabs        as *const () as usize),
+        ("normpath",     dispatch_normpath     as *const () as usize),
+        ("normcase",     dispatch_normcase     as *const () as usize),
         ("commonprefix", dispatch_commonprefix as *const () as usize),
-        ("commonpath", dispatch_commonpath as *const () as usize),
-        ("exists", dispatch_exists as *const () as usize),
-        ("lexists", dispatch_exists as *const () as usize),
-        ("isfile", dispatch_isfile as *const () as usize),
-        ("isdir", dispatch_isdir as *const () as usize),
-        ("islink", dispatch_islink as *const () as usize),
-        ("ismount", dispatch_ismount as *const () as usize),
-        ("getsize", dispatch_getsize as *const () as usize),
-        ("getmtime", dispatch_getmtime as *const () as usize),
-        ("getatime", dispatch_getatime as *const () as usize),
-        ("getctime", dispatch_getctime as *const () as usize),
-        ("samefile", dispatch_samefile as *const () as usize),
-        ("abspath", dispatch_abspath as *const () as usize),
-        ("realpath", dispatch_realpath as *const () as usize),
-        ("relpath", dispatch_relpath as *const () as usize),
-        ("expanduser", dispatch_expanduser as *const () as usize),
-        ("expandvars", dispatch_expandvars as *const () as usize),
+        ("commonpath",   dispatch_commonpath   as *const () as usize),
+        ("exists",       dispatch_exists       as *const () as usize),
+        ("lexists",      dispatch_exists       as *const () as usize),
+        ("isfile",       dispatch_isfile       as *const () as usize),
+        ("isdir",        dispatch_isdir        as *const () as usize),
+        ("islink",       dispatch_islink       as *const () as usize),
+        ("ismount",      dispatch_ismount      as *const () as usize),
+        ("getsize",      dispatch_getsize      as *const () as usize),
+        ("getmtime",     dispatch_getmtime     as *const () as usize),
+        ("getatime",     dispatch_getatime     as *const () as usize),
+        ("getctime",     dispatch_getctime     as *const () as usize),
+        ("samefile",     dispatch_samefile     as *const () as usize),
+        ("abspath",      dispatch_abspath      as *const () as usize),
+        ("realpath",     dispatch_realpath     as *const () as usize),
+        ("relpath",      dispatch_relpath      as *const () as usize),
+        ("expanduser",   dispatch_expanduser   as *const () as usize),
+        ("expandvars",   dispatch_expandvars   as *const () as usize),
     ];
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();
@@ -842,7 +738,7 @@ pub fn register() {
         attrs.insert((*name).to_string(), MbValue::from_func(*addr));
     }
     // Constants matching CPython ntpath.
-    attrs.insert("sep".to_string(), mk_str("\\".to_string()));
+    attrs.insert("sep".to_string(),    mk_str("\\".to_string()));
     attrs.insert("altsep".to_string(), mk_str("/".to_string()));
     attrs.insert("extsep".to_string(), mk_str(".".to_string()));
     attrs.insert("pathsep".to_string(), mk_str(";".to_string()));
@@ -850,10 +746,12 @@ pub fn register() {
     attrs.insert("curdir".to_string(), mk_str(".".to_string()));
     attrs.insert("pardir".to_string(), mk_str("..".to_string()));
     attrs.insert("devnull".to_string(), mk_str("nul".to_string()));
-    attrs.insert(
-        "supports_unicode_filenames".to_string(),
-        MbValue::from_bool(true),
-    );
+    attrs.insert("supports_unicode_filenames".to_string(), MbValue::from_bool(true));
+    // os.path.ALLOW_MISSING sentinel: ntpath re-exports it for realpath's
+    // `strict=` parameter. Fixtures only `from ntpath import ALLOW_MISSING`
+    // and pass it through to realpath (which ignores extra kwargs here), so
+    // a distinct opaque marker string suffices.
+    attrs.insert("ALLOW_MISSING".to_string(), mk_str("os.path.ALLOW_MISSING".to_string()));
     super::register_module("ntpath", attrs);
 }
 
@@ -863,15 +761,9 @@ mod tests {
 
     #[test]
     fn splitdrive_letter() {
-        assert_eq!(
-            nt_splitdrive("C:\\foo"),
-            ("C:".to_string(), "\\foo".to_string())
-        );
-        assert_eq!(
-            nt_splitdrive("C:foo"),
-            ("C:".to_string(), "foo".to_string())
-        );
-        assert_eq!(nt_splitdrive("foo"), ("".to_string(), "foo".to_string()));
+        assert_eq!(nt_splitdrive("C:\\foo"), ("C:".to_string(), "\\foo".to_string()));
+        assert_eq!(nt_splitdrive("C:foo"),    ("C:".to_string(), "foo".to_string()));
+        assert_eq!(nt_splitdrive("foo"),      ("".to_string(),   "foo".to_string()));
     }
 
     #[test]
@@ -902,12 +794,18 @@ mod tests {
 
     #[test]
     fn join_drive_switch() {
-        assert_eq!(nt_join_strs(&["C:\\a".into(), "D:\\b".into()]), "D:\\b",);
+        assert_eq!(
+            nt_join_strs(&["C:\\a".into(), "D:\\b".into()]),
+            "D:\\b",
+        );
     }
 
     #[test]
     fn join_root_resets() {
-        assert_eq!(nt_join_strs(&["C:\\foo".into(), "\\bar".into()]), "C:\\bar",);
+        assert_eq!(
+            nt_join_strs(&["C:\\foo".into(), "\\bar".into()]),
+            "C:\\bar",
+        );
     }
 
     #[test]
@@ -920,34 +818,22 @@ mod tests {
 
     #[test]
     fn split_basic() {
-        assert_eq!(
-            nt_split("C:\\a\\b\\c"),
-            ("C:\\a\\b".to_string(), "c".to_string())
-        );
-        assert_eq!(nt_split("\\a"), ("\\".to_string(), "a".to_string()));
-        assert_eq!(nt_split("noslash"), ("".to_string(), "noslash".to_string()));
+        assert_eq!(nt_split("C:\\a\\b\\c"), ("C:\\a\\b".to_string(), "c".to_string()));
+        assert_eq!(nt_split("\\a"),         ("\\".to_string(),     "a".to_string()));
+        assert_eq!(nt_split("noslash"),     ("".to_string(),       "noslash".to_string()));
     }
 
     #[test]
     fn splitext_basic() {
-        assert_eq!(
-            nt_splitext("foo.txt"),
-            ("foo".to_string(), ".txt".to_string())
-        );
-        assert_eq!(
-            nt_splitext("C:\\a\\b.txt"),
-            ("C:\\a\\b".to_string(), ".txt".to_string())
-        );
-        assert_eq!(
-            nt_splitext(".hidden"),
-            (".hidden".to_string(), String::new())
-        );
+        assert_eq!(nt_splitext("foo.txt"),       ("foo".to_string(),      ".txt".to_string()));
+        assert_eq!(nt_splitext("C:\\a\\b.txt"),  ("C:\\a\\b".to_string(), ".txt".to_string()));
+        assert_eq!(nt_splitext(".hidden"),       (".hidden".to_string(),  String::new()));
     }
 
     #[test]
     fn normpath_collapses_dotdot() {
         assert_eq!(nt_normpath("C:\\foo\\..\\bar"), "C:\\bar");
-        assert_eq!(nt_normpath("foo/bar/../baz"), "foo\\baz");
+        assert_eq!(nt_normpath("foo/bar/../baz"),   "foo\\baz");
         assert_eq!(nt_normpath(""), ".");
     }
 

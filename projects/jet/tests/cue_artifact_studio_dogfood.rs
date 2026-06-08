@@ -60,6 +60,7 @@ fn cue_summary_with(outcome_for_promote: Outcome) -> Summary {
             promote_report,
         ],
         coverage: None,
+        browser_sessions: Vec::new(),
     }
 }
 
@@ -120,6 +121,7 @@ fn run_mode_evidence_carries_product_steps_for_cue_flow() {
         1_700_000_000_000,
         1_700_000_000_320,
         None,
+        None,
     );
     assert_bundle_shape(&bundle, E2eMode::Run);
     assert_eq!(bundle.summary.passed, 2);
@@ -136,6 +138,7 @@ fn open_mode_evidence_inspects_same_flow() {
         1_700_000_000_000,
         1_700_000_000_320,
         None,
+        None,
     );
     assert_bundle_shape(&bundle, E2eMode::Open);
     // Open-mode evidence is consumable by the read-only review surface
@@ -149,7 +152,7 @@ fn open_mode_evidence_inspects_same_flow() {
 #[test]
 fn failure_path_carries_assertion_context() {
     let summary = cue_summary_with(Outcome::Failed);
-    let bundle = build_evidence_bundle(E2eMode::Run, summary, 1, 321, None);
+    let bundle = build_evidence_bundle(E2eMode::Run, summary, 1, 321, None, None);
     assert_eq!(bundle.summary.failed, 1);
     assert_eq!(summary_exit_code(&bundle), 1);
 

@@ -3,23 +3,23 @@
 //! A Rust-native replacement for Celery.
 
 pub mod error;
-pub mod handoff;
-pub mod message;
-pub mod ratelimit;
-pub mod result;
-pub mod retry;
-pub mod revocation;
-pub mod routing;
-pub mod signals;
 pub mod state;
+pub mod retry;
+pub mod message;
 pub mod task;
+pub mod result;
+pub mod routing;
+pub mod ratelimit;
+pub mod signals;
+pub mod revocation;
+pub mod handoff;
 
-pub mod backend;
 pub mod broker;
-pub mod executor;
-pub mod scheduler;
+pub mod backend;
 pub mod worker;
+pub mod scheduler;
 pub mod workflow;
+pub mod executor;
 
 // Optional: Metrics and tracing
 #[cfg(feature = "metrics")]
@@ -32,35 +32,35 @@ pub mod tracing_support;
 #[cfg(feature = "schema")]
 pub mod schema;
 
+
 // Re-exports
 pub use error::TaskError;
+pub use state::{TaskState, TaskResult};
+pub use retry::RetryPolicy;
+pub use message::TaskMessage;
+pub use task::{Task, TaskId, TaskContext, TaskOutcome, TaskRegistry};
+pub use result::AsyncResult;
+pub use routing::{Router, RouterConfig, Route, PatternType, RoutesConfig};
+pub use ratelimit::{
+    RateLimiter, RateLimitConfig, RateLimitResult, RateLimitManager,
+    TokenBucket, SlidingWindow,
+};
+pub use signals::{Signal, SignalHandler, SignalDispatcher, ShutdownReason};
+pub use revocation::{RevocationStore, InMemoryRevocationStore, RevokedTask, RevokeRequest, revoke, revoke_by_name};
 pub use handoff::{
     parse_http_background_handoffs, publish_http_background_handoffs,
     publish_http_background_handoffs_blocking, publish_routed_handoffs,
     publish_routed_handoffs_blocking, route_http_background_handoffs, PublishedTaskMessage,
     RoutedTaskMessage, TaskHandoff,
 };
-pub use message::TaskMessage;
-pub use ratelimit::{
-    RateLimitConfig, RateLimitManager, RateLimitResult, RateLimiter, SlidingWindow, TokenBucket,
-};
-pub use result::AsyncResult;
-pub use retry::RetryPolicy;
-pub use revocation::{
-    revoke, revoke_by_name, InMemoryRevocationStore, RevocationStore, RevokeRequest, RevokedTask,
-};
-pub use routing::{PatternType, Route, Router, RouterConfig, RoutesConfig};
-pub use signals::{ShutdownReason, Signal, SignalDispatcher, SignalHandler};
-pub use state::{TaskResult, TaskState};
-pub use task::{Task, TaskContext, TaskId, TaskOutcome, TaskRegistry};
 
 #[cfg(feature = "redis")]
 pub use revocation::RedisRevocationStore;
 
 // Broker re-exports
 pub use broker::{
-    Broker, BrokerCapabilities, BrokerConfig, BrokerMessage, DelayedBroker, DeliveryModel,
-    MessageHandler, PullBroker, PushBroker, SubscriptionHandle,
+    Broker, DeliveryModel, BrokerCapabilities, PullBroker, PushBroker, DelayedBroker,
+    BrokerMessage, MessageHandler, SubscriptionHandle, BrokerConfig,
 };
 
 #[cfg(any(feature = "nats", feature = "pubsub"))]
@@ -109,8 +109,14 @@ pub use scheduler::{PushReceiver, PushReceiverConfig};
 
 // Workflow re-exports
 pub use workflow::{
-    chunks, starmap, xmap, AsyncChainResult, AsyncChordResult, Chain, ChainMeta, Chord, ChordMeta,
-    Chunks, Group, GroupResult, Map, Starmap, TaskOptions, TaskSignature, WorkflowEngine,
+    TaskSignature, TaskOptions,
+    Chain, AsyncChainResult,
+    Group, GroupResult,
+    Chord, AsyncChordResult,
+    ChainMeta, ChordMeta,
+    Map, Starmap, Chunks,
+    xmap, starmap, chunks,
+    WorkflowEngine,
 };
 
 // K8s executor re-exports
@@ -119,11 +125,11 @@ pub use executor::{K8sJobExecutor, K8sJobExecutorConfig, OffloadedJobInfo};
 
 // Metrics re-exports
 #[cfg(feature = "metrics")]
-pub use metrics::{gather_metrics, TaskMetrics, METRICS};
+pub use metrics::{TaskMetrics, METRICS, gather_metrics};
 
 // Tracing re-exports
 #[cfg(feature = "tracing-otel")]
-pub use tracing_support::{create_task_span, init_tracing, shutdown_tracing, TaskSpanAttributes};
+pub use tracing_support::{TaskSpanAttributes, init_tracing, shutdown_tracing, create_task_span};
 
 /// Result type for task operations
 pub type Result<T> = std::result::Result<T, TaskError>;

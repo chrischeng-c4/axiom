@@ -7,10 +7,10 @@ use serde_json::Value as JsonValue;
 use sqlx::postgres::{PgArguments, PgPool};
 use sqlx::Row as SqlxRow;
 use std::collections::HashMap;
-use tracing::{debug, info, instrument, warn};
+use tracing::{info, warn, debug, instrument};
 
-use crate::query::{JoinCondition, JoinType, Operator, OrderDirection};
-use crate::{row_to_extracted, DataBridgeError, ExtractedValue, QueryBuilder, Result};
+use crate::{DataBridgeError, ExtractedValue, QueryBuilder, Result, row_to_extracted};
+use crate::query::{JoinType, JoinCondition, Operator, OrderDirection};
 
 /// Relation configuration for eager loading
 #[derive(Debug, Clone)]
@@ -89,9 +89,7 @@ impl Row {
         E: sqlx::Executor<'a, Database = sqlx::Postgres>,
     {
         if values.is_empty() {
-            return Err(DataBridgeError::Query(
-                "Cannot insert with no values".to_string(),
-            ));
+            return Err(DataBridgeError::Query("Cannot insert with no values".to_string()));
         }
 
         info!("Inserting row");
@@ -166,9 +164,8 @@ impl Row {
         let mut args = PgArguments::default();
         for row in rows {
             for col_name in &column_names {
-                let value = row.get(*col_name).ok_or_else(|| {
-                    DataBridgeError::Query("Required column not found in row data".to_string())
-                })?;
+                let value = row.get(*col_name)
+                    .ok_or_else(|| DataBridgeError::Query("Required column not found in row data".to_string()))?;
                 value.bind_to_arguments(&mut args)?;
             }
         }
@@ -178,8 +175,7 @@ impl Row {
             .await
             .map_err(|_| DataBridgeError::Query("Batch insert operation failed".to_string()))?;
 
-        let results = pg_rows
-            .iter()
+        let results = pg_rows.iter()
             .map(Self::from_sqlx)
             .collect::<Result<Vec<_>>>()?;
 
@@ -199,9 +195,7 @@ impl Row {
         E: sqlx::Executor<'a, Database = sqlx::Postgres>,
     {
         if values.is_empty() {
-            return Err(DataBridgeError::Query(
-                "Cannot upsert with no values".to_string(),
-            ));
+            return Err(DataBridgeError::Query("Cannot upsert with no values".to_string()));
         }
 
         let query_builder = QueryBuilder::new(table)?;
@@ -236,9 +230,7 @@ impl Row {
         }
 
         if conflict_target.is_empty() {
-            return Err(DataBridgeError::Query(
-                "Conflict target cannot be empty".to_string(),
-            ));
+            return Err(DataBridgeError::Query("Conflict target cannot be empty".to_string()));
         }
 
         let first_row = &rows[0];
@@ -281,13 +273,11 @@ impl Row {
         sql.push_str(") DO UPDATE SET ");
 
         let columns_to_update: Vec<&&String> = if let Some(update_cols) = update_columns {
-            column_names
-                .iter()
+            column_names.iter()
                 .filter(|col| update_cols.contains(&col.to_string()))
                 .collect()
         } else {
-            column_names
-                .iter()
+            column_names.iter()
                 .filter(|col| !conflict_target.contains(&col.to_string()))
                 .collect()
         };
@@ -307,9 +297,8 @@ impl Row {
         let mut args = PgArguments::default();
         for row in rows {
             for col_name in &column_names {
-                let value = row.get(*col_name).ok_or_else(|| {
-                    DataBridgeError::Query("Required column not found in row data".to_string())
-                })?;
+                let value = row.get(*col_name)
+                    .ok_or_else(|| DataBridgeError::Query("Required column not found in row data".to_string()))?;
                 value.bind_to_arguments(&mut args)?;
             }
         }
@@ -319,7 +308,9 @@ impl Row {
             .await
             .map_err(|_| DataBridgeError::Query("Batch upsert operation failed".to_string()))?;
 
-        pg_rows.iter().map(Self::from_sqlx).collect()
+        pg_rows.iter()
+            .map(Self::from_sqlx)
+            .collect()
     }
 
     /// Find single row by primary key.
@@ -367,7 +358,9 @@ impl Row {
             .await
             .map_err(|_| DataBridgeError::Query("Find operation failed".to_string()))?;
 
-        rows.iter().map(Self::from_sqlx).collect()
+        rows.iter()
+            .map(Self::from_sqlx)
+            .collect()
     }
 
     /// Update row in database.
@@ -379,9 +372,7 @@ impl Row {
         values: &[(String, ExtractedValue)],
     ) -> Result<bool> {
         if values.is_empty() {
-            return Err(DataBridgeError::Query(
-                "Cannot update with no values".to_string(),
-            ));
+            return Err(DataBridgeError::Query("Cannot update with no values".to_string()));
         }
 
         info!("Updating row");
@@ -428,11 +419,12 @@ impl Row {
     }
 
     /// Count rows matching query.
-    pub async fn count(pool: &PgPool, table: &str, query: Option<&QueryBuilder>) -> Result<i64> {
-        let mut sql = format!(
-            "SELECT COUNT(*) FROM {}",
-            QueryBuilder::quote_identifier(table)
-        );
+    pub async fn count(
+        pool: &PgPool,
+        table: &str,
+        query: Option<&QueryBuilder>,
+    ) -> Result<i64> {
+        let mut sql = format!("SELECT COUNT(*) FROM {}", QueryBuilder::quote_identifier(table));
         let mut params = Vec::new();
 
         if let Some(qb) = query {
@@ -460,8 +452,7 @@ impl Row {
             .await
             .map_err(|_| DataBridgeError::Query("Count operation failed".to_string()))?;
 
-        let count: i64 = row
-            .try_get(0)
+        let count: i64 = row.try_get(0)
             .map_err(|_| DataBridgeError::Query("Failed to extract count result".to_string()))?;
 
         Ok(count)
@@ -500,30 +491,23 @@ impl Row {
             .bind(table)
             .fetch_all(executor)
             .await
-            .map_err(|e| {
-                DataBridgeError::Database(format!("Failed to fetch table columns: {}", e))
-            })?;
+            .map_err(|e| DataBridgeError::Database(format!("Failed to fetch table columns: {}", e)))?;
 
         let mut main_columns = Vec::new();
         for row in column_rows {
-            let col_name: String = row
-                .try_get("column_name")
+            let col_name: String = row.try_get("column_name")
                 .map_err(|e| DataBridgeError::Database(e.to_string()))?;
             main_columns.push(col_name);
         }
 
         if main_columns.is_empty() {
-            return Err(DataBridgeError::Query(format!(
-                "Table '{}' not found or has no columns",
-                table
-            )));
+            return Err(DataBridgeError::Query(format!("Table '{}' not found or has no columns", table)));
         }
 
         let quoted_main_table = QueryBuilder::quote_identifier(table);
 
         // Alias main table columns with _main_ prefix to avoid collisions
-        let mut select_cols: Vec<String> = main_columns
-            .iter()
+        let mut select_cols: Vec<String> = main_columns.iter()
             .map(|col| {
                 let quoted_col = QueryBuilder::quote_identifier(col);
                 format!("{}.{} AS \"_main_{}\"", quoted_main_table, quoted_col, col)
@@ -537,38 +521,28 @@ impl Row {
                     for col in cols {
                         let quoted_col = QueryBuilder::quote_identifier(col);
                         // quoted_col already contains quotes (e.g., "column_name"), so use it directly
-                        select_cols.push(format!(
-                            "\"{}\".{} AS \"{}__{}\"",
-                            alias, quoted_col, rel.name, col
-                        ));
+                        select_cols.push(format!("\"{}\".{} AS \"{}__{}\"", alias, quoted_col, rel.name, col));
                     }
                 }
                 None => {
-                    select_cols.push(format!(
-                        "\"{}\".\"{}\" AS \"{}__exists\"",
-                        alias, rel.reference_column, rel.name
-                    ));
-                    select_cols.push(format!(
-                        "row_to_json(\"{}\") AS \"{}__data\"",
-                        alias, rel.name
-                    ));
+                    select_cols.push(format!("\"{}\".\"{}\" AS \"{}__exists\"", alias, rel.reference_column, rel.name));
+                    select_cols.push(format!("row_to_json(\"{}\") AS \"{}__data\"", alias, rel.name));
                 }
             }
         }
 
-        let mut qb = QueryBuilder::new(table)?.select_raw(select_cols);
+        let mut qb = QueryBuilder::new(table)?
+            .select_raw(select_cols);
 
         for (idx, rel) in relations.iter().enumerate() {
             let alias = format!("_rel{}", idx);
-            let join_condition =
-                JoinCondition::new(&rel.foreign_key, &alias, &rel.reference_column)?;
-
-            qb = qb.join(
-                rel.join_type.clone(),
-                &rel.table,
-                Some(&alias),
-                join_condition,
+            let join_condition = JoinCondition::new(
+                &rel.foreign_key,
+                &alias,
+                &rel.reference_column
             )?;
+
+            qb = qb.join(rel.join_type.clone(), &rel.table, Some(&alias), join_condition)?;
         }
 
         let qualified_id_col = format!("{}.id", table);
@@ -591,22 +565,15 @@ impl Row {
                 let mut result = Self::from_sqlx(&pg_row)?;
 
                 // First, strip _main_ prefix from main table columns
-                let main_keys: Vec<String> = result
-                    .columns
-                    .keys()
+                let main_keys: Vec<String> = result.columns.keys()
                     .filter(|k| k.starts_with("_main_"))
                     .cloned()
                     .collect();
 
                 for key in main_keys {
                     if let Some(value) = result.columns.remove(&key) {
-                        let final_key = key
-                            .strip_prefix("_main_")
-                            .ok_or_else(|| {
-                                DataBridgeError::Query(
-                                    "Failed to process main table column prefix".to_string(),
-                                )
-                            })?
+                        let final_key = key.strip_prefix("_main_")
+                            .ok_or_else(|| DataBridgeError::Query("Failed to process main table column prefix".to_string()))?
                             .to_string();
                         result.columns.insert(final_key, value);
                     }
@@ -617,15 +584,10 @@ impl Row {
                     let real_prefix = format!("{}__", rel.name);
 
                     let exists_key = format!("{}exists", real_prefix);
-                    let row_exists = !matches!(
-                        result.columns.remove(&exists_key),
-                        Some(ExtractedValue::Null) | None
-                    );
+                    let row_exists = !matches!(result.columns.remove(&exists_key), Some(ExtractedValue::Null) | None);
 
                     if !row_exists {
-                        result
-                            .columns
-                            .insert(rel.name.clone(), ExtractedValue::Null);
+                        result.columns.insert(rel.name.clone(), ExtractedValue::Null);
                         let mut to_remove = Vec::new();
                         for k in result.columns.keys() {
                             if k.starts_with(&real_prefix) {
@@ -639,8 +601,7 @@ impl Row {
                     }
 
                     let mut rel_data = serde_json::Map::new();
-                    let keys_to_process: Vec<String> = result
-                        .columns
+                    let keys_to_process: Vec<String> = result.columns
                         .keys()
                         .filter(|k| k.starts_with(&real_prefix))
                         .cloned()
@@ -648,13 +609,8 @@ impl Row {
 
                     for key in keys_to_process {
                         if let Some(value) = result.columns.remove(&key) {
-                            let rel_key = key
-                                .strip_prefix(&real_prefix)
-                                .ok_or_else(|| {
-                                    DataBridgeError::Query(
-                                        "Failed to process nested data structure".to_string(),
-                                    )
-                                })?
+                            let rel_key = key.strip_prefix(&real_prefix)
+                                .ok_or_else(|| DataBridgeError::Query("Failed to process nested data structure".to_string()))?
                                 .to_string();
 
                             if rel_key == "data" {
@@ -671,14 +627,9 @@ impl Row {
                     }
 
                     if !rel_data.is_empty() {
-                        result.columns.insert(
-                            rel.name.clone(),
-                            ExtractedValue::Json(JsonValue::Object(rel_data)),
-                        );
+                        result.columns.insert(rel.name.clone(), ExtractedValue::Json(JsonValue::Object(rel_data)));
                     } else {
-                        result
-                            .columns
-                            .insert(rel.name.clone(), ExtractedValue::Null);
+                        result.columns.insert(rel.name.clone(), ExtractedValue::Null);
                     }
                 }
 
@@ -724,30 +675,23 @@ impl Row {
             .bind(table)
             .fetch_all(executor)
             .await
-            .map_err(|e| {
-                DataBridgeError::Database(format!("Failed to fetch table columns: {}", e))
-            })?;
+            .map_err(|e| DataBridgeError::Database(format!("Failed to fetch table columns: {}", e)))?;
 
         let mut main_columns = Vec::new();
         for row in column_rows {
-            let col_name: String = row
-                .try_get("column_name")
+            let col_name: String = row.try_get("column_name")
                 .map_err(|e| DataBridgeError::Database(e.to_string()))?;
             main_columns.push(col_name);
         }
 
         if main_columns.is_empty() {
-            return Err(DataBridgeError::Query(format!(
-                "Table '{}' not found or has no columns",
-                table
-            )));
+            return Err(DataBridgeError::Query(format!("Table '{}' not found or has no columns", table)));
         }
 
         let quoted_main_table = QueryBuilder::quote_identifier(table);
 
         // Alias main table columns with _main_ prefix to avoid collisions
-        let mut select_cols: Vec<String> = main_columns
-            .iter()
+        let mut select_cols: Vec<String> = main_columns.iter()
             .map(|col| {
                 let quoted_col = QueryBuilder::quote_identifier(col);
                 format!("{}.{} AS \"_main_{}\"", quoted_main_table, quoted_col, col)
@@ -760,38 +704,28 @@ impl Row {
                     for col in cols {
                         let quoted_col = QueryBuilder::quote_identifier(col);
                         // quoted_col already contains quotes (e.g., "column_name"), so use it directly
-                        select_cols.push(format!(
-                            "\"{}\".{} AS \"{}__{}\"",
-                            alias, quoted_col, rel.name, col
-                        ));
+                        select_cols.push(format!("\"{}\".{} AS \"{}__{}\"", alias, quoted_col, rel.name, col));
                     }
                 }
                 None => {
-                    select_cols.push(format!(
-                        "\"{}\".\"{}\" AS \"{}__exists\"",
-                        alias, rel.reference_column, rel.name
-                    ));
-                    select_cols.push(format!(
-                        "row_to_json(\"{}\") AS \"{}__data\"",
-                        alias, rel.name
-                    ));
+                    select_cols.push(format!("\"{}\".\"{}\" AS \"{}__exists\"", alias, rel.reference_column, rel.name));
+                    select_cols.push(format!("row_to_json(\"{}\") AS \"{}__data\"", alias, rel.name));
                 }
             }
         }
 
-        let mut qb = QueryBuilder::new(table)?.select_raw(select_cols);
+        let mut qb = QueryBuilder::new(table)?
+            .select_raw(select_cols);
 
         for (idx, rel) in relations.iter().enumerate() {
             let alias = format!("_rel{}", idx);
-            let join_condition =
-                JoinCondition::new(&rel.foreign_key, &alias, &rel.reference_column)?;
-
-            qb = qb.join(
-                rel.join_type.clone(),
-                &rel.table,
-                Some(&alias),
-                join_condition,
+            let join_condition = JoinCondition::new(
+                &rel.foreign_key,
+                &alias,
+                &rel.reference_column
             )?;
+
+            qb = qb.join(rel.join_type.clone(), &rel.table, Some(&alias), join_condition)?;
         }
 
         if let Some((col, op, val)) = where_clause {
@@ -836,22 +770,15 @@ impl Row {
             let mut result = Self::from_sqlx(&pg_row)?;
 
             // First, strip _main_ prefix from main table columns
-            let main_keys: Vec<String> = result
-                .columns
-                .keys()
+            let main_keys: Vec<String> = result.columns.keys()
                 .filter(|k| k.starts_with("_main_"))
                 .cloned()
                 .collect();
 
             for key in main_keys {
                 if let Some(value) = result.columns.remove(&key) {
-                    let final_key = key
-                        .strip_prefix("_main_")
-                        .ok_or_else(|| {
-                            DataBridgeError::Query(
-                                "Failed to process main table column prefix".to_string(),
-                            )
-                        })?
+                    let final_key = key.strip_prefix("_main_")
+                        .ok_or_else(|| DataBridgeError::Query("Failed to process main table column prefix".to_string()))?
                         .to_string();
                     result.columns.insert(final_key, value);
                 }
@@ -862,15 +789,10 @@ impl Row {
                 let real_prefix = format!("{}__", rel.name);
 
                 let exists_key = format!("{}exists", real_prefix);
-                let row_exists = !matches!(
-                    result.columns.remove(&exists_key),
-                    Some(ExtractedValue::Null) | None
-                );
+                let row_exists = !matches!(result.columns.remove(&exists_key), Some(ExtractedValue::Null) | None);
 
                 if !row_exists {
-                    result
-                        .columns
-                        .insert(rel.name.clone(), ExtractedValue::Null);
+                    result.columns.insert(rel.name.clone(), ExtractedValue::Null);
                     let mut to_remove = Vec::new();
                     for k in result.columns.keys() {
                         if k.starts_with(&real_prefix) {
@@ -884,8 +806,7 @@ impl Row {
                 }
 
                 let mut rel_data = serde_json::Map::new();
-                let keys_to_process: Vec<String> = result
-                    .columns
+                let keys_to_process: Vec<String> = result.columns
                     .keys()
                     .filter(|k| k.starts_with(&real_prefix))
                     .cloned()
@@ -893,13 +814,8 @@ impl Row {
 
                 for key in keys_to_process {
                     if let Some(value) = result.columns.remove(&key) {
-                        let rel_key = key
-                            .strip_prefix(&real_prefix)
-                            .ok_or_else(|| {
-                                DataBridgeError::Query(
-                                    "Failed to process nested data structure".to_string(),
-                                )
-                            })?
+                        let rel_key = key.strip_prefix(&real_prefix)
+                            .ok_or_else(|| DataBridgeError::Query("Failed to process nested data structure".to_string()))?
                             .to_string();
                         if rel_key == "data" {
                             if let ExtractedValue::Json(JsonValue::Object(data_map)) = value {
@@ -915,14 +831,9 @@ impl Row {
                 }
 
                 if !rel_data.is_empty() {
-                    result.columns.insert(
-                        rel.name.clone(),
-                        ExtractedValue::Json(JsonValue::Object(rel_data)),
-                    );
+                    result.columns.insert(rel.name.clone(), ExtractedValue::Json(JsonValue::Object(rel_data)));
                 } else {
-                    result
-                        .columns
-                        .insert(rel.name.clone(), ExtractedValue::Null);
+                    result.columns.insert(rel.name.clone(), ExtractedValue::Null);
                 }
             }
             results.push(result);
@@ -970,10 +881,7 @@ impl Row {
         QueryBuilder::validate_identifier(table)?;
         QueryBuilder::validate_identifier(id_column)?;
 
-        let mut tx = pool
-            .begin()
-            .await
-            .map_err(|e| DataBridgeError::Database(e.to_string()))?;
+        let mut tx = pool.begin().await.map_err(|e| DataBridgeError::Database(e.to_string()))?;
         let backrefs = Self::get_backreferences_internal(&mut *tx, table).await?;
 
         // Validate all backref identifiers before use in SQL
@@ -1000,9 +908,7 @@ impl Row {
 
                     if row.0 {
                         warn!(source_table = %backref.source_table, "Cascade delete blocked by RESTRICT constraint");
-                        tx.rollback()
-                            .await
-                            .map_err(|e| DataBridgeError::Database(e.to_string()))?;
+                        tx.rollback().await.map_err(|e| DataBridgeError::Database(e.to_string()))?;
                         return Err(DataBridgeError::Validation(
                             "Cannot delete record: foreign key constraint violation. Use cascade delete or remove referencing records first.".to_string()
                         ));
@@ -1054,8 +960,7 @@ impl Row {
 
         let delete_query = format!(
             "DELETE FROM {} WHERE \"{}\" = $1",
-            QueryBuilder::quote_identifier(table),
-            id_column
+            QueryBuilder::quote_identifier(table), id_column
         );
         let result = sqlx::query(&delete_query)
             .bind(id)
@@ -1064,9 +969,7 @@ impl Row {
             .map_err(|e| DataBridgeError::Database(e.to_string()))?;
         total_deleted += result.rows_affected();
 
-        tx.commit()
-            .await
-            .map_err(|e| DataBridgeError::Database(e.to_string()))?;
+        tx.commit().await.map_err(|e| DataBridgeError::Database(e.to_string()))?;
 
         info!(
             total_deleted,
@@ -1097,10 +1000,7 @@ impl Row {
         }
 
         for backref in &backrefs {
-            if matches!(
-                backref.on_delete,
-                CascadeRule::Restrict | CascadeRule::NoAction
-            ) {
+            if matches!(backref.on_delete, CascadeRule::Restrict | CascadeRule::NoAction) {
                 let check_query = format!(
                     "SELECT EXISTS(SELECT 1 FROM \"{}\" WHERE \"{}\" = $1) as has_children",
                     backref.source_table, backref.source_column
@@ -1121,8 +1021,7 @@ impl Row {
 
         let query = format!(
             "DELETE FROM {} WHERE \"{}\" = $1",
-            QueryBuilder::quote_identifier(table),
-            id_column
+            QueryBuilder::quote_identifier(table), id_column
         );
 
         let result = sqlx::query(&query)
@@ -1156,29 +1055,20 @@ impl Row {
         let mut backrefs = Vec::new();
         for row in rows {
             backrefs.push(BackRef {
-                source_table: row
-                    .try_get("source_table")
+                source_table: row.try_get("source_table")
                     .map_err(|e| DataBridgeError::Database(e.to_string()))?,
-                source_column: row
-                    .try_get("source_column")
+                source_column: row.try_get("source_column")
                     .map_err(|e| DataBridgeError::Database(e.to_string()))?,
-                target_table: row
-                    .try_get("target_table")
+                target_table: row.try_get("target_table")
                     .map_err(|e| DataBridgeError::Database(e.to_string()))?,
-                target_column: row
-                    .try_get("target_column")
+                target_column: row.try_get("target_column")
                     .map_err(|e| DataBridgeError::Database(e.to_string()))?,
-                constraint_name: row
-                    .try_get("constraint_name")
+                constraint_name: row.try_get("constraint_name")
                     .map_err(|e| DataBridgeError::Database(e.to_string()))?,
-                on_delete: CascadeRule::from_sql(
-                    &row.try_get::<String, _>("delete_rule")
-                        .map_err(|e| DataBridgeError::Database(e.to_string()))?,
-                ),
-                on_update: CascadeRule::from_sql(
-                    &row.try_get::<String, _>("update_rule")
-                        .map_err(|e| DataBridgeError::Database(e.to_string()))?,
-                ),
+                on_delete: CascadeRule::from_sql(&row.try_get::<String, _>("delete_rule")
+                    .map_err(|e| DataBridgeError::Database(e.to_string()))?),
+                on_update: CascadeRule::from_sql(&row.try_get::<String, _>("update_rule")
+                    .map_err(|e| DataBridgeError::Database(e.to_string()))?),
             });
         }
 
@@ -1211,19 +1101,12 @@ impl Row {
             )
             "#,
             config.join_table,
-            config.source_key,
-            source_table,
-            config.source_reference,
-            config.target_key,
-            config.target_table,
-            config.target_reference,
-            config.source_key,
-            config.target_key
+            config.source_key, source_table, config.source_reference,
+            config.target_key, config.target_table, config.target_reference,
+            config.source_key, config.target_key
         );
 
-        sqlx::query(&sql)
-            .execute(pool)
-            .await
+        sqlx::query(&sql).execute(pool).await
             .map_err(|e| DataBridgeError::Database(e.to_string()))?;
         Ok(())
     }
@@ -1324,10 +1207,7 @@ impl Row {
                 for col in cols {
                     QueryBuilder::validate_identifier(col)?;
                 }
-                cols.iter()
-                    .map(|c| format!(r#"t."{}""#, c))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                cols.iter().map(|c| format!(r#"t."{}""#, c)).collect::<Vec<_>>().join(", ")
             }
             None => "t.*".to_string(),
         };
@@ -1338,11 +1218,7 @@ impl Row {
                 let mut parts = Vec::new();
                 for (col, dir) in orders {
                     QueryBuilder::validate_identifier(col)?;
-                    let direction = if dir.to_lowercase() == "desc" {
-                        "DESC"
-                    } else {
-                        "ASC"
-                    };
+                    let direction = if dir.to_lowercase() == "desc" { "DESC" } else { "ASC" };
                     parts.push(format!(r#"t."{}" {}"#, col, direction));
                 }
                 format!("ORDER BY {}", parts.join(", "))
@@ -1409,8 +1285,7 @@ impl Row {
             .await
             .map_err(|e| DataBridgeError::Database(e.to_string()))?;
 
-        let count: i64 = row
-            .try_get("count")
+        let count: i64 = row.try_get("count")
             .map_err(|e| DataBridgeError::Database(e.to_string()))?;
         Ok(count)
     }
@@ -1468,15 +1343,21 @@ fn extracted_value_to_json(value: &ExtractedValue) -> Result<JsonValue> {
         ExtractedValue::SmallInt(v) => JsonValue::Number((*v).into()),
         ExtractedValue::Int(v) => JsonValue::Number((*v).into()),
         ExtractedValue::BigInt(v) => JsonValue::Number((*v).into()),
-        ExtractedValue::Float(v) => serde_json::Number::from_f64(*v as f64)
-            .map(JsonValue::Number)
-            .unwrap_or(JsonValue::Null),
-        ExtractedValue::Double(v) => serde_json::Number::from_f64(*v)
-            .map(JsonValue::Number)
-            .unwrap_or(JsonValue::Null),
+        ExtractedValue::Float(v) => {
+            serde_json::Number::from_f64(*v as f64)
+                .map(JsonValue::Number)
+                .unwrap_or(JsonValue::Null)
+        }
+        ExtractedValue::Double(v) => {
+            serde_json::Number::from_f64(*v)
+                .map(JsonValue::Number)
+                .unwrap_or(JsonValue::Null)
+        }
         ExtractedValue::String(v) => JsonValue::String(v.clone()),
         ExtractedValue::Bytes(v) => {
-            let hex_string = v.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+            let hex_string = v.iter()
+                .map(|b| format!("{:02x}", b))
+                .collect::<String>();
             JsonValue::String(hex_string)
         }
         ExtractedValue::Uuid(v) => JsonValue::String(v.to_string()),
@@ -1505,10 +1386,7 @@ mod tests {
     fn test_row_data_creation() {
         let mut columns = HashMap::new();
         columns.insert("id".to_string(), ExtractedValue::BigInt(42));
-        columns.insert(
-            "name".to_string(),
-            ExtractedValue::String("Alice".to_string()),
-        );
+        columns.insert("name".to_string(), ExtractedValue::String("Alice".to_string()));
         let row = Row::new(columns.clone());
         assert!(matches!(row.get("id"), Ok(ExtractedValue::BigInt(42))));
         assert_eq!(row.columns_map(), &columns);

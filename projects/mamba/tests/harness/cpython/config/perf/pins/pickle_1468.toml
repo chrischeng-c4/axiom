@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/pickle_1468.toml)
 issue = 1468
 lib = "pickle"
-fixture = "tests/cpython/fixtures/std-libs/pickle/bench/highest_protocol_const_read_hot.py"
+fixture = "tests/cpython/_regression/std-libs/pickle/bench/highest_protocol_const_read_hot.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 1

@@ -16,6 +16,7 @@
 /// - Output capture uses the caller thread's buffer directly (no Arc<Mutex>)
 /// - Generator state lives in a thread-local HashMap (no DashMap needed)
 /// - `cleanup_all_generators()` deallocates all coroutine stacks
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::rc::{MbObject, ObjData};
@@ -46,9 +47,7 @@ struct CoroContext {
 
 impl CoroContext {
     fn new() -> Self {
-        CoroContext {
-            regs: [0u64; CORO_CTX_REGS],
-        }
+        CoroContext { regs: [0u64; CORO_CTX_REGS] }
     }
 }
 
@@ -78,10 +77,7 @@ impl CoroStack {
             // Guard page: no access at the bottom of the stack
             libc::mprotect(base as *mut libc::c_void, PAGE_SIZE, libc::PROT_NONE);
 
-            CoroStack {
-                base,
-                total_size: total,
-            }
+            CoroStack { base, total_size: total }
         }
     }
 
@@ -145,6 +141,7 @@ std::arch::global_asm!(
     "stp d10, d11, [x0, #120]",
     "stp d12, d13, [x0, #136]",
     "stp d14, d15, [x0, #152]",
+
     // Restore from to
     "ldp x19, x20, [x1]",
     "ldp x21, x22, [x1, #16]",
@@ -158,6 +155,7 @@ std::arch::global_asm!(
     "ldp d10, d11, [x1, #120]",
     "ldp d12, d13, [x1, #136]",
     "ldp d14, d15, [x1, #152]",
+
     // Return to restored LR (x30)
     "ret",
 );
@@ -180,6 +178,7 @@ std::arch::global_asm!(
     // Save return address
     "lea rax, [rip + .Lswap_resume]",
     "mov [rdi + 56], rax",
+
     // Restore from to
     "mov rbx, [rsi]",
     "mov rbp, [rsi + 8]",
@@ -190,6 +189,7 @@ std::arch::global_asm!(
     "mov rsp, [rsi + 48]",
     // Jump to restored rip
     "jmp [rsi + 56]",
+
     ".Lswap_resume:",
     "ret",
 );
@@ -256,11 +256,7 @@ unsafe impl Sync for CallerCtxStack {}
 impl CallerCtxStack {
     const fn new() -> Self {
         CallerCtxStack {
-            slots: [const {
-                std::cell::UnsafeCell::new(CoroContext {
-                    regs: [0u64; CORO_CTX_REGS],
-                })
-            }; MAX_GEN_NESTING],
+            slots: [const { std::cell::UnsafeCell::new(CoroContext { regs: [0u64; CORO_CTX_REGS] }) }; MAX_GEN_NESTING],
             depth: std::cell::Cell::new(0),
         }
     }
@@ -268,10 +264,7 @@ impl CallerCtxStack {
     /// Push a new context and return a raw pointer to it.
     fn push(&self) -> *mut CoroContext {
         let d = self.depth.get();
-        assert!(
-            d < MAX_GEN_NESTING,
-            "generator nesting too deep (max {MAX_GEN_NESTING})"
-        );
+        assert!(d < MAX_GEN_NESTING, "generator nesting too deep (max {MAX_GEN_NESTING})");
         self.depth.set(d + 1);
         self.slots[d].get()
     }
@@ -471,8 +464,7 @@ pub fn mb_generator_store_arg(gen_handle: MbValue, arg: MbValue) {
 /// Reads the generator ID from ACTIVE_GEN_ID (set before the swap into this
 /// coroutine), calls the compiled body, then swaps back to the caller.
 extern "C" fn gen_trampoline() {
-    let gen_id = GEN_ACTIVE
-        .with(|a| a.active_id.get())
+    let gen_id = GEN_ACTIVE.with(|a| a.active_id.get())
         .expect("gen_trampoline: ACTIVE_GEN_ID must be set");
 
     // Extract body fn addr and args from the registry.
@@ -526,7 +518,7 @@ fn init_coro_context(ctx: &mut CoroContext, stack_top: *mut u8) {
         //               idx 0..9       10    11  12   13..20
         ctx.regs[10] = 0; // x29 (FP) = 0 (base frame)
         ctx.regs[11] = gen_trampoline as *const () as u64; // x30 (LR) — swap_context does `ret` which jumps here
-                                                           // SP: 16-byte aligned, leave space for a minimal frame
+        // SP: 16-byte aligned, leave space for a minimal frame
         ctx.regs[12] = (stack_top as u64) & !0xF;
     }
     #[cfg(target_arch = "x86_64")]
@@ -674,10 +666,7 @@ fn resume_generator(id: u64, send_value: MbValue) -> MbValue {
                 )),
                 cause,
             );
-        } else if !super::exception::mb_has_exception()
-            .as_bool()
-            .unwrap_or(false)
-        {
+        } else if !super::exception::mb_has_exception().as_bool().unwrap_or(false) {
             raise_stop_iteration(MbValue::from_bits(completion_bits));
         }
         MbValue::none()
@@ -743,7 +732,11 @@ pub fn mb_generator_stop_value() -> MbValue {
 }
 
 /// Throw an exception into the generator.
-pub fn mb_generator_throw(gen_handle: MbValue, exc_type: MbValue, exc_msg: MbValue) -> MbValue {
+pub fn mb_generator_throw(
+    gen_handle: MbValue,
+    exc_type: MbValue,
+    exc_msg: MbValue,
+) -> MbValue {
     if let Some(id) = gen_handle.as_int() {
         let id = id as u64;
 
@@ -762,9 +755,9 @@ pub fn mb_generator_throw(gen_handle: MbValue, exc_type: MbValue, exc_msg: MbVal
         match state {
             Some(2) | None => {
                 // CPython: throw on exhausted generator raises the thrown exception
-                super::exception::set_current_exception(super::exception::MbException::new(
-                    &type_name, &msg,
-                ));
+                super::exception::set_current_exception(
+                    super::exception::MbException::new(&type_name, &msg),
+                );
                 return MbValue::none();
             }
             Some(0) => {
@@ -774,9 +767,9 @@ pub fn mb_generator_throw(gen_handle: MbValue, exc_type: MbValue, exc_msg: MbVal
                         entry.state = GenState::Completed;
                     }
                 });
-                super::exception::set_current_exception(super::exception::MbException::new(
-                    &type_name, &msg,
-                ));
+                super::exception::set_current_exception(
+                    super::exception::MbException::new(&type_name, &msg),
+                );
                 return MbValue::none();
             }
             _ => {}
@@ -813,10 +806,7 @@ pub fn mb_generator_throw(gen_handle: MbValue, exc_type: MbValue, exc_msg: MbVal
 
         // Check if generator completed (exception not caught)
         let completed = GENERATORS.with(|gens| {
-            gens.borrow()
-                .get(&id)
-                .map(|e| matches!(e.state, GenState::Completed))
-                .unwrap_or(true)
+            gens.borrow().get(&id).map(|e| matches!(e.state, GenState::Completed)).unwrap_or(true)
         });
 
         if completed {
@@ -826,13 +816,10 @@ pub fn mb_generator_throw(gen_handle: MbValue, exc_type: MbValue, exc_msg: MbVal
             // exception is still pending. Either is the correct value to
             // surface to the caller of throw(). Defensive fallback only
             // when no exception is pending (shouldn't happen post-fix).
-            if !super::exception::mb_has_exception()
-                .as_bool()
-                .unwrap_or(false)
-            {
-                super::exception::set_current_exception(super::exception::MbException::new(
-                    &type_name, &msg,
-                ));
+            if !super::exception::mb_has_exception().as_bool().unwrap_or(false) {
+                super::exception::set_current_exception(
+                    super::exception::MbException::new(&type_name, &msg),
+                );
             }
             MbValue::none()
         } else {
@@ -893,10 +880,7 @@ pub fn mb_generator_close(gen_handle: MbValue) {
 
         // Check if generator yielded despite GeneratorExit (illegal)
         let completed = GENERATORS.with(|gens| {
-            gens.borrow()
-                .get(&id)
-                .map(|e| matches!(e.state, GenState::Completed))
-                .unwrap_or(true)
+            gens.borrow().get(&id).map(|e| matches!(e.state, GenState::Completed)).unwrap_or(true)
         });
 
         if !completed && !result.is_none() {
@@ -906,10 +890,12 @@ pub fn mb_generator_close(gen_handle: MbValue) {
                     entry.state = GenState::Completed;
                 }
             });
-            super::exception::set_current_exception(super::exception::MbException::new(
-                "RuntimeError",
-                "generator ignored GeneratorExit",
-            ));
+            super::exception::set_current_exception(
+                super::exception::MbException::new(
+                    "RuntimeError",
+                    "generator ignored GeneratorExit",
+                ),
+            );
             return;
         }
 
@@ -1036,9 +1022,7 @@ pub fn cleanup_all_generators() {
 /// leaked at the MbValue layer; the mapped stack memory is retired here.
 pub(crate) fn cleanup_generator_state_for_runtime_reset() {
     let stale_ids: Vec<u64> = GENERATORS.with(|gens| {
-        gens.try_borrow()
-            .map(|g| g.keys().copied().collect())
-            .unwrap_or_default()
+        gens.try_borrow().map(|g| g.keys().copied().collect()).unwrap_or_default()
     });
     for id in stale_ids {
         super::iter::unregister_generator_iter(MbValue::from_int(id as i64));
@@ -1117,9 +1101,7 @@ pub fn mb_generator_yield_value(value: MbValue) -> MbValue {
         return MbValue::none();
     }
 
-    unsafe {
-        super::rc::retain_if_ptr(sent_value);
-    }
+    unsafe { super::rc::retain_if_ptr(sent_value); }
     sent_value
 }
 
@@ -1192,8 +1174,8 @@ fn yield_from_generator(sub_gen: MbValue) -> MbValue {
             let exc_val = super::exception::mb_catch_exception();
             let exc_type_str = super::exception::get_exception_type_pub(exc_val)
                 .unwrap_or_else(|| "Exception".to_string());
-            let exc_msg_str =
-                super::exception::get_exception_message_pub(exc_val).unwrap_or_default();
+            let exc_msg_str = super::exception::get_exception_message_pub(exc_val)
+                .unwrap_or_default();
             let type_vreg = MbValue::from_ptr(MbObject::new_str(exc_type_str));
             let msg_vreg = MbValue::from_ptr(MbObject::new_str(exc_msg_str));
             val = mb_generator_throw(sub_gen, type_vreg, msg_vreg);
@@ -1232,7 +1214,9 @@ fn call_body_fn(fn_addr: u64, args: &[MbValue]) -> MbValue {
             }
             2 => {
                 let f: extern "C" fn(i64, i64) -> i64 = std::mem::transmute(raw_addr as usize);
-                MbValue::from_bits(f(args[0].to_bits() as i64, args[1].to_bits() as i64) as u64)
+                MbValue::from_bits(
+                    f(args[0].to_bits() as i64, args[1].to_bits() as i64) as u64,
+                )
             }
             3 => {
                 let f: extern "C" fn(i64, i64, i64) -> i64 = std::mem::transmute(raw_addr as usize);
@@ -1243,8 +1227,7 @@ fn call_body_fn(fn_addr: u64, args: &[MbValue]) -> MbValue {
                 ) as u64)
             }
             4 => {
-                let f: extern "C" fn(i64, i64, i64, i64) -> i64 =
-                    std::mem::transmute(raw_addr as usize);
+                let f: extern "C" fn(i64, i64, i64, i64) -> i64 = std::mem::transmute(raw_addr as usize);
                 MbValue::from_bits(f(
                     args[0].to_bits() as i64,
                     args[1].to_bits() as i64,
@@ -1280,8 +1263,8 @@ fn extract_str(val: MbValue) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::rc::MbObject;
     use super::*;
+    use super::super::rc::MbObject;
 
     #[test]
     fn test_generator_create_and_is_exhausted() {
@@ -1353,10 +1336,7 @@ mod tests {
         cleanup_all_generators();
 
         for gen in &gen_ids {
-            assert!(
-                !is_known_generator(*gen),
-                "generator should be removed after cleanup"
-            );
+            assert!(!is_known_generator(*gen), "generator should be removed after cleanup");
             assert_eq!(
                 mb_generator_is_exhausted(*gen).as_bool(),
                 Some(true),
@@ -1370,14 +1350,8 @@ mod tests {
         let id1 = alloc_gen_id();
         let id2 = alloc_gen_id();
         let id3 = alloc_gen_id();
-        assert!(
-            id1 < id2,
-            "IDs should be strictly increasing: {id1} < {id2}"
-        );
-        assert!(
-            id2 < id3,
-            "IDs should be strictly increasing: {id2} < {id3}"
-        );
+        assert!(id1 < id2, "IDs should be strictly increasing: {id1} < {id2}");
+        assert!(id2 < id3, "IDs should be strictly increasing: {id2} < {id3}");
     }
 
     #[test]

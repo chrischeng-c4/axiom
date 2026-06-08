@@ -1,7 +1,7 @@
 # Manifest for the PEP 498 (formatted string literals / f-strings) corpus.
 #
 # One [[case]] per fixture. `fixture_gen.py` turns this into the files under
-# tests/cpython/fixtures/pep/498/<dimension>/<case>.py:
+# tests/cpython/pep/498/<dimension>/<case>.py:
 #   - mechanical surface/errors come out complete (status="filled")
 #   - semantic cases come out as fillable skeletons (status="generated")
 #

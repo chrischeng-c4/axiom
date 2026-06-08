@@ -72,6 +72,8 @@ fn fixture_with_artifacts() -> E2eEvidenceBundle {
             }],
         }],
         artifacts: vec![],
+        serve_session: None,
+        browser_sessions: vec![],
         open_control: None,
     }
 }

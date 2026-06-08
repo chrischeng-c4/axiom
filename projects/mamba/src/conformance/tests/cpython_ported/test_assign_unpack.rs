@@ -45,5 +45,8 @@ a, *middle, b = [1, 2, 3, 4, 5]
 print(a, middle, b)
 "#,
     );
-    assert_output(&out, "1 [2, 3, 4, 5]\n[1, 2, 3, 4] 5\n1 [2, 3, 4] 5\n");
+    assert_output(
+        &out,
+        "1 [2, 3, 4, 5]\n[1, 2, 3, 4] 5\n1 [2, 3, 4] 5\n",
+    );
 }

@@ -91,55 +91,20 @@ fn collect_legend_entries(series: &[DataSeries], palette: &[Color]) -> Vec<Legen
         };
 
         match s {
-            DataSeries::Line {
-                label: Some(l),
-                style: ls,
-                ..
-            } => {
-                entries.push(LegendEntry {
-                    label: l.clone(),
-                    color: ls.color,
-                });
+            DataSeries::Line { label: Some(l), style: ls, .. } => {
+                entries.push(LegendEntry { label: l.clone(), color: ls.color });
             }
-            DataSeries::Bar {
-                label: Some(l),
-                style: bs,
-                ..
-            } => {
-                entries.push(LegendEntry {
-                    label: l.clone(),
-                    color: bs.color,
-                });
+            DataSeries::Bar { label: Some(l), style: bs, .. } => {
+                entries.push(LegendEntry { label: l.clone(), color: bs.color });
             }
-            DataSeries::Scatter {
-                label: Some(l),
-                style: ps,
-                ..
-            } => {
-                entries.push(LegendEntry {
-                    label: l.clone(),
-                    color: ps.color,
-                });
+            DataSeries::Scatter { label: Some(l), style: ps, .. } => {
+                entries.push(LegendEntry { label: l.clone(), color: ps.color });
             }
-            DataSeries::Histogram {
-                label: Some(l),
-                style: bs,
-                ..
-            } => {
-                entries.push(LegendEntry {
-                    label: l.clone(),
-                    color: bs.color,
-                });
+            DataSeries::Histogram { label: Some(l), style: bs, .. } => {
+                entries.push(LegendEntry { label: l.clone(), color: bs.color });
             }
-            DataSeries::Area {
-                label: Some(l),
-                style: ls,
-                ..
-            } => {
-                entries.push(LegendEntry {
-                    label: l.clone(),
-                    color: ls.color,
-                });
+            DataSeries::Area { label: Some(l), style: ls, .. } => {
+                entries.push(LegendEntry { label: l.clone(), color: ls.color });
             }
             DataSeries::StackedBar { datasets, .. } => {
                 for (di, (name, _)) in datasets.iter().enumerate() {
@@ -148,10 +113,7 @@ fn collect_legend_entries(series: &[DataSeries], palette: &[Color]) -> Vec<Legen
                     } else {
                         palette[di % palette.len()]
                     };
-                    entries.push(LegendEntry {
-                        label: name.clone(),
-                        color,
-                    });
+                    entries.push(LegendEntry { label: name.clone(), color });
                 }
             }
             DataSeries::Violin { labels, .. } => {
@@ -161,10 +123,7 @@ fn collect_legend_entries(series: &[DataSeries], palette: &[Color]) -> Vec<Legen
                     } else {
                         palette[vi % palette.len()]
                     };
-                    entries.push(LegendEntry {
-                        label: lbl.clone(),
-                        color,
-                    });
+                    entries.push(LegendEntry { label: lbl.clone(), color });
                 }
             }
             DataSeries::Polar { datasets, .. } => {
@@ -174,10 +133,7 @@ fn collect_legend_entries(series: &[DataSeries], palette: &[Color]) -> Vec<Legen
                     } else {
                         palette[di % palette.len()]
                     };
-                    entries.push(LegendEntry {
-                        label: name.clone(),
-                        color,
-                    });
+                    entries.push(LegendEntry { label: name.clone(), color });
                 }
             }
             DataSeries::Donut { labels: dl, .. } => {
@@ -187,10 +143,7 @@ fn collect_legend_entries(series: &[DataSeries], palette: &[Color]) -> Vec<Legen
                     } else {
                         palette[di % palette.len()]
                     };
-                    entries.push(LegendEntry {
-                        label: lbl.clone(),
-                        color,
-                    });
+                    entries.push(LegendEntry { label: lbl.clone(), color });
                 }
             }
             _ => {
@@ -204,10 +157,7 @@ fn collect_legend_entries(series: &[DataSeries], palette: &[Color]) -> Vec<Legen
                     _ => None,
                 };
                 if let Some(l) = lbl {
-                    entries.push(LegendEntry {
-                        label: l,
-                        color: fallback_color,
-                    });
+                    entries.push(LegendEntry { label: l, color: fallback_color });
                 }
             }
         }
@@ -218,7 +168,7 @@ fn collect_legend_entries(series: &[DataSeries], palette: &[Color]) -> Vec<Legen
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viz::style::{BLUE, GREEN, ORANGE};
+    use crate::viz::style::{BLUE, ORANGE, GREEN};
 
     #[test]
     fn test_collect_no_labels() {
@@ -272,7 +222,9 @@ mod tests {
     fn test_render_legend_skips_single() {
         let style = ChartStyle::default();
         let mut r = SvgRenderer::new(400.0, 300.0);
-        let series = vec![DataSeries::line(vec![1.0], vec![2.0]).with_label("Only one")];
+        let series = vec![
+            DataSeries::line(vec![1.0], vec![2.0]).with_label("Only one"),
+        ];
         let before = r.elements.len();
         r.render_legend(&series, &style, &[BLUE]);
         // Should not add legend elements for a single entry

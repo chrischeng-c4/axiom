@@ -73,11 +73,17 @@ fn domain_roots_contain_only_entrypoints_and_taxonomy_dirs() {
         |_| false,
         &mut violations,
     );
-    collect_domain_root_violations("harness", &["cpython"], &[], |_| false, &mut violations);
+    collect_domain_root_violations(
+        "harness",
+        &["cpython"],
+        &[],
+        |_| false,
+        &mut violations,
+    );
     collect_domain_root_violations(
         "governance",
         &["gates", "mvp_gates", "schema_gates"],
-        &["ci_guard.rs", "mvp_gates.rs", "schema_gates.rs"],
+        &["ci_guard.rs", "common.rs", "mvp_gates.rs", "schema_gates.rs"],
         |_| false,
         &mut violations,
     );

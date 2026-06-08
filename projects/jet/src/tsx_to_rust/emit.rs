@@ -218,7 +218,12 @@ fn ts_type_to_rust(node: Node, source: &str) -> Result<String> {
 // ── Function component → render fn + Component factory ──────────────────────
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-tsx-to-rust.md#schema
-pub fn function_component(out: &mut Emitter, node: Node, source: &str) -> Result<()> {
+pub fn function_component(
+    out: &mut Emitter,
+    node: Node,
+    source: &str,
+    aliases: &HashMap<String, String>,
+) -> Result<()> {
     // Name — required.
     let name_node = first_child_of_kind(node, "identifier")
         .ok_or_else(|| reject(node, "component without name"))?;
@@ -239,7 +244,8 @@ pub fn function_component(out: &mut Emitter, node: Node, source: &str) -> Result
     // a named interface (emitted earlier).
     let params = first_child_of_kind(node, "formal_parameters")
         .ok_or_else(|| reject(node, "component without parameters"))?;
-    let (field_names, props_type) = parse_destructured_props(params, source)?;
+    let (field_names, props_type) = parse_component_props(params, source)?;
+    let has_props = !props_type.is_empty();
 
     // Body — a statement_block whose last statement is a return_statement.
     let body = first_child_of_kind(node, "statement_block")
@@ -253,9 +259,11 @@ pub fn function_component(out: &mut Emitter, node: Node, source: &str) -> Result
         "fn {render_fn}(props: &Rc<dyn std::any::Any>) -> Element {{"
     ));
     out.indent();
-    out.push_line(&format!(
-        "let props: &{props_type} = props.downcast_ref().expect(\"{props_type}\");"
-    ));
+    if has_props {
+        out.push_line(&format!(
+            "let props: &{props_type} = props.downcast_ref().expect(\"{props_type}\");"
+        ));
+    }
     // Destructure each prop field as a local `&Ty` so JSX
     // interpolations like `{value}` resolve without the transpiler
     // having to thread `prop_fields` through every emit_jsx_*
@@ -283,7 +291,7 @@ pub fn function_component(out: &mut Emitter, node: Node, source: &str) -> Result
                     .named_children(&mut stmt.walk())
                     .next()
                     .ok_or_else(|| reject(stmt, "empty return"))?;
-                let rendered = emit_jsx_expr(expr, source)?;
+                let rendered = emit_jsx_expr(expr, source, aliases)?;
                 out.push_line(&format!("{rendered}"));
             }
             "empty_statement" => {}
@@ -327,7 +335,11 @@ pub fn function_component(out: &mut Emitter, node: Node, source: &str) -> Result
     out.indent();
     out.push_line(&format!("name: \"{name}\","));
     out.push_line(&format!("render: {render_fn},"));
-    out.push_line(&format!("props: Rc::new({props_type} {{ {ctor_inits} }}),"));
+    if has_props {
+        out.push_line(&format!("props: Rc::new({props_type} {{ {ctor_inits} }}),"));
+    } else {
+        out.push_line("props: Rc::new(()),");
+    }
     out.dedent();
     out.push_line("}");
     out.dedent();
@@ -855,14 +867,23 @@ fn find_top_level_return_expr(body: Node) -> Option<Node> {
     found
 }
 
-/// Parse `{ start }: CounterProps` → (`["start"]`, "CounterProps").
-fn parse_destructured_props(params: Node, source: &str) -> Result<(Vec<String>, String)> {
-    let mut walker = params.walk();
-    let required_param = params
-        .named_children(&mut walker)
-        .find(|n| n.kind() == "required_parameter")
-        .ok_or_else(|| reject(params, "component must take exactly one parameter"))?;
+/// Parse component parameters. Supports no-props roots (`function App()`) and
+/// the existing destructured prop shape (`function Counter({ start }: Props)`).
+fn parse_component_props(params: Node, source: &str) -> Result<(Vec<String>, String)> {
+    let required_params: Vec<_> = params
+        .named_children(&mut params.walk())
+        .filter(|n| n.kind() == "required_parameter")
+        .collect();
 
+    match required_params.as_slice() {
+        [] => Ok((Vec::new(), String::new())),
+        [required_param] => parse_destructured_props(*required_param, source),
+        _ => Err(reject(params, "component must take at most one parameter")),
+    }
+}
+
+/// Parse `{ start }: CounterProps` → (`["start"]`, "CounterProps").
+fn parse_destructured_props(required_param: Node, source: &str) -> Result<(Vec<String>, String)> {
     let pattern = first_child_of_kind(required_param, "object_pattern")
         .ok_or_else(|| reject(required_param, "parameter must be destructured"))?;
     let mut field_names = Vec::new();
@@ -1135,7 +1156,7 @@ fn try_lower_in_component_copy_const(declarator: Node, source: &str) -> Result<O
     match init.kind() {
         "string" => {
             let literal = string_literal_text(init, source);
-            Ok(Some(format!("let {name} = {literal};")))
+            Ok(Some(format!("let {name} = {literal}.to_string();")))
         }
         "object" => {
             // Inline tuple literal so we can keep `.field` access without
@@ -1172,19 +1193,42 @@ fn try_lower_in_component_copy_const(declarator: Node, source: &str) -> Result<O
 /// uses `"…"` so we normalise single-quoted inputs.
 fn string_literal_text(node: Node, source: &str) -> String {
     let raw = node_text(node, source);
-    if raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2 {
-        let inner = &raw[1..raw.len() - 1];
-        rust_string_literal(inner)
+    let inner = if raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2 {
+        &raw[1..raw.len() - 1]
+    } else if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+        &raw[1..raw.len() - 1]
     } else {
-        // Re-quote via rust_string_literal on the inner text so escape
-        // semantics stay correct (e.g. embedded `"`).
-        let inner = if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
-            &raw[1..raw.len() - 1]
-        } else {
-            raw
+        raw
+    };
+    rust_string_literal(&decode_basic_js_string_escapes(inner))
+}
+
+fn decode_basic_js_string_escapes(inner: &str) -> String {
+    let mut out = String::new();
+    let mut chars = inner.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        let Some(next) = chars.next() else {
+            out.push('\\');
+            break;
         };
-        rust_string_literal(inner)
+        match next {
+            'n' => out.push('\n'),
+            'r' => out.push('\r'),
+            't' => out.push('\t'),
+            '\\' => out.push('\\'),
+            '"' => out.push('"'),
+            '\'' => out.push('\''),
+            other => {
+                out.push('\\');
+                out.push(other);
+            }
+        }
     }
+    out
 }
 
 /// Parse a TSX `object` literal whose every pair maps an identifier
@@ -1534,6 +1578,11 @@ fn transpile_expr(expr: Node, source: &str, prop_fields: &[String]) -> Result<St
             transpile_expr(inner, source, prop_fields)
         }
         "call_expression" => {
+            if let Some(clipboard_call) =
+                try_transpile_clipboard_write_text_call(expr, source, prop_fields)?
+            {
+                return Ok(clipboard_call);
+            }
             // Used for setter calls: `setN(n + 1)` → `setN.set(n + 1)`.
             let callee = first_child_of_kind(expr, "identifier")
                 .ok_or_else(|| reject(expr, "spike supports only bare-name calls"))?;
@@ -1576,9 +1625,35 @@ fn transpile_expr(expr: Node, source: &str, prop_fields: &[String]) -> Result<St
     }
 }
 
+fn try_transpile_clipboard_write_text_call(
+    expr: Node,
+    source: &str,
+    prop_fields: &[String],
+) -> Result<Option<String>> {
+    let Some(callee) = expr.named_children(&mut expr.walk()).next() else {
+        return Ok(None);
+    };
+    if node_text(callee, source) != "navigator.clipboard.writeText" {
+        return Ok(None);
+    }
+    let args = first_child_of_kind(expr, "arguments")
+        .ok_or_else(|| reject(expr, "clipboard writeText without arg list"))?;
+    let raw_args: Vec<Node> = args.named_children(&mut args.walk()).collect();
+    if raw_args.len() != 1 {
+        return Err(reject(
+            args,
+            "navigator.clipboard.writeText supports exactly one argument in the WASM subset",
+        ));
+    }
+    let arg = transpile_expr(raw_args[0], source, prop_fields)?;
+    Ok(Some(format!(
+        "{{ let _ = jet_wasm::host::write_clipboard_text({arg}.as_ref()); }}"
+    )))
+}
+
 // ── JSX → Element ──────────────────────────────────────────────────────────
 
-fn emit_jsx_expr(expr: Node, source: &str) -> Result<String> {
+fn emit_jsx_expr(expr: Node, source: &str, aliases: &HashMap<String, String>) -> Result<String> {
     // Walk down through parens_expression.
     let expr = if expr.kind() == "parenthesized_expression" {
         expr.named_children(&mut expr.walk())
@@ -1588,8 +1663,9 @@ fn emit_jsx_expr(expr: Node, source: &str) -> Result<String> {
         expr
     };
     match expr.kind() {
-        "jsx_element" => emit_jsx_element(expr, source),
-        "jsx_self_closing_element" => emit_jsx_self_closing(expr, source),
+        "jsx_element" => emit_jsx_element(expr, source, aliases),
+        "jsx_self_closing_element" => emit_jsx_self_closing(expr, source, aliases),
+        "jsx_fragment" => emit_jsx_fragment(expr, source, aliases),
         other => bail!(
             "expected JSX element, got `{other}` at {}",
             format_pos(expr)
@@ -1598,20 +1674,29 @@ fn emit_jsx_expr(expr: Node, source: &str) -> Result<String> {
 }
 
 /// `<tag ...>children</tag>` — full opening/closing form.
-fn emit_jsx_element(expr: Node, source: &str) -> Result<String> {
+fn emit_jsx_element(expr: Node, source: &str, aliases: &HashMap<String, String>) -> Result<String> {
     let open = first_child_of_kind(expr, "jsx_opening_element")
         .ok_or_else(|| reject(expr, "jsx without opening"))?;
     let tag_node =
         first_child_of_kind(open, "identifier").ok_or_else(|| reject(open, "jsx without tag"))?;
     let tag = node_text(tag_node, source);
+    let lowering = strict_tag_lowering(tag_node, source, aliases)?;
+    let is_adapter_component = aliases.contains_key(tag);
 
     // Attributes.
     let mut props_lines: Vec<String> = Vec::new();
     let mut walker = open.walk();
     for c in open.named_children(&mut walker) {
         if c.kind() == "jsx_attribute" {
-            emit_jsx_attribute(c, source, &mut props_lines)?;
+            if is_adapter_component {
+                compat_jsx_attribute(c, source, &mut props_lines)?;
+            } else {
+                emit_jsx_attribute(c, source, &mut props_lines)?;
+            }
         }
+    }
+    if is_adapter_component {
+        compat_mui_intrinsic_defaults(tag, &mut props_lines);
     }
 
     // Children.
@@ -1631,14 +1716,15 @@ fn emit_jsx_element(expr: Node, source: &str) -> Result<String> {
                     .named_children(&mut c.walk())
                     .next()
                     .ok_or_else(|| reject(c, "empty {} in JSX"))?;
-                child_exprs.push(emit_jsx_interp_child(inner, source)?);
+                child_exprs.push(emit_jsx_interp_child(inner, source, aliases)?);
             }
             "jsx_element" => {
-                child_exprs.push(emit_jsx_element(c, source)?);
+                child_exprs.push(emit_jsx_element(c, source, aliases)?);
             }
             "jsx_self_closing_element" => {
-                child_exprs.push(emit_jsx_self_closing(c, source)?);
+                child_exprs.push(emit_jsx_self_closing(c, source, aliases)?);
             }
+            "jsx_fragment" => child_exprs.push(emit_jsx_fragment(c, source, aliases)?),
             "jsx_opening_element" | "jsx_closing_element" => {}
             other => bail!(
                 "JSX child `{other}` outside spike subset at {}",
@@ -1647,28 +1733,75 @@ fn emit_jsx_element(expr: Node, source: &str) -> Result<String> {
         }
     }
 
-    let props_literal = render_props_literal(&props_lines);
-    Ok(format!(
-        "Element::intrinsic(\"{tag}\", {props_literal}, vec![{}])",
-        child_exprs.join(", ")
-    ))
+    compat_render_node(&lowering, &props_lines, child_exprs)
 }
 
 /// `<tag ... />` — self-closing form. No children; props only.
-fn emit_jsx_self_closing(expr: Node, source: &str) -> Result<String> {
+fn emit_jsx_self_closing(
+    expr: Node,
+    source: &str,
+    aliases: &HashMap<String, String>,
+) -> Result<String> {
     let tag_node = first_child_of_kind(expr, "identifier")
         .ok_or_else(|| reject(expr, "self-closing jsx without tag"))?;
     let tag = node_text(tag_node, source);
+    let lowering = strict_tag_lowering(tag_node, source, aliases)?;
+    let is_adapter_component = aliases.contains_key(tag);
     let mut props_lines: Vec<String> = Vec::new();
+    let mut label_child = None;
     let mut walker = expr.walk();
     for c in expr.named_children(&mut walker) {
         if c.kind() == "jsx_attribute" {
-            emit_jsx_attribute(c, source, &mut props_lines)?;
+            if is_adapter_component {
+                if let Some(label) = compat_label_child(c, source)? {
+                    label_child = Some(label);
+                }
+                compat_jsx_attribute(c, source, &mut props_lines)?;
+            } else {
+                emit_jsx_attribute(c, source, &mut props_lines)?;
+            }
         }
     }
-    let props_literal = render_props_literal(&props_lines);
+    if is_adapter_component {
+        compat_mui_intrinsic_defaults(tag, &mut props_lines);
+    }
+    compat_render_node(&lowering, &props_lines, label_child.into_iter().collect())
+}
+
+fn emit_jsx_fragment(
+    expr: Node,
+    source: &str,
+    aliases: &HashMap<String, String>,
+) -> Result<String> {
+    let mut child_exprs = Vec::new();
+    for c in expr.named_children(&mut expr.walk()) {
+        match c.kind() {
+            "jsx_text" => {
+                let trimmed = trim_jsx_text(node_text(c, source));
+                if !trimmed.is_empty() {
+                    child_exprs.push(format!("Element::text({})", rust_string_literal(&trimmed)));
+                }
+            }
+            "jsx_expression" => {
+                if let Some(inner) = c.named_children(&mut c.walk()).next() {
+                    child_exprs.push(emit_jsx_interp_child(inner, source, aliases)?);
+                }
+            }
+            "jsx_element" => child_exprs.push(emit_jsx_element(c, source, aliases)?),
+            "jsx_self_closing_element" => {
+                child_exprs.push(emit_jsx_self_closing(c, source, aliases)?)
+            }
+            "jsx_fragment" => child_exprs.push(emit_jsx_fragment(c, source, aliases)?),
+            "jsx_opening_fragment" | "jsx_closing_fragment" => {}
+            other => bail!(
+                "JSX fragment child `{other}` outside spike subset at {}",
+                format_pos(c)
+            ),
+        }
+    }
     Ok(format!(
-        "Element::intrinsic(\"{tag}\", {props_literal}, vec![])"
+        "Element::Fragment(vec![{}])",
+        child_exprs.join(", ")
     ))
 }
 
@@ -1678,6 +1811,24 @@ fn render_props_literal(lines: &[String]) -> String {
     } else {
         format!("Props {{ {} ..Default::default() }}", lines.join(" "))
     }
+}
+
+fn strict_tag_lowering(
+    tag_node: Node,
+    source: &str,
+    aliases: &HashMap<String, String>,
+) -> Result<String> {
+    let tag = node_text(tag_node, source);
+    if let Some(alias) = aliases.get(tag) {
+        return Ok(alias.clone());
+    }
+    if tag.chars().next().is_some_and(char::is_uppercase) {
+        return Err(reject(
+            tag_node,
+            &format!("JSX component `{tag}` has no WASM lowering adapter"),
+        ));
+    }
+    Ok(tag.to_string())
 }
 
 fn compat_jsx_expr(expr: Node, source: &str, aliases: &HashMap<String, String>) -> Result<String> {
@@ -1998,11 +2149,8 @@ fn compat_jsx_attribute(attr: Node, source: &str, out_lines: &mut Vec<String>) -
         }
         "style" => {
             if let Some(value) = value {
-                if let Some(style) = compat_style_literal(value, source)? {
-                    out_lines.push(format!(
-                        "style: Some({}.to_string()),",
-                        rust_string_literal(&style)
-                    ));
+                if let Some(style) = compat_style_rust_expr(value, source)? {
+                    out_lines.push(format!("style: Some({style}),"));
                 }
             }
         }
@@ -2067,6 +2215,16 @@ fn compat_jsx_attribute(attr: Node, source: &str, out_lines: &mut Vec<String>) -
                 }
             }
         }
+        "htmlFor" => {
+            if let Some(value) = value {
+                if let Some(v) = extract_string_literal(value, source) {
+                    out_lines.push(format!(
+                        "html_for: Some({}.to_string()),",
+                        rust_string_literal(&v)
+                    ));
+                }
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -2097,22 +2255,133 @@ fn compat_style_literal(value: Node, source: &str) -> Result<Option<String>> {
             .named_children(&mut child.walk())
             .find(|n| n.id() != key_node.id())
             .ok_or_else(|| reject(child, "style object pair without value"))?;
+        let raw_key = node_text(key_node, source);
         let css_value = match value_node.kind() {
             "string" => extract_string_literal(value_node, source).unwrap_or_default(),
+            "number" if numeric_style_property_is_unitless(raw_key) => {
+                node_text(value_node, source).to_string()
+            }
             "number" => format!("{}px", node_text(value_node, source)),
             _ => return Ok(None),
         };
-        declarations.push(format!(
-            "{}: {}",
-            camel_to_kebab(node_text(key_node, source)),
-            css_value
-        ));
+        declarations.push(format!("{}: {}", camel_to_kebab(raw_key), css_value));
     }
     if declarations.is_empty() {
         Ok(None)
     } else {
         Ok(Some(format!("{};", declarations.join("; "))))
     }
+}
+
+fn compat_style_rust_expr(value: Node, source: &str) -> Result<Option<String>> {
+    if let Some(style) = compat_style_literal(value, source)? {
+        return Ok(Some(format!("{}.to_string()", rust_string_literal(&style))));
+    }
+
+    let style = match value.kind() {
+        "jsx_expression" => value.named_children(&mut value.walk()).next(),
+        "object" => Some(value),
+        _ => None,
+    };
+    let Some(style) = style else {
+        return Ok(None);
+    };
+    if style.kind() != "object" {
+        return Ok(None);
+    }
+
+    let mut declarations = Vec::new();
+    let mut args = Vec::new();
+    for child in style.named_children(&mut style.walk()) {
+        if child.kind() != "pair" {
+            continue;
+        }
+        let key_node = first_child_of_kind(child, "property_identifier")
+            .or_else(|| first_child_of_kind(child, "identifier"))
+            .ok_or_else(|| reject(child, "style object key must be an identifier"))?;
+        let value_node = child
+            .named_children(&mut child.walk())
+            .find(|n| n.id() != key_node.id())
+            .ok_or_else(|| reject(child, "style object pair without value"))?;
+        let raw_key = node_text(key_node, source);
+        let Some(value_expr) = compat_style_value_rust_expr(raw_key, value_node, source)? else {
+            return Ok(None);
+        };
+        declarations.push(format!("{}: {{}}", camel_to_kebab(raw_key)));
+        args.push(value_expr);
+    }
+    if declarations.is_empty() {
+        return Ok(None);
+    }
+
+    let template = format!("{};", declarations.join("; "));
+    Ok(Some(format!(
+        "format!({}, {})",
+        rust_string_literal(&template),
+        args.join(", ")
+    )))
+}
+
+fn compat_style_value_rust_expr(
+    property: &str,
+    value: Node,
+    source: &str,
+) -> Result<Option<String>> {
+    match value.kind() {
+        "string" => Ok(extract_string_literal(value, source).map(|v| rust_string_literal(&v))),
+        "number" if numeric_style_property_is_unitless(property) => {
+            Ok(Some(rust_string_literal(node_text(value, source))))
+        }
+        "number" => Ok(Some(rust_string_literal(&format!(
+            "{}px",
+            node_text(value, source)
+        )))),
+        "parenthesized_expression" => {
+            let Some(inner) = value.named_children(&mut value.walk()).next() else {
+                return Ok(None);
+            };
+            compat_style_value_rust_expr(property, inner, source)
+        }
+        "ternary_expression" => {
+            let cond = value
+                .named_children(&mut value.walk())
+                .next()
+                .ok_or_else(|| reject(value, "style ternary without condition"))?;
+            let then_node = value
+                .named_children(&mut value.walk())
+                .nth(1)
+                .ok_or_else(|| reject(value, "style ternary without then branch"))?;
+            let else_node = value
+                .named_children(&mut value.walk())
+                .nth(2)
+                .ok_or_else(|| reject(value, "style ternary without else branch"))?;
+            let cond_expr = transpile_expr(cond, source, &[])?;
+            let Some(then_expr) = compat_style_value_rust_expr(property, then_node, source)? else {
+                return Ok(None);
+            };
+            let Some(else_expr) = compat_style_value_rust_expr(property, else_node, source)? else {
+                return Ok(None);
+            };
+            Ok(Some(format!(
+                "if {cond_expr} {{ {then_expr} }} else {{ {else_expr} }}"
+            )))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn numeric_style_property_is_unitless(property: &str) -> bool {
+    matches!(
+        property,
+        "lineHeight"
+            | "opacity"
+            | "zIndex"
+            | "fontWeight"
+            | "flex"
+            | "flexGrow"
+            | "flexShrink"
+            | "order"
+    )
 }
 
 fn compat_bool_prop_value(value: Node, source: &str) -> Result<String> {
@@ -2171,7 +2440,11 @@ fn extract_bool_attr(value: Option<Node>, source: &str) -> Option<bool> {
 /// - `{cond ? <A/> : <B/>}` → ternary → `if`.
 /// - Nested JSX elements — unwrap.
 /// - Otherwise: `Element::from_number(expr)` for numeric / generic.
-fn emit_jsx_interp_child(expr: Node, source: &str) -> Result<String> {
+fn emit_jsx_interp_child(
+    expr: Node,
+    source: &str,
+    aliases: &HashMap<String, String>,
+) -> Result<String> {
     match expr.kind() {
         "binary_expression" => {
             // Detect `cond && <JSX/>` — treat as conditional render.
@@ -2192,7 +2465,7 @@ fn emit_jsx_interp_child(expr: Node, source: &str) -> Result<String> {
                     .nth(1)
                     .ok_or_else(|| reject(expr, "&& missing RHS"))?;
                 let cond = transpile_expr(lhs, source, &[])?;
-                let then_branch = emit_jsx_expr(rhs, source)?;
+                let then_branch = emit_jsx_expr(rhs, source, aliases)?;
                 return Ok(format!(
                     "if {cond} {{ {then_branch} }} else {{ Element::Empty }}"
                 ));
@@ -2217,28 +2490,44 @@ fn emit_jsx_interp_child(expr: Node, source: &str) -> Result<String> {
                 .nth(2)
                 .ok_or_else(|| reject(expr, "ternary without else branch"))?;
             let cond = transpile_expr(cond_node, source, &[])?;
-            let then_rust = emit_jsx_interp_child(then_node, source)?;
-            let else_rust = emit_jsx_interp_child(else_node, source)?;
+            let then_rust = emit_jsx_interp_child(then_node, source, aliases)?;
+            let else_rust = emit_jsx_interp_child(else_node, source, aliases)?;
             Ok(format!(
                 "if {cond} {{ {then_rust} }} else {{ {else_rust} }}"
             ))
         }
-        "jsx_element" | "jsx_self_closing_element" => emit_jsx_expr(expr, source),
+        "jsx_element" | "jsx_self_closing_element" | "jsx_fragment" => {
+            emit_jsx_expr(expr, source, aliases)
+        }
+        "identifier" | "member_expression" => {
+            let rust = transpile_expr(expr, source, &[])?;
+            Ok(format!("Element::text({rust}.to_string())"))
+        }
+        "number" | "true" | "false" => {
+            let rust = transpile_expr(expr, source, &[])?;
+            Ok(format!("Element::from_number({rust})"))
+        }
         "null" => Ok("Element::Empty".to_string()),
         "call_expression" => {
+            if first_child_of_kind(expr, "identifier")
+                .map(|callee| node_text(callee, source) == "String")
+                .unwrap_or(false)
+            {
+                return compat_jsx_call_expression_child(expr, source);
+            }
             // Two recognized patterns:
             //   {[...Array(N)].map((_, idx) => <JSX/>)}  — range map
             //   {RECV.map((item) => <JSX/>)}             — iterable map
             //
             // Each → `Element::Fragment(...).collect::<Vec<_>>())`.
             if let Some((n_rust, idx_name, body_node)) = try_match_range_map(expr, source)? {
-                let body_rust = emit_jsx_interp_child(body_node, source)?;
+                let body_rust = emit_jsx_interp_child(body_node, source, aliases)?;
                 return Ok(format!(
                     "Element::Fragment((0i64..{n_rust}).map(|{idx_name}| {body_rust}).collect::<Vec<_>>())"
                 ));
             }
             if let Some((recv_rust, item_name, body_node)) = try_match_iter_map(expr, source)? {
-                let body_rust = emit_jsx_interp_child(body_node, source)?;
+                let body_rust = emit_jsx_interp_child(body_node, source, aliases)?;
                 return Ok(format!(
                     "Element::Fragment({recv_rust}.iter().map(|{item_name}| {body_rust}).collect::<Vec<_>>())"
                 ));
@@ -2406,7 +2695,13 @@ fn emit_jsx_attribute(attr: Node, source: &str, out_lines: &mut Vec<String>) -> 
         .or_else(|| first_child_of_kind(attr, "jsx_identifier"))
         .or_else(|| first_child_of_kind(attr, "identifier"))
         .ok_or_else(|| reject(attr, "jsx_attribute without name"))?;
-    let name = node_text(name_node, source);
+    let raw_name = node_text(name_node, source);
+    let attr_text = node_text(attr, source).trim_start();
+    let name = if raw_name == "aria" && attr_text.starts_with("aria-label") {
+        "aria-label"
+    } else {
+        raw_name
+    };
     // value is either a jsx_expression or a string literal.
     let value = attr
         .named_children(&mut attr.walk())
@@ -2430,6 +2725,11 @@ fn emit_jsx_attribute(attr: Node, source: &str, out_lines: &mut Vec<String>) -> 
                 rust_string_literal(&v)
             ));
         }
+        "style" => {
+            let style = compat_style_rust_expr(value, source)?
+                .ok_or_else(|| reject(value, "style must be an object literal in spike"))?;
+            out_lines.push(format!("style: Some({style}),"));
+        }
         "placeholder" => {
             let v = extract_string_literal(value, source)
                 .ok_or_else(|| reject(value, "placeholder must be string literal in spike"))?;
@@ -2438,9 +2738,37 @@ fn emit_jsx_attribute(attr: Node, source: &str, out_lines: &mut Vec<String>) -> 
                 rust_string_literal(&v)
             ));
         }
-        "value" => {
+        "value" | "defaultValue" => {
             let value_expr = emit_jsx_string_prop_value(value, source)?;
             out_lines.push(format!("value: Some({value_expr}),"));
+        }
+        "type" => {
+            let v = extract_string_literal(value, source)
+                .ok_or_else(|| reject(value, "type must be string literal in spike"))?;
+            out_lines.push(format!(
+                "input_type: Some({}.to_string()),",
+                rust_string_literal(&v)
+            ));
+        }
+        "checked" | "defaultChecked" => {
+            let value_expr = compat_bool_prop_value(value, source)?;
+            out_lines.push(format!("checked: Some({value_expr}),"));
+        }
+        "aria-label" => {
+            let v = extract_string_literal(value, source)
+                .ok_or_else(|| reject(value, "aria-label must be string literal in spike"))?;
+            out_lines.push(format!(
+                "aria_label: Some({}.to_string()),",
+                rust_string_literal(&v)
+            ));
+        }
+        "htmlFor" => {
+            let v = extract_string_literal(value, source)
+                .ok_or_else(|| reject(value, "htmlFor must be string literal in spike"))?;
+            out_lines.push(format!(
+                "html_for: Some({}.to_string()),",
+                rust_string_literal(&v)
+            ));
         }
         "onClick" => {
             // Value is a jsx_expression → arrow_function.
@@ -2490,6 +2818,8 @@ fn emit_jsx_attribute(attr: Node, source: &str, out_lines: &mut Vec<String>) -> 
                 out_lines.push(format!("on_checked_change: Some({callback}),"));
             }
         }
+        "key" | "tabIndex" | "aria-selected" | "onKeyDown" | "onMouseDown" | "onMouseOver"
+        | "onMouseMove" | "onMouseUp" | "onMouseLeave" => {}
         other => bail!(
             "JSX attribute `{other}` outside spike subset at {}",
             format_pos(attr)
@@ -2724,7 +3054,10 @@ fn collect_free_identifiers(node: Node, source: &str, ignore: &[&str]) -> Vec<St
     while let Some(n) = stack.pop() {
         if n.kind() == "identifier" {
             let name = node_text(n, source).to_string();
-            if !ignore.contains(&name.as_str()) && !out.contains(&name) {
+            if !ignore.contains(&name.as_str())
+                && !is_browser_global_identifier(&name)
+                && !out.contains(&name)
+            {
                 out.push(name);
             }
         }
@@ -2736,6 +3069,10 @@ fn collect_free_identifiers(node: Node, source: &str, ignore: &[&str]) -> Vec<St
     out
 }
 
+fn is_browser_global_identifier(name: &str) -> bool {
+    matches!(name, "console" | "document" | "navigator" | "window")
+}
+
 fn rust_string_literal(s: &str) -> String {
     let escaped: String = s
         .chars()
@@ -2743,6 +3080,8 @@ fn rust_string_literal(s: &str) -> String {
             '\\' => "\\\\".chars().collect::<Vec<_>>(),
             '"' => "\\\"".chars().collect::<Vec<_>>(),
             '\n' => "\\n".chars().collect::<Vec<_>>(),
+            '\r' => "\\r".chars().collect::<Vec<_>>(),
+            '\t' => "\\t".chars().collect::<Vec<_>>(),
             _ => vec![c],
         })
         .collect();

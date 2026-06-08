@@ -15,6 +15,9 @@
 //!
 //! Selector: `cargo test -p mamba --test mvp_runners`.
 
+#[path = "common.rs"]
+mod common;
+
 #[path = "mvp_gates/gate0_list_wrapper_2534.rs"]
 mod gate0_list_wrapper_2534;
 

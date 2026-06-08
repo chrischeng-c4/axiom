@@ -511,6 +511,23 @@ mod tests {
     }
 
     #[test]
+    fn test_dce_ternary_false_branch_function_expression() {
+        let input =
+            r#"module.exports["default"]="production"!=='production'?useRenderTimes:function(){};"#;
+        let output = eliminate_dead_code(input);
+        assert!(
+            output.contains(r#"module.exports["default"]=function(){}"#),
+            "false branch function expression should be preserved, got: {}",
+            output
+        );
+        assert!(
+            !output.contains(r#"module.exports["default"]=;"#),
+            "ternary DCE must not empty the default export expression: {}",
+            output
+        );
+    }
+
+    #[test]
     fn test_dce_ternary_true() {
         let input = r#"var x = "production" === "production" ? prodFn() : devFn();"#;
         let output = eliminate_dead_code(input);

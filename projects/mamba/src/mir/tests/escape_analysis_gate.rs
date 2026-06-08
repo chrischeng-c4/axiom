@@ -5,7 +5,8 @@
 use crate::testing::{b, get, i, load_manifest, s, strs};
 use toml::Value;
 
-const FIXTURE: &str = "tests/cpython/perf/mir_escape_analysis_skip_gc_track_gate/manifest.toml";
+const FIXTURE: &str =
+    "tests/harness/cpython/config/perf/mir_escape_analysis_skip_gc_track_gate/manifest.toml";
 fn m() -> Value {
     load_manifest(FIXTURE)
 }
@@ -84,10 +85,7 @@ fn r1_mir_pass_detects_non_escaping_literals() {
     ] {
         assert!(b(c, key), "{key}");
     }
-    assert_eq!(
-        strs(c, "allowed_literal_kind_values"),
-        vec!["list_literal", "dict_literal"]
-    );
+    assert_eq!(strs(c, "allowed_literal_kind_values"), vec!["list_literal", "dict_literal"]);
     assert_eq!(
         strs(c, "allowed_escape_classification_values"),
         vec!["escaping", "non_escaping"]
@@ -174,10 +172,7 @@ fn r3_conservative_must_track_under_uncertainty() {
 #[test]
 fn r4_bench_acceptance_per_bench_1_5x() {
     let m = m();
-    let c = get(
-        &m,
-        "r4_bench_acceptance_string_concat_and_list_sort_builtin_contract",
-    );
+    let c = get(&m, "r4_bench_acceptance_string_concat_and_list_sort_builtin_contract");
     assert_eq!(
         s(c, "case"),
         "string_concat_and_list_sort_builtin_each_improve_at_least_1_5x_vs_pre_pass_mamba_baseline"
@@ -193,10 +188,7 @@ fn r4_bench_acceptance_per_bench_1_5x() {
     ] {
         assert!(b(c, key), "{key}");
     }
-    assert_eq!(
-        strs(c, "required_benches"),
-        vec!["string_concat", "list_sort_builtin"]
-    );
+    assert_eq!(strs(c, "required_benches"), vec!["string_concat", "list_sort_builtin"]);
     assert_eq!(s(c, "expected_minimum_per_bench_improvement"), "1.5x");
     assert_eq!(
         strs(c, "allowed_baseline_kind_values"),
@@ -239,12 +231,7 @@ fn r5_escaping_value_must_remain_gc_tracked() {
     }
     assert_eq!(
         strs(c, "allowed_escape_path_values"),
-        vec![
-            "return",
-            "store_to_arg",
-            "closure_capture",
-            "exception_path"
-        ]
+        vec!["return", "store_to_arg", "closure_capture", "exception_path"]
     );
     assert_eq!(
         s(c, "escaping_track_dropped_failure_kind"),
@@ -281,10 +268,7 @@ fn runner_contract_declares_keys_and_cases() {
             "exit_code",
         ]
     );
-    assert_eq!(
-        strs(r, "outcome_values"),
-        vec!["pass", "fail", "missing", "skip"]
-    );
+    assert_eq!(strs(r, "outcome_values"), vec!["pass", "fail", "missing", "skip"]);
     assert_eq!(
         strs(r, "case_values"),
         vec![

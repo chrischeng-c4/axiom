@@ -27,16 +27,9 @@ fn manifest_path() -> PathBuf {
         .join("manifest.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_direct_local_wheel_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -72,7 +65,7 @@ fn pkgmgr_direct_local_wheel_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_direct_local_wheel_block_pins_pep427_filename_shape() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let wheel = doc
         .get("wheel")
         .and_then(|v| v.as_table())
@@ -127,7 +120,7 @@ fn pkgmgr_direct_local_wheel_block_pins_pep427_filename_shape() {
 
 #[test]
 fn pkgmgr_direct_local_wheel_action_uses_direct_path_not_name() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let action = doc
         .get("action")
         .and_then(|v| v.as_table())
@@ -158,9 +151,7 @@ fn pkgmgr_direct_local_wheel_action_uses_direct_path_not_name() {
         "`[action].command[1]` must reference the wheel's relative_path; got {path_arg:?}"
     );
     assert!(
-        path_arg.starts_with("./")
-            || path_arg.starts_with("./wheels")
-            || path_arg.starts_with("wheels/"),
+        path_arg.starts_with("./") || path_arg.starts_with("./wheels") || path_arg.starts_with("wheels/"),
         "direct-path add must use a project-relative wheel path; got {path_arg:?}"
     );
 
@@ -170,9 +161,7 @@ fn pkgmgr_direct_local_wheel_action_uses_direct_path_not_name() {
         "`[action].expected_outcome` must be \"pass\""
     );
     assert_eq!(
-        action
-            .get("expected_exit_code")
-            .and_then(|v| v.as_integer()),
+        action.get("expected_exit_code").and_then(|v| v.as_integer()),
         Some(0),
         "`[action].expected_exit_code` must be 0"
     );
@@ -185,14 +174,11 @@ fn pkgmgr_direct_local_wheel_action_uses_direct_path_not_name() {
 
 #[test]
 fn pkgmgr_direct_local_wheel_lockfile_records_direct_file_source() {
-    let doc = load_toml(&manifest_path());
-    let lock = doc
-        .get("lockfile_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[lockfile_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let lock = doc.get("lockfile_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[lockfile_assertion]` block \
          (acceptance: \"Lockfile records deterministic local source metadata.\")",
-        );
+    );
 
     let wheel_name = doc
         .get("wheel")
@@ -226,8 +212,7 @@ fn pkgmgr_direct_local_wheel_lockfile_records_direct_file_source() {
         "`[lockfile_assertion].must_record_source_kind` must be \"direct_file\""
     );
     assert_eq!(
-        lock.get("must_record_relative_path")
-            .and_then(|v| v.as_str()),
+        lock.get("must_record_relative_path").and_then(|v| v.as_str()),
         Some(wheel_path),
         "`[lockfile_assertion].must_record_relative_path` must equal `[wheel].relative_path`"
     );
@@ -247,14 +232,12 @@ fn pkgmgr_direct_local_wheel_lockfile_records_direct_file_source() {
         "`[lockfile_assertion].deterministic` must be true"
     );
     assert_eq!(
-        lock.get("byte_identical_on_replay")
-            .and_then(|v| v.as_bool()),
+        lock.get("byte_identical_on_replay").and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_assertion].byte_identical_on_replay` must be true"
     );
     assert_eq!(
-        lock.get("must_not_record_index_url")
-            .and_then(|v| v.as_bool()),
+        lock.get("must_not_record_index_url").and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_assertion].must_not_record_index_url` must be true — direct file source"
     );
@@ -262,7 +245,7 @@ fn pkgmgr_direct_local_wheel_lockfile_records_direct_file_source() {
 
 #[test]
 fn pkgmgr_direct_local_wheel_install_assertion_probes_import() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let install = doc
         .get("install_assertion")
         .and_then(|v| v.as_table())
@@ -285,16 +268,12 @@ fn pkgmgr_direct_local_wheel_install_assertion_probes_import() {
         "`[install_assertion].import_probe` must equal `[wheel].name`"
     );
     assert_eq!(
-        install
-            .get("expected_import_outcome")
-            .and_then(|v| v.as_str()),
+        install.get("expected_import_outcome").and_then(|v| v.as_str()),
         Some("import_ok"),
         "`[install_assertion].expected_import_outcome` must be \"import_ok\""
     );
     assert_eq!(
-        install
-            .get("metadata_records_local_source")
-            .and_then(|v| v.as_bool()),
+        install.get("metadata_records_local_source").and_then(|v| v.as_bool()),
         Some(true),
         "`[install_assertion].metadata_records_local_source` must be true"
     );
@@ -302,14 +281,11 @@ fn pkgmgr_direct_local_wheel_install_assertion_probes_import() {
 
 #[test]
 fn pkgmgr_direct_local_wheel_missing_wheel_case_fails_loud() {
-    let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("missing_wheel_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[missing_wheel_case]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let case = doc.get("missing_wheel_case").and_then(|v| v.as_table()).expect(
+        "missing `[missing_wheel_case]` block \
          (acceptance: \"Missing wheel path fails with a clear diagnostic.\")",
-        );
+    );
 
     let relative_path = case
         .get("relative_path")
@@ -365,7 +341,7 @@ fn pkgmgr_direct_local_wheel_missing_wheel_case_fails_loud() {
 
 #[test]
 fn pkgmgr_direct_local_wheel_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -387,7 +363,7 @@ fn pkgmgr_direct_local_wheel_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_direct_local_wheel_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -427,7 +403,7 @@ fn pkgmgr_direct_local_wheel_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_direct_local_wheel_pins_out_of_scope_per_issue_2689() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())

@@ -1,9 +1,9 @@
 //! INSERT, UPDATE, DELETE query building methods for QueryBuilder.
 
-use super::builder::QueryBuilder;
-use super::helpers::{adjust_param_indices, quote_identifier};
-use super::types::Operator;
 use crate::{DataBridgeError, ExtractedValue, Result};
+use super::builder::QueryBuilder;
+use super::helpers::{quote_identifier, adjust_param_indices};
+use super::types::Operator;
 
 impl QueryBuilder {
     /// Add columns to the RETURNING clause for INSERT/UPDATE/DELETE queries
@@ -32,14 +32,9 @@ impl QueryBuilder {
     /// Builds an INSERT SQL query string with parameter placeholders.
     ///
     /// Returns the SQL string with $1, $2, etc. placeholders and the parameter values.
-    pub fn build_insert(
-        &self,
-        values: &[(String, ExtractedValue)],
-    ) -> Result<(String, Vec<ExtractedValue>)> {
+    pub fn build_insert(&self, values: &[(String, ExtractedValue)]) -> Result<(String, Vec<ExtractedValue>)> {
         if values.is_empty() {
-            return Err(DataBridgeError::Query(
-                "Cannot insert with no values".to_string(),
-            ));
+            return Err(DataBridgeError::Query("Cannot insert with no values".to_string()));
         }
 
         // Validate column names
@@ -48,10 +43,7 @@ impl QueryBuilder {
         }
 
         let mut sql = format!("INSERT INTO {} (", quote_identifier(&self.table));
-        let columns: Vec<String> = values
-            .iter()
-            .map(|(col, _)| quote_identifier(col))
-            .collect();
+        let columns: Vec<String> = values.iter().map(|(col, _)| quote_identifier(col)).collect();
         sql.push_str(&columns.join(", "));
         sql.push_str(") VALUES (");
 
@@ -68,14 +60,9 @@ impl QueryBuilder {
     /// Builds an UPDATE SQL query string with parameter placeholders.
     ///
     /// Returns the SQL string with $1, $2, etc. placeholders and the parameter values.
-    pub fn build_update(
-        &self,
-        values: &[(String, ExtractedValue)],
-    ) -> Result<(String, Vec<ExtractedValue>)> {
+    pub fn build_update(&self, values: &[(String, ExtractedValue)]) -> Result<(String, Vec<ExtractedValue>)> {
         if values.is_empty() {
-            return Err(DataBridgeError::Query(
-                "Cannot update with no values".to_string(),
-            ));
+            return Err(DataBridgeError::Query("Cannot update with no values".to_string()));
         }
 
         // Validate column names
@@ -87,13 +74,10 @@ impl QueryBuilder {
         let mut params: Vec<ExtractedValue> = Vec::new();
 
         // SET clause
-        let set_parts: Vec<String> = values
-            .iter()
-            .map(|(col, val)| {
-                params.push(val.clone());
-                format!("{} = ${}", quote_identifier(col), params.len())
-            })
-            .collect();
+        let set_parts: Vec<String> = values.iter().map(|(col, val)| {
+            params.push(val.clone());
+            format!("{} = ${}", quote_identifier(col), params.len())
+        }).collect();
         sql.push_str(&set_parts.join(", "));
 
         // WHERE clause
@@ -123,14 +107,10 @@ impl QueryBuilder {
     ) -> Result<(String, Vec<ExtractedValue>)> {
         // Validation
         if values.is_empty() {
-            return Err(DataBridgeError::Query(
-                "Cannot upsert with no values".to_string(),
-            ));
+            return Err(DataBridgeError::Query("Cannot upsert with no values".to_string()));
         }
         if conflict_target.is_empty() {
-            return Err(DataBridgeError::Query(
-                "Conflict target cannot be empty".to_string(),
-            ));
+            return Err(DataBridgeError::Query("Conflict target cannot be empty".to_string()));
         }
 
         // Validate column names
@@ -148,10 +128,7 @@ impl QueryBuilder {
 
         // Build INSERT clause
         let mut sql = format!("INSERT INTO {} (", quote_identifier(&self.table));
-        let columns: Vec<String> = values
-            .iter()
-            .map(|(col, _)| quote_identifier(col))
-            .collect();
+        let columns: Vec<String> = values.iter().map(|(col, _)| quote_identifier(col)).collect();
         sql.push_str(&columns.join(", "));
         sql.push_str(") VALUES (");
 
@@ -161,10 +138,7 @@ impl QueryBuilder {
 
         // Build ON CONFLICT clause
         sql.push_str(" ON CONFLICT (");
-        let quoted_targets: Vec<String> = conflict_target
-            .iter()
-            .map(|c| quote_identifier(c))
-            .collect();
+        let quoted_targets: Vec<String> = conflict_target.iter().map(|c| quote_identifier(c)).collect();
         sql.push_str(&quoted_targets.join(", "));
         sql.push_str(") DO UPDATE SET ");
 
@@ -172,8 +146,7 @@ impl QueryBuilder {
         let columns_to_update: Vec<String> = if let Some(update_cols) = update_columns {
             update_cols.to_vec()
         } else {
-            values
-                .iter()
+            values.iter()
                 .map(|(col, _)| col.clone())
                 .filter(|col| !conflict_target.contains(col))
                 .collect()
@@ -181,20 +154,14 @@ impl QueryBuilder {
 
         if columns_to_update.is_empty() {
             return Err(DataBridgeError::Query(
-                "No columns to update after excluding conflict target".to_string(),
+                "No columns to update after excluding conflict target".to_string()
             ));
         }
 
         // Build SET clause using EXCLUDED
         let set_parts: Vec<String> = columns_to_update
             .iter()
-            .map(|col| {
-                format!(
-                    "{} = EXCLUDED.{}",
-                    quote_identifier(col),
-                    quote_identifier(col)
-                )
-            })
+            .map(|col| format!("{} = EXCLUDED.{}", quote_identifier(col), quote_identifier(col)))
             .collect();
         sql.push_str(&set_parts.join(", "));
 
@@ -231,11 +198,7 @@ impl QueryBuilder {
     }
 
     /// Helper to build a single WHERE condition for UPDATE/DELETE
-    fn build_modify_where_condition(
-        &self,
-        cond: &super::builder::WhereCondition,
-        params: &mut Vec<ExtractedValue>,
-    ) -> String {
+    fn build_modify_where_condition(&self, cond: &super::builder::WhereCondition, params: &mut Vec<ExtractedValue>) -> String {
         match cond.operator {
             Operator::InSubquery => {
                 if let Some(ref sq) = cond.subquery {
@@ -250,11 +213,7 @@ impl QueryBuilder {
                 if let Some(ref sq) = cond.subquery {
                     let adjusted_sql = adjust_param_indices(&sq.sql, params.len());
                     params.extend(sq.params.clone());
-                    format!(
-                        "{} NOT IN ({})",
-                        quote_identifier(&cond.field),
-                        adjusted_sql
-                    )
+                    format!("{} NOT IN ({})", quote_identifier(&cond.field), adjusted_sql)
                 } else {
                     format!("{} NOT IN (NULL)", quote_identifier(&cond.field))
                 }
@@ -285,60 +244,40 @@ impl QueryBuilder {
                 let quoted_field = quote_identifier(&cond.field);
                 if let Some(ref value) = cond.value {
                     params.push(value.clone());
-                    format!(
-                        "{} {} (${})",
-                        quoted_field,
-                        cond.operator.to_sql(),
-                        params.len()
-                    )
+                    format!("{} {} (${})", quoted_field, cond.operator.to_sql(), params.len())
                 } else {
                     format!("{} {} (NULL)", quoted_field, cond.operator.to_sql())
                 }
             }
             Operator::JsonContains | Operator::JsonContainedBy => {
                 if let Some(ExtractedValue::String(json)) = &cond.value {
-                    format!(
-                        "{} {} '{}'::jsonb",
+                    format!("{} {} '{}'::jsonb",
                         quote_identifier(&cond.field),
                         cond.operator.to_sql(),
                         json.replace("'", "''")
                     )
                 } else {
-                    format!(
-                        "{} {} NULL",
-                        quote_identifier(&cond.field),
-                        cond.operator.to_sql()
-                    )
+                    format!("{} {} NULL", quote_identifier(&cond.field), cond.operator.to_sql())
                 }
             }
             Operator::JsonKeyExists => {
                 let quoted_field = quote_identifier(&cond.field);
                 if let Some(ref value) = cond.value {
                     params.push(value.clone());
-                    format!(
-                        "{} {} ${}",
-                        quoted_field,
-                        cond.operator.to_sql(),
-                        params.len()
-                    )
+                    format!("{} {} ${}", quoted_field, cond.operator.to_sql(), params.len())
                 } else {
                     format!("{} {} NULL", quoted_field, cond.operator.to_sql())
                 }
             }
             Operator::JsonAnyKeyExists | Operator::JsonAllKeysExist => {
                 if let Some(ExtractedValue::String(arr)) = &cond.value {
-                    format!(
-                        "{} {} {}",
+                    format!("{} {} {}",
                         quote_identifier(&cond.field),
                         cond.operator.to_sql(),
                         arr
                     )
                 } else {
-                    format!(
-                        "{} {} NULL",
-                        quote_identifier(&cond.field),
-                        cond.operator.to_sql()
-                    )
+                    format!("{} {} NULL", quote_identifier(&cond.field), cond.operator.to_sql())
                 }
             }
             // Array operators
@@ -382,12 +321,7 @@ impl QueryBuilder {
                 let quoted_field = quote_identifier(&cond.field);
                 if let Some(ref value) = cond.value {
                     params.push(value.clone());
-                    format!(
-                        "{} {} ${}",
-                        quoted_field,
-                        cond.operator.to_sql(),
-                        params.len()
-                    )
+                    format!("{} {} ${}", quoted_field, cond.operator.to_sql(), params.len())
                 } else {
                     format!("{} {} NULL", quoted_field, cond.operator.to_sql())
                 }
@@ -400,7 +334,9 @@ impl QueryBuilder {
         if self.returning.is_empty() || self.returning.contains(&"*".to_string()) {
             sql.push('*');
         } else {
-            let cols: Vec<String> = self.returning.iter().map(|c| quote_identifier(c)).collect();
+            let cols: Vec<String> = self.returning.iter()
+                .map(|c| quote_identifier(c))
+                .collect();
             sql.push_str(&cols.join(", "));
         }
     }

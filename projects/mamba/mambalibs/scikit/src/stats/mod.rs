@@ -2,10 +2,10 @@
 //!
 //! Provides probability distributions, hypothesis testing, and descriptive statistics.
 
-mod descriptive;
 mod distributions;
 mod hypothesis;
+mod descriptive;
 
-pub use descriptive::*;
 pub use distributions::*;
 pub use hypothesis::*;
+pub use descriptive::*;

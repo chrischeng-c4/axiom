@@ -63,13 +63,13 @@ fn test_bulk_config_builder() {
 #[test]
 fn test_bulk_config_min_batch_size() {
     let config = BulkConfig::new().batch_size(0);
-    assert_eq!(config.batch_size, 1); // Should enforce minimum of 1
+    assert_eq!(config.batch_size, 1);  // Should enforce minimum of 1
 }
 
 #[test]
 fn test_bulk_config_min_parallelism() {
     let config = BulkConfig::new().max_parallelism(0);
-    assert_eq!(config.max_parallelism, 1); // Should enforce minimum of 1
+    assert_eq!(config.max_parallelism, 1);  // Should enforce minimum of 1
 }
 
 // =============================================================================
@@ -87,9 +87,7 @@ async fn test_bulk_insert_empty() -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
     let rows: Vec<HashMap<String, ExtractedValue>> = vec![];
@@ -114,17 +112,12 @@ async fn test_bulk_insert_single_row() -> Result<(), Box<dyn std::error::Error>>
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT, value INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
 
     let mut row = HashMap::new();
-    row.insert(
-        "name".to_string(),
-        ExtractedValue::String("test".to_string()),
-    );
+    row.insert("name".to_string(), ExtractedValue::String("test".to_string()));
     row.insert("value".to_string(), ExtractedValue::Int(42));
 
     let result = executor.insert_parallel(table, &[row]).await?;
@@ -134,8 +127,7 @@ async fn test_bulk_insert_single_row() -> Result<(), Box<dyn std::error::Error>>
 
     // Verify data
     let count: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {}", table))
-        .fetch_one(pool)
-        .await?;
+        .fetch_one(pool).await?;
     assert_eq!(count.0, 1);
 
     cleanup_table(pool, table).await?;
@@ -153,19 +145,14 @@ async fn test_bulk_insert_multiple_rows() -> Result<(), Box<dyn std::error::Erro
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT, value INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::new().batch_size(10));
 
     let rows: Vec<HashMap<String, ExtractedValue>> = (0..100)
         .map(|i| {
             let mut row = HashMap::new();
-            row.insert(
-                "name".to_string(),
-                ExtractedValue::String(format!("item_{}", i)),
-            );
+            row.insert("name".to_string(), ExtractedValue::String(format!("item_{}", i)));
             row.insert("value".to_string(), ExtractedValue::Int(i));
             row
         })
@@ -178,8 +165,7 @@ async fn test_bulk_insert_multiple_rows() -> Result<(), Box<dyn std::error::Erro
 
     // Verify data
     let count: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {}", table))
-        .fetch_one(pool)
-        .await?;
+        .fetch_one(pool).await?;
     assert_eq!(count.0, 100);
 
     cleanup_table(pool, table).await?;
@@ -197,9 +183,7 @@ async fn test_bulk_insert_large_batch() -> Result<(), Box<dyn std::error::Error>
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT, value INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Test with 1000 rows, batch_size 100 = 10 batches
     let executor = BulkExecutor::new(&conn, BulkConfig::new().batch_size(100));
@@ -207,10 +191,7 @@ async fn test_bulk_insert_large_batch() -> Result<(), Box<dyn std::error::Error>
     let rows: Vec<HashMap<String, ExtractedValue>> = (0..1000)
         .map(|i| {
             let mut row = HashMap::new();
-            row.insert(
-                "name".to_string(),
-                ExtractedValue::String(format!("item_{}", i)),
-            );
+            row.insert("name".to_string(), ExtractedValue::String(format!("item_{}", i)));
             row.insert("value".to_string(), ExtractedValue::Int(i));
             row
         })
@@ -236,24 +217,16 @@ async fn test_bulk_insert_with_nulls() -> Result<(), Box<dyn std::error::Error>>
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT, value INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
 
     let mut row1 = HashMap::new();
-    row1.insert(
-        "name".to_string(),
-        ExtractedValue::String("with_value".to_string()),
-    );
+    row1.insert("name".to_string(), ExtractedValue::String("with_value".to_string()));
     row1.insert("value".to_string(), ExtractedValue::Int(42));
 
     let mut row2 = HashMap::new();
-    row2.insert(
-        "name".to_string(),
-        ExtractedValue::String("null_value".to_string()),
-    );
+    row2.insert("name".to_string(), ExtractedValue::String("null_value".to_string()));
     row2.insert("value".to_string(), ExtractedValue::Null);
 
     let result = executor.insert_parallel(table, &[row1, row2]).await?;
@@ -262,11 +235,9 @@ async fn test_bulk_insert_with_nulls() -> Result<(), Box<dyn std::error::Error>>
 
     // Verify NULL was inserted correctly
     let count: (i64,) = sqlx::query_as(&format!(
-        "SELECT COUNT(*) FROM {} WHERE value IS NULL",
-        table
+        "SELECT COUNT(*) FROM {} WHERE value IS NULL", table
     ))
-    .fetch_one(pool)
-    .await?;
+    .fetch_one(pool).await?;
     assert_eq!(count.0, 1);
 
     cleanup_table(pool, table).await?;
@@ -289,11 +260,8 @@ async fn test_bulk_insert_various_types() -> Result<(), Box<dyn std::error::Erro
             bigint_val BIGINT,
             float_val DOUBLE PRECISION,
             text_val TEXT
-        )",
-        table
-    ))
-    .execute(pool)
-    .await?;
+        )", table
+    )).execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
 
@@ -302,10 +270,7 @@ async fn test_bulk_insert_various_types() -> Result<(), Box<dyn std::error::Erro
     row.insert("int_val".to_string(), ExtractedValue::Int(42));
     row.insert("bigint_val".to_string(), ExtractedValue::BigInt(9999999999));
     row.insert("float_val".to_string(), ExtractedValue::Double(3.14159));
-    row.insert(
-        "text_val".to_string(),
-        ExtractedValue::String("test".to_string()),
-    );
+    row.insert("text_val".to_string(), ExtractedValue::String("test".to_string()));
 
     let result = executor.insert_parallel(table, &[row]).await?;
 
@@ -330,9 +295,7 @@ async fn test_bulk_update_empty() -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
     let rows: Vec<HashMap<String, ExtractedValue>> = vec![];
@@ -357,26 +320,17 @@ async fn test_bulk_update_single_row() -> Result<(), Box<dyn std::error::Error>>
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT, value INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Insert initial data
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ('original', 1)",
-        table
-    ))
-    .execute(pool)
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ('original', 1)", table))
+        .execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
 
     let mut update = HashMap::new();
     update.insert("id".to_string(), ExtractedValue::Int(1));
-    update.insert(
-        "name".to_string(),
-        ExtractedValue::String("updated".to_string()),
-    );
+    update.insert("name".to_string(), ExtractedValue::String("updated".to_string()));
     update.insert("value".to_string(), ExtractedValue::Int(999));
 
     let result = executor.update_parallel(table, &[update]).await?;
@@ -384,10 +338,10 @@ async fn test_bulk_update_single_row() -> Result<(), Box<dyn std::error::Error>>
     assert_eq!(result.success_count, 1);
 
     // Verify update
-    let row: (String, i32) =
-        sqlx::query_as(&format!("SELECT name, value FROM {} WHERE id = 1", table))
-            .fetch_one(pool)
-            .await?;
+    let row: (String, i32) = sqlx::query_as(&format!(
+        "SELECT name, value FROM {} WHERE id = 1", table
+    ))
+    .fetch_one(pool).await?;
     assert_eq!(row.0, "updated");
     assert_eq!(row.1, 999);
 
@@ -406,9 +360,7 @@ async fn test_bulk_update_multiple_rows() -> Result<(), Box<dyn std::error::Erro
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT, value INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Insert initial data
     for i in 1..=10 {
@@ -418,8 +370,7 @@ async fn test_bulk_update_multiple_rows() -> Result<(), Box<dyn std::error::Erro
         ))
         .bind(format!("item_{}", i))
         .bind(i)
-        .execute(pool)
-        .await?;
+        .execute(pool).await?;
     }
 
     let executor = BulkExecutor::new(&conn, BulkConfig::new().batch_size(3));
@@ -440,8 +391,7 @@ async fn test_bulk_update_multiple_rows() -> Result<(), Box<dyn std::error::Erro
 
     // Verify updates
     let sum: (i64,) = sqlx::query_as(&format!("SELECT SUM(value) FROM {}", table))
-        .fetch_one(pool)
-        .await?;
+        .fetch_one(pool).await?;
     assert_eq!(sum.0, (1..=10).map(|i| i * 100).sum::<i64>());
 
     cleanup_table(pool, table).await?;
@@ -459,18 +409,13 @@ async fn test_bulk_update_nonexistent_id() -> Result<(), Box<dyn std::error::Err
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
 
     let mut update = HashMap::new();
-    update.insert("id".to_string(), ExtractedValue::Int(9999)); // doesn't exist
-    update.insert(
-        "name".to_string(),
-        ExtractedValue::String("ghost".to_string()),
-    );
+    update.insert("id".to_string(), ExtractedValue::Int(9999));  // doesn't exist
+    update.insert("name".to_string(), ExtractedValue::String("ghost".to_string()));
 
     let result = executor.update_parallel(table, &[update]).await?;
 
@@ -496,9 +441,7 @@ async fn test_bulk_delete_empty() -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
     let ids: Vec<i64> = vec![];
@@ -523,13 +466,10 @@ async fn test_bulk_delete_single() -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     sqlx::query(&format!("INSERT INTO {} (name) VALUES ('test')", table))
-        .execute(pool)
-        .await?;
+        .execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
     let result = executor.delete_parallel(table, &[1]).await?;
@@ -538,8 +478,7 @@ async fn test_bulk_delete_single() -> Result<(), Box<dyn std::error::Error>> {
 
     // Verify deletion
     let count: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {}", table))
-        .fetch_one(pool)
-        .await?;
+        .fetch_one(pool).await?;
     assert_eq!(count.0, 0);
 
     cleanup_table(pool, table).await?;
@@ -557,16 +496,13 @@ async fn test_bulk_delete_multiple() -> Result<(), Box<dyn std::error::Error>> {
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Insert 100 rows
     for i in 0..100 {
         sqlx::query(&format!("INSERT INTO {} (name) VALUES ($1)", table))
             .bind(format!("item_{}", i))
-            .execute(pool)
-            .await?;
+            .execute(pool).await?;
     }
 
     let executor = BulkExecutor::new(&conn, BulkConfig::new().batch_size(10));
@@ -579,8 +515,7 @@ async fn test_bulk_delete_multiple() -> Result<(), Box<dyn std::error::Error>> {
 
     // Verify remaining count
     let count: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {}", table))
-        .fetch_one(pool)
-        .await?;
+        .fetch_one(pool).await?;
     assert_eq!(count.0, 50);
 
     cleanup_table(pool, table).await?;
@@ -598,13 +533,10 @@ async fn test_bulk_delete_nonexistent_ids() -> Result<(), Box<dyn std::error::Er
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     sqlx::query(&format!("INSERT INTO {} (name) VALUES ('test')", table))
-        .execute(pool)
-        .await?;
+        .execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
 
@@ -615,8 +547,7 @@ async fn test_bulk_delete_nonexistent_ids() -> Result<(), Box<dyn std::error::Er
 
     // Verify original row still exists
     let count: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {}", table))
-        .fetch_one(pool)
-        .await?;
+        .fetch_one(pool).await?;
     assert_eq!(count.0, 1);
 
     cleanup_table(pool, table).await?;
@@ -638,44 +569,32 @@ async fn test_bulk_insert_continue_on_error() -> Result<(), Box<dyn std::error::
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Insert one row first
     sqlx::query(&format!("INSERT INTO {} (name) VALUES ('existing')", table))
-        .execute(pool)
-        .await?;
+        .execute(pool).await?;
 
     let executor = BulkExecutor::new(
         &conn,
-        BulkConfig::new().batch_size(1).continue_on_error(true),
+        BulkConfig::new().batch_size(1).continue_on_error(true)
     );
 
     // Try to insert duplicates - some will fail due to unique constraint
     let rows: Vec<HashMap<String, ExtractedValue>> = vec![
         {
             let mut row = HashMap::new();
-            row.insert(
-                "name".to_string(),
-                ExtractedValue::String("new1".to_string()),
-            );
+            row.insert("name".to_string(), ExtractedValue::String("new1".to_string()));
             row
         },
         {
             let mut row = HashMap::new();
-            row.insert(
-                "name".to_string(),
-                ExtractedValue::String("existing".to_string()),
-            ); // Will fail
+            row.insert("name".to_string(), ExtractedValue::String("existing".to_string())); // Will fail
             row
         },
         {
             let mut row = HashMap::new();
-            row.insert(
-                "name".to_string(),
-                ExtractedValue::String("new2".to_string()),
-            );
+            row.insert("name".to_string(), ExtractedValue::String("new2".to_string()));
             row
         },
     ];
@@ -702,26 +621,20 @@ async fn test_bulk_insert_fail_fast() -> Result<(), Box<dyn std::error::Error>> 
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT UNIQUE NOT NULL)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Insert one row first
     sqlx::query(&format!("INSERT INTO {} (name) VALUES ('existing')", table))
-        .execute(pool)
-        .await?;
+        .execute(pool).await?;
 
     let executor = BulkExecutor::new(
         &conn,
-        BulkConfig::new().batch_size(1).continue_on_error(false), // fail fast
+        BulkConfig::new().batch_size(1).continue_on_error(false)  // fail fast
     );
 
     // Try to insert duplicate - should fail immediately
     let mut row = HashMap::new();
-    row.insert(
-        "name".to_string(),
-        ExtractedValue::String("existing".to_string()),
-    );
+    row.insert("name".to_string(), ExtractedValue::String("existing".to_string()));
 
     let result = executor.insert_parallel(table, &[row]).await;
 
@@ -747,12 +660,13 @@ async fn test_bulk_insert_parallelism() -> Result<(), Box<dyn std::error::Error>
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, batch_id INTEGER, item_idx INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Use small batch size to force many parallel batches
-    let executor = BulkExecutor::new(&conn, BulkConfig::new().batch_size(10).max_parallelism(4));
+    let executor = BulkExecutor::new(
+        &conn,
+        BulkConfig::new().batch_size(10).max_parallelism(4)
+    );
 
     // Insert 100 rows
     let rows: Vec<HashMap<String, ExtractedValue>> = (0..100)
@@ -770,8 +684,7 @@ async fn test_bulk_insert_parallelism() -> Result<(), Box<dyn std::error::Error>
 
     // Verify all data is there
     let count: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {}", table))
-        .fetch_one(pool)
-        .await?;
+        .fetch_one(pool).await?;
     assert_eq!(count.0, 100);
 
     cleanup_table(pool, table).await?;
@@ -789,15 +702,12 @@ async fn test_bulk_concurrent_operations() -> Result<(), Box<dyn std::error::Err
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, counter INTEGER DEFAULT 0)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Insert initial rows
     for _ in 0..10 {
         sqlx::query(&format!("INSERT INTO {} DEFAULT VALUES", table))
-            .execute(pool)
-            .await?;
+            .execute(pool).await?;
     }
 
     // Run multiple bulk operations concurrently
@@ -836,9 +746,7 @@ async fn test_bulk_insert_special_characters() -> Result<(), Box<dyn std::error:
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
 
@@ -850,7 +758,7 @@ async fn test_bulk_insert_special_characters() -> Result<(), Box<dyn std::error:
         "unicode:\u{1F600}",
         "newline\nhere",
         "tab\there",
-        "", // empty string
+        "",  // empty string
     ];
 
     let rows: Vec<HashMap<String, ExtractedValue>> = special_strings
@@ -867,9 +775,10 @@ async fn test_bulk_insert_special_characters() -> Result<(), Box<dyn std::error:
     assert_eq!(result.success_count, special_strings.len());
 
     // Verify all strings stored correctly
-    let stored: Vec<(String,)> = sqlx::query_as(&format!("SELECT name FROM {} ORDER BY id", table))
-        .fetch_all(pool)
-        .await?;
+    let stored: Vec<(String,)> = sqlx::query_as(&format!(
+        "SELECT name FROM {} ORDER BY id", table
+    ))
+    .fetch_all(pool).await?;
 
     for (i, row) in stored.iter().enumerate() {
         assert_eq!(row.0, special_strings[i]);
@@ -890,9 +799,7 @@ async fn test_bulk_insert_exact_batch_size() -> Result<(), Box<dyn std::error::E
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, idx INTEGER)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     // Insert exactly batch_size rows (boundary case)
     let batch_size = 10;
@@ -925,13 +832,10 @@ async fn test_bulk_update_only_id_field() -> Result<(), Box<dyn std::error::Erro
     sqlx::query(&format!(
         "CREATE TABLE {} (id SERIAL PRIMARY KEY, name TEXT)",
         table
-    ))
-    .execute(pool)
-    .await?;
+    )).execute(pool).await?;
 
     sqlx::query(&format!("INSERT INTO {} (name) VALUES ('test')", table))
-        .execute(pool)
-        .await?;
+        .execute(pool).await?;
 
     let executor = BulkExecutor::new(&conn, BulkConfig::default());
 

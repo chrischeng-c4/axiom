@@ -53,9 +53,7 @@ mod tests {
     fn test_filtfilt_preserves_length() {
         let b = vec![0.25, 0.25, 0.25, 0.25];
         let a = vec![1.0];
-        let x: Vec<f64> = (0..100)
-            .map(|i| (2.0 * PI * 5.0 * i as f64 / 100.0).sin())
-            .collect();
+        let x: Vec<f64> = (0..100).map(|i| (2.0 * PI * 5.0 * i as f64 / 100.0).sin()).collect();
         let y = filtfilt(&b, &a, &x);
         assert_eq!(y.len(), x.len());
     }

@@ -23,7 +23,8 @@
 
 use crate::pkgmanage::pkgmgr::toolchain::PythonVersion;
 
-const PBS_BASE: &str = "https://github.com/astral-sh/python-build-standalone/releases/download";
+const PBS_BASE: &str =
+    "https://github.com/astral-sh/python-build-standalone/releases/download";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PbsArch {
@@ -71,7 +72,9 @@ pub struct PbsTarget {
 pub enum PbsUrlError {
     LibcOnNonLinux,
     MissingLinuxLibc,
-    UnsupportedVariantForTarget { detail: String },
+    UnsupportedVariantForTarget {
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for PbsUrlError {
@@ -196,13 +199,9 @@ mod tests {
 
     #[test]
     fn linux_glibc_x86_64_pgo_lto_url() {
-        let target = PbsTarget::new(
-            PbsArch::X86_64,
-            PbsOs::Linux,
-            Some(PbsLibc::Gnu),
-            PbsVariant::PgoLto,
-        )
-        .unwrap();
+        let target =
+            PbsTarget::new(PbsArch::X86_64, PbsOs::Linux, Some(PbsLibc::Gnu), PbsVariant::PgoLto)
+                .unwrap();
         let art = PbsArtifact {
             release_tag: "20240726".into(),
             version: pv(3, 12, 4),
@@ -235,8 +234,8 @@ mod tests {
 
     #[test]
     fn windows_x86_64_pgo_filename() {
-        let target =
-            PbsTarget::new(PbsArch::X86_64, PbsOs::Windows, None, PbsVariant::Pgo).unwrap();
+        let target = PbsTarget::new(PbsArch::X86_64, PbsOs::Windows, None, PbsVariant::Pgo)
+            .unwrap();
         let art = PbsArtifact {
             release_tag: "20240726".into(),
             version: pv(3, 12, 4),
@@ -250,13 +249,9 @@ mod tests {
 
     #[test]
     fn linux_musl_noopt_filename() {
-        let target = PbsTarget::new(
-            PbsArch::X86_64,
-            PbsOs::Linux,
-            Some(PbsLibc::Musl),
-            PbsVariant::Noopt,
-        )
-        .unwrap();
+        let target =
+            PbsTarget::new(PbsArch::X86_64, PbsOs::Linux, Some(PbsLibc::Musl), PbsVariant::Noopt)
+                .unwrap();
         let art = PbsArtifact {
             release_tag: "20240726".into(),
             version: pv(3, 12, 4),
@@ -270,13 +265,9 @@ mod tests {
 
     #[test]
     fn linux_i686_glibc_lto_filename() {
-        let target = PbsTarget::new(
-            PbsArch::I686,
-            PbsOs::Linux,
-            Some(PbsLibc::Gnu),
-            PbsVariant::Lto,
-        )
-        .unwrap();
+        let target =
+            PbsTarget::new(PbsArch::I686, PbsOs::Linux, Some(PbsLibc::Gnu), PbsVariant::Lto)
+                .unwrap();
         let art = PbsArtifact {
             release_tag: "20240909".into(),
             version: pv(3, 11, 9),
@@ -290,13 +281,9 @@ mod tests {
 
     #[test]
     fn debug_variant_tag_in_filename() {
-        let target = PbsTarget::new(
-            PbsArch::X86_64,
-            PbsOs::Linux,
-            Some(PbsLibc::Gnu),
-            PbsVariant::Debug,
-        )
-        .unwrap();
+        let target =
+            PbsTarget::new(PbsArch::X86_64, PbsOs::Linux, Some(PbsLibc::Gnu), PbsVariant::Debug)
+                .unwrap();
         let art = PbsArtifact {
             release_tag: "20240726".into(),
             version: pv(3, 12, 4),
@@ -307,25 +294,17 @@ mod tests {
 
     #[test]
     fn rejects_libc_on_macos() {
-        let err = PbsTarget::new(
-            PbsArch::Aarch64,
-            PbsOs::Darwin,
-            Some(PbsLibc::Gnu),
-            PbsVariant::PgoLto,
-        )
-        .unwrap_err();
+        let err =
+            PbsTarget::new(PbsArch::Aarch64, PbsOs::Darwin, Some(PbsLibc::Gnu), PbsVariant::PgoLto)
+                .unwrap_err();
         assert_eq!(err, PbsUrlError::LibcOnNonLinux);
     }
 
     #[test]
     fn rejects_libc_on_windows() {
-        let err = PbsTarget::new(
-            PbsArch::X86_64,
-            PbsOs::Windows,
-            Some(PbsLibc::Gnu),
-            PbsVariant::Pgo,
-        )
-        .unwrap_err();
+        let err =
+            PbsTarget::new(PbsArch::X86_64, PbsOs::Windows, Some(PbsLibc::Gnu), PbsVariant::Pgo)
+                .unwrap_err();
         assert_eq!(err, PbsUrlError::LibcOnNonLinux);
     }
 
@@ -456,13 +435,9 @@ mod tests {
 
     #[test]
     fn url_starts_with_pbs_base_and_release_tag() {
-        let target = PbsTarget::new(
-            PbsArch::X86_64,
-            PbsOs::Linux,
-            Some(PbsLibc::Gnu),
-            PbsVariant::PgoLto,
-        )
-        .unwrap();
+        let target =
+            PbsTarget::new(PbsArch::X86_64, PbsOs::Linux, Some(PbsLibc::Gnu), PbsVariant::PgoLto)
+                .unwrap();
         let art = PbsArtifact {
             release_tag: "20240726".into(),
             version: pv(3, 12, 4),

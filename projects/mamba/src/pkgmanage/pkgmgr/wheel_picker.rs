@@ -92,11 +92,7 @@ pub fn rank_wheels(filenames: &[String], selector: &TagSelector) -> Vec<ScoredWh
     scored.sort_by(|a, b| {
         b.tag_score
             .cmp(&a.tag_score)
-            .then_with(|| {
-                b.build_number
-                    .unwrap_or(0)
-                    .cmp(&a.build_number.unwrap_or(0))
-            })
+            .then_with(|| b.build_number.unwrap_or(0).cmp(&a.build_number.unwrap_or(0)))
             .then_with(|| a.filename.cmp(&b.filename))
     });
     scored
@@ -128,10 +124,7 @@ fn pick_winner(prev: ScoredWheel, next: ScoredWheel) -> ScoredWheel {
 /// PEP 491 build tag is "digit prefix + arbitrary suffix" (e.g. `1`,
 /// `42dev`, `7post1`). The numeric tie-break uses the leading digit run.
 fn extract_build_number(build_tag: &str) -> Option<u64> {
-    let digits: String = build_tag
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
+    let digits: String = build_tag.chars().take_while(|c| c.is_ascii_digit()).collect();
     if digits.is_empty() {
         return None;
     }
@@ -211,7 +204,10 @@ mod tests {
         ];
         let s = macos_arm64_cp312_selector();
         let best = pick_best_wheel(&files, &s).unwrap();
-        assert_eq!(best.filename, "pkg-1.0-cp312-abi3-macosx_11_0_arm64.whl");
+        assert_eq!(
+            best.filename,
+            "pkg-1.0-cp312-abi3-macosx_11_0_arm64.whl"
+        );
     }
 
     #[test]
@@ -258,7 +254,10 @@ mod tests {
         ];
         let s = macos_arm64_cp312_selector();
         let best = pick_best_wheel(&files, &s).unwrap();
-        assert_eq!(best.filename, "pkg-1.0-2-cp312-cp312-macosx_11_0_arm64.whl");
+        assert_eq!(
+            best.filename,
+            "pkg-1.0-2-cp312-cp312-macosx_11_0_arm64.whl"
+        );
         assert_eq!(best.build_number, Some(2));
     }
 
@@ -284,7 +283,10 @@ mod tests {
         ];
         let s = macos_arm64_cp312_selector();
         let best = pick_best_wheel(&files, &s).unwrap();
-        assert_eq!(best.filename, "pkg-1.0-1-cp312-cp312-macosx_11_0_arm64.whl");
+        assert_eq!(
+            best.filename,
+            "pkg-1.0-1-cp312-cp312-macosx_11_0_arm64.whl"
+        );
     }
 
     #[test]

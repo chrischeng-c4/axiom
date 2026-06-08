@@ -104,6 +104,12 @@ fn is_singleton_package(package_name: &str) -> bool {
     matches!(package_name, "react" | "react-dom")
 }
 
+fn package_version(package_dir: &Path) -> Option<String> {
+    package::read_package_json(&package_dir.join("package.json"))
+        .ok()
+        .and_then(|pkg| pkg.version)
+}
+
 /// @spec .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 impl ModuleResolver {
     /// Create a new module resolver
@@ -140,7 +146,11 @@ impl ModuleResolver {
     }
 
     fn detect_kind(&self, specifier: &str) -> ResolveKind {
-        if specifier.starts_with("./") || specifier.starts_with("../") {
+        if specifier == "."
+            || specifier == ".."
+            || specifier.starts_with("./")
+            || specifier.starts_with("../")
+        {
             ResolveKind::Relative
         } else if specifier.starts_with('/') {
             ResolveKind::Absolute
@@ -191,6 +201,8 @@ impl ModuleResolver {
         let (package_name, subpath) = parse_package_specifier(specifier);
 
         let mut current = from.parent();
+        let mut nearest: Option<(PathBuf, Option<String>)> = None;
+        let mut hoisted_same_version = None;
         let mut hoisted_singleton = None;
 
         while let Some(dir) = current {
@@ -200,12 +212,19 @@ impl ModuleResolver {
                 if package_dir.exists() {
                     if let Ok(resolved) = self.resolve_package_dir(&package_dir, subpath.as_deref())
                     {
+                        let version = package_version(&package_dir);
                         if is_singleton_package(&package_name) {
                             hoisted_singleton = Some(resolved);
                             current = dir.parent();
                             continue;
                         }
-                        return Ok(resolved);
+                        if let Some((_, nearest_version)) = &nearest {
+                            if version.is_some() && version == *nearest_version {
+                                hoisted_same_version = Some(resolved);
+                            }
+                        } else {
+                            nearest = Some((resolved, version));
+                        }
                     }
                 }
             }
@@ -213,6 +232,12 @@ impl ModuleResolver {
         }
 
         if let Some(resolved) = hoisted_singleton {
+            return Ok(resolved);
+        }
+        if let Some(resolved) = hoisted_same_version {
+            return Ok(resolved);
+        }
+        if let Some((resolved, _)) = nearest {
             return Ok(resolved);
         }
 
@@ -355,6 +380,8 @@ mod tests {
 
         assert_eq!(resolver.detect_kind("./foo"), ResolveKind::Relative);
         assert_eq!(resolver.detect_kind("../bar"), ResolveKind::Relative);
+        assert_eq!(resolver.detect_kind("."), ResolveKind::Relative);
+        assert_eq!(resolver.detect_kind(".."), ResolveKind::Relative);
         assert_eq!(resolver.detect_kind("/abs/path"), ResolveKind::Absolute);
         assert_eq!(resolver.detect_kind("react"), ResolveKind::Package);
     }
@@ -422,6 +449,29 @@ mod tests {
 
         let resolved = std::fs::canonicalize(resolved.path).unwrap();
         assert!(resolved.ends_with("dom-helpers/esm/addClass.js"));
+    }
+
+    #[test]
+    fn test_dot_relative_import_resolves_directory_index() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let style_dir = tmp
+            .path()
+            .join("node_modules")
+            .join("antd")
+            .join("es")
+            .join("tag")
+            .join("style");
+        std::fs::create_dir_all(&style_dir).unwrap();
+        let importer = style_dir.join("statusCmp.js");
+        let index = style_dir.join("index.js");
+        std::fs::write(&importer, "import { prepareToken } from '.';").unwrap();
+        std::fs::write(&index, "export const prepareToken = () => null;").unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::default()).unwrap();
+        let resolved = resolver.resolve(".", &importer).unwrap();
+
+        assert_eq!(resolved.kind, ResolveKind::Relative);
+        assert_eq!(resolved.path, index);
     }
 
     #[test]
@@ -675,6 +725,47 @@ mod tests {
         let resolved = resolver.resolve("scheduler", &importer).unwrap();
 
         assert_eq!(resolved.path, nested_pkg.join("index.js"));
+    }
+
+    #[test]
+    fn test_same_version_package_prefers_hoisted_root_package() {
+        use tempfile::tempdir;
+
+        let workspace = tempdir().unwrap();
+        let ws_root = workspace.path();
+
+        let root_pkg = ws_root.join("node_modules").join("scheduler");
+        std::fs::create_dir_all(&root_pkg).unwrap();
+        std::fs::write(
+            root_pkg.join("package.json"),
+            r#"{"name":"scheduler","version":"0.2.0","main":"index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(root_pkg.join("index.js"), "exports.version = 'root';").unwrap();
+
+        let nested_pkg = ws_root
+            .join("node_modules")
+            .join("react-dom")
+            .join("node_modules")
+            .join("scheduler");
+        std::fs::create_dir_all(&nested_pkg).unwrap();
+        std::fs::write(
+            nested_pkg.join("package.json"),
+            r#"{"name":"scheduler","version":"0.2.0","main":"index.js"}"#,
+        )
+        .unwrap();
+        std::fs::write(nested_pkg.join("index.js"), "exports.version = 'nested';").unwrap();
+
+        let importer = ws_root
+            .join("node_modules")
+            .join("react-dom")
+            .join("index.js");
+        std::fs::write(&importer, "require('scheduler');").unwrap();
+
+        let resolver = ModuleResolver::new(ResolveOptions::default()).unwrap();
+        let resolved = resolver.resolve("scheduler", &importer).unwrap();
+
+        assert_eq!(resolved.path, root_pkg.join("index.js"));
     }
 
     // ──────────────────────────────────────────────────────────────────

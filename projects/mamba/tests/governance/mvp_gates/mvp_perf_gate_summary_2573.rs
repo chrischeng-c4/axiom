@@ -21,12 +21,10 @@ use std::process::Command;
 
 use serde_json::{json, Value};
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn summary_script() -> PathBuf {
-    project_root().join("scripts").join("perf_gate_summary.py")
+    crate::common::project_root()
+        .join("scripts")
+        .join("perf_gate_summary.py")
 }
 
 fn unique_dir(tag: &str) -> PathBuf {
@@ -34,7 +32,8 @@ fn unique_dir(tag: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!("mamba-perf-gate-summary-{tag}-{nanos}"));
+    let dir = std::env::temp_dir()
+        .join(format!("mamba-perf-gate-summary-{tag}-{nanos}"));
     std::fs::create_dir_all(&dir).expect("create tempdir");
     dir
 }
@@ -55,7 +54,7 @@ fn run_summary(args: &[&str]) -> (i32, String, String) {
     let output = Command::new("python3")
         .arg(summary_script())
         .args(args)
-        .current_dir(project_root())
+        .current_dir(crate::common::project_root())
         .env_remove("MAMBA_PERF_LOCAL_DEBUG_OVERRIDE")
         .output()
         .expect("invoke perf_gate_summary.py");
@@ -105,10 +104,8 @@ fn summary_top_level_field_set_is_locked() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (_, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
     for key in &[
         "schema_version",
@@ -146,17 +143,10 @@ fn floor_result_carries_threshold_violations_count_slowest_blockers_and_passed()
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (_, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
-    for key in &[
-        "threshold",
-        "violations_count",
-        "slowest_blockers",
-        "passed",
-    ] {
+    for key in &["threshold", "violations_count", "slowest_blockers", "passed"] {
         assert!(
             payload["floor_result"].get(key).is_some(),
             "floor_result missing {key}"
@@ -177,18 +167,10 @@ fn suite_result_carries_floor_method_actual_passed_checked_count() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (_, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
-    for key in &[
-        "floor",
-        "method",
-        "actual_geomean",
-        "passed",
-        "checked_count",
-    ] {
+    for key in &["floor", "method", "actual_geomean", "passed", "checked_count"] {
         assert!(
             payload["suite_result"].get(key).is_some(),
             "suite_result missing {key}"
@@ -209,20 +191,13 @@ fn cpython_identity_block_carries_executable_version_and_implementation() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (_, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
     let ci = &payload["cpython_identity"];
     for key in &[
-        "executable",
-        "version",
-        "version_major_minor",
-        "implementation_name",
-        "required_cpython",
-        "matches",
-        "override_active",
+        "executable", "version", "version_major_minor",
+        "implementation_name", "required_cpython", "matches", "override_active",
     ] {
         assert!(ci.get(key).is_some(), "cpython_identity missing {key}");
     }
@@ -247,10 +222,8 @@ fn per_benchmark_array_has_name_speedup_tier_and_passed_floor_bit() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (_, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
     let per = payload["per_benchmark"].as_array().unwrap();
     assert_eq!(per.len(), 2);
@@ -286,15 +259,11 @@ fn slowest_blockers_lists_required_entries_below_floor_ascending() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (code, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
     assert_eq!(code, 1, "floor failures must gate");
-    let slowest = payload["floor_result"]["slowest_blockers"]
-        .as_array()
-        .unwrap();
+    let slowest = payload["floor_result"]["slowest_blockers"].as_array().unwrap();
     assert_eq!(slowest.len(), 2);
     assert_eq!(slowest[0]["name"], "very_slow");
     assert_eq!(slowest[1]["name"], "mid_slow");
@@ -318,14 +287,10 @@ fn slowest_blockers_truncates_to_at_most_five() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (_, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
-    let slowest = payload["floor_result"]["slowest_blockers"]
-        .as_array()
-        .unwrap();
+    let slowest = payload["floor_result"]["slowest_blockers"].as_array().unwrap();
     assert_eq!(slowest.len(), 5, "slowest_blockers truncates to top 5");
 }
 
@@ -344,10 +309,8 @@ fn gates_block_includes_each_constituent_gate_bit() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (code, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
     assert_eq!(code, 0);
     let gates = &payload["gates"];
@@ -379,10 +342,8 @@ fn legacy_v1_baseline_marks_baseline_version_ok_false() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (code, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
     assert_eq!(code, 1, "legacy v1 must fail gates");
     assert_eq!(payload["gates"]["baseline_version_ok"], false);
@@ -404,20 +365,16 @@ fn suite_geomean_below_floor_blocks_overall_pass() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (code, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
     assert_eq!(code, 1, "suite below 10x must gate");
     // floor passes (both ≥ 1.0×) but suite geomean fails (sqrt(2 * 1.25) ≈ 1.58).
     assert_eq!(payload["gates"]["per_benchmark_floor_ok"], true);
     assert_eq!(payload["gates"]["suite_geomean_ok"], false);
     let geomean = payload["suite_result"]["actual_geomean"].as_f64().unwrap();
-    assert!(
-        geomean > 1.5 && geomean < 1.7,
-        "geomean(2, 1.25) should be ~1.58; got {geomean}"
-    );
+    assert!(geomean > 1.5 && geomean < 1.7,
+        "geomean(2, 1.25) should be ~1.58; got {geomean}");
 }
 
 #[test]
@@ -442,10 +399,8 @@ fn cpython_mismatch_blocks_gate_without_override() {
         }),
     );
     let (code, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
     assert_eq!(code, 1);
     assert_eq!(payload["gates"]["cpython_identity_ok"], false);
@@ -474,10 +429,8 @@ fn cpython_mismatch_with_local_debug_override_still_passes_cpython_gate() {
         }),
     );
     let (code, payload) = run_summary_json(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
         "--local-debug-override",
     ]);
     assert_eq!(code, 0);
@@ -493,10 +446,8 @@ fn summary_exits_101_when_baseline_missing() {
     let dir = unique_dir("missing");
     let id_path = passing_identity_for(&dir);
     let (code, _stdout, stderr) = run_summary(&[
-        "--baseline",
-        "/tmp/perf-summary-baseline-missing.json",
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
+        "--baseline", "/tmp/perf-summary-baseline-missing.json",
+        "--cpython-identity-json", id_path.to_str().unwrap(),
     ]);
     assert_eq!(code, 101);
     assert!(stderr.contains("baseline missing"));
@@ -515,12 +466,9 @@ fn summary_text_mode_lists_slowest_blockers_and_gate_status() {
     let baseline_path = write_baseline(&dir, "baseline.json", &baseline);
     let id_path = passing_identity_for(&dir);
     let (code, _stdout, stderr) = run_summary(&[
-        "--baseline",
-        baseline_path.to_str().unwrap(),
-        "--cpython-identity-json",
-        id_path.to_str().unwrap(),
-        "--format",
-        "text",
+        "--baseline", baseline_path.to_str().unwrap(),
+        "--cpython-identity-json", id_path.to_str().unwrap(),
+        "--format", "text",
     ]);
     assert_eq!(code, 1);
     assert!(stderr.contains("perf_gate_summary"));
@@ -543,9 +491,6 @@ fn help_documents_baseline_policy_identity_and_override_flags() {
         "--local-debug-override",
         "--format",
     ] {
-        assert!(
-            stdout.contains(flag),
-            "--help must document {flag}; got {stdout}"
-        );
+        assert!(stdout.contains(flag), "--help must document {flag}; got {stdout}");
     }
 }

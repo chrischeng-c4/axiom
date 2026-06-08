@@ -19,15 +19,353 @@ use axum::routing::{get, post};
 use axum::Router;
 use jet::browser::{Browser, LaunchOptions};
 use jet::build_target::BuildTarget;
-use jet::test_runner::{self, RunnerConfig};
-use jet::wasm_build::{self, Profile};
+use jet::wasm_build::{self, manifest as wasm_manifest, Profile};
+use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+static WASM_PACK_BUILD_LOCK: Mutex<()> = Mutex::new(());
+
+fn wasm_pack_build_lock() -> MutexGuard<'static, ()> {
+    WASM_PACK_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn build_wasm_serialized_with_profile(
+    root: &Path,
+    out_dir: &Path,
+    profile: Profile,
+) -> anyhow::Result<()> {
+    let _guard = wasm_pack_build_lock();
+    wasm_build::build_with_profile(root, out_dir, profile, BuildTarget::Web)
+}
+
+fn build_wasm_serialized(root: &Path, out_dir: &Path) -> anyhow::Result<()> {
+    build_wasm_serialized_with_profile(root, out_dir, Profile::Release)
+}
+
+fn build_default_wasm_serialized(root: &Path, out_dir: &Path) -> anyhow::Result<()> {
+    let _guard = wasm_pack_build_lock();
+    jet::wasm_build::build(root, out_dir)
+}
+
+const WEBGPU_VISUAL_PROBE_JS: &str = r#"(() => {
+    function canvasVisualProbe() {
+        const canvas = document.querySelector('canvas#jet-canvas');
+        if (!canvas) return { error: 'missing-canvas' };
+        const sourceW = Math.max(1, Math.min(canvas.width || canvas.clientWidth || 1, 1024));
+        const sourceH = Math.max(1, Math.min(canvas.height || canvas.clientHeight || 1, 1024));
+        const sample = document.createElement('canvas');
+        sample.width = 32;
+        sample.height = 32;
+        const ctx = sample.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return { error: 'missing-2d-context' };
+
+        try {
+            ctx.drawImage(canvas, 0, 0, sourceW, sourceH, 0, 0, 32, 32);
+        } catch (error) {
+            return { error: String(error) };
+        }
+
+        const data = ctx.getImageData(0, 0, 32, 32).data;
+        let nonTransparent = 0;
+        let nonWhite = 0;
+        let nonBlack = 0;
+        const buckets = new Set();
+        const luma = [];
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            const a = data[i + 3];
+            if (a > 0) nonTransparent += 1;
+            if (a > 0 && (r < 250 || g < 250 || b < 250)) nonWhite += 1;
+            if (a > 0 && (r > 5 || g > 5 || b > 5)) nonBlack += 1;
+            buckets.add(`${r >> 5}:${g >> 5}:${b >> 5}:${a >> 5}`);
+            luma.push((299 * r + 587 * g + 114 * b) / 1000);
+        }
+
+        const blockLuma = [];
+        for (let by = 0; by < 8; by += 1) {
+            for (let bx = 0; bx < 8; bx += 1) {
+                let sum = 0;
+                for (let y = 0; y < 4; y += 1) {
+                    for (let x = 0; x < 4; x += 1) {
+                        sum += luma[(by * 4 + y) * 32 + (bx * 4 + x)];
+                    }
+                }
+                blockLuma.push(sum / 16);
+            }
+        }
+        const avg = blockLuma.reduce((acc, value) => acc + value, 0) / blockLuma.length;
+        let hash = '';
+        let ones = 0;
+        for (let i = 0; i < blockLuma.length; i += 4) {
+            let nibble = 0;
+            for (let j = 0; j < 4; j += 1) {
+                const bit = blockLuma[i + j] >= avg ? 1 : 0;
+                ones += bit;
+                nibble = (nibble << 1) | bit;
+            }
+            hash += nibble.toString(16);
+        }
+
+        return {
+            width: canvas.width,
+            height: canvas.height,
+            clientWidth: canvas.clientWidth,
+            clientHeight: canvas.clientHeight,
+            sourceW,
+            sourceH,
+            nonTransparent,
+            nonWhite,
+            nonBlack,
+            uniqueBuckets: buckets.size,
+            averageLuma: avg,
+            hash,
+            hashOnes: ones
+        };
+    }
+
+    return {
+        gpu: !!navigator.gpu,
+        status: window.__jet_webgpu_status ?? null,
+        console: window.__jet_console ?? [],
+        visualProbe: canvasVisualProbe(),
+        canvasCount: document.querySelectorAll('canvas#jet-canvas').length,
+        domCellCount: document.querySelectorAll('#large-grid, button, span').length
+    };
+})()"#;
+
+const WEBGPU_CONSOLE_CAPTURE_JS: &str = r#"(() => {
+    const entries = [];
+    Object.defineProperty(window, '__jet_console', {
+        value: entries,
+        configurable: true
+    });
+    for (const level of ['log', 'warn', 'error']) {
+        const original = console[level].bind(console);
+        console[level] = (...args) => {
+            entries.push({ level, text: args.map((arg) => {
+                try {
+                    return typeof arg === 'string' ? arg : JSON.stringify(arg);
+                } catch (_) {
+                    return String(arg);
+                }
+            }).join(' ') });
+            return original(...args);
+        };
+    }
+    window.addEventListener('error', (event) => {
+        entries.push({ level: 'error', text: event.message || String(event.error) });
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+        entries.push({ level: 'error', text: String(event.reason) });
+    });
+})()"#;
+
+const WEBGPU_SETTLE_TWO_RAF_JS: &str = r#"new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)));
+})"#;
+
+const DEBUG_TREE_SUMMARY_JS: &str = r#"(() => {
+    const status = window.__jet_webgpu_status ?? null;
+    const debug = window.__jet_debug;
+    if (!debug) {
+        return { ok: false, reason: 'missing __jet_debug', status };
+    }
+    const root = debug.elementTree();
+    const layout = debug.layoutTree();
+    const paintOps = debug.paintOps();
+    const texts = [];
+    const walk = (node) => {
+        if (!node || typeof node !== 'object') return;
+        if (node.kind === 'text') texts.push(String(node.text ?? ''));
+        for (const child of node.children || []) walk(child);
+    };
+    walk(root);
+    return {
+        ok: true,
+        text: texts.join(' '),
+        layoutNodeCount: Array.isArray(layout?.nodes) ? layout.nodes.length : 0,
+        paintOpCount: Array.isArray(paintOps) ? paintOps.length : 0,
+        status
+    };
+})()"#;
+
+fn webgpu_launch_options() -> LaunchOptions {
+    let mut options = LaunchOptions::default();
+    if let Ok(p) = std::env::var("CHROME_PATH") {
+        options.executable = Some(std::path::PathBuf::from(p));
+    }
+    options.args.push("--enable-unsafe-webgpu".to_string());
+    options
+}
+
+async fn wait_for_webgpu_rendered(page: &jet::browser::Page, context: &str) -> Option<Value> {
+    let mut probe = Value::Null;
+    for _ in 0..80 {
+        probe = page
+            .evaluate(WEBGPU_VISUAL_PROBE_JS)
+            .await
+            .unwrap_or_else(|err| panic!("{context}: probe WebGPU status failed: {err}"));
+        if probe.get("gpu").and_then(|v| v.as_bool()) != Some(true) {
+            return None;
+        }
+        let phase = probe
+            .get("status")
+            .and_then(|v| v.get("phase"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if phase == "error" {
+            panic!("{context}: WebGPU runtime reported error: {probe:?}");
+        }
+        if phase == "rendered" {
+            return Some(probe);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    panic!("{context}: WebGPU runtime did not reach rendered phase: {probe:?}");
+}
+
+fn assert_visible_webgpu_screenshot(bytes: &[u8], context: &str) -> Value {
+    let probe = common::react_oracle::screenshot_visual_probe_from_png(bytes);
+    assert!(
+        probe
+            .get("foregroundCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 256
+            && probe.get("nonWhite").and_then(|v| v.as_u64()).unwrap_or(0) > 0
+            && probe
+                .get("uniqueBuckets")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 1,
+        "{context}: expected visible WebGPU screenshot, got {probe:?}"
+    );
+    probe
+}
+
+fn webgpu_status_frames(probe: &Value) -> f64 {
+    probe
+        .get("status")
+        .and_then(|v| v.get("frames"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0)
+}
+
+async fn dispatch_cdp_click(page: &jet::browser::Page, x: f64, y: f64) {
+    for (event_type, button, buttons) in [
+        ("mouseMoved", "none", 0_u64),
+        ("mousePressed", "left", 1_u64),
+        ("mouseReleased", "left", 0_u64),
+    ] {
+        let mut params = serde_json::json!({
+            "type": event_type,
+            "x": x,
+            "y": y,
+            "buttons": buttons,
+        });
+        if button != "none" {
+            params["button"] = Value::String(button.to_string());
+            params["clickCount"] = Value::from(1);
+        }
+        page.session()
+            .send("Input.dispatchMouseEvent", params)
+            .await
+            .unwrap_or_else(|err| panic!("dispatch CDP click event {event_type}: {err}"));
+    }
+}
+
+fn debug_button_center_expr(label: &str) -> String {
+    let label = serde_json::to_string(label).expect("button label serializes");
+    format!(
+        r#"
+(() => {{
+  const label = {label};
+  const debug = window.__jet_debug;
+  if (!debug) return {{ ok: false, reason: 'missing __jet_debug' }};
+  const layout = debug.layoutTree();
+  const nodes = Array.isArray(layout?.nodes) ? layout.nodes : [];
+  const contains = (outer, inner) => {{
+    const cx = inner.x + inner.w / 2;
+    const cy = inner.y + inner.h / 2;
+    return cx >= outer.x && cx <= outer.x + outer.w && cy >= outer.y && cy <= outer.y + outer.h;
+  }};
+  const textNodes = nodes.filter((node) =>
+    node?.kind?.kind === 'text' && String(node.kind.text || '').includes(label)
+  );
+  const buttons = nodes.filter((node) =>
+    node?.kind?.kind === 'intrinsic' &&
+    node.kind.tag === 'button' &&
+    node.kind.has_on_click
+  );
+  for (const text of textNodes) {{
+    const hit = buttons
+      .filter((button) => contains(button.rect, text.rect))
+      .sort((a, b) => (a.rect.w * a.rect.h) - (b.rect.w * b.rect.h))[0];
+    if (hit) {{
+      return {{
+        ok: true,
+        x: hit.rect.x + hit.rect.w / 2,
+        y: hit.rect.y + hit.rect.h / 2,
+        rect: hit.rect
+      }};
+    }}
+  }}
+  return {{ ok: false, reason: `missing clickable button for ${{label}}`, textNodes, buttonCount: buttons.length }};
+}})()
+"#
+    )
+}
+
+fn debug_pick_expr(x: f64, y: f64) -> String {
+    format!(
+        r#"
+(() => {{
+  const debug = window.__jet_debug;
+  if (!debug) return {{ ok: false, reason: 'missing __jet_debug' }};
+  const pick = debug.pickAt({x}, {y});
+  return {{ ok: !!pick, pick }};
+}})()
+"#
+    )
+}
+
+async fn wait_for_debug_tree_text(
+    page: &jet::browser::Page,
+    expected: &str,
+    context: &str,
+) -> Value {
+    let mut summary = Value::Null;
+    for _ in 0..80 {
+        summary = page
+            .evaluate(DEBUG_TREE_SUMMARY_JS)
+            .await
+            .unwrap_or_else(|err| panic!("{context}: debug tree summary failed: {err}"));
+        let text = summary.get("text").and_then(|v| v.as_str()).unwrap_or("");
+        let rendered = summary
+            .get("status")
+            .and_then(|v| v.get("phase"))
+            .and_then(|v| v.as_str())
+            == Some("rendered");
+        if summary.get("ok").and_then(|v| v.as_bool()) == Some(true)
+            && rendered
+            && text.contains(expected)
+        {
+            return summary;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    panic!("{context}: debug tree never contained {expected:?}: {summary:?}");
+}
 
 #[tokio::test]
-async fn counter_demo_builds_and_renders_on_canvas() {
+async fn counter_demo_builds_and_updates_on_webgpu_canvas() {
     common::require_full_wasm_e2e_env();
 
     let workspace = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -43,7 +381,7 @@ async fn counter_demo_builds_and_renders_on_canvas() {
 
     // 1. Run `jet build --wasm` — call directly into the lib so we
     //    don't shell out to the jet binary.
-    jet::wasm_build::build(&demo, std::path::Path::new("dist"))
+    build_default_wasm_serialized(&demo, std::path::Path::new("dist"))
         .expect("jet build --wasm should succeed");
 
     // Sanity check outputs exist.
@@ -63,103 +401,78 @@ async fn counter_demo_builds_and_renders_on_canvas() {
 
     // 2. Serve dist/ with Rust and drive Chromium to verify rendering.
     let port = spawn_static_server(demo.join("dist")).await;
-    let log_file =
-        std::env::temp_dir().join(format!("jet-wasm-e2e-{}-{}.log", std::process::id(), port));
-    let _ = fs::remove_file(&log_file);
-
-    let tmp = tempfile::tempdir().unwrap();
-
     let url = format!("http://127.0.0.1:{port}/index.html");
-    let spec = format!(
-        r#"
-import {{ test, expect }} from '@jet/test';
-
-// Sample a broad region and return a compact signature
-// "<nonWhite>:<checksum>:<dark>". Sum catches glyph-level changes
-// even when non-white pixel count stays similar; `dark` counts
-// pixels with every channel < 128 — a proxy for "text pixel".
-const SAMPLE_JS = `(() => {{
-  const c = document.getElementById('jet-canvas');
-  if (!c) return 'NO_CANVAS';
-  const ctx = c.getContext('2d');
-  const w = Math.min(c.width, 400);
-  const h = Math.min(c.height, 100);
-  const img = ctx.getImageData(0, 0, w, h);
-  let nonWhite = 0, sum = 0, dark = 0;
-  for (let i = 0; i < img.data.length; i += 4) {{
-    const r = img.data[i], g = img.data[i+1], b = img.data[i+2];
-    if (r < 250 || g < 250 || b < 250) nonWhite += 1;
-    if (r < 128 && g < 128 && b < 128) dark += 1;
-    sum = (sum + r + g + b) | 0;
-  }}
-  return nonWhite + ':' + (sum >>> 0) + ':' + dark + ':' + w + 'x' + h;
-}})()`;
-
-test('counter-demo renders on canvas and increments on click', async ({{ page }}) => {{
-  await page.goto({url_json});
-  // Wait for WASM to instantiate + first paint.
-  await page.waitForTimeout(1500);
-
-  const before = await page.evaluate(SAMPLE_JS);
-  if (before === 'NO_CANVAS') throw new Error('canvas element missing');
-  const beforeNonWhite = parseInt(before.split(':')[0], 10);
-  if (!(beforeNonWhite > 50)) {{
-    throw new Error('canvas appears empty on first paint — got ' + before);
-  }}
-
-  // Click inside the button via CDP Input.dispatchMouseEvent. The
-  // button is drawn at the top-left, default height 24px, full
-  // viewport width — (30, 12) lands on the button.
-  await page.mouse.click(30, 12);
-  // Give the render loop a beat to flush + repaint.
-  await page.waitForTimeout(200);
-
-  const after = await page.evaluate(SAMPLE_JS);
-  const fs = await import('node:fs/promises');
-  await fs.writeFile({log_path_json}, 'before=' + before + ' after=' + after);
-
-  if (before === after) {{
-    throw new Error(
-      'click produced no visible change — before=' + before + ' after=' + after +
-      ' (hit-test / flush / repaint pipeline broken?)'
-    );
-  }}
-}});
-"#,
-        url_json = serde_json::to_string(&url).unwrap(),
-        log_path_json = serde_json::to_string(&log_file.display().to_string()).unwrap(),
-    );
-
-    let spec_path = tmp.path().join("wasm_e2e.spec.js");
-    fs::write(&spec_path, &spec).unwrap();
-
-    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
-    cfg.reporters = vec![jet::test_runner::config::Reporter::Term];
-    cfg.workers = 1;
-    cfg.headless = true;
-    cfg.timeout_ms = 60_000;
-
-    let summary = test_runner::run(cfg)
+    let browser = Browser::launch(webgpu_launch_options())
         .await
-        .expect("test runner should complete");
+        .expect("launch Chromium with WebGPU");
+    let page = browser.new_page().await.expect("open page");
+    page.add_init_script(WEBGPU_CONSOLE_CAPTURE_JS)
+        .await
+        .expect("install console capture");
+    page.goto(&url).await.expect("navigate to counter wasm app");
 
-    if let Ok(log) = fs::read_to_string(&log_file) {
-        println!("\n[wasm-e2e] sample: {log}");
+    let Some(before_probe) = wait_for_webgpu_rendered(&page, "counter demo").await else {
+        eprintln!("skipping: Chromium launched without navigator.gpu");
+        let _ = browser.close().await;
+        return;
+    };
+    page.evaluate(WEBGPU_SETTLE_TWO_RAF_JS)
+        .await
+        .expect("settle initial WebGPU paint");
+    let before_png = page
+        .screenshot()
+        .await
+        .expect("capture counter before click");
+    let before_visual = assert_visible_webgpu_screenshot(&before_png, "counter before click");
+    let before_frames = webgpu_status_frames(&before_probe);
+
+    dispatch_cdp_click(&page, 30.0, 12.0).await;
+
+    let mut after_probe = Value::Null;
+    for _ in 0..40 {
+        after_probe = page
+            .evaluate(WEBGPU_VISUAL_PROBE_JS)
+            .await
+            .expect("probe counter after click");
+        if webgpu_status_frames(&after_probe) > before_frames {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    assert_eq!(summary.failed, 0, "wasm e2e spec failed: {summary:?}");
-    assert_eq!(summary.passed, 1);
+    page.evaluate(WEBGPU_SETTLE_TWO_RAF_JS)
+        .await
+        .expect("settle post-click WebGPU paint");
+    let after_png = page
+        .screenshot()
+        .await
+        .expect("capture counter after click");
+    let after_visual = assert_visible_webgpu_screenshot(&after_png, "counter after click");
+
+    let _ = browser.close().await;
+    assert!(
+        webgpu_status_frames(&after_probe) > before_frames,
+        "counter click did not trigger a new WebGPU frame: before={before_probe:?} after={after_probe:?}"
+    );
+    assert_ne!(
+        before_png, after_png,
+        "counter click produced no visible screenshot change: before={before_visual:?} after={after_visual:?}"
+    );
 }
 
 #[test]
-fn webgpu_renderer_build_selects_webgpu_scaffold() {
+fn wasm_build_selects_webgpu_scaffold_by_default() {
     common::require_wasm_pack_env();
 
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     write_webgpu_fixture(root);
+    fs::create_dir_all(root.join("dist")).unwrap();
+    fs::write(root.join("dist/main.stale-dom.js"), "stale dom bundle").unwrap();
+    fs::write(root.join("dist/main.stale-dom.js.map"), "{}").unwrap();
+    fs::write(root.join("dist/stale.txt"), "stale output").unwrap();
 
-    wasm_build::build_with_profile(root, Path::new("dist"), Profile::Release, BuildTarget::Web)
-        .expect("webgpu renderer wasm build should succeed");
+    build_wasm_serialized(root, Path::new("dist"))
+        .expect("default wasm build should use WebGPU scaffold");
 
     for f in [
         "index.html",
@@ -174,6 +487,30 @@ fn webgpu_renderer_build_selects_webgpu_scaffold() {
     let boot = fs::read_to_string(root.join("dist/boot.js")).unwrap();
     assert!(boot.contains("installJetHost();"));
     assert!(boot.contains("init('./app_bg.wasm')"));
+    let mut wrapper_js = String::new();
+    for file in ["app.js", "boot.js", "jet-host.js"] {
+        wrapper_js.push_str(&fs::read_to_string(root.join("dist").join(file)).unwrap());
+        wrapper_js.push('\n');
+    }
+    for marker in [
+        "wasm-owned-app-marker",
+        "ReactDOM",
+        "createRoot",
+        "@mui/material",
+        "MUI visual table fixture",
+        "cell 9999",
+    ] {
+        assert!(
+            !wrapper_js.contains(marker),
+            "WASM build must keep app/domain/render marker {marker:?} out of wrapper JS"
+        );
+    }
+    assert!(
+        !root.join("dist/main.stale-dom.js").exists()
+            && !root.join("dist/main.stale-dom.js.map").exists()
+            && !root.join("dist/stale.txt").exists(),
+        "WASM build must clean stale DOM/dev-server artifacts from dist/"
+    );
 
     let manifest: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(root.join("dist/jet-target.json")).unwrap())
@@ -181,18 +518,34 @@ fn webgpu_renderer_build_selects_webgpu_scaffold() {
     let features = manifest["build"]["cargo_features"]
         .as_array()
         .expect("cargo_features array");
-    assert!(features.iter().any(|f| f == "jet-wasm/webgpu"));
-    assert!(features.iter().any(|f| f == "jet-wasm/webgpu-app"));
-    assert!(!features.iter().any(|f| f == "jet-wasm/canvas-app"));
+    assert_eq!(
+        features,
+        &[
+            serde_json::Value::String("jet-wasm/react".to_string()),
+            serde_json::Value::String("jet-wasm/webgpu".to_string()),
+            serde_json::Value::String("jet-wasm/webgpu-app".to_string()),
+        ]
+    );
+    assert_eq!(
+        manifest["build"]["tsx_lowering"].as_str(),
+        Some(wasm_manifest::TSX_LOWERING_STRICT),
+        "simple fixture must record strict TSX lowering in jet-target.json: {manifest}"
+    );
 
     let cargo_toml = fs::read_to_string(root.join(".jet/wasm-build/Cargo.toml")).unwrap();
-    assert!(cargo_toml.contains(r#""webgpu""#));
-    assert!(cargo_toml.contains(r#""webgpu-app""#));
-    assert!(!cargo_toml.contains(r#""canvas-app""#));
+    assert!(cargo_toml.contains(r#"features = ["react", "webgpu", "webgpu-app"]"#));
 
     let generated = fs::read_to_string(root.join(".jet/wasm-build/src/lib.rs")).unwrap();
-    assert!(generated.contains("jet_wasm::react::webgpu_app::run"));
-    assert!(!generated.contains("jet_wasm::react::canvas_app::run"));
+    assert!(
+        generated.contains("wasm-owned-app-marker"),
+        "lowered Rust/WASM source must own the app marker, not wrapper JS"
+    );
+    assert_eq!(
+        generated
+            .matches("jet_wasm::react::webgpu_app::run")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -203,7 +556,7 @@ fn wasm_build_bundles_css_side_effect_imports() {
     let root = tmp.path();
     write_css_import_fixture(root);
 
-    wasm_build::build_with_profile(root, Path::new("dist"), Profile::Release, BuildTarget::Web)
+    build_wasm_serialized(root, Path::new("dist"))
         .expect("wasm build should bundle CSS side-effect imports");
 
     let html = fs::read_to_string(root.join("dist/index.html")).unwrap();
@@ -222,11 +575,19 @@ fn wasm_build_compat_lowers_mui_runtime_imports() {
     let root = tmp.path();
     write_mui_compat_fixture(root);
 
-    wasm_build::build_with_profile(root, Path::new("dist"), Profile::Release, BuildTarget::Web)
+    build_wasm_serialized(root, Path::new("dist"))
         .expect("wasm compat build should lower MUI imports into Rust/WASM");
 
     assert!(root.join("dist/app_bg.wasm").exists());
     assert!(root.join("dist/jet-host.js").exists());
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("dist/jet-target.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest["build"]["tsx_lowering"].as_str(),
+        Some(wasm_manifest::TSX_LOWERING_COMPATIBILITY),
+        "MUI compat fixture must record compatibility lowering in jet-target.json: {manifest}"
+    );
     let generated = fs::read_to_string(root.join(".jet/wasm-build/src/lib.rs")).unwrap();
     assert!(generated.contains("Element::intrinsic(\"button\""));
     assert!(generated.contains("Element::intrinsic(\"input\""));
@@ -247,11 +608,19 @@ fn wasm_build_compat_lowers_antd_runtime_imports() {
     let root = tmp.path();
     write_antd_compat_fixture(root);
 
-    wasm_build::build_with_profile(root, Path::new("dist"), Profile::Release, BuildTarget::Web)
+    build_wasm_serialized(root, Path::new("dist"))
         .expect("wasm compat build should lower Ant Design imports into Rust/WASM");
 
     assert!(root.join("dist/app_bg.wasm").exists());
     assert!(root.join("dist/jet-host.js").exists());
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join("dist/jet-target.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest["build"]["tsx_lowering"].as_str(),
+        Some(wasm_manifest::TSX_LOWERING_COMPATIBILITY),
+        "Ant Design compat fixture must record compatibility lowering in jet-target.json: {manifest}"
+    );
     let generated = fs::read_to_string(root.join(".jet/wasm-build/src/lib.rs")).unwrap();
     assert!(generated.contains("Element::intrinsic(\"button\""));
     assert!(generated.contains("Element::intrinsic(\"input\""));
@@ -272,7 +641,7 @@ async fn use_effect_fetch_reaches_host_api_from_wasm() {
     let root = tmp.path();
     write_css_import_fixture(root);
 
-    wasm_build::build_with_profile(root, Path::new("dist"), Profile::Release, BuildTarget::Web)
+    build_wasm_serialized(root, Path::new("dist"))
         .expect("wasm build with fetch effect should succeed");
 
     let hits = Arc::new(AtomicUsize::new(0));
@@ -314,7 +683,7 @@ async fn cue_artifact_studio_dom_wasm_loads_api_and_posts() {
     let out_dir = Path::new(".jet").join("cue-wasm-e2e-dist");
     let _ = fs::remove_dir_all(root.join(&out_dir));
 
-    wasm_build::build_with_profile(&root, &out_dir, Profile::Release, BuildTarget::Web)
+    build_wasm_serialized_with_profile(&root, &out_dir, Profile::Dev)
         .expect("Cue Artifact Studio DOM wasm build should succeed");
 
     let post_projects = Arc::new(AtomicUsize::new(0));
@@ -327,63 +696,121 @@ async fn cue_artifact_studio_dom_wasm_loads_api_and_posts() {
     .await;
     let url = format!("http://127.0.0.1:{port}/index.html");
 
-    let browser = Browser::launch(LaunchOptions::default())
+    let browser = Browser::launch(webgpu_launch_options())
         .await
         .expect("launch Chromium");
     let page = browser.new_page().await.expect("open page");
+    page.add_init_script(WEBGPU_CONSOLE_CAPTURE_JS)
+        .await
+        .expect("install console capture");
     page.goto(&url).await.expect("navigate to Cue wasm app");
 
-    let text = wait_for_body_text(&page, "Team Request Tracker").await;
-    assert!(text.contains("Artifact Studio"), "body text: {text}");
-    assert!(text.contains("Request tracker intake"), "body text: {text}");
+    let Some(_) = wait_for_webgpu_rendered(&page, "Cue Artifact Studio").await else {
+        eprintln!("skipping: Chromium launched without navigator.gpu");
+        let _ = browser.close().await;
+        return;
+    };
+    let initial_summary = wait_for_debug_tree_text(
+        &page,
+        "Team Request Tracker",
+        "Cue Artifact Studio initial fetch repaint",
+    )
+    .await;
+    let initial_text = initial_summary
+        .get("text")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     assert!(
-        text.contains("Create request tracker PRD"),
-        "body text: {text}"
+        initial_text.contains("Artifact Studio"),
+        "debug tree text: {initial_text}"
+    );
+    assert!(
+        initial_text.contains("Request tracker intake"),
+        "debug tree text: {initial_text}"
+    );
+    assert!(
+        initial_text.contains("Create request tracker PRD"),
+        "debug tree text: {initial_text}"
     );
 
-    page.evaluate(
-        r#"(() => {
-            const button = [...document.querySelectorAll('button')]
-              .find((node) => node.textContent.includes('New Project'));
-            if (!button) throw new Error('New Project button missing');
-            button.click();
-            return true;
-        })()"#,
-    )
-    .await
-    .expect("click New Project");
+    let button = page
+        .evaluate(&debug_button_center_expr("New Project"))
+        .await
+        .expect("find New Project button in WASM debug layout");
+    assert!(
+        button.get("ok").and_then(|v| v.as_bool()) == Some(true),
+        "New Project button must be found in WASM debug layout: {button:?}"
+    );
+    let button_x = button.get("x").and_then(|v| v.as_f64()).unwrap();
+    let button_y = button.get("y").and_then(|v| v.as_f64()).unwrap();
+    let picked = page
+        .evaluate(&debug_pick_expr(button_x, button_y))
+        .await
+        .expect("pick New Project button coordinate in WASM debug layout");
+    let picked_kind = picked
+        .get("pick")
+        .and_then(|v| v.get("node"))
+        .and_then(|v| v.get("kind"));
+    assert!(
+        picked_kind
+            .and_then(|v| v.get("kind"))
+            .and_then(|v| v.as_str())
+            == Some("text")
+            && picked_kind
+                .and_then(|v| v.get("text"))
+                .and_then(|v| v.as_str())
+                == Some("New Project"),
+        "New Project coordinate must pick the visible button label surface: button={button:?} picked={picked:?}"
+    );
+    dispatch_cdp_click(&page, button_x, button_y).await;
     wait_for_counter(post_projects.clone(), "POST /api/projects").await;
 
-    page.evaluate(
-        r#"(() => {
-            const input = document.querySelector('input.jet-input');
-            if (!input) throw new Error('composer input missing');
-            input.value = 'Create a todo app from WASM';
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            const button = [...document.querySelectorAll('button')]
-              .find((node) => node.textContent.trim() === 'Send');
-            if (!button) throw new Error('Send button missing');
-            button.click();
-            return true;
-        })()"#,
+    let summary = wait_for_debug_tree_text(
+        &page,
+        "Team Request Tracker",
+        "Cue Artifact Studio refreshed",
     )
-    .await
-    .expect("send message");
-    wait_for_counter(post_messages.clone(), "POST /api/sessions/:id/messages").await;
+    .await;
+    let text = summary.get("text").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(text.contains("Artifact Studio"), "debug tree text: {text}");
+    assert!(
+        text.contains("Request tracker intake"),
+        "debug tree text: {text}"
+    );
+    assert!(
+        text.contains("Create request tracker PRD"),
+        "debug tree text: {text}"
+    );
+    assert!(
+        summary
+            .get("layoutNodeCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 8,
+        "Cue WASM debug layout should contain rendered nodes: {summary:?}"
+    );
+    assert!(
+        summary
+            .get("paintOpCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 8,
+        "Cue WASM debug paint ops should contain rendered output: {summary:?}"
+    );
 
     let _ = browser.close().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn webgpu_renderer_reports_runtime_status_when_available() {
+async fn webgpu_renderer_reports_runtime_status_and_visual_probe_when_available() {
     common::require_env();
 
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    write_webgpu_fixture(root);
+    write_webgpu_large_table_fixture(root, 10_000);
 
-    wasm_build::build_with_profile(root, Path::new("dist"), Profile::Release, BuildTarget::Web)
-        .expect("webgpu renderer wasm build should succeed");
+    build_wasm_serialized(root, Path::new("dist"))
+        .expect("default WebGPU wasm build should succeed");
 
     let port = spawn_static_server(root.join("dist")).await;
     let url = format!("http://127.0.0.1:{port}/index.html");
@@ -395,18 +822,30 @@ async fn webgpu_renderer_reports_runtime_status_when_available() {
     options.args.push("--enable-unsafe-webgpu".to_string());
     let browser = Browser::launch(options).await.expect("launch Chromium");
     let page = browser.new_page().await.expect("open page");
-    page.goto(&url).await.expect("navigate to WebGPU app");
-    tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
-
-    let probe = page
-        .evaluate(
-            r#"(() => ({
-                gpu: !!navigator.gpu,
-                status: window.__jet_webgpu_status ?? null
-            }))()"#,
-        )
+    page.add_init_script(WEBGPU_CONSOLE_CAPTURE_JS)
         .await
-        .expect("probe WebGPU status");
+        .expect("install console capture");
+    page.goto(&url).await.expect("navigate to WebGPU app");
+
+    let mut probe = serde_json::Value::Null;
+    for _ in 0..80 {
+        probe = page
+            .evaluate(WEBGPU_VISUAL_PROBE_JS)
+            .await
+            .expect("probe WebGPU status");
+        if probe.get("gpu").and_then(|v| v.as_bool()) != Some(true) {
+            break;
+        }
+        let phase = probe
+            .get("status")
+            .and_then(|v| v.get("phase"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if matches!(phase, "mounted" | "rendered" | "error") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
 
     if probe.get("gpu").and_then(|v| v.as_bool()) != Some(true) {
         eprintln!("skipping: Chromium launched without navigator.gpu");
@@ -418,11 +857,29 @@ async fn webgpu_renderer_reports_runtime_status_when_available() {
         .get("status")
         .and_then(|v| v.as_object())
         .expect("window.__jet_webgpu_status object when WebGPU is available");
+    let visual_probe = probe
+        .get("visualProbe")
+        .and_then(|v| v.as_object())
+        .expect("canvas visual probe object when WebGPU is available");
+    assert!(
+        visual_probe.get("error").is_none(),
+        "canvas visual probe failed: {visual_probe:?}"
+    );
+    assert_eq!(
+        probe.get("canvasCount").and_then(|v| v.as_u64()),
+        Some(1),
+        "expected exactly one wrapper canvas, got {probe:?}"
+    );
+    assert_eq!(
+        probe.get("domCellCount").and_then(|v| v.as_u64()),
+        Some(0),
+        "large table cells must not be materialized as DOM nodes; got {probe:?}"
+    );
     assert_ne!(status.get("phase").and_then(|v| v.as_str()), Some("error"));
     assert_eq!(
         status.get("bridgeMode").and_then(|v| v.as_str()),
         Some("text"),
-        "expected WebGPU app to use renderFrameWithText bridge, got {status:?}"
+        "expected WebGPU app to use renderFrameWithText bridge, got {probe:?}"
     );
     assert!(
         status.get("frames").and_then(|v| v.as_f64()).unwrap_or(0.0) >= 1.0,
@@ -433,16 +890,16 @@ async fn webgpu_renderer_reports_runtime_status_when_available() {
             .get("lastCellCount")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0)
-            >= 1.0,
-        "expected at least one lowered WebGPU cell, got {status:?}"
+            >= 10_000.0,
+        "expected the large table to lower at least 10k WebGPU cells, got {status:?}"
     );
     assert!(
         status
             .get("lastTextRunCount")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0)
-            >= 1.0,
-        "expected at least one planned WebGPU text run, got {status:?}"
+            >= 10_000.0,
+        "expected the large table to plan at least 10k WebGPU text runs, got {status:?}"
     );
     // T8 (slice #2191): the encode_text_pass seam must observe at
     // least one glyph instance when text runs are present, proving
@@ -455,6 +912,103 @@ async fn webgpu_renderer_reports_runtime_status_when_available() {
             .unwrap_or(0.0)
             >= 1.0,
         "expected at least one planned WebGPU text glyph, got {status:?}"
+    );
+    assert_eq!(
+        status.get("textAtlasMode").and_then(|v| v.as_str()),
+        Some("glyph-atlas"),
+        "expected WebGPU text to sample a real glyph atlas, got {status:?}"
+    );
+    assert!(
+        status
+            .get("lastTextAtlasUploadCount")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            >= 1.0,
+        "expected at least one real glyph atlas upload, got {status:?}"
+    );
+    assert!(
+        status
+            .get("lastTextAtlasWidth")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            > 1.0
+            && status
+                .get("lastTextAtlasHeight")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+                > 1.0
+            && status
+                .get("lastTextAtlasNonZeroAlphaCount")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0)
+                > 0.0,
+        "expected non-placeholder glyph atlas dimensions and alpha pixels, got {status:?}"
+    );
+
+    page.evaluate(WEBGPU_SETTLE_TWO_RAF_JS)
+        .await
+        .expect("wait for browser paint after WebGPU present");
+    let final_probe = page
+        .evaluate(WEBGPU_VISUAL_PROBE_JS)
+        .await
+        .expect("probe WebGPU status after paint");
+    let screenshot = page.screenshot().await.expect("capture WebGPU screenshot");
+    let screenshot_probe = common::react_oracle::screenshot_visual_probe_from_png(&screenshot);
+    let visual_diagnostics = serde_json::json!({
+        "runtime": final_probe,
+        "screenshot": screenshot_probe,
+    });
+    assert!(
+        screenshot_probe
+            .get("nonTransparent")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 0,
+        "expected screenshot probe to contain visible alpha, got {visual_diagnostics}"
+    );
+    assert!(
+        screenshot_probe
+            .get("nonWhite")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 0,
+        "expected screenshot probe to contain non-white pixels, got {visual_diagnostics}"
+    );
+    assert!(
+        screenshot_probe
+            .get("nonBlack")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 0,
+        "expected screenshot probe to contain non-black pixels, got {visual_diagnostics}"
+    );
+    assert!(
+        screenshot_probe
+            .get("uniqueBuckets")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 1,
+        "expected screenshot probe to contain more than one color bucket, got {visual_diagnostics}"
+    );
+    assert!(
+        screenshot_probe
+            .get("foregroundCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            > 256,
+        "expected screenshot foreground pixels from rendered cells/text, got {visual_diagnostics}"
+    );
+    let hash = screenshot_probe
+        .get("hash")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let hash_ones = screenshot_probe
+        .get("hashOnes")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(64);
+    assert!(
+        !hash.is_empty() && hash_ones > 0 && hash_ones < 64,
+        "expected non-solid screenshot perceptual hash, got {visual_diagnostics}"
     );
 
     let _ = browser.close().await;
@@ -605,7 +1159,6 @@ fn write_webgpu_fixture(root: &Path) {
 [wasm]
 entry = "src/App.tsx"
 root_component = "App"
-renderer = "web-gpu"
 "#,
     )
     .unwrap();
@@ -616,12 +1169,46 @@ interface AppProps {}
 
 export function App({}: AppProps) {
   return (
-    <button id="webgpu">
-      webgpu
+    <button id="wasm-owned-app-marker">
+      wasm-owned-app-marker
     </button>
   );
 }
 "#,
+    )
+    .unwrap();
+}
+
+fn write_webgpu_large_table_fixture(root: &Path, cell_count: usize) {
+    fs::create_dir_all(root.join("src")).unwrap();
+    fs::write(
+        root.join("jet.config.toml"),
+        r#"
+[wasm]
+entry = "src/App.tsx"
+root_component = "App"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/App.tsx"),
+        format!(
+            r#"
+interface AppProps {{}}
+
+export function App({{}}: AppProps) {{
+  return (
+    <div id="large-grid">
+      {{[...Array({cell_count})].map((_, idx) => (
+        <button>
+          {{idx}}
+        </button>
+      ))}}
+    </div>
+  );
+}}
+"#,
+        ),
     )
     .unwrap();
 }
@@ -791,26 +1378,6 @@ fn cue_projects_json() -> &'static str {
         }
       ]
     }"#
-}
-
-async fn wait_for_body_text(page: &jet::browser::Page, expected: &str) -> String {
-    for _ in 0..40 {
-        let value = page
-            .evaluate("document.body.innerText")
-            .await
-            .expect("read body text");
-        let text = value.as_str().unwrap_or_default().to_string();
-        if text.contains(expected) {
-            return text;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    }
-    page.evaluate("document.body.innerText")
-        .await
-        .expect("read final body text")
-        .as_str()
-        .unwrap_or_default()
-        .to_string()
 }
 
 async fn wait_for_counter(counter: Arc<AtomicUsize>, label: &str) {

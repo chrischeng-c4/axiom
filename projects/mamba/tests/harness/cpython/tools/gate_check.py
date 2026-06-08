@@ -31,7 +31,7 @@ MAMBA_DIR = TOOLS_DIR.parents[3]                            # projects/mamba
 REPO_ROOT = MAMBA_DIR.parent
 CPYTHON_DIR = TESTS_DIR / "cpython"                         # fixtures + .cache root
 
-FIXTURES_DIR = CPYTHON_DIR / "fixtures"
+FIXTURES_DIR = CPYTHON_DIR
 HARNESS_DIR = TESTS_DIR / "harness"
 BENCHES_DIR = MAMBA_DIR / "benches"
 RESULTS_DB = CPYTHON_DIR / ".cache" / "conformance" / "results.sqlite"
@@ -165,7 +165,7 @@ def c_d5_6():
 
 
 def c_d1():
-    ts_dir = FIXTURES_DIR / "type-strict"
+    ts_dir = FIXTURES_DIR / "type"
     fixtures = list(ts_dir.rglob("*.py")) if ts_dir.exists() else []
     markers = ("mamba-strict-type:", "no_typeerror:", "typeerror:")
     unmarked = [f for f in fixtures

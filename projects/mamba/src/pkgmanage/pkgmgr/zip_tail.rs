@@ -90,8 +90,9 @@ pub fn parse_zip_tail(tail: &[u8]) -> Result<EocdInfo, IndexError> {
     let cd_size_32 = u32_le(&eocd[12..16]) as u64;
     let cd_offset_32 = u32_le(&eocd[16..20]) as u64;
 
-    let needs_zip64 =
-        cd_size_32 == 0xFFFFFFFF || cd_offset_32 == 0xFFFFFFFF || entry_count_32 == 0xFFFF;
+    let needs_zip64 = cd_size_32 == 0xFFFFFFFF
+        || cd_offset_32 == 0xFFFFFFFF
+        || entry_count_32 == 0xFFFF;
 
     if !needs_zip64 {
         return Ok(EocdInfo {
@@ -142,7 +143,9 @@ fn parse_zip64(tail: &[u8], eocd_idx: usize) -> Result<EocdInfo, IndexError> {
     if end_u64 > tail.len() as u64 {
         return Err(IndexError::ParseError {
             url: String::new(),
-            detail: "Zip64 EOCD record truncated by the tail window; fetch a larger window".into(),
+            detail:
+                "Zip64 EOCD record truncated by the tail window; fetch a larger window"
+                    .into(),
         });
     }
     let zip64_rel = zip64_rel_u64 as usize;
@@ -226,7 +229,12 @@ mod tests {
     }
 
     /// Build a minimal valid 32-bit EOCD record.
-    fn make_eocd(entry_count: u16, cd_size: u32, cd_offset: u32, comment: &[u8]) -> Vec<u8> {
+    fn make_eocd(
+        entry_count: u16,
+        cd_size: u32,
+        cd_offset: u32,
+        comment: &[u8],
+    ) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&EOCD_SIG);
         out.extend_from_slice(&0u16.to_le_bytes()); // this disk

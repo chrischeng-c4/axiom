@@ -3,8 +3,10 @@
 //! This example demonstrates how to integrate the Router with TaskRegistry
 //! for automatic task queue routing.
 
+use queuekit::{
+    Task, TaskContext, TaskOutcome, TaskRegistry, RouterConfig,
+};
 use async_trait::async_trait;
-use queuekit::{RouterConfig, Task, TaskContext, TaskOutcome, TaskRegistry};
 
 // Define some example tasks
 struct MathTask;
@@ -55,10 +57,12 @@ fn main() {
     let router = RouterConfig::new()
         // Exact match routes
         .route("math.add", "math-workers")
+
         // Glob pattern routes
         .route_glob("email.*", "email-workers")
         .route_glob("urgent.*", "high-priority")
         .route_glob("analytics.*", "analytics-workers")
+
         // Custom routing function based on task arguments
         .route_fn("priority_router", |_task_name, args| {
             if let Some(priority) = args.get("priority").and_then(|v| v.as_str()) {
@@ -70,6 +74,7 @@ fn main() {
             }
             None
         })
+
         // Default queue for unmatched tasks
         .default_queue("default-workers")
         .build();
@@ -111,11 +116,17 @@ fn main() {
     assert_eq!(queue, "high-priority");
 
     // Test custom routing based on args
-    let queue = registry.route_task("process_data", &serde_json::json!({"priority": "high"}));
+    let queue = registry.route_task(
+        "process_data",
+        &serde_json::json!({"priority": "high"}),
+    );
     println!("  process_data (priority: high) → {}", queue);
     assert_eq!(queue, "high-priority");
 
-    let queue = registry.route_task("process_data", &serde_json::json!({"priority": "low"}));
+    let queue = registry.route_task(
+        "process_data",
+        &serde_json::json!({"priority": "low"}),
+    );
     println!("  process_data (priority: low) → {}", queue);
     assert_eq!(queue, "low-priority");
 

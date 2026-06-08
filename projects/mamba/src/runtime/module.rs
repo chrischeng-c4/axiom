@@ -56,6 +56,20 @@ thread_local! {
     /// Used alongside `VARIADIC_FUNC_ADDRS` to dispatch `f(args_list, kwargs_dict)`.
     pub(crate) static KWARGS_FUNC_ADDRS: std::cell::RefCell<HashSet<u64>> =
         std::cell::RefCell::new(HashSet::new());
+    /// SymbolId.0 for user functions whose inferred RETURN TYPE is `any`/`object`
+    /// (a guaranteed already-boxed MbValue, returned in the integer register).
+    /// Populated during HIR→MIR. The dynamic-call `rebox` re-boxes raw unboxed
+    /// ints (int fast-path returns) into MbValues by detecting the absence of a
+    /// NaN-prefix — but a `float` MbValue ALSO lacks the prefix, so an
+    /// any-returning callee that hands back a float (e.g. `lambda v: v*2.0` used
+    /// as a map/filter callback) would be mis-boxed as an int. These addresses
+    /// tell `rebox` to pass the value through untouched.
+    pub(crate) static BOXED_RETURN_SYMBOL_IDS: std::cell::RefCell<HashSet<u32>> =
+        std::cell::RefCell::new(HashSet::new());
+    /// JIT function pointer addresses for any/object-returning functions.
+    /// Populated post-finalize from `BOXED_RETURN_SYMBOL_IDS`.
+    pub(crate) static BOXED_RETURN_FUNC_ADDRS: std::cell::RefCell<HashSet<u64>> =
+        std::cell::RefCell::new(HashSet::new());
     /// JIT backends for imported file-based modules (#1190).
     /// Kept alive so that function pointers from compiled modules remain valid.
     /// Key = module name, Value = boxed JIT backend.
@@ -200,12 +214,24 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
         // Compile and execute the module file (#1190).
         compile_and_exec_module(&path, &name);
     } else {
-        // Module not found — remove sentinel and raise ModuleNotFoundError
+        // Module not found on disk or as a native module. Before failing, consult
+        // the Python-level `sys.modules` cache for a user-injected entry: CPython
+        // treats sys.modules as the authoritative import cache, so code that assigns
+        // `sys.modules["x"] = m` (test shims injecting a fake module — e.g. the
+        // pyperformance benchmarks inject a fake `pyperf`) expects a later
+        // `import x` to return `m`. The internal MODULES registry syncs INTO
+        // sys.modules but not the reverse, so recover the injection here. Remove the
+        // sentinel first so it does not shadow the injected value.
         MODULES.with(|mods| {
             mods.borrow_mut().remove(&name);
         });
+        if let Some(val) = lookup_sys_modules(&name) {
+            return val;
+        }
         let exc_type = MbValue::from_ptr(MbObject::new_str("ModuleNotFoundError".to_string()));
-        let msg = MbValue::from_ptr(MbObject::new_str(format!("No module named '{name}'")));
+        let msg = MbValue::from_ptr(MbObject::new_str(
+            format!("No module named '{name}'"),
+        ));
         super::exception::mb_raise(exc_type, msg);
         return MbValue::none();
     }
@@ -229,23 +255,43 @@ pub fn mb_import(module_name: MbValue) -> MbValue {
 /// Insert `name → val` into `sys.modules` (the dict stored as sys.modules attr).
 fn update_sys_modules(name: &str, val: MbValue) {
     let modules_dict = MODULES.with(|mods| {
-        mods.borrow()
-            .get("sys")
-            .and_then(|m| m.attrs.get("modules").copied())
+        mods.borrow().get("sys").and_then(|m| m.attrs.get("modules").copied())
     });
     if let Some(dict) = modules_dict {
         if let Some(ptr) = dict.as_ptr() {
             unsafe {
                 if let ObjData::Dict(ref lock) = (*ptr).data {
                     let mut map = lock.write().unwrap();
-                    unsafe {
-                        super::rc::retain_if_ptr(val);
-                    }
+                    unsafe { super::rc::retain_if_ptr(val); }
                     map.insert(name.into(), val);
                 }
             }
         }
     }
+}
+
+/// Look up a user-injected entry in the Python-level `sys.modules` dict.
+///
+/// CPython treats `sys.modules` as the authoritative import cache: assigning
+/// `sys.modules["x"] = m` makes a later `import x` return `m`. mamba's internal
+/// MODULES registry syncs INTO sys.modules (`update_sys_modules`) but not the
+/// reverse, so a user injection is invisible to `mb_import` unless recovered here.
+fn lookup_sys_modules(name: &str) -> Option<MbValue> {
+    let modules_dict = MODULES.with(|mods| {
+        mods.borrow().get("sys").and_then(|m| m.attrs.get("modules").copied())
+    })?;
+    let ptr = modules_dict.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let map = lock.read().unwrap();
+            let key = super::dict_ops::DictKey::Str(name.to_string());
+            if let Some(val) = map.get(&key).copied() {
+                super::rc::retain_if_ptr(val);
+                return Some(val);
+            }
+        }
+    }
+    None
 }
 
 /// Import specific names from a module: `from module import name1, name2`.
@@ -275,12 +321,10 @@ pub fn mb_import_from(module_name: MbValue, names: MbValue) -> MbValue {
                                     values.push(val);
                                 }
                                 None => {
-                                    let exc_type = MbValue::from_ptr(MbObject::new_str(
-                                        "ImportError".to_string(),
+                                    let exc_type = MbValue::from_ptr(MbObject::new_str("ImportError".to_string()));
+                                    let msg = MbValue::from_ptr(MbObject::new_str(
+                                        format!("cannot import name '{attr_name}' from '{name}'"),
                                     ));
-                                    let msg = MbValue::from_ptr(MbObject::new_str(format!(
-                                        "cannot import name '{attr_name}' from '{name}'"
-                                    )));
                                     super::exception::mb_raise(exc_type, msg);
                                     return MbValue::none();
                                 }
@@ -540,9 +584,9 @@ pub fn mb_module_getattr(module_name: MbValue, attr: MbValue) -> MbValue {
 
     // Attribute not found — raise ImportError (CPython Rule 6).
     let exc_type = MbValue::from_ptr(MbObject::new_str("ImportError".to_string()));
-    let msg = MbValue::from_ptr(MbObject::new_str(format!(
-        "cannot import name '{attr_name}' from '{name}'"
-    )));
+    let msg = MbValue::from_ptr(MbObject::new_str(
+        format!("cannot import name '{attr_name}' from '{name}'"),
+    ));
     super::exception::mb_raise(exc_type, msg);
     MbValue::none()
 }
@@ -837,6 +881,32 @@ pub fn is_kwargs_func(addr: u64) -> bool {
     KWARGS_FUNC_ADDRS.with(|addrs| addrs.borrow().contains(&addr))
 }
 
+/// Register a SymbolId as belonging to an `any`/`object`-returning function.
+pub fn register_boxed_return_symbol(sym_id: u32) {
+    BOXED_RETURN_SYMBOL_IDS.with(|ids| {
+        ids.borrow_mut().insert(sym_id);
+    });
+}
+
+/// Check if a SymbolId belongs to an any/object-returning function.
+pub fn is_boxed_return_symbol(sym_id: u32) -> bool {
+    BOXED_RETURN_SYMBOL_IDS.with(|ids| ids.borrow().contains(&sym_id))
+}
+
+/// Register a JIT function pointer address as an any/object-returning function.
+pub fn register_boxed_return_func(addr: u64) {
+    BOXED_RETURN_FUNC_ADDRS.with(|addrs| {
+        addrs.borrow_mut().insert(addr);
+    });
+}
+
+/// Check if the given function address returns an already-boxed MbValue
+/// (`any`/`object` return). The dynamic-call `rebox` passes such a value
+/// through untouched instead of re-boxing a no-NaN-prefix float as an int.
+pub fn is_boxed_return_func(addr: u64) -> bool {
+    BOXED_RETURN_FUNC_ADDRS.with(|addrs| addrs.borrow().contains(&addr))
+}
+
 // ── Built-in Module Registration ──
 
 /// Register built-in modules (builtins, sys, os, math, json).
@@ -959,6 +1029,17 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
         .filter_map(|f| sym_names.get(&f.name).map(|name| (f.name.0, name.clone())))
         .collect();
 
+    // Top-level class names so `import M; M.SomeClass` resolves. Classes are
+    // registered in CLASS_REGISTRY by name and referenced as bare class-name
+    // string values; they are not stored in GLOBAL_ID_NAMESPACE nor compiled
+    // to function pointers, so without this they never become module attrs
+    // (e.g. plistlib.UID / plistlib.InvalidFileException).
+    let user_class_names: Vec<String> = hir
+        .classes
+        .iter()
+        .filter_map(|c| sym_names.get(&c.name).cloned())
+        .collect();
+
     // Build SymbolId → type mapping for NaN-boxing raw global values (#1190).
     // The JIT stores raw i64/f64 in GLOBAL_ID_NAMESPACE, but module attrs
     // need to be proper NaN-boxed MbValues.
@@ -1011,7 +1092,7 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
     });
 
     // 7. JIT compile
-    let jit_result = (|| -> Option<()> {
+    let jit_result = (|| -> Option<HashMap<i64, MbValue>> {
         let mut backend = Box::new(CraneliftJitBackend::new().ok()?);
         let output = backend.codegen(&mir_module, &checker.tcx).ok()?;
 
@@ -1057,6 +1138,23 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
                     }
                 }
 
+                // Expose top-level classes as module attrs. A class value is a
+                // bare class-name string that the call/isinstance machinery
+                // resolves through CLASS_REGISTRY. Only add ones that actually
+                // registered (decorators/metaclasses may rename), and don't
+                // clobber an explicit same-named global binding.
+                for cls_name in &user_class_names {
+                    if attrs.contains_key(cls_name) {
+                        continue;
+                    }
+                    if super::class::class_is_registered(cls_name) {
+                        attrs.insert(
+                            cls_name.clone(),
+                            MbValue::from_ptr(MbObject::new_str(cls_name.clone())),
+                        );
+                    }
+                }
+
                 // R4: Set package-related attributes.
                 if is_pkg {
                     if let Some(ref dir) = pkg_dir {
@@ -1089,7 +1187,7 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
                     backends.borrow_mut().push(backend);
                 });
 
-                Some(())
+                Some(module_globals)
             }
             _ => None,
         }
@@ -1097,6 +1195,16 @@ fn compile_and_exec_module(path: &std::path::Path, module_name: &str) {
 
     // 11. Restore caller's globals regardless of success/failure
     restore_global_id_namespace(saved_globals);
+
+    // 11a. Persist the imported module's own global-id bindings (module-level
+    // variables and `import` results) back into the shared namespace. The
+    // module's functions read these via mb_global_get_id when invoked later
+    // from the caller; without this, every module-level constant/import is
+    // None inside an imported module's functions. SymbolIds are unique per
+    // compilation, so re-inserting cannot clobber the caller's globals.
+    if let Some(module_globals) = &jit_result {
+        crate::runtime::closure::merge_global_id_namespace(module_globals);
+    }
 
     // 11b. Restore CURRENT_MODULE_PACKAGE — R3.
     CURRENT_MODULE_PACKAGE.with(|cp| {
@@ -1363,6 +1471,8 @@ pub(crate) fn cleanup_all_modules() {
     let _ = VARIADIC_FUNC_ADDRS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
     let _ = KWARGS_SYMBOL_IDS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
     let _ = KWARGS_FUNC_ADDRS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
+    let _ = BOXED_RETURN_SYMBOL_IDS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
+    let _ = BOXED_RETURN_FUNC_ADDRS.with(|c| c.try_borrow_mut().map(|mut s| s.clear()));
     // NOTE: MODULE_JIT_BACKENDS is cleared separately by cleanup_module_jit_backends().
     // GC must run between this call and backend cleanup so that containers are
     // swept while compile-time objects (owned by backends) are still valid.
@@ -1583,17 +1693,11 @@ mod tests {
         let names = MbValue::from_ptr(MbObject::new_list(vec![s("missing_key")]));
         let result = mb_import_from(s("partial_from_mod2"), names);
         // CPython raises ImportError for missing attrs; mamba should match.
-        assert!(
-            result.is_none(),
-            "should return none sentinel after raising ImportError"
-        );
+        assert!(result.is_none(), "should return none sentinel after raising ImportError");
         let exc = super::super::exception::mb_get_exception();
         assert!(!exc.is_none(), "ImportError should be set");
         let exc_type = super::super::exception::get_exception_type_pub(exc).unwrap_or_default();
-        assert_eq!(
-            exc_type, "ImportError",
-            "exception type should be ImportError"
-        );
+        assert_eq!(exc_type, "ImportError", "exception type should be ImportError");
         super::super::exception::mb_clear_exception();
     }
 
@@ -1615,19 +1719,18 @@ mod tests {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let fields = fields.read().unwrap();
                 assert_eq!(
-                    fields
-                        .get("filename")
-                        .and_then(|v| extract_str(*v))
-                        .as_deref(),
+                    fields.get("filename").and_then(|v| extract_str(*v)).as_deref(),
                     Some("badsyntax_future6.py")
                 );
                 assert_eq!(fields.get("lineno").and_then(|v| v.as_int()), Some(3));
                 assert_eq!(fields.get("offset").and_then(|v| v.as_int()), Some(1));
-                assert!(fields
-                    .get("message")
-                    .and_then(|v| extract_str(*v))
-                    .unwrap_or_default()
-                    .contains("badsyntax_future6.py, line 3"));
+                assert!(
+                    fields
+                        .get("message")
+                        .and_then(|v| extract_str(*v))
+                        .unwrap_or_default()
+                        .contains("badsyntax_future6.py, line 3")
+                );
             } else {
                 panic!("expected SyntaxError instance");
             }

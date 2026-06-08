@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Group, GroupResult, TaskOptions, TaskSignature};
 use crate::{Broker, TaskError};
+use super::{Group, GroupResult, TaskOptions, TaskSignature};
 
 /// Starmap: Apply a task to each tuple of args in an iterable
 ///
@@ -47,12 +47,13 @@ impl Starmap {
 
     /// Convert to a Group for execution
     pub fn to_group(&self) -> Group {
-        let tasks: Vec<TaskSignature> = self
-            .items
+        let tasks: Vec<TaskSignature> = self.items
             .iter()
             .map(|args| {
-                TaskSignature::new(self.task_name.clone(), Value::Array(args.clone()))
-                    .with_options(self.options.clone())
+                TaskSignature::new(
+                    self.task_name.clone(),
+                    Value::Array(args.clone())
+                ).with_options(self.options.clone())
             })
             .collect();
 
@@ -60,7 +61,10 @@ impl Starmap {
     }
 
     /// Execute the starmap as a group (convenience method)
-    pub async fn apply_async<B: Broker>(&self, broker: &B) -> Result<GroupResult, TaskError> {
+    pub async fn apply_async<B: Broker>(
+        &self,
+        broker: &B,
+    ) -> Result<GroupResult, TaskError> {
         self.to_group().apply_async(broker).await
     }
 }
@@ -86,7 +90,10 @@ mod tests {
 
     #[test]
     fn test_starmap_basic() {
-        let items = vec![vec![json!(1), json!(2)], vec![json!(3), json!(4)]];
+        let items = vec![
+            vec![json!(1), json!(2)],
+            vec![json!(3), json!(4)],
+        ];
         let starmap = Starmap::new("add", items.clone());
 
         assert_eq!(starmap.task_name, "add");
@@ -102,7 +109,10 @@ mod tests {
 
     #[test]
     fn test_starmap_tuples() {
-        let items = vec![vec![json!("a"), json!(1)], vec![json!("b"), json!(2)]];
+        let items = vec![
+            vec![json!("a"), json!(1)],
+            vec![json!("b"), json!(2)],
+        ];
         let starmap = Starmap::new("process", items);
 
         let group = starmap.to_group();
@@ -114,7 +124,10 @@ mod tests {
 
     #[test]
     fn test_starmap_to_group() {
-        let items = vec![vec![json!(1), json!(2)], vec![json!(3), json!(4), json!(5)]];
+        let items = vec![
+            vec![json!(1), json!(2)],
+            vec![json!(3), json!(4), json!(5)],
+        ];
         let starmap = Starmap::new("multiply", items);
 
         let group = starmap.to_group();
@@ -146,7 +159,10 @@ mod tests {
 
     #[test]
     fn test_starmap_single_arg() {
-        let items = vec![vec![json!(1)], vec![json!(2)]];
+        let items = vec![
+            vec![json!(1)],
+            vec![json!(2)],
+        ];
         let starmap = Starmap::new("process", items);
 
         let group = starmap.to_group();

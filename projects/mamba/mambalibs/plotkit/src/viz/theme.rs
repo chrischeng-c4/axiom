@@ -46,15 +46,9 @@ impl Theme {
             font_size: 12.0,
             axis_color: "#333333".into(),
             colors: vec![
-                "#1f77b4".into(),
-                "#ff7f0e".into(),
-                "#2ca02c".into(),
-                "#d62728".into(),
-                "#9467bd".into(),
-                "#8c564b".into(),
-                "#e377c2".into(),
-                "#7f7f7f".into(),
-                "#bcbd22".into(),
+                "#1f77b4".into(), "#ff7f0e".into(), "#2ca02c".into(),
+                "#d62728".into(), "#9467bd".into(), "#8c564b".into(),
+                "#e377c2".into(), "#7f7f7f".into(), "#bcbd22".into(),
                 "#17becf".into(),
             ],
         }
@@ -69,15 +63,9 @@ impl Theme {
             font_size: 12.0,
             axis_color: "#a6adc8".into(),
             colors: vec![
-                "#89b4fa".into(),
-                "#fab387".into(),
-                "#a6e3a1".into(),
-                "#f38ba8".into(),
-                "#cba6f7".into(),
-                "#f5c2e7".into(),
-                "#94e2d5".into(),
-                "#f9e2af".into(),
-                "#74c7ec".into(),
+                "#89b4fa".into(), "#fab387".into(), "#a6e3a1".into(),
+                "#f38ba8".into(), "#cba6f7".into(), "#f5c2e7".into(),
+                "#94e2d5".into(), "#f9e2af".into(), "#74c7ec".into(),
                 "#b4befe".into(),
             ],
         }
@@ -92,12 +80,8 @@ impl Theme {
             font_size: 11.0,
             axis_color: "#999999".into(),
             colors: vec![
-                "#333333".into(),
-                "#666666".into(),
-                "#999999".into(),
-                "#bbbbbb".into(),
-                "#1f77b4".into(),
-                "#ff7f0e".into(),
+                "#333333".into(), "#666666".into(), "#999999".into(),
+                "#bbbbbb".into(), "#1f77b4".into(), "#ff7f0e".into(),
             ],
         }
     }
@@ -111,14 +95,9 @@ impl Theme {
             font_size: 14.0,
             axis_color: "#000000".into(),
             colors: vec![
-                "#000000".into(),
-                "#e41a1c".into(),
-                "#377eb8".into(),
-                "#4daf4a".into(),
-                "#984ea3".into(),
-                "#ff7f00".into(),
-                "#a65628".into(),
-                "#f781bf".into(),
+                "#000000".into(), "#e41a1c".into(), "#377eb8".into(),
+                "#4daf4a".into(), "#984ea3".into(), "#ff7f00".into(),
+                "#a65628".into(), "#f781bf".into(),
             ],
         }
     }
@@ -219,18 +198,9 @@ mod tests {
 
     #[test]
     fn test_all_themes_have_colors() {
-        for name in [
-            ThemeName::Light,
-            ThemeName::Dark,
-            ThemeName::Minimal,
-            ThemeName::Publication,
-        ] {
+        for name in [ThemeName::Light, ThemeName::Dark, ThemeName::Minimal, ThemeName::Publication] {
             let theme = Theme::from_name(name);
-            assert!(
-                theme.colors.len() >= 6,
-                "Theme {:?} should have at least 6 colors",
-                name
-            );
+            assert!(theme.colors.len() >= 6, "Theme {:?} should have at least 6 colors", name);
         }
     }
 }

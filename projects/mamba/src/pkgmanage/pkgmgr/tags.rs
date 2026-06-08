@@ -229,7 +229,10 @@ mod tests {
 
     #[test]
     fn parse_native_wheel() {
-        let w = parse_wheel_filename("numpy-1.26.0-cp312-cp312-macosx_11_0_arm64.whl").unwrap();
+        let w = parse_wheel_filename(
+            "numpy-1.26.0-cp312-cp312-macosx_11_0_arm64.whl",
+        )
+        .unwrap();
         assert_eq!(w.python, vec!["cp312"]);
         assert_eq!(w.abi, vec!["cp312"]);
         assert_eq!(w.platform, vec!["macosx_11_0_arm64"]);
@@ -238,7 +241,10 @@ mod tests {
     #[test]
     fn parse_build_tagged_wheel() {
         // `1-` is the build tag, immediately after version.
-        let w = parse_wheel_filename("pkg-2.0.0-1-cp312-cp312-macosx_11_0_arm64.whl").unwrap();
+        let w = parse_wheel_filename(
+            "pkg-2.0.0-1-cp312-cp312-macosx_11_0_arm64.whl",
+        )
+        .unwrap();
         assert_eq!(w.python, vec!["cp312"]);
     }
 

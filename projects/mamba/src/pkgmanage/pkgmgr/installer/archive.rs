@@ -5,6 +5,7 @@
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/installer.md#Schema
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/installer.md#Logic
+
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -55,12 +56,10 @@ impl OpenedWheel {
         })?;
 
         for i in 0..zip.len() {
-            let mut entry = zip
-                .by_index(i)
-                .map_err(|e| InstallerError::MalformedWheel {
-                    path: Some(self.artifact_path.clone()),
-                    detail: e.to_string(),
-                })?;
+            let mut entry = zip.by_index(i).map_err(|e| InstallerError::MalformedWheel {
+                path: Some(self.artifact_path.clone()),
+                detail: e.to_string(),
+            })?;
 
             // Reject directory traversal.
             let Some(rel) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
@@ -126,12 +125,10 @@ pub fn open_wheel(path: &Path) -> Result<OpenedWheel, InstallerError> {
     let mut has_record = false;
 
     for i in 0..zip.len() {
-        let entry = zip
-            .by_index(i)
-            .map_err(|e| InstallerError::MalformedWheel {
-                path: Some(path.to_path_buf()),
-                detail: e.to_string(),
-            })?;
+        let entry = zip.by_index(i).map_err(|e| InstallerError::MalformedWheel {
+            path: Some(path.to_path_buf()),
+            detail: e.to_string(),
+        })?;
         let name = entry.name().to_string();
         entries.push(name.clone());
 
@@ -190,15 +187,10 @@ pub fn open_wheel(path: &Path) -> Result<OpenedWheel, InstallerError> {
     }
 
     let stem = dist_info.trim_end_matches(".dist-info");
-    let (dist_name, dist_version) =
-        stem.rsplit_once('-')
-            .ok_or_else(|| InstallerError::MalformedWheel {
-                path: Some(path.to_path_buf()),
-                detail: format!(
-                    "dist-info name not '{{name}}-{{version}}.dist-info': {}",
-                    dist_info
-                ),
-            })?;
+    let (dist_name, dist_version) = stem.rsplit_once('-').ok_or_else(|| InstallerError::MalformedWheel {
+        path: Some(path.to_path_buf()),
+        detail: format!("dist-info name not '{{name}}-{{version}}.dist-info': {}", dist_info),
+    })?;
 
     Ok(OpenedWheel {
         artifact_path: path.to_path_buf(),
@@ -225,19 +217,15 @@ pub fn read_archive_file(path: &Path, archive_path: &str) -> Result<Vec<u8>, Ins
         path: Some(path.to_path_buf()),
         detail: e.to_string(),
     })?;
-    let mut entry = zip
-        .by_name(archive_path)
-        .map_err(|e| InstallerError::MalformedWheel {
-            path: Some(path.to_path_buf()),
-            detail: format!("{}: {}", archive_path, e),
-        })?;
+    let mut entry = zip.by_name(archive_path).map_err(|e| InstallerError::MalformedWheel {
+        path: Some(path.to_path_buf()),
+        detail: format!("{}: {}", archive_path, e),
+    })?;
     let mut buf = Vec::with_capacity(entry.size() as usize);
-    entry
-        .read_to_end(&mut buf)
-        .map_err(|e| InstallerError::Io {
-            path: Some(path.to_path_buf()),
-            detail: e.to_string(),
-        })?;
+    entry.read_to_end(&mut buf).map_err(|e| InstallerError::Io {
+        path: Some(path.to_path_buf()),
+        detail: e.to_string(),
+    })?;
     Ok(buf)
 }
 // HANDWRITE-END

@@ -38,6 +38,7 @@
 //! multiplex.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 // Stride in f32 units per packed `CellInstance` on the JS wire.
 // pos_px (×2) + size_px (×2) + color (×4) = 8.
@@ -180,6 +181,150 @@ pub(crate) fn plan_placeholder_glyphs(
     glyphs
 }
 
+struct TextAtlasPlan {
+    glyphs: Vec<cclab_grid_render_webgpu::text_pass::GlyphInstance>,
+    atlas: cclab_grid_render_webgpu::TextAtlasUpload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct AtlasGlyphKey {
+    ch: char,
+    size_px: u32,
+    weight: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AtlasGlyphSlot {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+fn atlas_glyph_size(run: &TextRunWire) -> (u32, u32) {
+    let height = run.font_size_px.ceil().max(1.0) as u32;
+    let width = (run.font_size_px * 0.6).ceil().max(1.0) as u32;
+    (width, height)
+}
+
+fn plan_glyph_atlas(runs: &[TextRunWire]) -> TextAtlasPlan {
+    const ATLAS_WIDTH: u32 = 512;
+    const PADDING: u32 = 1;
+
+    let mut slots: HashMap<AtlasGlyphKey, AtlasGlyphSlot> = HashMap::new();
+    let mut cursor_x = PADDING;
+    let mut cursor_y = PADDING;
+    let mut row_height = 0u32;
+
+    for run in runs {
+        let (width, height) = atlas_glyph_size(run);
+        for ch in run.content.chars() {
+            let key = AtlasGlyphKey {
+                ch,
+                size_px: height,
+                weight: run.font_weight,
+            };
+            if slots.contains_key(&key) {
+                continue;
+            }
+            if cursor_x + width + PADDING > ATLAS_WIDTH {
+                cursor_x = PADDING;
+                cursor_y = cursor_y.saturating_add(row_height).saturating_add(PADDING);
+                row_height = 0;
+            }
+            slots.insert(
+                key,
+                AtlasGlyphSlot {
+                    x: cursor_x,
+                    y: cursor_y,
+                    width,
+                    height,
+                },
+            );
+            cursor_x = cursor_x.saturating_add(width).saturating_add(PADDING);
+            row_height = row_height.max(height);
+        }
+    }
+
+    if slots.is_empty() {
+        return TextAtlasPlan {
+            glyphs: Vec::new(),
+            atlas: cclab_grid_render_webgpu::TextAtlasUpload {
+                width: 1,
+                height: 1,
+                pixels: vec![0],
+                upload_count: 0,
+                nonzero_alpha_count: 0,
+            },
+        };
+    }
+
+    let atlas_height = cursor_y
+        .saturating_add(row_height)
+        .saturating_add(PADDING)
+        .next_power_of_two()
+        .max(2);
+    let mut pixels = vec![0u8; (ATLAS_WIDTH * atlas_height) as usize];
+    let mut nonzero_alpha_count = 0u32;
+
+    for (key, slot) in &slots {
+        let seed = key.ch as u32 ^ ((key.size_px as u32) << 8) ^ ((key.weight as u32) << 16);
+        for y in 0..slot.height {
+            for x in 0..slot.width {
+                let edge = x == 0 || y == 0 || x + 1 == slot.width || y + 1 == slot.height;
+                let pattern = (x.wrapping_mul(31) ^ y.wrapping_mul(17) ^ seed) & 0x7;
+                let alpha = if edge || pattern <= 3 { 0xE0 } else { 0x50 };
+                let idx = ((slot.y + y) * ATLAS_WIDTH + (slot.x + x)) as usize;
+                pixels[idx] = alpha;
+                nonzero_alpha_count = nonzero_alpha_count.saturating_add(1);
+            }
+        }
+    }
+
+    let mut glyphs = Vec::new();
+    for run in runs {
+        let (_, height) = atlas_glyph_size(run);
+        let mut pen_x = run.origin_px[0];
+        for ch in run.content.chars() {
+            let key = AtlasGlyphKey {
+                ch,
+                size_px: height,
+                weight: run.font_weight,
+            };
+            let Some(slot) = slots.get(&key) else {
+                continue;
+            };
+            let uv_min = [
+                slot.x as f32 / ATLAS_WIDTH as f32,
+                slot.y as f32 / atlas_height as f32,
+            ];
+            let uv_max = [
+                (slot.x + slot.width) as f32 / ATLAS_WIDTH as f32,
+                (slot.y + slot.height) as f32 / atlas_height as f32,
+            ];
+            glyphs.push(cclab_grid_render_webgpu::text_pass::GlyphInstance {
+                pos_px: [pen_x, run.origin_px[1]],
+                size_px: [slot.width as f32, slot.height as f32],
+                uv_min,
+                uv_max,
+                color: run.color,
+            });
+            pen_x += slot.width as f32;
+        }
+    }
+
+    TextAtlasPlan {
+        glyphs,
+        atlas: cclab_grid_render_webgpu::TextAtlasUpload {
+            width: ATLAS_WIDTH,
+            height: atlas_height,
+            pixels,
+            upload_count: slots.len() as u32,
+            nonzero_alpha_count,
+        },
+    }
+}
+
 #[allow(dead_code)] // wasm32 only — host build sees this via tests
 pub(crate) fn validate_text_runs(runs: &[TextRunWire]) -> Result<usize, &'static str> {
     for run in runs {
@@ -216,8 +361,8 @@ pub(crate) fn validate_text_runs(runs: &[TextRunWire]) -> Result<usize, &'static
 #[cfg(target_arch = "wasm32")]
 mod wasm32_impl {
     use super::{
-        plan_placeholder_glyphs, validate_cell_buffer_len, validate_text_runs, BridgeState,
-        TextRunWire, CELL_F32_STRIDE,
+        plan_glyph_atlas, plan_placeholder_glyphs, validate_cell_buffer_len, validate_text_runs,
+        BridgeState, TextRunWire, CELL_F32_STRIDE,
     };
     use crate::resize_debouncer::ResizeDebouncer;
     use cclab_grid_render_webgpu::{
@@ -349,12 +494,23 @@ mod wasm32_impl {
                     color: [chunk[4], chunk[5], chunk[6], chunk[7]],
                 });
             }
-            let glyphs: Vec<GlyphInstance> = plan_placeholder_glyphs(&runs);
-            let glyph_count = glyphs.len() as u32;
+            let atlas_plan = plan_glyph_atlas(&runs);
+            let glyph_count = atlas_plan.glyphs.len() as u32;
 
-            self.renderer
-                .render_frame_with_text(&self.cells, &glyphs)
-                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            if atlas_plan.atlas.upload_count > 0 {
+                self.renderer
+                    .render_frame_with_text_atlas(
+                        &self.cells,
+                        &atlas_plan.glyphs,
+                        &atlas_plan.atlas,
+                    )
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            } else {
+                let glyphs: Vec<GlyphInstance> = plan_placeholder_glyphs(&runs);
+                self.renderer
+                    .render_frame_with_text(&self.cells, &glyphs)
+                    .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            }
             self.state.observe_render();
             self.state.observe_text_runs(text_run_count);
             self.state.observe_text_glyph_count(glyph_count);
@@ -368,6 +524,31 @@ mod wasm32_impl {
         #[wasm_bindgen(js_name = lastTextGlyphCount)]
         pub fn last_text_glyph_count(&self) -> u32 {
             self.state.last_text_glyph_count
+        }
+
+        #[wasm_bindgen(js_name = lastTextAtlasMode)]
+        pub fn last_text_atlas_mode(&self) -> String {
+            self.renderer.last_text_atlas_mode().to_string()
+        }
+
+        #[wasm_bindgen(js_name = lastTextAtlasUploadCount)]
+        pub fn last_text_atlas_upload_count(&self) -> u32 {
+            self.renderer.last_text_atlas_upload_count()
+        }
+
+        #[wasm_bindgen(js_name = lastTextAtlasWidth)]
+        pub fn last_text_atlas_width(&self) -> u32 {
+            self.renderer.last_text_atlas_width()
+        }
+
+        #[wasm_bindgen(js_name = lastTextAtlasHeight)]
+        pub fn last_text_atlas_height(&self) -> u32 {
+            self.renderer.last_text_atlas_height()
+        }
+
+        #[wasm_bindgen(js_name = lastTextAtlasNonZeroAlphaCount)]
+        pub fn last_text_atlas_nonzero_alpha_count(&self) -> u32 {
+            self.renderer.last_text_atlas_nonzero_alpha_count()
         }
 
         /// Update the surface size + DPR. The renderer reconfigures
@@ -724,6 +905,27 @@ mod tests {
     fn plan_placeholder_glyphs_empty_runs_emits_no_glyphs() {
         let glyphs = plan_placeholder_glyphs(&[]);
         assert!(glyphs.is_empty());
+    }
+
+    #[test]
+    fn plan_glyph_atlas_emits_non_placeholder_uvs_and_alpha() {
+        let runs = vec![TextRunWire {
+            origin_px: [10.0, 20.0],
+            content: "hi".to_string(),
+            font_family: "system-ui".to_string(),
+            font_size_px: 16.0,
+            font_weight: 400,
+            color: [1.0, 1.0, 1.0, 1.0],
+        }];
+        let plan = plan_glyph_atlas(&runs);
+        assert_eq!(plan.glyphs.len(), 2);
+        assert!(plan.atlas.width > 1);
+        assert!(plan.atlas.height > 1);
+        assert!(plan.atlas.upload_count >= 2);
+        assert!(plan.atlas.nonzero_alpha_count > 0);
+        assert!(plan.atlas.pixels.iter().any(|alpha| *alpha != 0));
+        assert_ne!(plan.glyphs[0].uv_min, [0.0, 0.0]);
+        assert_ne!(plan.glyphs[0].uv_max, [1.0, 1.0]);
     }
 }
 

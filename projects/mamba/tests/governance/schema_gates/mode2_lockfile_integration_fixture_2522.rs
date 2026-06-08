@@ -67,7 +67,10 @@ fn surface_pins_mode_2_lockfile_integration_coverage() {
 #[test]
 fn dependencies_pin_2520_and_pkgmgr_phase_1_4() {
     let d = &manifest()["dependencies"];
-    assert_eq!(d["depends_on_issue_2520_fetch_step"].as_bool(), Some(true));
+    assert_eq!(
+        d["depends_on_issue_2520_fetch_step"].as_bool(),
+        Some(true)
+    );
     assert_eq!(
         d["depends_on_pkgmgr_phase_1_4_lockfile"].as_bool(),
         Some(true)
@@ -81,10 +84,7 @@ fn canonical_lockfile_filename_and_provenance_are_pinned() {
         c["case"].as_str(),
         Some("canonical_lockfile_filename_and_provenance_are_pinned")
     );
-    assert_eq!(
-        c["canonical_lockfile_filename"].as_str(),
-        Some("mamba.lock")
-    );
+    assert_eq!(c["canonical_lockfile_filename"].as_str(), Some("mamba.lock"));
     assert_eq!(
         c["canonical_lockfile_relative_path"].as_str(),
         Some("mamba.lock")

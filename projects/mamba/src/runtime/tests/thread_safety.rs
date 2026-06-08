@@ -1,14 +1,15 @@
 #![cfg(test)]
 
-use crate::runtime::async_rt;
-use crate::runtime::gc;
-use crate::runtime::rc::MbObject;
-use crate::runtime::tokio_exec;
 /// Integration tests for thread-safe Mamba runtime.
 ///
 /// Tests safepoint-based STW GC, multi-thread async scheduling,
 /// and concurrent access to global async state.
+
 use crate::runtime::value::MbValue;
+use crate::runtime::rc::MbObject;
+use crate::runtime::gc;
+use crate::runtime::async_rt;
+use crate::runtime::tokio_exec;
 
 #[test]
 fn test_safepoint_register_unregister() {
@@ -29,9 +30,7 @@ fn test_safepoint_gc_collect_from_registered_thread() {
     // collect returned successfully = no deadlock
     gc::gc_remove_root(MbValue::from_ptr(obj));
     gc::gc_untrack(obj);
-    unsafe {
-        drop(Box::from_raw(obj));
-    }
+    unsafe { drop(Box::from_raw(obj)); }
 
     gc::gc_unregister_thread();
 }
@@ -83,11 +82,7 @@ fn test_concurrent_coroutine_creation() {
     let total = all_ids.len();
     all_ids.sort();
     all_ids.dedup();
-    assert_eq!(
-        all_ids.len(),
-        total,
-        "all coroutine IDs must be unique across threads"
-    );
+    assert_eq!(all_ids.len(), total, "all coroutine IDs must be unique across threads");
 }
 
 #[test]
@@ -96,7 +91,9 @@ fn test_tokio_spawn_from_multiple_threads() {
     let mut handles = Vec::new();
     for i in 0..4 {
         handles.push(std::thread::spawn(move || {
-            let name = MbValue::from_ptr(MbObject::new_str(format!("mt_coro_{i}")));
+            let name = MbValue::from_ptr(
+                MbObject::new_str(format!("mt_coro_{i}"))
+            );
             let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
             let coro = async_rt::mb_coroutine_new(name, locals);
             async_rt::mb_coroutine_complete(coro, MbValue::from_int(i as i64));
@@ -105,18 +102,16 @@ fn test_tokio_spawn_from_multiple_threads() {
         }));
     }
 
-    let task_ids: Vec<i64> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+    let task_ids: Vec<i64> = handles.into_iter()
+        .map(|h| h.join().unwrap())
+        .collect();
 
     // Give Tokio time to complete
     std::thread::sleep(std::time::Duration::from_millis(100));
 
     for tid in &task_ids {
-        let done = async_rt::TASKS
-            .read()
-            .unwrap()
-            .get(&(*tid as u64))
-            .map(|t| t.done)
-            .unwrap_or(false);
+        let done = async_rt::TASKS.read().unwrap()
+            .get(&(*tid as u64)).map(|t| t.done).unwrap_or(false);
         assert!(done, "Tokio task {tid} should be done");
     }
 }
@@ -125,7 +120,9 @@ fn test_tokio_spawn_from_multiple_threads() {
 fn test_tokio_gather_parallel_execution() {
     let mut coros = Vec::new();
     for i in 0..4 {
-        let name = MbValue::from_ptr(MbObject::new_str(format!("gather_coro_{i}")));
+        let name = MbValue::from_ptr(
+            MbObject::new_str(format!("gather_coro_{i}"))
+        );
         let locals = MbValue::from_ptr(MbObject::new_list(vec![]));
         let coro = async_rt::mb_coroutine_new(name, locals);
         async_rt::mb_coroutine_complete(coro, MbValue::from_int((i + 1) * 10));

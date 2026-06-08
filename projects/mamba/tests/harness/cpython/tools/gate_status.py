@@ -25,33 +25,36 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
-import subprocess
 from collections import Counter
 from pathlib import Path
 
+import harness_lib  # shared oracle/SUT runner (tools/): isolated scratch CWD + PYTHONBREAKPOINT=0
+
 TOOLS_DIR = Path(__file__).resolve().parent  # tests/harness/cpython/tools
-FIXTURES_DIR = TOOLS_DIR.parents[2] / "cpython" / "fixtures"  # tests/cpython/fixtures
-BUCKETS = ("core", "builtin-libs", "std-libs", "pep", "type-strict", "3rd-libs")
+FIXTURES_DIR = TOOLS_DIR.parents[2] / "cpython"  # tests/cpython
+# Dimension-first layout (STRUCTURE.md): the top-level dirs are FACETS, not
+# buckets. Stratify the pass-rate sample by facet so iteration walks real
+# fixture dirs (the old {core,std-libs,...} bucket dirs are no longer top-level).
+BUCKETS = (
+    "type", "surface", "behavior", "errors", "real_world", "security",
+    "perf", "security-matrix",
+)
 
 
 def run(argv, timeout):
-    env = dict(os.environ, PYTHONBREAKPOINT="0")
-    try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=env)
-        return r.returncode, r.stdout
-    except Exception:  # noqa: BLE001
-        return None, ""
+    rc, out, _err = harness_lib.run_fixture(argv, timeout)
+    return rc, out
 
 
 def classify(fixture: Path, mamba_bin: str, timeout: int) -> str:
     orc, oout = run(["python3.12", str(fixture)], timeout)
     if orc != 0:
-        return "ORACLE_SKIP"
+        return harness_lib.ORACLE_SKIP
     inner = f"ulimit -t {timeout} 2>/dev/null; ulimit -c 0 2>/dev/null; exec {mamba_bin} run {fixture}"
     mrc, mout = run(["/bin/sh", "-c", inner], timeout + 5)
     if mrc != 0 or mrc is None:
-        return "MAMBA_RED"
-    return "PASS" if mout == oout else "DIVERGE"
+        return harness_lib.MAMBA_RED
+    return harness_lib.PASS if mout == oout else harness_lib.DIVERGE
 
 
 def main(argv=None) -> int:
@@ -76,18 +79,16 @@ def main(argv=None) -> int:
         for fx in fixtures:
             c[classify(fx, mamba_bin, args.timeout)] += 1
         overall += c
-        graded = sum(c.values()) - c["ORACLE_SKIP"]
-        pr = 100 * c["PASS"] / graded if graded else 0.0
-        print(f"{bucket:14} {sum(c.values()):6} {c['PASS']:6} {c['MAMBA_RED']:10} "
-              f"{c['DIVERGE']:8} {c['ORACLE_SKIP']:6}  {pr:5.1f}%")
+        _, graded, pr = harness_lib.compute_pass_rate(c)
+        print(f"{bucket:14} {sum(c.values()):6} {c[harness_lib.PASS]:6} {c[harness_lib.MAMBA_RED]:10} "
+              f"{c[harness_lib.DIVERGE]:8} {c[harness_lib.ORACLE_SKIP]:6}  {pr:5.1f}%")
 
-    graded = sum(overall.values()) - overall["ORACLE_SKIP"]
-    pr = 100 * overall["PASS"] / graded if graded else 0.0
-    print(f"{'TOTAL':14} {sum(overall.values()):6} {overall['PASS']:6} {overall['MAMBA_RED']:10} "
-          f"{overall['DIVERGE']:8} {overall['ORACLE_SKIP']:6}  {pr:5.1f}%")
+    _, graded, pr = harness_lib.compute_pass_rate(overall)
+    print(f"{'TOTAL':14} {sum(overall.values()):6} {overall[harness_lib.PASS]:6} {overall[harness_lib.MAMBA_RED]:10} "
+          f"{overall[harness_lib.DIVERGE]:8} {overall[harness_lib.ORACLE_SKIP]:6}  {pr:5.1f}%")
     print(f"\nmamba Py3.12 PASS_RATE = {pr:.1f}%  "
-          f"({overall['PASS']}/{graded} graded fixtures; "
-          f"{overall['MAMBA_RED']} not-yet-implemented, {overall['DIVERGE']} wrong)")
+          f"({overall[harness_lib.PASS]}/{graded} graded fixtures; "
+          f"{overall[harness_lib.MAMBA_RED]} not-yet-implemented, {overall[harness_lib.DIVERGE]} wrong)")
     return 0
 
 

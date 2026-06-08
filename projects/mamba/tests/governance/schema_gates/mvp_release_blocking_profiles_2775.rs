@@ -26,7 +26,7 @@
 //! default `cargo test -p mamba` set; runs well under a second.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const EXPECTED_PROFILES: &[&str] = &[
     "correctness",
@@ -46,7 +46,12 @@ const EXPECTED_PROFILE_ISSUE: &[(&str, i64)] = &[
     ("smoke", 2819),
 ];
 
-const EXPECTED_OBJECTIVES: &[&str] = &["compatibility", "distribution", "ecosystem", "performance"];
+const EXPECTED_OBJECTIVES: &[&str] = &[
+    "compatibility",
+    "distribution",
+    "ecosystem",
+    "performance",
+];
 
 const CANONICAL_BUCKETS: &[&str] = &["required", "optional", "xfail", "blocker"];
 
@@ -71,13 +76,6 @@ fn manifest_path() -> PathBuf {
         .join("validation")
         .join("profiles")
         .join("release_gate.toml")
-}
-
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
 }
 
 fn require_table<'a>(doc: &'a toml::Value, key: &str) -> &'a toml::value::Table {
@@ -108,7 +106,11 @@ fn require_bool(table: &toml::value::Table, key: &str, ctx: &str) -> bool {
         .unwrap_or_else(|| panic!("{ctx}: missing required bool `{key}`"))
 }
 
-fn require_array<'a>(table: &'a toml::value::Table, key: &str, ctx: &str) -> &'a Vec<toml::Value> {
+fn require_array<'a>(
+    table: &'a toml::value::Table,
+    key: &str,
+    ctx: &str,
+) -> &'a Vec<toml::Value> {
     table
         .get(key)
         .and_then(|v| v.as_array())
@@ -127,7 +129,7 @@ fn collect_strings(arr: &[toml::Value], ctx: &str) -> BTreeSet<String> {
 
 #[test]
 fn release_gate_manifest_header_pins_umbrella_issue_and_parent() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     assert_eq!(
         doc.get("version").and_then(|v| v.as_integer()),
         Some(1),
@@ -152,13 +154,12 @@ fn release_gate_manifest_header_pins_umbrella_issue_and_parent() {
 
 #[test]
 fn release_gate_manifest_lists_exactly_the_six_release_blocking_profiles() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let profiles = require_table(&doc, "profiles");
     let got: BTreeSet<&str> = profiles.keys().map(|s| s.as_str()).collect();
     let want: BTreeSet<&str> = EXPECTED_PROFILES.iter().copied().collect();
     assert_eq!(
-        got,
-        want,
+        got, want,
         "release_gate.toml `[profiles.*]` must be exactly the six \
          release-blocking profiles. Missing: {:?}. Extra: {:?}.",
         want.difference(&got).collect::<Vec<_>>(),
@@ -172,7 +173,7 @@ fn each_referenced_profile_manifest_file_exists_and_points_back_to_2775() {
     // pass/fail policy." We assert every referenced manifest resolves
     // to a real file AND that file's `parent_issue` is 2775, closing
     // the umbrella loop.
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let profiles = require_table(&doc, "profiles");
     let dir = manifest_path()
         .parent()
@@ -191,7 +192,7 @@ fn each_referenced_profile_manifest_file_exists_and_points_back_to_2775() {
             "profile `{name}`: manifest path {} does not exist",
             manifest_abs.display()
         );
-        let child = load_toml(&manifest_abs);
+        let child = crate::common::load_toml(&manifest_abs);
         let child_parent = child
             .get("parent_issue")
             .and_then(|v| v.as_integer())
@@ -202,8 +203,7 @@ fn each_referenced_profile_manifest_file_exists_and_points_back_to_2775() {
                 )
             });
         assert_eq!(
-            child_parent,
-            UMBRELLA_ISSUE,
+            child_parent, UMBRELLA_ISSUE,
             "child manifest {} `parent_issue` = {child_parent}, must be {UMBRELLA_ISSUE}",
             manifest_abs.display()
         );
@@ -212,7 +212,7 @@ fn each_referenced_profile_manifest_file_exists_and_points_back_to_2775() {
 
 #[test]
 fn each_profile_entry_carries_required_fields_and_correct_issue() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let profiles = require_table(&doc, "profiles");
     let expected: BTreeMap<&str, i64> = EXPECTED_PROFILE_ISSUE.iter().copied().collect();
 
@@ -249,7 +249,7 @@ fn every_mvp_objective_is_claimed_by_at_least_one_profile() {
     // Acceptance 3: "Release summary exposes blockers by MVP objective."
     // Every declared objective in `[summary].objectives` must be the
     // objective of at least one profile, else the summary has dead keys.
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let summary = require_table(&doc, "summary");
     let declared = collect_strings(
         require_array(summary, "objectives", "[summary]"),
@@ -283,7 +283,7 @@ fn run_order_is_a_permutation_of_declared_profiles() {
     // Run order must reference exactly the profiles declared in
     // [profiles.*] — no missing entries (would silently skip a profile)
     // and no extras (typo would be a no-op).
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let run_order = require_table(&doc, "run_order");
     let sequence = require_array(run_order, "sequence", "[run_order]");
     let listed: Vec<String> = sequence
@@ -317,7 +317,7 @@ fn run_order_is_a_permutation_of_declared_profiles() {
 fn policy_bans_skip_xfail_stub_and_importpass_as_pass() {
     // Acceptance: "release-blocking rules do not count skips, xfails, or
     // stubs as pass" (from #2775 scope).
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let policy = require_table(&doc, "policy");
     let banned = collect_strings(
         require_array(policy, "non_pass_outcomes", "[policy]"),
@@ -339,7 +339,8 @@ fn policy_bans_skip_xfail_stub_and_importpass_as_pass() {
         require_array(policy, "canonical_buckets", "[policy]"),
         "[policy].canonical_buckets",
     );
-    let want_buckets: BTreeSet<String> = CANONICAL_BUCKETS.iter().map(|s| s.to_string()).collect();
+    let want_buckets: BTreeSet<String> =
+        CANONICAL_BUCKETS.iter().map(|s| s.to_string()).collect();
     assert_eq!(
         canonical, want_buckets,
         "[policy].canonical_buckets must equal {:?}",
@@ -358,7 +359,7 @@ fn ci_runner_block_locks_command_format_flag_and_exit_codes() {
     // Acceptance 2: "CI or worker command names are documented and
     // deterministic." Lock the entire `[ci_runner]` contract so the
     // runner (#2821) can be wired against fixed names.
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let ci = require_table(&doc, "ci_runner");
     assert_eq!(
         require_str(ci, "command", "[ci_runner]"),
@@ -398,7 +399,7 @@ fn summary_blocker_record_required_fields_are_pinned() {
     // Acceptance 3 detail: each blocker record MUST carry profile, id,
     // outcome — the minimum a downstream consumer needs to identify
     // and act on a blocker.
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let summary = require_table(&doc, "summary");
     let br = summary
         .get("blocker_record")
@@ -413,8 +414,7 @@ fn summary_blocker_record_required_fields_are_pinned() {
         .map(|s| s.to_string())
         .collect();
     assert_eq!(
-        required,
-        want,
+        required, want,
         "[summary.blocker_record].required_fields must be exactly {:?}",
         ["profile", "id", "outcome"]
     );
@@ -432,8 +432,7 @@ fn summary_blocker_record_required_fields_are_pinned() {
         .map(|s| s.to_string())
         .collect();
     assert_eq!(
-        pr_required,
-        pr_want,
+        pr_required, pr_want,
         "[summary.profile_record].required_fields must be exactly {:?}",
         ["profile", "objective", "passed", "blockers"]
     );
@@ -443,7 +442,7 @@ fn summary_blocker_record_required_fields_are_pinned() {
 fn summary_carries_objective_grouping_fields() {
     // The runner needs to know what shape the per-objective record
     // takes; lock the four mandatory fields.
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let summary = require_table(&doc, "summary");
     let fields = collect_strings(
         require_array(summary, "fields", "[summary]"),
@@ -454,8 +453,7 @@ fn summary_carries_objective_grouping_fields() {
         .map(|s| s.to_string())
         .collect();
     assert_eq!(
-        fields,
-        want,
+        fields, want,
         "[summary].fields must be exactly {:?}",
         ["objective", "profile_ids", "blocker_count", "blockers"]
     );
@@ -467,7 +465,7 @@ fn mvp_umbrella_links_release_gate_to_this_manifest() {
     // manifest so workers reading the umbrella discover the
     // release-gate aggregation layer.
     let umbrella = crate_root().join("validation").join("mvp.toml");
-    let doc = load_toml(&umbrella);
+    let doc = crate::common::load_toml(&umbrella);
     let profiles = require_table(&doc, "profiles");
     let release_gate = profiles
         .get("release_gate")
@@ -495,14 +493,18 @@ fn references_block_links_to_dependent_release_gate_issues() {
     // The aggregation manifest must forward-reference the release-
     // summary schema (#2820) and the release-gate runner (#2821) so
     // a reviewer reading this file alone can find both consumers.
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let refs = require_table(&doc, "references");
     let summary_ref = refs
         .get("release_summary_schema")
         .and_then(|v| v.as_table())
         .expect("[references.release_summary_schema] missing");
     assert_eq!(
-        require_int(summary_ref, "issue", "[references.release_summary_schema]",),
+        require_int(
+            summary_ref,
+            "issue",
+            "[references.release_summary_schema]",
+        ),
         2820,
         "release_summary_schema reference must point at #2820"
     );
@@ -520,7 +522,11 @@ fn references_block_links_to_dependent_release_gate_issues() {
         .and_then(|v| v.as_table())
         .expect("[references.baseline_update_policy] missing");
     assert_eq!(
-        require_int(baseline_ref, "issue", "[references.baseline_update_policy]",),
+        require_int(
+            baseline_ref,
+            "issue",
+            "[references.baseline_update_policy]",
+        ),
         2823,
         "baseline_update_policy reference must point at #2823"
     );

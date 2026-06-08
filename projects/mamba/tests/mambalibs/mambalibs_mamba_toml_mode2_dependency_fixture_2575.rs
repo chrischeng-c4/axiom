@@ -46,14 +46,8 @@ fn header_is_well_formed() {
         Some("mambalibs_mamba_toml_mode2_dependency"),
     );
     assert_eq!(doc.get("issue").and_then(|v| v.as_integer()), Some(2575));
-    assert_eq!(
-        doc.get("parent_issue").and_then(|v| v.as_integer()),
-        Some(2531)
-    );
-    assert_eq!(
-        doc.get("profile").and_then(|v| v.as_str()),
-        Some("mambalibs")
-    );
+    assert_eq!(doc.get("parent_issue").and_then(|v| v.as_integer()), Some(2531));
+    assert_eq!(doc.get("profile").and_then(|v| v.as_str()), Some("mambalibs"));
     assert_eq!(
         doc.get("family").and_then(|v| v.as_str()),
         Some("mamba_toml_mode2_dependency"),
@@ -83,10 +77,7 @@ fn mamba_toml_declares_local_mode2_dependency() {
         .and_then(|v| v.as_table())
         .expect("missing `[mamba_toml]` block");
 
-    assert_eq!(
-        m.get("section_name").and_then(|v| v.as_str()),
-        Some("dependencies")
-    );
+    assert_eq!(m.get("section_name").and_then(|v| v.as_str()), Some("dependencies"));
     let dep_name = m
         .get("dependency_name")
         .and_then(|v| v.as_str())
@@ -107,8 +98,7 @@ fn mamba_toml_declares_local_mode2_dependency() {
         "dependency_mode must be 2 (Mode 2)",
     );
     assert_eq!(
-        m.get("local_binding_crate_fixture_issue")
-            .and_then(|v| v.as_integer()),
+        m.get("local_binding_crate_fixture_issue").and_then(|v| v.as_integer()),
         Some(2577),
         "must cross-reference the #2577 local binding crate fixture",
     );
@@ -119,17 +109,11 @@ fn mamba_toml_declares_local_mode2_dependency() {
 #[test]
 fn parse_test_fails_when_dependency_stanza_removed() {
     let doc = load_toml(&manifest_path());
-    let c = doc
-        .get("dependency_stanza_removal_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[dependency_stanza_removal_case]` block — acceptance: \
+    let c = doc.get("dependency_stanza_removal_case").and_then(|v| v.as_table()).expect(
+        "missing `[dependency_stanza_removal_case]` block — acceptance: \
          \"Fixture parse test fails if the dependency stanza is removed.\"",
-        );
-    assert_eq!(
-        c.get("must_observe_section").and_then(|v| v.as_str()),
-        Some("dependencies")
     );
+    assert_eq!(c.get("must_observe_section").and_then(|v| v.as_str()), Some("dependencies"));
     let dep_in_case = c
         .get("must_observe_dependency_name")
         .and_then(|v| v.as_str())
@@ -143,47 +127,29 @@ fn parse_test_fails_when_dependency_stanza_removed() {
         dep_in_case, dep_in_mamba_toml,
         "must_observe_dependency_name must match [mamba_toml].dependency_name",
     );
+    assert_eq!(c.get("parse_must_fail_if_stanza_removed").and_then(|v| v.as_bool()), Some(true));
     assert_eq!(
-        c.get("parse_must_fail_if_stanza_removed")
-            .and_then(|v| v.as_bool()),
-        Some(true)
-    );
-    assert_eq!(
-        c.get("parse_must_fail_diagnostic_names_dependency_name")
-            .and_then(|v| v.as_bool()),
+        c.get("parse_must_fail_diagnostic_names_dependency_name").and_then(|v| v.as_bool()),
         Some(true),
     );
     assert_eq!(
-        c.get("parse_failure_exit_code_when_missing")
-            .and_then(|v| v.as_integer()),
+        c.get("parse_failure_exit_code_when_missing").and_then(|v| v.as_integer()),
         Some(1),
     );
-    assert_eq!(
-        c.get("expected_outcome_when_present")
-            .and_then(|v| v.as_str()),
-        Some("pass")
-    );
-    assert_eq!(
-        c.get("expected_outcome_when_removed")
-            .and_then(|v| v.as_str()),
-        Some("fail")
-    );
+    assert_eq!(c.get("expected_outcome_when_present").and_then(|v| v.as_str()), Some("pass"));
+    assert_eq!(c.get("expected_outcome_when_removed").and_then(|v| v.as_str()), Some("fail"));
 }
 
 // Acceptance: "Fixture is usable by the mambalibs E2E harness."
 #[test]
 fn fixture_is_usable_by_e2e_harness() {
     let doc = load_toml(&manifest_path());
-    let e = doc
-        .get("e2e_harness_compatibility")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[e2e_harness_compatibility]` block — acceptance: \
+    let e = doc.get("e2e_harness_compatibility").and_then(|v| v.as_table()).expect(
+        "missing `[e2e_harness_compatibility]` block — acceptance: \
          \"Fixture is usable by the mambalibs E2E harness.\"",
-        );
+    );
     assert_eq!(
-        e.get("mamba_build_e2e_fixture_issue")
-            .and_then(|v| v.as_integer()),
+        e.get("mamba_build_e2e_fixture_issue").and_then(|v| v.as_integer()),
         Some(2578),
         "must cross-reference the #2578 mamba-build E2E harness fixture",
     );
@@ -192,11 +158,7 @@ fn fixture_is_usable_by_e2e_harness() {
         "must_not_require_post_processing",
         "must_resolve_local_binding_crate_via_relative_path",
     ] {
-        assert_eq!(
-            e.get(*f).and_then(|v| v.as_bool()),
-            Some(true),
-            "{f} must be true"
-        );
+        assert_eq!(e.get(*f).and_then(|v| v.as_bool()), Some(true), "{f} must be true");
     }
 }
 
@@ -204,28 +166,15 @@ fn fixture_is_usable_by_e2e_harness() {
 #[test]
 fn syntax_matches_documented_target_workflow() {
     let doc = load_toml(&manifest_path());
-    let d = doc
-        .get("documented_workflow_match")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[documented_workflow_match]` block — acceptance: \
+    let d = doc.get("documented_workflow_match").and_then(|v| v.as_table()).expect(
+        "missing `[documented_workflow_match]` block — acceptance: \
          \"The syntax matches the documented target workflow.\"",
-        );
-    assert_eq!(
-        d.get("documented_section_name").and_then(|v| v.as_str()),
-        Some("dependencies")
     );
+    assert_eq!(d.get("documented_section_name").and_then(|v| v.as_str()), Some("dependencies"));
+    assert_eq!(d.get("documented_mode_field_name").and_then(|v| v.as_str()), Some("mode"));
+    assert_eq!(d.get("documented_path_field_name").and_then(|v| v.as_str()), Some("path"));
     assert_eq!(
-        d.get("documented_mode_field_name").and_then(|v| v.as_str()),
-        Some("mode")
-    );
-    assert_eq!(
-        d.get("documented_path_field_name").and_then(|v| v.as_str()),
-        Some("path")
-    );
-    assert_eq!(
-        d.get("documented_mode_value_for_mode2")
-            .and_then(|v| v.as_integer()),
+        d.get("documented_mode_value_for_mode2").and_then(|v| v.as_integer()),
         Some(2),
     );
     for f in &[
@@ -234,11 +183,7 @@ fn syntax_matches_documented_target_workflow() {
         "must_match_documented_path_field_name",
         "must_match_documented_mode_value",
     ] {
-        assert_eq!(
-            d.get(*f).and_then(|v| v.as_bool()),
-            Some(true),
-            "{f} must be true"
-        );
+        assert_eq!(d.get(*f).and_then(|v| v.as_bool()), Some(true), "{f} must be true");
     }
 
     // Cross-check: the documented values must match the values actually
@@ -260,18 +205,14 @@ fn syntax_matches_documented_target_workflow() {
     );
     assert_eq!(
         m.get("dependency_mode").and_then(|v| v.as_integer()),
-        d.get("documented_mode_value_for_mode2")
-            .and_then(|v| v.as_integer()),
+        d.get("documented_mode_value_for_mode2").and_then(|v| v.as_integer()),
     );
 }
 
 #[test]
 fn runner_contract_declares_keys_and_cases() {
     let doc = load_toml(&manifest_path());
-    let c = doc
-        .get("runner_contract")
-        .and_then(|v| v.as_table())
-        .unwrap();
+    let c = doc.get("runner_contract").and_then(|v| v.as_table()).unwrap();
     let keys: Vec<&str> = c
         .get("keys")
         .and_then(|v| v.as_array())
@@ -288,10 +229,7 @@ fn runner_contract_declares_keys_and_cases() {
         "parse_failure_diagnostic",
         "exit_code",
     ] {
-        assert!(
-            keys.contains(required),
-            "runner_contract.keys must include {required}"
-        );
+        assert!(keys.contains(required), "runner_contract.keys must include {required}");
     }
     let cases: Vec<&str> = c
         .get("case_values")
@@ -299,10 +237,7 @@ fn runner_contract_declares_keys_and_cases() {
         .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
         .unwrap_or_default();
     for required in &["dependency_stanza_present", "dependency_stanza_removed"] {
-        assert!(
-            cases.contains(required),
-            "runner_contract.case_values must include {required}"
-        );
+        assert!(cases.contains(required), "runner_contract.case_values must include {required}");
     }
 }
 
@@ -311,8 +246,7 @@ fn pins_out_of_scope_per_issue() {
     let doc = load_toml(&manifest_path());
     let o = doc.get("out_of_scope").and_then(|v| v.as_table()).unwrap();
     assert_eq!(
-        o.get("resolver_implementation_changes")
-            .and_then(|v| v.as_bool()),
+        o.get("resolver_implementation_changes").and_then(|v| v.as_bool()),
         Some(true),
     );
 }

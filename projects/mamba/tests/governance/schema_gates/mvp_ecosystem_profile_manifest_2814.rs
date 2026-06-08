@@ -38,16 +38,9 @@ fn umbrella_path() -> PathBuf {
         .join("mvp.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn ecosystem_profile_manifest_declares_canonical_buckets() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("profile").and_then(|v| v.as_str()),
@@ -70,7 +63,7 @@ fn ecosystem_profile_manifest_declares_canonical_buckets() {
 
 #[test]
 fn ecosystem_profile_policy_satisfies_acceptance() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let policy = doc
         .get("policy")
         .and_then(|v| v.as_table())
@@ -153,7 +146,7 @@ fn ecosystem_profile_policy_satisfies_acceptance() {
 
 #[test]
 fn ecosystem_profile_source_manifest_resolves() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let source = doc
         .get("source_manifest")
         .and_then(|v| v.as_str())
@@ -184,7 +177,7 @@ fn ecosystem_profile_source_manifest_resolves() {
 
 #[test]
 fn ecosystem_profile_outcome_map_covers_source_manifest() {
-    let profile_doc = load_toml(&manifest_path());
+    let profile_doc = crate::common::load_toml(&manifest_path());
     let outcome_map: BTreeSet<&str> = profile_doc
         .get("outcome_map")
         .and_then(|v| v.as_table())
@@ -198,7 +191,7 @@ fn ecosystem_profile_outcome_map_covers_source_manifest() {
         .and_then(|v| v.as_str())
         .expect("ecosystem.toml missing `source_manifest`");
     let source_path = manifest_path().parent().unwrap().join(source_rel);
-    let source_doc = load_toml(&source_path);
+    let source_doc = crate::common::load_toml(&source_path);
 
     let fixtures = source_doc
         .get("fixtures")
@@ -246,17 +239,20 @@ fn ecosystem_profile_outcome_map_covers_source_manifest() {
 
 #[test]
 fn mvp_umbrella_links_to_ecosystem_manifest() {
-    let doc = load_toml(&umbrella_path());
+    let doc = crate::common::load_toml(&umbrella_path());
     let entry = doc
         .get("profiles")
         .and_then(|v| v.get("ecosystem"))
         .and_then(|v| v.as_table())
         .expect("validation/mvp.toml missing `[profiles.ecosystem]`");
 
-    let manifest = entry.get("manifest").and_then(|v| v.as_str()).expect(
-        "validation/mvp.toml `[profiles.ecosystem].manifest` must be set \
+    let manifest = entry
+        .get("manifest")
+        .and_then(|v| v.as_str())
+        .expect(
+            "validation/mvp.toml `[profiles.ecosystem].manifest` must be set \
              so workers can locate ecosystem.toml",
-    );
+        );
     assert_eq!(
         manifest, "profiles/ecosystem.toml",
         "umbrella must point at profiles/ecosystem.toml; got {manifest:?}"

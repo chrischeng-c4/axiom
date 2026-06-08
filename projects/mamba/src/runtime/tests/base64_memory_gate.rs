@@ -6,7 +6,7 @@
 use crate::testing::{a, b, get, i, load_manifest, s};
 use toml::Value;
 
-const FIXTURE: &str = "tests/cpython/perf/base64_memory_gate/manifest.toml";
+const FIXTURE: &str = "tests/harness/cpython/config/perf/base64_memory_gate/manifest.toml";
 fn m() -> Value {
     load_manifest(FIXTURE)
 }
@@ -48,18 +48,9 @@ fn surface_pins_the_five_required_axes() {
     let sf = get(&m, "surface");
     assert!(b(sf, "must_cover_base64_memory_meets_1x_cpython_floor"));
     assert!(b(sf, "must_cover_speed_gate_holds_across_memory_fix"));
-    assert!(b(
-        sf,
-        "must_cover_starting_deficit_recorded_with_measurement_shape"
-    ));
-    assert!(b(
-        sf,
-        "must_cover_fix_path_bounded_to_bytes_layout_or_clone_elim"
-    ));
-    assert!(b(
-        sf,
-        "must_cover_sibling_bytes_libs_enumerated_as_unblock_targets"
-    ));
+    assert!(b(sf, "must_cover_starting_deficit_recorded_with_measurement_shape"));
+    assert!(b(sf, "must_cover_fix_path_bounded_to_bytes_layout_or_clone_elim"));
+    assert!(b(sf, "must_cover_sibling_bytes_libs_enumerated_as_unblock_targets"));
     assert!(b(sf, "must_be_offline_or_loopback_only"));
     assert!(b(sf, "must_be_deterministic"));
 }
@@ -105,19 +96,13 @@ fn r2_speed_gate_holds_across_memory_fix() {
     assert_eq!(s(r, "expected_speed_regression_threshold"), "1.0x_pre_fix");
     assert_eq!(i(r, "speed_regressed_exit_code"), 480);
     assert_eq!(i(r, "speed_threshold_widened_exit_code"), 481);
-    assert!(b(
-        r,
-        "must_distinguish_speed_regressed_from_threshold_widening"
-    ));
+    assert!(b(r, "must_distinguish_speed_regressed_from_threshold_widening"));
 }
 
 #[test]
 fn r3_starting_deficit_recorded_with_measurement_shape() {
     let m = m();
-    let r = get(
-        &m,
-        "r3_starting_deficit_recorded_with_measurement_shape_contract",
-    );
+    let r = get(&m, "r3_starting_deficit_recorded_with_measurement_shape_contract");
     assert_eq!(s(r, "requirement_id"), "R3");
     assert!(b(r, "must_record_mamba_mb"));
     assert!(b(r, "must_record_cpython_mb"));
@@ -152,10 +137,7 @@ fn r3_starting_deficit_recorded_with_measurement_shape() {
 #[test]
 fn r4_fix_path_bounded() {
     let m = m();
-    let r = get(
-        &m,
-        "r4_fix_path_bounded_to_bytes_layout_or_clone_elim_contract",
-    );
+    let r = get(&m, "r4_fix_path_bounded_to_bytes_layout_or_clone_elim_contract");
     assert_eq!(s(r, "requirement_id"), "R4");
     assert!(b(r, "must_pin_allowed_fix_paths"));
     assert!(b(r, "must_forbid_in_place_bytes_mutation_path"));
@@ -194,16 +176,10 @@ fn r4_fix_path_bounded() {
 #[test]
 fn r5_sibling_bytes_libs_enumerated() {
     let m = m();
-    let r = get(
-        &m,
-        "r5_sibling_bytes_libs_enumerated_as_unblock_targets_contract",
-    );
+    let r = get(&m, "r5_sibling_bytes_libs_enumerated_as_unblock_targets_contract");
     assert_eq!(s(r, "requirement_id"), "R5");
     assert!(b(r, "must_pin_sibling_unblock_target_set"));
-    assert!(b(
-        r,
-        "must_mark_sibling_retrofits_out_of_scope_for_this_issue"
-    ));
+    assert!(b(r, "must_mark_sibling_retrofits_out_of_scope_for_this_issue"));
     let names: Vec<&str> = a(r, "sibling_unblock_targets")
         .iter()
         .filter_map(|v| v.as_str())
@@ -213,10 +189,7 @@ fn r5_sibling_bytes_libs_enumerated() {
     }
     assert_eq!(i(r, "sibling_dropped_exit_code"), 486);
     assert_eq!(i(r, "sibling_implemented_in_this_issue_exit_code"), 487);
-    assert!(b(
-        r,
-        "must_distinguish_sibling_dropped_from_sibling_pulled_in"
-    ));
+    assert!(b(r, "must_distinguish_sibling_dropped_from_sibling_pulled_in"));
 }
 
 #[test]

@@ -146,7 +146,9 @@ impl TaskSignature {
                 new_args.extend(arr.clone());
                 serde_json::Value::Array(new_args)
             }
-            serde_json::Value::Null => serde_json::Value::Array(vec![previous_result]),
+            serde_json::Value::Null => {
+                serde_json::Value::Array(vec![previous_result])
+            }
             other => {
                 // If args is not an array, wrap both in array
                 serde_json::Value::Array(vec![previous_result, other.clone()])
@@ -183,7 +185,9 @@ mod tests {
 
     #[test]
     fn test_task_options_builder() {
-        let options = TaskOptions::new().with_queue("priority").with_countdown(60);
+        let options = TaskOptions::new()
+            .with_queue("priority")
+            .with_countdown(60);
 
         assert_eq!(options.queue, Some("priority".to_string()));
         assert_eq!(options.countdown, Some(60));
@@ -212,13 +216,15 @@ mod tests {
 
     #[test]
     fn test_set_queue() {
-        let sig = TaskSignature::new("task", serde_json::json!([])).set_queue("high_priority");
+        let sig = TaskSignature::new("task", serde_json::json!([]))
+            .set_queue("high_priority");
         assert_eq!(sig.options.queue, Some("high_priority".to_string()));
     }
 
     #[test]
     fn test_set_countdown() {
-        let sig = TaskSignature::new("task", serde_json::json!([])).set_countdown(120);
+        let sig = TaskSignature::new("task", serde_json::json!([]))
+            .set_countdown(120);
         assert_eq!(sig.options.countdown, Some(120));
     }
 }

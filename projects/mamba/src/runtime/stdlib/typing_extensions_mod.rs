@@ -1,5 +1,3 @@
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 /// typing_extensions module for Mamba (#1494).
 ///
 /// Minimal callable-dispatcher shim covering the four most-used
@@ -13,7 +11,10 @@ use super::super::value::MbValue;
 /// surface) is tracked separately under #1494; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the 3p
 /// conformance issues have closed against.
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::MbObject;
 
 unsafe extern "C" fn dispatch_protocol(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
@@ -23,10 +24,7 @@ unsafe extern "C" fn dispatch_typed_dict(_args_ptr: *const MbValue, _nargs: usiz
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_runtime_checkable(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_runtime_checkable(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
@@ -45,10 +43,7 @@ pub fn register() {
     attrs.insert("TypedDict".into(), MbValue::from_func(addr_typed_dict));
 
     let addr_runtime_checkable = dispatch_runtime_checkable as *const () as usize;
-    attrs.insert(
-        "runtime_checkable".into(),
-        MbValue::from_func(addr_runtime_checkable),
-    );
+    attrs.insert("runtime_checkable".into(), MbValue::from_func(addr_runtime_checkable));
 
     let addr_override = dispatch_override as *const () as usize;
     attrs.insert("override".into(), MbValue::from_func(addr_override));
@@ -61,5 +56,8 @@ pub fn register() {
         set.insert(addr_override as u64);
     });
 
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("PEP_560".into(), MbValue::from_int(1));
+    attrs.insert("TYPE_CHECKING".into(), MbValue::from_int(0));
     super::register_module("typing_extensions", attrs);
 }

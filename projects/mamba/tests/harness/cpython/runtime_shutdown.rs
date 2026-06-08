@@ -3,18 +3,13 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
-fn mamba_bin() -> PathBuf {
-    option_env!("CARGO_BIN_EXE_mamba")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/mamba")
-        })
-}
+#[path = "harness_common.rs"]
+mod common;
+use common::mamba_bin;
 
 fn fixture_path(rel: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/cpython")
-        .join("fixtures")
         .join(rel)
 }
 
@@ -59,7 +54,10 @@ fn assert_fixture_exits_successfully(rel: &str) {
 #[test]
 fn previously_crashing_fixtures_exit_without_shutdown_signal() {
     for rel in [
-        "core/imports/test_import.py",
+        // Relocated to _regression/ by the dimension-first migration (no-record
+        // regression fixture). The std-libs/* entries below predate this change
+        // and were already absent on disk.
+        "_regression/core/imports/test_import.py",
         "std-libs/itertools/edges.py",
         "std-libs/re/broad.py",
         "std-libs/re/ops_broad.py",

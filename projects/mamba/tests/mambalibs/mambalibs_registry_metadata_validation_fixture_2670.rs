@@ -101,13 +101,10 @@ fn mambalibs_registry_metadata_required_fields_cover_acceptance_set() {
 #[test]
 fn mambalibs_registry_metadata_valid_case_passes_with_every_field() {
     let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("valid_metadata_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[valid_metadata_case]` block \
+    let case = doc.get("valid_metadata_case").and_then(|v| v.as_table()).expect(
+        "missing `[valid_metadata_case]` block \
          (acceptance: \"Valid fixture metadata passes validation.\")",
-        );
+    );
 
     assert_eq!(
         case.get("case").and_then(|v| v.as_str()),
@@ -125,8 +122,7 @@ fn mambalibs_registry_metadata_valid_case_passes_with_every_field() {
         "`[valid_metadata_case].expected_exit_code` must be 0"
     );
     assert_eq!(
-        case.get("diagnostic_must_be_empty")
-            .and_then(|v| v.as_bool()),
+        case.get("diagnostic_must_be_empty").and_then(|v| v.as_bool()),
         Some(true),
         "`[valid_metadata_case].diagnostic_must_be_empty` must be true"
     );
@@ -178,13 +174,10 @@ fn mambalibs_registry_metadata_valid_case_passes_with_every_field() {
 #[test]
 fn mambalibs_registry_metadata_missing_abi_case_fails_and_names_field() {
     let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("missing_abi_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[missing_abi_case]` block \
+    let case = doc.get("missing_abi_case").and_then(|v| v.as_table()).expect(
+        "missing `[missing_abi_case]` block \
          (acceptance: \"Missing ABI or export metadata fails validation.\")",
-        );
+    );
 
     assert_eq!(
         case.get("case").and_then(|v| v.as_str()),
@@ -207,20 +200,17 @@ fn mambalibs_registry_metadata_missing_abi_case_fails_and_names_field() {
         "`[missing_abi_case].expected_exit_code` must be 1"
     );
     assert_eq!(
-        case.get("diagnostic_must_name_missing_field")
-            .and_then(|v| v.as_bool()),
+        case.get("diagnostic_must_name_missing_field").and_then(|v| v.as_bool()),
         Some(true),
         "`[missing_abi_case].diagnostic_must_name_missing_field` must be true"
     );
     assert_eq!(
-        case.get("diagnostic_must_name_field_value")
-            .and_then(|v| v.as_str()),
+        case.get("diagnostic_must_name_field_value").and_then(|v| v.as_str()),
         Some("abi"),
         "`[missing_abi_case].diagnostic_must_name_field_value` must be \"abi\""
     );
     assert_eq!(
-        case.get("must_not_silently_accept")
-            .and_then(|v| v.as_bool()),
+        case.get("must_not_silently_accept").and_then(|v| v.as_bool()),
         Some(true),
         "`[missing_abi_case].must_not_silently_accept` must be true"
     );
@@ -242,13 +232,10 @@ fn mambalibs_registry_metadata_missing_abi_case_fails_and_names_field() {
 #[test]
 fn mambalibs_registry_metadata_missing_exports_case_fails_and_names_field() {
     let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("missing_exports_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[missing_exports_case]` block \
+    let case = doc.get("missing_exports_case").and_then(|v| v.as_table()).expect(
+        "missing `[missing_exports_case]` block \
          (acceptance: \"Missing ABI or export metadata fails validation.\")",
-        );
+    );
 
     assert_eq!(
         case.get("case").and_then(|v| v.as_str()),
@@ -271,20 +258,17 @@ fn mambalibs_registry_metadata_missing_exports_case_fails_and_names_field() {
         "`[missing_exports_case].expected_exit_code` must be 1"
     );
     assert_eq!(
-        case.get("diagnostic_must_name_missing_field")
-            .and_then(|v| v.as_bool()),
+        case.get("diagnostic_must_name_missing_field").and_then(|v| v.as_bool()),
         Some(true),
         "`[missing_exports_case].diagnostic_must_name_missing_field` must be true"
     );
     assert_eq!(
-        case.get("diagnostic_must_name_field_value")
-            .and_then(|v| v.as_str()),
+        case.get("diagnostic_must_name_field_value").and_then(|v| v.as_str()),
         Some("exports"),
         "`[missing_exports_case].diagnostic_must_name_field_value` must be \"exports\""
     );
     assert_eq!(
-        case.get("must_not_silently_accept")
-            .and_then(|v| v.as_bool()),
+        case.get("must_not_silently_accept").and_then(|v| v.as_bool()),
         Some(true),
         "`[missing_exports_case].must_not_silently_accept` must be true"
     );
@@ -304,13 +288,10 @@ fn mambalibs_registry_metadata_missing_exports_case_fails_and_names_field() {
 #[test]
 fn mambalibs_registry_metadata_diagnostic_contract_pins_all_flags() {
     let doc = load_toml(&manifest_path());
-    let contract = doc
-        .get("diagnostic_contract")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[diagnostic_contract]` block \
+    let contract = doc.get("diagnostic_contract").and_then(|v| v.as_table()).expect(
+        "missing `[diagnostic_contract]` block \
          (acceptance: \"Diagnostic names the missing field.\")",
-        );
+    );
 
     for flag in &[
         "diagnostic_must_name_offending_metadata_file",
@@ -418,8 +399,7 @@ fn mambalibs_registry_metadata_pins_out_of_scope_per_issue_2670() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("real_remote_registry_implementation")
-            .and_then(|v| v.as_bool()),
+        oos.get("real_remote_registry_implementation").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].real_remote_registry_implementation` must be true \
          (issue text: \"Out of scope: real remote registry implementation.\")"

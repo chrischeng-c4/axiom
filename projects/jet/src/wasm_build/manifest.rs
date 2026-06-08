@@ -17,6 +17,8 @@ use std::path::Path;
 
 /// Hard-coded; bump on incompatible changes. Slice-3 ships v1.
 pub const SCHEMA_VERSION: u32 = 1;
+pub const TSX_LOWERING_STRICT: &str = "strict";
+pub const TSX_LOWERING_COMPATIBILITY: &str = "compatibility";
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
 #[derive(Debug, Serialize)]
@@ -55,6 +57,7 @@ pub struct Build {
     pub mode: &'static str,
     pub rustc_target: &'static str,
     pub cargo_features: Vec<String>,
+    pub tsx_lowering: &'static str,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
@@ -78,6 +81,7 @@ pub struct ManifestInputs<'a> {
     pub root_component: &'a str,
     pub jet_config_path: &'a Path,
     pub cargo_features: Vec<String>,
+    pub tsx_lowering: &'static str,
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
@@ -102,6 +106,7 @@ impl Manifest {
                 mode: inputs.profile_mode,
                 rustc_target: rustc_target_for(inputs.target),
                 cargo_features: inputs.cargo_features,
+                tsx_lowering: inputs.tsx_lowering,
             },
             source: Source {
                 entry: inputs.entry.to_string(),
@@ -194,6 +199,7 @@ mod tests {
                 "jet-multi-target/target-web".into(),
                 "jet-multi-target/web".into(),
             ],
+            tsx_lowering: TSX_LOWERING_STRICT,
         }
     }
 
@@ -215,6 +221,7 @@ mod tests {
         assert_eq!(m.artifact.wasm_path, Some("app_bg.wasm"));
         assert_eq!(m.artifact.host_path, Some("jet-host.js"));
         assert_eq!(m.build.rustc_target, "wasm32-unknown-unknown");
+        assert_eq!(m.build.tsx_lowering, TSX_LOWERING_STRICT);
         assert!(m.source.jet_config_hash.starts_with("sha256:"));
     }
 
@@ -272,7 +279,7 @@ mod tests {
         ] {
             assert!(json.get(key).is_some(), "missing top-level key {key}");
         }
-        for key in ["mode", "rustc_target", "cargo_features"] {
+        for key in ["mode", "rustc_target", "cargo_features", "tsx_lowering"] {
             assert!(json.pointer(&format!("/build/{key}")).is_some());
         }
         for key in ["entry", "root_component", "jet_config_hash"] {

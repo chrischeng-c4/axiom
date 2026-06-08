@@ -127,9 +127,7 @@ fn mambalibs_local_path_override_block_uses_local_path_kind() {
         "relative_path must be a relative file path (start with ./ or ../); got {rel:?}"
     );
     assert_eq!(
-        block
-            .get("must_not_escape_project_tree")
-            .and_then(|v| v.as_bool()),
+        block.get("must_not_escape_project_tree").and_then(|v| v.as_bool()),
         Some(true),
         "`[override].must_not_escape_project_tree` must be true"
     );
@@ -168,8 +166,7 @@ fn mambalibs_local_path_override_apply_case_imports_override_sentinel() {
         "`[override_apply_case].expected_exit_code` must be 0"
     );
     assert_eq!(
-        case.get("must_resolve_via_override")
-            .and_then(|v| v.as_bool()),
+        case.get("must_resolve_via_override").and_then(|v| v.as_bool()),
         Some(true),
         "`[override_apply_case].must_resolve_via_override` must be true"
     );
@@ -186,15 +183,13 @@ fn mambalibs_local_path_override_apply_case_imports_override_sentinel() {
         .expect("`[binding].registry_default_sentinel_value` must be set");
 
     assert_eq!(
-        case.get("import_probe_value_must_be")
-            .and_then(|v| v.as_str()),
+        case.get("import_probe_value_must_be").and_then(|v| v.as_str()),
         Some(local),
         "`[override_apply_case].import_probe_value_must_be` must equal \
          `[binding].local_override_sentinel_value`"
     );
     assert_eq!(
-        case.get("import_probe_value_must_not_be")
-            .and_then(|v| v.as_str()),
+        case.get("import_probe_value_must_not_be").and_then(|v| v.as_str()),
         Some(registry),
         "`[override_apply_case].import_probe_value_must_not_be` must equal \
          `[binding].registry_default_sentinel_value`"
@@ -209,14 +204,11 @@ fn mambalibs_local_path_override_apply_case_imports_override_sentinel() {
 #[test]
 fn mambalibs_local_path_override_lockfile_assertion_records_deterministic_identity() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("lockfile_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[lockfile_assertion]` block \
+    let block = doc.get("lockfile_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[lockfile_assertion]` block \
          (acceptance: \"Lockfile records the local path dependency identity \
          deterministically.\")",
-        );
+    );
 
     assert_eq!(
         block.get("file").and_then(|v| v.as_str()),
@@ -224,9 +216,7 @@ fn mambalibs_local_path_override_lockfile_assertion_records_deterministic_identi
         "`[lockfile_assertion].file` must be \"mamba.lock\""
     );
     assert_eq!(
-        block
-            .get("must_record_source_kind")
-            .and_then(|v| v.as_str()),
+        block.get("must_record_source_kind").and_then(|v| v.as_str()),
         Some("local_path"),
         "lockfile must record source_kind == \"local_path\""
     );
@@ -236,9 +226,7 @@ fn mambalibs_local_path_override_lockfile_assertion_records_deterministic_identi
         "source_kind_field_key must be `source`"
     );
     assert_eq!(
-        block
-            .get("override_path_field_key")
-            .and_then(|v| v.as_str()),
+        block.get("override_path_field_key").and_then(|v| v.as_str()),
         Some("path"),
         "override_path_field_key must be `path`"
     );
@@ -251,9 +239,7 @@ fn mambalibs_local_path_override_lockfile_assertion_records_deterministic_identi
         .and_then(|v| v.as_str())
         .expect("`[override].relative_path` must be set");
     assert_eq!(
-        block
-            .get("must_record_relative_path")
-            .and_then(|v| v.as_str()),
+        block.get("must_record_relative_path").and_then(|v| v.as_str()),
         Some(rel),
         "`[lockfile_assertion].must_record_relative_path` must equal `[override].relative_path`"
     );
@@ -275,13 +261,10 @@ fn mambalibs_local_path_override_lockfile_assertion_records_deterministic_identi
 #[test]
 fn mambalibs_local_path_override_missing_path_case_fails_with_named_diagnostic() {
     let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("missing_override_path_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[missing_override_path_case]` block \
+    let case = doc.get("missing_override_path_case").and_then(|v| v.as_table()).expect(
+        "missing `[missing_override_path_case]` block \
          (acceptance: \"Missing or wrong override path fails clearly.\")",
-        );
+    );
 
     assert_eq!(
         case.get("case").and_then(|v| v.as_str()),
@@ -329,13 +312,10 @@ fn mambalibs_local_path_override_missing_path_case_fails_with_named_diagnostic()
 #[test]
 fn mambalibs_local_path_override_wrong_path_case_fails_with_named_diagnostic() {
     let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("wrong_override_path_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[wrong_override_path_case]` block \
+    let case = doc.get("wrong_override_path_case").and_then(|v| v.as_table()).expect(
+        "missing `[wrong_override_path_case]` block \
          (acceptance: \"Missing or wrong override path fails clearly.\")",
-        );
+    );
 
     assert_eq!(
         case.get("case").and_then(|v| v.as_str()),
@@ -384,13 +364,10 @@ fn mambalibs_local_path_override_wrong_path_case_fails_with_named_diagnostic() {
 #[test]
 fn mambalibs_local_path_override_import_proof_contract_pins_summary_naming() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("import_proof_contract")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[import_proof_contract]` block \
+    let block = doc.get("import_proof_contract").and_then(|v| v.as_table()).expect(
+        "missing `[import_proof_contract]` block \
          (acceptance: \"Import result proves the override was used.\")",
-        );
+    );
 
     for flag in &[
         "must_distinguish_override_from_default",
@@ -498,8 +475,7 @@ fn mambalibs_local_path_override_pins_out_of_scope_per_issue_2671() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("remote_registry_override_policy")
-            .and_then(|v| v.as_bool()),
+        oos.get("remote_registry_override_policy").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].remote_registry_override_policy` must be true \
          (issue text: \"Out of scope: remote registry override policy.\")"

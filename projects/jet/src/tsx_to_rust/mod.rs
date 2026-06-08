@@ -62,6 +62,7 @@ pub struct TranspileResult {
 pub enum ImportAction {
     Ignore,
     Style(String),
+    LoweredComponents(Vec<(String, String)>),
 }
 
 /// Transpile with a known TSX source filename so `// @tsx <file>:L:C`
@@ -83,6 +84,7 @@ pub fn transpile_with_source(tsx_source: &str, source_file: &str) -> Result<Tran
     out.source_file = source_file.to_string();
     emit::prelude(&mut out);
     let mut style_imports = Vec::new();
+    let mut component_aliases = HashMap::new();
 
     for child in root.named_children(&mut root.walk()) {
         match child.kind() {
@@ -90,6 +92,9 @@ pub fn transpile_with_source(tsx_source: &str, source_file: &str) -> Result<Tran
             "import_statement" => match handle_import_statement(child, tsx_source)? {
                 ImportAction::Ignore => {}
                 ImportAction::Style(path) => style_imports.push(path),
+                ImportAction::LoweredComponents(pairs) => {
+                    component_aliases.extend(pairs);
+                }
             },
             "interface_declaration" => emit::props_interface(&mut out, child, tsx_source)?,
             "export_statement" => {
@@ -98,11 +103,11 @@ pub fn transpile_with_source(tsx_source: &str, source_file: &str) -> Result<Tran
                 let decl = first_child_of_kind(child, "function_declaration").ok_or_else(|| {
                     reject(child, "export of non-function is outside the spike subset")
                 })?;
-                emit::function_component(&mut out, decl, tsx_source)?;
+                emit::function_component(&mut out, decl, tsx_source, &component_aliases)?;
             }
             "function_declaration" => {
                 // Non-exported component — handle identically.
-                emit::function_component(&mut out, child, tsx_source)?;
+                emit::function_component(&mut out, child, tsx_source, &component_aliases)?;
             }
             // Readonly copy constants — `const X = "literal"` or
             // `const COPY = { key: "literal", … }`. Used by Cue's
@@ -266,6 +271,10 @@ fn handle_import_statement(node: Node, source: &str) -> Result<ImportAction> {
         return Ok(ImportAction::Ignore);
     }
 
+    if let Some(pairs) = supported_library_import_aliases(text, &module) {
+        return Ok(ImportAction::LoweredComponents(pairs));
+    }
+
     Err(reject(
         node,
         &format!(
@@ -274,6 +283,30 @@ fn handle_import_statement(node: Node, source: &str) -> Result<ImportAction> {
              and local code the TSX→Rust compiler can see directly"
         ),
     ))
+}
+
+fn supported_library_import_aliases(
+    import_text: &str,
+    module: &str,
+) -> Option<Vec<(String, String)>> {
+    let aliases = if module.starts_with("@mui/icons-material/") {
+        imported_local_names(import_text)
+            .into_iter()
+            .map(|local| (local, "span".to_string()))
+            .collect::<Vec<_>>()
+    } else if module.starts_with("@mui/material") {
+        imported_local_names(import_text)
+            .into_iter()
+            .map(|local| {
+                let lower = mui_component_lowering(&local).to_string();
+                (local, lower)
+            })
+            .collect::<Vec<_>>()
+    } else {
+        return None;
+    };
+
+    Some(aliases)
 }
 
 fn find_function_declaration<'a>(root: Node<'a>, source: &str, name: &str) -> Option<Node<'a>> {

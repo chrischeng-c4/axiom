@@ -74,7 +74,9 @@ impl LocalVersionLabel {
             // All-digit segments become Numeric; otherwise Alphanumeric.
             if part.bytes().all(|b| b.is_ascii_digit()) {
                 let n: u64 = part.parse().map_err(|_| {
-                    parse_err(format!("local version segment `{part}` overflows u64"))
+                    parse_err(format!(
+                        "local version segment `{part}` overflows u64"
+                    ))
                 })?;
                 segments.push(LocalSegment::Numeric(n));
             } else {
@@ -123,15 +125,19 @@ impl Ord for LocalVersionLabel {
                     Ordering::Equal => continue,
                     other => return other,
                 },
-                (LocalSegment::Alphanumeric(x), LocalSegment::Alphanumeric(y)) => match x.cmp(y) {
-                    Ordering::Equal => continue,
-                    other => return other,
-                },
+                (LocalSegment::Alphanumeric(x), LocalSegment::Alphanumeric(y)) => {
+                    match x.cmp(y) {
+                        Ordering::Equal => continue,
+                        other => return other,
+                    }
+                }
                 // PEP 440: numeric sorts ABOVE alphanumeric.
                 (LocalSegment::Numeric(_), LocalSegment::Alphanumeric(_)) => {
                     return Ordering::Greater
                 }
-                (LocalSegment::Alphanumeric(_), LocalSegment::Numeric(_)) => return Ordering::Less,
+                (LocalSegment::Alphanumeric(_), LocalSegment::Numeric(_)) => {
+                    return Ordering::Less
+                }
             }
         }
         // Tie among shared prefix — shorter sorts below longer.
@@ -153,10 +159,12 @@ impl PartialOrd for LocalVersionLabel {
 pub fn cmp_with_local(a: &str, b: &str) -> Result<Ordering, IndexError> {
     let (a_pub, a_loc) = LocalVersionLabel::split_from_version(a)?;
     let (b_pub, b_loc) = LocalVersionLabel::split_from_version(b)?;
-    let pa = crate::pkgmanage::pkgmgr::pep440::parse(a_pub)
-        .ok_or_else(|| parse_err(format!("public part `{a_pub}` is not PEP 440 parseable")))?;
-    let pb = crate::pkgmanage::pkgmgr::pep440::parse(b_pub)
-        .ok_or_else(|| parse_err(format!("public part `{b_pub}` is not PEP 440 parseable")))?;
+    let pa = crate::pkgmanage::pkgmgr::pep440::parse(a_pub).ok_or_else(|| {
+        parse_err(format!("public part `{a_pub}` is not PEP 440 parseable"))
+    })?;
+    let pb = crate::pkgmanage::pkgmgr::pep440::parse(b_pub).ok_or_else(|| {
+        parse_err(format!("public part `{b_pub}` is not PEP 440 parseable"))
+    })?;
     match pa.cmp(&pb) {
         Ordering::Equal => Ok(match (a_loc, b_loc) {
             (None, None) => Ordering::Equal,
@@ -244,7 +252,8 @@ mod tests {
 
     #[test]
     fn split_from_version_with_local() {
-        let (pub_part, loc) = LocalVersionLabel::split_from_version("1.2.3+cu118").unwrap();
+        let (pub_part, loc) =
+            LocalVersionLabel::split_from_version("1.2.3+cu118").unwrap();
         assert_eq!(pub_part, "1.2.3");
         let l = loc.unwrap();
         assert_eq!(l.raw, "cu118");
@@ -284,8 +293,14 @@ mod tests {
 
     #[test]
     fn cmp_with_local_no_labels_either_side() {
-        assert_eq!(cmp_with_local("1.2.3", "1.2.3").unwrap(), Ordering::Equal);
-        assert_eq!(cmp_with_local("1.2.3", "1.2.4").unwrap(), Ordering::Less);
+        assert_eq!(
+            cmp_with_local("1.2.3", "1.2.3").unwrap(),
+            Ordering::Equal
+        );
+        assert_eq!(
+            cmp_with_local("1.2.3", "1.2.4").unwrap(),
+            Ordering::Less
+        );
     }
 
     #[test]
@@ -328,7 +343,12 @@ mod tests {
     fn realistic_pytorch_cuda_labels() {
         // PyTorch publishes wheels at /whl/cu118/, /whl/cu121/, /whl/cu124/
         // — uv must sort these by their local labels when pinning.
-        let order: Vec<&str> = vec!["2.1.0+cpu", "2.1.0+cu118", "2.1.0+cu121", "2.1.0+cu124"];
+        let order: Vec<&str> = vec![
+            "2.1.0+cpu",
+            "2.1.0+cu118",
+            "2.1.0+cu121",
+            "2.1.0+cu124",
+        ];
         for win in order.windows(2) {
             assert_eq!(
                 cmp_with_local(win[0], win[1]).unwrap(),

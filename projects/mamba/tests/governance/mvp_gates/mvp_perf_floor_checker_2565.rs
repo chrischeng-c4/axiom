@@ -18,17 +18,12 @@
 //!        baseline JSON only).
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Instant;
 
 use serde_json::{json, Value};
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn checker_script() -> PathBuf {
-    project_root().join("scripts").join("perf_floor_check.py")
+    crate::common::project_root().join("scripts").join("perf_floor_check.py")
 }
 
 fn unique_dir(tag: &str) -> PathBuf {
@@ -48,12 +43,7 @@ fn write_baseline(dir: &Path, name: &str, value: &Value) -> PathBuf {
 }
 
 fn run_checker(args: &[&str]) -> (i32, String, String) {
-    let output = Command::new("python3")
-        .arg(checker_script())
-        .args(args)
-        .current_dir(project_root())
-        .output()
-        .expect("invoke perf_floor_check.py");
+    let output = crate::common::run_python_script(&checker_script(), args);
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).to_string(),
@@ -74,13 +64,12 @@ fn required_benchmark_below_floor_fails_checker() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, stderr) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, stderr) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
     assert_eq!(code, 1, "required below floor must fail (stderr={stderr})");
-    assert!(
-        stderr.contains("string_concat"),
-        "must name offending benchmark"
-    );
+    assert!(stderr.contains("string_concat"), "must name offending benchmark");
     assert!(stderr.contains("rule:"), "must restate the rule for triage");
     assert!(stderr.contains("#2565"), "must cite tracking issue");
 }
@@ -99,7 +88,10 @@ fn unbucketed_entries_default_to_required() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, _) = run_checker(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
     assert_eq!(code, 1, "missing-bucket entries default to required");
 }
 
@@ -116,8 +108,10 @@ fn required_benchmark_at_or_above_floor_passes() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, _, stderr) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "text"]);
+    let (code, _, stderr) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "text",
+    ]);
     assert_eq!(code, 0, "speedup ≥ 1.0 must pass (stderr={stderr})");
     assert!(stderr.contains("clean"), "text mode must announce clean");
 }
@@ -137,17 +131,15 @@ fn blocked_benchmark_below_floor_is_reported_but_not_gating() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     assert_eq!(code, 0, "blocked entry must NOT cause non-zero exit");
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
     assert_eq!(v["violations"].as_array().unwrap().len(), 0);
     let blocked = v["blocked_below_floor"].as_array().unwrap();
-    assert_eq!(
-        blocked.len(),
-        1,
-        "blocked entry must surface in dedicated section"
-    );
+    assert_eq!(blocked.len(), 1, "blocked entry must surface in dedicated section");
     assert_eq!(blocked[0]["name"], json!("slow_blocked"));
     assert_eq!(blocked[0]["bucket"], json!("blocker"));
 }
@@ -165,8 +157,10 @@ fn xfail_and_optional_buckets_treated_as_report_only() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     assert_eq!(code, 0);
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
     let blocked = v["blocked_below_floor"].as_array().unwrap();
@@ -186,15 +180,13 @@ fn json_report_surfaces_required_speedup_and_kind() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     assert_eq!(code, 1);
     let v: Value = serde_json::from_str(&stdout).expect("parse JSON");
-    assert_eq!(
-        v["floor"].as_f64(),
-        Some(1.0),
-        "floor must surface in report"
-    );
+    assert_eq!(v["floor"].as_f64(), Some(1.0), "floor must surface in report");
     let violations = v["violations"].as_array().unwrap();
     assert_eq!(violations.len(), 1);
     for key in ["name", "bucket", "speedup", "kind"] {
@@ -221,20 +213,16 @@ fn violations_sorted_ascending_speedup_for_diff_stability() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (_code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (_code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     let v: Value = serde_json::from_str(&stdout).unwrap();
     let names: Vec<&str> = v["violations"]
-        .as_array()
-        .unwrap()
-        .iter()
+        .as_array().unwrap().iter()
         .map(|r| r["name"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        names,
-        vec!["a", "b", "c"],
-        "ascending speedup → slowest first"
-    );
+    assert_eq!(names, vec!["a", "b", "c"], "ascending speedup → slowest first");
 }
 
 // ─── Acceptance 3: runs without re-executing benchmarks ─────────────
@@ -256,7 +244,10 @@ fn checker_runs_in_under_two_seconds_on_baseline() {
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
     let started = Instant::now();
-    let (code, _, _) = run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (code, _, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     let elapsed = started.elapsed();
     assert_eq!(code, 0);
     assert!(
@@ -278,12 +269,13 @@ fn checker_reports_checked_count_for_audit() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (_code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (_code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     let v: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
-        v["checked_count"].as_i64(),
-        Some(2),
+        v["checked_count"].as_i64(), Some(2),
         "only required entries should be counted as 'checked'",
     );
 }
@@ -304,8 +296,10 @@ fn checker_picks_up_floor_from_performance_toml() {
         ],
     });
     let path = write_baseline(&dir, "baseline.json", &baseline);
-    let (code, stdout, _) =
-        run_checker(&["--baseline", path.to_str().unwrap(), "--format", "json"]);
+    let (code, stdout, _) = run_checker(&[
+        "--baseline", path.to_str().unwrap(),
+        "--format", "json",
+    ]);
     assert_eq!(code, 1, "0.6 must fail under default 1.0 floor");
     let v: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(v["floor"].as_f64(), Some(1.0));
@@ -316,10 +310,8 @@ fn checker_picks_up_floor_from_performance_toml() {
 #[test]
 fn checker_exits_101_when_baseline_missing() {
     let (code, _, _) = run_checker(&[
-        "--baseline",
-        "/nonexistent/path/missing.json",
-        "--format",
-        "json",
+        "--baseline", "/nonexistent/path/missing.json",
+        "--format", "json",
     ]);
     assert_eq!(code, 101, "missing baseline must exit 101 (IO error)");
 }

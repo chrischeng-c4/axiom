@@ -22,6 +22,9 @@ extern "C" {
     #[wasm_bindgen(js_name = jet_bridge_fetch)]
     fn js_fetch(input: &str, init: JsValue) -> js_sys::Promise;
 
+    #[wasm_bindgen(js_name = jet_bridge_clipboard_write_text)]
+    fn js_clipboard_write_text(text: &str) -> js_sys::Promise;
+
     #[wasm_bindgen(js_name = jet_bridge_console_log)]
     fn js_console_log(value: JsValue);
     #[wasm_bindgen(js_name = jet_bridge_console_warn)]
@@ -55,6 +58,16 @@ pub fn fetch(input: &str) -> js_sys::Promise {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src.md#schema
 pub fn fetch_with_init(input: &str, init: JsValue) -> js_sys::Promise {
     js_fetch(input, init)
+}
+
+/// Write text to the browser clipboard through the host adapter.
+///
+/// The returned `Promise` is intentionally JS-owned so generated event
+/// handlers can fire-and-forget while browser diagnostics can still spy on
+/// `navigator.clipboard.writeText`.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src.md#schema
+pub fn write_clipboard_text(text: &str) -> js_sys::Promise {
+    js_clipboard_write_text(text)
 }
 
 /// Fetch a URL and decode the response body with `Response.json()`.

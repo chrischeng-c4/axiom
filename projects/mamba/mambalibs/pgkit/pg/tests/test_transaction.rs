@@ -11,11 +11,15 @@ use qc::{expect, AssertionError};
 
 /// Helper to get database URL from environment
 fn get_database_url() -> String {
-    std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
+    std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql://localhost/test_db".to_string())
 }
 
 /// Helper to create a test table for transaction tests
-async fn setup_test_table(pool: &sqlx::PgPool, table_name: &str) -> Result<(), sqlx::Error> {
+async fn setup_test_table(
+    pool: &sqlx::PgPool,
+    table_name: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(&format!("DROP TABLE IF EXISTS {} CASCADE", table_name))
         .execute(pool)
         .await?;
@@ -35,7 +39,10 @@ async fn setup_test_table(pool: &sqlx::PgPool, table_name: &str) -> Result<(), s
 }
 
 /// Helper to cleanup test table
-async fn cleanup_test_table(pool: &sqlx::PgPool, table_name: &str) -> Result<(), sqlx::Error> {
+async fn cleanup_test_table(
+    pool: &sqlx::PgPool,
+    table_name: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(&format!("DROP TABLE IF EXISTS {} CASCADE", table_name))
         .execute(pool)
         .await?;
@@ -82,14 +89,11 @@ async fn test_transaction_commit() -> Result<(), Box<dyn std::error::Error>> {
     // Begin transaction, insert record, commit
     let mut txn = Transaction::begin(&conn, IsolationLevel::ReadCommitted).await?;
 
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ($1, $2)",
-        table
-    ))
-    .bind("Alice")
-    .bind(100)
-    .execute(txn.as_mut_transaction().as_mut())
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+        .bind("Alice")
+        .bind(100)
+        .execute(txn.as_mut_transaction().as_mut())
+        .await?;
 
     txn.commit().await?;
 
@@ -113,14 +117,11 @@ async fn test_transaction_rollback() -> Result<(), Box<dyn std::error::Error>> {
     // Begin transaction, insert record, rollback
     let mut txn = Transaction::begin(&conn, IsolationLevel::ReadCommitted).await?;
 
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ($1, $2)",
-        table
-    ))
-    .bind("Bob")
-    .bind(200)
-    .execute(txn.as_mut_transaction().as_mut())
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+        .bind("Bob")
+        .bind(200)
+        .execute(txn.as_mut_transaction().as_mut())
+        .await?;
 
     txn.rollback().await?;
 
@@ -149,27 +150,21 @@ async fn test_savepoint_partial_rollback() -> Result<(), Box<dyn std::error::Err
     let mut txn = Transaction::begin(&conn, IsolationLevel::ReadCommitted).await?;
 
     // Insert A
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ($1, $2)",
-        table
-    ))
-    .bind("RecordA")
-    .bind(100)
-    .execute(txn.as_mut_transaction().as_mut())
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+        .bind("RecordA")
+        .bind(100)
+        .execute(txn.as_mut_transaction().as_mut())
+        .await?;
 
     // Create savepoint
     txn.savepoint("sp1").await?;
 
     // Insert B after savepoint
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ($1, $2)",
-        table
-    ))
-    .bind("RecordB")
-    .bind(200)
-    .execute(txn.as_mut_transaction().as_mut())
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+        .bind("RecordB")
+        .bind(200)
+        .execute(txn.as_mut_transaction().as_mut())
+        .await?;
 
     // Rollback to savepoint (undoes B, keeps A)
     txn.rollback_to("sp1").await?;
@@ -201,27 +196,21 @@ async fn test_release_savepoint() -> Result<(), Box<dyn std::error::Error>> {
     let mut txn = Transaction::begin(&conn, IsolationLevel::ReadCommitted).await?;
 
     // Insert A
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ($1, $2)",
-        table
-    ))
-    .bind("RecordA")
-    .bind(100)
-    .execute(txn.as_mut_transaction().as_mut())
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+        .bind("RecordA")
+        .bind(100)
+        .execute(txn.as_mut_transaction().as_mut())
+        .await?;
 
     // Create savepoint
     txn.savepoint("sp1").await?;
 
     // Insert B after savepoint
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ($1, $2)",
-        table
-    ))
-    .bind("RecordB")
-    .bind(200)
-    .execute(txn.as_mut_transaction().as_mut())
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+        .bind("RecordB")
+        .bind(200)
+        .execute(txn.as_mut_transaction().as_mut())
+        .await?;
 
     // Release savepoint (confirms changes since savepoint)
     txn.release_savepoint("sp1").await?;
@@ -344,14 +333,11 @@ async fn test_auto_rollback_on_drop() -> Result<(), Box<dyn std::error::Error>> 
         let mut txn = Transaction::begin(&conn, IsolationLevel::ReadCommitted).await?;
 
         // Insert record
-        sqlx::query(&format!(
-            "INSERT INTO {} (name, value) VALUES ($1, $2)",
-            table
-        ))
-        .bind("Dropped")
-        .bind(999)
-        .execute(txn.as_mut_transaction().as_mut())
-        .await?;
+        sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+            .bind("Dropped")
+            .bind(999)
+            .execute(txn.as_mut_transaction().as_mut())
+            .await?;
 
         // Transaction is dropped here without commit or explicit rollback
         // SQLx should auto-rollback
@@ -381,38 +367,29 @@ async fn test_multiple_savepoints() -> Result<(), Box<dyn std::error::Error>> {
     let mut txn = Transaction::begin(&conn, IsolationLevel::ReadCommitted).await?;
 
     // Insert A
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ($1, $2)",
-        table
-    ))
-    .bind("A")
-    .bind(1)
-    .execute(txn.as_mut_transaction().as_mut())
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+        .bind("A")
+        .bind(1)
+        .execute(txn.as_mut_transaction().as_mut())
+        .await?;
 
     txn.savepoint("sp1").await?;
 
     // Insert B
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ($1, $2)",
-        table
-    ))
-    .bind("B")
-    .bind(2)
-    .execute(txn.as_mut_transaction().as_mut())
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+        .bind("B")
+        .bind(2)
+        .execute(txn.as_mut_transaction().as_mut())
+        .await?;
 
     txn.savepoint("sp2").await?;
 
     // Insert C
-    sqlx::query(&format!(
-        "INSERT INTO {} (name, value) VALUES ($1, $2)",
-        table
-    ))
-    .bind("C")
-    .bind(3)
-    .execute(txn.as_mut_transaction().as_mut())
-    .await?;
+    sqlx::query(&format!("INSERT INTO {} (name, value) VALUES ($1, $2)", table))
+        .bind("C")
+        .bind(3)
+        .execute(txn.as_mut_transaction().as_mut())
+        .await?;
 
     // Rollback to sp2 (undoes C only)
     txn.rollback_to("sp2").await?;

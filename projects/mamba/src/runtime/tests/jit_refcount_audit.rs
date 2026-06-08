@@ -1,13 +1,14 @@
 #![cfg(test)]
 
-use crate::runtime::gc;
-use crate::runtime::rc::{self, mb_refcount, MbObject, ObjData, IMMORTAL_REFCOUNT};
 /// JIT refcount audit integration tests (#1129).
 ///
 /// Validates the ownership audit changes: all borrowed-reference mb_* functions
 /// now call `retain_if_ptr` before returning, ensuring callers always receive
 /// owned references. Also verifies EMIT_REFCOUNT_CALLS=true and GC re-enabled.
+
 use crate::runtime::value::MbValue;
+use crate::runtime::rc::{self, MbObject, ObjData, IMMORTAL_REFCOUNT, mb_refcount};
+use crate::runtime::gc;
 
 // ── Helpers ──
 
@@ -54,9 +55,7 @@ impl Drop for GcGuard {
 #[test]
 fn test_retain_if_ptr_int_noop() {
     let val = MbValue::from_int(42);
-    unsafe {
-        rc::retain_if_ptr(val);
-    }
+    unsafe { rc::retain_if_ptr(val); }
     // No crash. Value is unchanged (ints are NaN-boxed, not heap pointers).
     assert_eq!(val.as_int(), Some(42));
 }
@@ -99,9 +98,7 @@ fn test_retain_if_ptr_immortal_noop() {
 #[test]
 fn test_retain_if_ptr_none_noop() {
     let val = MbValue::none();
-    unsafe {
-        rc::retain_if_ptr(val);
-    }
+    unsafe { rc::retain_if_ptr(val); }
     assert!(val.is_none());
 }
 
@@ -109,9 +106,7 @@ fn test_retain_if_ptr_none_noop() {
 #[test]
 fn test_retain_if_ptr_bool_noop() {
     let val = MbValue::from_bool(true);
-    unsafe {
-        rc::retain_if_ptr(val);
-    }
+    unsafe { rc::retain_if_ptr(val); }
     assert_eq!(val.as_bool(), Some(true));
 }
 
@@ -119,9 +114,7 @@ fn test_retain_if_ptr_bool_noop() {
 #[test]
 fn test_retain_if_ptr_float_noop() {
     let val = MbValue::from_float(3.14);
-    unsafe {
-        rc::retain_if_ptr(val);
-    }
+    unsafe { rc::retain_if_ptr(val); }
     assert!(val.as_float().is_some());
 }
 
@@ -178,9 +171,7 @@ fn test_list_getitem_int_noop() {
     assert_eq!(elem.as_int(), Some(20));
 
     // Release list — ints are not pointers, no crash
-    unsafe {
-        rc::release_if_ptr(list);
-    }
+    unsafe { rc::release_if_ptr(list); }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -272,7 +263,7 @@ fn test_tuple_getitem_owned_ref() {
 #[test]
 fn test_getattr_owned_ref() {
     let _gc = GcGuard::new();
-    use crate::runtime::class::{mb_getattr, mb_setattr};
+    use crate::runtime::class::{mb_setattr, mb_getattr};
 
     unsafe {
         // Create an instance with a heap attribute
@@ -289,10 +280,7 @@ fn test_getattr_owned_ref() {
         assert!(result.is_ptr());
         // attr_val rc should have been bumped by both setattr and getattr
         let rc = mb_refcount(attr_val);
-        assert!(
-            rc >= 2,
-            "expected rc >= 2 after setattr + getattr, got {rc}"
-        );
+        assert!(rc >= 2, "expected rc >= 2 after setattr + getattr, got {rc}");
 
         // Release the getattr result
         rc::release_if_ptr(result);
@@ -315,7 +303,7 @@ fn test_getattr_owned_ref() {
 #[test]
 fn test_global_get_owned_ref() {
     let _gc = GcGuard::new();
-    use crate::runtime::closure::{mb_global_get_id, mb_global_set_id};
+    use crate::runtime::closure::{mb_global_set_id, mb_global_get_id};
 
     unsafe {
         let global_list = MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(2)]);
@@ -366,23 +354,28 @@ fn test_global_get_owned_ref() {
 #[test]
 fn test_cell_get_owned_ref() {
     let _gc = GcGuard::new();
-    use crate::runtime::closure::{mb_cell_get, mb_cell_new, mb_cell_set};
+    use crate::runtime::closure::{mb_cell_new, mb_cell_set, mb_cell_get};
 
     unsafe {
         let inner = MbObject::new_str("cell_value".into());
         assert_eq!(mb_refcount(inner), 1);
 
-        // mb_cell_new takes an initial value
+        // mb_cell_new takes its OWN owned reference to the initial value: it
+        // calls `retain_if_ptr` so the slot survives the JIT epilogue's
+        // `mb_release_value` on the source VReg (see MakeCell in
+        // codegen/cranelift/mod.rs + the "Fix C-prime" comment in closure.rs).
+        // So after construction the object has rc 2: our `inner` + the cell.
         let cell = mb_cell_new(MbValue::from_ptr(inner));
-
-        // Get cell value — should return owned ref (retain: rc 1→2)
-        let val = mb_cell_get(cell);
-        assert!(val.is_ptr());
         assert_eq!(mb_refcount(inner), 2);
 
-        // Release the get result
+        // Get cell value — returns an owned ref (retain: rc 2→3).
+        let val = mb_cell_get(cell);
+        assert!(val.is_ptr());
+        assert_eq!(mb_refcount(inner), 3);
+
+        // Release the get result (rc 3→2).
         rc::release_if_ptr(val);
-        assert_eq!(mb_refcount(inner), 1);
+        assert_eq!(mb_refcount(inner), 2);
 
         // Value still valid in the cell
         if let ObjData::Str(ref s) = (*inner).data {
@@ -391,9 +384,13 @@ fn test_cell_get_owned_ref() {
             panic!("expected Str data");
         }
 
-        // Cleanup: overwrite cell — mb_cell_set now cascade-releases the old
-        // value (rc 1→0, freed). No manual release needed.
+        // Cleanup: overwrite cell — mb_cell_set cascade-releases the old cell
+        // value (rc 2→1, the cell's owned ref dropped).
         mb_cell_set(cell, MbValue::none());
+        assert_eq!(mb_refcount(inner), 1);
+
+        // Final cleanup: release our remaining `inner` reference (rc 1→0, freed).
+        rc::mb_release(inner);
     }
 }
 
@@ -405,7 +402,7 @@ fn test_cell_get_owned_ref() {
 #[test]
 fn test_closure_get_capture_owned_ref() {
     let _gc = GcGuard::new();
-    use crate::runtime::closure::{mb_closure_get_capture, mb_closure_new, mb_closure_release};
+    use crate::runtime::closure::{mb_closure_new, mb_closure_get_capture, mb_closure_release};
 
     unsafe {
         let captured = MbObject::new_str("captured_var".into());
@@ -504,7 +501,7 @@ fn test_next_owned_ref() {
 #[test]
 fn test_next_int_noop() {
     let _gc = GcGuard::new();
-    use crate::runtime::iter::{mb_iter, mb_iter_release, mb_next};
+    use crate::runtime::iter::{mb_iter, mb_next, mb_iter_release};
 
     let list = list_val(vec![MbValue::from_int(10), MbValue::from_int(20)]);
     let iter_handle = mb_iter(list);
@@ -516,9 +513,7 @@ fn test_next_int_noop() {
     assert_eq!(second.as_int(), Some(20));
 
     mb_iter_release(iter_handle);
-    unsafe {
-        rc::release_if_ptr(list);
-    }
+    unsafe { rc::release_if_ptr(list); }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -572,9 +567,7 @@ fn test_dict_get_missing_key_returns_default() {
     let val = mb_dict_get(dict, str_val("missing"), default);
     assert_eq!(val.as_int(), Some(999));
 
-    unsafe {
-        rc::release_if_ptr(dict);
-    }
+    unsafe { rc::release_if_ptr(dict); }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -622,7 +615,9 @@ fn test_catch_exception_owned_ref() {
     use crate::runtime::exception;
 
     // Set an exception
-    exception::set_current_exception(exception::MbException::new("ValueError", "test error"));
+    exception::set_current_exception(
+        exception::MbException::new("ValueError", "test error")
+    );
 
     // Catch it — should return an owned reference
     let exc = exception::mb_catch_exception();
@@ -648,10 +643,7 @@ fn test_catch_exception_none_when_empty() {
     exception::clear_current_exception();
 
     let exc = exception::mb_catch_exception();
-    assert!(
-        exc.is_none(),
-        "should return None when no exception pending"
-    );
+    assert!(exc.is_none(), "should return None when no exception pending");
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -773,12 +765,12 @@ fn test_list_pop_new_ref() {
 /// crash under ASan (but here we just verify it runs correctly).
 #[test]
 fn test_emit_refcount_enabled() {
-    use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
-    use crate::codegen::{CodegenBackend, CodegenOutput};
-    use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
     use crate::parser;
     use crate::source::span::FileId;
     use crate::types::TypeChecker;
+    use crate::lower::{lower_module, lower_hir_to_mir_with_symbols};
+    use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
+    use crate::codegen::{CodegenBackend, CodegenOutput};
 
     let _jit_guard = JIT_LOCK.lock().unwrap();
 
@@ -835,12 +827,12 @@ fn test_gc_enabled() {
 /// enabled. Verifies no crash, correct results, and proper cleanup.
 #[test]
 fn test_conformance_with_refcount_basic() {
-    use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
-    use crate::codegen::{CodegenBackend, CodegenOutput};
-    use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
     use crate::parser;
     use crate::source::span::FileId;
     use crate::types::TypeChecker;
+    use crate::lower::{lower_module, lower_hir_to_mir_with_symbols};
+    use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
+    use crate::codegen::{CodegenBackend, CodegenOutput};
 
     fn jit_run_locked(src: &str, guard: &std::sync::MutexGuard<'_, ()>) -> i64 {
         let _ = guard; // hold the lock
@@ -864,19 +856,12 @@ fn test_conformance_with_refcount_basic() {
     let guard = JIT_LOCK.lock().unwrap();
 
     // Test 1: Simple arithmetic
-    assert_eq!(
-        jit_run_locked("def f() -> int:\n    return 1 + 2\n", &guard),
-        3
-    );
+    assert_eq!(jit_run_locked("def f() -> int:\n    return 1 + 2\n", &guard), 3);
 
     // Test 2: Variable reassignment
-    assert_eq!(
-        jit_run_locked(
-            "def f() -> int:\n    x: int = 10\n    x = 20\n    return x\n",
-            &guard
-        ),
-        20
-    );
+    assert_eq!(jit_run_locked(
+        "def f() -> int:\n    x: int = 10\n    x = 20\n    return x\n", &guard
+    ), 20);
 
     // Test 3: Loop with accumulator
     assert_eq!(jit_run_locked(
@@ -885,22 +870,14 @@ fn test_conformance_with_refcount_basic() {
     ), 45);
 
     // Test 4: List creation (exercises heap allocation with refcount)
-    assert_eq!(
-        jit_run_locked(
-            "def f() -> int:\n    x: list = [1, 2, 3]\n    return 100\n",
-            &guard
-        ),
-        100
-    );
+    assert_eq!(jit_run_locked(
+        "def f() -> int:\n    x: list = [1, 2, 3]\n    return 100\n", &guard
+    ), 100);
 
     // Test 5: String literals (immortal refcount)
-    assert_eq!(
-        jit_run_locked(
-            "def f() -> int:\n    x: str = \"hello\"\n    y: str = \"world\"\n    return 77\n",
-            &guard
-        ),
-        77
-    );
+    assert_eq!(jit_run_locked(
+        "def f() -> int:\n    x: str = \"hello\"\n    y: str = \"world\"\n    return 77\n", &guard
+    ), 77);
 
     // Test 6: Multiple locals released at return
     assert_eq!(jit_run_locked(
@@ -922,9 +899,7 @@ fn test_list_getitem_out_of_bounds() {
     let result = mb_list_getitem(list, MbValue::from_int(5));
     assert!(result.is_none(), "out-of-bounds getitem should return None");
 
-    unsafe {
-        rc::release_if_ptr(list);
-    }
+    unsafe { rc::release_if_ptr(list); }
 }
 
 /// Edge case: tuple getitem with out-of-bounds index returns None.
@@ -934,14 +909,9 @@ fn test_tuple_getitem_out_of_bounds() {
 
     let tup = tuple_val(vec![MbValue::from_int(1)]);
     let result = mb_tuple_getitem(tup, MbValue::from_int(5));
-    assert!(
-        result.is_none(),
-        "out-of-bounds tuple getitem should return None"
-    );
+    assert!(result.is_none(), "out-of-bounds tuple getitem should return None");
 
-    unsafe {
-        rc::release_if_ptr(tup);
-    }
+    unsafe { rc::release_if_ptr(tup); }
 }
 
 /// Edge case: dict getitem with missing key — verify no crash.
@@ -955,9 +925,7 @@ fn test_dict_getitem_missing_key() {
     // The result may be None (KeyError was raised internally)
     let _ = result;
 
-    unsafe {
-        rc::release_if_ptr(dict);
-    }
+    unsafe { rc::release_if_ptr(dict); }
 }
 
 // ═══════════════════════════════════════════════════════════

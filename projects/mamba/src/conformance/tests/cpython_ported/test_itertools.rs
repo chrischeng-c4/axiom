@@ -87,10 +87,7 @@ fn test_itertools_permutations_full() {
 print(list(itertools.permutations([1, 2, 3])))
 "#,
     );
-    assert_output(
-        &out,
-        "[(1, 2, 3), (1, 3, 2), (2, 1, 3), (2, 3, 1), (3, 1, 2), (3, 2, 1)]\n",
-    );
+    assert_output(&out, "[(1, 2, 3), (1, 3, 2), (2, 1, 3), (2, 3, 1), (3, 1, 2), (3, 2, 1)]\n");
 }
 
 // ---------------------------------------------------------------- accumulate

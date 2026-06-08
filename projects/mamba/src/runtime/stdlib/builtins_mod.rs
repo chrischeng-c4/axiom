@@ -1,12 +1,13 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// builtins module for Mamba (#997).
 ///
 /// Exposes all built-in functions and constants as an importable module.
 /// In CPython, `import builtins` gives access to the built-in namespace.
 /// Each function is wrapped in an `unsafe extern "C" fn dispatch_*` wrapper
 /// using the `(args_ptr, nargs)` ABI and registered via `NATIVE_FUNC_ADDRS`.
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 // ── Dispatch wrappers ──
 //
@@ -194,11 +195,7 @@ unsafe extern "C" fn dispatch_reversed(args_ptr: *const MbValue, nargs: usize) -
 unsafe extern "C" fn dispatch_enumerate(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
     let iterable = args.first().copied().unwrap_or_else(MbValue::none);
-    let start = if nargs >= 2 {
-        args[1]
-    } else {
-        MbValue::from_int(0)
-    };
+    let start = if nargs >= 2 { args[1] } else { MbValue::from_int(0) };
     super::super::iter::mb_enumerate(iterable, start)
 }
 
@@ -239,19 +236,16 @@ unsafe extern "C" fn dispatch_any(args_ptr: *const MbValue, nargs: usize) -> MbV
 unsafe extern "C" fn dispatch_input(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
     super::super::builtins::mb_input(
-        args.first()
-            .copied()
-            .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str(String::new()))),
+        args.first().copied().unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str(String::new()))),
     )
 }
 
 unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
     let path = args.first().copied().unwrap_or_else(MbValue::none);
-    let mode = args
-        .get(1)
-        .copied()
-        .unwrap_or_else(|| MbValue::from_ptr(MbObject::new_str("r".to_string())));
+    let mode = args.get(1).copied().unwrap_or_else(|| {
+        MbValue::from_ptr(MbObject::new_str("r".to_string()))
+    });
     super::super::file_io::mb_open(path, mode)
 }
 
@@ -410,14 +404,22 @@ unsafe extern "C" fn dispatch_compile(args_ptr: *const MbValue, nargs: usize) ->
 
 unsafe extern "C" fn dispatch_dunder_import(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_dunder_import(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_dunder_import(
+        args.first().copied().unwrap_or_else(MbValue::none),
+    )
 }
 
-unsafe extern "C" fn dispatch_globals(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_globals(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     super::super::builtins::mb_globals()
 }
 
-unsafe extern "C" fn dispatch_locals(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_locals(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     super::super::builtins::mb_locals()
 }
 
@@ -462,7 +464,10 @@ unsafe extern "C" fn dispatch_list(args_ptr: *const MbValue, nargs: usize) -> Mb
     super::super::list_ops::mb_list_from_iterable(args[0])
 }
 
-unsafe extern "C" fn dispatch_dict(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_dict(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
     if nargs == 0 {
         return super::super::dict_ops::mb_dict_new();
     }
@@ -496,10 +501,7 @@ unsafe extern "C" fn dispatch_frozenset(args_ptr: *const MbValue, nargs: usize) 
 
 unsafe extern "C" fn dispatch_complex(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    let real = args
-        .first()
-        .copied()
-        .unwrap_or_else(|| MbValue::from_int(0));
+    let real = args.first().copied().unwrap_or_else(|| MbValue::from_int(0));
     let imag = args.get(1).copied().unwrap_or_else(|| MbValue::from_int(0));
     super::super::builtins::mb_complex(real, imag)
 }
@@ -528,7 +530,9 @@ unsafe extern "C" fn dispatch_bytearray(args_ptr: *const MbValue, nargs: usize) 
 
 unsafe extern "C" fn dispatch_memoryview(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::builtins::mb_memoryview(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::builtins::mb_memoryview(
+        args.first().copied().unwrap_or_else(MbValue::none),
+    )
 }
 
 unsafe extern "C" fn dispatch_slice(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -543,7 +547,10 @@ unsafe extern "C" fn dispatch_slice(args_ptr: *const MbValue, nargs: usize) -> M
     }
 }
 
-unsafe extern "C" fn dispatch_object(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_object(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     // object() returns a featureless object -- stub as None
     MbValue::none()
 }
@@ -557,24 +564,61 @@ unsafe extern "C" fn dispatch_super(args_ptr: *const MbValue, nargs: usize) -> M
 
 unsafe extern "C" fn dispatch_property(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::class::mb_property_new(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::class::mb_property_new(
+        args.first().copied().unwrap_or_else(MbValue::none),
+    )
 }
 
 unsafe extern "C" fn dispatch_classmethod(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::class::mb_classmethod_new(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::class::mb_classmethod_new(
+        args.first().copied().unwrap_or_else(MbValue::none),
+    )
 }
 
 unsafe extern "C" fn dispatch_staticmethod(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { safe_args(args_ptr, nargs) };
-    super::super::class::mb_staticmethod_new(args.first().copied().unwrap_or_else(MbValue::none))
+    super::super::class::mb_staticmethod_new(
+        args.first().copied().unwrap_or_else(MbValue::none),
+    )
 }
 
-unsafe extern "C" fn dispatch_breakpoint(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_breakpoint(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
     // PEP 553 default sys.breakpointhook — see `mb_breakpoint`. Args
     // and kwargs are dropped; the hook only prints a "breakpoint hit"
     // notice (or stays silent under PYTHONBREAKPOINT=0). (#1256)
     super::super::builtins::mb_breakpoint()
+}
+
+// ── Present-but-stub callables ──
+//
+// CPython exposes these names in `builtins` and they are callable. mamba does
+// not yet implement their behaviour; registering a callable stub satisfies the
+// module surface (`hasattr(builtins, NAME)` / `callable(builtins.NAME)`)
+// without claiming real semantics. Each returns None.
+
+unsafe extern "C" fn dispatch_aiter(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    // aiter(async_iterable) — async iteration is not yet supported; return the
+    // argument unchanged so the name is present and callable.
+    let args = unsafe { safe_args(args_ptr, nargs) };
+    args.first().copied().unwrap_or_else(MbValue::none)
+}
+
+unsafe extern "C" fn dispatch_anext(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { safe_args(args_ptr, nargs) };
+    args.get(1).copied().unwrap_or_else(MbValue::none)
+}
+
+unsafe extern "C" fn dispatch_builtins_stub(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    // exit / quit / help / copyright / credits / license: interactive helpers
+    // present in the builtins namespace. Stubbed to a no-op returning None.
+    MbValue::none()
 }
 
 /// Register the builtins module.
@@ -676,6 +720,14 @@ pub fn register() {
         ("classmethod", dispatch_classmethod as *const () as usize),
         ("staticmethod", dispatch_staticmethod as *const () as usize),
         ("breakpoint", dispatch_breakpoint as *const () as usize),
+        ("aiter", dispatch_aiter as *const () as usize),
+        ("anext", dispatch_anext as *const () as usize),
+        ("exit", dispatch_builtins_stub as *const () as usize),
+        ("quit", dispatch_builtins_stub as *const () as usize),
+        ("help", dispatch_builtins_stub as *const () as usize),
+        ("copyright", dispatch_builtins_stub as *const () as usize),
+        ("credits", dispatch_builtins_stub as *const () as usize),
+        ("license", dispatch_builtins_stub as *const () as usize),
     ];
 
     for (name, addr) in dispatchers {
@@ -698,12 +750,101 @@ pub fn register() {
             );
             super::super::closure::mb_func_set_doc(
                 func,
-                MbValue::from_ptr(MbObject::new_str(format!("Built-in function {name}."))),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "Built-in function {name}."
+                ))),
             );
         }
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(*addr as u64);
         });
+    }
+
+    // -- Built-in exception & warning class objects --
+    //
+    // CPython exposes the whole exception hierarchy plus the warning categories
+    // in `builtins`. Each is a `type` object, so `type(builtins.ValueError)` is
+    // `type` and `callable(builtins.ValueError)` is True. We register each as a
+    // cached builtin type object (class_name == "type"), matching how the bare
+    // builtin types (`int`, `list`, ...) are surfaced above.
+    let exception_class_names: &[&str] = &[
+        "BaseException",
+        "BaseExceptionGroup",
+        "Exception",
+        "ExceptionGroup",
+        "ArithmeticError",
+        "AssertionError",
+        "AttributeError",
+        "BlockingIOError",
+        "BrokenPipeError",
+        "BufferError",
+        "ChildProcessError",
+        "ConnectionAbortedError",
+        "ConnectionError",
+        "ConnectionRefusedError",
+        "ConnectionResetError",
+        "EOFError",
+        "EnvironmentError",
+        "FileExistsError",
+        "FileNotFoundError",
+        "FloatingPointError",
+        "GeneratorExit",
+        "IOError",
+        "ImportError",
+        "IndentationError",
+        "IndexError",
+        "InterruptedError",
+        "IsADirectoryError",
+        "KeyError",
+        "KeyboardInterrupt",
+        "LookupError",
+        "MemoryError",
+        "ModuleNotFoundError",
+        "NameError",
+        "NotADirectoryError",
+        "NotImplementedError",
+        "OSError",
+        "OverflowError",
+        "PermissionError",
+        "ProcessLookupError",
+        "RecursionError",
+        "ReferenceError",
+        "RuntimeError",
+        "StopAsyncIteration",
+        "StopIteration",
+        "SyntaxError",
+        "SystemError",
+        "SystemExit",
+        "TabError",
+        "TimeoutError",
+        "TypeError",
+        "UnboundLocalError",
+        "UnicodeDecodeError",
+        "UnicodeEncodeError",
+        "UnicodeError",
+        "UnicodeTranslateError",
+        "ValueError",
+        "ZeroDivisionError",
+        // Warning categories
+        "Warning",
+        "BytesWarning",
+        "DeprecationWarning",
+        "EncodingWarning",
+        "FutureWarning",
+        "ImportWarning",
+        "PendingDeprecationWarning",
+        "ResourceWarning",
+        "RuntimeWarning",
+        "SyntaxWarning",
+        "UnicodeWarning",
+        "UserWarning",
+    ];
+    for name in exception_class_names {
+        let type_name = MbValue::from_ptr(MbObject::new_str((*name).to_string()));
+        attrs.insert(
+            (*name).to_string(),
+            super::super::builtins::mb_builtin_type_obj(type_name),
+        );
     }
 
     super::register_module("builtins", attrs);

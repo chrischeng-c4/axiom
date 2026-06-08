@@ -10,7 +10,7 @@ use toml::Value;
 
 fn manifest_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/perf/typed_generator_ffi_gate/manifest.toml")
+        .join("tests/harness/cpython/config/perf/typed_generator_ffi_gate/manifest.toml")
 }
 
 fn manifest() -> Value {
@@ -22,24 +22,16 @@ fn get<'a>(v: &'a Value, key: &str) -> &'a Value {
     v.get(key).unwrap_or_else(|| panic!("missing key: {key}"))
 }
 fn b(v: &Value, key: &str) -> bool {
-    get(v, key)
-        .as_bool()
-        .unwrap_or_else(|| panic!("{key} not bool"))
+    get(v, key).as_bool().unwrap_or_else(|| panic!("{key} not bool"))
 }
 fn s<'a>(v: &'a Value, key: &str) -> &'a str {
-    get(v, key)
-        .as_str()
-        .unwrap_or_else(|| panic!("{key} not str"))
+    get(v, key).as_str().unwrap_or_else(|| panic!("{key} not str"))
 }
 fn i(v: &Value, key: &str) -> i64 {
-    get(v, key)
-        .as_integer()
-        .unwrap_or_else(|| panic!("{key} not int"))
+    get(v, key).as_integer().unwrap_or_else(|| panic!("{key} not int"))
 }
 fn a<'a>(v: &'a Value, key: &str) -> &'a Vec<Value> {
-    get(v, key)
-        .as_array()
-        .unwrap_or_else(|| panic!("{key} not array"))
+    get(v, key).as_array().unwrap_or_else(|| panic!("{key} not array"))
 }
 
 #[test]
@@ -78,10 +70,7 @@ fn surface_pins_the_five_required_axes() {
     let m = manifest();
     let sf = get(&m, "surface");
     assert!(b(sf, "must_cover_typed_ffi_entrypoints_added"));
-    assert!(b(
-        sf,
-        "must_cover_codegen_emits_typed_variant_when_statically_known"
-    ));
+    assert!(b(sf, "must_cover_codegen_emits_typed_variant_when_statically_known"));
     assert!(b(sf, "must_cover_generator_sum_meets_3x_floor"));
     assert!(b(sf, "must_cover_untyped_fallback_no_regression"));
     assert!(b(sf, "must_cover_fix_path_bounded"));
@@ -109,26 +98,17 @@ fn r1_typed_ffi_entrypoints_added() {
     assert!(knames.contains(&"value_and_done_struct"));
     assert!(knames.contains(&"tagged_union"));
     assert!(knames.contains(&"out_param_with_bool_return"));
-    assert_eq!(
-        s(r, "expected_typed_return_record_kind"),
-        "value_and_done_struct"
-    );
+    assert_eq!(s(r, "expected_typed_return_record_kind"), "value_and_done_struct");
     assert_eq!(i(r, "typed_entrypoint_missing_exit_code"), 525);
     assert_eq!(i(r, "per_yield_boxing_when_both_typed_exit_code"), 526);
     assert_eq!(i(r, "untyped_fallback_removed_exit_code"), 527);
-    assert!(b(
-        r,
-        "must_distinguish_typed_missing_from_boxing_from_fallback_removed"
-    ));
+    assert!(b(r, "must_distinguish_typed_missing_from_boxing_from_fallback_removed"));
 }
 
 #[test]
 fn r2_codegen_emits_typed_variant() {
     let m = manifest();
-    let r = get(
-        &m,
-        "r2_codegen_emits_typed_variant_when_statically_known_contract",
-    );
+    let r = get(&m, "r2_codegen_emits_typed_variant_when_statically_known_contract");
     assert_eq!(s(r, "requirement_id"), "R2");
     assert!(b(r, "must_emit_typed_variant_when_element_type_known"));
     assert!(b(r, "must_skip_boxing_on_yield_to_consume_path"));
@@ -142,10 +122,7 @@ fn r2_codegen_emits_typed_variant() {
     assert!(names.contains(&"cranelift_clif_inspection"));
     assert!(names.contains(&"post_compile_disassembly"));
     assert!(names.contains(&"no_ir_check"));
-    assert_eq!(
-        s(r, "expected_ir_verification_kind"),
-        "cranelift_clif_inspection"
-    );
+    assert_eq!(s(r, "expected_ir_verification_kind"), "cranelift_clif_inspection");
     assert_eq!(i(r, "box_int_emitted_on_typed_path_exit_code"), 528);
     assert_eq!(i(r, "unbox_int_emitted_on_typed_path_exit_code"), 529);
     assert_eq!(i(r, "ir_verification_skipped_exit_code"), 530);
@@ -160,20 +137,14 @@ fn r3_generator_sum_meets_3x_floor() {
     assert!(b(r, "must_meet_or_exceed_generator_sum_3x_floor"));
     assert!(b(r, "must_move_floor_compliance_count"));
     assert_eq!(s(r, "expected_bench_name"), "generator_sum_typed");
-    assert_eq!(
-        s(r, "expected_baseline_workload"),
-        "yield_i_over_10000_ints_annotated_iterator_int"
-    );
+    assert_eq!(s(r, "expected_baseline_workload"), "yield_i_over_10000_ints_annotated_iterator_int");
     assert_eq!(s(r, "expected_cpython_ratio_floor"), "3.0x");
     assert_eq!(s(r, "expected_pre_fix_starting_ratio"), "0.66x");
     assert_eq!(s(r, "expected_pre_fix_compliance"), "5_of_8");
     assert_eq!(s(r, "expected_post_fix_compliance_floor"), "6_of_8");
     assert_eq!(i(r, "floor_not_met_exit_code"), 531);
     assert_eq!(i(r, "compliance_did_not_move_exit_code"), 532);
-    assert!(b(
-        r,
-        "must_distinguish_floor_not_met_from_compliance_did_not_move"
-    ));
+    assert!(b(r, "must_distinguish_floor_not_met_from_compliance_did_not_move"));
 }
 
 #[test]
@@ -184,35 +155,19 @@ fn r4_untyped_fallback_no_regression() {
     assert!(b(r, "must_keep_iterator_any_on_untyped_fallback"));
     assert!(b(r, "must_preserve_yield_order"));
     assert!(b(r, "must_preserve_terminal_done_semantics"));
-    assert!(b(
-        r,
-        "must_preserve_stopiteration_propagation_on_exception_path"
-    ));
+    assert!(b(r, "must_preserve_stopiteration_propagation_on_exception_path"));
     assert!(b(r, "forbid_regressing_untyped_generator_speed"));
-    assert!(b(
-        r,
-        "forbid_changing_observable_yield_semantics_via_typed_path"
-    ));
-    assert_eq!(
-        s(r, "expected_untyped_fallback_entrypoint"),
-        "mb_next_value"
-    );
+    assert!(b(r, "forbid_changing_observable_yield_semantics_via_typed_path"));
+    assert_eq!(s(r, "expected_untyped_fallback_entrypoint"), "mb_next_value");
     let axes = a(r, "preserved_semantic_axes");
     let names: Vec<&str> = axes.iter().filter_map(|v| v.as_str()).collect();
-    for axis in &[
-        "yield_order",
-        "terminal_done_true",
-        "stopiteration_propagation_on_exception_path",
-    ] {
+    for axis in &["yield_order", "terminal_done_true", "stopiteration_propagation_on_exception_path"] {
         assert!(names.contains(axis), "missing axis: {axis}");
     }
     assert_eq!(i(r, "untyped_regressed_exit_code"), 533);
     assert_eq!(i(r, "yield_order_changed_exit_code"), 534);
     assert_eq!(i(r, "stopiteration_propagation_broken_exit_code"), 535);
-    assert!(b(
-        r,
-        "must_distinguish_untyped_regress_from_order_change_from_stopiter_break"
-    ));
+    assert!(b(r, "must_distinguish_untyped_regress_from_order_change_from_stopiter_break"));
 }
 
 #[test]
@@ -244,10 +199,7 @@ fn r5_fix_path_bounded() {
     assert_eq!(i(r, "disallowed_fix_path_used_exit_code"), 536);
     assert_eq!(i(r, "cpython_baseline_changed_exit_code"), 537);
     assert_eq!(i(r, "state_machine_rewritten_again_exit_code"), 538);
-    assert!(b(
-        r,
-        "must_distinguish_disallowed_from_baseline_change_from_state_machine_rewrite"
-    ));
+    assert!(b(r, "must_distinguish_disallowed_from_baseline_change_from_state_machine_rewrite"));
 }
 
 #[test]

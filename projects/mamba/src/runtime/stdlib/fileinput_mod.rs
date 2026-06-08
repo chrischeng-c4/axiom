@@ -1,71 +1,65 @@
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
-/// fileinput module for Mamba (#1261 long-tail).
-///
-/// Iterates over lines from a list of files. Surface-only shim — returns
-/// an empty list for `input()` calls when no files are provided. The
-/// per-file metadata helpers (`filename()`, `lineno()`, `isfirstline()`)
-/// each return a fixed sentinel so the chained-API protocol resolves
-/// without crashing.
-use std::collections::HashMap;
+//! Real `fileinput` for Mamba.
+//!
+//! fileinput is a stateful module: it iterates lines across a list of files
+//! (or stdin), tracks per-file and cumulative line numbers, supports inplace
+//! rewriting, custom open hooks, and binary/text modes. The previous stub
+//! returned empty lists / fixed sentinels from every helper and could not
+//! provide a working `FileInput` class.
+//!
+//! Rather than special-casing the whole `FileInput` protocol in native Rust,
+//! we ship a pure-Python port (`py_src/fileinput.py`, adapted from CPython
+//! 3.12) and let Mamba's own compiler execute it: the source is materialized
+//! to a per-build temp directory at startup and that directory is added to the
+//! import search path so `import fileinput` resolves to the real
+//! implementation. No native module is registered, so the search-path file is
+//! the only `fileinput` Mamba sees.
 
-unsafe extern "C" fn dispatch_input(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_list(Vec::new()))
-}
+use std::io::Write;
+use std::path::PathBuf;
 
-unsafe extern "C" fn dispatch_filename(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_str("".to_string()))
-}
-
-unsafe extern "C" fn dispatch_lineno(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_int(0)
-}
-
-unsafe extern "C" fn dispatch_filelineno(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_int(0)
-}
-
-unsafe extern "C" fn dispatch_isfirstline(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_bool(false)
-}
-
-unsafe extern "C" fn dispatch_isstdin(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_bool(false)
-}
-
-unsafe extern "C" fn dispatch_nextfile(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::none()
-}
-
-unsafe extern "C" fn dispatch_close(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::none()
-}
-
-unsafe extern "C" fn dispatch_fileinput_class(_a: *const MbValue, _n: usize) -> MbValue {
-    MbValue::from_ptr(MbObject::new_dict())
-}
+/// The pure-Python fileinput source, embedded at compile time.
+const FILEINPUT_SRC: &str = include_str!("py_src/fileinput.py");
 
 pub fn register() {
-    let mut attrs = HashMap::new();
-    let dispatchers: &[(&str, usize)] = &[
-        ("input", dispatch_input as *const () as usize),
-        ("filename", dispatch_filename as *const () as usize),
-        ("lineno", dispatch_lineno as *const () as usize),
-        ("filelineno", dispatch_filelineno as *const () as usize),
-        ("isfirstline", dispatch_isfirstline as *const () as usize),
-        ("isstdin", dispatch_isstdin as *const () as usize),
-        ("nextfile", dispatch_nextfile as *const () as usize),
-        ("close", dispatch_close as *const () as usize),
-        ("FileInput", dispatch_fileinput_class as *const () as usize),
-    ];
-    for (name, addr) in dispatchers {
-        attrs.insert((*name).into(), MbValue::from_func(*addr));
+    // Materialize the embedded source to a stable temp directory and add that
+    // directory to the import search path. Keyed on a content hash so the file
+    // is written at most once per build and concurrent runs share it.
+    let dir = match materialize_py_src() {
+        Some(d) => d,
+        None => return,
+    };
+    // Inserting at index 0 is always a valid Vec position. A user-supplied
+    // fileinput.py in the running script's directory still wins regardless of
+    // ordering: find_module() consults SCRIPT_DIR before SEARCH_PATHS.
+    super::super::module::mb_insert_search_path(0, &dir.display().to_string());
+}
+
+fn materialize_py_src() -> Option<PathBuf> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    FILEINPUT_SRC.hash(&mut hasher);
+    let h = hasher.finish();
+
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("mamba_pylib_fileinput_{h:016x}"));
+    if std::fs::create_dir_all(&dir).is_err() {
+        return None;
     }
-    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
-        let mut set = s.borrow_mut();
-        for (_, addr) in dispatchers {
-            set.insert(*addr as u64);
+    let file = dir.join("fileinput.py");
+    // Only (re)write if missing or stale; ignore write races between processes.
+    let needs_write = match std::fs::read_to_string(&file) {
+        Ok(existing) => existing != FILEINPUT_SRC,
+        Err(_) => true,
+    };
+    if needs_write {
+        // Write to a unique temp name then rename, so a partially written file
+        // is never observed by a concurrent reader.
+        let tmp = dir.join(format!("fileinput.{}.tmp", std::process::id()));
+        if let Ok(mut f) = std::fs::File::create(&tmp) {
+            if f.write_all(FILEINPUT_SRC.as_bytes()).is_ok() {
+                let _ = std::fs::rename(&tmp, &file);
+            }
         }
-    });
-    super::register_module("fileinput", attrs);
+    }
+    Some(dir)
 }

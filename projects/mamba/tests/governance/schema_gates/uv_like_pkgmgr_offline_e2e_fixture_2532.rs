@@ -171,10 +171,7 @@ fn resolver_conflict_yanked_transitive_wheel_lockfile_activation_console_script_
             "console_script_entrypoint",
         ]
     );
-    assert_eq!(
-        c["covered_paths_field_name"].as_str(),
-        Some("covered_paths")
-    );
+    assert_eq!(c["covered_paths_field_name"].as_str(), Some("covered_paths"));
     assert_eq!(
         c["missing_covered_path_failure_kind"].as_str(),
         Some("mvp_pkgmgr_required_path_uncovered")
@@ -204,7 +201,10 @@ fn live_pypi_remains_opt_in() {
         c["live_pypi_opt_in_field_name"].as_str(),
         Some("live_pypi_opt_in")
     );
-    assert_eq!(c["default_live_pypi_opt_in_value"].as_bool(), Some(false));
+    assert_eq!(
+        c["default_live_pypi_opt_in_value"].as_bool(),
+        Some(false)
+    );
     assert_eq!(
         c["live_pypi_enabled_in_default_gate_failure_kind"].as_str(),
         Some("mvp_pkgmgr_live_pypi_enabled_in_default_gate")

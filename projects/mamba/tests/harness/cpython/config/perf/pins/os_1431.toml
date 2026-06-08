@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/os_1431.toml)
 issue = 1431
 lib = "os"
-fixture = "tests/cpython/fixtures/std-libs/os/bench/getpid_hot.py"
+fixture = "tests/cpython/_regression/std-libs/os/bench/getpid_hot.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 1

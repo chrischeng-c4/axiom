@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/s3transfer_1503.toml)
 issue = 1503
 lib = "s3transfer"
-fixture = "tests/cpython/fixtures/3rd-libs/s3transfer/bench/s3transfer_type_read_hot.py"
+fixture = "tests/cpython/_regression/3rd-libs/s3transfer/bench/s3transfer_type_read_hot.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 9

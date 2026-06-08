@@ -1,4 +1,5 @@
 #![cfg(test)]
+
 // Real-network integration tests for the PyPI index client.
 //
 // These tests hit https://pypi.org/ directly and require an internet connection.
@@ -16,6 +17,7 @@
 //   IT-05  download_artifact(<smallest wheel>)          → Ok, sha256 matches (end-to-end streaming verify)
 //   IT-06  fetch_metadata("requests")                   → latest version is a PEP 440 release (not pre/dev) [AC2]
 //   IT-07  fetch_metadata_simple("requests")            → Ok; ≥1 file with non-empty yanked_reason [AC1/R1/R2]
+
 #![cfg(feature = "integration")]
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -50,15 +52,8 @@ async fn it_01_fetch_metadata_requests_ok() {
         .await
         .expect("IT-01: fetch_metadata(requests) must succeed");
 
-    assert!(
-        !meta.versions.is_empty(),
-        "IT-01: requests must have at least one version"
-    );
-    assert_eq!(
-        meta.name.to_lowercase(),
-        "requests",
-        "IT-01: name must be 'requests'"
-    );
+    assert!(!meta.versions.is_empty(), "IT-01: requests must have at least one version");
+    assert_eq!(meta.name.to_lowercase(), "requests", "IT-01: name must be 'requests'");
 
     // At least one release file must have a sha256 hash.
     let has_sha256 = meta
@@ -66,10 +61,7 @@ async fn it_01_fetch_metadata_requests_ok() {
         .values()
         .flat_map(|files| files.iter())
         .any(|f| f.hash.algorithm == "sha256" && !f.hash.digest.is_empty());
-    assert!(
-        has_sha256,
-        "IT-01: at least one release file must have a sha256 hash"
-    );
+    assert!(has_sha256, "IT-01: at least one release file must have a sha256 hash");
 }
 
 // IT-02: fetch_metadata("<nonexistent>") → Err(IndexError::NotFound).
@@ -98,14 +90,8 @@ async fn it_03_fetch_metadata_simple_flask_ok() {
         .expect("IT-03: fetch_metadata_simple(flask) must succeed");
 
     let total_files: usize = meta.releases.values().map(|v| v.len()).sum();
-    assert!(
-        total_files > 0,
-        "IT-03: flask must have at least one release file"
-    );
-    assert_eq!(
-        meta.source, "simple-api",
-        "IT-03: source must be 'simple-api'"
-    );
+    assert!(total_files > 0, "IT-03: flask must have at least one release file");
+    assert_eq!(meta.source, "simple-api", "IT-03: source must be 'simple-api'");
 }
 
 // IT-04: fetch_metadata_batch with mixed results — 3 results in input order.
@@ -126,29 +112,15 @@ async fn it_04_fetch_metadata_batch_mixed() {
     assert_eq!(results.len(), 3, "IT-04: must return exactly 3 results");
 
     // Slot 0: requests → Ok
-    assert_eq!(
-        results[0].0, "requests",
-        "IT-04: slot 0 name must be 'requests'"
-    );
-    assert!(
-        results[0].1.is_ok(),
-        "IT-04: slot 0 (requests) must be Ok, got: {:?}",
-        results[0].1
-    );
+    assert_eq!(results[0].0, "requests", "IT-04: slot 0 name must be 'requests'");
+    assert!(results[0].1.is_ok(), "IT-04: slot 0 (requests) must be Ok, got: {:?}", results[0].1);
 
     // Slot 1: flask → Ok
     assert_eq!(results[1].0, "flask", "IT-04: slot 1 name must be 'flask'");
-    assert!(
-        results[1].1.is_ok(),
-        "IT-04: slot 1 (flask) must be Ok, got: {:?}",
-        results[1].1
-    );
+    assert!(results[1].1.is_ok(), "IT-04: slot 1 (flask) must be Ok, got: {:?}", results[1].1);
 
     // Slot 2: nonexistent → Err(NotFound)
-    assert_eq!(
-        results[2].0, "this-package-will-not-exist-xyz-12345",
-        "IT-04: slot 2 name mismatch"
-    );
+    assert_eq!(results[2].0, "this-package-will-not-exist-xyz-12345", "IT-04: slot 2 name mismatch");
     match &results[2].1 {
         Err(IndexError::NotFound { .. }) => {}
         other => panic!("IT-04: slot 2 must be NotFound, got: {:?}", other),
@@ -217,10 +189,7 @@ async fn it_06_fetch_metadata_requests_latest_is_release_not_prerelease() {
         .await
         .expect("IT-06: fetch_metadata(requests) must succeed");
 
-    assert!(
-        !meta.versions.is_empty(),
-        "IT-06: versions list must be non-empty"
-    );
+    assert!(!meta.versions.is_empty(), "IT-06: versions list must be non-empty");
     let latest = &meta.versions[0]; // sorted newest-first by PEP 440 in simple_api.rs:53
 
     // AC2: assert latest is NOT a pre-release (a/b/rc + digits) and NOT a dev release (.devN).
@@ -234,22 +203,15 @@ async fn it_06_fetch_metadata_requests_latest_is_release_not_prerelease() {
         while i < bytes.len() {
             let c = bytes[i];
             // match "aN" / "bN" / "rcN" suffix starts
-            if (c == b'a' || c == b'b')
-                && i > 0
-                && bytes[i - 1].is_ascii_digit()
-                && i + 1 < bytes.len()
-                && bytes[i + 1].is_ascii_digit()
+            if (c == b'a' || c == b'b') && i > 0 && bytes[i - 1].is_ascii_digit()
+                && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit()
             {
                 found = true;
                 break;
             }
-            if c == b'r'
-                && i + 1 < bytes.len()
-                && bytes[i + 1] == b'c'
-                && i > 0
-                && bytes[i - 1].is_ascii_digit()
-                && i + 2 < bytes.len()
-                && bytes[i + 2].is_ascii_digit()
+            if c == b'r' && i + 1 < bytes.len() && bytes[i + 1] == b'c'
+                && i > 0 && bytes[i - 1].is_ascii_digit()
+                && i + 2 < bytes.len() && bytes[i + 2].is_ascii_digit()
             {
                 found = true;
                 break;
@@ -279,31 +241,20 @@ async fn it_06_fetch_metadata_requests_latest_is_release_not_prerelease() {
 async fn it_07_fetch_metadata_simple_requests_handles_string_yanked() {
     let client = make_real_client();
     // REQ: R1 — must return Ok (not ParseError) even with string-yanked entries
-    let meta = client.fetch_metadata_simple("requests").await.expect(
-        "IT-07: fetch_metadata_simple(requests) must succeed despite string-yanked entries",
-    );
+    let meta = client
+        .fetch_metadata_simple("requests")
+        .await
+        .expect("IT-07: fetch_metadata_simple(requests) must succeed despite string-yanked entries");
 
-    assert!(
-        !meta.versions.is_empty(),
-        "IT-07: requests must have at least one version"
-    );
-    assert_eq!(
-        meta.source, "simple-api",
-        "IT-07: source must be 'simple-api'"
-    );
+    assert!(!meta.versions.is_empty(), "IT-07: requests must have at least one version");
+    assert_eq!(meta.source, "simple-api", "IT-07: source must be 'simple-api'");
 
     // REQ: R2 — string-yanked entries must set yanked=true AND populate yanked_reason
     let has_string_yanked = meta
         .releases
         .values()
         .flat_map(|files| files.iter())
-        .any(|f| {
-            f.yanked
-                && f.yanked_reason
-                    .as_deref()
-                    .map(|r| !r.is_empty())
-                    .unwrap_or(false)
-        });
+        .any(|f| f.yanked && f.yanked_reason.as_deref().map(|r| !r.is_empty()).unwrap_or(false));
 
     assert!(
         has_string_yanked,

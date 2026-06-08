@@ -649,33 +649,26 @@ async fn cjs_nested_dependencies_resolve_from_parent_package() {
 }
 
 #[tokio::test]
-async fn cjs_nested_react_dependency_uses_root_singleton_wrapper() {
+async fn cjs_nested_dependency_reuses_root_when_same_version() {
     let dir = tempdir().unwrap();
     let root = dir.path();
     let node_modules = root.join("node_modules");
     let jet_dir = node_modules.join(".jet");
     fs::create_dir_all(&jet_dir).unwrap();
 
-    let react = node_modules.join("react");
     let react_dom = node_modules.join("react-dom");
     let nested_react = react_dom.join("node_modules/react");
-    fs::create_dir_all(&react).unwrap();
-    fs::create_dir_all(&react_dom).unwrap();
+    let root_react = node_modules.join("react");
     fs::create_dir_all(&nested_react).unwrap();
+    fs::create_dir_all(&root_react).unwrap();
 
     fs::write(
-        react.join("package.json"),
-        r#"{"name":"react","version":"18.3.1","main":"index.js"}"#,
-    )
-    .unwrap();
-    fs::write(
-        react.join("index.js"),
-        "exports.useState = function useState() {};",
-    )
-    .unwrap();
-    fs::write(
         react_dom.join("package.json"),
-        r#"{"name":"react-dom","version":"18.3.1","main":"index.js"}"#,
+        r#"{
+            "name": "react-dom",
+            "version": "18.3.1",
+            "main": "index.js"
+        }"#,
     )
     .unwrap();
     fs::write(
@@ -683,16 +676,22 @@ async fn cjs_nested_react_dependency_uses_root_singleton_wrapper() {
         "var React = require('react'); module.exports = React;",
     )
     .unwrap();
-    fs::write(
-        nested_react.join("package.json"),
-        r#"{"name":"react","version":"18.3.1","main":"index.js"}"#,
-    )
-    .unwrap();
-    fs::write(
-        nested_react.join("index.js"),
-        "exports.useState = function nestedUseState() {};",
-    )
-    .unwrap();
+    for pkg in [&nested_react, &root_react] {
+        fs::write(
+            pkg.join("package.json"),
+            r#"{
+                "name": "react",
+                "version": "18.3.1",
+                "main": "index.js"
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            pkg.join("index.js"),
+            "exports.useState = function useState() {};",
+        )
+        .unwrap();
+    }
 
     let prebundler = PreBundler::new(root.to_path_buf());
     let (_filename, source) = prebundler
@@ -702,16 +701,13 @@ async fn cjs_nested_react_dependency_uses_root_singleton_wrapper() {
 
     assert!(
         source.contains("/node_modules/.jet/react.mjs"),
-        "react-dom require('react') must use the root singleton wrapper: {}",
+        "same-version nested React must reuse the root prebundle: {}",
         source
     );
     assert!(
-        jet_dir.join("react.mjs").exists(),
-        "root singleton react wrapper must be written"
-    );
-    assert!(
-        !jet_dir.join("react-dom_node_modules_react.mjs").exists(),
-        "react-dom must not get a duplicate nested React wrapper"
+        !source.contains("react-dom_node_modules_react.mjs"),
+        "same-version nested React must not create a second React copy: {}",
+        source
     );
 }
 

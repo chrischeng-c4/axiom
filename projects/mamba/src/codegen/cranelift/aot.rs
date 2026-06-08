@@ -3,6 +3,7 @@
 /// Generates a C-compatible `main` function that calls the Mamba entry point
 /// and prints its i64 return value using `putchar` (avoids variadic printf
 /// issues on ARM64 macOS).
+
 use cranelift_codegen::ir::{
     condcodes::IntCC, types as cl_types, AbiParam, Function, InstBuilder, Signature,
 };
@@ -16,7 +17,10 @@ use cranelift_object::ObjectModule;
 /// `main` calls the Mamba entry function, passes the i64 result to
 /// `_mb_print_i64` (which prints the decimal representation via `putchar`),
 /// then returns 0.
-pub fn emit_main(module: &mut ObjectModule, entry_func_id: FuncId) -> crate::error::Result<()> {
+pub fn emit_main(
+    module: &mut ObjectModule,
+    entry_func_id: FuncId,
+) -> crate::error::Result<()> {
     // Declare putchar: (i32) -> i32
     let mut putchar_sig = Signature::new(CallConv::SystemV);
     putchar_sig.params.push(AbiParam::new(cl_types::I32));
@@ -83,7 +87,10 @@ pub fn emit_main(module: &mut ObjectModule, entry_func_id: FuncId) -> crate::err
 ///   divisor = 1; temp = n
 ///   while temp >= 10: temp /= 10; divisor *= 10
 ///   while divisor > 0: digit = n/divisor; putchar(digit+'0'); n %= divisor; divisor /= 10
-fn emit_print_i64(module: &mut ObjectModule, putchar_id: FuncId) -> crate::error::Result<FuncId> {
+fn emit_print_i64(
+    module: &mut ObjectModule,
+    putchar_id: FuncId,
+) -> crate::error::Result<FuncId> {
     let mut sig = Signature::new(CallConv::SystemV);
     sig.params.push(AbiParam::new(cl_types::I64));
     let func_id = module
@@ -140,9 +147,7 @@ fn emit_print_i64(module: &mut ObjectModule, putchar_id: FuncId) -> crate::error
     let n2 = builder.use_var(v_n);
     let zero2 = builder.ins().iconst(cl_types::I64, 0);
     let is_zero = builder.ins().icmp(IntCC::Equal, n2, zero2);
-    builder
-        .ins()
-        .brif(is_zero, b_zero_case, &[], b_find_div_init, &[]);
+    builder.ins().brif(is_zero, b_zero_case, &[], b_find_div_init, &[]);
 
     // ── zero_case: print '0', done ──
     builder.switch_to_block(b_zero_case);
@@ -163,12 +168,8 @@ fn emit_print_i64(module: &mut ObjectModule, putchar_id: FuncId) -> crate::error
     builder.switch_to_block(b_find_div_check);
     let temp = builder.use_var(v_temp);
     let ten = builder.ins().iconst(cl_types::I64, 10);
-    let ge10 = builder
-        .ins()
-        .icmp(IntCC::SignedGreaterThanOrEqual, temp, ten);
-    builder
-        .ins()
-        .brif(ge10, b_find_div_update, &[], b_print_check, &[]);
+    let ge10 = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, temp, ten);
+    builder.ins().brif(ge10, b_find_div_update, &[], b_print_check, &[]);
 
     // ── find_div_update: temp /= 10, divisor *= 10, loop back ──
     builder.switch_to_block(b_find_div_update);
@@ -237,15 +238,12 @@ mod tests {
         let mut flags_builder = settings::builder();
         flags_builder.set("is_pic", "true").unwrap();
         let isa_builder = cranelift_native::builder().expect("no native ISA");
-        let isa = isa_builder
-            .finish(settings::Flags::new(flags_builder))
-            .expect("ISA error");
+        let isa = isa_builder.finish(settings::Flags::new(flags_builder)).expect("ISA error");
         let obj_builder = ObjectBuilder::new(
             isa,
             "test_module",
             cranelift_module::default_libcall_names(),
-        )
-        .expect("object builder error");
+        ).expect("object builder error");
         ObjectModule::new(obj_builder)
     }
 
@@ -255,14 +253,8 @@ mod tests {
         // Declare a dummy entry function: () -> i64
         let mut sig = Signature::new(CallConv::SystemV);
         sig.returns.push(AbiParam::new(cl_types::I64));
-        let entry_id = module
-            .declare_function("_mb_0", Linkage::Local, &sig)
-            .unwrap();
+        let entry_id = module.declare_function("_mb_0", Linkage::Local, &sig).unwrap();
         let result = emit_main(&mut module, entry_id);
-        assert!(
-            result.is_ok(),
-            "emit_main should succeed: {:?}",
-            result.err()
-        );
+        assert!(result.is_ok(), "emit_main should succeed: {:?}", result.err());
     }
 }

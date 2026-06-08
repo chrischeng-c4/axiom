@@ -28,7 +28,7 @@ impl GeminiProvider {
     /// ```rust,ignore
     /// let provider = GeminiProvider::with_base_url(
     ///     "your-api-key",
-    ///     "https://llm-gateway.example.com/v1",
+    ///     "https://your-internal-gateway.example.com/v1",
     /// )?;
     /// ```
     pub fn with_base_url(

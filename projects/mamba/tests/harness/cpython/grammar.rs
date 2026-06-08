@@ -1,7 +1,9 @@
 //! CPython 3.12 compliance test harness for the Mamba parser.
 //!
-//! Discovers `.py` fixtures under `tests/cpython/fixtures/core/grammar/` and runs each
-//! through the Mamba parser.  Tests listed in `cpython_known_failures.toml` are
+//! Discovers `.py` fixtures under `tests/cpython/_regression/core/grammar/` and
+//! runs each through the Mamba parser. (The dimension-first migration moved the
+//! no-record grammar syntax-probe regression fixtures under `_regression/`.)
+//! Tests listed in `cpython_known_failures.toml` are
 //! treated as *expected failures* (xfail): they are skipped without failing
 //! CI, and a warning is printed when they unexpectedly pass.
 //!
@@ -72,7 +74,7 @@ fn xfail_map() -> &'static HashMap<String, String> {
 // -- Fixture key ------------------------------------------------------------
 
 /// Derive the xfail manifest key from the fixture path.
-/// E.g. `tests/cpython/fixtures/core/grammar/test_fstring/nested_fstrings.py`
+/// E.g. `tests/cpython/core/grammar/test_fstring/nested_fstrings.py`
 ///   -> `test_fstring/nested_fstrings`
 fn fixture_key(path: &Path) -> String {
     let mut parts = path.components().peekable();
@@ -166,6 +168,6 @@ fn run_cpython_fixture(path: &Path) -> datatest_stable::Result<()> {
 
 harness!(
     run_cpython_fixture,
-    "tests/cpython/fixtures/core/grammar",
+    "tests/cpython/_regression/core/grammar",
     r".*\.py$"
 );

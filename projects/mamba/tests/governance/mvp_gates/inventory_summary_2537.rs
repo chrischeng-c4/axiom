@@ -5,15 +5,10 @@
 //! It only invokes Python 3 against a static source-tree scan, so it stays
 //! safely under the MVP smoke-gate budget.
 
-use std::path::PathBuf;
 use std::process::Command;
 
-fn mamba_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn run_script(args: &[&str]) -> (i32, String, String) {
-    let script = mamba_root().join("scripts").join("inventory_summary.py");
+    let script = crate::common::mamba_root().join("scripts").join("inventory_summary.py");
     let out = Command::new("python3")
         .arg(&script)
         .args(args)
@@ -84,7 +79,7 @@ fn json_inventory_is_machine_readable() {
 #[test]
 fn missing_root_returns_nonzero() {
     // Acceptance: exits non-zero if the inventory cannot be computed.
-    let script = mamba_root().join("scripts").join("inventory_summary.py");
+    let script = crate::common::mamba_root().join("scripts").join("inventory_summary.py");
     let out = Command::new("python3")
         .arg(&script)
         .arg("--root")

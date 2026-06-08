@@ -1,10 +1,11 @@
-use super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
-use super::value::MbValue;
 /// Exception handling runtime (#283).
 ///
 /// Implements Python-compatible exception objects and the try/except/finally
 /// runtime support using setjmp/longjmp-style unwinding.
+
 use rustc_hash::FxHashMap;
+use super::value::MbValue;
+use super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 /// Exception object stored on the heap.
 #[derive(Clone)]
@@ -62,9 +63,7 @@ thread_local! {
 /// Returns a clone — caller does not own the cell.
 pub fn last_handled_exception() -> Option<(String, String)> {
     LAST_HANDLED_EXCEPTION.with(|cell| {
-        cell.borrow()
-            .as_ref()
-            .map(|e| (e.exc_type.clone(), e.message.clone()))
+        cell.borrow().as_ref().map(|e| (e.exc_type.clone(), e.message.clone()))
     })
 }
 
@@ -108,36 +107,22 @@ pub fn mb_exception_new_with_args(exc_type: MbValue, args_list: MbValue) -> MbVa
     };
     // Build instance fields directly (avoids circular dep with class.rs)
     let mut fields = FxHashMap::default();
-    fields.insert(
-        "message".to_string(),
-        MbValue::from_ptr(MbObject::new_str(msg.clone())),
-    );
-    fields.insert(
-        "__type__".to_string(),
-        MbValue::from_ptr(MbObject::new_str(type_name.clone())),
-    );
+    fields.insert("message".to_string(), MbValue::from_ptr(MbObject::new_str(msg.clone())));
+    fields.insert("__type__".to_string(), MbValue::from_ptr(MbObject::new_str(type_name.clone())));
     fields.insert("__cause__".to_string(), MbValue::none());
     fields.insert("__context__".to_string(), MbValue::none());
-    fields.insert(
-        "__suppress_context__".to_string(),
-        MbValue::from_bool(false),
-    );
+    fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
     // StopIteration stores the first arg as `.value` (CPython semantics).
     if type_name == "StopIteration" {
         let value_val = arg_items.first().copied().unwrap_or_else(MbValue::none);
-        unsafe {
-            super::rc::retain_if_ptr(value_val);
-        }
+        unsafe { super::rc::retain_if_ptr(value_val); }
         fields.insert("value".to_string(), value_val);
     }
     // args = tuple of all constructor arguments (preserves all args, including non-string ones)
     let args_tuple = MbValue::from_ptr(MbObject::new_tuple(arg_items));
     fields.insert("args".to_string(), args_tuple);
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: std::sync::atomic::AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
+        header: MbObjectHeader { rc: std::sync::atomic::AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
             class_name: type_name,
             fields: crate::runtime::rc::MbRwLock::new(fields),
@@ -183,10 +168,7 @@ fn store_exception_as_value(exc: MbException) -> MbValue {
     } else {
         vec![MbValue::from_ptr(MbObject::new_str(exc.message.clone()))]
     };
-    fields.insert(
-        "args".to_string(),
-        MbValue::from_ptr(MbObject::new_tuple(args_items)),
-    );
+    fields.insert("args".to_string(), MbValue::from_ptr(MbObject::new_tuple(args_items)));
     // StopIteration.value: generator return value takes priority; for
     // explicit `raise StopIteration(x)` the constructor argument is kept
     // in `exc.message` and surfaced here as a string fallback.
@@ -200,10 +182,7 @@ fn store_exception_as_value(exc: MbException) -> MbValue {
         fields.insert("value".to_string(), value_val);
     }
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: std::sync::atomic::AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
+        header: MbObjectHeader { rc: std::sync::atomic::AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
             class_name: exc.exc_type,
             fields: crate::runtime::rc::MbRwLock::new(fields),
@@ -277,12 +256,7 @@ pub fn mb_raise_with_context(exc_type: MbValue, message: MbValue, context: MbVal
 
 /// Raise with both explicit cause and implicit context.
 /// Always sets __suppress_context__ = True (per Python `raise from` semantics).
-pub fn mb_raise_from_with_context(
-    exc_type: MbValue,
-    message: MbValue,
-    cause: MbValue,
-    context: MbValue,
-) {
+pub fn mb_raise_from_with_context(exc_type: MbValue, message: MbValue, cause: MbValue, context: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = extract_str(message).unwrap_or_default();
     let mut exc = MbException::new(&type_name, &msg);
@@ -313,7 +287,9 @@ pub fn mb_reraise(exc: MbValue) {
 
 /// Check if there's a pending exception.
 pub fn mb_has_exception() -> MbValue {
-    CURRENT_EXCEPTION.with(|cell| MbValue::from_bool(cell.borrow().is_some()))
+    CURRENT_EXCEPTION.with(|cell| {
+        MbValue::from_bool(cell.borrow().is_some())
+    })
 }
 
 /// Take the current exception (clearing the pending state) and return a
@@ -340,18 +316,18 @@ pub fn mb_take_uncaught_traceback() -> Option<String> {
 /// `traceback.format_exc()` and `sys.exc_info()` can report it after the
 /// except handler has consumed the pending slot.
 pub fn mb_catch_exception() -> MbValue {
-    CURRENT_EXCEPTION.with(|cell| match cell.borrow_mut().take() {
-        Some(exc) => {
-            LAST_HANDLED_EXCEPTION.with(|h| {
-                *h.borrow_mut() = Some(exc.clone());
-            });
-            let val = store_exception_as_value(exc);
-            unsafe {
-                super::rc::retain_if_ptr(val);
+    CURRENT_EXCEPTION.with(|cell| {
+        match cell.borrow_mut().take() {
+            Some(exc) => {
+                LAST_HANDLED_EXCEPTION.with(|h| {
+                    *h.borrow_mut() = Some(exc.clone());
+                });
+                let val = store_exception_as_value(exc);
+                unsafe { super::rc::retain_if_ptr(val); }
+                val
             }
-            val
+            None => MbValue::none(),
         }
-        None => MbValue::none(),
     })
 }
 
@@ -364,7 +340,11 @@ pub fn mb_exception_matches(exc: MbValue, exc_type: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Tuple(ref items) = (*ptr).data {
                 for item in items {
-                    let target = extract_str(*item).unwrap_or_default();
+                    // Resolve the handler type's name from a Str, a func value
+                    // (NATIVE_TYPE_NAMES — e.g. urllib.error.URLError), or a
+                    // type-object Instance (__name__), so `except SomeExc` works
+                    // regardless of how the exception class is exposed.
+                    let target = super::class::resolve_class_name(*item).unwrap_or_default();
                     if actual_type == target || is_subclass_of(&actual_type, &target) {
                         return MbValue::from_bool(true);
                     }
@@ -374,8 +354,9 @@ pub fn mb_exception_matches(exc: MbValue, exc_type: MbValue) -> MbValue {
         }
     }
 
-    let target_type = extract_str(exc_type).unwrap_or_default();
-    let matches = actual_type == target_type || is_subclass_of(&actual_type, &target_type);
+    let target_type = super::class::resolve_class_name(exc_type).unwrap_or_default();
+    let matches = actual_type == target_type
+        || is_subclass_of(&actual_type, &target_type);
     MbValue::from_bool(matches)
 }
 
@@ -450,75 +431,53 @@ pub fn get_exception_message_pub(exc: MbValue) -> Option<String> {
 /// caused class.rs to treat every no-`__init__` user class as an exception
 /// and inject a bogus `args` field. (#1551)
 fn is_builtin_exception_name(name: &str) -> bool {
-    matches!(
-        name,
-        "BaseException"
-            | "Exception"
-            | "ArithmeticError"
-            | "ZeroDivisionError"
-            | "OverflowError"
-            | "FloatingPointError"
-            | "LookupError"
-            | "IndexError"
-            | "KeyError"
-            | "UnicodeError"
-            | "UnicodeDecodeError"
-            | "UnicodeEncodeError"
-            | "UnicodeTranslateError"
-            | "ValueError"
-            | "JSONDecodeError"
-            | "OSError"
-            | "IOError"
-            | "FileNotFoundError"
-            | "PermissionError"
-            | "IsADirectoryError"
-            | "NotADirectoryError"
-            | "FileExistsError"
-            | "ConnectionError"
-            | "TimeoutError"
-            | "BrokenPipeError"
-            | "ConnectionAbortedError"
-            | "ConnectionRefusedError"
-            | "ConnectionResetError"
-            | "BlockingIOError"
-            | "ChildProcessError"
-            | "InterruptedError"
-            | "ProcessLookupError"
-            | "RuntimeError"
-            | "NotImplementedError"
-            | "RecursionError"
-            | "NameError"
-            | "UnboundLocalError"
-            | "ImportError"
-            | "ModuleNotFoundError"
-            | "SyntaxError"
-            | "IndentationError"
-            | "TabError"
-            | "AttributeError"
-            | "TypeError"
-            | "AssertionError"
-            | "StopIteration"
-            | "StopAsyncIteration"
-            | "GeneratorExit"
-            | "SystemExit"
-            | "KeyboardInterrupt"
-            | "MemoryError"
-            | "BufferError"
-            | "EOFError"
-            | "ReferenceError"
-            | "SystemError"
-            | "Warning"
-            | "DeprecationWarning"
-            | "RuntimeWarning"
-            | "UserWarning"
-            | "SyntaxWarning"
-            | "FutureWarning"
-            | "PendingDeprecationWarning"
-            | "UnicodeWarning"
-            | "BytesWarning"
-            | "ResourceWarning"
-            | "ImportWarning"
-            | "EncodingWarning"
+    matches!(name,
+        "BaseException" | "Exception"
+        | "ArithmeticError" | "ZeroDivisionError" | "OverflowError" | "FloatingPointError"
+        | "LookupError" | "IndexError" | "KeyError"
+        | "UnicodeError" | "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"
+        | "ValueError" | "JSONDecodeError"
+        | "OSError" | "IOError"
+        | "FileNotFoundError" | "PermissionError" | "IsADirectoryError"
+        | "NotADirectoryError" | "FileExistsError" | "ConnectionError"
+        | "TimeoutError" | "BrokenPipeError" | "ConnectionAbortedError"
+        | "ConnectionRefusedError" | "ConnectionResetError"
+        | "BlockingIOError" | "ChildProcessError"
+        | "InterruptedError" | "ProcessLookupError"
+        | "RuntimeError" | "NotImplementedError" | "RecursionError"
+        | "NameError" | "UnboundLocalError"
+        | "ImportError" | "ModuleNotFoundError"
+        | "SyntaxError" | "IndentationError" | "TabError"
+        | "AttributeError" | "TypeError" | "AssertionError"
+        | "StopIteration" | "StopAsyncIteration" | "GeneratorExit"
+        | "SystemExit" | "KeyboardInterrupt"
+        | "MemoryError" | "BufferError" | "EOFError"
+        | "ReferenceError" | "SystemError"
+        | "ExceptionGroup" | "BaseExceptionGroup"
+        | "Warning" | "DeprecationWarning" | "RuntimeWarning" | "UserWarning"
+        | "SyntaxWarning" | "FutureWarning" | "PendingDeprecationWarning"
+        | "UnicodeWarning" | "BytesWarning" | "ResourceWarning"
+        | "ImportWarning" | "EncodingWarning"
+        // subprocess exception tree (subprocess_mod.rs raises these). All
+        // ultimately derive from Exception.
+        | "SubprocessError" | "CalledProcessError" | "TimeoutExpired"
+        // configparser exception tree (configparser_mod.rs raises these). The
+        // base `Error` derives from Exception; the rest derive from it.
+        | "NoSectionError" | "NoOptionError"
+        | "DuplicateSectionError" | "DuplicateOptionError"
+        | "InterpolationError" | "InterpolationMissingOptionError"
+        | "InterpolationSyntaxError" | "InterpolationDepthError"
+        | "ParsingError" | "MissingSectionHeaderError"
+        // binascii exception tree (binascii_mod.rs raises these). `Error`
+        // derives from ValueError; `Incomplete` derives from Exception.
+        | "binascii.Error" | "binascii.Incomplete"
+        // statistics.StatisticsError (statistics_mod.rs raises this). It
+        // derives from ValueError (see the ValueError arm of is_subclass_of),
+        // so `except ValueError` / `except Exception` must both catch it.
+        | "StatisticsError"
+        // calendar.IllegalMonthError / IllegalWeekdayError (calendar_mod.rs
+        // raises these). Both derive from ValueError (CPython 3.12).
+        | "IllegalMonthError" | "IllegalWeekdayError"
     )
 }
 
@@ -526,6 +485,13 @@ fn is_builtin_exception_name(name: &str) -> bool {
 pub fn is_subclass_of(child: &str, parent: &str) -> bool {
     if parent == "Exception" || parent == "BaseException" {
         if is_builtin_exception_name(child) {
+            return true;
+        }
+        // configparser base `Error` (and its subclasses) derive from Exception.
+        // `Error` is intentionally not listed in is_builtin_exception_name
+        // because the bare name is generic, but the whole configparser tree is
+        // a subclass of Exception/BaseException.
+        if child == "Error" || is_configparser_error_subclass(child) {
             return true;
         }
         // User-class case: walk MRO; any built-in exception ancestor counts.
@@ -544,69 +510,92 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
     }
     // Built-in exception hierarchy
     match parent {
-        "ArithmeticError" => matches!(
-            child,
-            "ZeroDivisionError" | "OverflowError" | "FloatingPointError"
-        ),
+        "ArithmeticError" => matches!(child,
+            "ZeroDivisionError" | "OverflowError" | "FloatingPointError"),
         "LookupError" => matches!(child, "IndexError" | "KeyError"),
-        "UnicodeError" => matches!(
-            child,
+        "UnicodeError" => matches!(child,
+            "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"),
+        "ValueError" => matches!(child,
             "UnicodeDecodeError" | "UnicodeEncodeError" | "UnicodeTranslateError"
-        ),
-        "ValueError" => matches!(
-            child,
-            "UnicodeDecodeError"
-                | "UnicodeEncodeError"
-                | "UnicodeTranslateError"
-                | "UnicodeError"
-                | "JSONDecodeError"
-        ),
-        "OSError" => matches!(
-            child,
-            "FileNotFoundError"
-                | "PermissionError"
-                | "IsADirectoryError"
-                | "NotADirectoryError"
-                | "FileExistsError"
-                | "ConnectionError"
-                | "TimeoutError"
-                | "BrokenPipeError"
-                | "ConnectionAbortedError"
-                | "ConnectionRefusedError"
-                | "ConnectionResetError"
-                | "BlockingIOError"
-                | "ChildProcessError"
-                | "InterruptedError"
-                | "ProcessLookupError"
-        ),
-        "ConnectionError" => matches!(
-            child,
-            "BrokenPipeError"
-                | "ConnectionAbortedError"
-                | "ConnectionRefusedError"
-                | "ConnectionResetError"
-        ),
-        "RuntimeError" => matches!(child, "NotImplementedError" | "RecursionError"),
+            | "UnicodeError" | "JSONDecodeError"
+            // binascii.Error subclasses ValueError (CPython 3.12).
+            | "binascii.Error"
+            // statistics.StatisticsError subclasses ValueError (CPython 3.12).
+            | "StatisticsError"
+            // calendar.IllegalMonthError / IllegalWeekdayError subclass
+            // ValueError (CPython 3.12).
+            | "IllegalMonthError" | "IllegalWeekdayError"),
+        "OSError" => matches!(child,
+            "FileNotFoundError" | "PermissionError" | "IsADirectoryError"
+            | "NotADirectoryError" | "FileExistsError" | "ConnectionError"
+            | "TimeoutError" | "BrokenPipeError" | "ConnectionAbortedError"
+            | "ConnectionRefusedError" | "ConnectionResetError"
+            | "BlockingIOError" | "ChildProcessError"
+            | "InterruptedError" | "ProcessLookupError"),
+        "ConnectionError" => matches!(child,
+            "BrokenPipeError" | "ConnectionAbortedError"
+            | "ConnectionRefusedError" | "ConnectionResetError"),
+        "RuntimeError" => matches!(child,
+            "NotImplementedError" | "RecursionError"),
         "NameError" => matches!(child, "UnboundLocalError"),
         "ImportError" => matches!(child, "ModuleNotFoundError"),
-        "SyntaxError" => matches!(child, "IndentationError" | "TabError"),
+        // PEP 654: ExceptionGroup derives from both BaseExceptionGroup and Exception.
+        "BaseExceptionGroup" => matches!(child, "ExceptionGroup"),
+        "SyntaxError" => matches!(child,
+            "IndentationError" | "TabError"),
         "IndentationError" => matches!(child, "TabError"),
-        "Warning" => matches!(
-            child,
-            "DeprecationWarning"
-                | "RuntimeWarning"
-                | "UserWarning"
-                | "SyntaxWarning"
-                | "FutureWarning"
-                | "PendingDeprecationWarning"
-                | "UnicodeWarning"
-                | "BytesWarning"
-                | "ResourceWarning"
-                | "ImportWarning"
-                | "EncodingWarning"
-        ),
+        "Warning" => matches!(child,
+            "DeprecationWarning" | "RuntimeWarning" | "UserWarning"
+            | "SyntaxWarning" | "FutureWarning" | "PendingDeprecationWarning"
+            | "UnicodeWarning" | "BytesWarning" | "ResourceWarning"
+            | "ImportWarning" | "EncodingWarning"),
+        // subprocess: SubprocessError ⊂ Exception; CalledProcessError and
+        // TimeoutExpired ⊂ SubprocessError (Python 3.12).
+        "SubprocessError" => matches!(child,
+            "CalledProcessError" | "TimeoutExpired"),
+        // configparser: every leaf derives (directly or transitively) from the
+        // package base `Error`. `except configparser.Error` must catch them all.
+        "Error" => is_configparser_error_subclass(child),
+        // configparser interpolation subtree:
+        // InterpolationMissingOptionError / InterpolationSyntaxError /
+        // InterpolationDepthError ⊂ InterpolationError ⊂ Error.
+        "InterpolationError" => matches!(child,
+            "InterpolationMissingOptionError"
+            | "InterpolationSyntaxError"
+            | "InterpolationDepthError"),
+        // configparser: MissingSectionHeaderError ⊂ ParsingError ⊂ Error.
+        "ParsingError" => matches!(child, "MissingSectionHeaderError"),
         _ => false,
     }
+}
+
+/// True if `child` is a configparser exception class that derives, directly or
+/// transitively, from configparser's base `Error`. Mirrors the Python 3.12
+/// configparser hierarchy:
+///
+/// ```text
+/// Error
+/// ├── NoSectionError
+/// ├── NoOptionError
+/// ├── DuplicateSectionError
+/// ├── DuplicateOptionError
+/// ├── InterpolationError
+/// │   ├── InterpolationMissingOptionError
+/// │   ├── InterpolationSyntaxError
+/// │   └── InterpolationDepthError
+/// └── ParsingError
+///     └── MissingSectionHeaderError
+/// ```
+fn is_configparser_error_subclass(child: &str) -> bool {
+    matches!(child,
+        "NoSectionError" | "NoOptionError"
+        | "DuplicateSectionError" | "DuplicateOptionError"
+        | "InterpolationError"
+        | "InterpolationMissingOptionError"
+        | "InterpolationSyntaxError"
+        | "InterpolationDepthError"
+        | "ParsingError"
+        | "MissingSectionHeaderError")
 }
 
 // ── Try/Except Frame Management ──
@@ -708,7 +697,7 @@ pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue 
                     MbValue::from_ptr(MbObject::new_tuple_borrowed(items.to_vec()))
                 }
                 ObjData::Tuple(_) => exceptions, // already a tuple
-                _ => exceptions,                 // fallback
+                _ => exceptions, // fallback
             }
         }
     } else {
@@ -725,10 +714,7 @@ pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue 
     );
     fields.insert("exceptions".to_string(), exc_tuple);
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: std::sync::atomic::AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
+        header: MbObjectHeader { rc: std::sync::atomic::AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
             class_name: "ExceptionGroup".to_string(),
             fields: crate::runtime::rc::MbRwLock::new(fields),
@@ -767,7 +753,9 @@ pub fn mb_except_star(group: MbValue, exc_type: MbValue) -> MbValue {
                 };
                 for exc in items.iter() {
                     let actual_type = get_exception_type(*exc).unwrap_or_default();
-                    if actual_type == target_type || is_subclass_of(&actual_type, &target_type) {
+                    if actual_type == target_type
+                        || is_subclass_of(&actual_type, &target_type)
+                    {
                         matched.push(*exc);
                     } else {
                         rest.push(*exc);
@@ -777,17 +765,14 @@ pub fn mb_except_star(group: MbValue, exc_type: MbValue) -> MbValue {
         }
     }
 
-    let msg = group
-        .as_ptr()
-        .and_then(|ptr| unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let fields = fields.read().unwrap();
-                fields.get("message").and_then(|v| extract_str(*v))
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
+    let msg = group.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let fields = fields.read().unwrap();
+            fields.get("message").and_then(|v| extract_str(*v))
+        } else {
+            None
+        }
+    }).unwrap_or_default();
 
     let matched_val = if matched.is_empty() {
         MbValue::none()
@@ -892,11 +877,7 @@ pub fn register_builtin_exceptions() {
     super::class::mb_class_register("ArithmeticError", vec!["Exception".into()], empty());
     super::class::mb_class_register("ZeroDivisionError", vec!["ArithmeticError".into()], empty());
     super::class::mb_class_register("OverflowError", vec!["ArithmeticError".into()], empty());
-    super::class::mb_class_register(
-        "FloatingPointError",
-        vec!["ArithmeticError".into()],
-        empty(),
-    );
+    super::class::mb_class_register("FloatingPointError", vec!["ArithmeticError".into()], empty());
 
     // Lookup hierarchy
     super::class::mb_class_register("LookupError", vec!["Exception".into()], empty());
@@ -908,11 +889,7 @@ pub fn register_builtin_exceptions() {
     super::class::mb_class_register("UnicodeError", vec!["ValueError".into()], empty());
     super::class::mb_class_register("UnicodeDecodeError", vec!["UnicodeError".into()], empty());
     super::class::mb_class_register("UnicodeEncodeError", vec!["UnicodeError".into()], empty());
-    super::class::mb_class_register(
-        "UnicodeTranslateError",
-        vec!["UnicodeError".into()],
-        empty(),
-    );
+    super::class::mb_class_register("UnicodeTranslateError", vec!["UnicodeError".into()], empty());
 
     // OS / IO hierarchy
     super::class::mb_class_register("OSError", vec!["Exception".into()], empty());
@@ -928,21 +905,9 @@ pub fn register_builtin_exceptions() {
     super::class::mb_class_register("TimeoutError", vec!["OSError".into()], empty());
     super::class::mb_class_register("ConnectionError", vec!["OSError".into()], empty());
     super::class::mb_class_register("BrokenPipeError", vec!["ConnectionError".into()], empty());
-    super::class::mb_class_register(
-        "ConnectionAbortedError",
-        vec!["ConnectionError".into()],
-        empty(),
-    );
-    super::class::mb_class_register(
-        "ConnectionRefusedError",
-        vec!["ConnectionError".into()],
-        empty(),
-    );
-    super::class::mb_class_register(
-        "ConnectionResetError",
-        vec!["ConnectionError".into()],
-        empty(),
-    );
+    super::class::mb_class_register("ConnectionAbortedError", vec!["ConnectionError".into()], empty());
+    super::class::mb_class_register("ConnectionRefusedError", vec!["ConnectionError".into()], empty());
+    super::class::mb_class_register("ConnectionResetError", vec!["ConnectionError".into()], empty());
     // Reference / cycle hierarchy.
     super::class::mb_class_register("ReferenceError", vec!["Exception".into()], empty());
 
@@ -982,8 +947,14 @@ pub fn register_builtin_exceptions() {
     super::class::mb_class_register("ImportWarning", vec!["Warning".into()], empty());
     super::class::mb_class_register("EncodingWarning", vec!["Warning".into()], empty());
 
-    // ExceptionGroup (PEP 654) — inherits from Exception
-    super::class::mb_class_register("ExceptionGroup", vec!["Exception".into()], empty());
+    // ExceptionGroup (PEP 654): BaseExceptionGroup ⊂ BaseException;
+    // ExceptionGroup ⊂ (BaseExceptionGroup, Exception).
+    super::class::mb_class_register("BaseExceptionGroup", vec!["BaseException".into()], empty());
+    super::class::mb_class_register(
+        "ExceptionGroup",
+        vec!["BaseExceptionGroup".into(), "Exception".into()],
+        empty(),
+    );
 }
 
 // ── R4: Non-destructive exception retrieval ──
@@ -991,71 +962,263 @@ pub fn register_builtin_exceptions() {
 /// Retrieve the current exception without clearing the pending state.
 /// Returns `MbValue::none()` if no exception is pending.
 pub fn mb_get_exception() -> MbValue {
-    CURRENT_EXCEPTION.with(|cell| match cell.borrow().as_ref() {
-        Some(exc) => {
-            let val = store_exception_as_value(MbException {
-                exc_type: exc.exc_type.clone(),
-                message: exc.message.clone(),
-                cause: exc.cause.as_ref().map(|c| {
-                    Box::new(MbException {
+    CURRENT_EXCEPTION.with(|cell| {
+        match cell.borrow().as_ref() {
+            Some(exc) => {
+                let val = store_exception_as_value(MbException {
+                    exc_type: exc.exc_type.clone(),
+                    message: exc.message.clone(),
+                    cause: exc.cause.as_ref().map(|c| Box::new(MbException {
                         exc_type: c.exc_type.clone(),
                         message: c.message.clone(),
                         cause: None,
                         context: None,
                         suppress_context: c.suppress_context,
                         traceback: c.traceback.clone(),
-                    })
-                }),
-                context: exc.context.as_ref().map(|c| {
-                    Box::new(MbException {
+                    })),
+                    context: exc.context.as_ref().map(|c| Box::new(MbException {
                         exc_type: c.exc_type.clone(),
                         message: c.message.clone(),
                         cause: None,
                         context: None,
                         suppress_context: c.suppress_context,
                         traceback: c.traceback.clone(),
-                    })
-                }),
-                suppress_context: exc.suppress_context,
-                traceback: exc.traceback.clone(),
-            });
-            unsafe {
-                super::rc::retain_if_ptr(val);
+                    })),
+                    suppress_context: exc.suppress_context,
+                    traceback: exc.traceback.clone(),
+                });
+                unsafe { super::rc::retain_if_ptr(val); }
+                val
             }
-            val
+            None => MbValue::none(),
         }
-        None => MbValue::none(),
     })
 }
 
-// ── R5: ExceptionGroup additional methods ──
+// ── R5: ExceptionGroup additional methods (PEP 654) ──
 
-/// Split an ExceptionGroup into (matched, rest) based on a type predicate.
-/// `predicate` is a string exception type name.  Returns a tuple (matched_group, rest_group)
-/// where each element is an ExceptionGroup or None.
-///
-/// This is a named alias for `mb_except_star` that follows CPython's
-/// `ExceptionGroup.split()` semantics.
-pub fn mb_exception_group_split(group: MbValue, predicate: MbValue) -> MbValue {
-    mb_except_star(group, predicate)
+/// A `subgroup`/`split` condition. On mamba a "type" object reaches native code
+/// as its name-string (`ValueError` ≡ `"ValueError"`), a tuple of types as a
+/// tuple of name-strings, and a predicate as a callable function value.
+enum EgCondition {
+    /// Single exception type name, e.g. "ValueError".
+    Type(String),
+    /// Tuple of exception type names, e.g. ["ValueError", "TypeError"].
+    Types(Vec<String>),
+    /// Callable predicate `f(exc) -> bool`.
+    Predicate(MbValue),
 }
 
-/// Filter an ExceptionGroup to only matching exceptions (subgroup).
-/// Returns a new ExceptionGroup containing only exceptions matching `predicate`,
-/// or None if no exceptions match.
-pub fn mb_exception_group_subgroup(group: MbValue, predicate: MbValue) -> MbValue {
-    let result = mb_except_star(group, predicate);
-    // mb_except_star returns (matched, rest) — extract matched (index 0)
-    if let Some(ptr) = result.as_ptr() {
+/// True if `val` is a runtime value that names a registered exception class
+/// (i.e. a type object on mamba, represented as a name-string).
+fn is_exception_type_name(val: MbValue) -> bool {
+    if let Some(s) = extract_str(val) {
+        // A type used as a condition must be an exception type. A registered
+        // exception class name qualifies; a plain string like "bad arg" does not.
+        return is_builtin_exception_name(&s)
+            || super::class::class_mro_any(&s, is_builtin_exception_name)
+            || is_subclass_of(&s, "BaseException");
+    }
+    false
+}
+
+/// Parse a `subgroup`/`split` condition argument, raising TypeError (the same
+/// failure mode as CPython) when the argument is neither an exception type, a
+/// tuple of exception types, nor a callable.
+fn parse_eg_condition(cond: MbValue) -> Result<EgCondition, ()> {
+    // Tuple-of-types: every element must itself be an exception type name.
+    if let Some(ptr) = cond.as_ptr() {
         unsafe {
             if let ObjData::Tuple(ref items) = (*ptr).data {
-                if !items.is_empty() {
-                    return items[0];
+                let mut names = Vec::with_capacity(items.len());
+                for it in items.iter() {
+                    if is_exception_type_name(*it) {
+                        names.push(extract_str(*it).unwrap_or_default());
+                    } else {
+                        mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "expected an exception type, a tuple of exception types, or a callable (not tuple element)".to_string(),
+                            )),
+                        );
+                        return Err(());
+                    }
+                }
+                return Ok(EgCondition::Types(names));
+            }
+        }
+    }
+    // Single type object (name-string that names an exception class).
+    if is_exception_type_name(cond) {
+        return Ok(EgCondition::Type(extract_str(cond).unwrap_or_default()));
+    }
+    // Callable predicate. A type reaches here as a Str and is NOT callable on
+    // mamba, so this only fires for genuine function values.
+    if super::builtins::mb_callable(cond).as_bool() == Some(true) {
+        return Ok(EgCondition::Predicate(cond));
+    }
+    // Anything else (plain string, exception instance, list, bad tuple) → TypeError.
+    mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "expected an exception type, a tuple of exception types, or a callable".to_string(),
+        )),
+    );
+    Err(())
+}
+
+/// True if a single (leaf or group) exception value matches the condition.
+fn eg_condition_matches(exc: MbValue, cond: &EgCondition) -> bool {
+    match cond {
+        EgCondition::Type(t) => {
+            let actual = get_exception_type(exc).unwrap_or_default();
+            actual == *t || is_subclass_of(&actual, t)
+        }
+        EgCondition::Types(ts) => {
+            let actual = get_exception_type(exc).unwrap_or_default();
+            ts.iter().any(|t| actual == *t || is_subclass_of(&actual, t))
+        }
+        EgCondition::Predicate(f) => {
+            // CPython matches on the general truthiness of the predicate's
+            // return value, not only a literal `True`. `as_bool()` is `None`
+            // for any non-bool return (e.g. a non-empty string or nonzero int),
+            // so use full truthiness semantics here.
+            let args = MbValue::from_ptr(MbObject::new_list(vec![exc]));
+            super::builtins::mb_is_truthy(super::builtins::mb_call_spread(*f, args)) != 0
+        }
+    }
+}
+
+/// True if `exc` is an ExceptionGroup-shaped instance (carries an `exceptions`
+/// field). Used to decide whether to recurse.
+fn is_exception_group_value(exc: MbValue) -> bool {
+    if let Some(ptr) = exc.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "ExceptionGroup"
+                    || class_name == "BaseExceptionGroup"
+                    || fields.read().unwrap().contains_key("exceptions")
+                {
+                    return true;
                 }
             }
         }
     }
-    MbValue::none()
+    false
+}
+
+/// Read the message string of a group value.
+fn eg_message(group: MbValue) -> String {
+    group.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get("message").and_then(|v| extract_str(*v))
+        } else {
+            None
+        }
+    }).unwrap_or_default()
+}
+
+/// Read the direct sub-exceptions of a group value as a Vec.
+fn eg_child_exceptions(group: MbValue) -> Vec<MbValue> {
+    let exc_field = group.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get("exceptions").copied()
+        } else {
+            None
+        }
+    });
+    if let Some(coll) = exc_field {
+        if let Some(ptr) = coll.as_ptr() {
+            unsafe {
+                return match &(*ptr).data {
+                    ObjData::Tuple(items) => items.clone(),
+                    ObjData::List(lock) => lock.read().unwrap().to_vec(),
+                    _ => vec![],
+                };
+            }
+        }
+    }
+    vec![]
+}
+
+/// Derive a new group from `group` carrying `excs`, preserving the message
+/// (CPython's `derive` + metadata copy). Retains the borrowed children.
+fn eg_derive(group: MbValue, excs: Vec<MbValue>) -> MbValue {
+    for e in &excs {
+        unsafe { super::rc::retain_if_ptr(*e); }
+    }
+    mb_exception_group_new(
+        MbValue::from_ptr(MbObject::new_str(eg_message(group))),
+        MbValue::from_ptr(MbObject::new_list_borrowed(excs)),
+    )
+}
+
+/// Recursive `split` per PEP 654. Returns `(matched, rest)` where each side is a
+/// derived ExceptionGroup or `MbValue::none()`. If the group itself matches the
+/// condition, the whole group passes through by identity (matched=group).
+fn eg_split_rec(group: MbValue, cond: &EgCondition) -> (MbValue, MbValue) {
+    // Whole-group match short-circuit → identity passthrough.
+    // The matched side is handed back to the caller as an owned value (split
+    // returns it in the tuple; subgroup returns it directly), so retain the
+    // group before passing it through by identity — mirroring class.rs's
+    // __enter__ which retains the receiver before returning it.
+    if eg_condition_matches(group, cond) {
+        unsafe { super::rc::retain_if_ptr(group); }
+        return (group, MbValue::none());
+    }
+    let mut matched = Vec::new();
+    let mut rest = Vec::new();
+    for exc in eg_child_exceptions(group) {
+        if is_exception_group_value(exc) {
+            let (m, r) = eg_split_rec(exc, cond);
+            if !m.is_none() {
+                matched.push(m);
+            }
+            if !r.is_none() {
+                rest.push(r);
+            }
+        } else if eg_condition_matches(exc, cond) {
+            unsafe { super::rc::retain_if_ptr(exc); }
+            matched.push(exc);
+        } else {
+            unsafe { super::rc::retain_if_ptr(exc); }
+            rest.push(exc);
+        }
+    }
+    let matched_group = if matched.is_empty() {
+        MbValue::none()
+    } else {
+        eg_derive(group, matched)
+    };
+    let rest_group = if rest.is_empty() {
+        MbValue::none()
+    } else {
+        eg_derive(group, rest)
+    };
+    (matched_group, rest_group)
+}
+
+/// `ExceptionGroup.split(condition)` → `(match, rest)` tuple (PEP 654).
+/// `condition` is an exception type, a tuple of exception types, or a callable.
+/// Raises TypeError on a bad condition.
+pub fn mb_exception_group_split(group: MbValue, condition: MbValue) -> MbValue {
+    let cond = match parse_eg_condition(condition) {
+        Ok(c) => c,
+        Err(()) => return MbValue::none(),
+    };
+    let (matched, rest) = eg_split_rec(group, &cond);
+    MbValue::from_ptr(MbObject::new_tuple(vec![matched, rest]))
+}
+
+/// `ExceptionGroup.subgroup(condition)` → matched group or None (PEP 654).
+/// Equivalent to `split(condition)[0]`.
+pub fn mb_exception_group_subgroup(group: MbValue, condition: MbValue) -> MbValue {
+    let cond = match parse_eg_condition(condition) {
+        Ok(c) => c,
+        Err(()) => return MbValue::none(),
+    };
+    let (matched, _rest) = eg_split_rec(group, &cond);
+    matched
 }
 
 /// Access the sub-exceptions of an ExceptionGroup as a tuple.
@@ -1296,42 +1459,21 @@ mod tests {
     #[test]
     fn test_py312_exception_types_exist() {
         let types = [
-            "OverflowError",
-            "ZeroDivisionError",
-            "FloatingPointError",
-            "IndexError",
-            "KeyError",
-            "UnicodeDecodeError",
-            "UnicodeEncodeError",
-            "UnicodeTranslateError",
-            "FileNotFoundError",
-            "PermissionError",
-            "IsADirectoryError",
-            "NotADirectoryError",
-            "FileExistsError",
-            "TimeoutError",
-            "BlockingIOError",
-            "ChildProcessError",
-            "BrokenPipeError",
-            "ConnectionAbortedError",
-            "ConnectionRefusedError",
-            "ConnectionResetError",
-            "RecursionError",
-            "NotImplementedError",
-            "IndentationError",
-            "TabError",
-            "UnboundLocalError",
-            "ModuleNotFoundError",
-            "StopAsyncIteration",
-            "SystemError",
-            "DeprecationWarning",
-            "RuntimeWarning",
-            "SyntaxWarning",
-            "UnicodeWarning",
-            "BytesWarning",
-            "ResourceWarning",
-            "FutureWarning",
-            "PendingDeprecationWarning",
+            "OverflowError", "ZeroDivisionError", "FloatingPointError",
+            "IndexError", "KeyError",
+            "UnicodeDecodeError", "UnicodeEncodeError", "UnicodeTranslateError",
+            "FileNotFoundError", "PermissionError", "IsADirectoryError",
+            "NotADirectoryError", "FileExistsError", "TimeoutError",
+            "BlockingIOError", "ChildProcessError",
+            "BrokenPipeError", "ConnectionAbortedError",
+            "ConnectionRefusedError", "ConnectionResetError",
+            "RecursionError", "NotImplementedError",
+            "IndentationError", "TabError",
+            "UnboundLocalError", "ModuleNotFoundError",
+            "StopAsyncIteration", "SystemError",
+            "DeprecationWarning", "RuntimeWarning", "SyntaxWarning",
+            "UnicodeWarning", "BytesWarning", "ResourceWarning",
+            "FutureWarning", "PendingDeprecationWarning",
             "UserWarning",
         ];
         for t in types {
@@ -1390,19 +1532,13 @@ mod tests {
 
         let sup_attr = MbValue::from_ptr(MbObject::new_str("__suppress_context__".into()));
         let sup_val = crate::runtime::class::mb_getattr(exc, sup_attr);
-        assert_eq!(
-            sup_val.as_bool(),
-            Some(true),
-            "__suppress_context__ should be true for `raise X from None`"
-        );
+        assert_eq!(sup_val.as_bool(), Some(true),
+            "__suppress_context__ should be true for `raise X from None`");
 
         // __cause__ should be None
         let cause_attr = MbValue::from_ptr(MbObject::new_str("__cause__".into()));
         let cause_val = crate::runtime::class::mb_getattr(exc, cause_attr);
-        assert!(
-            cause_val.is_none(),
-            "__cause__ should be None for `raise X from None`"
-        );
+        assert!(cause_val.is_none(), "__cause__ should be None for `raise X from None`");
         mb_clear_exception();
     }
 
@@ -1441,11 +1577,8 @@ mod tests {
 
         cleanup_all_exceptions();
 
-        assert_eq!(
-            mb_has_exception().as_bool(),
-            Some(false),
-            "CURRENT_EXCEPTION should be None after cleanup"
-        );
+        assert_eq!(mb_has_exception().as_bool(), Some(false),
+            "CURRENT_EXCEPTION should be None after cleanup");
     }
 
     #[test]
@@ -1481,34 +1614,19 @@ mod tests {
 
     #[test]
     fn test_py312_warning_hierarchy() {
-        for w in [
-            "DeprecationWarning",
-            "RuntimeWarning",
-            "UserWarning",
-            "SyntaxWarning",
-            "FutureWarning",
-            "PendingDeprecationWarning",
-            "UnicodeWarning",
-            "BytesWarning",
-            "ResourceWarning",
-        ] {
+        for w in ["DeprecationWarning", "RuntimeWarning", "UserWarning",
+                  "SyntaxWarning", "FutureWarning", "PendingDeprecationWarning",
+                  "UnicodeWarning", "BytesWarning", "ResourceWarning"] {
             assert!(is_subclass_of(w, "Warning"), "{w} should be Warning");
             assert!(is_subclass_of(w, "Exception"), "{w} should be Exception");
-            assert!(
-                is_subclass_of(w, "BaseException"),
-                "{w} should be BaseException"
-            );
+            assert!(is_subclass_of(w, "BaseException"), "{w} should be BaseException");
         }
     }
 
     #[test]
     fn test_py312_connection_error_subtypes() {
-        for e in [
-            "BrokenPipeError",
-            "ConnectionAbortedError",
-            "ConnectionRefusedError",
-            "ConnectionResetError",
-        ] {
+        for e in ["BrokenPipeError", "ConnectionAbortedError",
+                  "ConnectionRefusedError", "ConnectionResetError"] {
             assert!(is_subclass_of(e, "ConnectionError"));
             assert!(is_subclass_of(e, "OSError"));
         }
@@ -1533,73 +1651,39 @@ mod tests {
     fn test_register_builtin_exceptions_populates_registry() {
         register_builtin_exceptions();
         // After registration, check_class_hierarchy should resolve MRO chains
-        assert!(
-            crate::runtime::class::check_class_hierarchy("Exception", "BaseException"),
-            "Exception should be subclass of BaseException via registry"
-        );
-        assert!(
-            crate::runtime::class::check_class_hierarchy("ValueError", "Exception"),
-            "ValueError should be subclass of Exception via registry"
-        );
-        assert!(
-            crate::runtime::class::check_class_hierarchy("TypeError", "Exception"),
-            "TypeError should be subclass of Exception via registry"
-        );
-        assert!(
-            crate::runtime::class::check_class_hierarchy("ZeroDivisionError", "ArithmeticError"),
-            "ZeroDivisionError should be subclass of ArithmeticError via registry"
-        );
-        assert!(
-            crate::runtime::class::check_class_hierarchy("IndexError", "LookupError"),
-            "IndexError should be subclass of LookupError via registry"
-        );
-        assert!(
-            crate::runtime::class::check_class_hierarchy("KeyError", "LookupError"),
-            "KeyError should be subclass of LookupError via registry"
-        );
-        assert!(
-            crate::runtime::class::check_class_hierarchy("FileNotFoundError", "OSError"),
-            "FileNotFoundError should be subclass of OSError via registry"
-        );
+        assert!(crate::runtime::class::check_class_hierarchy("Exception", "BaseException"),
+            "Exception should be subclass of BaseException via registry");
+        assert!(crate::runtime::class::check_class_hierarchy("ValueError", "Exception"),
+            "ValueError should be subclass of Exception via registry");
+        assert!(crate::runtime::class::check_class_hierarchy("TypeError", "Exception"),
+            "TypeError should be subclass of Exception via registry");
+        assert!(crate::runtime::class::check_class_hierarchy("ZeroDivisionError", "ArithmeticError"),
+            "ZeroDivisionError should be subclass of ArithmeticError via registry");
+        assert!(crate::runtime::class::check_class_hierarchy("IndexError", "LookupError"),
+            "IndexError should be subclass of LookupError via registry");
+        assert!(crate::runtime::class::check_class_hierarchy("KeyError", "LookupError"),
+            "KeyError should be subclass of LookupError via registry");
+        assert!(crate::runtime::class::check_class_hierarchy("FileNotFoundError", "OSError"),
+            "FileNotFoundError should be subclass of OSError via registry");
     }
 
     #[test]
     fn test_register_builtin_exceptions_base_exception_children() {
         register_builtin_exceptions();
-        assert!(crate::runtime::class::check_class_hierarchy(
-            "SystemExit",
-            "BaseException"
-        ));
-        assert!(crate::runtime::class::check_class_hierarchy(
-            "KeyboardInterrupt",
-            "BaseException"
-        ));
-        assert!(crate::runtime::class::check_class_hierarchy(
-            "GeneratorExit",
-            "BaseException"
-        ));
+        assert!(crate::runtime::class::check_class_hierarchy("SystemExit", "BaseException"));
+        assert!(crate::runtime::class::check_class_hierarchy("KeyboardInterrupt", "BaseException"));
+        assert!(crate::runtime::class::check_class_hierarchy("GeneratorExit", "BaseException"));
         // These should NOT be subclasses of Exception
-        assert!(!crate::runtime::class::check_class_hierarchy(
-            "SystemExit",
-            "Exception"
-        ));
-        assert!(!crate::runtime::class::check_class_hierarchy(
-            "KeyboardInterrupt",
-            "Exception"
-        ));
-        assert!(!crate::runtime::class::check_class_hierarchy(
-            "GeneratorExit",
-            "Exception"
-        ));
+        assert!(!crate::runtime::class::check_class_hierarchy("SystemExit", "Exception"));
+        assert!(!crate::runtime::class::check_class_hierarchy("KeyboardInterrupt", "Exception"));
+        assert!(!crate::runtime::class::check_class_hierarchy("GeneratorExit", "Exception"));
     }
 
     #[test]
     fn test_register_builtin_exceptions_exception_group() {
         register_builtin_exceptions();
-        assert!(
-            crate::runtime::class::check_class_hierarchy("ExceptionGroup", "Exception"),
-            "ExceptionGroup should inherit from Exception via registry"
-        );
+        assert!(crate::runtime::class::check_class_hierarchy("ExceptionGroup", "Exception"),
+            "ExceptionGroup should inherit from Exception via registry");
     }
 
     // ── R2: mb_exception_new_with_args preserves constructor arguments ──
@@ -1607,9 +1691,9 @@ mod tests {
     #[test]
     fn test_exception_new_with_args_single_arg() {
         let typ = MbValue::from_ptr(MbObject::new_str("ValueError".into()));
-        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_ptr(
-            MbObject::new_str("bad input".into()),
-        )]));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![
+            MbValue::from_ptr(MbObject::new_str("bad input".into())),
+        ]));
         let exc = mb_exception_new_with_args(typ, args);
         assert!(exc.is_ptr());
         assert_eq!(get_exception_type(exc).unwrap(), "ValueError");
@@ -1653,55 +1737,40 @@ mod tests {
         register_builtin_exceptions();
         let exc = mb_value_error("test");
         let exc_type = MbValue::from_ptr(MbObject::new_str("Exception".into()));
-        assert_eq!(
-            mb_exception_matches(exc, exc_type).as_bool(),
-            Some(true),
-            "ValueError should match Exception (parent class)"
-        );
+        assert_eq!(mb_exception_matches(exc, exc_type).as_bool(), Some(true),
+            "ValueError should match Exception (parent class)");
     }
 
     #[test]
     fn test_exception_matches_specific_mismatch() {
         let exc = mb_value_error("test");
         let te = MbValue::from_ptr(MbObject::new_str("TypeError".into()));
-        assert_eq!(
-            mb_exception_matches(exc, te).as_bool(),
-            Some(false),
-            "ValueError should NOT match TypeError"
-        );
+        assert_eq!(mb_exception_matches(exc, te).as_bool(), Some(false),
+            "ValueError should NOT match TypeError");
     }
 
     #[test]
     fn test_exception_matches_exact_type() {
         let exc = mb_value_error("test");
         let ve = MbValue::from_ptr(MbObject::new_str("ValueError".into()));
-        assert_eq!(
-            mb_exception_matches(exc, ve).as_bool(),
-            Some(true),
-            "ValueError should match ValueError exactly"
-        );
+        assert_eq!(mb_exception_matches(exc, ve).as_bool(), Some(true),
+            "ValueError should match ValueError exactly");
     }
 
     #[test]
     fn test_exception_matches_zero_division_to_arithmetic() {
         let exc = mb_zero_division_error();
         let arith = MbValue::from_ptr(MbObject::new_str("ArithmeticError".into()));
-        assert_eq!(
-            mb_exception_matches(exc, arith).as_bool(),
-            Some(true),
-            "ZeroDivisionError should match ArithmeticError (parent)"
-        );
+        assert_eq!(mb_exception_matches(exc, arith).as_bool(), Some(true),
+            "ZeroDivisionError should match ArithmeticError (parent)");
     }
 
     #[test]
     fn test_exception_matches_index_to_lookup() {
         let exc = mb_index_error("oob");
         let lookup = MbValue::from_ptr(MbObject::new_str("LookupError".into()));
-        assert_eq!(
-            mb_exception_matches(exc, lookup).as_bool(),
-            Some(true),
-            "IndexError should match LookupError (parent)"
-        );
+        assert_eq!(mb_exception_matches(exc, lookup).as_bool(), Some(true),
+            "IndexError should match LookupError (parent)");
     }
 
     // ── R4: mb_get_exception — non-destructive retrieval ──
@@ -1716,19 +1785,13 @@ mod tests {
 
         // mb_get_exception should return the exception without clearing it
         let exc = mb_get_exception();
-        assert!(
-            !exc.is_none(),
-            "mb_get_exception should return the pending exception"
-        );
+        assert!(!exc.is_none(), "mb_get_exception should return the pending exception");
         assert_eq!(get_exception_type(exc).unwrap(), "ValueError");
         assert_eq!(get_exception_message(exc).unwrap(), "pending");
 
         // Exception should STILL be pending (non-destructive)
-        assert_eq!(
-            mb_has_exception().as_bool(),
-            Some(true),
-            "Exception should still be pending after mb_get_exception"
-        );
+        assert_eq!(mb_has_exception().as_bool(), Some(true),
+            "Exception should still be pending after mb_get_exception");
 
         mb_clear_exception();
     }
@@ -1737,10 +1800,8 @@ mod tests {
     fn test_get_exception_returns_none_when_no_exception() {
         mb_clear_exception();
         let exc = mb_get_exception();
-        assert!(
-            exc.is_none(),
-            "mb_get_exception should return None when no exception is pending"
-        );
+        assert!(exc.is_none(),
+            "mb_get_exception should return None when no exception is pending");
     }
 
     #[test]
@@ -1757,10 +1818,7 @@ mod tests {
         // __cause__ should be preserved
         let cause_attr = MbValue::from_ptr(MbObject::new_str("__cause__".into()));
         let cause_val = crate::runtime::class::mb_getattr(exc, cause_attr);
-        assert!(
-            !cause_val.is_none(),
-            "__cause__ should be preserved in get_exception"
-        );
+        assert!(!cause_val.is_none(), "__cause__ should be preserved in get_exception");
         assert_eq!(get_exception_type(cause_val).unwrap(), "TypeError");
 
         mb_clear_exception();
@@ -1823,11 +1881,8 @@ mod tests {
         // __suppress_context__ should be true (raise from always suppresses)
         let sup_attr = MbValue::from_ptr(MbObject::new_str("__suppress_context__".into()));
         let sup_val = crate::runtime::class::mb_getattr(exc, sup_attr);
-        assert_eq!(
-            sup_val.as_bool(),
-            Some(true),
-            "__suppress_context__ should be true for raise-from"
-        );
+        assert_eq!(sup_val.as_bool(), Some(true),
+            "__suppress_context__ should be true for raise-from");
     }
 
     #[test]
@@ -1844,10 +1899,7 @@ mod tests {
         // __cause__ should be None
         let cause_attr = MbValue::from_ptr(MbObject::new_str("__cause__".into()));
         let cause_val = crate::runtime::class::mb_getattr(exc, cause_attr);
-        assert!(
-            cause_val.is_none(),
-            "__cause__ should be None when cause is None"
-        );
+        assert!(cause_val.is_none(), "__cause__ should be None when cause is None");
 
         // __context__ should still be set
         let ctx_attr = MbValue::from_ptr(MbObject::new_str("__context__".into()));
@@ -2011,10 +2063,8 @@ mod tests {
 
         let predicate = MbValue::from_ptr(MbObject::new_str("ValueError".into()));
         let subgroup = mb_exception_group_subgroup(group, predicate);
-        assert!(
-            subgroup.is_none(),
-            "subgroup should be None when no exceptions match"
-        );
+        assert!(subgroup.is_none(),
+            "subgroup should be None when no exceptions match");
     }
 
     #[test]
@@ -2026,10 +2076,7 @@ mod tests {
         let group = mb_exception_group_new(msg, exceptions);
 
         let excs = mb_exception_group_exceptions(group);
-        assert!(
-            !excs.is_none(),
-            "exceptions() should return the sub-exceptions"
-        );
+        assert!(!excs.is_none(), "exceptions() should return the sub-exceptions");
         unsafe {
             if let Some(ptr) = excs.as_ptr() {
                 if let ObjData::Tuple(ref items) = (*ptr).data {
@@ -2048,10 +2095,8 @@ mod tests {
         let exc = mb_value_error("not a group");
         let result = mb_exception_group_exceptions(exc);
         // A regular exception has no "exceptions" field → returns None
-        assert!(
-            result.is_none(),
-            "exceptions() on a non-group should return None"
-        );
+        assert!(result.is_none(),
+            "exceptions() on a non-group should return None");
     }
 
     // ── R6: except* syntax — mb_except_star ──
@@ -2133,16 +2178,10 @@ mod tests {
         mb_raise(typ, msg);
 
         let exc = mb_catch_exception();
-        assert_eq!(
-            get_exception_type(exc).unwrap(),
-            "ValueError",
-            "Exception instance should have class=ValueError"
-        );
-        assert_eq!(
-            get_exception_message(exc).unwrap(),
-            "bad input",
-            "Exception instance should have message='bad input'"
-        );
+        assert_eq!(get_exception_type(exc).unwrap(), "ValueError",
+            "Exception instance should have class=ValueError");
+        assert_eq!(get_exception_message(exc).unwrap(), "bad input",
+            "Exception instance should have message='bad input'");
     }
 
     // ── Acceptance Scenario: Except matching via inheritance ──
@@ -2151,11 +2190,8 @@ mod tests {
     fn test_scenario_except_catches_value_error_via_inheritance() {
         let exc = mb_value_error("test");
         let exc_type = MbValue::from_ptr(MbObject::new_str("Exception".into()));
-        assert_eq!(
-            mb_exception_matches(exc, exc_type).as_bool(),
-            Some(true),
-            "try/except Exception should catch ValueError via inheritance"
-        );
+        assert_eq!(mb_exception_matches(exc, exc_type).as_bool(), Some(true),
+            "try/except Exception should catch ValueError via inheritance");
     }
 
     // ── Acceptance Scenario: Except specific mismatch ──
@@ -2164,11 +2200,8 @@ mod tests {
     fn test_scenario_except_type_error_does_not_catch_value_error() {
         let exc = mb_value_error("test");
         let te = MbValue::from_ptr(MbObject::new_str("TypeError".into()));
-        assert_eq!(
-            mb_exception_matches(exc, te).as_bool(),
-            Some(false),
-            "try/except TypeError should NOT catch ValueError"
-        );
+        assert_eq!(mb_exception_matches(exc, te).as_bool(), Some(false),
+            "try/except TypeError should NOT catch ValueError");
     }
 
     // ── Acceptance Scenario: except* catches matching exceptions ──
@@ -2191,10 +2224,8 @@ mod tests {
                 let rest = items[1];
 
                 // Handler catches ValueError
-                assert!(
-                    !matched.is_none(),
-                    "except* ValueError should catch ValueError from group"
-                );
+                assert!(!matched.is_none(),
+                    "except* ValueError should catch ValueError from group");
                 let matched_excs = mb_exception_group_exceptions(matched);
                 if let Some(mptr) = matched_excs.as_ptr() {
                     if let ObjData::Tuple(ref mitems) = (*mptr).data {
@@ -2204,10 +2235,8 @@ mod tests {
                 }
 
                 // Remaining TypeError propagates
-                assert!(
-                    !rest.is_none(),
-                    "TypeError should remain/propagate after except* ValueError"
-                );
+                assert!(!rest.is_none(),
+                    "TypeError should remain/propagate after except* ValueError");
                 let rest_excs = mb_exception_group_exceptions(rest);
                 if let Some(rptr) = rest_excs.as_ptr() {
                     if let ObjData::Tuple(ref ritems) = (*rptr).data {
@@ -2233,14 +2262,8 @@ mod tests {
         unsafe {
             let ptr = result.as_ptr().unwrap();
             if let ObjData::Tuple(ref items) = (*ptr).data {
-                assert!(
-                    items[0].is_none(),
-                    "matched must be None when no exceptions match"
-                );
-                assert!(
-                    !items[1].is_none(),
-                    "rest must contain all original exceptions"
-                );
+                assert!(items[0].is_none(), "matched must be None when no exceptions match");
+                assert!(!items[1].is_none(), "rest must contain all original exceptions");
             }
         }
     }
@@ -2251,10 +2274,7 @@ mod tests {
     fn test_name_error_constructor() {
         let exc = mb_name_error("name 'x' is not defined");
         assert_eq!(get_exception_type(exc).unwrap(), "NameError");
-        assert_eq!(
-            get_exception_message(exc).unwrap(),
-            "name 'x' is not defined"
-        );
+        assert_eq!(get_exception_message(exc).unwrap(), "name 'x' is not defined");
     }
 
     // ── set_current_exception / clear_current_exception (public API) ──

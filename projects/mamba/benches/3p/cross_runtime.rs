@@ -98,7 +98,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant};
 
-use qc::performance::profiler::{MemorySnapshot, PhaseBreakdown, PhaseTiming, ProfilePhase};
+use qc::performance::profiler::{
+    MemorySnapshot, PhaseBreakdown, PhaseTiming, ProfilePhase,
+};
 
 const FLOOR: f64 = 1.0;
 
@@ -121,64 +123,79 @@ fn parse_args() -> Args {
         match arg.as_str() {
             "--fixture" => fixture_filter = it.next(),
             "--iters" => {
-                iters = it.next().and_then(|s| s.parse().ok()).unwrap_or_else(|| {
-                    eprintln!("--iters requires a positive integer");
-                    std::process::exit(2);
-                });
+                iters = it
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| {
+                        eprintln!("--iters requires a positive integer");
+                        std::process::exit(2);
+                    });
             }
             // cargo bench passes through args we don't recognise — ignore.
             _ => {}
         }
     }
-    Args {
-        fixture_filter,
-        iters,
-    }
+    Args { fixture_filter, iters }
 }
 
 fn fixtures_root() -> PathBuf {
+    // Dimension-first layout (STRUCTURE.md): fixtures live under tests/cpython,
+    // NOT the old tests/fixtures/conformance. Bench scenarios are any `*.py`
+    // inside a `bench/` dir at ANY depth (core/bench, pep/<lib>/bench,
+    // std-libs/<lib>/bench, 3rd-libs/<lib>/bench, …), so we walk recursively.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
-        .join("conformance")
+        .join("cpython")
 }
 
 fn discover(root: &Path) -> Vec<Fixture> {
     let mut out = Vec::new();
-    for bucket in ["stdlib", "3p"] {
-        let bucket_dir = root.join(bucket);
-        let Ok(libs) = std::fs::read_dir(&bucket_dir) else {
+    collect_bench(root, &mut out);
+    out.sort_by(|a, b| (&a.lib, &a.scenario).cmp(&(&b.lib, &b.scenario)));
+    out
+}
+
+/// Recursively collect every `*.py` inside a `bench/` directory. The fixture's
+/// `lib` label is the name of the dir that CONTAINS `bench/` (so core/bench ->
+/// "core", std-libs/abc/bench -> "abc", pep/fstrings/bench -> "fstrings").
+fn collect_bench(dir: &Path, out: &mut Vec<Fixture>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_dir() {
             continue;
-        };
-        for lib_entry in libs.flatten() {
-            let lib_name = match lib_entry.file_name().to_str() {
-                Some(s) => s.to_string(),
-                None => continue,
-            };
-            let bench_dir = lib_entry.path().join("bench");
-            let Ok(scripts) = std::fs::read_dir(&bench_dir) else {
+        }
+        if p.file_name().and_then(|s| s.to_str()) == Some("bench") {
+            let lib = dir
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let Ok(scripts) = std::fs::read_dir(&p) else {
                 continue;
             };
             for script_entry in scripts.flatten() {
-                let p = script_entry.path();
-                if p.extension().and_then(|s| s.to_str()) != Some("py") {
+                let sp = script_entry.path();
+                if sp.extension().and_then(|s| s.to_str()) != Some("py") {
                     continue;
                 }
-                let scenario = p
+                let scenario = sp
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("unknown")
                     .to_string();
                 out.push(Fixture {
-                    lib: lib_name.clone(),
+                    lib: lib.clone(),
                     scenario,
-                    path: p,
+                    path: sp,
                 });
             }
+        } else {
+            collect_bench(&p, out);
         }
     }
-    out.sort_by(|a, b| (&a.lib, &a.scenario).cmp(&(&b.lib, &b.scenario)));
-    out
 }
 
 fn python3_available() -> bool {
@@ -324,37 +341,25 @@ fn time_one(cmd: &Path, args: &[&str], phase: &mut PhaseTiming) -> (Sample, bool
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr).to_string();
             let stdout = String::from_utf8_lossy(&o.stdout).to_string();
-            let rss = if wrapped {
-                parse_peak_rss(&stderr)
-            } else {
-                None
-            };
+            let rss = if wrapped { parse_peak_rss(&stderr) } else { None };
             // INTERNAL_TIME_NS is emitted by the fixture itself (independent
             // of the `time` wrapper). Mamba currently routes `print(...,
             // file=sys.stderr)` to stdout — until that runtime gap closes,
             // accept the marker on either stream so the same fixture file
             // works under both runtimes unchanged.
-            let internal_ns =
-                parse_internal_time_ns(&stderr).or_else(|| parse_internal_time_ns(&stdout));
+            let internal_ns = parse_internal_time_ns(&stderr)
+                .or_else(|| parse_internal_time_ns(&stdout));
             // Note: when wrapped, the child's stderr is interleaved with
             // `time`'s memory report. The exit status is the child's
             // (preserved by `time`), so success-checking is unchanged.
             (
-                Sample {
-                    wall: elapsed,
-                    rss_bytes: rss,
-                    internal_ns,
-                },
+                Sample { wall: elapsed, rss_bytes: rss, internal_ns },
                 o.status.success(),
                 stderr,
             )
         }
         Err(e) => (
-            Sample {
-                wall: elapsed,
-                rss_bytes: None,
-                internal_ns: None,
-            },
+            Sample { wall: elapsed, rss_bytes: None, internal_ns: None },
             false,
             format!("spawn error: {e}"),
         ),
@@ -403,17 +408,11 @@ fn warmup_probe(
 ) -> Result<String, String> {
     let (py_out, py_ok, py_err) = run_once_capture(python, py_args);
     if !py_ok {
-        return Err(format!(
-            "cpython warmup failed: {}",
-            py_err.lines().take(3).collect::<Vec<_>>().join(" | ")
-        ));
+        return Err(format!("cpython warmup failed: {}", py_err.lines().take(3).collect::<Vec<_>>().join(" | ")));
     }
     let (mb_out, mb_ok, mb_err) = run_once_capture(mamba, mb_args);
     if !mb_ok {
-        return Err(format!(
-            "mamba warmup failed: {}",
-            mb_err.lines().take(3).collect::<Vec<_>>().join(" | ")
-        ));
+        return Err(format!("mamba warmup failed: {}", mb_err.lines().take(3).collect::<Vec<_>>().join(" | ")));
     }
     // Strip the internal-time marker line before comparing. The integer
     // ns value will always differ between runtimes (and between
@@ -446,16 +445,15 @@ fn warmup_probe(
 /// the accumulator typed as `PhaseTiming` means a future patch can
 /// split mamba compile-vs-run without changing the bench loop shape.
 fn summarise_phase(phase: PhaseTiming) -> PhaseBreakdown {
-    let mut times: std::collections::HashMap<String, Vec<u64>> = std::collections::HashMap::new();
+    let mut times: std::collections::HashMap<String, Vec<u64>> =
+        std::collections::HashMap::new();
     // We only retain min/max/avg in PhaseTiming itself; replay a synthetic
     // sample vector here so PhaseBreakdown::from_times can render a row.
     // The recorded count + total are the source of truth and remain accurate;
     // per-iter detail is intentionally collapsed to keep harness state lean.
     let total = phase.total_ns;
     let count = phase.count;
-    let synthetic: Vec<u64> = (0..count)
-        .map(|_| if count == 0 { 0 } else { total / count })
-        .collect();
+    let synthetic: Vec<u64> = (0..count).map(|_| if count == 0 { 0 } else { total / count }).collect();
     times.insert(ProfilePhase::Total.to_string(), synthetic);
     PhaseBreakdown::from_times(times, count, total)
 }
@@ -495,11 +493,7 @@ fn best_of(
             best_internal = Some(best_internal.map_or(int_ns, |cur| cur.min(int_ns)));
         }
     }
-    Ok(Sample {
-        wall: best_wall,
-        rss_bytes: best_rss,
-        internal_ns: best_internal,
-    })
+    Ok(Sample { wall: best_wall, rss_bytes: best_rss, internal_ns: best_internal })
 }
 
 fn main() -> ExitCode {
@@ -524,9 +518,9 @@ fn main() -> ExitCode {
     let fixtures: Vec<_> = fixtures
         .into_iter()
         .filter(|f| {
-            args.fixture_filter.as_deref().map_or(true, |needle| {
-                f.scenario.contains(needle) || f.lib.contains(needle)
-            })
+            args.fixture_filter
+                .as_deref()
+                .map_or(true, |needle| f.scenario.contains(needle) || f.lib.contains(needle))
         })
         .collect();
 

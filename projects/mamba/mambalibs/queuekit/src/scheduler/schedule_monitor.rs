@@ -72,7 +72,10 @@ impl TaskSchedule {
     /// Create a cron-based schedule from a cron expression string.
     pub fn cron(expression: &str) -> Result<Self, TaskError> {
         let parsed = Schedule::from_str(expression).map_err(|e| {
-            TaskError::Configuration(format!("Invalid cron expression '{}': {}", expression, e))
+            TaskError::Configuration(format!(
+                "Invalid cron expression '{}': {}",
+                expression, e
+            ))
         })?;
         Ok(Self::Cron {
             expression: expression.to_string(),
@@ -144,7 +147,8 @@ static MONITOR_METRICS: Lazy<MonitorMetrics> = Lazy::new(|| {
     )
     .expect("scheduler_task_latency_seconds HistogramVec");
 
-    prometheus::register(Box::new(fire_total.clone())).expect("register scheduler_task_fire_total");
+    prometheus::register(Box::new(fire_total.clone()))
+        .expect("register scheduler_task_fire_total");
     prometheus::register(Box::new(latency_seconds.clone()))
         .expect("register scheduler_task_latency_seconds");
 
@@ -297,11 +301,10 @@ impl ScheduleMonitor {
 
         // Compute latency and classify
         let (status, latency_secs) = if let Some(expected_at) = entry.expected_at {
-            let latency = (actual_at - expected_at).to_std().unwrap_or(Duration::ZERO);
-            (
-                Self::classify_fire(latency, entry.leeway),
-                latency.as_secs_f64(),
-            )
+            let latency = (actual_at - expected_at)
+                .to_std()
+                .unwrap_or(Duration::ZERO);
+            (Self::classify_fire(latency, entry.leeway), latency.as_secs_f64())
         } else {
             // No expected_at yet — first fire, treat as on_time.
             (FireStatus::OnTime, 0.0)
@@ -400,7 +403,9 @@ impl ScheduleMonitor {
                 };
 
                 let leeway_chrono = chrono::Duration::from_std(entry.leeway)
-                    .unwrap_or_else(|_| chrono::Duration::seconds(entry.leeway.as_secs() as i64));
+                    .unwrap_or_else(|_| {
+                        chrono::Duration::seconds(entry.leeway.as_secs() as i64)
+                    });
                 let deadline = expected_at + leeway_chrono;
 
                 if now <= deadline {
@@ -440,7 +445,8 @@ impl ScheduleMonitor {
                 out.push((name.clone(), expected_at, webhook_url));
 
                 // Advance expected_at to next scheduled time
-                entry.expected_at = Self::compute_next_expected(&entry.schedule, expected_at);
+                entry.expected_at =
+                    Self::compute_next_expected(&entry.schedule, expected_at);
             }
 
             out
@@ -466,7 +472,11 @@ impl ScheduleMonitor {
     // -- Internal: webhook --------------------------------------------------
 
     /// POST JSON payload to webhook URL.  Logs errors at `warn` level.
-    async fn send_webhook(client: &reqwest::Client, url: &str, payload: &WebhookPayload) {
+    async fn send_webhook(
+        client: &reqwest::Client,
+        url: &str,
+        payload: &WebhookPayload,
+    ) {
         match client.post(url).json(payload).send().await {
             Ok(resp) if resp.status().is_success() => {
                 tracing::debug!(
@@ -753,10 +763,7 @@ mod tests {
 
         // expected_at should be set to a future time
         let expected = get_expected_at(&monitor, "daily-cleanup");
-        assert!(
-            expected.is_some(),
-            "expected_at should be set after registration"
-        );
+        assert!(expected.is_some(), "expected_at should be set after registration");
         assert!(
             expected.unwrap() > Utc::now(),
             "expected_at should be in the future"
@@ -841,7 +848,12 @@ mod tests {
         // Interval schedule, 3600s, leeway = 60s
         let schedule = TaskSchedule::interval(Duration::from_secs(3600));
         monitor
-            .register_task("hourly-sync", schedule, Some(Duration::from_secs(60)), None)
+            .register_task(
+                "hourly-sync",
+                schedule,
+                Some(Duration::from_secs(60)),
+                None,
+            )
             .unwrap();
 
         let expected = Utc.with_ymd_and_hms(2026, 3, 28, 10, 0, 0).unwrap();
@@ -858,7 +870,12 @@ mod tests {
         let monitor = default_monitor();
         let schedule = TaskSchedule::interval(Duration::from_secs(3600));
         monitor
-            .register_task("hourly-sync", schedule, Some(Duration::from_secs(60)), None)
+            .register_task(
+                "hourly-sync",
+                schedule,
+                Some(Duration::from_secs(60)),
+                None,
+            )
             .unwrap();
 
         let expected = Utc.with_ymd_and_hms(2026, 3, 28, 10, 0, 0).unwrap();
@@ -925,17 +942,15 @@ mod tests {
         {
             let mut tasks = monitor.tasks.write().unwrap();
             let entry = tasks.get_mut("hourly-task").unwrap();
-            entry.last_actual_at = Some(Utc.with_ymd_and_hms(2026, 3, 28, 10, 0, 5).unwrap());
+            entry.last_actual_at =
+                Some(Utc.with_ymd_and_hms(2026, 3, 28, 10, 0, 5).unwrap());
         }
 
         // check_missed should NOT advance expected_at (trigger was received)
         let before = get_expected_at(&monitor, "hourly-task");
         monitor.check_missed().await;
         let after = get_expected_at(&monitor, "hourly-task");
-        assert_eq!(
-            before, after,
-            "expected_at should not change when trigger was recorded"
-        );
+        assert_eq!(before, after, "expected_at should not change when trigger was recorded");
     }
 
     // =======================================================================
@@ -1017,11 +1032,7 @@ mod tests {
             .record_trigger("custom-leeway-task", actual)
             .unwrap();
 
-        assert_eq!(
-            r1,
-            Some(FireStatus::OnTime),
-            "30s leeway: 15s should be on_time"
-        );
+        assert_eq!(r1, Some(FireStatus::OnTime), "30s leeway: 15s should be on_time");
         assert_eq!(r2, Some(FireStatus::Late), "10s leeway: 15s should be late");
     }
 
@@ -1032,7 +1043,9 @@ mod tests {
     #[test]
     fn s7_unregistered_task_returns_none() {
         let monitor = default_monitor();
-        let result = monitor.record_trigger("unknown-task", Utc::now()).unwrap();
+        let result = monitor
+            .record_trigger("unknown-task", Utc::now())
+            .unwrap();
         assert_eq!(result, None);
     }
 
@@ -1102,7 +1115,10 @@ mod tests {
         monitor.stop();
 
         let result = tokio::time::timeout(Duration::from_secs(2), handle).await;
-        assert!(result.is_ok(), "Background task should exit after stop()");
+        assert!(
+            result.is_ok(),
+            "Background task should exit after stop()"
+        );
 
         // Drop after background task has exited — should not panic
         drop(monitor);
@@ -1326,9 +1342,6 @@ mod tests {
         let before = get_expected_at(&monitor, "future-task");
         monitor.check_missed().await;
         let after = get_expected_at(&monitor, "future-task");
-        assert_eq!(
-            before, after,
-            "Future expected_at should not be flagged as missed"
-        );
+        assert_eq!(before, after, "Future expected_at should not be flagged as missed");
     }
 }

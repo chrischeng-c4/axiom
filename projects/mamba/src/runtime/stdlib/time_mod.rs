@@ -58,13 +58,15 @@
 //! Will convert to CODEGEN once the standardize sweep grows a
 //! `stdlib_module_surface` section type with chrono primitives.
 
-use crate::runtime::rc::MbRwLock as RwLock;
-use rustc_hash::FxHashMap;
 use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use chrono::{DateTime, Datelike, Local, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{
+    DateTime, Datelike, Local, NaiveDateTime, TimeZone, Timelike, Utc,
+};
 
 use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 use super::super::value::MbValue;
@@ -110,34 +112,34 @@ macro_rules! disp_binary {
     };
 }
 
-disp_nullary!(d_time, mb_time_time);
-disp_nullary!(d_time_ns, mb_time_time_ns);
-disp_nullary!(d_monotonic, mb_time_monotonic);
-disp_nullary!(d_monotonic_ns, mb_time_monotonic_ns);
-disp_nullary!(d_perf_counter, mb_time_perf_counter);
-disp_nullary!(d_perf_counter_ns, mb_time_perf_counter_ns);
-disp_nullary!(d_process_time, mb_time_process_time);
-disp_nullary!(d_process_time_ns, mb_time_process_time_ns);
-disp_nullary!(d_thread_time, mb_time_thread_time);
-disp_nullary!(d_thread_time_ns, mb_time_thread_time_ns);
-disp_nullary!(d_tzset, mb_time_tzset);
+disp_nullary!(d_time,             mb_time_time);
+disp_nullary!(d_time_ns,          mb_time_time_ns);
+disp_nullary!(d_monotonic,        mb_time_monotonic);
+disp_nullary!(d_monotonic_ns,     mb_time_monotonic_ns);
+disp_nullary!(d_perf_counter,     mb_time_perf_counter);
+disp_nullary!(d_perf_counter_ns,  mb_time_perf_counter_ns);
+disp_nullary!(d_process_time,     mb_time_process_time);
+disp_nullary!(d_process_time_ns,  mb_time_process_time_ns);
+disp_nullary!(d_thread_time,      mb_time_thread_time);
+disp_nullary!(d_thread_time_ns,   mb_time_thread_time_ns);
+disp_nullary!(d_tzset,            mb_time_tzset);
 
-disp_unary!(d_sleep, mb_time_sleep);
-disp_unary!(d_gmtime, mb_time_gmtime);
-disp_unary!(d_localtime, mb_time_localtime);
-disp_unary!(d_mktime, mb_time_mktime);
-disp_unary!(d_ctime, mb_time_ctime);
-disp_unary!(d_asctime, mb_time_asctime);
-disp_unary!(d_clock_getres, mb_time_clock_getres);
-disp_unary!(d_clock_gettime, mb_time_clock_gettime);
-disp_unary!(d_clock_gettime_ns, mb_time_clock_gettime_ns);
-disp_unary!(d_struct_time, mb_time_struct_time);
-disp_unary!(d_get_clock_info, mb_time_get_clock_info);
+disp_unary!(d_sleep,              mb_time_sleep);
+disp_unary!(d_gmtime,             mb_time_gmtime);
+disp_unary!(d_localtime,          mb_time_localtime);
+disp_unary!(d_mktime,             mb_time_mktime);
+disp_unary!(d_ctime,              mb_time_ctime);
+disp_unary!(d_asctime,            mb_time_asctime);
+disp_unary!(d_clock_getres,       mb_time_clock_getres);
+disp_unary!(d_clock_gettime,      mb_time_clock_gettime);
+disp_unary!(d_clock_gettime_ns,   mb_time_clock_gettime_ns);
+disp_unary!(d_struct_time,        mb_time_struct_time);
+disp_unary!(d_get_clock_info,     mb_time_get_clock_info);
 
-disp_binary!(d_strftime, mb_time_strftime);
-disp_binary!(d_strptime, mb_time_strptime);
-disp_binary!(d_clock_settime, mb_time_clock_settime);
-disp_binary!(d_clock_settime_ns, mb_time_clock_settime_ns);
+disp_binary!(d_strftime,          mb_time_strftime);
+disp_binary!(d_strptime,          mb_time_strptime);
+disp_binary!(d_clock_settime,     mb_time_clock_settime);
+disp_binary!(d_clock_settime_ns,  mb_time_clock_settime_ns);
 
 // -- Clock constants (Linux numeric values for cross-host reproducibility) --
 
@@ -153,31 +155,31 @@ pub fn register() {
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("time", d_time as *const () as usize),
-        ("time_ns", d_time_ns as *const () as usize),
-        ("monotonic", d_monotonic as *const () as usize),
-        ("monotonic_ns", d_monotonic_ns as *const () as usize),
-        ("perf_counter", d_perf_counter as *const () as usize),
-        ("perf_counter_ns", d_perf_counter_ns as *const () as usize),
-        ("process_time", d_process_time as *const () as usize),
-        ("process_time_ns", d_process_time_ns as *const () as usize),
-        ("thread_time", d_thread_time as *const () as usize),
-        ("thread_time_ns", d_thread_time_ns as *const () as usize),
-        ("tzset", d_tzset as *const () as usize),
-        ("sleep", d_sleep as *const () as usize),
-        ("gmtime", d_gmtime as *const () as usize),
-        ("localtime", d_localtime as *const () as usize),
-        ("mktime", d_mktime as *const () as usize),
-        ("ctime", d_ctime as *const () as usize),
-        ("asctime", d_asctime as *const () as usize),
-        ("clock_getres", d_clock_getres as *const () as usize),
-        ("clock_gettime", d_clock_gettime as *const () as usize),
+        ("time",             d_time             as *const () as usize),
+        ("time_ns",          d_time_ns          as *const () as usize),
+        ("monotonic",        d_monotonic        as *const () as usize),
+        ("monotonic_ns",     d_monotonic_ns     as *const () as usize),
+        ("perf_counter",     d_perf_counter     as *const () as usize),
+        ("perf_counter_ns",  d_perf_counter_ns  as *const () as usize),
+        ("process_time",     d_process_time     as *const () as usize),
+        ("process_time_ns",  d_process_time_ns  as *const () as usize),
+        ("thread_time",      d_thread_time      as *const () as usize),
+        ("thread_time_ns",   d_thread_time_ns   as *const () as usize),
+        ("tzset",            d_tzset            as *const () as usize),
+        ("sleep",            d_sleep            as *const () as usize),
+        ("gmtime",           d_gmtime           as *const () as usize),
+        ("localtime",        d_localtime        as *const () as usize),
+        ("mktime",           d_mktime           as *const () as usize),
+        ("ctime",            d_ctime            as *const () as usize),
+        ("asctime",          d_asctime          as *const () as usize),
+        ("clock_getres",     d_clock_getres     as *const () as usize),
+        ("clock_gettime",    d_clock_gettime    as *const () as usize),
         ("clock_gettime_ns", d_clock_gettime_ns as *const () as usize),
-        ("struct_time", d_struct_time as *const () as usize),
-        ("get_clock_info", d_get_clock_info as *const () as usize),
-        ("strftime", d_strftime as *const () as usize),
-        ("strptime", d_strptime as *const () as usize),
-        ("clock_settime", d_clock_settime as *const () as usize),
+        ("struct_time",      d_struct_time      as *const () as usize),
+        ("get_clock_info",   d_get_clock_info   as *const () as usize),
+        ("strftime",         d_strftime         as *const () as usize),
+        ("strptime",         d_strptime         as *const () as usize),
+        ("clock_settime",    d_clock_settime    as *const () as usize),
         ("clock_settime_ns", d_clock_settime_ns as *const () as usize),
     ];
     for (name, addr) in dispatchers {
@@ -188,35 +190,21 @@ pub fn register() {
     }
 
     // Integer clock-id constants.
-    attrs.insert(
-        "CLOCK_REALTIME".to_string(),
-        MbValue::from_int(CLOCK_REALTIME),
-    );
-    attrs.insert(
-        "CLOCK_MONOTONIC".to_string(),
-        MbValue::from_int(CLOCK_MONOTONIC),
-    );
-    attrs.insert(
-        "CLOCK_PROCESS_CPUTIME_ID".to_string(),
-        MbValue::from_int(CLOCK_PROCESS_CPUTIME_ID),
-    );
-    attrs.insert(
-        "CLOCK_THREAD_CPUTIME_ID".to_string(),
-        MbValue::from_int(CLOCK_THREAD_CPUTIME_ID),
-    );
-    attrs.insert(
-        "CLOCK_MONOTONIC_RAW".to_string(),
-        MbValue::from_int(CLOCK_MONOTONIC_RAW),
-    );
-    attrs.insert(
-        "CLOCK_UPTIME_RAW".to_string(),
-        MbValue::from_int(CLOCK_UPTIME_RAW),
-    );
+    attrs.insert("CLOCK_REALTIME".to_string(), MbValue::from_int(CLOCK_REALTIME));
+    attrs.insert("CLOCK_MONOTONIC".to_string(), MbValue::from_int(CLOCK_MONOTONIC));
+    attrs.insert("CLOCK_PROCESS_CPUTIME_ID".to_string(),
+        MbValue::from_int(CLOCK_PROCESS_CPUTIME_ID));
+    attrs.insert("CLOCK_THREAD_CPUTIME_ID".to_string(),
+        MbValue::from_int(CLOCK_THREAD_CPUTIME_ID));
+    attrs.insert("CLOCK_MONOTONIC_RAW".to_string(),
+        MbValue::from_int(CLOCK_MONOTONIC_RAW));
+    attrs.insert("CLOCK_UPTIME_RAW".to_string(),
+        MbValue::from_int(CLOCK_UPTIME_RAW));
 
     // Timezone snapshot from chrono::Local.
     let (tz_off, alt_off, dst, tz0, tz1) = compute_tz_snapshot();
     attrs.insert("timezone".to_string(), MbValue::from_int(tz_off));
-    attrs.insert("altzone".to_string(), MbValue::from_int(alt_off));
+    attrs.insert("altzone".to_string(),  MbValue::from_int(alt_off));
     attrs.insert("daylight".to_string(), MbValue::from_int(dst));
     let tzname_tuple = MbObject::new_tuple(vec![
         MbValue::from_ptr(MbObject::new_str(tz0)),
@@ -229,33 +217,60 @@ pub fn register() {
 
 // -- Helpers --
 
+// Raise a catchable Python exception via the thread-local exception
+// machinery (same pattern as array_mod / codecs_mod). The returned
+// `MbValue::none()` is the dispatcher's return value; the runtime checks
+// the pending-exception flag after the call returns.
+fn raise_exc(exc_type: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc_type.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+fn raise_value_error(msg: &str) -> MbValue { raise_exc("ValueError", msg) }
+fn raise_overflow_error(msg: &str) -> MbValue { raise_exc("OverflowError", msg) }
+fn raise_os_error(msg: &str) -> MbValue { raise_exc("OSError", msg) }
+
+/// Is `clk_id` one of the clock ids `time` exposes? CPython's
+/// `clock_gettime` raises `OSError` (EINVAL) for unknown ids; mamba mirrors
+/// that for any id outside the six registered `CLOCK_*` constants.
+fn is_known_clock_id(id: i64) -> bool {
+    matches!(
+        id,
+        CLOCK_REALTIME
+            | CLOCK_MONOTONIC
+            | CLOCK_PROCESS_CPUTIME_ID
+            | CLOCK_THREAD_CPUTIME_ID
+            | CLOCK_MONOTONIC_RAW
+            | CLOCK_UPTIME_RAW
+    )
+}
+
+/// Reject timestamps that cannot fit a `time_t` (i64 seconds). CPython
+/// raises `OverflowError` rather than fabricating a garbage `struct_time`
+/// for out-of-range inputs such as `1e200`. Returns `true` when `secs` is
+/// finite and in-range (safe to convert); valid epoch values (~1e9) always
+/// pass.
+fn timestamp_in_range(secs: f64) -> bool {
+    secs.is_finite() && secs >= i64::MIN as f64 && secs <= i64::MAX as f64
+}
+
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data {
-            Some(s.clone())
-        } else {
-            None
-        }
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
     })
 }
 
 fn extract_int(val: MbValue) -> Option<i64> {
-    if let Some(i) = val.as_int() {
-        return Some(i);
-    }
-    if let Some(f) = val.as_float() {
-        return Some(f as i64);
-    }
+    if let Some(i) = val.as_int() { return Some(i); }
+    if let Some(f) = val.as_float() { return Some(f as i64); }
     None
 }
 
 fn extract_float(val: MbValue) -> Option<f64> {
-    if let Some(f) = val.as_float() {
-        return Some(f);
-    }
-    if let Some(i) = val.as_int() {
-        return Some(i as f64);
-    }
+    if let Some(f) = val.as_float() { return Some(f); }
+    if let Some(i) = val.as_int() { return Some(i as f64); }
     None
 }
 
@@ -268,13 +283,12 @@ fn extract_tuple_items(val: MbValue) -> Vec<MbValue> {
                 ObjData::Instance { fields, .. } => {
                     let f = fields.read().unwrap();
                     let names = [
-                        "tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min", "tm_sec", "tm_wday",
-                        "tm_yday", "tm_isdst",
+                        "tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min",
+                        "tm_sec", "tm_wday", "tm_yday", "tm_isdst",
                     ];
-                    return names
-                        .iter()
-                        .map(|n| f.get(*n).copied().unwrap_or_else(MbValue::none))
-                        .collect();
+                    return names.iter().map(|n| {
+                        f.get(*n).copied().unwrap_or_else(MbValue::none)
+                    }).collect();
                 }
                 _ => {}
             }
@@ -302,51 +316,40 @@ fn compute_tz_snapshot() -> (i64, i64, i64, String, String) {
 /// `DateTime<Local>`.
 fn struct_time_from_dt<Tz: TimeZone>(dt: &DateTime<Tz>, is_local: bool) -> MbValue {
     let tm_year = dt.year() as i64;
-    let tm_mon = dt.month() as i64;
+    let tm_mon  = dt.month() as i64;
     let tm_mday = dt.day() as i64;
     let tm_hour = dt.hour() as i64;
-    let tm_min = dt.minute() as i64;
-    let tm_sec = dt.second() as i64;
+    let tm_min  = dt.minute() as i64;
+    let tm_sec  = dt.second() as i64;
     // chrono weekday(): Monday=0 .. Sunday=6 (matches CPython tm_wday).
     let tm_wday = dt.weekday().num_days_from_monday() as i64;
     let tm_yday = dt.ordinal() as i64;
     let _ = is_local;
     // tm_isdst left as 0 (no DST modelled); CPython returns -1 for UTC.
     let tm_isdst: i64 = 0;
-    new_struct_time_instance(
-        tm_year, tm_mon, tm_mday, tm_hour, tm_min, tm_sec, tm_wday, tm_yday, tm_isdst,
-    )
+    new_struct_time_instance(tm_year, tm_mon, tm_mday, tm_hour, tm_min,
+        tm_sec, tm_wday, tm_yday, tm_isdst)
 }
 
 fn new_struct_time_instance(
-    y: i64,
-    mo: i64,
-    d: i64,
-    h: i64,
-    mi: i64,
-    s: i64,
-    wd: i64,
-    yd: i64,
-    dst: i64,
+    y: i64, mo: i64, d: i64, h: i64, mi: i64,
+    s: i64, wd: i64, yd: i64, dst: i64,
 ) -> MbValue {
     let mut fields = FxHashMap::default();
-    fields.insert("tm_year".to_string(), MbValue::from_int(y));
-    fields.insert("tm_mon".to_string(), MbValue::from_int(mo));
-    fields.insert("tm_mday".to_string(), MbValue::from_int(d));
-    fields.insert("tm_hour".to_string(), MbValue::from_int(h));
-    fields.insert("tm_min".to_string(), MbValue::from_int(mi));
-    fields.insert("tm_sec".to_string(), MbValue::from_int(s));
-    fields.insert("tm_wday".to_string(), MbValue::from_int(wd));
-    fields.insert("tm_yday".to_string(), MbValue::from_int(yd));
+    fields.insert("tm_year".to_string(),  MbValue::from_int(y));
+    fields.insert("tm_mon".to_string(),   MbValue::from_int(mo));
+    fields.insert("tm_mday".to_string(),  MbValue::from_int(d));
+    fields.insert("tm_hour".to_string(),  MbValue::from_int(h));
+    fields.insert("tm_min".to_string(),   MbValue::from_int(mi));
+    fields.insert("tm_sec".to_string(),   MbValue::from_int(s));
+    fields.insert("tm_wday".to_string(),  MbValue::from_int(wd));
+    fields.insert("tm_yday".to_string(),  MbValue::from_int(yd));
     fields.insert("tm_isdst".to_string(), MbValue::from_int(dst));
-    fields.insert("n_fields".to_string(), MbValue::from_int(9));
+    fields.insert("n_fields".to_string(),    MbValue::from_int(9));
     fields.insert("n_sequence_fields".to_string(), MbValue::from_int(9));
-    fields.insert("n_unnamed_fields".to_string(), MbValue::from_int(0));
+    fields.insert("n_unnamed_fields".to_string(),  MbValue::from_int(0));
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
+        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
             class_name: "struct_time".to_string(),
             fields: RwLock::new(fields),
@@ -357,25 +360,22 @@ fn new_struct_time_instance(
 
 fn struct_time_to_naive(st: MbValue) -> Option<NaiveDateTime> {
     let items = extract_tuple_items(st);
-    if items.len() < 6 {
-        return None;
-    }
-    let y = extract_int(items[0])? as i32;
+    if items.len() < 6 { return None; }
+    let y  = extract_int(items[0])? as i32;
     let mo = extract_int(items[1])? as u32;
-    let d = extract_int(items[2])? as u32;
-    let h = extract_int(items[3])? as u32;
+    let d  = extract_int(items[2])? as u32;
+    let h  = extract_int(items[3])? as u32;
     let mi = extract_int(items[4])? as u32;
-    let s = extract_int(items[5])? as u32;
-    chrono::NaiveDate::from_ymd_opt(y, mo, d).and_then(|nd| nd.and_hms_opt(h, mi, s))
+    let s  = extract_int(items[5])? as u32;
+    chrono::NaiveDate::from_ymd_opt(y, mo, d)
+        .and_then(|nd| nd.and_hms_opt(h, mi, s))
 }
 
 // -- Runtime functions --
 
 /// time.time() -> float (seconds since epoch)
 pub fn mb_time_time() -> MbValue {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
+    let duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     MbValue::from_float(duration.as_secs_f64())
 }
 
@@ -386,9 +386,7 @@ pub fn mb_time_time() -> MbValue {
 /// current epoch magnitudes — callers needing integer ns should compose
 /// from `time()` and a sub-second monotonic delta.
 pub fn mb_time_time_ns() -> MbValue {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
+    let duration = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     MbValue::from_float(duration.as_nanos() as f64)
 }
 
@@ -425,10 +423,7 @@ fn cpu_time_ns(thread: bool) -> i64 {
     } else {
         libc::CLOCK_PROCESS_CPUTIME_ID
     };
-    let mut ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     let rc = unsafe { libc::clock_gettime(clk, &mut ts) };
     if rc == 0 {
         (ts.tv_sec as i64) * 1_000_000_000 + (ts.tv_nsec as i64)
@@ -475,17 +470,13 @@ pub fn mb_time_tzset() -> MbValue {
 /// time.sleep(seconds) -> None
 pub fn mb_time_sleep(secs: MbValue) -> MbValue {
     let duration = if let Some(f) = secs.as_float() {
-        if f <= 0.0 {
-            std::time::Duration::ZERO
-        } else {
-            std::time::Duration::from_secs_f64(f)
-        }
+        if f < 0.0 { return raise_value_error("sleep length must be non-negative"); }
+        if f == 0.0 { std::time::Duration::ZERO }
+        else { std::time::Duration::from_secs_f64(f) }
     } else if let Some(i) = secs.as_int() {
-        if i <= 0 {
-            std::time::Duration::ZERO
-        } else {
-            std::time::Duration::from_secs(i as u64)
-        }
+        if i < 0 { return raise_value_error("sleep length must be non-negative"); }
+        if i == 0 { std::time::Duration::ZERO }
+        else { std::time::Duration::from_secs(i as u64) }
     } else {
         return MbValue::none();
     };
@@ -501,11 +492,12 @@ pub fn mb_time_gmtime(secs: MbValue) -> MbValue {
         Utc::now()
     } else {
         let secs_f = extract_float(secs).unwrap_or(0.0);
+        if !timestamp_in_range(secs_f) {
+            return raise_overflow_error("timestamp out of range for platform time_t");
+        }
         let whole = secs_f.trunc() as i64;
         let frac_ns = ((secs_f - whole as f64) * 1e9) as u32;
-        Utc.timestamp_opt(whole, frac_ns)
-            .single()
-            .unwrap_or_else(Utc::now)
+        Utc.timestamp_opt(whole, frac_ns).single().unwrap_or_else(Utc::now)
     };
     struct_time_from_dt(&dt, false)
 }
@@ -516,12 +508,12 @@ pub fn mb_time_localtime(secs: MbValue) -> MbValue {
         Local::now()
     } else {
         let secs_f = extract_float(secs).unwrap_or(0.0);
+        if !timestamp_in_range(secs_f) {
+            return raise_overflow_error("timestamp out of range for platform time_t");
+        }
         let whole = secs_f.trunc() as i64;
         let frac_ns = ((secs_f - whole as f64) * 1e9) as u32;
-        Local
-            .timestamp_opt(whole, frac_ns)
-            .single()
-            .unwrap_or_else(Local::now)
+        Local.timestamp_opt(whole, frac_ns).single().unwrap_or_else(Local::now)
     };
     struct_time_from_dt(&dt, true)
 }
@@ -559,11 +551,11 @@ pub fn mb_time_ctime(secs: MbValue) -> MbValue {
         Local::now()
     } else {
         let secs_f = extract_float(secs).unwrap_or(0.0);
+        if !timestamp_in_range(secs_f) {
+            return raise_overflow_error("timestamp out of range for platform time_t");
+        }
         let whole = secs_f.trunc() as i64;
-        Local
-            .timestamp_opt(whole, 0)
-            .single()
-            .unwrap_or_else(Local::now)
+        Local.timestamp_opt(whole, 0).single().unwrap_or_else(Local::now)
     };
     let s = dt.format("%a %b %e %H:%M:%S %Y").to_string();
     MbValue::from_ptr(MbObject::new_str(s))
@@ -583,10 +575,13 @@ pub fn mb_time_clock_getres(clk_id: MbValue) -> MbValue {
 /// time.clock_gettime(clk_id) -> float
 pub fn mb_time_clock_gettime(clk_id: MbValue) -> MbValue {
     let id = extract_int(clk_id).unwrap_or(CLOCK_MONOTONIC);
+    if !is_known_clock_id(id) {
+        return raise_os_error("[Errno 22] Invalid argument");
+    }
     match id {
         v if v == CLOCK_REALTIME => mb_time_time(),
         v if v == CLOCK_PROCESS_CPUTIME_ID => mb_time_process_time(),
-        v if v == CLOCK_THREAD_CPUTIME_ID => mb_time_thread_time(),
+        v if v == CLOCK_THREAD_CPUTIME_ID  => mb_time_thread_time(),
         _ => mb_time_monotonic(),
     }
 }
@@ -597,7 +592,7 @@ pub fn mb_time_clock_gettime_ns(clk_id: MbValue) -> MbValue {
     match id {
         v if v == CLOCK_REALTIME => mb_time_time_ns(),
         v if v == CLOCK_PROCESS_CPUTIME_ID => mb_time_process_time_ns(),
-        v if v == CLOCK_THREAD_CPUTIME_ID => mb_time_thread_time_ns(),
+        v if v == CLOCK_THREAD_CPUTIME_ID  => mb_time_thread_time_ns(),
         _ => mb_time_monotonic_ns(),
     }
 }
@@ -618,17 +613,12 @@ pub fn mb_time_clock_settime_ns(_clk_id: MbValue, _value: MbValue) -> MbValue {
 /// object itself is not yet a real type for `isinstance` checks.
 pub fn mb_time_struct_time(seq: MbValue) -> MbValue {
     let items = extract_tuple_items(seq);
-    let get = |i: usize| -> i64 { items.get(i).copied().and_then(extract_int).unwrap_or(0) };
+    let get = |i: usize| -> i64 {
+        items.get(i).copied().and_then(extract_int).unwrap_or(0)
+    };
     new_struct_time_instance(
-        get(0),
-        get(1),
-        get(2),
-        get(3),
-        get(4),
-        get(5),
-        get(6),
-        get(7),
-        get(8),
+        get(0), get(1), get(2), get(3), get(4),
+        get(5), get(6), get(7), get(8),
     )
 }
 
@@ -638,23 +628,18 @@ pub fn mb_time_get_clock_info(name: MbValue) -> MbValue {
     let (implementation, monotonic_flag, adjustable, resolution) = match n.as_str() {
         "monotonic" | "perf_counter" => ("clock_gettime(MONOTONIC)", true, false, 1e-9),
         "process_time" => ("clock_gettime(PROCESS_CPUTIME_ID)", true, false, 1e-9),
-        "thread_time" => ("clock_gettime(THREAD_CPUTIME_ID)", true, false, 1e-9),
+        "thread_time"  => ("clock_gettime(THREAD_CPUTIME_ID)", true, false, 1e-9),
         "time" => ("clock_gettime(REALTIME)", false, true, 1e-6),
         _ => ("clock_gettime(MONOTONIC)", true, false, 1e-9),
     };
     let mut fields = FxHashMap::default();
-    fields.insert(
-        "implementation".to_string(),
-        MbValue::from_ptr(MbObject::new_str(implementation.to_string())),
-    );
-    fields.insert("monotonic".to_string(), MbValue::from_bool(monotonic_flag));
+    fields.insert("implementation".to_string(),
+        MbValue::from_ptr(MbObject::new_str(implementation.to_string())));
+    fields.insert("monotonic".to_string(),  MbValue::from_bool(monotonic_flag));
     fields.insert("adjustable".to_string(), MbValue::from_bool(adjustable));
     fields.insert("resolution".to_string(), MbValue::from_float(resolution));
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
+        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
             class_name: "namespace".to_string(),
             fields: RwLock::new(fields),
@@ -689,7 +674,9 @@ pub fn mb_time_strptime(s: MbValue, fmt: MbValue) -> MbValue {
             let utc = Utc.from_utc_datetime(&n);
             struct_time_from_dt(&utc, false)
         }
-        Err(_) => new_struct_time_instance(1900, 1, 1, 0, 0, 0, 0, 1, -1),
+        Err(_) => raise_value_error(&format!(
+            "time data {input:?} does not match format {format_str:?}"
+        )),
     }
 }
 
@@ -708,9 +695,7 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     let f = fields.read().unwrap();
-                    if let Some(v) = f.get(field) {
-                        return *v;
-                    }
+                    if let Some(v) = f.get(field) { return *v; }
                 }
             }
         }
@@ -719,11 +704,7 @@ mod tests {
 
     fn get_str(val: MbValue) -> Option<String> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                Some(s.clone())
-            } else {
-                None
-            }
+            if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
         })
     }
 
@@ -950,17 +931,15 @@ mod tests {
 
     #[test]
     fn test_clock_settime_is_noop() {
-        let r = mb_time_clock_settime(
-            MbValue::from_int(CLOCK_REALTIME),
-            MbValue::from_float(1234.0),
-        );
+        let r = mb_time_clock_settime(MbValue::from_int(CLOCK_REALTIME),
+                                      MbValue::from_float(1234.0));
         assert!(r.is_none());
     }
 
     #[test]
     fn test_clock_settime_ns_is_noop() {
-        let r =
-            mb_time_clock_settime_ns(MbValue::from_int(CLOCK_REALTIME), MbValue::from_int(1234));
+        let r = mb_time_clock_settime_ns(MbValue::from_int(CLOCK_REALTIME),
+                                         MbValue::from_int(1234));
         assert!(r.is_none());
     }
 
@@ -969,15 +948,9 @@ mod tests {
     #[test]
     fn test_struct_time_from_tuple() {
         let items = vec![
-            MbValue::from_int(2024),
-            MbValue::from_int(3),
-            MbValue::from_int(15),
-            MbValue::from_int(10),
-            MbValue::from_int(20),
-            MbValue::from_int(30),
-            MbValue::from_int(4),
-            MbValue::from_int(75),
-            MbValue::from_int(0),
+            MbValue::from_int(2024), MbValue::from_int(3), MbValue::from_int(15),
+            MbValue::from_int(10),   MbValue::from_int(20), MbValue::from_int(30),
+            MbValue::from_int(4),    MbValue::from_int(75), MbValue::from_int(0),
         ];
         let tup = MbValue::from_ptr(MbObject::new_tuple(items));
         let st = mb_time_struct_time(tup);
@@ -1028,15 +1001,9 @@ mod tests {
     #[test]
     fn test_strftime_iso_format() {
         let items = vec![
-            MbValue::from_int(2024),
-            MbValue::from_int(3),
-            MbValue::from_int(15),
-            MbValue::from_int(10),
-            MbValue::from_int(20),
-            MbValue::from_int(30),
-            MbValue::from_int(4),
-            MbValue::from_int(75),
-            MbValue::from_int(0),
+            MbValue::from_int(2024), MbValue::from_int(3), MbValue::from_int(15),
+            MbValue::from_int(10),   MbValue::from_int(20), MbValue::from_int(30),
+            MbValue::from_int(4),    MbValue::from_int(75), MbValue::from_int(0),
         ];
         let tup = MbValue::from_ptr(MbObject::new_tuple(items));
         let s_val = mb_time_strftime(s("%Y-%m-%d %H:%M:%S"), tup);
@@ -1090,13 +1057,11 @@ mod tests {
     #[test]
     fn test_register_wires_full_36_surface() {
         register();
-        let snap = super::super::super::module::NATIVE_FUNC_ADDRS.with(|s| s.borrow().len());
+        let snap = super::super::super::module::NATIVE_FUNC_ADDRS
+            .with(|s| s.borrow().len());
         // 26 dispatchers should each be registered; snapshot is
         // monotonic across the test process so assert non-zero floor.
-        assert!(
-            snap >= 26,
-            "expected at least 26 native func addrs registered"
-        );
+        assert!(snap >= 26, "expected at least 26 native func addrs registered");
     }
 
     #[test]

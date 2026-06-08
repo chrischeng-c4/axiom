@@ -1,5 +1,3 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// html.parser module for Mamba (#449, #1480).
 ///
 /// Provides:
@@ -26,7 +24,10 @@ use super::super::value::MbValue;
 /// attribute) but every call raises `NotImplementedError`. The dispatcher
 /// surface keeps the typeshed-declared shape (R3) reachable without
 /// committing to a parser strategy (R1/R2).
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -58,21 +59,21 @@ macro_rules! dispatch_variadic_stub {
     };
 }
 
-dispatch_variadic_stub!(dispatch_feed, "HTMLParser.feed");
-dispatch_variadic_stub!(dispatch_close, "HTMLParser.close");
-dispatch_variadic_stub!(dispatch_reset, "HTMLParser.reset");
-dispatch_variadic_stub!(dispatch_getpos, "HTMLParser.getpos");
+dispatch_variadic_stub!(dispatch_feed,              "HTMLParser.feed");
+dispatch_variadic_stub!(dispatch_close,             "HTMLParser.close");
+dispatch_variadic_stub!(dispatch_reset,             "HTMLParser.reset");
+dispatch_variadic_stub!(dispatch_getpos,            "HTMLParser.getpos");
 dispatch_variadic_stub!(dispatch_get_starttag_text, "HTMLParser.get_starttag_text");
-dispatch_variadic_stub!(dispatch_handle_starttag, "HTMLParser.handle_starttag");
-dispatch_variadic_stub!(dispatch_handle_endtag, "HTMLParser.handle_endtag");
-dispatch_variadic_stub!(dispatch_handle_startendtag, "HTMLParser.handle_startendtag");
-dispatch_variadic_stub!(dispatch_handle_data, "HTMLParser.handle_data");
-dispatch_variadic_stub!(dispatch_handle_entityref, "HTMLParser.handle_entityref");
-dispatch_variadic_stub!(dispatch_handle_charref, "HTMLParser.handle_charref");
-dispatch_variadic_stub!(dispatch_handle_comment, "HTMLParser.handle_comment");
-dispatch_variadic_stub!(dispatch_handle_decl, "HTMLParser.handle_decl");
-dispatch_variadic_stub!(dispatch_handle_pi, "HTMLParser.handle_pi");
-dispatch_variadic_stub!(dispatch_unknown_decl, "HTMLParser.unknown_decl");
+dispatch_variadic_stub!(dispatch_handle_starttag,   "HTMLParser.handle_starttag");
+dispatch_variadic_stub!(dispatch_handle_endtag,     "HTMLParser.handle_endtag");
+dispatch_variadic_stub!(dispatch_handle_startendtag,"HTMLParser.handle_startendtag");
+dispatch_variadic_stub!(dispatch_handle_data,       "HTMLParser.handle_data");
+dispatch_variadic_stub!(dispatch_handle_entityref,  "HTMLParser.handle_entityref");
+dispatch_variadic_stub!(dispatch_handle_charref,    "HTMLParser.handle_charref");
+dispatch_variadic_stub!(dispatch_handle_comment,    "HTMLParser.handle_comment");
+dispatch_variadic_stub!(dispatch_handle_decl,       "HTMLParser.handle_decl");
+dispatch_variadic_stub!(dispatch_handle_pi,         "HTMLParser.handle_pi");
+dispatch_variadic_stub!(dispatch_unknown_decl,      "HTMLParser.unknown_decl");
 // HANDWRITE-END
 
 dispatch_nullary!(dispatch_HTMLParser, mb_html_parser_new);
@@ -103,38 +104,34 @@ pub fn register() {
 
     // ── html.parser (typeshed submodule surface) ──
     let mut parser_attrs = HashMap::new();
-    parser_attrs.insert(
-        "__name__".to_string(),
-        MbValue::from_ptr(MbObject::new_str("html.parser".to_string())),
-    );
-    parser_attrs.insert(
-        "__package__".to_string(),
-        MbValue::from_ptr(MbObject::new_str("html".to_string())),
-    );
+    parser_attrs.insert("__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("html.parser".to_string())));
+    parser_attrs.insert("__package__".to_string(),
+        MbValue::from_ptr(MbObject::new_str("html".to_string())));
 
     // HANDWRITE-BEGIN reason: #1480 — HTMLParser method surface stubbed
     // pending parser-implementation decision (html5ever vendor vs CPython
     // port). Each entry is a callable dispatcher raising NotImplementedError.
     let parser_dispatchers: Vec<(&str, usize)> = vec![
-        ("HTMLParser", dispatch_HTMLParser as usize),
-        ("feed", dispatch_feed as usize),
-        ("close", dispatch_close as usize),
-        ("reset", dispatch_reset as usize),
-        ("getpos", dispatch_getpos as usize),
-        ("get_starttag_text", dispatch_get_starttag_text as usize),
-        ("handle_starttag", dispatch_handle_starttag as usize),
-        ("handle_endtag", dispatch_handle_endtag as usize),
-        ("handle_startendtag", dispatch_handle_startendtag as usize),
-        ("handle_data", dispatch_handle_data as usize),
-        ("handle_entityref", dispatch_handle_entityref as usize),
-        ("handle_charref", dispatch_handle_charref as usize),
-        ("handle_comment", dispatch_handle_comment as usize),
-        ("handle_decl", dispatch_handle_decl as usize),
-        ("handle_pi", dispatch_handle_pi as usize),
-        ("unknown_decl", dispatch_unknown_decl as usize),
+        ("HTMLParser",            dispatch_HTMLParser as usize),
+        ("feed",                  dispatch_feed as usize),
+        ("close",                 dispatch_close as usize),
+        ("reset",                 dispatch_reset as usize),
+        ("getpos",                dispatch_getpos as usize),
+        ("get_starttag_text",     dispatch_get_starttag_text as usize),
+        ("handle_starttag",       dispatch_handle_starttag as usize),
+        ("handle_endtag",         dispatch_handle_endtag as usize),
+        ("handle_startendtag",    dispatch_handle_startendtag as usize),
+        ("handle_data",           dispatch_handle_data as usize),
+        ("handle_entityref",      dispatch_handle_entityref as usize),
+        ("handle_charref",        dispatch_handle_charref as usize),
+        ("handle_comment",        dispatch_handle_comment as usize),
+        ("handle_decl",           dispatch_handle_decl as usize),
+        ("handle_pi",             dispatch_handle_pi as usize),
+        ("unknown_decl",          dispatch_unknown_decl as usize),
         // `unescape` is deprecated on HTMLParser (since 3.5) but still
         // present in the public surface — point it at the real impl.
-        ("unescape", dispatch_unescape as usize),
+        ("unescape",              dispatch_unescape as usize),
     ];
     // HANDWRITE-END
     for (name, addr) in &parser_dispatchers {
@@ -157,7 +154,10 @@ pub fn register() {
             r.get("html.parser")
                 .map(|m| super::super::module::module_to_value(m))
         };
-        if let (Some(v), Some(html_mod)) = (parser_val, mods.borrow_mut().get_mut("html")) {
+        if let (Some(v), Some(html_mod)) = (
+            parser_val,
+            mods.borrow_mut().get_mut("html"),
+        ) {
             html_mod.attrs.insert("parser".to_string(), v);
         }
     });
@@ -165,11 +165,7 @@ pub fn register() {
 
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data {
-            Some(s.clone())
-        } else {
-            None
-        }
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
     })
 }
 
@@ -178,9 +174,9 @@ fn extract_str(val: MbValue) -> Option<String> {
 fn raise_not_implemented(name: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("NotImplementedError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(format!(
-            "html.parser.{name} is not implemented in Mamba (#1480)"
-        ))),
+        MbValue::from_ptr(MbObject::new_str(
+            format!("html.parser.{name} is not implemented in Mamba (#1480)"),
+        )),
     );
     MbValue::none()
 }
@@ -270,23 +266,11 @@ mod tests {
         // html.parser must carry every typeshed-declared HTMLParser method
         // as a callable, even if each one raises NotImplementedError.
         for name in &[
-            "HTMLParser",
-            "feed",
-            "close",
-            "reset",
-            "getpos",
-            "get_starttag_text",
-            "handle_starttag",
-            "handle_endtag",
-            "handle_startendtag",
-            "handle_data",
-            "handle_entityref",
-            "handle_charref",
-            "handle_comment",
-            "handle_decl",
-            "handle_pi",
-            "unknown_decl",
-            "unescape",
+            "HTMLParser", "feed", "close", "reset", "getpos",
+            "get_starttag_text", "handle_starttag", "handle_endtag",
+            "handle_startendtag", "handle_data", "handle_entityref",
+            "handle_charref", "handle_comment", "handle_decl",
+            "handle_pi", "unknown_decl", "unescape",
         ] {
             let v = crate::runtime::module::mb_module_getattr(
                 MbValue::from_ptr(MbObject::new_str("html.parser".to_string())),
@@ -294,7 +278,8 @@ mod tests {
             );
             // Either a callable (func tag, no ptr) or an object ptr; both are
             // legitimate "registered" outcomes. None-tag means missing.
-            assert!(!v.is_none(), "html.parser.{} not registered", name);
+            assert!(!v.is_none(),
+                "html.parser.{} not registered", name);
         }
     }
 }

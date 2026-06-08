@@ -4,8 +4,8 @@ use super::provider::{
 use crate::error::{NovaError, NovaResult};
 use crate::types::{Message, Role, TokenUsage, ToolCall};
 use async_trait::async_trait;
-use futures::StreamExt;
 use mambalibs_http::client::{HttpClient, HttpClientConfig, HttpMethod, RequestBuilder};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -331,10 +331,7 @@ impl LLMProvider for ClaudeProvider {
 
 fn parse_claude_sse_stream(
     byte_stream: std::pin::Pin<
-        Box<
-            dyn futures::Stream<Item = Result<bytes::Bytes, mambalibs_http::client::HttpError>>
-                + Send,
-        >,
+        Box<dyn futures::Stream<Item = Result<bytes::Bytes, mambalibs_http::client::HttpError>> + Send>,
     >,
 ) -> impl futures::Stream<Item = NovaResult<StreamChunk>> + Send {
     let mut buffer = String::new();

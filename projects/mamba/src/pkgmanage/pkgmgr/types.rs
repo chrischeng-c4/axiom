@@ -1,8 +1,8 @@
 // REQ: FileHash, ReleaseFile, PackageMetadata, IndexClient structs
 // REQ: IndexError enum variants per spec §Error Types
 
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
 
 /// Cryptographic digest of a distribution file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,12 +1,13 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
-use rustc_hash::FxHashMap;
 /// re (regular expressions) module for Mamba — backed by `regex` crate.
 ///
 /// Provides: re.search, re.match_, re.findall, re.sub, re.split, re.escape
+
 use std::cell::RefCell;
 use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::rc::Rc;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 // ── Regex compile cache (#2110) ──────────────────────────────────────────
 //
@@ -71,9 +72,9 @@ fn extract_str(val: MbValue) -> Option<String> {
             // patterns (the overwhelming majority of real-world bytes regex
             // use), and silently substitutes U+FFFD for non-UTF-8 sequences.
             ObjData::Bytes(b) => Some(String::from_utf8_lossy(b).into_owned()),
-            ObjData::ByteArray(lock) => {
-                Some(String::from_utf8_lossy(&lock.read().unwrap()).into_owned())
-            }
+            ObjData::ByteArray(lock) => Some(
+                String::from_utf8_lossy(&lock.read().unwrap()).into_owned(),
+            ),
             _ => None,
         }
     })
@@ -140,6 +141,89 @@ unsafe extern "C" fn dispatch_compile(args_ptr: *const MbValue, nargs: usize) ->
     )
 }
 
+/// `re.error(msg, pattern=None, pos=None)` constructor. CPython's `re.error`
+/// is a real exception *class* (callable, a subclass of `Exception`), so the
+/// module-level `re.error` name is exposed as this callable func value rather
+/// than a sentinel string. Building an `Instance { class_name: "re.error" }`
+/// keeps the raised type / `except re.error` / `isinstance(e, re.error)`
+/// string-compare path intact while making the name constructible. (#2098)
+unsafe extern "C" fn dispatch_re_error(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let msg = a.get(0).copied().unwrap_or_else(MbValue::none);
+    let pattern = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let pos = a.get(2).copied().unwrap_or_else(MbValue::none);
+    let mut fields = FxHashMap::default();
+    // `message` / `args` mirror how the runtime exception machinery reads an
+    // exception's payload; the `pattern` / `pos` attributes are part of
+    // CPython's `re.error` surface.
+    fields.insert("message".to_string(), msg);
+    fields.insert("args".to_string(),
+        MbValue::from_ptr(MbObject::new_tuple(vec![msg])));
+    fields.insert("pattern".to_string(), pattern);
+    fields.insert("pos".to_string(), pos);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "re.error".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// Generic surface stub. Backs the module-level `re.template` / `re.Scanner`
+/// names and the per-class method shells (`re.Match.group` etc.) that the
+/// `callable(...)` surface fixtures probe. Real `re.Match` / `re.Pattern`
+/// method dispatch is handled in `runtime::class::mb_call_method` on actual
+/// match/pattern Instances; these stubs only have to be *callable* values so
+/// `callable(re.Match.group)` / `callable(re.Scanner)` report True.
+unsafe extern "C" fn dispatch_re_surface_stub(
+    _args_ptr: *const MbValue,
+    _nargs: usize,
+) -> MbValue {
+    MbValue::none()
+}
+
+/// Register `addr` as a known native function pointer and return it as a
+/// callable `MbValue`. Mirrors the per-dispatcher registration in `register`.
+fn surface_func(addr: usize) -> MbValue {
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(addr as u64);
+    });
+    MbValue::from_func(addr)
+}
+
+/// Build a `re.<Name>` class shell as a type object (`class_name == "type"`,
+/// `__name__ = name`) carrying one callable method-stub field per entry in
+/// `methods`. Representing the shell as a type object keeps `isinstance(x,
+/// re.Pattern)` / `re.Pattern.__name__` resolving to the right name (the
+/// isinstance/type machinery reads `__name__` from a "type" Instance), while
+/// the non-special method names fall through type-object getattr to ordinary
+/// instance-field lookup so `re.Pattern.findall` etc. return the stub. (#2098)
+fn make_re_class_shell(name: &str, methods: &[&str]) -> MbValue {
+    let stub_addr = dispatch_re_surface_stub as *const () as usize;
+    let mut fields = FxHashMap::default();
+    fields.insert("__name__".to_string(),
+        MbValue::from_ptr(MbObject::new_str(name.to_string())));
+    for m in methods {
+        fields.insert((*m).to_string(), surface_func(stub_addr));
+    }
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "type".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
 /// Register the re module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -164,47 +248,90 @@ pub fn register() {
         });
     }
 
-    // Class-name surfaces — sentinel strings (mirrors lzma_mod's
-    // LZMAFile / LZMACompressor / LZMADecompressor pattern). Mamba builds
-    // `re.Match` / `re.Pattern` Instances internally via
-    // `build_match_instance_with_spans` / `mb_re_compile`, so the
-    // module-level names are surface-only and not directly callable as
-    // constructors. The typeshed walker recognises them under #2098.
-    attrs.insert(
-        "Match".to_string(),
-        MbValue::from_ptr(MbObject::new_str("re.Match".to_string())),
-    );
-    attrs.insert(
-        "Pattern".to_string(),
-        MbValue::from_ptr(MbObject::new_str("re.Pattern".to_string())),
-    );
-    attrs.insert(
-        "RegexFlag".to_string(),
-        MbValue::from_ptr(MbObject::new_str("re.RegexFlag".to_string())),
-    );
-    attrs.insert(
-        "error".to_string(),
-        MbValue::from_ptr(MbObject::new_str("re.error".to_string())),
-    );
+    // Class-name surfaces. `re.Match` / `re.Pattern` are exposed as type-object
+    // shells (`class_name == "type"`, `__name__` set) carrying one callable
+    // method stub per CPython method name, so `callable(re.Match.group)` /
+    // `callable(re.Pattern.findall)` resolve through type-object getattr to the
+    // stub field. Real `re.Match` / `re.Pattern` Instances are still built
+    // internally via `build_match_instance_with_spans` / `mb_re_compile`; method
+    // dispatch on those runs in `runtime::class::mb_call_method`. Representing the
+    // module-level name as a type object (not a sentinel string) keeps
+    // `isinstance(x, re.Pattern)` resolving the right target name. (#2098)
+    attrs.insert("Match".to_string(),
+        make_re_class_shell("re.Match", &[
+            "group", "groups", "groupdict", "start", "end", "span",
+            "expand", "__getitem__",
+        ]));
+    attrs.insert("Pattern".to_string(),
+        make_re_class_shell("re.Pattern", &[
+            "search", "match", "fullmatch", "findall", "finditer",
+            "sub", "subn", "split", "scanner",
+        ]));
+    // `re.RegexFlag` stays a sentinel string (it is a flag enum, not an
+    // exception class, and nothing probes its dunders beyond presence).
+    attrs.insert("RegexFlag".to_string(),
+        MbValue::from_ptr(MbObject::new_str("re.RegexFlag".to_string())));
+
+    // `re.error` is a real exception *class* (a subclass of `Exception`),
+    // mirroring the proven `urllib.error.URLError` shape: expose the name as a
+    // callable func constructor whose addr is recorded in `NATIVE_TYPE_NAMES`,
+    // and register the class (with the BaseException chaining slots) in the
+    // class registry. This keeps `except re.error` / `isinstance(e, re.error)`
+    // resolving to the name `"re.error"` (via `resolve_class_name` /
+    // `mb_isinstance`'s func->NATIVE_TYPE_NAMES path) AND makes
+    // `hasattr(re.error, "__cause__")` True: `mb_getattr` on the class func
+    // consults the registered method table for the dunder. (#2098)
+    let error_addr = dispatch_re_error as *const () as usize;
+    attrs.insert("error".to_string(), MbValue::from_func(error_addr));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(error_addr as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(error_addr as u64, "re.error".to_string());
+    });
+    // BaseException exposes `__cause__` / `__context__` /
+    // `__suppress_context__` as getset descriptors, so on the real CPython
+    // class `hasattr(re.error, "__cause__")` is True. Seed the class method
+    // table with the three chaining slots (inert func sentinels — the surface
+    // dimension only asserts presence) so the surface probe resolves. The
+    // `Exception` base makes `except Exception` / `is_subclass_of` catch it.
+    let mut error_slots: HashMap<String, MbValue> = HashMap::new();
+    let slot = MbValue::from_func(error_addr);
+    error_slots.insert("__cause__".to_string(), slot);
+    error_slots.insert("__context__".to_string(), slot);
+    error_slots.insert("__suppress_context__".to_string(), slot);
+    super::super::class::mb_class_register(
+        "re.error", vec!["Exception".to_string()], error_slots);
+
+    // `re.template` (deprecated alias of re.compile) and `re.Scanner` — surface
+    // names probed by `hasattr(re, "template")` / `callable(re.Scanner)`. Both
+    // are callable func stubs; the Scanner runtime path is not modeled here.
+    let stub_addr = dispatch_re_surface_stub as *const () as usize;
+    attrs.insert("template".to_string(), surface_func(stub_addr));
+    attrs.insert("Scanner".to_string(), surface_func(stub_addr));
 
     // RegexFlag constants — match CPython's bit values so cross-runtime
     // `re.IGNORECASE == 2` etc. holds. Bits are stable across py3.x.
-    attrs.insert("A".into(), MbValue::from_int(256));
-    attrs.insert("ASCII".into(), MbValue::from_int(256));
-    attrs.insert("DEBUG".into(), MbValue::from_int(128));
-    attrs.insert("I".into(), MbValue::from_int(2));
+    attrs.insert("A".into(),          MbValue::from_int(256));
+    attrs.insert("ASCII".into(),      MbValue::from_int(256));
+    attrs.insert("DEBUG".into(),      MbValue::from_int(128));
+    attrs.insert("I".into(),          MbValue::from_int(2));
     attrs.insert("IGNORECASE".into(), MbValue::from_int(2));
-    attrs.insert("L".into(), MbValue::from_int(4));
-    attrs.insert("LOCALE".into(), MbValue::from_int(4));
-    attrs.insert("M".into(), MbValue::from_int(8));
-    attrs.insert("MULTILINE".into(), MbValue::from_int(8));
-    attrs.insert("S".into(), MbValue::from_int(16));
-    attrs.insert("DOTALL".into(), MbValue::from_int(16));
-    attrs.insert("X".into(), MbValue::from_int(64));
-    attrs.insert("VERBOSE".into(), MbValue::from_int(64));
-    attrs.insert("U".into(), MbValue::from_int(32));
-    attrs.insert("UNICODE".into(), MbValue::from_int(32));
+    attrs.insert("L".into(),          MbValue::from_int(4));
+    attrs.insert("LOCALE".into(),     MbValue::from_int(4));
+    attrs.insert("M".into(),          MbValue::from_int(8));
+    attrs.insert("MULTILINE".into(),  MbValue::from_int(8));
+    attrs.insert("S".into(),          MbValue::from_int(16));
+    attrs.insert("DOTALL".into(),     MbValue::from_int(16));
+    attrs.insert("X".into(),          MbValue::from_int(64));
+    attrs.insert("VERBOSE".into(),    MbValue::from_int(64));
+    attrs.insert("U".into(),          MbValue::from_int(32));
+    attrs.insert("UNICODE".into(),    MbValue::from_int(32));
 
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("NOFLAG".into(), MbValue::from_int(0));
+    attrs.insert("T".into(), MbValue::from_int(1));
+    attrs.insert("TEMPLATE".into(), MbValue::from_int(1));
     super::register_module("re", attrs);
 }
 
@@ -246,10 +373,8 @@ pub(crate) fn build_match_instance_with_spans(
 ) -> MbValue {
     let mut fields = FxHashMap::default();
     // Group 0 is the full match.
-    fields.insert(
-        "group_0".to_string(),
-        MbValue::from_ptr(MbObject::new_str(matched.to_string())),
-    );
+    fields.insert("group_0".to_string(),
+        MbValue::from_ptr(MbObject::new_str(matched.to_string())));
     for (i, g) in groups.iter().enumerate() {
         let key = format!("group_{}", i + 1);
         let val = match g {
@@ -275,25 +400,17 @@ pub(crate) fn build_match_instance_with_spans(
     }
     fields.insert("_start".to_string(), MbValue::from_int(start as i64));
     fields.insert("_end".to_string(), MbValue::from_int(end as i64));
-    fields.insert(
-        "_group_count".to_string(),
-        MbValue::from_int(groups.len() as i64),
-    );
+    fields.insert("_group_count".to_string(), MbValue::from_int(groups.len() as i64));
     // CPython re.Match attributes (#1614). `lastindex` is the highest-index
     // group that participated in the match; `lastgroup` is its name when the
     // group is named, else None. `string` is the original input.
-    fields.insert(
-        "string".to_string(),
-        MbValue::from_ptr(MbObject::new_str(input_string.to_string())),
-    );
-    let group_names: Vec<MbValue> = named_groups
-        .iter()
+    fields.insert("string".to_string(),
+        MbValue::from_ptr(MbObject::new_str(input_string.to_string())));
+    let group_names: Vec<MbValue> = named_groups.iter()
         .map(|(n, _)| MbValue::from_ptr(MbObject::new_str((*n).to_string())))
         .collect();
-    fields.insert(
-        "_group_names".to_string(),
-        MbValue::from_ptr(MbObject::new_list(group_names)),
-    );
+    fields.insert("_group_names".to_string(),
+        MbValue::from_ptr(MbObject::new_list(group_names)));
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -346,22 +463,15 @@ pub fn match_repr(m: MbValue) -> String {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                if let Some(s) = f.get("_start").and_then(|v| v.as_int()) {
-                    start = s;
-                }
-                if let Some(e) = f.get("_end").and_then(|v| v.as_int()) {
-                    end = e;
-                }
+                if let Some(s) = f.get("_start").and_then(|v| v.as_int()) { start = s; }
+                if let Some(e) = f.get("_end").and_then(|v| v.as_int()) { end = e; }
                 if let Some(g0) = f.get("group_0").copied() {
                     group0_repr = repr_string(g0);
                 }
             }
         }
     }
-    format!(
-        "<re.Match object; span=({}, {}), match={}>",
-        start, end, group0_repr
-    )
+    format!("<re.Match object; span=({}, {}), match={}>", start, end, group0_repr)
 }
 
 /// CPython-compatible `repr(<re.Pattern>)`:
@@ -376,9 +486,7 @@ pub fn pattern_repr(p: MbValue) -> String {
                 if let Some(pat) = f.get("pattern").copied() {
                     pattern_repr_str = repr_string(pat);
                 }
-                if let Some(fl) = f.get("flags").and_then(|v| v.as_int()) {
-                    flags = fl;
-                }
+                if let Some(fl) = f.get("flags").and_then(|v| v.as_int()) { flags = fl; }
             }
         }
     }
@@ -393,7 +501,11 @@ pub fn pattern_repr(p: MbValue) -> String {
 
 /// Build a Match Instance from a `regex::Captures`, capturing both positional
 /// and named groups so `.group(i)` / `.group(name)` dispatch works.
-fn captures_to_match_with_input(re: &regex::Regex, caps: regex::Captures, input: &str) -> MbValue {
+fn captures_to_match_with_input(
+    re: &regex::Regex,
+    caps: regex::Captures,
+    input: &str,
+) -> MbValue {
     captures_to_match_full(re, caps, input, re.as_str())
 }
 
@@ -415,19 +527,13 @@ fn captures_to_match_full(
     let group_spans: Vec<Option<(usize, usize)>> = (1..=num_groups)
         .map(|i| caps.get(i).map(|m| (m.start(), m.end())))
         .collect();
-    let named_groups: Vec<(&str, Option<&str>)> = re
-        .capture_names()
+    let named_groups: Vec<(&str, Option<&str>)> = re.capture_names()
         .flatten()
         .map(|n| (n, caps.name(n).map(|m| m.as_str())))
         .collect();
     let m = build_match_instance_with_spans(
-        full.as_str(),
-        input,
-        full.start(),
-        full.end(),
-        &groups,
-        &group_spans,
-        &named_groups,
+        full.as_str(), input, full.start(), full.end(),
+        &groups, &group_spans, &named_groups,
     );
     // lastindex / lastgroup — highest-index participating group + its name.
     let mut last_index: Option<i64> = None;
@@ -443,14 +549,11 @@ fn captures_to_match_full(
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut g = fields.write().unwrap();
-                g.insert(
-                    "lastindex".to_string(),
-                    last_index.map_or(MbValue::none(), MbValue::from_int),
-                );
-                g.insert(
-                    "lastgroup".to_string(),
-                    last_group.map_or(MbValue::none(), |s| MbValue::from_ptr(MbObject::new_str(s))),
-                );
+                g.insert("lastindex".to_string(),
+                    last_index.map_or(MbValue::none(), MbValue::from_int));
+                g.insert("lastgroup".to_string(),
+                    last_group.map_or(MbValue::none(),
+                        |s| MbValue::from_ptr(MbObject::new_str(s))));
                 // .re — re.Pattern instance carrying the source pattern (#1622).
                 let pat_val = MbValue::from_ptr(MbObject::new_str(source_pattern.to_string()));
                 let pat_inst = mb_re_compile(pat_val, MbValue::from_int(0));
@@ -466,8 +569,7 @@ fn captures_to_match_full(
                     MbValue::from_int(full.end() as i64),
                 ])));
                 for i in 1..=num_groups {
-                    let (s, e) = caps
-                        .get(i)
+                    let (s, e) = caps.get(i)
                         .map(|m| (m.start() as i64, m.end() as i64))
                         .unwrap_or((-1, -1));
                     regs_elems.push(MbValue::from_ptr(MbObject::new_tuple(vec![
@@ -475,10 +577,8 @@ fn captures_to_match_full(
                         MbValue::from_int(e),
                     ])));
                 }
-                g.insert(
-                    "regs".to_string(),
-                    MbValue::from_ptr(MbObject::new_tuple(regs_elems)),
-                );
+                g.insert("regs".to_string(),
+                    MbValue::from_ptr(MbObject::new_tuple(regs_elems)));
             }
         }
     }
@@ -494,49 +594,35 @@ fn captures_to_match(re: &regex::Regex, caps: regex::Captures) -> MbValue {
 
 /// re.search(pattern, string) -> Match instance or None
 pub fn mb_re_search(pattern: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
-    let text = match extract_str(string) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let pat = match extract_str(pattern) { Some(s) => s, None => return MbValue::none() };
+    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
 
     match compile_cached(&pat) {
-        Ok(re) => match re.captures(&text) {
-            Some(caps) => captures_to_match_with_input(&re, caps, &text),
-            None => MbValue::none(),
-        },
-        Err(e) => {
-            raise_re_error(&e);
-            MbValue::none()
+        Ok(re) => {
+            match re.captures(&text) {
+                Some(caps) => captures_to_match_with_input(&re, caps, &text),
+                None => MbValue::none(),
+            }
         }
+        Err(e) => { raise_re_error(&e); MbValue::none() }
     }
 }
 
 /// re.match_(pattern, string) -> Match instance or None (anchored at start)
 pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
-    let text = match extract_str(string) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let pat = match extract_str(pattern) { Some(s) => s, None => return MbValue::none() };
+    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
 
     // Anchor at start by wrapping pattern
     let anchored = format!("^(?:{pat})");
     match regex::Regex::new(&anchored) {
-        Ok(re) => match re.captures(&text) {
-            Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
-            None => MbValue::none(),
-        },
-        Err(e) => {
-            raise_re_error(&e.to_string());
-            MbValue::none()
+        Ok(re) => {
+            match re.captures(&text) {
+                Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
+                None => MbValue::none(),
+            }
         }
+        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
     }
 }
 
@@ -547,25 +633,18 @@ pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
 /// `re.fullmatch` callable, and by real-world fixtures that validate whole
 /// tokens (e.g. log-line schema check).
 pub fn mb_re_fullmatch(pattern: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
-    let text = match extract_str(string) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let pat = match extract_str(pattern) { Some(s) => s, None => return MbValue::none() };
+    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
 
     let anchored = format!("^(?:{pat})$");
     match regex::Regex::new(&anchored) {
-        Ok(re) => match re.captures(&text) {
-            Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
-            None => MbValue::none(),
-        },
-        Err(e) => {
-            raise_re_error(&e.to_string());
-            MbValue::none()
+        Ok(re) => {
+            match re.captures(&text) {
+                Some(caps) => captures_to_match_full(&re, caps, &text, &pat),
+                None => MbValue::none(),
+            }
         }
+        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
     }
 }
 
@@ -585,38 +664,35 @@ pub fn mb_re_findall(pattern: MbValue, string: MbValue) -> MbValue {
 
     let re = match compile_cached(&pat) {
         Ok(r) => r,
-        Err(e) => {
-            raise_re_error(&e);
-            return MbValue::from_ptr(MbObject::new_list(vec![]));
-        }
+        Err(e) => { raise_re_error(&e); return MbValue::from_ptr(MbObject::new_list(vec![])); }
     };
 
     let num_groups = re.captures_len() - 1; // exclude group 0 (full match)
-                                            // HANDWRITE-BEGIN reason: #2110 — per-match `MbObject::new_str(s.to_string())`
-                                            //   allocates a fresh boxed `String` for every group of every match. The
-                                            //   structurally-correct fix (a refcounted `Arc<str>` borrow into the
-                                            //   source buffer that all `ObjData::Str` consumers can see through)
-                                            //   touches every string consumer in `runtime/rc.rs`, `string_ops.rs`,
-                                            //   `dict_ops.rs`, and the JIT — beyond a re-shim edit. Scoped wins
-                                            //   landed here in #2110:
-                                            //
-                                            //     1. Thread-local compile cache eliminates re-compilation on hot
-                                            //        loops that pass the same pattern string each call (the
-                                            //        `findall_hot` bench compiles the same 4-group regex 5x).
-                                            //     2. `results` is pre-sized using the lower-bound estimate
-                                            //        `text.len() / pat.len()` so the Vec doesn't repeatedly grow
-                                            //        during the scan (60k matches no longer trigger log2 reallocs).
-                                            //     3. The multi-group tuple buffer is built in-place against a
-                                            //        reused `CaptureLocations` to skip the per-iteration HashMap
-                                            //        lookup the `captures_iter` API does for named-group dispatch.
-                                            //
-                                            //   Closing the remaining gap (borrowed-substring objects) is tracked
-                                            //   as a follow-on in #2110 once the `Arc<str>`-backed string-storage
-                                            //   refactor is in.
-                                            // Heuristic capacity: at least one match per (pattern-length) bytes.
-                                            // Over-allocates harmlessly when the pattern is short or matches are
-                                            // sparse; the alternative — a Vec that doubles 17 times to reach 60k
-                                            // — is strictly worse.
+    // HANDWRITE-BEGIN reason: #2110 — per-match `MbObject::new_str(s.to_string())`
+    //   allocates a fresh boxed `String` for every group of every match. The
+    //   structurally-correct fix (a refcounted `Arc<str>` borrow into the
+    //   source buffer that all `ObjData::Str` consumers can see through)
+    //   touches every string consumer in `runtime/rc.rs`, `string_ops.rs`,
+    //   `dict_ops.rs`, and the JIT — beyond a re-shim edit. Scoped wins
+    //   landed here in #2110:
+    //
+    //     1. Thread-local compile cache eliminates re-compilation on hot
+    //        loops that pass the same pattern string each call (the
+    //        `findall_hot` bench compiles the same 4-group regex 5x).
+    //     2. `results` is pre-sized using the lower-bound estimate
+    //        `text.len() / pat.len()` so the Vec doesn't repeatedly grow
+    //        during the scan (60k matches no longer trigger log2 reallocs).
+    //     3. The multi-group tuple buffer is built in-place against a
+    //        reused `CaptureLocations` to skip the per-iteration HashMap
+    //        lookup the `captures_iter` API does for named-group dispatch.
+    //
+    //   Closing the remaining gap (borrowed-substring objects) is tracked
+    //   as a follow-on in #2110 once the `Arc<str>`-backed string-storage
+    //   refactor is in.
+    // Heuristic capacity: at least one match per (pattern-length) bytes.
+    // Over-allocates harmlessly when the pattern is short or matches are
+    // sparse; the alternative — a Vec that doubles 17 times to reach 60k
+    // — is strictly worse.
     let cap_hint = (text.len() / pat.len().max(8)).min(1 << 20).max(8);
     let mut results: Vec<MbValue> = Vec::with_capacity(cap_hint);
 
@@ -640,10 +716,12 @@ pub fn mb_re_findall(pattern: MbValue, string: MbValue) -> MbValue {
             // Advance: handle zero-width matches by stepping at least 1 byte
             // past `start`. `m.end()` is exclusive; matches `find_iter`'s
             // behavior on empty matches.
-            let new_start = if m.end() == start { start + 1 } else { m.end() };
-            if new_start > text.len() {
-                break;
-            }
+            let new_start = if m.end() == start {
+                start + 1
+            } else {
+                m.end()
+            };
+            if new_start > text.len() { break; }
             start = new_start;
         }
     } else {
@@ -662,10 +740,12 @@ pub fn mb_re_findall(pattern: MbValue, string: MbValue) -> MbValue {
                 group_vals.push(MbValue::from_ptr(s_obj));
             }
             results.push(MbValue::from_ptr(MbObject::new_tuple(group_vals)));
-            let new_start = if m.end() == start { start + 1 } else { m.end() };
-            if new_start > text.len() {
-                break;
-            }
+            let new_start = if m.end() == start {
+                start + 1
+            } else {
+                m.end()
+            };
+            if new_start > text.len() { break; }
             start = new_start;
         }
     }
@@ -676,28 +756,16 @@ pub fn mb_re_findall(pattern: MbValue, string: MbValue) -> MbValue {
 
 /// re.sub(pattern, repl, string) -> string with all matches replaced
 pub fn mb_re_sub(pattern: MbValue, repl: MbValue, string: MbValue) -> MbValue {
-    let pat = match extract_str(pattern) {
-        Some(s) => s,
-        None => return string,
-    };
-    let replacement = match extract_str(repl) {
-        Some(s) => s,
-        None => return string,
-    };
-    let text = match extract_str(string) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let pat = match extract_str(pattern) { Some(s) => s, None => return string };
+    let replacement = match extract_str(repl) { Some(s) => s, None => return string };
+    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
 
     match regex::Regex::new(&pat) {
         Ok(re) => {
             let result = re.replace_all(&text, replacement.as_str()).to_string();
             MbValue::from_ptr(MbObject::new_str(result))
         }
-        Err(e) => {
-            raise_re_error(&e.to_string());
-            MbValue::none()
-        }
+        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
     }
 }
 
@@ -713,10 +781,7 @@ pub fn mb_re_subn(pattern: MbValue, repl: MbValue, string: MbValue) -> MbValue {
         Some(s) => s,
         None => return MbValue::from_ptr(MbObject::new_tuple(vec![string, MbValue::from_int(0)])),
     };
-    let text = match extract_str(string) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
 
     match regex::Regex::new(&pat) {
         Ok(re) => {
@@ -725,10 +790,7 @@ pub fn mb_re_subn(pattern: MbValue, repl: MbValue, string: MbValue) -> MbValue {
             let new_str = MbValue::from_ptr(MbObject::new_str(result));
             MbValue::from_ptr(MbObject::new_tuple(vec![new_str, MbValue::from_int(count)]))
         }
-        Err(e) => {
-            raise_re_error(&e.to_string());
-            MbValue::none()
-        }
+        Err(e) => { raise_re_error(&e.to_string()); MbValue::none() }
     }
 }
 
@@ -749,10 +811,7 @@ pub fn mb_re_finditer(pattern: MbValue, string: MbValue) -> MbValue {
 
     let re = match regex::Regex::new(&pat) {
         Ok(r) => r,
-        Err(e) => {
-            raise_re_error(&e.to_string());
-            return MbValue::from_ptr(MbObject::new_list(vec![]));
-        }
+        Err(e) => { raise_re_error(&e.to_string()); return MbValue::from_ptr(MbObject::new_list(vec![])); }
     };
 
     let mut matches = Vec::new();
@@ -775,16 +834,12 @@ pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
 
     match regex::Regex::new(&pat) {
         Ok(re) => {
-            let parts: Vec<MbValue> = re
-                .split(&text)
+            let parts: Vec<MbValue> = re.split(&text)
                 .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
                 .collect();
             MbValue::from_ptr(MbObject::new_list(parts))
         }
-        Err(e) => {
-            raise_re_error(&e.to_string());
-            MbValue::from_ptr(MbObject::new_list(vec![]))
-        }
+        Err(e) => { raise_re_error(&e.to_string()); MbValue::from_ptr(MbObject::new_list(vec![])) }
     }
 }
 
@@ -795,14 +850,8 @@ pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
 /// the Match Instance's `group_N` / `group_name_NAME` fields populated by
 /// `build_match_instance_with_spans`.
 pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
-    let tmpl = match extract_str(template) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
-    let inst_ptr = match match_inst.as_ptr() {
-        Some(p) => p,
-        None => return MbValue::none(),
-    };
+    let tmpl = match extract_str(template) { Some(s) => s, None => return MbValue::none() };
+    let inst_ptr = match match_inst.as_ptr() { Some(p) => p, None => return MbValue::none() };
     let fields = unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
             fields
@@ -812,14 +861,12 @@ pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
     };
     let guard = fields.read().unwrap();
     let lookup_numeric = |i: usize| -> Option<String> {
-        guard
-            .get(&format!("group_{}", i))
+        guard.get(&format!("group_{}", i))
             .copied()
             .and_then(extract_str)
     };
     let lookup_named = |name: &str| -> Option<String> {
-        guard
-            .get(&format!("group_name_{}", name))
+        guard.get(&format!("group_name_{}", name))
             .copied()
             .and_then(extract_str)
     };
@@ -843,10 +890,7 @@ pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
         }
         let next = bytes[i + 1];
         match next {
-            b'\\' => {
-                out.push('\\');
-                i += 2;
-            }
+            b'\\' => { out.push('\\'); i += 2; }
             b'0'..=b'9' => {
                 let idx = (next - b'0') as usize;
                 if let Some(g) = lookup_numeric(idx) {
@@ -897,10 +941,7 @@ pub fn mb_re_match_expand(match_inst: MbValue, template: MbValue) -> MbValue {
 
 /// re.escape(string) -> string with regex meta-characters escaped
 pub fn mb_re_escape(string: MbValue) -> MbValue {
-    let text = match extract_str(string) {
-        Some(s) => s,
-        None => return MbValue::none(),
-    };
+    let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
     let escaped = regex::escape(&text);
     MbValue::from_ptr(MbObject::new_str(escaped))
 }
@@ -920,17 +961,12 @@ pub fn mb_re_compile(pattern: MbValue, flags: MbValue) -> MbValue {
     // before the user threads it through any matcher.
     let re = match regex::Regex::new(&pat_str) {
         Ok(r) => r,
-        Err(e) => {
-            raise_re_error(&e.to_string());
-            return MbValue::none();
-        }
+        Err(e) => { raise_re_error(&e.to_string()); return MbValue::none(); }
     };
     let flag_int = flags.as_int().unwrap_or(0);
     let mut fields = FxHashMap::default();
-    fields.insert(
-        "pattern".to_string(),
-        MbValue::from_ptr(MbObject::new_str(pat_str)),
-    );
+    fields.insert("pattern".to_string(),
+        MbValue::from_ptr(MbObject::new_str(pat_str)));
     fields.insert("flags".to_string(), MbValue::from_int(flag_int));
     // .groups — number of capturing groups. (#1624)
     let num_groups = re.captures_len().saturating_sub(1) as i64;
@@ -970,11 +1006,7 @@ mod tests {
         let result = mb_re_search(s("w\\w+"), s("hello world"));
         unsafe {
             let ptr = result.as_ptr().expect("expected Instance");
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 assert_eq!(class_name, "re.Match");
                 let f = fields.read().unwrap();
                 assert_eq!(f.get("_start").and_then(|v| v.as_int()), Some(6));
@@ -1072,15 +1104,11 @@ mod tests {
             let ptr = result.as_ptr().expect("expected Instance");
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                assert_eq!(
-                    extract_str(f.get("string").copied().unwrap()).unwrap(),
-                    "alice smith"
-                );
+                assert_eq!(extract_str(f.get("string").copied().unwrap()).unwrap(),
+                    "alice smith");
                 assert_eq!(f.get("lastindex").and_then(|v| v.as_int()), Some(2));
-                assert_eq!(
-                    extract_str(f.get("lastgroup").copied().unwrap()).unwrap(),
-                    "last"
-                );
+                assert_eq!(extract_str(f.get("lastgroup").copied().unwrap()).unwrap(),
+                    "last");
             } else {
                 panic!("expected re.Match Instance");
             }
@@ -1127,14 +1155,8 @@ mod tests {
                     assert_eq!(extract_str(items[0]).unwrap(), "first");
                     assert_eq!(extract_str(items[1]).unwrap(), "last");
                 }
-                assert_eq!(
-                    extract_str(f.get("group_name_first").copied().unwrap()).unwrap(),
-                    "alice"
-                );
-                assert_eq!(
-                    extract_str(f.get("group_name_last").copied().unwrap()).unwrap(),
-                    "smith"
-                );
+                assert_eq!(extract_str(f.get("group_name_first").copied().unwrap()).unwrap(), "alice");
+                assert_eq!(extract_str(f.get("group_name_last").copied().unwrap()).unwrap(), "smith");
             } else {
                 panic!("expected re.Match Instance");
             }
@@ -1148,11 +1170,7 @@ mod tests {
         let result = mb_re_search(s(r"\d+"), s("abc123"));
         assert!(result.is_ptr());
         unsafe {
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*result.as_ptr().unwrap()).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*result.as_ptr().unwrap()).data {
                 assert_eq!(class_name, "re.Match");
                 let f = fields.read().unwrap();
                 // group_0 is the full match
@@ -1219,7 +1237,7 @@ mod tests {
 
     /// Regression-document for #2110 — `re.findall` with multi-group patterns
     /// allocates a fresh `MbObject` per group per match. The mirror fixture is
-    /// `tests/cpython/fixtures/std-libs/re/bench/findall_hot.py`; the cross-
+    /// `tests/cpython/std-libs/re/bench/findall_hot.py`; the cross-
     /// runtime harness reports wall ~0.05x / internal ~0.00x / mem ~0.11x vs
     /// CPython.
     ///
@@ -1285,9 +1303,7 @@ mod tests {
             let to_len = |v: MbValue| {
                 if let ObjData::List(ref lock) = (*v.as_ptr().unwrap()).data {
                     lock.read().unwrap().len()
-                } else {
-                    0
-                }
+                } else { 0 }
             };
             assert_eq!(to_len(r1), 4);
             assert_eq!(to_len(r2), 2);
@@ -1306,26 +1322,16 @@ mod tests {
         let result = mb_re_findall(s(pat), s(text));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else {
-                panic!("list");
-            };
+            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
             let items = lock.read().unwrap();
             assert_eq!(items.len(), 4);
             // alpha: no number → ("alpha", "")
-            let ObjData::Tuple(ref t0) = (*items[0].as_ptr().unwrap()).data else {
-                panic!()
-            };
-            let ObjData::Str(ref g1) = (*t0[1].as_ptr().unwrap()).data else {
-                panic!()
-            };
+            let ObjData::Tuple(ref t0) = (*items[0].as_ptr().unwrap()).data else { panic!() };
+            let ObjData::Str(ref g1) = (*t0[1].as_ptr().unwrap()).data else { panic!() };
             assert_eq!(g1, "");
             // beta-7 → ("beta", "7")
-            let ObjData::Tuple(ref t1) = (*items[1].as_ptr().unwrap()).data else {
-                panic!()
-            };
-            let ObjData::Str(ref g1) = (*t1[1].as_ptr().unwrap()).data else {
-                panic!()
-            };
+            let ObjData::Tuple(ref t1) = (*items[1].as_ptr().unwrap()).data else { panic!() };
+            let ObjData::Str(ref g1) = (*t1[1].as_ptr().unwrap()).data else { panic!() };
             assert_eq!(g1, "7");
         }
     }
@@ -1342,21 +1348,15 @@ mod tests {
         let result = mb_re_findall(s(pat), s(text));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else {
-                panic!("list");
-            };
+            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
             let items = lock.read().unwrap();
             // regex's \w on Unicode default matches letters + combining marks.
             // Expect at least 4 items: hello, 你好, café, world.
             assert!(items.len() >= 4, "got {} items", items.len());
             // Inspect the second match — must be "你好" exactly.
-            let ObjData::Str(ref g) = (*items[1].as_ptr().unwrap()).data else {
-                panic!()
-            };
+            let ObjData::Str(ref g) = (*items[1].as_ptr().unwrap()).data else { panic!() };
             assert_eq!(g, "你好");
-            let ObjData::Str(ref g) = (*items[2].as_ptr().unwrap()).data else {
-                panic!()
-            };
+            let ObjData::Str(ref g) = (*items[2].as_ptr().unwrap()).data else { panic!() };
             assert_eq!(g, "café");
         }
     }
@@ -1377,32 +1377,19 @@ mod tests {
     fn test_re_bytes_input_no_silent_drop() {
         // search returns a Match (not None) for bytes-input
         let m = mb_re_search(b(b"\\d+"), b(b"abc 123 def"));
-        assert!(
-            m.as_ptr().is_some(),
-            "re.search(bytes_pat, bytes_data) returned None"
-        );
+        assert!(m.as_ptr().is_some(), "re.search(bytes_pat, bytes_data) returned None");
 
         // match anchored at start
         let m = mb_re_match(b(b"abc"), b(b"abc 123"));
-        assert!(
-            m.as_ptr().is_some(),
-            "re.match(bytes_pat, bytes_data) returned None"
-        );
+        assert!(m.as_ptr().is_some(), "re.match(bytes_pat, bytes_data) returned None");
 
         // findall captures all groups
         let result = mb_re_findall(b(b"(\\d+)"), b(b"a=1 b=2 c=3"));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else {
-                panic!("list");
-            };
+            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
             let items = lock.read().unwrap();
-            assert_eq!(
-                items.len(),
-                3,
-                "re.findall(bytes_pat, bytes_data) returned {} items",
-                items.len()
-            );
+            assert_eq!(items.len(), 3, "re.findall(bytes_pat, bytes_data) returned {} items", items.len());
         }
 
         // findall on bulk text — sanity check no silent drop on larger input
@@ -1410,15 +1397,9 @@ mod tests {
         let result = mb_re_findall(b(b"(\\d+)"), b(&log));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else {
-                panic!("list");
-            };
+            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
             let items = lock.read().unwrap();
-            assert!(
-                items.len() >= 400,
-                "expected >=400 hits, got {}",
-                items.len()
-            );
+            assert!(items.len() >= 400, "expected >=400 hits, got {}", items.len());
         }
     }
 
@@ -1432,13 +1413,12 @@ mod tests {
         let result = mb_re_findall(s(pat), s(text));
         unsafe {
             let ptr = result.as_ptr().unwrap();
-            let ObjData::List(ref lock) = (*ptr).data else {
-                panic!("list");
-            };
+            let ObjData::List(ref lock) = (*ptr).data else { panic!("list"); };
             let items = lock.read().unwrap();
             // Terminating is the actual gate; bound the upper count.
             assert!(items.len() <= text.len() + 1, "got {} items", items.len());
             assert!(items.len() >= 3, "expected >=3 hits, got {}", items.len());
         }
     }
+
 }

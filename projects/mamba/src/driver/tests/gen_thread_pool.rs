@@ -7,11 +7,9 @@
 ///
 /// Test plan coverage:
 ///   test_generator_stress_200_iterations  — S1, R1, R2 (pool thread reuse)
-///   test_basic_yield_through_pool         — S2, R3, R7 (basic_yield.py fixture)
-///   test_send_throw_through_pool          — S3, R5, R7 (send_throw.py fixture)
 ///   test_nested_list_comprehension        — S4, R8 (concurrent generators)
-///   test_yield_from_through_pool          — S8, R7 (yield_from.py fixture)
 ///   test_multi_threaded_conformance_suite — S1, S8, R6 (no SIGBUS on aarch64)
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -93,38 +91,13 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
             "output mismatch:\n--- expected ---\n{expected_trimmed}\n--- actual ---\n{actual_trimmed}\n--- diff ---\n{diff}"
         );
     }
-}
-
-/// Load a fixture file and its golden expected output, run through JIT, and compare.
-fn run_fixture(fixture_path: &str) {
-    let src = std::fs::read_to_string(fixture_path)
-        .unwrap_or_else(|e| panic!("read fixture {fixture_path}: {e}"));
-    let expected_path = fixture_path.replace(".py", ".expected");
-    let expected = std::fs::read_to_string(&expected_path)
-        .unwrap_or_else(|e| panic!("read expected {expected_path}: {e}"));
-
-    // Strip xfail directive from source before running
-    let src_clean: String = src
-        .lines()
-        .filter(|line| !line.trim().starts_with("# mamba-xfail:"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-
-    let output = jit_capture(&src_clean);
-    assert_output(&output, &expected);
 }
 
 // =============================================================================
@@ -154,30 +127,6 @@ print(next(g))
 }
 
 // =============================================================================
-// S2/R3/R7: Basic generator yield/next through pool
-// =============================================================================
-
-/// Run `generators/basic_yield.py` fixture, verify output unchanged after
-/// pool refactor.  Validates generator state transitions work correctly
-/// through the global registry (Created → Running → Suspended → Completed).
-#[test]
-fn test_basic_yield_through_pool() {
-    run_fixture("tests/cpython/fixtures/core/generators/basic_yield.py");
-}
-
-// =============================================================================
-// S3/R5/R7: Generator send/throw through pool
-// =============================================================================
-
-/// Run `generators/send_throw.py` fixture, verify send/throw protocol works
-/// via global registry. Channel endpoints are found via GENERATOR_REGISTRY
-/// regardless of caller thread.
-#[test]
-fn test_send_throw_through_pool() {
-    run_fixture("tests/cpython/fixtures/core/generators/send_throw.py");
-}
-
-// =============================================================================
 // S4/R8: Nested list comprehension — concurrent generators
 // =============================================================================
 
@@ -192,18 +141,6 @@ print(result)
 "#,
     );
     assert_output(&output, "[[0, 1, 2], [0, 1, 2], [0, 1, 2]]\n");
-}
-
-// =============================================================================
-// S8/R7: yield from through pool
-// =============================================================================
-
-/// Run `generators/yield_from.py` fixture, verify delegation works through pool.
-/// Tests that yield-from correctly forwards values between generators executing
-/// on different pool workers.
-#[test]
-fn test_yield_from_through_pool() {
-    run_fixture("tests/cpython/fixtures/core/generators/yield_from.py");
 }
 
 // =============================================================================

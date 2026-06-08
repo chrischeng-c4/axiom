@@ -4,12 +4,13 @@
 // AC6 gated on `PYPI_LIVE=1` env var (offline-safe CI default).
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/installer.md#Test%20Plan
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::pkgmanage::pkgmgr::installer::{InstallKind, InstallMode, InstallRequest, Installer};
 use base64::Engine;
+use crate::pkgmanage::pkgmgr::installer::{InstallMode, InstallRequest, Installer, InstallKind};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
@@ -37,22 +38,14 @@ fn build_wheel(
         .collect();
     entries.push((
         format!("{}/METADATA", dist_info),
-        format!(
-            "Metadata-Version: 2.1\nName: {}\nVersion: {}\n",
-            name, version
-        )
-        .into_bytes(),
+        format!("Metadata-Version: 2.1\nName: {}\nVersion: {}\n", name, version).into_bytes(),
     ));
     entries.push((
         format!("{}/WHEEL", dist_info),
-        b"Wheel-Version: 1.0\nGenerator: mamba-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
-            .to_vec(),
+        b"Wheel-Version: 1.0\nGenerator: mamba-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n".to_vec(),
     ));
     if let Some(ep) = entry_points {
-        entries.push((
-            format!("{}/entry_points.txt", dist_info),
-            ep.as_bytes().to_vec(),
-        ));
+        entries.push((format!("{}/entry_points.txt", dist_info), ep.as_bytes().to_vec()));
     }
 
     // Build RECORD text last (it includes hashes for everything except itself).
@@ -118,10 +111,7 @@ fn ac1_install_synthetic_purelib_wheel_extracts_files_and_verifies_record() {
     assert!(site_packages.join("demo/__init__.py").is_file());
     assert!(site_packages.join("demo/util.py").is_file());
     assert!(site_packages.join("demo-1.0.0.dist-info/RECORD").is_file());
-    assert!(result
-        .installed_files
-        .iter()
-        .any(|p| p == Path::new("demo/__init__.py")));
+    assert!(result.installed_files.iter().any(|p| p == Path::new("demo/__init__.py")));
 }
 
 #[test]
@@ -135,10 +125,7 @@ fn ac2_console_scripts_emit_executable_wrappers() {
         &wheels,
         "httpie",
         "0.0.1",
-        &[
-            ("httpie/__init__.py", b""),
-            ("httpie/core.py", b"def main():\n    return 0\n"),
-        ],
+        &[("httpie/__init__.py", b""), ("httpie/core.py", b"def main():\n    return 0\n")],
         Some("[console_scripts]\nhttpie = httpie.core:main\n"),
     );
 
@@ -149,11 +136,7 @@ fn ac2_console_scripts_emit_executable_wrappers() {
     assert_eq!(result.console_scripts, vec!["httpie".to_string()]);
     let bin_dir = site_packages.parent().unwrap().join("bin");
     let script = bin_dir.join("httpie");
-    assert!(
-        script.is_file(),
-        "bin/httpie should exist at {}",
-        script.display()
-    );
+    assert!(script.is_file(), "bin/httpie should exist at {}", script.display());
     let body = fs::read_to_string(&script).unwrap();
     assert!(body.starts_with("#!/usr/bin/python3\n"));
     assert!(body.contains("from httpie.core import main"));
@@ -191,10 +174,7 @@ fn ac3_uninstall_removes_record_listed_files_and_dist_info() {
 
     assert!(!site_packages.join("demo/__init__.py").exists());
     assert!(!site_packages.join("demo-1.0.0.dist-info").exists());
-    assert!(
-        site_packages.join("unrelated.py").exists(),
-        "siblings must survive uninstall"
-    );
+    assert!(site_packages.join("unrelated.py").exists(), "siblings must survive uninstall");
 }
 
 #[test]
@@ -235,13 +215,7 @@ fn ac5_install_graph_walks_topological_order() {
     let names = ["certifi", "urllib3", "requests"];
     let mut paths = std::collections::HashMap::new();
     for n in names {
-        let p = build_wheel(
-            &wheels,
-            n,
-            "1.0.0",
-            &[(&format!("{}/__init__.py", n), b"")],
-            None,
-        );
+        let p = build_wheel(&wheels, n, "1.0.0", &[(&format!("{}/__init__.py", n), b"")], None);
         paths.insert(format!("{}-1.0.0", n), p);
     }
 
@@ -269,10 +243,7 @@ fn ac5_install_graph_walks_topological_order() {
             &site_packages,
             &PathBuf::from("/usr/bin/python3"),
             |name, version| {
-                Ok(paths
-                    .get(&format!("{}-{}", name, version))
-                    .cloned()
-                    .unwrap())
+                Ok(paths.get(&format!("{}-{}", name, version)).cloned().unwrap())
             },
         )
         .unwrap();

@@ -1,8 +1,8 @@
-use super::ast::TypeExpr;
-use super::Parser;
 use crate::error::MambaError;
 use crate::lexer::token::TokenKind;
 use crate::source::span::{Span, Spanned};
+use super::ast::TypeExpr;
+use super::Parser;
 
 impl<'a> Parser<'a> {
     /// Parse a type annotation expression.
@@ -16,11 +16,7 @@ impl<'a> Parser<'a> {
                 self.advance();
                 types.push(self.parse_type_atom()?);
             }
-            let span = types
-                .first()
-                .unwrap()
-                .span
-                .merge(types.last().unwrap().span);
+            let span = types.first().unwrap().span.merge(types.last().unwrap().span);
             ty = Spanned::new(TypeExpr::Union(types), span);
         }
 
@@ -35,16 +31,14 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_type_atom(&mut self) -> crate::error::Result<Spanned<TypeExpr>> {
-        let token = self
-            .peek()
-            .ok_or_else(|| MambaError::syntax(Span::dummy(), "expected type expression"))?;
+        let token = self.peek().ok_or_else(|| {
+            MambaError::syntax(Span::dummy(), "expected type expression")
+        })?;
         let start = token.start;
 
         match &token.kind {
             // Built-in type keywords
-            TokenKind::IntType
-            | TokenKind::FloatType
-            | TokenKind::BoolType
+            TokenKind::IntType | TokenKind::FloatType | TokenKind::BoolType
             | TokenKind::StrType => {
                 let name = self.current_text().to_string();
                 self.advance();
@@ -119,10 +113,7 @@ impl<'a> Parser<'a> {
                     let ret = self.parse_type_expr()?;
                     let span = self.span_from(start);
                     Ok(Spanned::new(
-                        TypeExpr::Fn {
-                            params,
-                            ret: Box::new(ret),
-                        },
+                        TypeExpr::Fn { params, ret: Box::new(ret) },
                         span,
                     ))
                 } else if params.len() == 1 {
@@ -140,10 +131,7 @@ impl<'a> Parser<'a> {
             }
             TokenKind::None_ => {
                 self.advance();
-                Ok(Spanned::new(
-                    TypeExpr::Named("None".to_string()),
-                    self.span_from(start),
-                ))
+                Ok(Spanned::new(TypeExpr::Named("None".to_string()), self.span_from(start)))
             }
             // `type` used as a type expression (e.g. `type[BaseModel]`).
             // Python's `type[X]` is the builtin generic for the class-object of X.
@@ -159,17 +147,11 @@ impl<'a> Parser<'a> {
                     }
                     self.expect(TokenKind::RBracket)?;
                     Ok(Spanned::new(
-                        TypeExpr::Generic {
-                            name: "type".to_string(),
-                            args,
-                        },
+                        TypeExpr::Generic { name: "type".to_string(), args },
                         self.span_from(start),
                     ))
                 } else {
-                    Ok(Spanned::new(
-                        TypeExpr::Named("type".to_string()),
-                        self.span_from(start),
-                    ))
+                    Ok(Spanned::new(TypeExpr::Named("type".to_string()), self.span_from(start)))
                 }
             }
             // TypeVarTuple spread: `*Ts` used in type position (e.g. `tuple[*Ts]`)
@@ -179,10 +161,17 @@ impl<'a> Parser<'a> {
                 let name = self.text_at(s, e).to_string();
                 Ok(Spanned::new(TypeExpr::Named(name), self.span_from(start)))
             }
-            _ => Err(MambaError::syntax(
-                Span::new(self.file_id, start, token.end),
-                format!("expected type, got {}", token.kind),
-            )),
+            // Arbitrary non-type annotation expression: `-> 1`, `x: {1: 2}`,
+            // `-> [int]`, `-> a + b` (PEP 3107). Python annotations are arbitrary
+            // expressions and are never validated as types — CPython only stores them
+            // in __annotations__ — so a non-type expression carries no constraint and
+            // resolves to `Any`. Consume the whole expression to stay token-synced,
+            // rather than failing the parse. Genuinely invalid syntax still errors via
+            // parse_expr below.
+            _ => {
+                self.parse_expr()?;
+                Ok(Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(start)))
+            }
         }
     }
 }
@@ -193,9 +182,7 @@ mod tests {
     use crate::parser::ast::*;
     use crate::source::span::FileId;
 
-    fn fid() -> FileId {
-        FileId(0)
-    }
+    fn fid() -> FileId { FileId(0) }
     /// Parse `x: <type> = 0` and return the TypeExpr.
     fn parse_type(ty_src: &str) -> TypeExpr {
         let src = format!("x: {ty_src} = 0\n");
@@ -407,11 +394,20 @@ mod tests {
     // --- Error cases ---
 
     #[test]
-    fn test_type_error_on_invalid_token() {
-        // Using a number as a type should fail
-        let src = "x: 42 = 0\n";
-        let result = parser::parse(src, fid());
-        assert!(result.is_err());
+    fn test_literal_annotation_resolves_to_any() {
+        // PEP 3107/526: an annotation is an arbitrary expression, never validated as
+        // a type (CPython only stores it in __annotations__). A literal value carries
+        // no type constraint, so `x: 42` must PARSE and resolve to `Any`, not fail.
+        assert_eq!(parse_type("42"), TypeExpr::Named("Any".to_string()));
+        assert_eq!(parse_type("{1: 2}"), TypeExpr::Named("Any".to_string()));
+        assert_eq!(parse_type("[int]"), TypeExpr::Named("Any".to_string()));
+    }
+
+    #[test]
+    fn test_type_error_on_non_expression_token() {
+        // A token that cannot even start an expression (a stray `,`) still errors.
+        let src = "x: , = 0\n";
+        assert!(parser::parse(src, fid()).is_err());
     }
 
     // --- Optional after union ---

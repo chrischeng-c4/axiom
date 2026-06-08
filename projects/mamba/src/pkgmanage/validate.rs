@@ -210,7 +210,8 @@ fn probe_init(bin: &Path) -> FamilyResult {
     if !proj.join("mamba.toml").exists() {
         return FamilyResult::fail("init did not create mamba.toml");
     }
-    FamilyResult::pass("init created mamba.toml + scaffolding").with_paths(Some(proj), None, None)
+    FamilyResult::pass("init created mamba.toml + scaffolding")
+        .with_paths(Some(proj), None, None)
 }
 
 fn probe_add(bin: &Path) -> FamilyResult {
@@ -243,11 +244,8 @@ fn probe_add(bin: &Path) -> FamilyResult {
         return FamilyResult::fail("manifest missing dep after add");
     }
     let lock_path = proj.join("mamba.lock");
-    FamilyResult::pass("add recorded dep in manifest + lockfile").with_paths(
-        Some(proj),
-        Some(lock_path),
-        None,
-    )
+    FamilyResult::pass("add recorded dep in manifest + lockfile")
+        .with_paths(Some(proj), Some(lock_path), None)
 }
 
 fn probe_lock(bin: &Path) -> FamilyResult {
@@ -293,11 +291,8 @@ fn probe_lock(bin: &Path) -> FamilyResult {
     if !lock.contains("name = \"frozen-demo-transitive\"") {
         return FamilyResult::fail("lockfile missing transitive dep");
     }
-    FamilyResult::pass("lock byte-identical on replay; records transitive").with_paths(
-        Some(proj),
-        Some(lock_path),
-        None,
-    )
+    FamilyResult::pass("lock byte-identical on replay; records transitive")
+        .with_paths(Some(proj), Some(lock_path), None)
 }
 
 fn probe_sync(bin: &Path) -> FamilyResult {
@@ -333,11 +328,12 @@ fn probe_sync(bin: &Path) -> FamilyResult {
     if !stderr.contains("no_op") {
         return FamilyResult::fail("second sync did not signal no_op");
     }
-    FamilyResult::pass("sync first-run installs; second-run no_op").with_paths(
-        Some(proj.clone()),
-        Some(proj.join("mamba.lock")),
-        Some(proj.join(".venv")),
-    )
+    FamilyResult::pass("sync first-run installs; second-run no_op")
+        .with_paths(
+            Some(proj.clone()),
+            Some(proj.join("mamba.lock")),
+            Some(proj.join(".venv")),
+        )
 }
 
 fn probe_run(bin: &Path) -> FamilyResult {
@@ -371,11 +367,12 @@ fn probe_run(bin: &Path) -> FamilyResult {
     if !stderr.contains("environment is not synced") {
         return FamilyResult::fail("run pre-sync did not name env-not-synced");
     }
-    FamilyResult::pass("run preflight rejects un-synced env").with_paths(
-        Some(proj.clone()),
-        Some(proj.join("mamba.lock")),
-        Some(proj.join(".venv")),
-    )
+    FamilyResult::pass("run preflight rejects un-synced env")
+        .with_paths(
+            Some(proj.clone()),
+            Some(proj.join("mamba.lock")),
+            Some(proj.join(".venv")),
+        )
 }
 
 fn probe_install(bin: &Path) -> FamilyResult {
@@ -405,11 +402,8 @@ fn probe_install(bin: &Path) -> FamilyResult {
     if !tool_dir.join("manifest.toml").exists() {
         return FamilyResult::fail("install did not materialize manifest");
     }
-    FamilyResult::pass("install materialized tool dir + shim").with_paths(
-        Some(tool_dir),
-        None,
-        Some(tools),
-    )
+    FamilyResult::pass("install materialized tool dir + shim")
+        .with_paths(Some(tool_dir), None, Some(tools))
 }
 
 fn probe_hash(bin: &Path) -> FamilyResult {
@@ -466,11 +460,8 @@ fn probe_cache(bin: &Path) -> FamilyResult {
     if cache_root.join("blob.bin").exists() {
         return FamilyResult::fail("cache clean did not remove blob");
     }
-    FamilyResult::pass("cache dir + clean honor MAMBA_CACHE_DIR").with_paths(
-        None,
-        None,
-        Some(cache_root),
-    )
+    FamilyResult::pass("cache dir + clean honor MAMBA_CACHE_DIR")
+        .with_paths(None, None, Some(cache_root))
 }
 
 fn emit_human(results: &BTreeMap<String, FamilyResult>, include_live: bool) {

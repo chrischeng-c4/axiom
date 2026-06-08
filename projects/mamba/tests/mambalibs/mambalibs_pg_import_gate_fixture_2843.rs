@@ -38,107 +38,54 @@ fn header_is_well_formed() {
 fn binding_uses_documented_surface() {
     let doc = load_toml(&manifest_path());
     let bind = doc.get("binding").and_then(|v| v.as_table()).unwrap();
-    let stmt = bind
-        .get("import_statement")
-        .and_then(|v| v.as_str())
-        .unwrap();
+    let stmt = bind.get("import_statement").and_then(|v| v.as_str()).unwrap();
     assert!(stmt.contains("from mambalibs import") && stmt.contains(LIBRARY));
 }
 
 #[test]
 fn support_status_enum_well_formed() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("support_status")
-        .and_then(|v| v.as_table())
-        .unwrap();
-    let allowed: Vec<&str> = block
-        .get("allowed_values")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-    for v in &["pass", "xfail", "blocker"] {
-        assert!(allowed.contains(v));
-    }
+    let block = doc.get("support_status").and_then(|v| v.as_table()).unwrap();
+    let allowed: Vec<&str> = block.get("allowed_values").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    for v in &["pass", "xfail", "blocker"] { assert!(allowed.contains(v)); }
 }
 
 #[test]
 fn supported_case_asserts_minimal_symbol() {
     let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("supported_case")
-        .and_then(|v| v.as_table())
-        .unwrap();
-    assert_eq!(
-        case.get("case").and_then(|v| v.as_str()),
-        Some(SUPPORTED_CASE)
-    );
-    assert_eq!(
-        case.get("expected_outcome").and_then(|v| v.as_str()),
-        Some("pass")
-    );
-    let bind_sym = doc
-        .get("binding")
-        .and_then(|v| v.get("minimal_exported_symbol"))
-        .and_then(|v| v.as_str())
-        .unwrap();
-    assert_eq!(
-        case.get("asserted_symbol").and_then(|v| v.as_str()),
-        Some(bind_sym)
-    );
+    let case = doc.get("supported_case").and_then(|v| v.as_table()).unwrap();
+    assert_eq!(case.get("case").and_then(|v| v.as_str()), Some(SUPPORTED_CASE));
+    assert_eq!(case.get("expected_outcome").and_then(|v| v.as_str()), Some("pass"));
+    let bind_sym = doc.get("binding").and_then(|v| v.get("minimal_exported_symbol"))
+        .and_then(|v| v.as_str()).unwrap();
+    assert_eq!(case.get("asserted_symbol").and_then(|v| v.as_str()), Some(bind_sym));
 }
 
 #[test]
 fn blocked_case_links_to_tracker() {
     let doc = load_toml(&manifest_path());
     let case = doc.get("blocked_case").and_then(|v| v.as_table()).unwrap();
-    assert_eq!(
-        case.get("expected_outcome").and_then(|v| v.as_str()),
-        Some("blocked")
-    );
-    assert_eq!(
-        case.get("linked_blocker_issue")
-            .and_then(|v| v.as_integer()),
-        Some(ISSUE)
-    );
-    assert_eq!(
-        case.get("must_name_offending_library")
-            .and_then(|v| v.as_str()),
-        Some(LIBRARY)
-    );
+    assert_eq!(case.get("expected_outcome").and_then(|v| v.as_str()), Some("blocked"));
+    assert_eq!(case.get("linked_blocker_issue").and_then(|v| v.as_integer()), Some(ISSUE));
+    assert_eq!(case.get("must_name_offending_library").and_then(|v| v.as_str()), Some(LIBRARY));
 }
 
 #[test]
 fn diagnostic_contract_names_library_and_surface() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("diagnostic_contract")
-        .and_then(|v| v.as_table())
-        .unwrap();
-    assert_eq!(
-        block
-            .get("diagnostic_must_name_library")
-            .and_then(|v| v.as_str()),
-        Some(LIBRARY)
-    );
-    assert_eq!(
-        block
-            .get("diagnostic_must_name_surface")
-            .and_then(|v| v.as_str()),
-        Some("mambalibs")
-    );
+    let block = doc.get("diagnostic_contract").and_then(|v| v.as_table()).unwrap();
+    assert_eq!(block.get("diagnostic_must_name_library").and_then(|v| v.as_str()), Some(LIBRARY));
+    assert_eq!(block.get("diagnostic_must_name_surface").and_then(|v| v.as_str()), Some("mambalibs"));
 }
 
 #[test]
 fn live_dependency_policy_forbids_db_connection() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("live_dependency_policy")
-        .and_then(|v| v.as_table())
-        .expect(
-            "[live_dependency_policy] missing — acceptance: \
+    let block = doc.get("live_dependency_policy").and_then(|v| v.as_table()).expect(
+        "[live_dependency_policy] missing — acceptance: \
          \"Test does not require a live database.\"",
-        );
+    );
     for f in &[
         "must_not_open_tcp_connection",
         "must_not_connect_to_database",
@@ -147,11 +94,8 @@ fn live_dependency_policy_forbids_db_connection() {
     ] {
         assert_eq!(block.get(*f).and_then(|v| v.as_bool()), Some(true), "{f}");
     }
-    let forbidden: Vec<&str> = block
-        .get("forbidden_env_vars")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
+    let forbidden: Vec<&str> = block.get("forbidden_env_vars").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
     for v in &["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "DATABASE_URL"] {
         assert!(forbidden.contains(v), "forbidden_env_vars must include {v}");
     }
@@ -160,14 +104,8 @@ fn live_dependency_policy_forbids_db_connection() {
 #[test]
 fn gate_summary_field_lives_in_runner_contract() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("gate_summary_contract")
-        .and_then(|v| v.as_table())
-        .unwrap();
-    assert_eq!(
-        block.get("field_name").and_then(|v| v.as_str()),
-        Some(STATUS_FIELD)
-    );
+    let block = doc.get("gate_summary_contract").and_then(|v| v.as_table()).unwrap();
+    assert_eq!(block.get("field_name").and_then(|v| v.as_str()), Some(STATUS_FIELD));
 }
 
 #[test]
@@ -187,37 +125,17 @@ fn isolation_pins_no_global_state() {
 #[test]
 fn runner_contract_declares_keys_and_cases() {
     let doc = load_toml(&manifest_path());
-    let c = doc
-        .get("runner_contract")
-        .and_then(|v| v.as_table())
-        .unwrap();
-    let keys: Vec<&str> = c
-        .get("keys")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
+    let c = doc.get("runner_contract").and_then(|v| v.as_table()).unwrap();
+    let keys: Vec<&str> = c.get("keys").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
     for r in &[
-        "outcome",
-        "case",
-        "surface",
-        "library",
-        "import_statement",
-        "asserted_symbol",
-        STATUS_FIELD,
-        "linked_blocker_issue",
-        "diagnostic_message",
-        "exit_code",
-    ] {
-        assert!(keys.contains(r));
-    }
-    let cases: Vec<&str> = c
-        .get("case_values")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-    for r in &[SUPPORTED_CASE, BLOCKED_CASE] {
-        assert!(cases.contains(r));
-    }
+        "outcome", "case", "surface", "library", "import_statement",
+        "asserted_symbol", STATUS_FIELD, "linked_blocker_issue",
+        "diagnostic_message", "exit_code",
+    ] { assert!(keys.contains(r)); }
+    let cases: Vec<&str> = c.get("case_values").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect()).unwrap_or_default();
+    for r in &[SUPPORTED_CASE, BLOCKED_CASE] { assert!(cases.contains(r)); }
 }
 
 #[test]

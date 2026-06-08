@@ -34,11 +34,11 @@ from pathlib import Path
 TOOLS_DIR = Path(__file__).resolve().parent
 CPYTHON_DIR = TOOLS_DIR.parents[2] / "cpython"  # tests/cpython (fixtures + .cache)
 MAMBA_DIR = CPYTHON_DIR.parent.parent
-FIXTURES_DIR = CPYTHON_DIR / "fixtures"
+FIXTURES_DIR = CPYTHON_DIR
 DEFAULT_DB = CPYTHON_DIR / ".cache" / "conformance" / "results.sqlite"
 
 # dimension subdir names per FIXTURE-LAYOUT.md
-DIMENSIONS = ("surface", "behavior", "errors", "bench", "real_world", "security")
+DIMENSIONS = ("surface", "behavior", "errors", "bench", "real_world", "security", "concurrency")
 
 RSS_MACOS_RE = re.compile(r"^\s*(\d+)\s+maximum resident set size\s*$", re.MULTILINE)
 RSS_LINUX_RE = re.compile(

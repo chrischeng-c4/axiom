@@ -78,10 +78,7 @@ fn cclab_mamba_registry_exposes_abi_version_constants() {
     ] {
         assert!(b(c, key), "{key}");
     }
-    assert_eq!(
-        s(c, "abi_version_constants_field_name"),
-        "abi_version_constants"
-    );
+    assert_eq!(s(c, "abi_version_constants_field_name"), "abi_version_constants");
     assert_eq!(
         strs(c, "required_abi_version_constants"),
         vec![
@@ -129,10 +126,7 @@ fn abi_mismatch_produces_readable_error_not_link_time_symbol_fail() {
         ]
     );
     assert_eq!(s(c, "abi_mismatch_error_field_name"), "abi_mismatch_error");
-    assert_eq!(
-        s(c, "abi_mismatch_failure_kind"),
-        "mambalibs_abi_mismatch_pre_link"
-    );
+    assert_eq!(s(c, "abi_mismatch_failure_kind"), "mambalibs_abi_mismatch_pre_link");
     assert_eq!(i(c, "abi_mismatch_exit_code"), 230);
     assert_eq!(
         s(c, "link_time_symbol_failure_kind"),
@@ -166,10 +160,7 @@ fn mamba_build_compares_abi_version_before_link() {
         "mambalibs_abi_compare_phase_out_of_order"
     );
     assert_eq!(i(c, "phase_out_of_order_exit_code"), 232);
-    assert_eq!(
-        s(c, "phase_skipped_failure_kind"),
-        "mambalibs_abi_compare_phase_skipped"
-    );
+    assert_eq!(s(c, "phase_skipped_failure_kind"), "mambalibs_abi_compare_phase_skipped");
     assert_eq!(i(c, "phase_skipped_exit_code"), 233);
 }
 
@@ -195,10 +186,7 @@ fn runner_contract_declares_keys_and_cases() {
             "exit_code",
         ]
     );
-    assert_eq!(
-        strs(r, "outcome_values"),
-        vec!["pass", "fail", "missing", "skip"]
-    );
+    assert_eq!(strs(r, "outcome_values"), vec!["pass", "fail", "missing", "skip"]);
     assert_eq!(
         strs(r, "case_values"),
         vec![

@@ -155,14 +155,11 @@ fn mambalibs_rust_error_payload_is_deterministic_and_small() {
 #[test]
 fn mambalibs_rust_error_call_case_includes_code_and_text() {
     let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("error_call_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[error_call_case]` block \
+    let case = doc.get("error_call_case").and_then(|v| v.as_table()).expect(
+        "missing `[error_call_case]` block \
          (acceptance: \"Exception message includes the fixture error \
          code or text.\")",
-        );
+    );
 
     assert_eq!(
         case.get("case").and_then(|v| v.as_str()),
@@ -259,9 +256,7 @@ fn mambalibs_rust_error_crash_guard_pins_all_fail_flags() {
     }
 
     assert_eq!(
-        guard
-            .get("pinned_clean_exit_code")
-            .and_then(|v| v.as_integer()),
+        guard.get("pinned_clean_exit_code").and_then(|v| v.as_integer()),
         Some(0),
         "`[crash_guard].pinned_clean_exit_code` must be 0 — non-zero exits beyond \
          that are crash indicators"
@@ -271,26 +266,19 @@ fn mambalibs_rust_error_crash_guard_pins_all_fail_flags() {
 #[test]
 fn mambalibs_rust_error_isolation_keeps_positive_fixtures_separate() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("isolation_from_positive_cases")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[isolation_from_positive_cases]` block \
+    let block = doc.get("isolation_from_positive_cases").and_then(|v| v.as_table()).expect(
+        "missing `[isolation_from_positive_cases]` block \
          (acceptance: \"Positive import and call fixtures remain \
          separate.\")",
-        );
+    );
 
     assert_eq!(
-        block
-            .get("type_roundtrip_fixture_issue")
-            .and_then(|v| v.as_integer()),
+        block.get("type_roundtrip_fixture_issue").and_then(|v| v.as_integer()),
         Some(2666),
         "`type_roundtrip_fixture_issue` must record #2666"
     );
     assert_eq!(
-        block
-            .get("dir_help_fixture_issue")
-            .and_then(|v| v.as_integer()),
+        block.get("dir_help_fixture_issue").and_then(|v| v.as_integer()),
         Some(2667),
         "`dir_help_fixture_issue` must record #2667"
     );
@@ -380,8 +368,7 @@ fn mambalibs_rust_error_pins_out_of_scope_per_issue_2672() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("full_exception_hierarchy_design")
-            .and_then(|v| v.as_bool()),
+        oos.get("full_exception_hierarchy_design").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].full_exception_hierarchy_design` must be true \
          (issue text: \"Out of scope: full exception hierarchy design.\")"

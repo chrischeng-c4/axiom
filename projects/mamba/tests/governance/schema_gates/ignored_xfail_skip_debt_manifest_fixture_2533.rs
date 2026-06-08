@@ -161,9 +161,15 @@ fn required_mvp_profile_cannot_pass_with_required_tests_skipped() {
         c["required_test_skipped_failure_kind"].as_str(),
         Some("mvp_required_test_skipped")
     );
-    assert_eq!(c["required_test_skipped_exit_code"].as_integer(), Some(187));
+    assert_eq!(
+        c["required_test_skipped_exit_code"].as_integer(),
+        Some(187)
+    );
     assert_eq!(c["opt_in_marker_classification"].as_str(), Some("opt_in"));
-    assert_eq!(c["blocker_marker_classification"].as_str(), Some("blocker"));
+    assert_eq!(
+        c["blocker_marker_classification"].as_str(),
+        Some("blocker")
+    );
     assert_eq!(
         c["required_classification_field_name"].as_str(),
         Some("marker_classification")
@@ -206,7 +212,10 @@ fn new_ignored_or_xfailed_tests_require_linked_work_item_references() {
         .map(|v| v.as_str().expect("string"))
         .collect();
     assert_eq!(kinds, vec!["issue", "epic", "tracker"]);
-    assert_eq!(c["work_item_reference_regex"].as_str(), Some("^#[0-9]+$"));
+    assert_eq!(
+        c["work_item_reference_regex"].as_str(),
+        Some("^#[0-9]+$")
+    );
     assert_eq!(
         c["missing_work_item_reference_failure_kind"].as_str(),
         Some("mvp_marker_missing_work_item_reference")

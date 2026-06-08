@@ -43,12 +43,12 @@ pub fn parse_retry_after(header: &str) -> Result<RetryAfter, IndexError> {
         });
     }
     if s.chars().all(|c| c.is_ascii_digit()) {
-        let n: u64 = s
-            .parse()
-            .map_err(|e: std::num::ParseIntError| IndexError::ParseError {
+        let n: u64 = s.parse().map_err(|e: std::num::ParseIntError| {
+            IndexError::ParseError {
                 url: "Retry-After".into(),
                 detail: format!("Retry-After delta-seconds out of range: {e}"),
-            })?;
+            }
+        })?;
         return Ok(RetryAfter::Seconds(n));
     }
     // Fall through to HTTP-date.

@@ -17,9 +17,9 @@
 //! doesn't exist yet. Will convert to CODEGEN once the standardize
 //! sweep grows an `algorithmic_primitive` section type.
 
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 fn raise_type_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
@@ -29,9 +29,18 @@ fn raise_type_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+fn raise_index_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 fn is_heap_list(val: MbValue) -> bool {
-    val.as_ptr()
-        .is_some_and(|ptr| unsafe { matches!((*ptr).data, ObjData::List(_)) })
+    val.as_ptr().is_some_and(|ptr| unsafe {
+        matches!((*ptr).data, ObjData::List(_))
+    })
 }
 
 macro_rules! dispatch_heap_unary {
@@ -51,62 +60,117 @@ macro_rules! dispatch_heap_binary {
     ($name:ident, $fn:ident) => {
         unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
             let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            // CPython's heappush/heappushpop/heapreplace take exactly two
+            // arguments; calling with one (`heappush([])`) raises TypeError,
+            // not a silent push-of-None.
+            if nargs < 2 {
+                return raise_type_error(concat!(
+                    stringify!($fn), " expected 2 arguments"
+                ));
+            }
             let heap = a.get(0).copied().unwrap_or_else(MbValue::none);
             if !is_heap_list(heap) {
                 return raise_type_error("heap argument must be a list");
             }
-            $fn(heap, a.get(1).copied().unwrap_or_else(MbValue::none))
-        }
-    };
-}
-
-macro_rules! dispatch_binary {
-    ($name:ident, $fn:ident) => {
-        unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
             $fn(
-                a.get(0).copied().unwrap_or_else(MbValue::none),
+                heap,
                 a.get(1).copied().unwrap_or_else(MbValue::none),
             )
         }
     };
 }
 
-dispatch_heap_binary!(dispatch_heappush, mb_heapq_heappush);
-dispatch_heap_unary!(dispatch_heappop, mb_heapq_heappop);
-dispatch_heap_binary!(dispatch_heappushpop, mb_heapq_heappushpop);
-dispatch_heap_binary!(dispatch_heapreplace, mb_heapq_heapreplace);
-dispatch_heap_unary!(dispatch_heapify, mb_heapq_heapify);
-dispatch_binary!(dispatch_nlargest, mb_heapq_nlargest);
-dispatch_binary!(dispatch_nsmallest, mb_heapq_nsmallest);
+dispatch_heap_binary!(dispatch_heappush,        mb_heapq_heappush);
+dispatch_heap_unary! (dispatch_heappop,         mb_heapq_heappop);
+dispatch_heap_binary!(dispatch_heappushpop,     mb_heapq_heappushpop);
+dispatch_heap_binary!(dispatch_heapreplace,     mb_heapq_heapreplace);
+dispatch_heap_unary! (dispatch_heapify,         mb_heapq_heapify);
+dispatch_heap_unary! (dispatch_heapify_max,     mb_heapq_heapify_max);
+dispatch_heap_unary! (dispatch_heappop_max,     mb_heapq_heappop_max);
+dispatch_heap_binary!(dispatch_heapreplace_max, mb_heapq_heapreplace_max);
 
-/// merge accepts variadic sorted iterables: `merge(a, b, c, ...)`.
-/// Implemented as a flat-args dispatcher so all positional iterables
-/// flow through, not just the first two (which `dispatch_binary` would
-/// truncate to). Returns a single sorted list — eager rather than the
-/// CPython lazy-iterator semantics, which matches mamba's current
-/// generator support (no PyGenObject yet).
+/// nlargest(n, iterable, key=None). The optional `key=` keyword is
+/// delivered as a trailing kwargs dict positional by HIR lowering, so we
+/// accept the variadic shape and forward args[2] (the dict, if present).
+unsafe extern "C" fn dispatch_nlargest(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let n = a.first().copied().unwrap_or_else(MbValue::none);
+    let iterable = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let kwargs = a.get(2).copied().unwrap_or_else(MbValue::none);
+    mb_heapq_nlargest(n, iterable, kwargs)
+}
+
+/// nsmallest(n, iterable, key=None). See `dispatch_nlargest`.
+unsafe extern "C" fn dispatch_nsmallest(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let n = a.first().copied().unwrap_or_else(MbValue::none);
+    let iterable = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let kwargs = a.get(2).copied().unwrap_or_else(MbValue::none);
+    mb_heapq_nsmallest(n, iterable, kwargs)
+}
+
+/// merge accepts variadic sorted iterables: `merge(*iterables, key=None,
+/// reverse=False)`. Implemented as a flat-args dispatcher so all
+/// positional iterables flow through, not just the first two. Returns a
+/// single sorted list — eager rather than the CPython lazy-iterator
+/// semantics, which matches mamba's current generator support (no
+/// PyGenObject yet).
+///
+/// The `key=`/`reverse=` keywords arrive as a trailing kwargs dict
+/// positional (HIR lowering for an attribute call with kwargs). It is
+/// detected and consumed rather than treated as another iterable.
+/// CPython merges presorted inputs with a stable k-way heap merge; an
+/// eager stable sort by the same comparison key reproduces the observable
+/// output order (including ties).
 unsafe extern "C" fn dispatch_merge(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    // A trailing dict positional is the kwargs bundle, not an iterable.
+    let (iterables, kwargs): (&[MbValue], MbValue) = match a.last() {
+        Some(last) if last.as_ptr().is_some_and(|ptr| unsafe {
+            matches!((*ptr).data, ObjData::Dict(_))
+        }) => (&a[..a.len() - 1], *last),
+        _ => (a, MbValue::none()),
+    };
+    let key = kwarg(kwargs, "key");
+    let reverse = is_truthy(kwarg(kwargs, "reverse"));
+
     let mut all: Vec<MbValue> = Vec::new();
-    for v in a.iter() {
-        all.extend(extract_iterable(*v));
+    for v in iterables.iter() {
+        all.extend(super::super::builtins::extract_items(*v));
+        // CPython's merge() does not swallow exceptions raised by an input
+        // iterator (e.g. a generator that over-indexes its backing list and
+        // raises IndexError). Our eager drain leaves such an exception
+        // pending; surface it instead of producing a partial result.
+        if super::super::exception::current_exception_type().is_some() {
+            return MbValue::none();
+        }
     }
-    all.sort_by_key(|v| item_key(*v));
-    MbValue::from_ptr(MbObject::new_list(all))
+    // Stable sort by the (optional) key; reverse flips ordering while
+    // preserving stability, matching heapq.merge(reverse=True).
+    all.sort_by(|x, y| {
+        let ord = super::super::builtins::mb_value_cmp_pub(apply_key(key, *x), apply_key(key, *y));
+        if reverse { ord.reverse() } else { ord }
+    });
+    // Elements are borrowed from the source iterables — retain on the way out.
+    MbValue::from_ptr(MbObject::new_list_borrowed(all))
 }
 
 pub fn register() {
     let mut attrs = HashMap::new();
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("heappush", dispatch_heappush as usize),
-        ("heappop", dispatch_heappop as usize),
-        ("heappushpop", dispatch_heappushpop as usize),
-        ("heapreplace", dispatch_heapreplace as usize),
-        ("heapify", dispatch_heapify as usize),
-        ("nlargest", dispatch_nlargest as usize),
-        ("nsmallest", dispatch_nsmallest as usize),
-        ("merge", dispatch_merge as usize),
+        ("heappush",     dispatch_heappush     as usize),
+        ("heappop",      dispatch_heappop      as usize),
+        ("heappushpop",  dispatch_heappushpop  as usize),
+        ("heapreplace",  dispatch_heapreplace  as usize),
+        ("heapify",      dispatch_heapify      as usize),
+        ("nlargest",     dispatch_nlargest     as usize),
+        ("nsmallest",    dispatch_nsmallest    as usize),
+        ("merge",        dispatch_merge        as usize),
+        // CPython's private max-heap helpers, exercised by the test-suite
+        // and used internally by nlargest/nsmallest with key=.
+        ("_heapify_max",     dispatch_heapify_max     as usize),
+        ("_heappop_max",     dispatch_heappop_max     as usize),
+        ("_heapreplace_max", dispatch_heapreplace_max as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -117,26 +181,62 @@ pub fn register() {
     super::register_module("heapq", attrs);
 }
 
-/// Comparable key for an MbValue. Integers and floats compare by value;
-/// anything else hashes to 0 (matches the previous shim's behaviour and
-/// keeps the heap invariant well-defined for the supported subset).
-fn item_key(v: MbValue) -> i64 {
-    if let Some(i) = v.as_int() {
-        return i;
-    }
-    if let Some(f) = v.as_float() {
-        return f as i64;
-    }
-    if let Some(b) = v.as_bool() {
-        return if b { 1 } else { 0 };
-    }
-    0
-}
-
-/// `<` for MbValue using the integer-or-float key.
+/// CPython-faithful `<` for two MbValues. Delegates to the runtime's
+/// general comparison (`mb_value_cmp_pub`), which handles int, float,
+/// mixed int/float, str (lexicographic), tuple/list (element-wise), and
+/// user instances with `__lt__`. This is what makes a heap of tuples or
+/// strings order correctly — the previous `item_key` projected every
+/// non-numeric value to 0, which silently broke the heap invariant.
 #[inline]
 fn lt(a: MbValue, b: MbValue) -> bool {
-    item_key(a) < item_key(b)
+    super::super::builtins::mb_value_cmp_pub(a, b) == std::cmp::Ordering::Less
+}
+
+/// Read a string-keyed entry out of a trailing keyword-args dict.
+///
+/// `heapq.nlargest`/`nsmallest`/`merge` accept the `key=`/`reverse=`
+/// keyword arguments. At the call site (an attribute call with kwargs),
+/// HIR lowering appends a single trailing dict positional `{"key": ...,
+/// "reverse": ...}`. This pulls a named value out of that dict, or
+/// returns `None` when the arg isn't a dict / the name is absent.
+fn kwarg(maybe_dict: MbValue, name: &str) -> MbValue {
+    if !maybe_dict.as_ptr().is_some_and(|ptr| unsafe {
+        matches!((*ptr).data, ObjData::Dict(_))
+    }) {
+        return MbValue::none();
+    }
+    let key = MbValue::from_ptr(MbObject::new_str(name.to_string()));
+    super::super::dict_ops::mb_dict_get(maybe_dict, key, MbValue::none())
+}
+
+/// Apply a `key=` callable to an item, mirroring `sorted(..., key=fn)`.
+/// Supports JIT/user callables, named builtins (`len`, `abs`, ...), and
+/// instance callables. A None key is the identity.
+fn apply_key(key: MbValue, item: MbValue) -> MbValue {
+    if key.is_none() {
+        return item;
+    }
+    if super::super::builtins::resolve_callable_pub(key).is_some() {
+        return super::super::class::mb_call1_val(key, item);
+    }
+    // Named builtin callable passed as a bare string handle (e.g. `len`).
+    if let Some(name) = key.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
+    }) {
+        if let Some(v) = super::super::builtins::call_named_callable_pub(&name, item) {
+            return v;
+        }
+    }
+    // Instance callables (__call__, functools.partial, bound methods, ...).
+    if key.as_ptr().is_some() {
+        return super::super::class::mb_call1_val(key, item);
+    }
+    item
+}
+
+/// Truthiness of a `reverse=` keyword value.
+fn is_truthy(v: MbValue) -> bool {
+    v.as_bool() == Some(true) || v.as_int() == Some(1)
 }
 
 /// CPython's `_siftdown(heap, startpos, pos)` — bubble a fresh item up
@@ -176,6 +276,110 @@ fn sift_up(heap: &mut [MbValue], mut pos: usize) {
     sift_down(heap, startpos, pos);
 }
 
+// ── Max-heap variants (CPython's private `_*_max` helpers) ──
+//
+// heapq exposes `_heapify_max`, `_heappop_max`, and `_heapreplace_max`
+// (used internally by nlargest/merge and exercised directly by the CPython
+// test-suite). They are the dual of the min-heap ops with the comparison
+// reversed, so the root is the LARGEST element.
+
+/// Max-heap `_siftdown_max` — bubble a fresh item up toward the root while
+/// it is GREATER than its parent.
+fn sift_down_max(heap: &mut [MbValue], startpos: usize, mut pos: usize) {
+    let newitem = heap[pos];
+    while pos > startpos {
+        let parent = (pos - 1) >> 1;
+        if lt(heap[parent], newitem) {
+            heap[pos] = heap[parent];
+            pos = parent;
+            continue;
+        }
+        break;
+    }
+    heap[pos] = newitem;
+}
+
+/// Max-heap `_siftup_max` — promote the LARGER child as the hole descends.
+fn sift_up_max(heap: &mut [MbValue], mut pos: usize) {
+    let endpos = heap.len();
+    let startpos = pos;
+    let newitem = heap[pos];
+    let mut childpos = 2 * pos + 1;
+    while childpos < endpos {
+        let rightpos = childpos + 1;
+        if rightpos < endpos && !lt(heap[rightpos], heap[childpos]) {
+            childpos = rightpos;
+        }
+        heap[pos] = heap[childpos];
+        pos = childpos;
+        childpos = 2 * pos + 1;
+    }
+    heap[pos] = newitem;
+    sift_down_max(heap, startpos, pos);
+}
+
+/// heapq._heapify_max(list) -> None (in-place, max-heap order)
+pub fn mb_heapq_heapify_max(lst: MbValue) -> MbValue {
+    if let Some(ptr) = lst.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let mut items = lock.write().unwrap();
+                let n = items.len();
+                if n > 1 {
+                    let mut i = n / 2;
+                    while i > 0 {
+                        i -= 1;
+                        sift_up_max(&mut items, i);
+                    }
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+/// heapq._heappop_max(heap) -> largest item
+pub fn mb_heapq_heappop_max(heap: MbValue) -> MbValue {
+    if let Some(ptr) = heap.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let mut items = lock.write().unwrap();
+                if items.is_empty() {
+                    drop(items);
+                    return raise_index_error("index out of range");
+                }
+                let last = items.pop().unwrap();
+                if items.is_empty() { return last; }
+                let returnitem = items[0];
+                items[0] = last;
+                sift_up_max(&mut items, 0);
+                return returnitem;
+            }
+        }
+    }
+    MbValue::none()
+}
+
+/// heapq._heapreplace_max(heap, item) -> largest item, then push item.
+pub fn mb_heapq_heapreplace_max(heap: MbValue, item: MbValue) -> MbValue {
+    if let Some(ptr) = heap.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let mut items = lock.write().unwrap();
+                if items.is_empty() {
+                    drop(items);
+                    return raise_index_error("index out of range");
+                }
+                let returnitem = items[0];
+                items[0] = item;
+                sift_up_max(&mut items, 0);
+                return returnitem;
+            }
+        }
+    }
+    MbValue::none()
+}
+
 /// heapq.heappush(heap, item) -> None
 pub fn mb_heapq_heappush(heap: MbValue, item: MbValue) -> MbValue {
     if let Some(ptr) = heap.as_ptr() {
@@ -197,13 +401,13 @@ pub fn mb_heapq_heappop(heap: MbValue) -> MbValue {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
+                // CPython raises IndexError on an empty heap.
                 if items.is_empty() {
-                    return MbValue::none();
+                    drop(items);
+                    return raise_index_error("index out of range");
                 }
                 let last = items.pop().unwrap();
-                if items.is_empty() {
-                    return last;
-                }
+                if items.is_empty() { return last; }
                 let returnitem = items[0];
                 items[0] = last;
                 sift_up(&mut items, 0);
@@ -247,8 +451,10 @@ pub fn mb_heapq_heapreplace(heap: MbValue, item: MbValue) -> MbValue {
         unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
+                // CPython raises IndexError when the heap is empty.
                 if items.is_empty() {
-                    return MbValue::none();
+                    drop(items);
+                    return raise_index_error("index out of range");
                 }
                 let returnitem = items[0];
                 items[0] = item;
@@ -283,37 +489,56 @@ pub fn mb_heapq_heapify(lst: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// Extract a Vec<MbValue> from a list or tuple iterable. Non-iterables
-/// fall back to an empty vec.
-fn extract_iterable(val: MbValue) -> Vec<MbValue> {
-    val.as_ptr()
-        .map(|ptr| unsafe {
-            match &(*ptr).data {
-                ObjData::List(ref lock) => lock.read().unwrap().to_vec(),
-                ObjData::Tuple(items) => items.clone(),
-                _ => Vec::new(),
-            }
-        })
-        .unwrap_or_default()
+/// heapq.nlargest(n, iterable, key=None) -> list of the n largest items,
+/// ordered largest-first. With `key=`, items are ranked by `key(item)`
+/// (and returned as the items themselves, not their keys). Ties keep
+/// original input order — CPython decorates with a descending counter to
+/// make `nlargest` stable, so an equal-key run comes out in input order.
+pub fn mb_heapq_nlargest(n: MbValue, iterable: MbValue, kwargs: MbValue) -> MbValue {
+    let count = n.as_int().unwrap_or(0).max(0) as usize;
+    let key = kwarg(kwargs, "key");
+    let items = super::super::builtins::extract_items(iterable);
+    // Decorate with original index so the sort is stable on key ties.
+    let mut decorated: Vec<(MbValue, usize)> = items
+        .into_iter()
+        .enumerate()
+        .map(|(i, v)| (v, i))
+        .collect();
+    // Descending by key; ties broken by ascending original index (stable).
+    decorated.sort_by(|(a, ia), (b, ib)| {
+        match super::super::builtins::mb_value_cmp_pub(apply_key(key, *b), apply_key(key, *a)) {
+            std::cmp::Ordering::Equal => ia.cmp(ib),
+            ord => ord,
+        }
+    });
+    let mut s: Vec<MbValue> = decorated.into_iter().map(|(v, _)| v).collect();
+    s.truncate(count);
+    // Elements are borrowed from the source iterable — retain on the way out.
+    MbValue::from_ptr(MbObject::new_list_borrowed(s))
 }
 
-/// heapq.nlargest(n, iterable) -> list
-pub fn mb_heapq_nlargest(n: MbValue, iterable: MbValue) -> MbValue {
+/// heapq.nsmallest(n, iterable, key=None) -> list of the n smallest items,
+/// ordered smallest-first. See `mb_heapq_nlargest` for `key=`/tie rules.
+pub fn mb_heapq_nsmallest(n: MbValue, iterable: MbValue, kwargs: MbValue) -> MbValue {
     let count = n.as_int().unwrap_or(0).max(0) as usize;
-    let mut s = extract_iterable(iterable);
-    // Descending sort — `b.cmp(a)` for the i64 key.
-    s.sort_by(|a, b| item_key(*b).cmp(&item_key(*a)));
+    let key = kwarg(kwargs, "key");
+    let items = super::super::builtins::extract_items(iterable);
+    let mut decorated: Vec<(MbValue, usize)> = items
+        .into_iter()
+        .enumerate()
+        .map(|(i, v)| (v, i))
+        .collect();
+    // Ascending by key; ties broken by ascending original index (stable).
+    decorated.sort_by(|(a, ia), (b, ib)| {
+        match super::super::builtins::mb_value_cmp_pub(apply_key(key, *a), apply_key(key, *b)) {
+            std::cmp::Ordering::Equal => ia.cmp(ib),
+            ord => ord,
+        }
+    });
+    let mut s: Vec<MbValue> = decorated.into_iter().map(|(v, _)| v).collect();
     s.truncate(count);
-    MbValue::from_ptr(MbObject::new_list(s))
-}
-
-/// heapq.nsmallest(n, iterable) -> list
-pub fn mb_heapq_nsmallest(n: MbValue, iterable: MbValue) -> MbValue {
-    let count = n.as_int().unwrap_or(0).max(0) as usize;
-    let mut s = extract_iterable(iterable);
-    s.sort_by_key(|v| item_key(*v));
-    s.truncate(count);
-    MbValue::from_ptr(MbObject::new_list(s))
+    // Elements are borrowed from the source iterable — retain on the way out.
+    MbValue::from_ptr(MbObject::new_list_borrowed(s))
 }
 
 // HANDWRITE-END
@@ -328,19 +553,11 @@ mod tests {
     }
 
     fn read_list(val: MbValue) -> Vec<i64> {
-        val.as_ptr()
-            .map(|ptr| unsafe {
-                if let ObjData::List(ref lock) = (*ptr).data {
-                    lock.read()
-                        .unwrap()
-                        .iter()
-                        .filter_map(|v| v.as_int())
-                        .collect()
-                } else {
-                    vec![]
-                }
-            })
-            .unwrap_or_default()
+        val.as_ptr().map(|ptr| unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                lock.read().unwrap().iter().filter_map(|v| v.as_int()).collect()
+            } else { vec![] }
+        }).unwrap_or_default()
     }
 
     /// Verify the binary-heap invariant: every node is <= its children.
@@ -348,12 +565,8 @@ mod tests {
         for i in 0..vals.len() {
             let lc = 2 * i + 1;
             let rc = 2 * i + 2;
-            if lc < vals.len() && vals[i] > vals[lc] {
-                return false;
-            }
-            if rc < vals.len() && vals[i] > vals[rc] {
-                return false;
-            }
+            if lc < vals.len() && vals[i] > vals[lc] { return false; }
+            if rc < vals.len() && vals[i] > vals[rc] { return false; }
         }
         true
     }
@@ -375,9 +588,7 @@ mod tests {
         let mut out = Vec::new();
         loop {
             let v = mb_heapq_heappop(h);
-            if v.is_none() {
-                break;
-            }
+            if v.is_none() { break; }
             out.push(v.as_int().unwrap());
         }
         assert_eq!(out, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
@@ -419,14 +630,14 @@ mod tests {
     #[test]
     fn test_nlargest() {
         let lst = mk_list(&[1, 5, 3, 4, 2]);
-        let r = mb_heapq_nlargest(MbValue::from_int(3), lst);
+        let r = mb_heapq_nlargest(MbValue::from_int(3), lst, MbValue::none());
         assert_eq!(read_list(r), vec![5, 4, 3]);
     }
 
     #[test]
     fn test_nsmallest() {
         let lst = mk_list(&[5, 1, 3, 4, 2]);
-        let r = mb_heapq_nsmallest(MbValue::from_int(3), lst);
+        let r = mb_heapq_nsmallest(MbValue::from_int(3), lst, MbValue::none());
         assert_eq!(read_list(r), vec![1, 2, 3]);
     }
 

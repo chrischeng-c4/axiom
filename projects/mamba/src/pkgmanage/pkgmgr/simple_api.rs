@@ -241,22 +241,13 @@ struct Pep691Hashes {
 impl Pep691Hashes {
     fn best(&self) -> FileHash {
         if let Some(d) = &self.sha256 {
-            return FileHash {
-                algorithm: "sha256".into(),
-                digest: d.clone(),
-            };
+            return FileHash { algorithm: "sha256".into(), digest: d.clone() };
         }
         if let Some(d) = &self.sha384 {
-            return FileHash {
-                algorithm: "sha384".into(),
-                digest: d.clone(),
-            };
+            return FileHash { algorithm: "sha384".into(), digest: d.clone() };
         }
         if let Some(d) = &self.sha512 {
-            return FileHash {
-                algorithm: "sha512".into(),
-                digest: d.clone(),
-            };
+            return FileHash { algorithm: "sha512".into(), digest: d.clone() };
         }
         FileHash::default()
     }
@@ -347,23 +338,14 @@ mod tests {
         assert_eq!(meta.versions.len(), 1);
         assert_eq!(meta.versions[0], "2.31.0");
 
-        let files = meta
-            .releases
-            .get("2.31.0")
-            .expect("version 2.31.0 should exist");
+        let files = meta.releases.get("2.31.0").expect("version 2.31.0 should exist");
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].filename, "requests-2.31.0-py3-none-any.whl");
         assert_eq!(files[0].hash.algorithm, "sha256");
-        assert_eq!(
-            files[0].hash.digest,
-            "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-        );
+        assert_eq!(files[0].hash.digest, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
         // URL should NOT contain the fragment
         assert!(!files[0].url.contains('#'));
-        assert_eq!(
-            files[0].url,
-            "https://files.example.com/requests-2.31.0-py3-none-any.whl"
-        );
+        assert_eq!(files[0].url, "https://files.example.com/requests-2.31.0-py3-none-any.whl");
         assert_eq!(files[0].requires_python.as_deref(), Some(">=3.7"));
         assert!(!files[0].yanked);
         assert_eq!(files[0].source.as_deref(), Some("simple-api"));
@@ -446,17 +428,12 @@ mod tests {
         assert_eq!(meta.versions.len(), 1);
         assert_eq!(meta.versions[0], "2.31.0");
 
-        let files = meta
-            .releases
-            .get("2.31.0")
-            .expect("version 2.31.0 should exist");
+        let files = meta.releases.get("2.31.0").expect("version 2.31.0 should exist");
         assert_eq!(files.len(), 2, "both wheel and sdist should be present");
 
         // Verify hashes
         assert!(files.iter().all(|f| f.hash.algorithm == "sha256"));
-        assert!(files
-            .iter()
-            .all(|f| f.source.as_deref() == Some("simple-api")));
+        assert!(files.iter().all(|f| f.source.as_deref() == Some("simple-api")));
     }
 
     // REQ: test_parse_simple_json_malformed — invalid JSON → IndexError::ParseError
@@ -492,10 +469,7 @@ mod tests {
         assert_eq!(url, "https://files.example.com/pkg-1.0.0.whl");
         let h = hash.expect("should have hash");
         assert_eq!(h.algorithm, "sha256");
-        assert_eq!(
-            h.digest,
-            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-        );
+        assert_eq!(h.digest, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
 
         // No fragment
         let (url2, hash2) = strip_hash_fragment("https://files.example.com/pkg-1.0.0.whl");
@@ -514,10 +488,7 @@ mod tests {
         let meta = parse_simple_html("mypkg", body_empty).unwrap();
         let files = meta.releases.get("1.0.0").unwrap();
         assert!(files[0].yanked, "empty data-yanked must set yanked=true");
-        assert_eq!(
-            files[0].yanked_reason, None,
-            "empty data-yanked must leave yanked_reason=None"
-        );
+        assert_eq!(files[0].yanked_reason, None, "empty data-yanked must leave yanked_reason=None");
 
         // Non-empty data-yanked → yanked=true, yanked_reason=Some(reason)
         let body_reason = r#"<html><body>
@@ -526,10 +497,7 @@ mod tests {
 </body></html>"#;
         let meta2 = parse_simple_html("mypkg", body_reason).unwrap();
         let files2 = meta2.releases.get("2.0.0").unwrap();
-        assert!(
-            files2[0].yanked,
-            "non-empty data-yanked must set yanked=true"
-        );
+        assert!(files2[0].yanked, "non-empty data-yanked must set yanked=true");
         assert_eq!(
             files2[0].yanked_reason.as_deref(),
             Some("reason here"),
@@ -542,14 +510,8 @@ mod tests {
 </body></html>"#;
         let meta3 = parse_simple_html("mypkg", body_absent).unwrap();
         let files3 = meta3.releases.get("3.0.0").unwrap();
-        assert!(
-            !files3[0].yanked,
-            "absent data-yanked must leave yanked=false"
-        );
-        assert_eq!(
-            files3[0].yanked_reason, None,
-            "absent data-yanked must leave yanked_reason=None"
-        );
+        assert!(!files3[0].yanked, "absent data-yanked must leave yanked=false");
+        assert_eq!(files3[0].yanked_reason, None, "absent data-yanked must leave yanked_reason=None");
     }
 
     // REQ: AC2 [R5] — JSON parser: fixture with bool-yanked AND string-yanked entries; assert correct split
@@ -585,19 +547,12 @@ mod tests {
             ]
         }"#;
 
-        let meta = parse_simple_json("requests", body)
-            .expect("must parse successfully with string-yanked entries");
+        let meta = parse_simple_json("requests", body).expect("must parse successfully with string-yanked entries");
 
         // Bool yanked=true → yanked=true, yanked_reason=None
         let v2280 = &meta.releases["2.28.0"][0];
-        assert!(
-            v2280.yanked,
-            "2.28.0: bool yanked=true must set yanked=true"
-        );
-        assert_eq!(
-            v2280.yanked_reason, None,
-            "2.28.0: bool yanked=true must leave yanked_reason=None"
-        );
+        assert!(v2280.yanked, "2.28.0: bool yanked=true must set yanked=true");
+        assert_eq!(v2280.yanked_reason, None, "2.28.0: bool yanked=true must leave yanked_reason=None");
 
         // String yanked → yanked=true, yanked_reason=Some(reason)
         let v2270 = &meta.releases["2.27.0"][0];
@@ -610,25 +565,13 @@ mod tests {
 
         // Bool yanked=false → yanked=false, yanked_reason=None
         let v2260 = &meta.releases["2.26.0"][0];
-        assert!(
-            !v2260.yanked,
-            "2.26.0: bool yanked=false must set yanked=false"
-        );
-        assert_eq!(
-            v2260.yanked_reason, None,
-            "2.26.0: bool yanked=false must leave yanked_reason=None"
-        );
+        assert!(!v2260.yanked, "2.26.0: bool yanked=false must set yanked=false");
+        assert_eq!(v2260.yanked_reason, None, "2.26.0: bool yanked=false must leave yanked_reason=None");
 
         // Absent yanked → yanked=false, yanked_reason=None
         let v2250 = &meta.releases["2.25.0"][0];
-        assert!(
-            !v2250.yanked,
-            "2.25.0: absent yanked must default to yanked=false"
-        );
-        assert_eq!(
-            v2250.yanked_reason, None,
-            "2.25.0: absent yanked must leave yanked_reason=None"
-        );
+        assert!(!v2250.yanked, "2.25.0: absent yanked must default to yanked=false");
+        assert_eq!(v2250.yanked_reason, None, "2.25.0: absent yanked must leave yanked_reason=None");
     }
 
     // REQ: tick-112 test-coverage — strip_hash_fragment alt-algo + malformed-fragment branches

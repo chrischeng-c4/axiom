@@ -8,10 +8,8 @@
 //!
 //! Browser-driving code paths are abstracted behind the [`BrowserSession`]
 //! trait so unit tests can run without a live Chromium. The default
-//! production implementation [`runner::PlaywrightBrowserSession`] currently
-//! returns `unimplemented!()` with a pointer to the follow-up tracker —
-//! it is wired up so the public surface matches the spec, but the live
-//! browser harness is gated on issue #2139's follow-up.
+//! production implementation [`runner::JetBrowserSession`] launches Chromium
+//! directly and captures DOM oracle artifacts through CDP.
 
 pub mod artifacts;
 pub mod channels;
@@ -25,8 +23,8 @@ pub use channels::{
 };
 pub use manifest::{FixtureManifest, ManifestError};
 pub use runner::{
-    BrowserKind, BrowserSession, MatrixEntry, PageHost, Runner, RunnerConfig, RunnerError,
-    StubBrowserSession,
+    BrowserKind, BrowserSession, JetBrowserSession, MatrixEntry, PageHost,
+    PlaywrightBrowserSession, Runner, RunnerConfig, RunnerError, StubBrowserSession,
 };
 
 use std::path::Path;

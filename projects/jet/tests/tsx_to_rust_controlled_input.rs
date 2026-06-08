@@ -1,6 +1,6 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests.md#tests
 // CODEGEN-BEGIN
-//! Controlled input TSX lowering coverage for the DOM renderer parity slice.
+//! Controlled input TSX lowering coverage for the WASM input surface.
 
 use jet::tsx_to_rust::transpile;
 

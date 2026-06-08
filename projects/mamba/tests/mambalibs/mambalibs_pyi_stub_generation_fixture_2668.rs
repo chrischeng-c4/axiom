@@ -121,7 +121,10 @@ fn mambalibs_pyi_stub_binding_block_pins_signature_components() {
         .get("return_kind")
         .and_then(|v| v.as_str())
         .expect("`[binding].return_kind` must be set");
-    assert!(!ret.is_empty(), "`[binding].return_kind` must be non-empty");
+    assert!(
+        !ret.is_empty(),
+        "`[binding].return_kind` must be non-empty"
+    );
 }
 
 #[test]
@@ -162,14 +165,11 @@ fn mambalibs_pyi_stub_artifact_block_pins_deterministic_pyi() {
 #[test]
 fn mambalibs_pyi_stub_generation_case_pins_module_and_signature() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("stub_generation_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[stub_generation_case]` block \
+    let block = doc.get("stub_generation_case").and_then(|v| v.as_table()).expect(
+        "missing `[stub_generation_case]` block \
          (acceptance: \"Stub output includes the exported module and \
          function signature.\")",
-        );
+    );
 
     assert_eq!(
         block.get("case").and_then(|v| v.as_str()),
@@ -187,9 +187,7 @@ fn mambalibs_pyi_stub_generation_case_pins_module_and_signature() {
         "`[stub_generation_case].expected_exit_code` must be 0"
     );
     assert_eq!(
-        block
-            .get("must_create_stub_artifact")
-            .and_then(|v| v.as_bool()),
+        block.get("must_create_stub_artifact").and_then(|v| v.as_bool()),
         Some(true),
         "`[stub_generation_case].must_create_stub_artifact` must be true"
     );
@@ -223,9 +221,7 @@ fn mambalibs_pyi_stub_generation_case_pins_module_and_signature() {
     );
 
     assert_eq!(
-        block
-            .get("must_include_function_signature")
-            .and_then(|v| v.as_bool()),
+        block.get("must_include_function_signature").and_then(|v| v.as_bool()),
         Some(true),
         "`[stub_generation_case].must_include_function_signature` must be true"
     );
@@ -268,14 +264,11 @@ fn mambalibs_pyi_stub_generation_case_pins_module_and_signature() {
 #[test]
 fn mambalibs_pyi_missing_stub_generator_case_blocks_with_linked_issue() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("missing_stub_generator_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[missing_stub_generator_case]` block \
+    let block = doc.get("missing_stub_generator_case").and_then(|v| v.as_table()).expect(
+        "missing `[missing_stub_generator_case]` block \
          (acceptance: \"Missing stub generation is reported with a \
          linked blocker, not silent pass.\")",
-        );
+    );
 
     assert_eq!(
         block.get("case").and_then(|v| v.as_str()),
@@ -303,17 +296,13 @@ fn mambalibs_pyi_missing_stub_generator_case_blocks_with_linked_issue() {
     }
 
     assert_eq!(
-        block
-            .get("linked_blocker_issue")
-            .and_then(|v| v.as_integer()),
+        block.get("linked_blocker_issue").and_then(|v| v.as_integer()),
         Some(2668),
         "`[missing_stub_generator_case].linked_blocker_issue` must record #2668"
     );
 
     assert_eq!(
-        block
-            .get("diagnostic_must_name_offending_feature")
-            .and_then(|v| v.as_str()),
+        block.get("diagnostic_must_name_offending_feature").and_then(|v| v.as_str()),
         Some("stub_generation"),
         "`[missing_stub_generator_case].diagnostic_must_name_offending_feature` \
          must be \"stub_generation\""
@@ -323,15 +312,12 @@ fn mambalibs_pyi_missing_stub_generator_case_blocks_with_linked_issue() {
 #[test]
 fn mambalibs_pyi_unsupported_behavior_contract_forbids_silent_pass() {
     let doc = load_toml(&manifest_path());
-    let contract = doc
-        .get("unsupported_behavior_contract")
-        .and_then(|v| v.as_table())
-        .expect("missing `[unsupported_behavior_contract]` block");
+    let contract = doc.get("unsupported_behavior_contract").and_then(|v| v.as_table()).expect(
+        "missing `[unsupported_behavior_contract]` block",
+    );
 
     assert_eq!(
-        contract
-            .get("when_stub_generation_unsupported_outcome")
-            .and_then(|v| v.as_str()),
+        contract.get("when_stub_generation_unsupported_outcome").and_then(|v| v.as_str()),
         Some("blocked"),
         "`when_stub_generation_unsupported_outcome` must be \"blocked\""
     );
@@ -343,9 +329,7 @@ fn mambalibs_pyi_unsupported_behavior_contract_forbids_silent_pass() {
         );
     }
     assert_eq!(
-        contract
-            .get("must_link_to_blocker_issue")
-            .and_then(|v| v.as_integer()),
+        contract.get("must_link_to_blocker_issue").and_then(|v| v.as_integer()),
         Some(2668),
         "`[unsupported_behavior_contract].must_link_to_blocker_issue` must record #2668"
     );
@@ -354,18 +338,13 @@ fn mambalibs_pyi_unsupported_behavior_contract_forbids_silent_pass() {
 #[test]
 fn mambalibs_pyi_import_independence_preserves_2666() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("import_independence")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[import_independence]` block \
+    let block = doc.get("import_independence").and_then(|v| v.as_table()).expect(
+        "missing `[import_independence]` block \
          (acceptance: \"Import fixture still works independently.\")",
-        );
+    );
 
     assert_eq!(
-        block
-            .get("type_roundtrip_fixture_issue")
-            .and_then(|v| v.as_integer()),
+        block.get("type_roundtrip_fixture_issue").and_then(|v| v.as_integer()),
         Some(2666),
         "`[import_independence].type_roundtrip_fixture_issue` must record #2666"
     );
@@ -467,8 +446,7 @@ fn mambalibs_pyi_pins_out_of_scope_per_issue_2668() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("full_typing_coverage_for_every_library")
-            .and_then(|v| v.as_bool()),
+        oos.get("full_typing_coverage_for_every_library").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].full_typing_coverage_for_every_library` must be true \
          (issue text: \"Out of scope: full typing coverage for every library.\")"

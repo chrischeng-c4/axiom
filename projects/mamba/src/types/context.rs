@@ -1,5 +1,5 @@
-use super::ty::{Ty, TypeId, TypeVarId};
 use std::collections::HashMap;
+use super::ty::{Ty, TypeId, TypeVarId};
 
 /// Type variable info: optional upper bound and type constraints (#242).
 #[derive(Debug, Clone)]
@@ -27,14 +27,14 @@ impl TypeContext {
             type_vars: Vec::new(),
         };
         // Pre-register primitive types at known positions
-        ctx.intern(Ty::Never); // TypeId(0)
-        ctx.intern(Ty::None); // TypeId(1)
-        ctx.intern(Ty::Bool); // TypeId(2)
-        ctx.intern(Ty::Int); // TypeId(3)
-        ctx.intern(Ty::Float); // TypeId(4)
-        ctx.intern(Ty::Str); // TypeId(5)
-        ctx.intern(Ty::Error); // TypeId(6)
-        ctx.intern(Ty::Any); // TypeId(7) — #240
+        ctx.intern(Ty::Never);   // TypeId(0)
+        ctx.intern(Ty::None);    // TypeId(1)
+        ctx.intern(Ty::Bool);    // TypeId(2)
+        ctx.intern(Ty::Int);     // TypeId(3)
+        ctx.intern(Ty::Float);   // TypeId(4)
+        ctx.intern(Ty::Str);     // TypeId(5)
+        ctx.intern(Ty::Error);   // TypeId(6)
+        ctx.intern(Ty::Any);     // TypeId(7) — #240
         ctx
     }
 
@@ -56,37 +56,18 @@ impl TypeContext {
 
     /// Look up an already-interned type without mutating. Returns None if not found.
     pub fn find(&self, ty: &Ty) -> Option<TypeId> {
-        self.types
-            .iter()
-            .position(|t| t == ty)
-            .map(|i| TypeId(i as u32))
+        self.types.iter().position(|t| t == ty).map(|i| TypeId(i as u32))
     }
 
     // Well-known type IDs
-    pub fn never(&self) -> TypeId {
-        TypeId(0)
-    }
-    pub fn none(&self) -> TypeId {
-        TypeId(1)
-    }
-    pub fn bool(&self) -> TypeId {
-        TypeId(2)
-    }
-    pub fn int(&self) -> TypeId {
-        TypeId(3)
-    }
-    pub fn float(&self) -> TypeId {
-        TypeId(4)
-    }
-    pub fn str(&self) -> TypeId {
-        TypeId(5)
-    }
-    pub fn error(&self) -> TypeId {
-        TypeId(6)
-    }
-    pub fn any(&self) -> TypeId {
-        TypeId(7)
-    }
+    pub fn never(&self) -> TypeId { TypeId(0) }
+    pub fn none(&self) -> TypeId { TypeId(1) }
+    pub fn bool(&self) -> TypeId { TypeId(2) }
+    pub fn int(&self) -> TypeId { TypeId(3) }
+    pub fn float(&self) -> TypeId { TypeId(4) }
+    pub fn str(&self) -> TypeId { TypeId(5) }
+    pub fn error(&self) -> TypeId { TypeId(6) }
+    pub fn any(&self) -> TypeId { TypeId(7) }
 
     // --- Type aliases (#241) ---
 
@@ -105,18 +86,9 @@ impl TypeContext {
 
     // --- Type variables (#242) ---
 
-    pub fn new_type_var(
-        &mut self,
-        name: String,
-        bound: Option<TypeId>,
-        constraints: Vec<TypeId>,
-    ) -> TypeVarId {
+    pub fn new_type_var(&mut self, name: String, bound: Option<TypeId>, constraints: Vec<TypeId>) -> TypeVarId {
         let id = TypeVarId(self.type_vars.len() as u32);
-        self.type_vars.push(TypeVarInfo {
-            name,
-            bound,
-            constraints,
-        });
+        self.type_vars.push(TypeVarInfo { name, bound, constraints });
         id
     }
 
@@ -128,9 +100,7 @@ impl TypeContext {
 
     /// Check if `sub` is a subtype of `sup` (simplified).
     pub fn is_subtype(&self, sub: TypeId, sup: TypeId) -> bool {
-        if sub == sup {
-            return true;
-        }
+        if sub == sup { return true; }
 
         let sub_ty = self.get(sub);
         let sup_ty = self.get(sup);
@@ -141,9 +111,7 @@ impl TypeContext {
         }
 
         // Never is subtype of everything
-        if matches!(sub_ty, Ty::Never) {
-            return true;
-        }
+        if matches!(sub_ty, Ty::Never) { return true; }
 
         // int is subtype of float (numeric widening)
         if matches!(sub_ty, Ty::Int) && matches!(sup_ty, Ty::Float) {
@@ -299,7 +267,9 @@ mod tests {
         let mut tcx = TypeContext::new();
         let int_ty = tcx.int();
         let str_ty = tcx.str();
-        let id = tcx.new_type_var("T".to_string(), None, vec![int_ty, str_ty]);
+        let id = tcx.new_type_var(
+            "T".to_string(), None, vec![int_ty, str_ty],
+        );
         let info = tcx.get_type_var(id);
         assert_eq!(info.constraints, vec![int_ty, str_ty]);
     }

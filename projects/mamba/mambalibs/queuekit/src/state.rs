@@ -34,18 +34,12 @@ pub enum TaskState {
 impl TaskState {
     /// Check if this is a terminal state
     pub fn is_terminal(&self) -> bool {
-        matches!(
-            self,
-            Self::Success | Self::Failure | Self::Revoked | Self::Rejected
-        )
+        matches!(self, Self::Success | Self::Failure | Self::Revoked | Self::Rejected)
     }
 
     /// Check if task is in progress
     pub fn is_active(&self) -> bool {
-        matches!(
-            self,
-            Self::Received | Self::Started | Self::Retry | Self::Offloaded
-        )
+        matches!(self, Self::Received | Self::Started | Self::Retry | Self::Offloaded)
     }
 
     /// Check if task is offloaded to external executor
@@ -204,10 +198,7 @@ mod tests {
         ];
         for (variant, expected) in &cases {
             let json = serde_json::to_string(variant).unwrap();
-            assert_eq!(
-                &json, *expected,
-                "variant {variant:?} did not serialize to {expected}"
-            );
+            assert_eq!(&json, *expected, "variant {variant:?} did not serialize to {expected}");
         }
     }
 
@@ -216,12 +207,7 @@ mod tests {
     /// T4: terminal states
     #[test]
     fn terminal_states() {
-        for s in [
-            TaskState::Success,
-            TaskState::Failure,
-            TaskState::Revoked,
-            TaskState::Rejected,
-        ] {
+        for s in [TaskState::Success, TaskState::Failure, TaskState::Revoked, TaskState::Rejected] {
             assert!(s.is_terminal(), "{s:?} should be terminal");
         }
     }

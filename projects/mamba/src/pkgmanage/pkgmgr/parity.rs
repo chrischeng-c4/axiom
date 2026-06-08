@@ -26,7 +26,9 @@ use std::collections::BTreeSet;
 use crate::pkgmanage::pkgmgr::benchmark;
 use crate::pkgmanage::pkgmgr::bytecode;
 use crate::pkgmanage::pkgmgr::freshness;
-use crate::pkgmanage::pkgmgr::groups::{DependencyGroups, GroupEntry, ProjectExtras};
+use crate::pkgmanage::pkgmgr::groups::{
+    DependencyGroups, GroupEntry, ProjectExtras,
+};
 use crate::pkgmanage::pkgmgr::indexes;
 use crate::pkgmanage::pkgmgr::pep723;
 use crate::pkgmanage::pkgmgr::platforms;
@@ -191,7 +193,11 @@ fn fail(detail: impl Into<String>) -> ParityOutcome {
     }
 }
 
-fn expect_eq<T: PartialEq + std::fmt::Debug>(label: &str, actual: T, expected: T) -> ParityOutcome {
+fn expect_eq<T: PartialEq + std::fmt::Debug>(
+    label: &str,
+    actual: T,
+    expected: T,
+) -> ParityOutcome {
     if actual == expected {
         ok()
     } else {
@@ -269,10 +275,8 @@ import requests
     // Tick 23: dependency-group expansion with include-group.
     m.push("groups.expand_include", "PEP 735", || {
         let mut g = DependencyGroups::default();
-        g.by_name.insert(
-            "dev".to_string(),
-            vec![GroupEntry::Requirement("pytest".into())],
-        );
+        g.by_name
+            .insert("dev".to_string(), vec![GroupEntry::Requirement("pytest".into())]);
         g.by_name.insert(
             "test".to_string(),
             vec![
@@ -283,10 +287,8 @@ import requests
         match g.expand(&["test"]) {
             Ok(reqs) => {
                 let set: BTreeSet<String> = reqs.into_iter().collect();
-                let expected: BTreeSet<String> = ["pytest", "hypothesis"]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect();
+                let expected: BTreeSet<String> =
+                    ["pytest", "hypothesis"].iter().map(|s| s.to_string()).collect();
                 if set == expected {
                     ok()
                 } else {
@@ -353,7 +355,10 @@ import requests
     // applicable environment set for a plain marker.
     m.push("platforms.python_version_gate", "PEP 508 + envs", || {
         let envs = platforms::EnvironmentSet::standard_matrix();
-        match platforms::evaluate_marker_across_envs(Some("python_version >= \"3.10\""), &envs) {
+        match platforms::evaluate_marker_across_envs(
+            Some("python_version >= \"3.10\""),
+            &envs,
+        ) {
             Ok(applicable) => {
                 // All standard envs are >= 3.10 (the matrix starts at 3.10).
                 expect_eq("matrix size", applicable.len(), envs.len())
@@ -365,24 +370,20 @@ import requests
     // Tick 26: bytecode count walker — no temp dir; just validate that
     // `count_py_files` correctly errors on a definitely-missing path
     // (smoke for the I/O wiring; real file walking is unit-tested).
-    m.push(
-        "bytecode.count_missing_errs",
-        "compileall preflight",
-        || {
-            let bogus = std::path::Path::new("/definitely/not/a/real/path/abc-xyz");
-            match bytecode::count_py_files(bogus) {
-                Ok(n) => fail(format!("expected error, got count={n}")),
-                Err(e) => {
-                    let msg = format!("{e}");
-                    if msg.contains("does not exist") {
-                        ok()
-                    } else {
-                        fail(format!("wrong error variant: {msg}"))
-                    }
+    m.push("bytecode.count_missing_errs", "compileall preflight", || {
+        let bogus = std::path::Path::new("/definitely/not/a/real/path/abc-xyz");
+        match bytecode::count_py_files(bogus) {
+            Ok(n) => fail(format!("expected error, got count={n}")),
+            Err(e) => {
+                let msg = format!("{e}");
+                if msg.contains("does not exist") {
+                    ok()
+                } else {
+                    fail(format!("wrong error variant: {msg}"))
                 }
             }
-        },
-    );
+        }
+    });
 
     // Tick 27: multi-index parse + implicit PyPI tail.
     m.push("indexes.parse_and_order", "[[tool.uv.index]]", || {
@@ -394,10 +395,14 @@ url = "https://internal.example/simple"
         match indexes::parse_indexes(toml_src) {
             Ok(cfg) => {
                 let order = indexes::query_order(&cfg, "anything");
-                if order.len() == 2 && order[0].name == "internal" && order[1].name == "pypi" {
+                if order.len() == 2
+                    && order[0].name == "internal"
+                    && order[1].name == "pypi"
+                {
                     ok()
                 } else {
-                    let names: Vec<&str> = order.iter().map(|i| i.name.as_str()).collect();
+                    let names: Vec<&str> =
+                        order.iter().map(|i| i.name.as_str()).collect();
                     fail(format!("unexpected order: {names:?}"))
                 }
             }
@@ -516,10 +521,7 @@ mod tests {
         });
         let text = run_matrix(&m).render_text();
         assert!(text.contains("ok      ok"), "missing ok marker in: {text}");
-        assert!(
-            text.contains("FAIL    bad"),
-            "missing FAIL marker in: {text}"
-        );
+        assert!(text.contains("FAIL    bad"), "missing FAIL marker in: {text}");
         assert!(text.contains("details here"), "missing detail in: {text}");
     }
 

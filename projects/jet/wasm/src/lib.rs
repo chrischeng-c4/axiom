@@ -7,7 +7,9 @@
 //! - **Generic substrate** (this file + `renderer`):
 //!   - `Element` tree, `Props`, `Callback`, `Component` types that
 //!     any framework-specific runtime uses.
-//!   - `renderer` module: layout + paint + canvas backend.
+//!   - `renderer` module: layout + paint operations consumed by the
+//!     browser WebGPU app renderer. A test-only paint backend remains
+//!     available for host-side renderer unit tests.
 //!   - Nothing here is React-specific. Vue / Angular / Solid /
 //!     vanilla-JS adapters would target the same `Element` shape.
 //!
@@ -80,8 +82,8 @@ use std::rc::Rc;
 // ── Element tree ────────────────────────────────────────────────────────────
 
 /// A rendered element. Either an intrinsic host node (`<div>`, `<button>`,
-/// etc. — eventually mapped to canvas paint ops by the renderer), a text
-/// leaf, or a component invocation that the runtime will expand.
+/// etc. — mapped to WebGPU paint plans by the renderer), a text leaf, or a
+/// component invocation that the runtime will expand.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src.md#schema
 #[derive(Clone)]
 pub enum Element {
@@ -160,6 +162,8 @@ pub struct Props {
     pub checked: Option<bool>,
     /// @spec .aw/tech-design/projects/jet/specs/4072.md#schema
     pub aria_label: Option<String>,
+    /// @spec .aw/tech-design/projects/jet/specs/4072.md#schema
+    pub html_for: Option<String>,
     pub disabled: bool,
 }
 
@@ -189,7 +193,7 @@ impl<P: Clone> Callback<P> {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-src.md#schema
 impl Element {
     /// Depth-first collect every `on_click` callback in the tree.
-    /// The canvas renderer will do richer hit-testing; tests use
+    /// The browser WebGPU renderer performs richer hit-testing; tests use
     /// this for round-trip verification.
     pub fn find_on_click(&self, target_id: &str) -> Option<Callback<()>> {
         match self {

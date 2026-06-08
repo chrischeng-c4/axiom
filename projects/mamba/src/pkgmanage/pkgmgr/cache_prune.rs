@@ -244,7 +244,11 @@ impl PrunePlan {
 
 /// Pure decision layer: given an inventory + policy + "now",
 /// produce the deterministic list of files to remove. No I/O.
-pub fn plan_prune(inventory: &CacheInventory, policy: &PrunePolicy, now: SystemTime) -> PrunePlan {
+pub fn plan_prune(
+    inventory: &CacheInventory,
+    policy: &PrunePolicy,
+    now: SystemTime,
+) -> PrunePlan {
     let allowed_cats: HashSet<CacheCategory> = if policy.categories.is_empty() {
         if policy.all_unknown_too {
             [
@@ -390,7 +394,9 @@ pub fn apply_prune_plan(plan: &PrunePlan, dry_run: bool) -> PruneSummary {
                 summary.bytes_freed += e.size_bytes;
             }
             Err(err) => {
-                summary.failures.push((e.path.clone(), err.to_string()));
+                summary
+                    .failures
+                    .push((e.path.clone(), err.to_string()));
             }
         }
     }
@@ -461,9 +467,7 @@ mod tests {
         touch(&root.join("metadata/requests/json-api.json"), 100);
         touch(&root.join("artifacts/requests/req-2.31.0.whl"), 500);
         touch(
-            &root.join(
-                "content/ab/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
-            ),
+            &root.join("content/ab/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"),
             900,
         );
         touch(&root.join("rogue/note.txt"), 50);
@@ -516,12 +520,7 @@ mod tests {
         let inv = inventory(
             now,
             &[
-                (
-                    CacheCategory::Metadata,
-                    "metadata/a/json-api.json",
-                    100,
-                    7200,
-                ),
+                (CacheCategory::Metadata, "metadata/a/json-api.json", 100, 7200),
                 (CacheCategory::Metadata, "metadata/b/json-api.json", 100, 60),
             ],
         );
@@ -531,10 +530,7 @@ mod tests {
             now,
         );
         assert_eq!(plan.len(), 1);
-        assert_eq!(
-            plan.entries[0].path,
-            PathBuf::from("metadata/a/json-api.json")
-        );
+        assert_eq!(plan.entries[0].path, PathBuf::from("metadata/a/json-api.json"));
         assert_eq!(plan.entries[0].reason, PruneReason::OlderThan);
     }
 
@@ -615,18 +611,8 @@ mod tests {
         let inv = inventory(
             now,
             &[
-                (
-                    CacheCategory::Metadata,
-                    "metadata/requests/json-api.json",
-                    10,
-                    1,
-                ),
-                (
-                    CacheCategory::Metadata,
-                    "metadata/flask/json-api.json",
-                    10,
-                    1,
-                ),
+                (CacheCategory::Metadata, "metadata/requests/json-api.json", 10, 1),
+                (CacheCategory::Metadata, "metadata/flask/json-api.json", 10, 1),
                 (CacheCategory::Artifact, "artifacts/requests/req.whl", 50, 1),
             ],
         );

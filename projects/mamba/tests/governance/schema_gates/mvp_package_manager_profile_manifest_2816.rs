@@ -40,16 +40,9 @@ fn umbrella_path() -> PathBuf {
         .join("mvp.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn package_manager_profile_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("profile").and_then(|v| v.as_str()),
@@ -76,7 +69,7 @@ fn package_manager_profile_manifest_header_is_well_formed() {
 
 #[test]
 fn package_manager_profile_declares_all_workflow_families() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let families = doc
         .get("families")
         .and_then(|v| v.as_table())
@@ -99,7 +92,7 @@ fn package_manager_profile_declares_all_workflow_families() {
 
 #[test]
 fn package_manager_profile_defaults_offline_with_frozen_local_indexes() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let policy = doc
         .get("policy")
         .and_then(|v| v.as_table())
@@ -150,7 +143,7 @@ fn package_manager_profile_defaults_offline_with_frozen_local_indexes() {
 
 #[test]
 fn package_manager_profile_live_network_is_opt_in_only() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let live = doc
         .get("live_network")
@@ -207,7 +200,7 @@ fn package_manager_profile_live_network_is_opt_in_only() {
 
 #[test]
 fn package_manager_profile_summary_names_project_lockfile_environment() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let summary = doc
         .get("summary")
         .and_then(|v| v.as_table())
@@ -230,7 +223,7 @@ fn package_manager_profile_summary_names_project_lockfile_environment() {
 
 #[test]
 fn package_manager_profile_runner_contract_covers_every_family() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -253,7 +246,7 @@ fn package_manager_profile_runner_contract_covers_every_family() {
 
 #[test]
 fn mvp_umbrella_links_to_package_manager_manifest() {
-    let doc = load_toml(&umbrella_path());
+    let doc = crate::common::load_toml(&umbrella_path());
     let entry = doc
         .get("profiles")
         .and_then(|v| v.get("package_manager"))

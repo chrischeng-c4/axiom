@@ -23,6 +23,9 @@
 //!
 //! Selector: `cargo test -p mamba --test schema_gates`.
 
+#[path = "common.rs"]
+mod common;
+
 #[path = "schema_gates/block_ignored_in_mvp_profile_fixture_2599.rs"]
 mod block_ignored_in_mvp_profile_fixture_2599;
 

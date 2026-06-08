@@ -236,13 +236,10 @@ fn mambalibs_clean_case_removes_artifacts_but_not_lockfile() {
 #[test]
 fn mambalibs_clean_source_preservation_pins_source_tree() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("source_preservation")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[source_preservation]` block \
+    let block = doc.get("source_preservation").and_then(|v| v.as_table()).expect(
+        "missing `[source_preservation]` block \
          (acceptance: \"Clean does not delete source fixture files.\")",
-        );
+    );
 
     let preserved = string_array(&doc, "source_preservation", "must_preserve_relative_paths");
     assert!(
@@ -271,13 +268,10 @@ fn mambalibs_clean_source_preservation_pins_source_tree() {
 #[test]
 fn mambalibs_clean_lockfile_policy_preserves_lockfile() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("lockfile_policy")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[lockfile_policy]` block \
+    let block = doc.get("lockfile_policy").and_then(|v| v.as_table()).expect(
+        "missing `[lockfile_policy]` block \
          (acceptance: \"Clean does not delete source fixture files.\")",
-        );
+    );
 
     let lockfile = block
         .get("lockfile_relative_path")
@@ -289,9 +283,7 @@ fn mambalibs_clean_lockfile_policy_preserves_lockfile() {
     );
 
     assert_eq!(
-        block
-            .get("must_be_preserved_by_clean")
-            .and_then(|v| v.as_bool()),
+        block.get("must_be_preserved_by_clean").and_then(|v| v.as_bool()),
         Some(true),
         "`[lockfile_policy].must_be_preserved_by_clean` must be true"
     );
@@ -320,13 +312,10 @@ fn mambalibs_clean_lockfile_policy_preserves_lockfile() {
 #[test]
 fn mambalibs_clean_rebuild_after_clean_recreates_full_artifact_set() {
     let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("rebuild_after_clean_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[rebuild_after_clean_case]` block \
+    let case = doc.get("rebuild_after_clean_case").and_then(|v| v.as_table()).expect(
+        "missing `[rebuild_after_clean_case]` block \
          (acceptance: \"Rebuild after clean still succeeds.\")",
-        );
+    );
 
     assert_eq!(
         case.get("case").and_then(|v| v.as_str()),
@@ -355,10 +344,7 @@ fn mambalibs_clean_rebuild_after_clean_recreates_full_artifact_set() {
         "`[rebuild_after_clean_case].command` must be [\"build\"]; got {command:?}"
     );
 
-    for flag in &[
-        "must_recreate_all_expected_files",
-        "must_match_artifact_paths_set",
-    ] {
+    for flag in &["must_recreate_all_expected_files", "must_match_artifact_paths_set"] {
         assert_eq!(
             case.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -367,13 +353,9 @@ fn mambalibs_clean_rebuild_after_clean_recreates_full_artifact_set() {
     }
 
     // Rebuild set MUST equal the full artifact set.
-    let recreated: HashSet<_> = string_array(
-        &doc,
-        "rebuild_after_clean_case",
-        "must_recreate_relative_paths",
-    )
-    .into_iter()
-    .collect();
+    let recreated: HashSet<_> = string_array(&doc, "rebuild_after_clean_case", "must_recreate_relative_paths")
+        .into_iter()
+        .collect();
     let artifact_set: HashSet<_> = string_array(&doc, "artifact_paths", "relative_paths")
         .into_iter()
         .collect();

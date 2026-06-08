@@ -45,6 +45,12 @@ pub struct BundleOptions {
     /// Use `crate::bundler::define::build_import_meta_env_defines` to build
     /// this map from scanned `.env` files.
     pub defines: HashMap<String, String>,
+
+    /// Emit imported CSS as linked assets instead of runtime style injection.
+    ///
+    /// Production DOM builds set this so CSS is not duplicated in both the JS
+    /// bundle and a sidecar stylesheet.
+    pub css_bundle: bool,
 }
 
 /// Production build configuration.
@@ -202,6 +208,7 @@ impl Default for BundleOptions {
             externals: HashSet::new(),
             externalize_all_packages: false,
             defines: HashMap::new(),
+            css_bundle: false,
         }
     }
 }

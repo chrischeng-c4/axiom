@@ -1,5 +1,3 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
 /// webbrowser module for Mamba (#1261 long-tail).
 ///
 /// Replaces the long_tail webbrowser stub (every open call returned
@@ -13,8 +11,11 @@ use super::super::value::MbValue;
 /// instances, so `get(name)` returns the module dict itself — `open()`
 /// on that dict is the same callable, and the class shells stay as
 /// no-op constructors.
+
 use std::collections::HashMap;
 use std::process::Command;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 unsafe fn args_slice<'a>(args_ptr: *const MbValue, nargs: usize) -> &'a [MbValue] {
     if nargs == 0 || args_ptr.is_null() {
@@ -36,9 +37,7 @@ unsafe fn as_str(val: MbValue) -> Option<String> {
 /// Spawn the platform-appropriate URL handler. Returns true on
 /// successful spawn (the child may still fail later; we don't wait).
 fn spawn_opener(url: &str) -> bool {
-    if url.is_empty() {
-        return false;
-    }
+    if url.is_empty() { return false; }
     #[cfg(target_os = "macos")]
     {
         return Command::new("open").arg(url).spawn().is_ok();
@@ -46,10 +45,7 @@ fn spawn_opener(url: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
         // `start` is a cmd builtin, not an exe.
-        return Command::new("cmd")
-            .args(["/c", "start", "", url])
-            .spawn()
-            .is_ok();
+        return Command::new("cmd").args(["/c", "start", "", url]).spawn().is_ok();
     }
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
@@ -62,12 +58,7 @@ fn spawn_opener(url: &str) -> bool {
             }
         }
         // Fall back to xdg-open, then sensible-browser, then x-www-browser.
-        for cmd in [
-            "xdg-open",
-            "sensible-browser",
-            "x-www-browser",
-            "www-browser",
-        ] {
+        for cmd in ["xdg-open", "sensible-browser", "x-www-browser", "www-browser"] {
             if Command::new(cmd).arg(url).spawn().is_ok() {
                 return true;
             }
@@ -78,31 +69,19 @@ fn spawn_opener(url: &str) -> bool {
 
 unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let url = args
-        .first()
-        .copied()
-        .and_then(|v| as_str(v))
-        .unwrap_or_default();
+    let url = args.first().copied().and_then(|v| as_str(v)).unwrap_or_default();
     MbValue::from_bool(spawn_opener(&url))
 }
 
 unsafe extern "C" fn dispatch_open_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let url = args
-        .first()
-        .copied()
-        .and_then(|v| as_str(v))
-        .unwrap_or_default();
+    let url = args.first().copied().and_then(|v| as_str(v)).unwrap_or_default();
     MbValue::from_bool(spawn_opener(&url))
 }
 
 unsafe extern "C" fn dispatch_open_new_tab(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = args_slice(args_ptr, nargs);
-    let url = args
-        .first()
-        .copied()
-        .and_then(|v| as_str(v))
-        .unwrap_or_default();
+    let url = args.first().copied().and_then(|v| as_str(v)).unwrap_or_default();
     MbValue::from_bool(spawn_opener(&url))
 }
 
@@ -125,49 +104,19 @@ unsafe extern "C" fn dispatch_class_shell(_args: *const MbValue, _nargs: usize) 
 
 pub fn register() {
     let mut attrs: HashMap<String, MbValue> = HashMap::new();
-    attrs.insert(
-        "open".into(),
-        MbValue::from_func(dispatch_open as *const () as usize),
-    );
-    attrs.insert(
-        "open_new".into(),
-        MbValue::from_func(dispatch_open_new as *const () as usize),
-    );
-    attrs.insert(
-        "open_new_tab".into(),
-        MbValue::from_func(dispatch_open_new_tab as *const () as usize),
-    );
-    attrs.insert(
-        "get".into(),
-        MbValue::from_func(dispatch_get as *const () as usize),
-    );
-    attrs.insert(
-        "register".into(),
-        MbValue::from_func(dispatch_register as *const () as usize),
-    );
+    attrs.insert("open".into(),         MbValue::from_func(dispatch_open as *const () as usize));
+    attrs.insert("open_new".into(),     MbValue::from_func(dispatch_open_new as *const () as usize));
+    attrs.insert("open_new_tab".into(), MbValue::from_func(dispatch_open_new_tab as *const () as usize));
+    attrs.insert("get".into(),          MbValue::from_func(dispatch_get as *const () as usize));
+    attrs.insert("register".into(),     MbValue::from_func(dispatch_register as *const () as usize));
 
     // Class shells (constructors return empty dicts).
     for cls in [
-        "Error",
-        "BackgroundBrowser",
-        "GenericBrowser",
-        "BaseBrowser",
-        "UnixBrowser",
-        "Mozilla",
-        "Galeon",
-        "Chrome",
-        "Opera",
-        "Elinks",
-        "Konqueror",
-        "Grail",
-        "WindowsDefault",
-        "MacOSX",
-        "MacOSXOSAScript",
+        "Error", "BackgroundBrowser", "GenericBrowser", "BaseBrowser",
+        "UnixBrowser", "Mozilla", "Galeon", "Chrome", "Opera", "Elinks",
+        "Konqueror", "Grail", "WindowsDefault", "MacOSX", "MacOSXOSAScript",
     ] {
-        attrs.insert(
-            cls.into(),
-            MbValue::from_func(dispatch_class_shell as *const () as usize),
-        );
+        attrs.insert(cls.into(), MbValue::from_func(dispatch_class_shell as *const () as usize));
     }
     super::register_module("webbrowser", attrs);
 }

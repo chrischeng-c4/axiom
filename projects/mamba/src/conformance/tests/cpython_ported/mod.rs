@@ -5,7 +5,7 @@
 //!   https://github.com/python/cpython/tree/v3.12.0
 //!
 //! The helper `jit_capture` and `assert_output` mirror the pattern from
-//! `tests/cpython/fixtures/core/generators/mod.rs` — kept self-contained to avoid
+//! `tests/cpython/core/generators/mod.rs` — kept self-contained to avoid
 //! cross-binary dependencies.
 //!
 //! Run with:
@@ -47,43 +47,79 @@ pub fn jit_capture(src: &str) -> String {
         );
     }
 
-    let hir = lower_module(&module, &checker).expect("HIR lowering failed");
-    let mir = lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
+    // Lowering, codegen, and execution must all run on the SAME thread.
+    //
+    // The HIR→MIR lowerer and the Cranelift backend register user-defined
+    // variadic (`*args`) / kwargs (`**kwargs`) functions into the *thread-local*
+    // registries `VARIADIC_SYMBOL_IDS` / `VARIADIC_FUNC_ADDRS` / `KWARGS_*`
+    // (see runtime::module). At call time `mb_call_spread` consults those
+    // registries via `is_variadic_func` to decide whether to pack arguments
+    // into the single args-list parameter the JIT compiled for such functions.
+    //
+    // The previous harness lowered + codegen'd on the test's main thread but
+    // executed the entry on a freshly spawned thread, whose thread-local
+    // registries were empty. `is_variadic_func` then returned false on the
+    // executor thread, so `mb_call_spread` invoked a `*args` wrapper with the
+    // wrong (unpacked) calling convention — an ABI mismatch that silently
+    // derailed execution and produced empty stdout. `mamba run` never hit this
+    // because it lowers, codegens, and executes all on one thread.
+    //
+    // Doing the whole pipeline inside the spawned thread keeps execution under
+    // the timeout guard while ensuring the registries the executor reads are
+    // the same ones lowering + codegen populated.
+    let (tx, rx) = mpsc::sync_channel(1);
 
-    let mut backend = CraneliftJitBackend::new().expect("JIT init failed");
-    let output = backend
-        .codegen(&mir, &checker.tcx)
-        .expect("JIT codegen failed");
+    let handle = thread::spawn(move || {
+        let hir = match lower_module(&module, &checker) {
+            Ok(hir) => hir,
+            Err(_) => {
+                let _ = tx.send(Err("HIR lowering failed".to_string()));
+                return;
+            }
+        };
+        let mir = lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
 
-    match output {
-        CodegenOutput::Jit { entry } => {
-            let entry_addr = entry as usize;
-            let (tx, rx) = mpsc::sync_channel(1);
+        let mut backend = match CraneliftJitBackend::new() {
+            Ok(b) => b,
+            Err(e) => {
+                let _ = tx.send(Err(format!("JIT init failed: {e}")));
+                return;
+            }
+        };
+        let output = match backend.codegen(&mir, &checker.tcx) {
+            Ok(o) => o,
+            Err(e) => {
+                let _ = tx.send(Err(format!("JIT codegen failed: {e}")));
+                return;
+            }
+        };
 
-            let handle = thread::spawn(move || {
-                let prev = begin_capture();
-                let main_fn: fn() -> i64 = unsafe { std::mem::transmute(entry_addr) };
-                let _result = main_fn();
-                cleanup_all_runtime_state();
-                let captured = end_capture(prev);
-                let _ = tx.send(captured);
-            });
+        let CodegenOutput::Jit { entry } = output else {
+            let _ = tx.send(Err("expected JIT output".to_string()));
+            return;
+        };
 
-            let result = match rx.recv_timeout(Duration::from_secs(TEST_TIMEOUT_SECS)) {
-                Ok(captured) => captured,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    panic!("JIT execution timed out after {TEST_TIMEOUT_SECS}s");
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    panic!("JIT execution thread panicked");
-                }
-            };
+        let prev = begin_capture();
+        let main_fn: fn() -> i64 = unsafe { std::mem::transmute(entry) };
+        let _result = main_fn();
+        cleanup_all_runtime_state();
+        let captured = end_capture(prev);
+        let _ = tx.send(Ok(captured));
+    });
 
-            let _ = handle.join();
-            result
+    let result = match rx.recv_timeout(Duration::from_secs(TEST_TIMEOUT_SECS)) {
+        Ok(Ok(captured)) => captured,
+        Ok(Err(msg)) => panic!("{msg}"),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            panic!("JIT execution timed out after {TEST_TIMEOUT_SECS}s");
         }
-        _ => panic!("expected JIT output"),
-    }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("JIT execution thread panicked");
+        }
+    };
+
+    let _ = handle.join();
+    result
 }
 
 /// Assert captured stdout equals `expected` (trailing newlines ignored).
@@ -99,12 +135,7 @@ pub fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
@@ -157,6 +188,7 @@ pub mod test_copy;
 pub mod test_custom_iter;
 pub mod test_decorators;
 pub mod test_default_kw_args;
+pub mod test_dunder_ops;
 pub mod test_dict;
 pub mod test_dict_comprehension;
 pub mod test_dict_counter;
@@ -168,7 +200,6 @@ pub mod test_dict_pop_clear;
 pub mod test_dict_update_merge;
 pub mod test_dict_views;
 pub mod test_difflib;
-pub mod test_dunder_ops;
 pub mod test_elif_chains;
 pub mod test_else_clauses;
 pub mod test_enumerate;
@@ -176,12 +207,12 @@ pub mod test_exception_variants;
 pub mod test_exceptions;
 pub mod test_filter_map;
 pub mod test_float;
-pub mod test_float_extended;
 pub mod test_float_ops;
-pub mod test_fnmatch;
 pub mod test_format;
 pub mod test_format_braces;
 pub mod test_format_method;
+pub mod test_float_extended;
+pub mod test_fnmatch;
 pub mod test_fstring;
 pub mod test_fstring_expressions;
 pub mod test_fstring_format_specs;

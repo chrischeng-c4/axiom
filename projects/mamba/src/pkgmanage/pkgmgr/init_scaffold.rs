@@ -144,10 +144,7 @@ pub fn render_pyproject(opts: &ScaffoldOptions) -> Result<String, IndexError> {
     out.push_str("[project]\n");
     out.push_str(&format!("name = {}\n", toml_string(&name)));
     out.push_str(&format!("version = {}\n", toml_string(&opts.version)));
-    out.push_str(&format!(
-        "description = {}\n",
-        toml_string(&opts.description)
-    ));
+    out.push_str(&format!("description = {}\n", toml_string(&opts.description)));
     out.push_str(&format!(
         "requires-python = {}\n",
         toml_string(&opts.requires_python)
@@ -156,10 +153,7 @@ pub fn render_pyproject(opts: &ScaffoldOptions) -> Result<String, IndexError> {
         out.push_str(&format!("readme = {}\n", toml_string(readme)));
     }
     if let Some(license) = &opts.license {
-        out.push_str(&format!(
-            "license = {{ text = {} }}\n",
-            toml_string(license)
-        ));
+        out.push_str(&format!("license = {{ text = {} }}\n", toml_string(license)));
     }
     if !opts.authors.is_empty() {
         out.push_str("authors = [\n");
@@ -219,14 +213,8 @@ mod tests {
 
     #[test]
     fn validate_collapses_separators() {
-        assert_eq!(
-            validate_project_name("My__Pkg.Name").unwrap(),
-            "my-pkg-name"
-        );
-        assert_eq!(
-            validate_project_name("--leading--trail--").unwrap(),
-            "leading-trail"
-        );
+        assert_eq!(validate_project_name("My__Pkg.Name").unwrap(), "my-pkg-name");
+        assert_eq!(validate_project_name("--leading--trail--").unwrap(), "leading-trail");
     }
 
     #[test]
@@ -341,10 +329,7 @@ mod tests {
             .get("project")
             .and_then(|v| v.as_table())
             .expect("missing [project] table");
-        assert_eq!(
-            project.get("name").and_then(|v| v.as_str()),
-            Some("demo-pkg")
-        );
+        assert_eq!(project.get("name").and_then(|v| v.as_str()), Some("demo-pkg"));
         assert!(parsed.get("tool").is_some(), "tool table missing");
     }
 }

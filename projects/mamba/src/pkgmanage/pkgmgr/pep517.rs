@@ -58,7 +58,10 @@ pub fn create_isolated_venv(python: &Path, venv_dir: &Path) -> Result<(), IndexE
 /// Install a list of build requires into a venv using the venv's pip.
 /// Each item in `requires` is passed verbatim to `pip install`, so PEP 440
 /// specifiers and other markers are honored.
-pub fn install_build_requires(venv_python: &Path, requires: &[String]) -> Result<(), IndexError> {
+pub fn install_build_requires(
+    venv_python: &Path,
+    requires: &[String],
+) -> Result<(), IndexError> {
     if requires.is_empty() {
         return Ok(());
     }

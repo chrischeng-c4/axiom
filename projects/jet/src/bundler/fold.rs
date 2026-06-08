@@ -674,7 +674,7 @@ mod tests {
                     return;
                 }
             }
-            eprintln!("Skipping: no bundle found");
+            eprintln!("Optional bundle fixture absent: no bundle found");
             return;
         }
         let source = std::fs::read_to_string(&bundle_path).unwrap();

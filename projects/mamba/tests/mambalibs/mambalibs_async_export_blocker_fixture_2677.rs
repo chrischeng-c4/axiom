@@ -167,9 +167,7 @@ fn mambalibs_async_support_status_enum_is_well_formed() {
     );
 
     assert_eq!(
-        block
-            .get("status_must_be_one_of_allowed")
-            .and_then(|v| v.as_bool()),
+        block.get("status_must_be_one_of_allowed").and_then(|v| v.as_bool()),
         Some(true),
         "`[support_status].status_must_be_one_of_allowed` must be true"
     );
@@ -189,8 +187,7 @@ fn mambalibs_async_pass_case_is_compute_only_and_deterministic() {
         "`[pass_case].case` must be \"async_export_supported\""
     );
     assert_eq!(
-        case.get("status_under_which_applicable")
-            .and_then(|v| v.as_str()),
+        case.get("status_under_which_applicable").and_then(|v| v.as_str()),
         Some("pass"),
         "`[pass_case].status_under_which_applicable` must be \"pass\""
     );
@@ -246,8 +243,7 @@ fn mambalibs_async_xfail_case_surfaces_exception_not_crash() {
         "`[xfail_case].case` must be \"async_export_xfail\""
     );
     assert_eq!(
-        case.get("status_under_which_applicable")
-            .and_then(|v| v.as_str()),
+        case.get("status_under_which_applicable").and_then(|v| v.as_str()),
         Some("xfail"),
         "`[xfail_case].status_under_which_applicable` must be \"xfail\""
     );
@@ -289,8 +285,7 @@ fn mambalibs_async_blocker_case_emits_structured_blocker() {
         "`[blocker_case].case` must be \"async_export_blocker\""
     );
     assert_eq!(
-        case.get("status_under_which_applicable")
-            .and_then(|v| v.as_str()),
+        case.get("status_under_which_applicable").and_then(|v| v.as_str()),
         Some("blocker"),
         "`[blocker_case].status_under_which_applicable` must be \"blocker\""
     );
@@ -301,12 +296,14 @@ fn mambalibs_async_blocker_case_emits_structured_blocker() {
          unsupported behavior is NOT silently skipped"
     );
     assert_eq!(
-        case.get("linked_blocker_issue")
-            .and_then(|v| v.as_integer()),
+        case.get("linked_blocker_issue").and_then(|v| v.as_integer()),
         Some(2677),
         "`[blocker_case].linked_blocker_issue` must record #2677"
     );
-    for flag in &["must_emit_structured_blocker", "must_not_attempt_call"] {
+    for flag in &[
+        "must_emit_structured_blocker",
+        "must_not_attempt_call",
+    ] {
         assert_eq!(
             case.get(*flag).and_then(|v| v.as_bool()),
             Some(true),
@@ -314,8 +311,7 @@ fn mambalibs_async_blocker_case_emits_structured_blocker() {
         );
     }
     assert_eq!(
-        case.get("must_name_offending_feature")
-            .and_then(|v| v.as_str()),
+        case.get("must_name_offending_feature").and_then(|v| v.as_str()),
         Some("async_export"),
         "`[blocker_case].must_name_offending_feature` must be \"async_export\""
     );
@@ -337,13 +333,10 @@ fn mambalibs_async_blocker_case_emits_structured_blocker() {
 #[test]
 fn mambalibs_async_unsupported_behavior_contract_blocks_silent_skip() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("unsupported_behavior_contract")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[unsupported_behavior_contract]` block \
+    let block = doc.get("unsupported_behavior_contract").and_then(|v| v.as_table()).expect(
+        "missing `[unsupported_behavior_contract]` block \
          (acceptance: \"Unsupported behavior is not silently skipped.\")",
-        );
+    );
 
     for flag in &[
         "distinguish_blocker_from_skip",
@@ -360,9 +353,7 @@ fn mambalibs_async_unsupported_behavior_contract_blocks_silent_skip() {
     }
 
     assert_eq!(
-        block
-            .get("linked_blocker_issue")
-            .and_then(|v| v.as_integer()),
+        block.get("linked_blocker_issue").and_then(|v| v.as_integer()),
         Some(2677),
         "`[unsupported_behavior_contract].linked_blocker_issue` must record #2677"
     );
@@ -371,13 +362,10 @@ fn mambalibs_async_unsupported_behavior_contract_blocks_silent_skip() {
 #[test]
 fn mambalibs_async_no_wall_clock_sleeps_pins_zero_sleep() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("no_wall_clock_sleeps")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[no_wall_clock_sleeps]` block \
+    let block = doc.get("no_wall_clock_sleeps").and_then(|v| v.as_table()).expect(
+        "missing `[no_wall_clock_sleeps]` block \
          (acceptance: \"Passing fixture avoids wall-clock sleeps.\")",
-        );
+    );
 
     for flag in &[
         "forbid_thread_sleep",
@@ -410,13 +398,10 @@ fn mambalibs_async_no_wall_clock_sleeps_pins_zero_sleep() {
 #[test]
 fn mambalibs_async_gate_summary_contract_pins_async_export_status_field() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("gate_summary_contract")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[gate_summary_contract]` block \
+    let block = doc.get("gate_summary_contract").and_then(|v| v.as_table()).expect(
+        "missing `[gate_summary_contract]` block \
          (acceptance: \"Async export support status appears in mambalibs gate summary.\")",
-        );
+    );
 
     assert_eq!(
         block.get("field_name").and_then(|v| v.as_str()),
@@ -545,8 +530,7 @@ fn mambalibs_async_pins_out_of_scope_per_issue_2677() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("full_async_runtime_integration")
-            .and_then(|v| v.as_bool()),
+        oos.get("full_async_runtime_integration").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].full_async_runtime_integration` must be true \
          (issue text: \"Out of scope: full async runtime integration.\")"

@@ -91,13 +91,10 @@ fn mambalibs_cli_summary_json_manifest_header_is_well_formed() {
 #[test]
 fn mambalibs_cli_summary_emission_is_machine_parseable() {
     let doc = load_toml(&manifest_path());
-    let block = doc
-        .get("summary_emission")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[summary_emission]` block \
+    let block = doc.get("summary_emission").and_then(|v| v.as_table()).expect(
+        "missing `[summary_emission]` block \
          (acceptance: \"JSON summary can be parsed without scraping logs.\")",
-        );
+    );
 
     for flag in &[
         "must_be_machine_parseable_json",
@@ -155,14 +152,7 @@ fn mambalibs_cli_summary_required_fields_appear_in_success_summary() {
         !required.is_empty(),
         "`[required_fields].keys` must be non-empty"
     );
-    for required_key in &[
-        "dependency_name",
-        "build_status",
-        "artifact_path",
-        "import_status",
-        "diagnostics",
-        "outcome",
-    ] {
+    for required_key in &["dependency_name", "build_status", "artifact_path", "import_status", "diagnostics", "outcome"] {
         assert!(
             required.iter().any(|k| k == required_key),
             "`[required_fields].keys` must include `{required_key}`; got {required:?}"
@@ -184,16 +174,12 @@ fn mambalibs_cli_summary_required_fields_appear_in_success_summary() {
     }
 
     assert_eq!(
-        doc.get("success_case")
-            .and_then(|v| v.get("expected_outcome"))
-            .and_then(|v| v.as_str()),
+        doc.get("success_case").and_then(|v| v.get("expected_outcome")).and_then(|v| v.as_str()),
         Some("pass"),
         "`[success_case].expected_outcome` must be \"pass\""
     );
     assert_eq!(
-        doc.get("success_case")
-            .and_then(|v| v.get("expected_exit_code"))
-            .and_then(|v| v.as_integer()),
+        doc.get("success_case").and_then(|v| v.get("expected_exit_code")).and_then(|v| v.as_integer()),
         Some(0),
         "`[success_case].expected_exit_code` must be 0"
     );
@@ -204,9 +190,7 @@ fn mambalibs_cli_summary_required_fields_on_failure_appear_in_failure_summary() 
     let doc = load_toml(&manifest_path());
     let required_on_fail = required_keys(&doc, "required_fields_on_failure");
     assert!(
-        required_on_fail
-            .iter()
-            .any(|k| k == "linked_issue_or_blocker"),
+        required_on_fail.iter().any(|k| k == "linked_issue_or_blocker"),
         "`[required_fields_on_failure].keys` must include `linked_issue_or_blocker`; \
          got {required_on_fail:?}"
     );
@@ -243,16 +227,12 @@ fn mambalibs_cli_summary_required_fields_on_failure_appear_in_failure_summary() 
     }
 
     assert_eq!(
-        doc.get("failure_case")
-            .and_then(|v| v.get("expected_outcome"))
-            .and_then(|v| v.as_str()),
+        doc.get("failure_case").and_then(|v| v.get("expected_outcome")).and_then(|v| v.as_str()),
         Some("fail"),
         "`[failure_case].expected_outcome` must be \"fail\""
     );
     assert_eq!(
-        doc.get("failure_case")
-            .and_then(|v| v.get("expected_exit_code"))
-            .and_then(|v| v.as_integer()),
+        doc.get("failure_case").and_then(|v| v.get("expected_exit_code")).and_then(|v| v.as_integer()),
         Some(1),
         "`[failure_case].expected_exit_code` must be 1"
     );
@@ -271,13 +251,10 @@ fn mambalibs_cli_summary_required_fields_on_failure_appear_in_failure_summary() 
 #[test]
 fn mambalibs_cli_summary_missing_field_case_targets_a_required_field() {
     let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("missing_field_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[missing_field_case]` block \
+    let case = doc.get("missing_field_case").and_then(|v| v.as_table()).expect(
+        "missing `[missing_field_case]` block \
          (acceptance: \"Missing required fields fail the test.\")",
-        );
+    );
 
     assert_eq!(
         case.get("case").and_then(|v| v.as_str()),
@@ -321,8 +298,7 @@ fn mambalibs_cli_summary_missing_field_case_targets_a_required_field() {
 
     // AND the diagnostic value must match the omitted field exactly.
     assert_eq!(
-        case.get("diagnostic_must_name_missing_field_value")
-            .and_then(|v| v.as_str()),
+        case.get("diagnostic_must_name_missing_field_value").and_then(|v| v.as_str()),
         Some(omitted),
         "`[missing_field_case].diagnostic_must_name_missing_field_value` must equal \
          `omitted_required_field`"
@@ -451,8 +427,7 @@ fn mambalibs_cli_summary_pins_out_of_scope_per_issue_2676() {
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("dashboard_or_reporting_ui")
-            .and_then(|v| v.as_bool()),
+        oos.get("dashboard_or_reporting_ui").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].dashboard_or_reporting_ui` must be true \
          (issue text: \"Out of scope: dashboard or reporting UI.\")"

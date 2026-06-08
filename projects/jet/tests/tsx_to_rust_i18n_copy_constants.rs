@@ -45,11 +45,12 @@ fn top_level_object_const_passes_through() {
 #[test]
 fn in_component_string_const_lowers_to_let() {
     let out = transpile(FIXTURE).expect("transpile");
-    // In-component `const X = "literal"` should lower to a Rust
-    // `let X = "literal";` inside the render fn — NOT trip the
-    // "binding RHS must be a hook call" guard.
+    // In-component `const X = "literal"` should lower to an owned Rust
+    // `String` inside the render fn — NOT trip the "binding RHS must be
+    // a hook call" guard, and closures can capture it without no-op
+    // cloning a borrowed `&str`.
     assert!(
-        out.contains("let HEADER = \"welcome\";"),
+        out.contains("let HEADER = \"welcome\".to_string();"),
         "in-component string const should lower to a Rust let.\nGENERATED:\n{out}"
     );
 }

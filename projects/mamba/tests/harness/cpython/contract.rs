@@ -10,14 +10,10 @@ use std::path::{Path, PathBuf};
 
 use toml::Value;
 
-const DIMENSIONS: &[&str] = &[
-    "surface",
-    "behavior",
-    "errors",
-    "bench",
-    "real_world",
-    "security",
-];
+#[path = "harness_common.rs"]
+mod common;
+use common::collect_files;
+
 const MIN_SECURITY_FIXTURES: usize = 30;
 const MIN_TYPE_STRICT_FIXTURES: usize = 15;
 const MIN_PERF_PINS: usize = 100;
@@ -35,28 +31,8 @@ fn cpython_harness_dir() -> PathBuf {
     manifest_dir().join("tests/harness/cpython")
 }
 
-fn collect_files(root: &Path, suffix: &str) -> Vec<PathBuf> {
-    fn walk(out: &mut Vec<PathBuf>, dir: &Path, suffix: &str) {
-        let entries = std::fs::read_dir(dir)
-            .unwrap_or_else(|err| panic!("cannot read {}: {err}", dir.display()));
-        for entry in entries {
-            let path = entry.expect("read_dir entry").path();
-            if path.is_dir() {
-                walk(out, &path, suffix);
-            } else if path.to_string_lossy().ends_with(suffix) {
-                out.push(path);
-            }
-        }
-    }
-
-    let mut out = Vec::new();
-    walk(&mut out, root, suffix);
-    out.sort();
-    out
-}
-
 fn fixture_files() -> Vec<PathBuf> {
-    collect_files(&cpython_dir().join("fixtures"), ".py")
+    collect_files(&cpython_dir(), ".py")
 }
 
 fn extract_script_toml(text: &str) -> Option<String> {
@@ -94,7 +70,7 @@ fn meta_str<'a>(meta: &'a Value, key: &str) -> &'a str {
 }
 
 fn fixture_rel(path: &Path) -> PathBuf {
-    path.strip_prefix(cpython_dir().join("fixtures"))
+    path.strip_prefix(cpython_dir())
         .expect("fixture path under fixtures root")
         .to_path_buf()
 }
@@ -153,24 +129,25 @@ fn migrated_surface_subjects() -> BTreeSet<String> {
 
 #[test]
 fn fixture_tree_covers_all_replacement_axes() {
+    // Dimension-first layout (STRUCTURE.md): the `[tool.mamba]` record is the
+    // source of truth for a fixture's dimension, NOT its path index. The tree is
+    // now `{facet}/{bucket}/{lib}/{case}.py`, so the old `path.components()[2]`
+    // bucket-first index is gone; every axis assertion reads the record.
     let mut migrated_by_dimension: BTreeMap<String, usize> = BTreeMap::new();
-    let mut path_by_dimension: BTreeMap<String, usize> = BTreeMap::new();
     let mut buckets_by_dimension: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // Per-lib security (record bucket != the flat `security-matrix` wall). The
+    // speed/memory guard compares the perf wall against this apples-to-apples
+    // per-lib adversarial count, not the 228-cell matrix wall.
+    let mut per_lib_security: usize = 0;
 
     for path in fixture_files() {
-        let rel = fixture_rel(&path);
-        let parts: Vec<String> = rel
-            .components()
-            .map(|part| part.as_os_str().to_string_lossy().into_owned())
-            .collect();
-        if parts.len() >= 4 && DIMENSIONS.contains(&parts[2].as_str()) {
-            *path_by_dimension.entry(parts[2].clone()).or_default() += 1;
-        }
-
         if let Some(meta) = tool_mamba(&path) {
             let bucket = meta_str(&meta, "bucket").to_string();
             let dimension = meta_str(&meta, "dimension").to_string();
             *migrated_by_dimension.entry(dimension.clone()).or_default() += 1;
+            if dimension == "security" && bucket != "security-matrix" {
+                per_lib_security += 1;
+            }
             buckets_by_dimension
                 .entry(dimension)
                 .or_default()
@@ -196,9 +173,11 @@ fn fixture_tree_covers_all_replacement_axes() {
             "missing migrated CPython replacement dimension `{dimension}`"
         );
     }
+    // Speed/memory gate: the perf wall (`dimension=perf`) is the per-record
+    // speed/memory facet; drive the assertion off the record, not a path index.
     assert!(
-        path_by_dimension.get("bench").copied().unwrap_or(0) > 0,
-        "missing bench fixtures for speed/memory gates"
+        migrated_by_dimension.get("perf").copied().unwrap_or(0) > 0,
+        "missing perf fixtures for speed/memory gates"
     );
 
     assert!(
@@ -214,9 +193,8 @@ fn fixture_tree_covers_all_replacement_axes() {
         "negative compatibility must cover std-libs and PEP fixtures"
     );
     assert!(
-        path_by_dimension.get("bench").copied().unwrap_or(0)
-            >= migrated_by_dimension.get("security").copied().unwrap_or(0),
-        "speed/memory coverage should not be smaller than security coverage"
+        migrated_by_dimension.get("perf").copied().unwrap_or(0) >= per_lib_security,
+        "speed/memory coverage should not be smaller than per-lib security coverage"
     );
 }
 
@@ -244,7 +222,7 @@ fn cpython312_public_api_surface_is_fully_fixture_backed() {
 
 #[test]
 fn type_strict_inverse_contract_is_explicit() {
-    let root = cpython_dir().join("fixtures/type-strict");
+    let root = cpython_dir().join("type");
     let files = collect_files(&root, ".py");
     assert!(
         files.len() >= MIN_TYPE_STRICT_FIXTURES,
@@ -260,6 +238,12 @@ fn type_strict_inverse_contract_is_explicit() {
             "{} does not declare the strict-type contract",
             path.display()
         );
+        // Inverse-classification markers (FIXTURE-LAYOUT type-strict convention):
+        // the source prints `no_typeerror:` on the CPython-accepts branch and
+        // `typeerror:` on the mamba-must-raise branch. type_wall_gen.py emits both
+        // (plus a `setup_or_other:` branch for import/setup failures). Requiring
+        // both keeps the contract honest — a fixture that dropped `no_typeerror:`
+        // would no longer assert that CPython's accepting path is covered.
         assert!(
             text.contains("typeerror:") && text.contains("no_typeerror:"),
             "{} must emit both inverse-classification markers",
@@ -411,7 +395,7 @@ fn safety_contract_has_adversarial_fixtures_and_sandboxed_runner() {
     );
 
     let compiler_resilience = collect_files(
-        &cpython_dir().join("fixtures/core/compiler_resilience"),
+        &cpython_dir().join("_regression/core/compiler_resilience"),
         ".py",
     );
     assert!(

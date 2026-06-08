@@ -1,6 +1,3 @@
-use super::rc::MbObject;
-use super::value::MbValue;
-use rustc_hash::{FxHashMap, FxHashSet};
 /// Cycle-detecting garbage collector for the Mamba runtime (#315).
 /// Thread-local version — one GC state per thread, no cross-thread coordination.
 ///
@@ -10,7 +7,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// - Mark phase: starting from roots (stack/globals), mark reachable objects
 /// - Sweep phase: reclaim unmarked tracked objects (breaking cycles)
 /// - Per-thread isolation: each test thread has its own independent GC state
+
 use std::sync::atomic::Ordering;
+use rustc_hash::{FxHashMap, FxHashSet};
+use super::rc::MbObject;
+use super::value::MbValue;
 
 /// GC configuration and state.
 struct GcState {
@@ -181,7 +182,8 @@ pub fn collect() -> usize {
             }
             gc.collecting = true;
             let tracked: Vec<usize> = gc.tracked.iter().copied().collect();
-            let roots: Vec<*mut MbObject> = gc.roots.iter().filter_map(|v| v.as_ptr()).collect();
+            let roots: Vec<*mut MbObject> =
+                gc.roots.iter().filter_map(|v| v.as_ptr()).collect();
             Some((tracked, roots))
         });
         match result {
@@ -242,8 +244,7 @@ pub fn collect() -> usize {
     // while freeing objects.
     let to_free: Vec<usize> = GC.with(|gc| {
         let mut gc = gc.borrow_mut();
-        let to_sweep: Vec<usize> = gc_refs
-            .keys()
+        let to_sweep: Vec<usize> = gc_refs.keys()
             .filter(|addr| !marked.contains(addr))
             .copied()
             .collect();
@@ -254,10 +255,7 @@ pub fn collect() -> usize {
                 let obj = addr as *mut MbObject;
                 unsafe {
                     // Mark immortal to prevent re-entrant release from cycles.
-                    (*obj)
-                        .header
-                        .rc
-                        .store(super::rc::IMMORTAL_REFCOUNT, Ordering::Relaxed);
+                    (*obj).header.rc.store(super::rc::IMMORTAL_REFCOUNT, Ordering::Relaxed);
                 }
                 confirmed.push(addr);
             }
@@ -303,47 +301,35 @@ unsafe fn visit_contained(obj: *mut MbObject, mut visitor: impl FnMut(*mut MbObj
         ObjData::List(lock) => {
             let items = lock.read().unwrap();
             for item in items.iter() {
-                if let Some(ptr) = item.as_ptr() {
-                    visitor(ptr);
-                }
+                if let Some(ptr) = item.as_ptr() { visitor(ptr); }
             }
         }
         ObjData::Dict(lock) => {
             let map = lock.read().unwrap();
             for val in map.values() {
-                if let Some(ptr) = val.as_ptr() {
-                    visitor(ptr);
-                }
+                if let Some(ptr) = val.as_ptr() { visitor(ptr); }
             }
         }
         ObjData::Tuple(items) => {
             for item in items {
-                if let Some(ptr) = item.as_ptr() {
-                    visitor(ptr);
-                }
+                if let Some(ptr) = item.as_ptr() { visitor(ptr); }
             }
         }
         ObjData::Instance { fields, .. } => {
             let fields = fields.read().unwrap();
             for val in fields.values() {
-                if let Some(ptr) = val.as_ptr() {
-                    visitor(ptr);
-                }
+                if let Some(ptr) = val.as_ptr() { visitor(ptr); }
             }
         }
         ObjData::Set(lock) => {
             let items = lock.read().unwrap();
             for item in items.iter() {
-                if let Some(ptr) = item.as_ptr() {
-                    visitor(ptr);
-                }
+                if let Some(ptr) = item.as_ptr() { visitor(ptr); }
             }
         }
         ObjData::FrozenSet(items) => {
             for item in items {
-                if let Some(ptr) = item.as_ptr() {
-                    visitor(ptr);
-                }
+                if let Some(ptr) = item.as_ptr() { visitor(ptr); }
             }
         }
         _ => {} // Non-container types (Str, Bytes, BigInt, etc.) have no children
@@ -371,16 +357,12 @@ fn mark_object(obj: *mut MbObject, marked: &mut FxHashSet<usize>) {
 
 /// Enable automatic garbage collection.
 pub fn gc_enable() {
-    GC.with(|gc| {
-        gc.borrow_mut().enabled = true;
-    });
+    GC.with(|gc| { gc.borrow_mut().enabled = true; });
 }
 
 /// Disable automatic garbage collection.
 pub fn gc_disable() {
-    GC.with(|gc| {
-        gc.borrow_mut().enabled = false;
-    });
+    GC.with(|gc| { gc.borrow_mut().enabled = false; });
 }
 
 /// Check if GC is enabled.
@@ -390,9 +372,7 @@ pub fn gc_is_enabled() -> bool {
 
 /// Set the collection threshold.
 pub fn gc_set_threshold(threshold: usize) {
-    GC.with(|gc| {
-        gc.borrow_mut().threshold = threshold;
-    });
+    GC.with(|gc| { gc.borrow_mut().threshold = threshold; });
 }
 
 /// Get the collection threshold.
@@ -418,14 +398,7 @@ pub fn gc_get_stats() -> (u64, usize, usize) {
 pub fn gc_get_full_stats() -> (u64, usize, usize, usize, bool, bool) {
     GC.with(|gc| {
         let gc = gc.borrow();
-        (
-            gc.collections,
-            gc.tracked.len(),
-            gc.threshold,
-            gc.alloc_count,
-            gc.enabled,
-            gc.collecting,
-        )
+        (gc.collections, gc.tracked.len(), gc.threshold, gc.alloc_count, gc.enabled, gc.collecting)
     })
 }
 
@@ -454,8 +427,8 @@ pub fn mb_gc_isenabled() -> MbValue {
 
 #[cfg(test)]
 mod tests {
-    use super::super::rc::{MbObject, ObjData};
     use super::*;
+    use super::super::rc::{MbObject, ObjData};
 
     fn reset_gc_for_test() {
         GC.with(|gc| {
@@ -494,10 +467,7 @@ mod tests {
         // Neither is in roots, so both should be collected
         let freed = collect();
         gc_enable();
-        assert!(
-            freed >= 2,
-            "should collect at least 2 cyclic objects, got {freed}"
-        );
+        assert!(freed >= 2, "should collect at least 2 cyclic objects, got {freed}");
     }
 
     #[test]
@@ -514,9 +484,7 @@ mod tests {
         gc_remove_root(val);
         gc_untrack(obj);
         gc_enable();
-        unsafe {
-            drop(Box::from_raw(obj));
-        }
+        unsafe { drop(Box::from_raw(obj)); }
     }
 
     #[test]
@@ -578,10 +546,7 @@ mod tests {
             }
         }
         let freed = collect();
-        assert!(
-            freed >= 1,
-            "self-referential list should be collected, freed={freed}"
-        );
+        assert!(freed >= 1, "self-referential list should be collected, freed={freed}");
     }
 
     #[test]
@@ -597,16 +562,9 @@ mod tests {
                 }
             }
         }
-        unsafe {
-            for &node in &nodes {
-                simulate_jit_release(node);
-            }
-        }
+        unsafe { for &node in &nodes { simulate_jit_release(node); } }
         let freed = collect();
-        assert_eq!(
-            freed, N,
-            "all {N} chain nodes should be collected, freed={freed}"
-        );
+        assert_eq!(freed, N, "all {N} chain nodes should be collected, freed={freed}");
     }
 
     #[test]
@@ -614,20 +572,10 @@ mod tests {
         reset_gc_for_test();
         let before = gc_get_count();
         let obj = MbObject::new_list(vec![]);
-        assert_eq!(
-            gc_get_count(),
-            before + 1,
-            "count should increase after track"
-        );
+        assert_eq!(gc_get_count(), before + 1, "count should increase after track");
         gc_untrack(obj);
-        assert_eq!(
-            gc_get_count(),
-            before,
-            "count should decrease after untrack"
-        );
-        unsafe {
-            drop(Box::from_raw(obj));
-        }
+        assert_eq!(gc_get_count(), before, "count should decrease after untrack");
+        unsafe { drop(Box::from_raw(obj)); }
     }
 
     #[test]
@@ -639,9 +587,7 @@ mod tests {
         assert_eq!(collect(), 0, "rooted object must not be collected");
         gc_remove_root(val);
         gc_untrack(obj);
-        unsafe {
-            drop(Box::from_raw(obj));
-        }
+        unsafe { drop(Box::from_raw(obj)); }
     }
 
     #[test]
@@ -652,9 +598,7 @@ mod tests {
         gc_add_root(val);
         assert_eq!(collect(), 0, "should not collect while rooted");
         gc_remove_root(val);
-        unsafe {
-            simulate_jit_release(obj);
-        }
+        unsafe { simulate_jit_release(obj); }
         assert_eq!(collect(), 1, "should collect after root removed");
     }
 
@@ -667,10 +611,7 @@ mod tests {
         gc_add_root(MbValue::from_ptr(b));
         assert_eq!(collect(), 0, "both rooted, nothing collected");
         gc_clear_roots();
-        unsafe {
-            simulate_jit_release(a);
-            simulate_jit_release(b);
-        }
+        unsafe { simulate_jit_release(a); simulate_jit_release(b); }
         assert_eq!(collect(), 2, "both freed after clear_roots");
     }
 
@@ -678,9 +619,7 @@ mod tests {
     fn test_multiple_collect_idempotent() {
         reset_gc_for_test();
         let obj = MbObject::new_list(vec![]);
-        unsafe {
-            simulate_jit_release(obj);
-        }
+        unsafe { simulate_jit_release(obj); }
         assert_eq!(collect(), 1);
         assert_eq!(collect(), 0);
         assert_eq!(collect(), 0);
@@ -689,11 +628,7 @@ mod tests {
     #[test]
     fn test_empty_collect() {
         reset_gc_for_test();
-        assert_eq!(
-            collect(),
-            0,
-            "collect with no tracked objects should return 0"
-        );
+        assert_eq!(collect(), 0, "collect with no tracked objects should return 0");
     }
 
     #[test]
@@ -704,10 +639,7 @@ mod tests {
         assert_eq!(gc_get_count(), 1);
         let _b = MbObject::new_dict();
         assert_eq!(gc_get_count(), 2);
-        unsafe {
-            simulate_jit_release(_a);
-            simulate_jit_release(_b);
-        }
+        unsafe { simulate_jit_release(_a); simulate_jit_release(_b); }
         assert_eq!(collect(), 2);
         assert_eq!(gc_get_count(), 0);
     }
@@ -740,9 +672,7 @@ mod tests {
     fn test_mb_gc_collect_returns_int() {
         reset_gc_for_test();
         let obj = MbObject::new_list(vec![]);
-        unsafe {
-            simulate_jit_release(obj);
-        }
+        unsafe { simulate_jit_release(obj); }
         let result = mb_gc_collect(MbValue::none());
         assert!(result.is_int());
         assert_eq!(result.as_int(), Some(1));
@@ -754,19 +684,9 @@ mod tests {
         gc_disable();
         gc_set_threshold(1);
         let mut ptrs = Vec::new();
-        for _ in 0..5 {
-            ptrs.push(MbObject::new_list(vec![]));
-        }
-        assert_eq!(
-            gc_get_count(),
-            5,
-            "auto-collect must not run while GC is disabled"
-        );
-        unsafe {
-            for &p in &ptrs {
-                simulate_jit_release(p);
-            }
-        }
+        for _ in 0..5 { ptrs.push(MbObject::new_list(vec![])); }
+        assert_eq!(gc_get_count(), 5, "auto-collect must not run while GC is disabled");
+        unsafe { for &p in &ptrs { simulate_jit_release(p); } }
         assert_eq!(collect(), 5);
         gc_enable();
         gc_set_threshold(700);
@@ -794,9 +714,7 @@ mod tests {
     fn test_dict_object_collected() {
         reset_gc_for_test();
         let d = MbObject::new_dict();
-        unsafe {
-            simulate_jit_release(d);
-        }
+        unsafe { simulate_jit_release(d); }
         assert_eq!(collect(), 1, "unreachable dict should be collected");
     }
 
@@ -804,9 +722,7 @@ mod tests {
     fn test_instance_object_collected() {
         reset_gc_for_test();
         let inst = MbObject::new_instance("MyClass".to_string());
-        unsafe {
-            simulate_jit_release(inst);
-        }
+        unsafe { simulate_jit_release(inst); }
         assert_eq!(collect(), 1, "unreachable instance should be collected");
     }
 
@@ -821,11 +737,7 @@ mod tests {
         gc_add_root(MbValue::from_ptr(c));
         assert_eq!(collect(), 0, "all three rooted, nothing collected");
         gc_clear_roots();
-        unsafe {
-            simulate_jit_release(a);
-            simulate_jit_release(b);
-            simulate_jit_release(c);
-        }
+        unsafe { simulate_jit_release(a); simulate_jit_release(b); simulate_jit_release(c); }
         assert_eq!(collect(), 3, "all freed after roots cleared");
     }
 
@@ -834,9 +746,7 @@ mod tests {
         reset_gc_for_test();
         gc_add_root(MbValue::from_int(42));
         let obj = MbObject::new_list(vec![]);
-        unsafe {
-            simulate_jit_release(obj);
-        }
+        unsafe { simulate_jit_release(obj); }
         assert_eq!(collect(), 1, "unrooted list collected; int root is a no-op");
         gc_clear_roots();
     }
@@ -860,10 +770,7 @@ mod tests {
         gc_add_root(MbValue::from_ptr(b));
         assert_eq!(collect(), 0, "all rooted → 0 freed");
         gc_clear_roots();
-        unsafe {
-            simulate_jit_release(a);
-            simulate_jit_release(b);
-        }
+        unsafe { simulate_jit_release(a); simulate_jit_release(b); }
         assert_eq!(collect(), 2);
     }
 
@@ -874,9 +781,7 @@ mod tests {
         reset_gc_for_test();
         let t = MbObject::new_tuple(vec![MbValue::from_int(1), MbValue::from_int(2)]);
         assert_eq!(gc_get_count(), 0, "atomic-only tuple should NOT be tracked");
-        unsafe {
-            simulate_jit_release(t);
-        }
+        unsafe { simulate_jit_release(t); }
         assert_eq!(collect(), 0, "no tracked obj → nothing for gc to free");
     }
 
@@ -890,10 +795,7 @@ mod tests {
         assert_eq!(gc_get_count(), 1, "list is tracked");
         let t = MbObject::new_tuple(vec![MbValue::from_ptr(inner)]);
         assert_eq!(gc_get_count(), 2, "tuple holding a list IS tracked");
-        unsafe {
-            simulate_jit_release(t);
-            simulate_jit_release(inner);
-        }
+        unsafe { simulate_jit_release(t); simulate_jit_release(inner); }
         assert_eq!(collect(), 2, "both objects collected");
     }
 
@@ -906,9 +808,7 @@ mod tests {
         assert_eq!(gc_get_count(), 0);
         gc_track(obj);
         assert_eq!(gc_get_count(), 1);
-        unsafe {
-            simulate_jit_release(obj);
-        }
+        unsafe { simulate_jit_release(obj); }
         assert_eq!(collect(), 1, "re-tracked object should be collected");
     }
 
@@ -917,9 +817,7 @@ mod tests {
         reset_gc_for_test();
         gc_set_threshold(usize::MAX);
         gc_enable();
-        for _ in 0..10 {
-            let _p = MbObject::new_list(vec![]);
-        }
+        for _ in 0..10 { let _p = MbObject::new_list(vec![]); }
         assert_eq!(gc_get_count(), 10, "no auto-collect with huge threshold");
         gc_disable();
         collect();
@@ -944,15 +842,8 @@ mod tests {
         gc_disable();
         let a = MbObject::new_list(vec![]);
         let b = MbObject::new_list(vec![]);
-        unsafe {
-            simulate_jit_release(a);
-            simulate_jit_release(b);
-        }
-        assert_eq!(
-            collect(),
-            2,
-            "manual collect works even when auto-GC is disabled"
-        );
+        unsafe { simulate_jit_release(a); simulate_jit_release(b); }
+        assert_eq!(collect(), 2, "manual collect works even when auto-GC is disabled");
     }
 
     #[test]
@@ -961,15 +852,11 @@ mod tests {
         let live = MbObject::new_list(vec![MbValue::from_int(1)]);
         let dead = MbObject::new_list(vec![MbValue::from_int(2)]);
         gc_add_root(MbValue::from_ptr(live));
-        unsafe {
-            simulate_jit_release(dead);
-        }
+        unsafe { simulate_jit_release(dead); }
         assert_eq!(collect(), 1, "only the unreachable object should be freed");
         assert_eq!(gc_get_count(), 1, "live object still tracked");
         gc_clear_roots();
-        unsafe {
-            simulate_jit_release(live);
-        }
+        unsafe { simulate_jit_release(live); }
         assert_eq!(collect(), 1, "live object freed after root removed");
     }
 
@@ -979,22 +866,14 @@ mod tests {
         let a = MbObject::new_list(vec![]);
         let b = MbObject::new_list(vec![]);
         unsafe {
-            if let ObjData::List(ref lock) = (*a).data {
-                lock.write().unwrap().push(MbValue::from_ptr(b));
-            }
-            if let ObjData::List(ref lock) = (*b).data {
-                lock.write().unwrap().push(MbValue::from_ptr(a));
-            }
+            if let ObjData::List(ref lock) = (*a).data { lock.write().unwrap().push(MbValue::from_ptr(b)); }
+            if let ObjData::List(ref lock) = (*b).data { lock.write().unwrap().push(MbValue::from_ptr(a)); }
         }
         let c = MbObject::new_list(vec![]);
         let d = MbObject::new_list(vec![]);
         unsafe {
-            if let ObjData::List(ref lock) = (*c).data {
-                lock.write().unwrap().push(MbValue::from_ptr(d));
-            }
-            if let ObjData::List(ref lock) = (*d).data {
-                lock.write().unwrap().push(MbValue::from_ptr(c));
-            }
+            if let ObjData::List(ref lock) = (*c).data { lock.write().unwrap().push(MbValue::from_ptr(d)); }
+            if let ObjData::List(ref lock) = (*d).data { lock.write().unwrap().push(MbValue::from_ptr(c)); }
         }
         assert_eq!(gc_get_count(), 4);
         assert_eq!(collect(), 4, "all four cyclic objects should be collected");
@@ -1008,17 +887,12 @@ mod tests {
         let dead1 = MbObject::new_list(vec![]);
         let dead2 = MbObject::new_list(vec![]);
         gc_add_root(MbValue::from_ptr(live));
-        unsafe {
-            simulate_jit_release(dead1);
-            simulate_jit_release(dead2);
-        }
+        unsafe { simulate_jit_release(dead1); simulate_jit_release(dead2); }
         assert_eq!(gc_get_count(), 3);
         assert_eq!(collect(), 2);
         assert_eq!(gc_get_count(), 1, "only live object remains tracked");
         gc_clear_roots();
-        unsafe {
-            simulate_jit_release(live);
-        }
+        unsafe { simulate_jit_release(live); }
         collect();
         assert_eq!(gc_get_count(), 0);
     }
@@ -1030,18 +904,13 @@ mod tests {
         let outer = MbObject::new_dict();
         unsafe {
             if let ObjData::Dict(ref lock) = (*outer).data {
-                lock.write()
-                    .unwrap()
-                    .insert("key".into(), MbValue::from_ptr(inner));
+                lock.write().unwrap().insert("key".into(), MbValue::from_ptr(inner));
             }
         }
         gc_add_root(MbValue::from_ptr(outer));
         assert_eq!(collect(), 0, "both reachable via root");
         gc_clear_roots();
-        unsafe {
-            simulate_jit_release(outer);
-            simulate_jit_release(inner);
-        }
+        unsafe { simulate_jit_release(outer); simulate_jit_release(inner); }
         assert_eq!(collect(), 2, "both freed when root removed");
     }
 
@@ -1052,19 +921,13 @@ mod tests {
         let inst = MbObject::new_instance("Foo".to_string());
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*inst).data {
-                fields
-                    .write()
-                    .unwrap()
-                    .insert("x".to_string(), MbValue::from_ptr(field_val));
+                fields.write().unwrap().insert("x".to_string(), MbValue::from_ptr(field_val));
             }
         }
         gc_add_root(MbValue::from_ptr(inst));
         assert_eq!(collect(), 0, "instance and field are both reachable");
         gc_clear_roots();
-        unsafe {
-            simulate_jit_release(inst);
-            simulate_jit_release(field_val);
-        }
+        unsafe { simulate_jit_release(inst); simulate_jit_release(field_val); }
         assert_eq!(collect(), 2, "both freed after root removed");
     }
 
@@ -1073,25 +936,11 @@ mod tests {
     fn test_collect_reentrant_guard() {
         reset_gc_for_test();
         let obj = MbObject::new_list(vec![]);
-        GC.with(|gc| {
-            gc.borrow_mut().collecting = true;
-        });
-        assert_eq!(
-            collect(),
-            0,
-            "collect() must return 0 when already collecting"
-        );
-        GC.with(|gc| {
-            gc.borrow_mut().collecting = false;
-        });
-        unsafe {
-            simulate_jit_release(obj);
-        }
-        assert_eq!(
-            collect(),
-            1,
-            "collect() works after collecting flag cleared"
-        );
+        GC.with(|gc| { gc.borrow_mut().collecting = true; });
+        assert_eq!(collect(), 0, "collect() must return 0 when already collecting");
+        GC.with(|gc| { gc.borrow_mut().collecting = false; });
+        unsafe { simulate_jit_release(obj); }
+        assert_eq!(collect(), 1, "collect() works after collecting flag cleared");
     }
 
     /// alloc_count resets to 0 after each collect() call.
@@ -1100,12 +949,8 @@ mod tests {
         reset_gc_for_test();
         let _a = MbObject::new_list(vec![]);
         let _b = MbObject::new_list(vec![]);
-        GC.with(|gc| {
-            assert_eq!(gc.borrow().alloc_count, 2);
-        });
+        GC.with(|gc| { assert_eq!(gc.borrow().alloc_count, 2); });
         collect();
-        GC.with(|gc| {
-            assert_eq!(gc.borrow().alloc_count, 0);
-        });
+        GC.with(|gc| { assert_eq!(gc.borrow().alloc_count, 0); });
     }
 }

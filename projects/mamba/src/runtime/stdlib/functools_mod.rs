@@ -1,6 +1,3 @@
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
-use rustc_hash::FxHashMap;
 /// functools module for Mamba (#393).
 ///
 /// Provides: reduce, partial, lru_cache, cache, total_ordering, wraps,
@@ -9,7 +6,11 @@ use rustc_hash::FxHashMap;
 /// Note: reduce and partial are stubs — full function-call dispatch
 /// is not yet wired in. lru_cache is an identity passthrough.
 /// cached_property, singledispatch, singledispatchmethod are MVP stubs.
+
 use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 /// Extract a String from an MbValue that wraps a heap Str.
 #[allow(dead_code)]
@@ -53,10 +54,91 @@ unsafe extern "C" fn dispatch_reduce(args_ptr: *const MbValue, nargs: usize) -> 
 
 unsafe extern "C" fn dispatch_partial(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let func = args.get(0).copied().unwrap_or_else(MbValue::none);
-    let bound: Vec<MbValue> = args.iter().skip(1).copied().collect();
-    let bound_list = MbValue::from_ptr(MbObject::new_list(bound));
-    mb_functools_partial(func, bound_list)
+    // Trailing dict (if present) carries the construction-time keyword args.
+    let (positional, kwargs) = split_kwargs(args);
+    let func = positional.first().copied().unwrap_or_else(MbValue::none);
+    let bound: Vec<MbValue> = positional.iter().skip(1).copied().collect();
+    let keywords = kwargs.unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
+    build_partial(func, bound, keywords)
+}
+
+/// Build a `functools.partial` Instance. Flattens nested partials: when `func`
+/// is itself a partial, CPython concatenates the args (outer-partial args first
+/// then the new bound args) and merges keywords (new keywords win). The stored
+/// `args` field is a tuple and `keywords` is a dict — matching CPython's
+/// introspection surface.
+fn build_partial(mut func: MbValue, mut bound: Vec<MbValue>, keywords: MbValue) -> MbValue {
+    // Flatten a single level of partial nesting (CPython's __new__ does this).
+    if let Some(fp) = func.as_ptr() {
+        let nested = unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*fp).data {
+                if class_name == "functools.partial" {
+                    let f = fields.read().unwrap();
+                    Some((
+                        f.get("func").copied().unwrap_or_else(MbValue::none),
+                        f.get("args").copied().unwrap_or_else(MbValue::none),
+                        f.get("keywords").copied().unwrap_or_else(MbValue::none),
+                    ))
+                } else { None }
+            } else { None }
+        };
+        if let Some((inner_func, inner_args, inner_kw)) = nested {
+            func = inner_func;
+            let mut merged = super::super::builtins::extract_items(inner_args);
+            merged.append(&mut bound);
+            bound = merged;
+            // Merge keywords: inner first, then new (new wins on conflict).
+            let merged_kw = merge_dicts(inner_kw, keywords);
+            return make_partial_instance(func, bound, merged_kw);
+        }
+    }
+    make_partial_instance(func, bound, keywords)
+}
+
+/// Merge two kwargs dicts into a fresh dict (`b` wins on key collisions).
+fn merge_dicts(a: MbValue, b: MbValue) -> MbValue {
+    let out = MbValue::from_ptr(MbObject::new_dict());
+    for src in [a, b] {
+        if let Some(sp) = src.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*sp).data {
+                    let guard = lock.read().unwrap();
+                    if let Some(op) = out.as_ptr() {
+                        if let ObjData::Dict(ref olock) = (*op).data {
+                            let mut og = olock.write().unwrap();
+                            for (k, v) in guard.iter() {
+                                super::super::rc::retain_if_ptr(*v);
+                                og.insert(k.clone(), *v);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Construct the `functools.partial` Instance with `func`/`args`/`keywords`.
+fn make_partial_instance(func: MbValue, bound: Vec<MbValue>, keywords: MbValue) -> MbValue {
+    unsafe { super::super::rc::retain_if_ptr(func); }
+    for v in &bound { unsafe { super::super::rc::retain_if_ptr(*v); } }
+    let args_tuple = MbValue::from_ptr(MbObject::new_tuple(bound));
+    let mut fields = FxHashMap::default();
+    fields.insert("func".to_string(), func);
+    fields.insert("args".to_string(), args_tuple);
+    fields.insert("keywords".to_string(), keywords);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "functools.partial".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
 }
 
 unsafe extern "C" fn dispatch_lru_cache(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -80,8 +162,7 @@ fn dispatch_lru_cache_impl(args: &[MbValue]) -> MbValue {
     let (positional, kwargs) = split_kwargs(args);
     let (maxsize_kw, typed_kw) = parse_lru_kwargs(kwargs);
     // Bare `@lru_cache` form: single callable positional arg, no kwargs.
-    if positional.len() == 1
-        && kwargs.is_none()
+    if positional.len() == 1 && kwargs.is_none()
         && super::super::builtins::resolve_callable_pub(positional[0]).is_some()
     {
         // Default maxsize = 128 (CPython default).
@@ -121,21 +202,13 @@ fn split_kwargs(args: &[MbValue]) -> (&[MbValue], Option<MbValue>) {
 
 /// Extract `maxsize` / `typed` from the kwargs dict if present.
 fn parse_lru_kwargs(kwargs: Option<MbValue>) -> (Option<MbValue>, Option<MbValue>) {
-    let Some(kw) = kwargs else {
-        return (None, None);
-    };
-    let Some(ptr) = kw.as_ptr() else {
-        return (None, None);
-    };
+    let Some(kw) = kwargs else { return (None, None); };
+    let Some(ptr) = kw.as_ptr() else { return (None, None); };
     unsafe {
         if let ObjData::Dict(ref lock) = (*ptr).data {
             let guard = lock.read().unwrap();
-            let max = guard
-                .get(&super::super::dict_ops::DictKey::Str("maxsize".into()))
-                .copied();
-            let typed = guard
-                .get(&super::super::dict_ops::DictKey::Str("typed".into()))
-                .copied();
+            let max = guard.get(&super::super::dict_ops::DictKey::Str("maxsize".into())).copied();
+            let typed = guard.get(&super::super::dict_ops::DictKey::Str("typed".into())).copied();
             return (max, typed);
         }
     }
@@ -144,8 +217,121 @@ fn parse_lru_kwargs(kwargs: Option<MbValue>) -> (Option<MbValue>, Option<MbValue
 
 unsafe extern "C" fn dispatch_total_ordering(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    // total_ordering is a class decorator — identity passthrough for now
-    args.get(0).copied().unwrap_or_else(MbValue::none)
+    let cls = args.get(0).copied().unwrap_or_else(MbValue::none);
+    // total_ordering is a class decorator: record the class so the runtime
+    // comparison operators can synthesize the missing ordering ops from the
+    // single seed op the class actually defines. Returns the class unchanged.
+    if let Some(name) = extract_str(cls) {
+        TOTAL_ORDERING_CLASSES.with(|s| { s.borrow_mut().insert(name); });
+    }
+    cls
+}
+
+thread_local! {
+    /// Class names decorated with `functools.total_ordering`. The runtime
+    /// comparison operators consult this set to derive missing ordering ops.
+    static TOTAL_ORDERING_CLASSES: std::cell::RefCell<std::collections::HashSet<String>> =
+        std::cell::RefCell::new(std::collections::HashSet::new());
+}
+
+/// Which seed ordering dunder a total_ordering class defines, in CPython's
+/// precedence order (`__lt__`, `__gt__`, `__le__`, `__ge__`).
+fn total_ordering_seed(class_name: &str) -> Option<&'static str> {
+    for seed in ["__lt__", "__gt__", "__le__", "__ge__"] {
+        if !super::super::class::lookup_method(class_name, seed).is_none() {
+            return Some(seed);
+        }
+    }
+    None
+}
+
+/// Derive the rich-comparison result `op` (one of "lt","le","gt","ge") for an
+/// instance of a `total_ordering`-decorated class, using whatever single seed
+/// op the class defines plus `__eq__`. Returns `None` when `a` is not an
+/// instance of a registered total_ordering class, or when the requested op is
+/// itself the seed op (so the caller uses the class's own method).
+pub fn mb_functools_total_ordering_richcmp(a: MbValue, b: MbValue, op: &str) -> Option<bool> {
+    let class_name = a.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*p).data {
+            Some(class_name.clone())
+        } else { None }
+    })?;
+    let is_registered = TOTAL_ORDERING_CLASSES.with(|s| s.borrow().contains(&class_name));
+    if !is_registered {
+        return None;
+    }
+    let seed = total_ordering_seed(&class_name)?;
+    let seed_op = match seed {
+        "__lt__" => "lt",
+        "__gt__" => "gt",
+        "__le__" => "le",
+        "__ge__" => "ge",
+        _ => return None,
+    };
+    // The class defines this op natively — let the normal dispatch handle it.
+    if op == seed_op {
+        return None;
+    }
+    // Call the seed op (returns its bool result) and __eq__.
+    let call_dunder = |dunder: &str, x: MbValue, y: MbValue| -> Option<bool> {
+        let m = super::super::class::lookup_method(&class_name, dunder);
+        if m.is_none() { return None; }
+        let mname = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![y]));
+        let r = super::super::class::mb_call_method(x, mname, args);
+        // NotImplemented propagates as "fall back"; treat as None.
+        if r.is_not_implemented() { return None; }
+        Some(truthy(r))
+    };
+    let seed_val = call_dunder(seed, a, b);
+    // Derive per CPython's _ordering rules. Each branch maps (seed, target) →
+    // boolean expression over the seed call and __eq__.
+    let result = match (seed, op) {
+        // Seeded from __lt__.
+        ("__lt__", "le") => seed_val? || call_dunder("__eq__", a, b)?,
+        ("__lt__", "gt") => !(seed_val? || call_dunder("__eq__", a, b)?),
+        ("__lt__", "ge") => !seed_val?,
+        // Seeded from __gt__.
+        ("__gt__", "ge") => seed_val? || call_dunder("__eq__", a, b)?,
+        ("__gt__", "lt") => !(seed_val? || call_dunder("__eq__", a, b)?),
+        ("__gt__", "le") => !seed_val?,
+        // Seeded from __le__.
+        ("__le__", "ge") => !seed_val? || call_dunder("__eq__", a, b)?,
+        ("__le__", "lt") => seed_val? && !call_dunder("__eq__", a, b)?,
+        ("__le__", "gt") => !seed_val?,
+        // Seeded from __ge__.
+        ("__ge__", "le") => !seed_val? || call_dunder("__eq__", a, b)?,
+        ("__ge__", "gt") => seed_val? && !call_dunder("__eq__", a, b)?,
+        ("__ge__", "lt") => !seed_val?,
+        _ => return None,
+    };
+    Some(result)
+}
+
+/// Truthiness helper for dunder results (bool / int / float / None).
+fn truthy(v: MbValue) -> bool {
+    if let Some(b) = v.as_bool() { b }
+    else if let Some(i) = v.as_int() { i != 0 }
+    else if let Some(f) = v.as_float() { f != 0.0 }
+    else if v.is_none() { false }
+    else {
+        const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
+        const TAG_MASK: u64 = 0x0007_0000_0000_0000;
+        let bits = v.to_bits();
+        let looks_boxed = (bits & NAN_PREFIX) == NAN_PREFIX
+            && bits != f64::NAN.to_bits()
+            && ((bits & TAG_MASK) >> 48) <= 6;
+        if looks_boxed { true } else { (bits as i64) != 0 }
+    }
+}
+
+/// True when `v` is an instance of a `total_ordering`-decorated class.
+pub fn is_total_ordering_instance(v: MbValue) -> bool {
+    v.as_ptr().map(|p| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*p).data {
+            TOTAL_ORDERING_CLASSES.with(|s| s.borrow().contains(class_name))
+        } else { false }
+    }).unwrap_or(false)
 }
 
 unsafe extern "C" fn dispatch_wraps(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -197,10 +383,7 @@ unsafe extern "C" fn dispatch_singledispatch(args_ptr: *const MbValue, nargs: us
 }
 
 // REQ: R10
-unsafe extern "C" fn dispatch_singledispatchmethod(
-    args_ptr: *const MbValue,
-    nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_singledispatchmethod(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     mb_functools_singledispatchmethod(args.get(0).copied().unwrap_or_else(MbValue::none))
 }
@@ -356,42 +539,18 @@ pub fn register() {
     let dispatchers: [(&str, usize); 16] = [
         ("reduce", dispatch_reduce as *const () as usize),
         ("partial", dispatch_partial as *const () as usize),
-        (
-            "partialmethod",
-            dispatch_partialmethod as *const () as usize,
-        ),
+        ("partialmethod", dispatch_partialmethod as *const () as usize),
         ("lru_cache", dispatch_lru_cache as *const () as usize),
         ("cache", dispatch_cache as *const () as usize),
-        (
-            "total_ordering",
-            dispatch_total_ordering as *const () as usize,
-        ),
+        ("total_ordering", dispatch_total_ordering as *const () as usize),
         ("wraps", dispatch_wraps as *const () as usize),
-        (
-            "cached_property",
-            dispatch_cached_property as *const () as usize,
-        ),
+        ("cached_property", dispatch_cached_property as *const () as usize),
         ("cmp_to_key", dispatch_cmp_to_key as *const () as usize),
-        (
-            "update_wrapper",
-            dispatch_update_wrapper as *const () as usize,
-        ),
-        (
-            "singledispatch",
-            dispatch_singledispatch as *const () as usize,
-        ),
-        (
-            "singledispatchmethod",
-            dispatch_singledispatchmethod as *const () as usize,
-        ),
-        (
-            "recursive_repr",
-            dispatch_recursive_repr as *const () as usize,
-        ),
-        (
-            "get_cache_token",
-            dispatch_get_cache_token as *const () as usize,
-        ),
+        ("update_wrapper", dispatch_update_wrapper as *const () as usize),
+        ("singledispatch", dispatch_singledispatch as *const () as usize),
+        ("singledispatchmethod", dispatch_singledispatchmethod as *const () as usize),
+        ("recursive_repr", dispatch_recursive_repr as *const () as usize),
+        ("get_cache_token", dispatch_get_cache_token as *const () as usize),
         ("namedtuple", dispatch_namedtuple as *const () as usize),
         ("GenericAlias", dispatch_generic_alias as *const () as usize),
     ];
@@ -403,10 +562,7 @@ pub fn register() {
     }
 
     // Module-level tuple constants used by `functools.wraps`.
-    attrs.insert(
-        "WRAPPER_ASSIGNMENTS".to_string(),
-        wrapper_assignments_tuple(),
-    );
+    attrs.insert("WRAPPER_ASSIGNMENTS".to_string(), wrapper_assignments_tuple());
     attrs.insert("WRAPPER_UPDATES".to_string(), wrapper_updates_tuple());
 
     super::register_module("functools", attrs);
@@ -421,10 +577,64 @@ pub fn register() {
 /// **Stub**: Since function-call dispatch is not yet wired into the
 /// stdlib layer, this performs a basic sum-fold when `func` is the
 /// string "add", and returns `initial` otherwise.
-pub fn mb_functools_reduce(func: MbValue, iterable: MbValue, initial: MbValue) -> MbValue {
-    // Materialize iterable via iterator protocol (handles list, tuple, generator,
-    // custom iterators, etc.).
-    let items: Vec<MbValue> = {
+/// Legacy sequence-protocol drain for `reduce`: if `iterable` is a user
+/// Instance that defines `__getitem__` but not `__iter__`, materialize it by
+/// calling `__getitem__(0)`, `__getitem__(1)`, ... until an IndexError is
+/// raised. Returns `None` when the object is not a __getitem__-only sequence
+/// (caller falls back to the normal iterator protocol).
+fn reduce_getitem_sequence(iterable: MbValue) -> Option<Vec<MbValue>> {
+    let ptr = iterable.as_ptr()?;
+    let class_name = unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            class_name.clone()
+        } else {
+            return None;
+        }
+    };
+    // Only take this path for __getitem__-only instances. If __iter__ exists,
+    // defer to the normal iterator protocol (it is the preferred path).
+    if !super::super::class::lookup_method(&class_name, "__iter__").is_none() {
+        return None;
+    }
+    if super::super::class::lookup_method(&class_name, "__getitem__").is_none() {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut i: i64 = 0;
+    loop {
+        let item = super::super::class::mb_obj_getitem(iterable, MbValue::from_int(i));
+        // __getitem__ signalled the end of the sequence by raising IndexError.
+        if let Some(ty) = super::super::exception::current_exception_type() {
+            if ty == "IndexError" || ty == "StopIteration" {
+                super::super::exception::mb_clear_exception();
+                break;
+            }
+            // A different, genuine exception — propagate it.
+            return Some(out);
+        }
+        out.push(item);
+        i += 1;
+        // Defensive bound to avoid runaway loops on a misbehaving sequence.
+        if i > 100_000_000 {
+            break;
+        }
+    }
+    Some(out)
+}
+
+pub fn mb_functools_reduce(
+    func: MbValue,
+    iterable: MbValue,
+    initial: MbValue,
+) -> MbValue {
+    // Materialize iterable. CPython's reduce uses PyObject_GetIter, which
+    // accepts the legacy sequence protocol: an object with __getitem__ (and no
+    // __iter__) is iterated by calling __getitem__(0), __getitem__(1), ... until
+    // IndexError. mamba's mb_iter only honors __iter__, so detect the
+    // __getitem__-only case here and drive it manually.
+    let items: Vec<MbValue> = if let Some(seq) = reduce_getitem_sequence(iterable) {
+        seq
+    } else {
         let iter_handle = super::super::iter::mb_iter(iterable);
         if iter_handle.is_none() {
             return initial;
@@ -435,9 +645,7 @@ pub fn mb_functools_reduce(func: MbValue, iterable: MbValue, initial: MbValue) -
                 break;
             }
             let item = super::super::iter::mb_next(iter_handle);
-            if item.is_none()
-                && super::super::iter::mb_has_next(iter_handle).as_bool() == Some(false)
-            {
+            if item.is_none() && super::super::iter::mb_has_next(iter_handle).as_bool() == Some(false) {
                 break;
             }
             acc.push(item);
@@ -445,18 +653,33 @@ pub fn mb_functools_reduce(func: MbValue, iterable: MbValue, initial: MbValue) -
         acc
     };
 
+    // Determine initial accumulator. CPython: with no initializer and an empty
+    // iterable, raise TypeError; with a single element and no initializer, that
+    // element is returned without ever calling func.
+    let (mut acc, start) = if initial.is_none() {
+        if items.is_empty() {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "reduce() of empty iterable with no initial value".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+        (items[0], 1)
+    } else {
+        (initial, 0)
+    };
+    // Short-circuit: nothing left to fold (single element / empty+initial) →
+    // return the accumulator without resolving or calling func at all. This
+    // matches CPython even when `func` is not callable (e.g. reduce(42, "1")).
+    if start >= items.len() {
+        unsafe { super::super::rc::retain_if_ptr(acc); }
+        return acc;
+    }
+
     // Try to resolve func as a callable (lambda, function, closure).
     if let Some(raw_addr) = super::super::builtins::resolve_callable_pub(func) {
-        // Determine initial accumulator
-        let (mut acc, start) = if initial.is_none() {
-            if items.is_empty() {
-                return MbValue::none();
-            }
-            (items[0], 1)
-        } else {
-            (initial, 0)
-        };
-
         // Fast path (mitigation 3A for #2100): when `func` is a native
         // extern "C" fn(*const MbValue, usize) -> MbValue, call it directly
         // with stack-allocated `[MbValue; 2]`. Skips per-iter
@@ -531,16 +754,17 @@ fn reduce_mul(items: &[MbValue], initial: MbValue) -> MbValue {
 /// callable, `args` is a list of already-bound positional arguments. The
 /// runtime's dynamic-dispatch path (`mb_call_spread`) detects the
 /// `functools.partial` class name and prepends the bound args to the call.
-pub fn mb_functools_partial(func: MbValue, args: MbValue) -> MbValue {
+pub fn mb_functools_partial(
+    func: MbValue,
+    args: MbValue,
+) -> MbValue {
     // Normalize `args` to a list of bound positional args. When called via
     // the native dispatch (`*args` spread), `args` is the caller's list.
     // When called via `mb_functools_partial(f, x)` directly (the 2-arg form),
     // wrap the single value as a one-element list.
-    let bound = if args
-        .as_ptr()
-        .map(|p| unsafe { matches!(&(*p).data, ObjData::List(_)) })
-        .unwrap_or(false)
-    {
+    let bound = if args.as_ptr().map(|p| unsafe {
+        matches!(&(*p).data, ObjData::List(_))
+    }).unwrap_or(false) {
         args
     } else {
         MbValue::from_ptr(MbObject::new_list(vec![args]))
@@ -559,6 +783,53 @@ pub fn mb_functools_partial(func: MbValue, args: MbValue) -> MbValue {
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// repr(functools.partial(...)) →
+/// `functools.partial(<func>, <pos>..., <key>=<val>...)`, matching CPython's
+/// `partial.__repr__`. Positional args and keyword values are rendered with
+/// `repr()`; keyword keys are bare identifiers.
+pub fn mb_functools_partial_repr(partial: MbValue) -> MbValue {
+    let Some(ptr) = partial.as_ptr() else {
+        return MbValue::from_ptr(MbObject::new_str("functools.partial()".to_string()));
+    };
+    let (func, args_val, kw_val) = unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let f = fields.read().unwrap();
+            (
+                f.get("func").copied().unwrap_or_else(MbValue::none),
+                f.get("args").copied().unwrap_or_else(MbValue::none),
+                f.get("keywords").copied().unwrap_or_else(MbValue::none),
+            )
+        } else {
+            return MbValue::from_ptr(MbObject::new_str("functools.partial()".to_string()));
+        }
+    };
+    let repr_of = |v: MbValue| -> String {
+        let r = super::super::builtins::mb_repr(v);
+        extract_str(r).unwrap_or_else(|| "None".to_string())
+    };
+    let mut parts: Vec<String> = Vec::new();
+    parts.push(repr_of(func));
+    for a in super::super::builtins::extract_items(args_val) {
+        parts.push(repr_of(a));
+    }
+    if let Some(kp) = kw_val.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*kp).data {
+                let guard = lock.read().unwrap();
+                for (k, v) in guard.iter() {
+                    if let super::super::dict_ops::DictKey::Str(ref ks) = k {
+                        parts.push(format!("{}={}", ks, repr_of(*v)));
+                    }
+                }
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_str(format!(
+        "functools.partial({})",
+        parts.join(", ")
+    )))
 }
 
 /// functools.lru_cache(func) -> wrapper  (legacy 1-arg entry point)
@@ -591,21 +862,15 @@ pub fn mb_functools_lru_cache_factory(maxsize: MbValue, typed: MbValue) -> MbVal
 /// Build the lru_cache wrapper instance that `mb_call_spread` routes through.
 pub fn mb_functools_lru_cache_wrap(func: MbValue, maxsize: MbValue, typed: MbValue) -> MbValue {
     // Retain the wrapped callable so the wrapper owns its own rc.
-    unsafe {
-        super::super::rc::retain_if_ptr(func);
-    }
+    unsafe { super::super::rc::retain_if_ptr(func); }
     let mut fields = FxHashMap::default();
     fields.insert("_func".to_string(), func);
     fields.insert("_maxsize".to_string(), maxsize);
     fields.insert("_typed".to_string(), typed);
-    fields.insert(
-        "_cache".to_string(),
-        MbValue::from_ptr(super::super::rc::MbObject::new_dict()),
-    );
-    fields.insert(
-        "_order".to_string(),
-        MbValue::from_ptr(super::super::rc::MbObject::new_list(Vec::new())),
-    );
+    fields.insert("_cache".to_string(),
+        MbValue::from_ptr(super::super::rc::MbObject::new_dict()));
+    fields.insert("_order".to_string(),
+        MbValue::from_ptr(super::super::rc::MbObject::new_list(Vec::new())));
     fields.insert("_hits".to_string(), MbValue::from_int(0));
     fields.insert("_misses".to_string(), MbValue::from_int(0));
     let obj = Box::new(super::super::rc::MbObject {
@@ -628,24 +893,18 @@ pub fn mb_functools_lru_cache_wrap(func: MbValue, maxsize: MbValue, typed: MbVal
 /// `f(1.0)` live in separate cache slots. Returns a `DictKey::Str` directly
 /// so callers don't need another `to_dict_key` round-trip.
 fn lru_build_cache_key_dk(items: &[MbValue], typed: bool) -> super::super::dict_ops::DictKey {
-    use super::super::dict_ops::{to_dict_key, DictKey};
+    use super::super::dict_ops::DictKey;
     let mut out = String::new();
     out.push('(');
     for (i, v) in items.iter().enumerate() {
-        if i > 0 {
-            out.push('|');
-        }
+        if i > 0 { out.push('|'); }
         if typed {
             // Tag each arg with its type name so f(1) / f(1.0) separate.
-            if v.is_int() {
-                out.push_str("i:");
-            } else if v.is_float() {
-                out.push_str("f:");
-            } else if v.is_bool() {
-                out.push_str("b:");
-            } else if v.is_none() {
-                out.push_str("n:");
-            } else if let Some(p) = v.as_ptr() {
+            if v.is_int() { out.push_str("i:"); }
+            else if v.is_float() { out.push_str("f:"); }
+            else if v.is_bool() { out.push_str("b:"); }
+            else if v.is_none() { out.push_str("n:"); }
+            else if let Some(p) = v.as_ptr() {
                 let tag: String = unsafe {
                     match &(*p).data {
                         ObjData::Str(_) => "s:".to_string(),
@@ -663,34 +922,93 @@ fn lru_build_cache_key_dk(items: &[MbValue], typed: bool) -> super::super::dict_
                 out.push_str(&tag);
             }
         }
-        // Use the DictKey Display to stringify each arg in a stable way.
-        let dk = to_dict_key(*v);
-        match &dk {
-            DictKey::Int(i) => out.push_str(&i.to_string()),
-            DictKey::Str(s) => {
-                out.push('"');
-                out.push_str(s);
-                out.push('"');
-            }
-            DictKey::Bool(b) => out.push_str(if *b { "T" } else { "F" }),
-            DictKey::None => out.push_str("None"),
-            DictKey::Instance { hash_val, .. } => {
-                out.push('@');
-                out.push_str(&hash_val.to_string());
-            }
-            DictKey::Other(s) => out.push_str(s),
-            DictKey::Func(addr) => {
-                out.push('@');
-                out.push_str(&format!("{addr:x}"));
-            }
-            DictKey::Tuple { hash_val, .. } => {
-                out.push('T');
-                out.push_str(&hash_val.to_string());
-            }
-        }
+        lru_encode_value_key(*v, &mut out);
     }
     out.push(')');
     DictKey::Str(out)
+}
+
+/// Append a value-faithful encoding of `v` into `out`. Unlike a bare
+/// `hash_val` stringification, this folds container *element* keys so that
+/// two distinct args that merely share a hash never collide into the same
+/// cache slot. The encoding mirrors `DictKey`'s eq semantics:
+///   * Tuple — ordered fold of element keys (`mb_tuple_eq` is element-wise).
+///   * FrozenSet — order-independent fold (element keys sorted), so two
+///     frozensets that compare equal (any build order) produce the same key,
+///     and unequal frozensets with a colliding hash produce distinct keys.
+///   * Instance — hash plus pointer identity, so distinct instances with an
+///     equal `__hash__` get distinct keys. (Two `__eq__`-equal-but-distinct
+///     instances over-separate into different slots, which is a benign cache
+///     miss — never a wrong hit.)
+/// Recursion is depth-bounded implicitly by the value tree; nested containers
+/// fold recursively.
+fn lru_encode_value_key(v: MbValue, out: &mut String) {
+    use super::super::dict_ops::{to_dict_key, DictKey};
+    let dk = to_dict_key(v);
+    match &dk {
+        DictKey::Int(i) => out.push_str(&i.to_string()),
+        DictKey::Float(bits) => { out.push('f'); out.push_str(&bits.to_string()); }
+        DictKey::Str(s) => { out.push('"'); out.push_str(s); out.push('"'); }
+        DictKey::Bool(b) => out.push_str(if *b { "T" } else { "F" }),
+        DictKey::None => out.push_str("None"),
+        DictKey::Instance { hash_val, ptr, .. } => {
+            // Hash buckets, pointer identity disambiguates collisions. We
+            // cannot fully encode user `__eq__` into a string, so we lean on
+            // identity: never a wrong hit, at worst an extra miss.
+            out.push('@');
+            out.push_str(&hash_val.to_string());
+            out.push('#');
+            out.push_str(&format!("{ptr:x}"));
+        }
+        DictKey::Other(s) => out.push_str(s),
+        DictKey::Func(addr) => {
+            out.push('@');
+            out.push_str(&format!("{addr:x}"));
+        }
+        DictKey::Tuple { .. } => {
+            // Ordered fold of element keys — matches mb_tuple_eq.
+            out.push('T');
+            out.push('[');
+            if let Some(p) = v.as_ptr() {
+                unsafe {
+                    if let ObjData::Tuple(ref items) = (*p).data {
+                        for (i, el) in items.iter().enumerate() {
+                            if i > 0 { out.push(','); }
+                            lru_encode_value_key(*el, out);
+                        }
+                    }
+                }
+            }
+            out.push(']');
+        }
+        DictKey::FrozenSet { hash_val, .. } => {
+            // Order-independent fold: encode each element, sort, then join so
+            // equal frozensets (any build order) match and unequal ones with a
+            // colliding hash stay distinct.
+            out.push('S');
+            out.push('{');
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(p) = v.as_ptr() {
+                unsafe {
+                    if let ObjData::FrozenSet(ref items) = (*p).data {
+                        for el in items.iter() {
+                            let mut s = String::new();
+                            lru_encode_value_key(*el, &mut s);
+                            parts.push(s);
+                        }
+                    }
+                }
+            }
+            parts.sort();
+            // Fall back to mixing in the content hash so two frozensets whose
+            // element encodings happen to sort identically (they shouldn't for
+            // distinct sets) still carry their structural hash signal.
+            out.push_str(&parts.join(","));
+            out.push(';');
+            out.push_str(&hash_val.to_string());
+            out.push('}');
+        }
+    }
 }
 
 /// Called by `mb_call_spread` when `func` is a `functools.lru_cache_wrapper`
@@ -698,9 +1016,7 @@ fn lru_build_cache_key_dk(items: &[MbValue], typed: bool) -> super::super::dict_
 /// honors maxsize (0 = disabled, None = unbounded, positive = LRU).
 pub fn mb_functools_lru_cache_invoke(wrapper: MbValue, items: Vec<MbValue>) -> MbValue {
     use super::super::rc::{MbObject, ObjData};
-    let Some(ptr) = wrapper.as_ptr() else {
-        return MbValue::none();
-    };
+    let Some(ptr) = wrapper.as_ptr() else { return MbValue::none(); };
     // Fetch cache fields under a read lock, cloned so we can drop the lock
     // before calling the inner function (which might reentrantly invoke us).
     let (inner_func, maxsize_v, typed_v, cache_val, order_val) = unsafe {
@@ -786,15 +1102,11 @@ fn lru_touch_order(order_val: MbValue, key_dk: &super::super::dict_ops::DictKey)
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut guard = lock.write().unwrap();
                 let pos = guard.iter().position(|v| {
-                    v.as_ptr()
-                        .map(|p| {
-                            if let ObjData::Str(ref s) = (*p).data {
-                                s == &key_str
-                            } else {
-                                false
-                            }
-                        })
-                        .unwrap_or(false)
+                    v.as_ptr().map(|p| {
+                        if let ObjData::Str(ref s) = (*p).data {
+                            s == &key_str
+                        } else { false }
+                    }).unwrap_or(false)
                 });
                 if let Some(i) = pos {
                     let entry = guard.remove(i);
@@ -807,26 +1119,18 @@ fn lru_touch_order(order_val: MbValue, key_dk: &super::super::dict_ops::DictKey)
 
 /// Evict oldest entries from the cache until length <= limit.
 fn lru_evict_to_limit(cache_val: MbValue, order_val: MbValue, limit: usize) {
-    let Some(cache_ptr) = cache_val.as_ptr() else {
-        return;
-    };
-    let Some(order_ptr) = order_val.as_ptr() else {
-        return;
-    };
+    let Some(cache_ptr) = cache_val.as_ptr() else { return; };
+    let Some(order_ptr) = order_val.as_ptr() else { return; };
     unsafe {
         if let (ObjData::Dict(ref cache_lock), ObjData::List(ref order_lock)) =
             (&(*cache_ptr).data, &(*order_ptr).data)
         {
             loop {
                 let len = cache_lock.read().unwrap().len();
-                if len <= limit {
-                    break;
-                }
+                if len <= limit { break; }
                 let oldest = {
                     let mut order = order_lock.write().unwrap();
-                    if order.is_empty() {
-                        break;
-                    }
+                    if order.is_empty() { break; }
                     order.remove(0)
                 };
                 let oldest_key = super::super::dict_ops::to_dict_key(oldest);
@@ -848,9 +1152,7 @@ fn dict_key_to_stable_mbvalue(key: &super::super::dict_ops::DictKey) -> MbValue 
 
 /// Increment a counter field ("_hits" or "_misses") on the wrapper.
 fn bump_lru_counter(wrapper: MbValue, field: &str) {
-    let Some(ptr) = wrapper.as_ptr() else {
-        return;
-    };
+    let Some(ptr) = wrapper.as_ptr() else { return; };
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             let mut f = fields.write().unwrap();
@@ -863,19 +1165,13 @@ fn bump_lru_counter(wrapper: MbValue, field: &str) {
 /// Called by `mb_call_spread` when `func` is the factory Instance produced by
 /// `@lru_cache(maxsize=N)` form. The single arg is the wrapped callable.
 pub fn mb_functools_lru_cache_factory_apply(factory: MbValue, items: Vec<MbValue>) -> MbValue {
-    let Some(ptr) = factory.as_ptr() else {
-        return MbValue::none();
-    };
+    let Some(ptr) = factory.as_ptr() else { return MbValue::none(); };
     let (maxsize, typed) = unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             let f = fields.read().unwrap();
             (
-                f.get("_maxsize")
-                    .copied()
-                    .unwrap_or_else(|| MbValue::from_int(128)),
-                f.get("_typed")
-                    .copied()
-                    .unwrap_or_else(|| MbValue::from_bool(false)),
+                f.get("_maxsize").copied().unwrap_or_else(|| MbValue::from_int(128)),
+                f.get("_typed").copied().unwrap_or_else(|| MbValue::from_bool(false)),
             )
         } else {
             return MbValue::none();
@@ -891,32 +1187,19 @@ pub fn mb_functools_lru_cache_factory_apply(factory: MbValue, items: Vec<MbValue
 /// so we ship it as an Instance with those fields.
 pub fn mb_functools_lru_cache_info(wrapper: MbValue) -> MbValue {
     use super::super::rc::{MbObject, ObjData};
-    let Some(ptr) = wrapper.as_ptr() else {
-        return MbValue::none();
-    };
+    let Some(ptr) = wrapper.as_ptr() else { return MbValue::none(); };
     let (hits, misses, maxsize, currsize) = unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             let f = fields.read().unwrap();
-            let h = f
-                .get("_hits")
-                .copied()
-                .unwrap_or_else(|| MbValue::from_int(0));
-            let m = f
-                .get("_misses")
-                .copied()
-                .unwrap_or_else(|| MbValue::from_int(0));
+            let h = f.get("_hits").copied().unwrap_or_else(|| MbValue::from_int(0));
+            let m = f.get("_misses").copied().unwrap_or_else(|| MbValue::from_int(0));
             let ms = f.get("_maxsize").copied().unwrap_or_else(MbValue::none);
             let c = f.get("_cache").copied().unwrap_or_else(MbValue::none);
-            let sz = c
-                .as_ptr()
-                .map(|cp| {
-                    if let ObjData::Dict(ref lock) = (*cp).data {
-                        lock.read().unwrap().len() as i64
-                    } else {
-                        0
-                    }
-                })
-                .unwrap_or(0);
+            let sz = c.as_ptr().map(|cp| {
+                if let ObjData::Dict(ref lock) = (*cp).data {
+                    lock.read().unwrap().len() as i64
+                } else { 0 }
+            }).unwrap_or(0);
             (h, m, ms, MbValue::from_int(sz))
         } else {
             return MbValue::none();
@@ -942,9 +1225,7 @@ pub fn mb_functools_lru_cache_info(wrapper: MbValue) -> MbValue {
 
 /// cache_clear() — reset counters and empty the cache dict + order list.
 pub fn mb_functools_lru_cache_clear(wrapper: MbValue) -> MbValue {
-    let Some(ptr) = wrapper.as_ptr() else {
-        return MbValue::none();
-    };
+    let Some(ptr) = wrapper.as_ptr() else { return MbValue::none(); };
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             let mut f = fields.write().unwrap();
@@ -977,12 +1258,15 @@ pub fn mb_functools_cached_property(func: MbValue) -> MbValue {
     func
 }
 
-/// functools.cmp_to_key(mycmp) -> Instance  (R7)
+/// functools.cmp_to_key(mycmp) -> key-factory Instance  (R7)
 ///
-/// Wraps an old-style comparison function in a `functools.cmp_to_key` Instance.
-/// The `_cmp` field holds the comparison callable. The sort integration that
-/// uses this Instance to perform `__lt__` etc. is future work.
+/// Returns a `functools.cmp_to_key` factory Instance carrying the comparison
+/// callable in `_cmp`. Calling the factory with a value produces a key object
+/// (`functools.cmp_to_key_obj`) whose rich-comparison operators delegate to the
+/// stored cmp. The factory dispatch is wired in `mb_call_spread`; the key
+/// comparisons are wired in the runtime comparison operators.
 pub fn mb_functools_cmp_to_key(mycmp: MbValue) -> MbValue {
+    unsafe { super::super::rc::retain_if_ptr(mycmp); }
     let mut fields = FxHashMap::default();
     fields.insert("_cmp".to_string(), mycmp);
     let obj = Box::new(super::super::rc::MbObject {
@@ -998,12 +1282,181 @@ pub fn mb_functools_cmp_to_key(mycmp: MbValue) -> MbValue {
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+/// Apply a `functools.cmp_to_key` factory to a value: build a key object that
+/// wraps `obj` and carries the comparison callable. Called by `mb_call_spread`
+/// when the factory Instance is invoked.
+pub fn mb_functools_cmp_to_key_apply(factory: MbValue, items: Vec<MbValue>) -> MbValue {
+    let cmp = factory.as_ptr().map(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().unwrap().get("_cmp").copied().unwrap_or_else(MbValue::none)
+        } else {
+            MbValue::none()
+        }
+    }).unwrap_or_else(MbValue::none);
+    let obj_val = items.first().copied().unwrap_or_else(MbValue::none);
+    unsafe {
+        super::super::rc::retain_if_ptr(cmp);
+        super::super::rc::retain_if_ptr(obj_val);
+    }
+    let mut fields = FxHashMap::default();
+    fields.insert("_cmp".to_string(), cmp);
+    fields.insert("obj".to_string(), obj_val);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "functools.cmp_to_key_obj".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// Run the stored cmp on two key objects' wrapped values, returning the sign
+/// (`< 0`, `0`, `> 0`) as an i64. Used by every rich-comparison operator.
+fn cmp_to_key_compare(a: MbValue, b: MbValue) -> Option<i64> {
+    let (cmp, lhs) = a.as_ptr().map(|p| unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*p).data {
+            if class_name == "functools.cmp_to_key_obj" {
+                let f = fields.read().unwrap();
+                (
+                    Some(f.get("_cmp").copied().unwrap_or_else(MbValue::none)),
+                    f.get("obj").copied().unwrap_or_else(MbValue::none),
+                )
+            } else { (None, MbValue::none()) }
+        } else { (None, MbValue::none()) }
+    }).unwrap_or((None, MbValue::none()));
+    let cmp = cmp?;
+    let rhs = b.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*p).data {
+            if class_name == "functools.cmp_to_key_obj" {
+                Some(fields.read().unwrap().get("obj").copied().unwrap_or_else(MbValue::none))
+            } else { None }
+        } else { None }
+    })?;
+    let pair = MbValue::from_ptr(MbObject::new_list(vec![lhs, rhs]));
+    let result = super::super::builtins::mb_call_spread(cmp, pair);
+    Some(cmp_result_to_sign(result))
+}
+
+/// Coerce a comparison callable's return value to a CPython-style sign int.
+///
+/// A Python-defined cmp whose body computes the sign with bool subtraction
+/// (`(x>y) - (x<y)`) is JIT-compiled to return a *raw, unboxed* i64 rather
+/// than a NaN-boxed MbValue. When that raw value is negative (e.g. -1) every
+/// high bit is set, which is bit-indistinguishable from a NaN-boxed value with
+/// the otherwise-unused tag 7 — so `mb_call_spread`'s rebox guard forwards it
+/// untouched and the standard `as_int()` decode fails. Detect that case (an
+/// invalid tag) and recover the raw i64; otherwise decode normally.
+fn cmp_result_to_sign(result: MbValue) -> i64 {
+    if let Some(i) = result.as_int() {
+        i
+    } else if let Some(f) = result.as_float() {
+        if f < 0.0 { -1 } else if f > 0.0 { 1 } else { 0 }
+    } else if let Some(bv) = result.as_bool() {
+        if bv { 1 } else { 0 }
+    } else if result.is_none() {
+        0
+    } else {
+        const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
+        const TAG_MASK: u64 = 0x0007_0000_0000_0000;
+        let bits = result.to_bits();
+        let looks_boxed = (bits & NAN_PREFIX) == NAN_PREFIX
+            && bits != f64::NAN.to_bits()
+            && ((bits & TAG_MASK) >> 48) <= 6; // valid tags are 0..=6
+        if looks_boxed {
+            // A genuine boxed value we don't otherwise handle — treat as 0.
+            0
+        } else {
+            // Raw unboxed i64 returned by a JIT-compiled int function.
+            bits as i64
+        }
+    }
+}
+
+/// True when `v` is a `functools.cmp_to_key_obj` key wrapper.
+pub fn is_cmp_to_key_obj(v: MbValue) -> bool {
+    v.as_ptr().map(|p| unsafe {
+        matches!(&(*p).data, ObjData::Instance { class_name, .. }
+            if class_name == "functools.cmp_to_key_obj")
+    }).unwrap_or(false)
+}
+
+/// Rich-comparison entry for cmp_to_key key objects. `op` is one of
+/// "lt","le","gt","ge","eq","ne". Returns the boolean result, or `None` when
+/// `a` is not a key object (caller falls back to default comparison).
+pub fn mb_functools_cmp_to_key_richcmp(a: MbValue, b: MbValue, op: &str) -> Option<bool> {
+    let sign = cmp_to_key_compare(a, b)?;
+    Some(match op {
+        "lt" => sign < 0,
+        "le" => sign <= 0,
+        "gt" => sign > 0,
+        "ge" => sign >= 0,
+        "eq" => sign == 0,
+        "ne" => sign != 0,
+        _ => false,
+    })
+}
+
+thread_local! {
+    /// `__wrapped__` back-references set by `functools.wraps` /
+    /// `update_wrapper`, keyed by the wrapper function's NaN-boxed bits.
+    static FUNC_WRAPPED: std::cell::RefCell<HashMap<u64, MbValue>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// Record `wrapper.__wrapped__ = wrapped`.
+pub fn set_func_wrapped(wrapper: MbValue, wrapped: MbValue) {
+    unsafe { super::super::rc::retain_if_ptr(wrapped); }
+    FUNC_WRAPPED.with(|m| { m.borrow_mut().insert(wrapper.to_bits(), wrapped); });
+}
+
+/// Read `wrapper.__wrapped__`, or a None-MbValue when unset. Consulted by the
+/// runtime attribute-access path for the `__wrapped__` dunder.
+pub fn get_func_wrapped(wrapper: MbValue) -> MbValue {
+    FUNC_WRAPPED.with(|m| m.borrow().get(&wrapper.to_bits()).copied().unwrap_or_else(MbValue::none))
+}
+
+/// Apply a `functools.wraps`/`update_wrapper` copy from `wrapped` onto
+/// `wrapper` (both function values): copy `__name__`, `__qualname__`,
+/// `__module__`, `__doc__` and set `__wrapped__ = wrapped`. Returns `wrapper`.
+pub fn mb_functools_wraps_apply(wrapper: MbValue, wrapped: MbValue) -> MbValue {
+    let name = super::super::closure::mb_func_get_name(wrapped);
+    if !name.is_none() {
+        super::super::closure::mb_func_set_name(wrapper, name);
+    }
+    let doc = super::super::closure::mb_func_get_doc(wrapped);
+    if !doc.is_none() {
+        super::super::closure::mb_func_set_doc(wrapper, doc);
+    }
+    let module = super::super::closure::mb_func_get_module(wrapped);
+    if !module.is_none() {
+        super::super::closure::mb_func_set_module(wrapper, module);
+    }
+    set_func_wrapped(wrapper, wrapped);
+    unsafe { super::super::rc::retain_if_ptr(wrapper); }
+    wrapper
+}
+
 /// functools.update_wrapper(wrapper, wrapped) -> wrapper  (R8)
 ///
 /// Copies `__name__` and `__doc__` fields from `wrapped` to `wrapper` when
 /// both are Instance objects. Otherwise returns `wrapper` unchanged (identity
 /// passthrough for non-Instance values).
 pub fn mb_functools_update_wrapper(wrapper: MbValue, wrapped: MbValue) -> MbValue {
+    // Function-valued wrapper/wrapped (the common `@wraps`/`update_wrapper`
+    // shape): copy name/doc/module and set __wrapped__ via the shared helper.
+    let wrapper_is_fn = wrapper.as_func().is_some()
+        || (wrapper.as_int().is_some()
+            && !super::super::closure::mb_func_get_name(wrapper).is_none());
+    let wrapped_is_fn = wrapped.as_func().is_some()
+        || (wrapped.as_int().is_some()
+            && !super::super::closure::mb_func_get_name(wrapped).is_none());
+    if wrapper_is_fn || wrapped_is_fn {
+        return mb_functools_wraps_apply(wrapper, wrapped);
+    }
     // Only copy fields when both values are heap-allocated Instance objects.
     let wrapper_ptr = wrapper.as_ptr();
     let wrapped_ptr = wrapped.as_ptr();
@@ -1014,11 +1467,7 @@ pub fn mb_functools_update_wrapper(wrapper: MbValue, wrapped: MbValue) -> MbValu
             if is_wrapper_instance && is_wrapped_instance {
                 if let ObjData::Instance { ref fields, .. } = (*dp).data {
                     let src = fields.read().unwrap();
-                    if let ObjData::Instance {
-                        fields: ref dst_fields,
-                        ..
-                    } = (*wp).data
-                    {
+                    if let ObjData::Instance { fields: ref dst_fields, .. } = (*wp).data {
                         let mut dst = dst_fields.write().unwrap();
                         for key in &["__name__", "__doc__", "__module__", "__qualname__"] {
                             if let Some(&val) = src.get(*key) {
@@ -1080,7 +1529,8 @@ mod tests {
             MbValue::from_int(2),
             MbValue::from_int(3),
         ]);
-        let result = mb_functools_reduce(s("add"), items, MbValue::from_int(0));
+        let result =
+            mb_functools_reduce(s("add"), items, MbValue::from_int(0));
         assert_eq!(result.as_int(), Some(6));
     }
 
@@ -1091,14 +1541,19 @@ mod tests {
             MbValue::from_int(3),
             MbValue::from_int(4),
         ]);
-        let result = mb_functools_reduce(s("mul"), items, MbValue::from_int(1));
+        let result =
+            mb_functools_reduce(s("mul"), items, MbValue::from_int(1));
         assert_eq!(result.as_int(), Some(24));
     }
 
     #[test]
     fn test_reduce_unknown_func_returns_initial() {
         let items = make_list(vec![MbValue::from_int(10)]);
-        let result = mb_functools_reduce(s("unknown"), items, MbValue::from_int(42));
+        let result = mb_functools_reduce(
+            s("unknown"),
+            items,
+            MbValue::from_int(42),
+        );
         assert_eq!(result.as_int(), Some(42));
     }
 
@@ -1110,11 +1565,7 @@ mod tests {
         // Result should be a functools.partial Instance with func + args fields
         unsafe {
             let ptr = result.as_ptr().expect("expected instance");
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 assert_eq!(class_name, "functools.partial");
                 let f = fields.read().unwrap();
                 let stored_func = f.get("func").copied().unwrap();
@@ -1163,11 +1614,7 @@ mod tests {
         let result = mb_functools_cmp_to_key(cmp_fn);
         unsafe {
             let ptr = result.as_ptr().expect("expected instance ptr");
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 assert_eq!(class_name, "functools.cmp_to_key");
                 let f = fields.read().unwrap();
                 let stored = f.get("_cmp").copied().expect("_cmp field missing");
@@ -1213,10 +1660,7 @@ mod tests {
             let ptr = result.as_ptr().expect("expected instance ptr");
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
-                let name = f
-                    .get("__name__")
-                    .copied()
-                    .expect("__name__ missing after update_wrapper");
+                let name = f.get("__name__").copied().expect("__name__ missing after update_wrapper");
                 assert_eq!(extract_str(name).as_deref(), Some("my_func"));
             } else {
                 panic!("expected Instance");
@@ -1231,11 +1675,7 @@ mod tests {
         let result = mb_functools_singledispatch(func);
         unsafe {
             let ptr = result.as_ptr().expect("expected instance ptr");
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 assert_eq!(class_name, "functools.singledispatch");
                 let f = fields.read().unwrap();
                 let stored = f.get("_func").copied().expect("_func field missing");
@@ -1279,12 +1719,7 @@ mod tests {
         let r = mb_functools_generic_alias(origin, type_args);
         unsafe {
             let ptr = r.as_ptr().expect("GenericAlias should be ptr");
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-                ..
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
                 assert_eq!(class_name, "types.GenericAlias");
                 let f = fields.read().unwrap();
                 assert_eq!(f.get("_origin").and_then(|v| v.as_int()), Some(123));

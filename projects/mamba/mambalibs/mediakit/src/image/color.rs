@@ -293,12 +293,8 @@ mod tests {
         // Allow tolerance due to u8 quantization in Lab space
         for i in 0..6 {
             let diff = (back.data[i] as i16 - img.data[i] as i16).abs();
-            assert!(
-                diff <= 3,
-                "pixel[{i}]: expected ~{}, got {} (diff {diff})",
-                img.data[i],
-                back.data[i]
-            );
+            assert!(diff <= 3, "pixel[{i}]: expected ~{}, got {} (diff {diff})",
+                    img.data[i], back.data[i]);
         }
     }
 

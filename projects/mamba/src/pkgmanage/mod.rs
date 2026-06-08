@@ -10,18 +10,18 @@
 // Lives alongside `cpython::*` (language + stdlib) and `mambalibs::*`
 // (PyPI-equivalents). See projects/mamba/PLAN.md.
 
-pub mod add;
-pub mod builder;
-pub mod cache;
-pub mod hash;
-pub mod init;
-pub mod install;
-pub mod lock;
-pub mod lockfile;
 pub mod manifest;
 pub mod pkgmgr;
-pub mod remove;
-pub mod run;
+pub mod builder;
 pub mod source;
+pub mod lockfile;
+pub mod init;
+pub mod add;
+pub mod remove;
+pub mod lock;
 pub mod sync;
+pub mod run;
+pub mod cache;
+pub mod hash;
+pub mod install;
 pub mod validate;

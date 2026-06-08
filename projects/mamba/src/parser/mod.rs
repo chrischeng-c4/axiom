@@ -26,13 +26,7 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token>, source: &'a str, file_id: FileId) -> Self {
-        Self {
-            tokens,
-            pos: 0,
-            source,
-            file_id,
-            pending_stmts: Vec::new(),
-        }
+        Self { tokens, pos: 0, source, file_id, pending_stmts: Vec::new() }
     }
 
     /// Parse the entire module.
@@ -44,7 +38,7 @@ impl<'a> Parser<'a> {
             // Semicolons as statement separators between simple statements.
             while self.peek_kind() == Some(TokenKind::Semicolon) {
                 self.advance(); // consume `;`
-                                // Skip consecutive semicolons (empty statements)
+                // Skip consecutive semicolons (empty statements)
                 while self.peek_kind() == Some(TokenKind::Semicolon) {
                     self.advance();
                 }
@@ -59,8 +53,7 @@ impl<'a> Parser<'a> {
                 if let Some(kind) = self.peek_kind() {
                     if Self::is_compound_start(&kind) {
                         return Err(MambaError::syntax(
-                            self.peek()
-                                .map(|t| Span::new(self.file_id, t.start, t.end))
+                            self.peek().map(|t| Span::new(self.file_id, t.start, t.end))
                                 .unwrap_or(Span::dummy()),
                             "compound statement not allowed after semicolon".to_string(),
                         ));
@@ -192,7 +185,9 @@ impl<'a> Parser<'a> {
                     }
                 }
                 TokenKind::Colon if depth == 0 => return true,
-                TokenKind::Newline | TokenKind::Semicolon | TokenKind::Eof if depth == 0 => {
+                TokenKind::Newline | TokenKind::Semicolon | TokenKind::Eof
+                    if depth == 0 =>
+                {
                     return false;
                 }
                 _ => {}
@@ -231,9 +226,7 @@ mod tests {
     use super::*;
     use crate::source::span::FileId;
 
-    fn fid() -> FileId {
-        FileId(0)
-    }
+    fn fid() -> FileId { FileId(0) }
 
     // --- Parser::new and basic token navigation ---
 

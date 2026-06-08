@@ -16,7 +16,8 @@ fn pg_url() -> String {
 #[test]
 #[ignore]
 fn blocking_connection_ping() {
-    let conn = Connection::new(&pg_url(), PoolConfig::default()).expect("connect");
+    let conn = Connection::new(&pg_url(), PoolConfig::default())
+        .expect("connect");
     conn.ping().expect("ping");
 }
 
@@ -95,7 +96,8 @@ fn blocking_transaction_commit() {
             .unwrap();
     });
 
-    let mut tx = Transaction::begin(&conn, IsolationLevel::ReadCommitted).expect("begin");
+    let mut tx = Transaction::begin(&conn, IsolationLevel::ReadCommitted)
+        .expect("begin");
 
     // Insert + savepoint + rollback to savepoint
     rt.block_on(async {
@@ -148,7 +150,8 @@ fn blocking_transaction_rollback_discards_writes() {
             .unwrap();
     });
 
-    let mut tx = Transaction::begin(&conn, IsolationLevel::ReadCommitted).expect("begin");
+    let mut tx = Transaction::begin(&conn, IsolationLevel::ReadCommitted)
+        .expect("begin");
     rt.block_on(async {
         sqlx::query("INSERT INTO _blocking_rollback_test (id) VALUES (42)")
             .execute(&mut **tx.as_mut_transaction())

@@ -37,6 +37,7 @@ pub mod qr;
 #[cfg(feature = "qr")]
 pub mod qr_render;
 
+
 /// Crypto error type.
 #[derive(Debug, thiserror::Error)]
 pub enum CryptoError {

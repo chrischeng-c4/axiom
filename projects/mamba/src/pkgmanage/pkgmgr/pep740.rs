@@ -82,7 +82,9 @@ pub enum Publisher {
         environment: Option<String>,
     },
     #[serde(rename = "Google")]
-    Google { email: String },
+    Google {
+        email: String,
+    },
     #[serde(rename = "ActiveState")]
     ActiveState {
         organization: String,
@@ -195,7 +197,8 @@ mod tests {
 
     fn sample_envelope() -> Envelope {
         Envelope {
-            statement: "eyJfdHlwZSI6ICJodHRwczovL2luLXRvdG8uaW8vU3RhdGVtZW50L3YwLjEifQ==".into(),
+            statement: "eyJfdHlwZSI6ICJodHRwczovL2luLXRvdG8uaW8vU3RhdGVtZW50L3YwLjEifQ=="
+                .into(),
             signature: "MEUCIQD6Hxx7TYY=".into(),
         }
     }
@@ -247,11 +250,7 @@ mod tests {
         assert_eq!(doc.attestation_bundles.len(), 1);
         let bundle = &doc.attestation_bundles[0];
         match &bundle.publisher {
-            Publisher::GitHub {
-                repository,
-                workflow,
-                environment,
-            } => {
+            Publisher::GitHub { repository, workflow, environment } => {
                 assert_eq!(repository, "psf/requests");
                 assert_eq!(workflow, "release.yml");
                 assert_eq!(environment.as_deref(), Some("pypi"));
@@ -297,11 +296,7 @@ mod tests {
         }"#;
         let doc = parse_provenance(src).unwrap();
         match &doc.attestation_bundles[0].publisher {
-            Publisher::GitLab {
-                repository,
-                workflow_filepath,
-                environment,
-            } => {
+            Publisher::GitLab { repository, workflow_filepath, environment } => {
                 assert_eq!(repository, "group/sub/project");
                 assert_eq!(workflow_filepath, ".gitlab-ci.yml");
                 assert!(environment.is_none());
@@ -342,11 +337,7 @@ mod tests {
         }"#;
         let doc = parse_provenance(src).unwrap();
         match &doc.attestation_bundles[0].publisher {
-            Publisher::ActiveState {
-                organization,
-                project,
-                actor,
-            } => {
+            Publisher::ActiveState { organization, project, actor } => {
                 assert_eq!(organization, "Acme");
                 assert_eq!(project, "widget");
                 assert_eq!(actor, "build-bot");
@@ -485,9 +476,7 @@ mod tests {
             workflow_filepath: ".gitlab-ci.yml".into(),
             environment: None,
         };
-        let google = Publisher::Google {
-            email: "a@b".into(),
-        };
+        let google = Publisher::Google { email: "a@b".into() };
         let active = Publisher::ActiveState {
             organization: "o".into(),
             project: "p".into(),
@@ -517,9 +506,7 @@ mod tests {
         let doc = ProvenanceDocument {
             version: 1,
             attestation_bundles: vec![AttestationBundle {
-                publisher: Publisher::Google {
-                    email: "a@b".into(),
-                },
+                publisher: Publisher::Google { email: "a@b".into() },
                 attestations: vec![],
             }],
         };

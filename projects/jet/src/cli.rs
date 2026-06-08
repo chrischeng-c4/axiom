@@ -19,6 +19,7 @@ use anyhow::{anyhow, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Build the jet CLI command tree
 /// @spec .aw/tech-design/projects/jet/semantic/jet-src.md#schema
@@ -199,9 +200,23 @@ pub fn command() -> Command {
                 )
                 .subcommand(
                     Command::new("shutdown")
-                        .about("Request the active `jet dev` session in this project to stop"),
+                        .about("Request a running Jet dev server to shut down by host and port")
+                        .arg(
+                            Arg::new("port")
+                                .short('p')
+                                .long("port")
+                                .required(true)
+                                .help("Port of the running `jet dev` server"),
+                        )
+                        .arg(
+                            Arg::new("host")
+                                .long("host")
+                                .default_value("127.0.0.1")
+                                .help("Host of the running `jet dev` server"),
+                        ),
                 ),
         )
+        .subcommand(serve_command())
         .subcommand(
             Command::new("build")
                 .about("Build for production")
@@ -263,13 +278,15 @@ pub fn command() -> Command {
                     Arg::new("minify")
                         .long("minify")
                         .action(ArgAction::SetTrue)
-                        .help("Enable minification (whitespace removal, comment stripping)"),
+                        .help(
+                            "Enable minification (default; whitespace removal, comment stripping)",
+                        ),
                 )
                 .arg(
                     Arg::new("no-minify")
                         .long("no-minify")
                         .action(ArgAction::SetTrue)
-                        .help("Disable minification"),
+                        .help("Disable default minification"),
                 )
                 .arg(
                     Arg::new("sourcemap")
@@ -305,7 +322,7 @@ pub fn command() -> Command {
                     // jet build --wasm — compile the app's TSX entry through
                     // ts_to_rust → rustc (wasm32) → dist/app.wasm + boot loader
                     // + index.html, producing an openable static site that
-                    // renders the root component on a <canvas>.
+                    // renders the root component on a WebGPU canvas surface.
                     Arg::new("wasm")
                         .long("wasm")
                         .action(ArgAction::SetTrue)
@@ -671,6 +688,26 @@ pub fn command() -> Command {
                                 .help("Number of concurrent E2E workers"),
                         )
                         .arg(
+                            Arg::new("serve")
+                                .long("serve")
+                                .value_name("MODE")
+                                .default_value("off")
+                                .value_parser(["off", "dev", "prod"])
+                                .help(
+                                    "Start an agent-first Jet server for this run: off, dev, prod. \
+                                     Cannot be combined with --base-url.",
+                                ),
+                        )
+                        .arg(
+                            Arg::new("base-url")
+                                .long("base-url")
+                                .value_name("URL")
+                                .help(
+                                    "External AUT base URL for relative page.goto paths. \
+                                     Cannot be combined with --serve dev/prod.",
+                                ),
+                        )
+                        .arg(
                             Arg::new("trace")
                                 .long("trace")
                                 .value_name("MODE")
@@ -807,7 +844,7 @@ pub fn command() -> Command {
         // @spec .aw/changes/enhancement-cclab-jet-browser-install-cli-pinned-chromium-down/specs/enhancement-cclab-jet-browser-install-cli-pinned-chromium-down-spec.md#R6
         .subcommand(
             Command::new("browser")
-                .about("Browser management + jet-wasm debugging commands")
+                .about("Browser Bridge management + jet-wasm debugging commands")
                 .subcommand(
                     Command::new("install")
                         .about("Download and cache a pinned browser binary")
@@ -832,7 +869,7 @@ pub fn command() -> Command {
                 )
                 .subcommand(
                     Command::new("launch")
-                        .about("Launch Chromium, navigate to URL, and hold a CDP session for other `jet browser` commands to reuse")
+                        .about("Launch Chromium, navigate to URL, and hold a foreground CDP session for other `jet browser` commands to reuse")
                         .arg(Arg::new("url").required(true).help("URL to open (typically the `jet dev --wasm --debug` address)")),
                 )
                 .subcommand(
@@ -877,6 +914,99 @@ pub fn command() -> Command {
                 .subcommand(
                     Command::new("frame")
                         .about("Dump the last-frame paint ops"),
+                )
+                .subcommand(
+                    Command::new("perf")
+                        .about("Print a compact runtime performance snapshot without full capture"),
+                )
+                .subcommand(
+                    Command::new("mouse")
+                        .about("Dispatch one CDP mouse event into the attached Jet browser session")
+                        .arg(
+                            Arg::new("type")
+                                .required(true)
+                                .value_parser(["mouseMoved", "mousePressed", "mouseReleased"])
+                                .help("CDP mouse event type"),
+                        )
+                        .arg(Arg::new("x").required(true).help("Viewport CSS-pixel x coordinate"))
+                        .arg(Arg::new("y").required(true).help("Viewport CSS-pixel y coordinate"))
+                        .arg(
+                            Arg::new("button")
+                                .long("button")
+                                .value_parser(["left", "right", "middle", "none"])
+                                .help("Mouse button for pressed/released events"),
+                        )
+                        .arg(
+                            Arg::new("buttons")
+                                .long("buttons")
+                                .help("CDP buttons bitfield, e.g. 1 while dragging with the left button"),
+                        )
+                        .arg(
+                            Arg::new("click-count")
+                                .long("click-count")
+                                .help("CDP clickCount for pressed/released events"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("drag")
+                        .about("Drag between two viewport coordinates using CDP mouse events")
+                        .arg(Arg::new("from-x").required(true).help("Start x coordinate"))
+                        .arg(Arg::new("from-y").required(true).help("Start y coordinate"))
+                        .arg(Arg::new("to-x").required(true).help("End x coordinate"))
+                        .arg(Arg::new("to-y").required(true).help("End y coordinate"))
+                        .arg(
+                            Arg::new("steps")
+                                .long("steps")
+                                .default_value("8")
+                                .help("Interpolated mouseMoved events between press and release"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("wheel")
+                        .about("Dispatch one CDP mouse wheel event into the attached Jet browser session")
+                        .arg(Arg::new("x").required(true).help("Viewport CSS-pixel x coordinate"))
+                        .arg(Arg::new("y").required(true).help("Viewport CSS-pixel y coordinate"))
+                        .arg(
+                            Arg::new("delta-x")
+                                .long("delta-x")
+                                .default_value("0")
+                                .help("Horizontal wheel delta in CSS pixels"),
+                        )
+                        .arg(
+                            Arg::new("delta-y")
+                                .long("delta-y")
+                                .default_value("0")
+                                .help("Vertical wheel delta in CSS pixels"),
+                        ),
+                )
+                .subcommand(
+                    Command::new("key")
+                        .about("Press one key in the attached Jet browser session using CDP key events")
+                        .arg(Arg::new("key").required(true).help("Key value such as c, Enter, or ArrowDown"))
+                        .arg(
+                            Arg::new("ctrl")
+                                .long("ctrl")
+                                .action(ArgAction::SetTrue)
+                                .help("Hold Control while pressing the key"),
+                        )
+                        .arg(
+                            Arg::new("meta")
+                                .long("meta")
+                                .action(ArgAction::SetTrue)
+                                .help("Hold Meta/Command while pressing the key"),
+                        )
+                        .arg(
+                            Arg::new("shift")
+                                .long("shift")
+                                .action(ArgAction::SetTrue)
+                                .help("Hold Shift while pressing the key"),
+                        )
+                        .arg(
+                            Arg::new("alt")
+                                .long("alt")
+                                .action(ArgAction::SetTrue)
+                                .help("Hold Alt while pressing the key"),
+                        ),
                 )
                 .subcommand(
                     Command::new("capture")
@@ -932,7 +1062,7 @@ pub fn command() -> Command {
                 )
                 .subcommand(
                     Command::new("debug")
-                        .about("Sugar for `launch`: opens the URL and prints the available commands")
+                        .about("Open a foreground Browser Bridge session for human inspection")
                         .arg(Arg::new("url").required(true)),
                 )
                 .subcommand(
@@ -942,6 +1072,269 @@ pub fn command() -> Command {
                             Arg::new("filter")
                                 .help("Only print components whose name contains this substring"),
                         ),
+                ),
+        )
+        .subcommand(browser_bridge_command())
+}
+
+fn serve_command() -> Command {
+    Command::new("serve")
+        .about("Start an agent-first detached Jet server session")
+        .arg(
+            Arg::new("port")
+                .short('p')
+                .long("port")
+                .help("Port to run on (default: from jet.config.toml or 3000; 0 asks the OS)"),
+        )
+        .arg(
+            Arg::new("host")
+                .long("host")
+                .default_value("127.0.0.1")
+                .help("Host to bind to"),
+        )
+        .arg(
+            Arg::new("prod")
+                .long("prod")
+                .action(ArgAction::SetTrue)
+                .help("Serve production dist artifacts from ./dist"),
+        )
+        .arg(
+            Arg::new("wasm")
+                .long("wasm")
+                .action(ArgAction::SetTrue)
+                .help("Serve the FE-on-WASM target through the detached serve session"),
+        )
+        .arg(
+            Arg::new("debug")
+                .long("debug")
+                .action(ArgAction::SetTrue)
+                .help("Build the WASM app with debug info and runtime inspection hooks"),
+        )
+        .subcommand(
+            Command::new("shutdown")
+                .about("Request the active detached Jet serve session to shut down")
+                .arg(
+                    Arg::new("port")
+                        .short('p')
+                        .long("port")
+                        .help("Port to shut down; defaults to .jet/serve-session.json"),
+                )
+                .arg(
+                    Arg::new("host")
+                        .long("host")
+                        .default_value("127.0.0.1")
+                        .help("Host to shut down when --port is provided"),
+                ),
+        )
+}
+
+fn browser_bridge_command() -> Command {
+    Command::new("bb")
+        .about("Agent-first Browser Bridge commands")
+        .subcommand(
+            Command::new("launch")
+                .about("Launch headless Chromium as a detached Browser Bridge session")
+                .arg(
+                    Arg::new("url")
+                        .required(true)
+                        .help("URL to open (typically the `jet serve --wasm` address)"),
+                ),
+        )
+        .subcommand(
+            Command::new("shutdown").about("Request the active Browser Bridge session to close"),
+        )
+        .subcommand(
+            Command::new("tree")
+                .about("Print the element / layout / fiber tree from the attached session")
+                .arg(
+                    Arg::new("which")
+                        .default_value("element")
+                        .help("element | layout | fiber"),
+                ),
+        )
+        .subcommand(
+            Command::new("pick")
+                .about("Arm a one-shot click listener; next click on the canvas prints the hit-tested node")
+                .arg(
+                    Arg::new("timeout")
+                        .long("timeout")
+                        .default_value("30")
+                        .help("Seconds to wait for the click"),
+                ),
+        )
+        .subcommand(
+            Command::new("hooks")
+                .about("Print hook values for a fiber")
+                .arg(Arg::new("fiber-id").required(true)),
+        )
+        .subcommand(
+            Command::new("highlight")
+                .about("Overlay a red rect on the given layout-node index (or clear when --clear)")
+                .arg(Arg::new("index").required(false))
+                .arg(
+                    Arg::new("clear")
+                        .long("clear")
+                        .action(ArgAction::SetTrue)
+                        .help("Clear the current highlight"),
+                ),
+        )
+        .subcommand(Command::new("frame").about("Dump the last-frame paint ops"))
+        .subcommand(
+            Command::new("perf")
+                .about("Print a compact runtime performance snapshot without full capture"),
+        )
+        .subcommand(
+            Command::new("mouse")
+                .about("Dispatch one CDP mouse event into the attached Browser Bridge session")
+                .arg(
+                    Arg::new("type")
+                        .required(true)
+                        .value_parser(["mouseMoved", "mousePressed", "mouseReleased"])
+                        .help("CDP mouse event type"),
+                )
+                .arg(Arg::new("x").required(true).help("Viewport CSS-pixel x coordinate"))
+                .arg(Arg::new("y").required(true).help("Viewport CSS-pixel y coordinate"))
+                .arg(
+                    Arg::new("button")
+                        .long("button")
+                        .value_parser(["left", "right", "middle", "none"])
+                        .help("Mouse button for pressed/released events"),
+                )
+                .arg(
+                    Arg::new("buttons")
+                        .long("buttons")
+                        .help("CDP buttons bitfield, e.g. 1 while dragging with the left button"),
+                )
+                .arg(
+                    Arg::new("click-count")
+                        .long("click-count")
+                        .help("CDP clickCount for pressed/released events"),
+                ),
+        )
+        .subcommand(
+            Command::new("drag")
+                .about("Drag between two viewport coordinates using CDP mouse events")
+                .arg(Arg::new("from-x").required(true).help("Start x coordinate"))
+                .arg(Arg::new("from-y").required(true).help("Start y coordinate"))
+                .arg(Arg::new("to-x").required(true).help("End x coordinate"))
+                .arg(Arg::new("to-y").required(true).help("End y coordinate"))
+                .arg(
+                    Arg::new("steps")
+                        .long("steps")
+                        .default_value("8")
+                        .help("Interpolated mouseMoved events between press and release"),
+                ),
+        )
+        .subcommand(
+            Command::new("wheel")
+                .about("Dispatch one CDP mouse wheel event into the attached Browser Bridge session")
+                .arg(Arg::new("x").required(true).help("Viewport CSS-pixel x coordinate"))
+                .arg(Arg::new("y").required(true).help("Viewport CSS-pixel y coordinate"))
+                .arg(
+                    Arg::new("delta-x")
+                        .long("delta-x")
+                        .default_value("0")
+                        .help("Horizontal wheel delta in CSS pixels"),
+                )
+                .arg(
+                    Arg::new("delta-y")
+                        .long("delta-y")
+                        .default_value("0")
+                        .help("Vertical wheel delta in CSS pixels"),
+                ),
+        )
+        .subcommand(
+            Command::new("key")
+                .about("Press one key in the attached Browser Bridge session using CDP key events")
+                .arg(Arg::new("key").required(true).help("Key value such as c, Enter, or ArrowDown"))
+                .arg(
+                    Arg::new("ctrl")
+                        .long("ctrl")
+                        .action(ArgAction::SetTrue)
+                        .help("Hold Control while pressing the key"),
+                )
+                .arg(
+                    Arg::new("meta")
+                        .long("meta")
+                        .action(ArgAction::SetTrue)
+                        .help("Hold Meta/Command while pressing the key"),
+                )
+                .arg(
+                    Arg::new("shift")
+                        .long("shift")
+                        .action(ArgAction::SetTrue)
+                        .help("Hold Shift while pressing the key"),
+                )
+                .arg(
+                    Arg::new("alt")
+                        .long("alt")
+                        .action(ArgAction::SetTrue)
+                        .help("Hold Alt while pressing the key"),
+                ),
+        )
+        .subcommand(
+            Command::new("capture")
+                .about("Print a parity-ready JSON observation bundle from an attached wasm or DOM browser session")
+                .arg(
+                    Arg::new("surface")
+                        .long("surface")
+                        .default_value("wasm")
+                        .value_parser(["wasm", "dom"])
+                        .help("Observation surface to capture: wasm debug bridge or live DOM"),
+                )
+                .arg(
+                    Arg::new("root-selector")
+                        .long("root-selector")
+                        .default_value("body")
+                        .help("DOM root selector for --surface dom"),
+                )
+                .arg(
+                    Arg::new("out")
+                        .long("out")
+                        .short('o')
+                        .alias("output")
+                        .help("Output file (writes to stdout when omitted)"),
+                )
+                .arg(
+                    Arg::new("pretty")
+                        .long("pretty")
+                        .action(ArgAction::SetTrue)
+                        .help("Pretty-print JSON output"),
+                )
+                .arg(
+                    Arg::new("hook")
+                        .long("hook")
+                        .action(ArgAction::Append)
+                        .num_args(1)
+                        .help("Fiber id whose hook values should be included; repeats. Defaults to fibers with hooks."),
+                ),
+        )
+        .subcommand(
+            Command::new("screenshot")
+                .about("Save a PNG of the current canvas")
+                .arg(
+                    Arg::new("out")
+                        .long("out")
+                        .short('o')
+                        .help("Output file (writes to stdout when omitted)"),
+                ),
+        )
+        .subcommand(
+            Command::new("eval")
+                .about("Runtime.evaluate escape hatch")
+                .arg(Arg::new("expr").required(true)),
+        )
+        .subcommand(
+            Command::new("debug")
+                .about("Open a foreground Browser Bridge session for human inspection")
+                .arg(Arg::new("url").required(true)),
+        )
+        .subcommand(
+            Command::new("tsx")
+                .about("Print TSX source locations for each component (reads dist/tsx-source-map.json — no live browser needed)")
+                .arg(
+                    Arg::new("filter")
+                        .help("Only print components whose name contains this substring"),
                 ),
         )
 }
@@ -1157,21 +1550,19 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             None => anyhow::bail!("{}", format_unknown_store_subcommand_err(None)),
         },
 
+        Some(("serve", m)) => handle_serve_command(&root_dir, m).await,
+
         Some(("dev", m)) => {
-            if let Some(("shutdown", _)) = m.subcommand() {
-                let existing = crate::dev_session::read(&root_dir).ok();
-                crate::dev_session::request_shutdown(&root_dir)?;
-                if let Some(session) = existing {
-                    eprintln!(
-                        "[jet dev] shutdown requested for {:?} session pid {} at {}",
-                        session.mode, session.pid, session.url
-                    );
-                } else {
-                    eprintln!(
-                        "[jet dev] shutdown requested; no current session file was readable."
-                    );
-                }
-                return Ok(());
+            if let Some(("shutdown", sm)) = m.subcommand() {
+                let port = sm
+                    .get_one::<String>("port")
+                    .and_then(|s| parse_cli_numeric_flag::<u16>("--port", s))
+                    .context("--port is required and must be a number")?;
+                let host = sm
+                    .get_one::<String>("host")
+                    .cloned()
+                    .unwrap_or_else(|| "127.0.0.1".to_string());
+                return shutdown_dev_server(&host, port).await;
             }
 
             // WASM mode short-circuits the JS-bundle dev path.
@@ -1319,12 +1710,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             let entry = find_entry_point(&root_dir)?;
             let output_dir = root_dir.join(&output);
 
-            // @spec .aw/tech-design/crates/jet/validate/add-production-jet-build-regression-coverage.md#changes
-            // JS optimization currently uses text scanners plus Phase 2
-            // flattening that can corrupt large third-party bundles. Keep the
-            // production app path browser-bootable until those passes become
-            // syntax-aware.
-            let minify = false;
+            let minify = build_minify_enabled_from_matches(m);
             let sourcemap_mode = match m
                 .get_one::<String>("sourcemap")
                 .map(|s| s.as_str())
@@ -1347,7 +1733,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // in production. esbuild errors out on missing `=`; mirror
             // that behaviour by bailing with a tagged message so CI
             // catches the typo.
-            let mut defines = crate::bundler::define::production_defines();
+            let mut defines = production_build_defines(&root_dir);
             if let Some(defs) = m.get_many::<String>("define") {
                 for def in defs {
                     let (key, value) = parse_define_arg(def).map_err(|msg| anyhow!("{}", msg))?;
@@ -1399,6 +1785,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 // Web app production builds must emit a browser-bootable bundle,
                 // not a "build complete" shell with bare React/MUI externals.
                 externalize_all_packages: false,
+                css_bundle: true,
                 transform_options: crate::transform::TransformOptions {
                     dev_mode: false,
                     ..Default::default()
@@ -1423,19 +1810,12 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
 
             // Post-process: minify
             if minify {
-                code = crate::bundler::minify::minify_js(&code, &drops);
-                code = crate::bundler::minify::replace_bool_literals(&code);
+                code = minify_build_js_internal(&code, &drops);
             }
 
             // Content hash for filename
-            let hash = {
-                use std::collections::hash_map::DefaultHasher;
-                use std::hash::{Hash, Hasher};
-                let mut h = DefaultHasher::new();
-                code.hash(&mut h);
-                format!("{:08x}", h.finish())
-            };
-            let out_filename = format!("main.{}.js", &hash[..8]);
+            let hash = content_hash_prefix(&code);
+            let out_filename = format!("main.{hash}.js");
 
             std::fs::create_dir_all(&output_dir).context("Failed to create output directory")?;
 
@@ -1881,6 +2261,8 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     workers: crate::e2e::parse_workers(rm.get_one::<usize>("workers")),
                     trace: crate::e2e::parse_trace_mode(rm.get_one::<String>("trace"))?,
                     evidence_dir,
+                    serve: crate::e2e::parse_serve_mode(rm.get_one::<String>("serve"))?,
+                    base_url: rm.get_one::<String>("base-url").cloned(),
                     print_json: rm.get_flag("json"),
                 };
                 let result = crate::e2e::run_agent_mode(opts).await?;
@@ -1926,7 +2308,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
         },
 
         // @spec .aw/changes/enhancement-cclab-jet-browser-install-cli-pinned-chromium-down/specs/enhancement-cclab-jet-browser-install-cli-pinned-chromium-down-spec.md#R1
-        Some(("browser", bm)) => match bm.subcommand() {
+        Some((browser_cmd @ ("browser" | "bb"), bm)) => match bm.subcommand() {
             Some(("install", im)) => {
                 let target = im
                     .get_one::<String>("target")
@@ -1967,9 +2349,17 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 );
                 Ok(())
             }
-            Some(("launch", lm)) | Some(("debug", lm)) => {
+            Some(("launch", lm)) => {
                 let url = lm.get_one::<String>("url").expect("url required");
-                crate::browser_cli::launch(&root_dir, url).await
+                if browser_cmd == "bb" {
+                    crate::browser_cli::launch_detached(&root_dir, url).await
+                } else {
+                    crate::browser_cli::launch_foreground(&root_dir, url).await
+                }
+            }
+            Some(("debug", lm)) => {
+                let url = lm.get_one::<String>("url").expect("url required");
+                crate::browser_cli::launch_foreground(&root_dir, url).await
             }
             Some(("shutdown", _)) => crate::browser_cli::shutdown(&root_dir).await,
             Some(("tree", tm)) => {
@@ -2014,6 +2404,96 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 crate::browser_cli::highlight(&root_dir, index).await
             }
             Some(("frame", _)) => crate::browser_cli::frame(&root_dir).await,
+            Some(("perf", _)) => crate::browser_cli::perf(&root_dir).await,
+            Some(("mouse", mm)) => {
+                let event_type = mm.get_one::<String>("type").expect("type required");
+                let x = mm
+                    .get_one::<String>("x")
+                    .expect("x required")
+                    .parse::<f64>()
+                    .context("x must be a number")?;
+                let y = mm
+                    .get_one::<String>("y")
+                    .expect("y required")
+                    .parse::<f64>()
+                    .context("y must be a number")?;
+                let button = mm.get_one::<String>("button").map(String::as_str);
+                let buttons = mm
+                    .get_one::<String>("buttons")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("--buttons", s));
+                let click_count = mm
+                    .get_one::<String>("click-count")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("--click-count", s));
+                crate::browser_cli::mouse(&root_dir, event_type, x, y, button, buttons, click_count)
+                    .await
+            }
+            Some(("drag", dm)) => {
+                let from_x = dm
+                    .get_one::<String>("from-x")
+                    .expect("from-x required")
+                    .parse::<f64>()
+                    .context("from-x must be a number")?;
+                let from_y = dm
+                    .get_one::<String>("from-y")
+                    .expect("from-y required")
+                    .parse::<f64>()
+                    .context("from-y must be a number")?;
+                let to_x = dm
+                    .get_one::<String>("to-x")
+                    .expect("to-x required")
+                    .parse::<f64>()
+                    .context("to-x must be a number")?;
+                let to_y = dm
+                    .get_one::<String>("to-y")
+                    .expect("to-y required")
+                    .parse::<f64>()
+                    .context("to-y must be a number")?;
+                let steps = dm
+                    .get_one::<String>("steps")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("--steps", s))
+                    .unwrap_or(8);
+                crate::browser_cli::drag(&root_dir, from_x, from_y, to_x, to_y, steps).await
+            }
+            Some(("wheel", wm)) => {
+                let x = wm
+                    .get_one::<String>("x")
+                    .expect("x required")
+                    .parse::<f64>()
+                    .context("x must be a number")?;
+                let y = wm
+                    .get_one::<String>("y")
+                    .expect("y required")
+                    .parse::<f64>()
+                    .context("y must be a number")?;
+                let delta_x = wm
+                    .get_one::<String>("delta-x")
+                    .expect("delta-x has default")
+                    .parse::<f64>()
+                    .context("--delta-x must be a number")?;
+                let delta_y = wm
+                    .get_one::<String>("delta-y")
+                    .expect("delta-y has default")
+                    .parse::<f64>()
+                    .context("--delta-y must be a number")?;
+                crate::browser_cli::wheel(&root_dir, x, y, delta_x, delta_y).await
+            }
+            Some(("key", km)) => {
+                let key = km.get_one::<String>("key").expect("key required");
+                let mut modifiers = 0;
+                if km.get_flag("alt") {
+                    modifiers |= 1;
+                }
+                if km.get_flag("ctrl") {
+                    modifiers |= 2;
+                }
+                if km.get_flag("meta") {
+                    modifiers |= 4;
+                }
+                if km.get_flag("shift") {
+                    modifiers |= 8;
+                }
+                crate::browser_cli::key(&root_dir, key, modifiers).await
+            }
             Some(("capture", cm)) => {
                 let out = cm.get_one::<String>("out").map(PathBuf::from);
                 let surface = cm
@@ -2057,7 +2537,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             }
             _ => {
                 anyhow::bail!(
-                    "Unknown browser subcommand. Try one of: install, launch, shutdown, debug, tree, pick, hooks, highlight, frame, capture, screenshot, eval."
+                    "Unknown browser subcommand. Try one of: install, launch, shutdown, debug, tree, pick, hooks, highlight, frame, perf, mouse, drag, key, capture, screenshot, eval."
                 )
             }
         },
@@ -2195,14 +2675,8 @@ async fn run_nx_build(
         // for workspace builds until the optimizer is syntax-aware.
 
         // Content hash for output filename.
-        let hash = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut h = DefaultHasher::new();
-            code.hash(&mut h);
-            format!("{:08x}", h.finish())
-        };
-        let out_filename = format!("main.{}.js", &hash[..8]);
+        let hash = content_hash_prefix(&code);
+        let out_filename = format!("main.{hash}.js");
 
         std::fs::create_dir_all(&output_dir)
             .with_context(|| format!("Failed to create output dir for '{}'", project_name))?;
@@ -2388,6 +2862,93 @@ where
             );
             None
         }
+    }
+}
+
+async fn handle_serve_command(root_dir: &PathBuf, m: &ArgMatches) -> Result<()> {
+    if let Some(("shutdown", sm)) = m.subcommand() {
+        if let Some(port) = sm
+            .get_one::<String>("port")
+            .and_then(|s| parse_cli_numeric_flag::<u16>("--port", s))
+        {
+            let host = sm
+                .get_one::<String>("host")
+                .cloned()
+                .unwrap_or_else(|| "127.0.0.1".to_string());
+            shutdown_dev_server(&host, port).await?;
+            return Ok(());
+        }
+
+        let (session, body) = crate::dev_server::serve_process::shutdown_active(root_dir).await?;
+        print_shutdown_result(&session.host, session.port, body);
+        return Ok(());
+    }
+
+    let jet_config = crate::task_runner::config::JetConfig::load(root_dir).unwrap_or_default();
+    let cli_port = m
+        .get_one::<String>("port")
+        .and_then(|s| parse_cli_numeric_flag::<u16>("--port", s));
+    let port = cli_port.or(jet_config.dev.port).unwrap_or(3000);
+    let host = m
+        .get_one::<String>("host")
+        .cloned()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let prod = m.get_flag("prod");
+    let wasm = m.get_flag("wasm");
+    if std::env::var_os("JET_SERVE_CHILD").is_some() {
+        if !prod {
+            anyhow::bail!("JET_SERVE_CHILD is only valid for `jet serve --prod`");
+        }
+        return crate::dev_server::prod_static::serve(
+            root_dir,
+            crate::dev_server::prod_static::ProdOptions {
+                host,
+                port,
+                target: crate::dev_server::serve_process::serve_session_target(prod, wasm),
+            },
+        )
+        .await;
+    }
+
+    launch_detached_serve(root_dir, &host, port, prod, wasm, m.get_flag("debug")).await
+}
+
+async fn launch_detached_serve(
+    root_dir: &Path,
+    host: &str,
+    port: u16,
+    prod: bool,
+    wasm: bool,
+    debug: bool,
+) -> Result<()> {
+    let launch = crate::dev_server::serve_process::launch_detached(
+        crate::dev_server::serve_process::ServeProcessOptions {
+            root_dir: root_dir.to_path_buf(),
+            host: host.to_string(),
+            port,
+            prod,
+            wasm,
+            debug,
+            ready_timeout: Duration::from_secs(30),
+        },
+    )
+    .await?;
+    println!("{}", serde_json::to_string_pretty(&launch.payload())?);
+    Ok(())
+}
+
+async fn shutdown_dev_server(host: &str, port: u16) -> Result<()> {
+    let body = crate::dev_server::serve_process::shutdown_host_port(host, port).await?;
+    print_shutdown_result(host, port, body);
+    Ok(())
+}
+
+fn print_shutdown_result(host: &str, port: u16, body: String) {
+    let url = crate::dev_server::serve_process::shutdown_url(host, port);
+    println!("[jet] shutdown requested: {url}");
+    let body = body.trim();
+    if !body.is_empty() {
+        println!("{body}");
     }
 }
 
@@ -2722,6 +3283,15 @@ fn find_entry_point(root_dir: &PathBuf) -> Result<PathBuf> {
     anyhow::bail!("No entry point found. Tried: {}", candidates.join(", "))
 }
 
+fn content_hash_prefix(content: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    let hex = format!("{:x}", hasher.finalize());
+    hex[..8].to_string()
+}
+
 fn write_bundle_assets(
     output_dir: &Path,
     assets: &[crate::bundler::types::Asset],
@@ -2818,6 +3388,31 @@ fn build_flag_snapshot_from_matches(m: &ArgMatches) -> crate::build_target::Flag
             .map(|v| v.count() > 0)
             .unwrap_or(false),
     }
+}
+
+fn build_minify_enabled_from_matches(m: &ArgMatches) -> bool {
+    !m.get_flag("no-minify")
+}
+
+fn production_build_defines(root_dir: &Path) -> std::collections::HashMap<String, String> {
+    let mut defines = crate::bundler::define::production_defines();
+    let env_vars = crate::runner::env::scan_env_files(root_dir, "production");
+    defines.extend(crate::runner::env::import_meta_env_defines(
+        &env_vars,
+        "production",
+    ));
+    defines
+}
+
+fn minify_build_js_internal(code: &str, drops: &[crate::bundler::minify::DropStatement]) -> String {
+    let mut code = crate::bundler::minify::minify_js(code, drops);
+    code = crate::bundler::minify::replace_bool_literals(&code);
+    if !code.contains('`') {
+        code = crate::bundler::dce::eliminate_dead_code(&code);
+        code = crate::bundler::mangle::mangle_variables(&code);
+        code = crate::bundler::fold::fold_constants(&code);
+    }
+    code
 }
 
 /// Produce the typed error returned by `jet check` until TypeScript
@@ -2960,6 +3555,22 @@ mod build_index_html_tests {
     }
 
     #[test]
+    fn content_hash_prefix_is_stable_sha256_prefix() {
+        assert_eq!(
+            content_hash_prefix("console.log('basic');"),
+            content_hash_prefix("console.log('basic');")
+        );
+        assert_eq!(
+            content_hash_prefix("console.log('basic');"),
+            "77561beb".to_string()
+        );
+        assert_ne!(
+            content_hash_prefix("console.log('basic');"),
+            content_hash_prefix("console.log('changed');")
+        );
+    }
+
+    #[test]
     fn copy_public_dir_preserves_nested_assets() {
         let temp = TempDir::new().unwrap();
         let root = temp.path().join("app");
@@ -3054,6 +3665,10 @@ mod e2e_command_contract_tests {
             "run help must mention agents: {help}"
         );
         assert!(
+            help.contains("--serve") && help.contains("--base-url"),
+            "run help must expose AUT serve/base-url controls: {help}"
+        );
+        assert!(
             !help.contains("desktop review app; implementation is tracked by #2390"),
             "run help must not route users to desktop open-mode implementation: {help}"
         );
@@ -3087,6 +3702,46 @@ mod e2e_command_contract_tests {
         );
     }
 
+    #[test]
+    fn serve_command_exposes_agent_first_session_surface() {
+        let help = help_text(&["jet", "serve", "--help"]);
+        assert!(
+            help.contains("detached") && help.contains("--wasm") && help.contains("--prod"),
+            "serve help must expose detached agent mode plus wasm/prod target flags: {help}"
+        );
+        assert!(
+            help.contains("shutdown"),
+            "serve help must expose the session shutdown control surface: {help}"
+        );
+    }
+
+    #[test]
+    fn serve_command_is_observable_to_dispatch() {
+        let matches = command()
+            .try_get_matches_from(["jet", "serve", "--port", "0"])
+            .expect("serve parses");
+        let (name, sm) = matches.subcommand().expect("top-level subcommand");
+        assert_eq!(
+            name, "serve",
+            "dispatch must distinguish `jet serve` from legacy `jet dev`"
+        );
+        assert_eq!(sm.get_one::<String>("port").map(String::as_str), Some("0"));
+    }
+
+    #[test]
+    fn serve_shutdown_can_use_session_file_without_port() {
+        let matches = command()
+            .try_get_matches_from(["jet", "serve", "shutdown"])
+            .expect("serve shutdown parses without --port");
+        let (name, sm) = matches.subcommand().expect("top-level subcommand");
+        assert_eq!(name, "serve");
+        let (_, shutdown) = sm.subcommand().expect("serve subcommand");
+        assert!(
+            shutdown.get_one::<String>("port").is_none(),
+            "serve shutdown should allow session-file based shutdown"
+        );
+    }
+
     // @spec .aw/tech-design/projects/jet/specs/3941.md#unit-test
     #[test]
     fn browser_capture_help_describes_dom_and_wasm_surfaces() {
@@ -3102,6 +3757,93 @@ mod e2e_command_contract_tests {
         assert!(
             help.contains("--root-selector"),
             "capture help must advertise DOM root selector: {help}"
+        );
+    }
+
+    #[test]
+    fn bb_alias_exposes_browser_bridge_capture_surface() {
+        let help = help_text(&["jet", "bb", "capture", "--help"]);
+        assert!(
+            help.contains("--surface") && help.contains("wasm") && help.contains("dom"),
+            "bb capture help must expose the same DOM/WASM surface contract: {help}"
+        );
+        assert!(
+            help.contains("--root-selector"),
+            "bb capture help must expose DOM root selector: {help}"
+        );
+    }
+
+    #[test]
+    fn browser_bridge_launch_is_agent_first_and_debug_is_human_foreground() {
+        let launch_help = help_text(&["jet", "bb", "launch", "--help"]);
+        assert!(
+            launch_help.contains("headless") && launch_help.contains("detached"),
+            "bb launch help must advertise headless detached agent mode: {launch_help}"
+        );
+
+        let debug_help = help_text(&["jet", "bb", "debug", "--help"]);
+        assert!(
+            debug_help.contains("foreground") && debug_help.contains("human inspection"),
+            "bb debug help must advertise foreground human inspection mode: {debug_help}"
+        );
+    }
+
+    #[test]
+    fn bb_command_is_observable_to_dispatch() {
+        let matches = command()
+            .try_get_matches_from(["jet", "bb", "launch", "http://127.0.0.1:3000/"])
+            .expect("bb launch parses");
+        let (name, _) = matches.subcommand().expect("top-level subcommand");
+        assert_eq!(
+            name, "bb",
+            "dispatch must distinguish `jet bb launch` from legacy `jet browser launch`"
+        );
+    }
+
+    #[test]
+    fn browser_bridge_help_lists_lightweight_perf_probe() {
+        let bb_help = help_text(&["jet", "bb", "--help"]);
+        assert!(
+            bb_help.contains("perf"),
+            "bb help must expose the lightweight perf snapshot command: {bb_help}"
+        );
+
+        let perf_help = help_text(&["jet", "bb", "perf", "--help"]);
+        assert!(
+            perf_help.contains("performance") && perf_help.contains("without full capture"),
+            "bb perf help must distinguish itself from heavy capture: {perf_help}"
+        );
+    }
+
+    #[test]
+    fn browser_input_help_describes_mouse_drag_wheel_and_key_commands() {
+        let browser_help = help_text(&["jet", "browser", "--help"]);
+        assert!(
+            browser_help.contains("mouse")
+                && browser_help.contains("drag")
+                && browser_help.contains("wheel")
+                && browser_help.contains("key"),
+            "browser help must list input-driving commands: {browser_help}"
+        );
+
+        let drag_help = help_text(&["jet", "browser", "drag", "--help"]);
+        assert!(
+            drag_help.contains("CDP mouse events") && drag_help.contains("--steps"),
+            "drag help must describe CDP mouse input and steps: {drag_help}"
+        );
+
+        let wheel_help = help_text(&["jet", "browser", "wheel", "--help"]);
+        assert!(
+            wheel_help.contains("CDP mouse wheel event")
+                && wheel_help.contains("--delta-x")
+                && wheel_help.contains("--delta-y"),
+            "wheel help must describe CDP wheel input and deltas: {wheel_help}"
+        );
+
+        let key_help = help_text(&["jet", "browser", "key", "--help"]);
+        assert!(
+            key_help.contains("--ctrl") && key_help.contains("--meta"),
+            "key help must advertise shortcut modifiers: {key_help}"
         );
     }
 
@@ -3165,6 +3907,8 @@ mod e2e_command_contract_tests {
                 "run",
                 "--evidence-dir",
                 "out/evidence",
+                "--serve",
+                "dev",
                 "--json",
                 "flows/cue-artifact-studio.spec.ts",
             ])
@@ -3175,7 +3919,28 @@ mod e2e_command_contract_tests {
             run.get_one::<String>("evidence-dir").map(String::as_str),
             Some("out/evidence")
         );
+        assert_eq!(
+            run.get_one::<String>("serve").map(String::as_str),
+            Some("dev")
+        );
         assert!(run.get_flag("json"));
+
+        let base_url_matches = command()
+            .try_get_matches_from([
+                "jet",
+                "e2e",
+                "run",
+                "--base-url",
+                "http://127.0.0.1:43127/",
+                "flows/cue-artifact-studio.spec.ts",
+            ])
+            .unwrap();
+        let (_, e2e) = base_url_matches.subcommand().unwrap();
+        let (_, run) = e2e.subcommand().unwrap();
+        assert_eq!(
+            run.get_one::<String>("base-url").map(String::as_str),
+            Some("http://127.0.0.1:43127/")
+        );
 
         let open_matches = command()
             .try_get_matches_from(["jet", "e2e", "open", "--dry-run", "--no-open"])
@@ -3307,6 +4072,109 @@ mod build_target_validation_table_tests {
         assert!(snap.sourcemap_set);
         assert!(snap.splitting);
         assert!(snap.drop_set);
+    }
+
+    #[test]
+    fn build_minify_is_default_and_no_minify_is_escape_hatch() {
+        let default_build = run_build(&[]).unwrap();
+        assert!(
+            build_minify_enabled_from_matches(&default_build),
+            "jet build should minify by default"
+        );
+
+        let no_minify = run_build(&["--no-minify"]).unwrap();
+        assert!(
+            !build_minify_enabled_from_matches(&no_minify),
+            "--no-minify must disable default minification"
+        );
+
+        let explicit_then_disabled = run_build(&["--minify", "--no-minify"]).unwrap();
+        assert!(
+            !build_minify_enabled_from_matches(&explicit_then_disabled),
+            "--no-minify must win when both flags are present"
+        );
+    }
+
+    #[test]
+    fn build_minifier_uses_jet_internal_pipeline() {
+        let out = minify_build_js_internal(
+            "const enabled = true;\nconsole.log(enabled);\n",
+            &[crate::bundler::minify::DropStatement::Console],
+        );
+
+        assert!(
+            !out.contains("console.log"),
+            "drop console should be handled internally, got: {out}"
+        );
+        assert!(
+            out.contains("!0") || !out.contains("true"),
+            "boolean replacement should be handled internally, got: {out}"
+        );
+    }
+
+    #[test]
+    fn build_minifier_eliminates_production_dead_else_branch() {
+        let out = minify_build_js_internal(
+            r#"if ("production" === "production") { module.exports = require(1); } else { module.exports = require("./dev.js"); }"#,
+            &[],
+        );
+
+        assert!(
+            !out.contains("./dev.js"),
+            "dead development branch should be removed internally, got: {out}"
+        );
+        assert!(
+            out.contains("require(1)"),
+            "live production branch should remain, got: {out}"
+        );
+    }
+
+    #[test]
+    fn build_minifier_preserves_default_export_function_expression_branch() {
+        let out = minify_build_js_internal(
+            r#"module.exports["default"] = "production" !== 'production' ? useRenderTimes : function () {};"#,
+            &[],
+        );
+
+        assert!(
+            out.contains(r#"module.exports["default"]=function()"#),
+            "production ternary false branch should keep function expression, got: {out}"
+        );
+        assert!(
+            !out.contains(r#"module.exports["default"]=;"#),
+            "minifier must not empty default export expression, got: {out}"
+        );
+    }
+
+    #[test]
+    fn production_build_defines_include_import_meta_env() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join(".env.production"),
+            "VITE_PUBLIC_TITLE=Jet DOM\n",
+        )
+        .unwrap();
+
+        let defines = production_build_defines(tmp.path());
+
+        assert_eq!(
+            defines.get("import.meta.env.MODE").map(String::as_str),
+            Some("\"production\"")
+        );
+        assert_eq!(
+            defines.get("import.meta.env.DEV").map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            defines.get("import.meta.env.PROD").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            defines
+                .get("import.meta.env.VITE_PUBLIC_TITLE")
+                .map(String::as_str),
+            Some("\"Jet DOM\"")
+        );
     }
 
     #[test]

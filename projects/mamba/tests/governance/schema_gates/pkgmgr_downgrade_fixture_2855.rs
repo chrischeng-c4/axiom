@@ -26,16 +26,9 @@ fn manifest_path() -> PathBuf {
         .join("manifest.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_downgrade_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -66,7 +59,7 @@ fn pkgmgr_downgrade_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_downgrade_package_block_pins_two_distinct_versions() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let pkg = doc
         .get("package")
         .and_then(|v| v.as_table())
@@ -106,7 +99,7 @@ fn pkgmgr_downgrade_package_block_pins_two_distinct_versions() {
 
 #[test]
 fn pkgmgr_downgrade_initial_state_pins_newer_version() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let init = doc
         .get("initial_state")
         .and_then(|v| v.as_table())
@@ -138,8 +131,7 @@ fn pkgmgr_downgrade_initial_state_pins_newer_version() {
         "`[initial_state].locked_version_must_be` must equal `[package].newer_version`"
     );
     assert_eq!(
-        init.get("import_probe_value_must_be")
-            .and_then(|v| v.as_str()),
+        init.get("import_probe_value_must_be").and_then(|v| v.as_str()),
         Some(newer),
         "`[initial_state].import_probe_value_must_be` must equal `[package].newer_version`"
     );
@@ -147,7 +139,7 @@ fn pkgmgr_downgrade_initial_state_pins_newer_version() {
 
 #[test]
 fn pkgmgr_downgrade_action_flips_to_older_version_only() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let action = doc
         .get("downgrade_action")
         .and_then(|v| v.as_table())
@@ -180,16 +172,12 @@ fn pkgmgr_downgrade_action_flips_to_older_version_only() {
         "`[downgrade_action].expected_outcome` must be \"pass\""
     );
     assert_eq!(
-        action
-            .get("expected_exit_code")
-            .and_then(|v| v.as_integer()),
+        action.get("expected_exit_code").and_then(|v| v.as_integer()),
         Some(0),
         "`[downgrade_action].expected_exit_code` must be 0"
     );
     assert_eq!(
-        action
-            .get("locked_version_must_become")
-            .and_then(|v| v.as_str()),
+        action.get("locked_version_must_become").and_then(|v| v.as_str()),
         Some(older),
         "`[downgrade_action].locked_version_must_become` must equal `[package].older_version`"
     );
@@ -199,16 +187,12 @@ fn pkgmgr_downgrade_action_flips_to_older_version_only() {
         "`[downgrade_action].locked_version_must_no_longer_be` must equal `[package].newer_version`"
     );
     assert_eq!(
-        action
-            .get("must_only_touch_target_package")
-            .and_then(|v| v.as_bool()),
+        action.get("must_only_touch_target_package").and_then(|v| v.as_bool()),
         Some(true),
         "`[downgrade_action].must_only_touch_target_package` must be true"
     );
     assert_eq!(
-        action
-            .get("import_probe_value_must_be")
-            .and_then(|v| v.as_str()),
+        action.get("import_probe_value_must_be").and_then(|v| v.as_str()),
         Some(older),
         "`[downgrade_action].import_probe_value_must_be` must equal `[package].older_version`"
     );
@@ -216,14 +200,11 @@ fn pkgmgr_downgrade_action_flips_to_older_version_only() {
 
 #[test]
 fn pkgmgr_downgrade_lockfile_diff_bounds_change_to_target() {
-    let doc = load_toml(&manifest_path());
-    let diff = doc
-        .get("lockfile_diff_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[lockfile_diff_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let diff = doc.get("lockfile_diff_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[lockfile_diff_assertion]` block \
          (acceptance: \"Downgrade changes only expected package entries.\")",
-        );
+    );
 
     let pkg_name = doc
         .get("package")
@@ -257,14 +238,12 @@ fn pkgmgr_downgrade_lockfile_diff_bounds_change_to_target() {
         "`[lockfile_diff_assertion].must_record_new_version` must equal `[package].older_version`"
     );
     assert_eq!(
-        diff.get("must_only_change_target_package")
-            .and_then(|v| v.as_str()),
+        diff.get("must_only_change_target_package").and_then(|v| v.as_str()),
         Some(pkg_name),
         "`[lockfile_diff_assertion].must_only_change_target_package` must equal `[package].name`"
     );
     assert_eq!(
-        diff.get("must_not_touch_unrelated")
-            .and_then(|v| v.as_str()),
+        diff.get("must_not_touch_unrelated").and_then(|v| v.as_str()),
         Some(other_name),
         "`[lockfile_diff_assertion].must_not_touch_unrelated` must equal `[other_dependency].name`"
     );
@@ -283,14 +262,11 @@ fn pkgmgr_downgrade_lockfile_diff_bounds_change_to_target() {
 
 #[test]
 fn pkgmgr_downgrade_constraint_conflict_case_is_deterministic_and_loud() {
-    let doc = load_toml(&manifest_path());
-    let case = doc
-        .get("constraint_conflict_case")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[constraint_conflict_case]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let case = doc.get("constraint_conflict_case").and_then(|v| v.as_table()).expect(
+        "missing `[constraint_conflict_case]` block \
          (acceptance: \"Constraint conflict reports deterministic diagnostic.\")",
-        );
+    );
 
     let pkg_name = doc
         .get("package")
@@ -345,7 +321,7 @@ fn pkgmgr_downgrade_constraint_conflict_case_is_deterministic_and_loud() {
 
 #[test]
 fn pkgmgr_downgrade_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -367,7 +343,7 @@ fn pkgmgr_downgrade_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_downgrade_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -410,14 +386,13 @@ fn pkgmgr_downgrade_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_downgrade_pins_out_of_scope_per_issue_2855() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())
         .expect("missing `[out_of_scope]` block");
     assert_eq!(
-        oos.get("full_version_selection_ux")
-            .and_then(|v| v.as_bool()),
+        oos.get("full_version_selection_ux").and_then(|v| v.as_bool()),
         Some(true),
         "`[out_of_scope].full_version_selection_ux` must be true \
          (issue text: \"Out of scope: full version-selection UX.\")"

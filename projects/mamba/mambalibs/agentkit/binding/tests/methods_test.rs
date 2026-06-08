@@ -2,20 +2,19 @@
 // Requirements: R1, R2, R4, R5, R6
 #![allow(improper_ctypes_definitions)]
 
+use cclab_mamba_registry::MbValue;
+use agentkit_binding::types::{MbAgentBuilder, MbLlmAgent, MbMessage, MbProvider, MbSchema, MbSchemaBuilder, MbToolRegistry};
 use agentkit_binding::methods::{
     mb_agent_builder_build, mb_agent_builder_new, mb_agent_builder_provider,
     mb_agent_builder_system_prompt, mb_agent_claude_provider, mb_agent_gemini_provider,
     mb_agent_message_content, mb_agent_message_new, mb_agent_message_role,
-    mb_agent_openai_provider, mb_agent_run, mb_agent_schema_array, mb_agent_schema_boolean,
-    mb_agent_schema_build, mb_agent_schema_field, mb_agent_schema_integer, mb_agent_schema_null,
+    mb_agent_openai_provider, mb_agent_run, mb_agent_tool_registry_new,
+    mb_agent_tool_registry_register,
+    mb_agent_schema_array, mb_agent_schema_boolean, mb_agent_schema_build,
+    mb_agent_schema_field, mb_agent_schema_integer, mb_agent_schema_null,
     mb_agent_schema_number, mb_agent_schema_object, mb_agent_schema_optional,
     mb_agent_schema_required, mb_agent_schema_string, mb_agent_schema_validate,
-    mb_agent_tool_registry_new, mb_agent_tool_registry_register,
 };
-use agentkit_binding::types::{
-    MbAgentBuilder, MbLlmAgent, MbMessage, MbProvider, MbSchema, MbSchemaBuilder, MbToolRegistry,
-};
-use cclab_mamba_registry::MbValue;
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -38,15 +37,9 @@ fn builder_new_empty() {
     assert!(builder_val.is_ptr(), "builder should be a ptr");
     let addr = builder_val.as_ptr().unwrap();
     let builder = unsafe { &*(addr as *const MbAgentBuilder) };
-    assert!(
-        builder.provider_name.is_empty(),
-        "provider_name should be empty"
-    );
+    assert!(builder.provider_name.is_empty(), "provider_name should be empty");
     assert!(builder.api_key.is_empty(), "api_key should be empty");
-    assert!(
-        builder.system_prompt.is_empty(),
-        "system_prompt should be empty"
-    );
+    assert!(builder.system_prompt.is_empty(), "system_prompt should be empty");
 }
 
 // ── mb_agent_claude_provider ──────────────────────────────────────────────────
@@ -120,10 +113,7 @@ fn builder_set_provider() {
 fn builder_set_provider_null() {
     let args = [MbValue::none(), make_str_val("some-val")];
     let result = unsafe { mb_agent_builder_provider(args.as_ptr(), 2) };
-    assert!(
-        result.is_none(),
-        "builder_provider with null builder should return none()"
-    );
+    assert!(result.is_none(), "builder_provider with null builder should return none()");
 }
 
 // ── mb_agent_builder_system_prompt ────────────────────────────────────────────
@@ -144,10 +134,7 @@ fn builder_system_prompt() {
 fn builder_system_prompt_null() {
     let args = [MbValue::none(), make_str_val("prompt")];
     let result = unsafe { mb_agent_builder_system_prompt(args.as_ptr(), 2) };
-    assert!(
-        result.is_none(),
-        "system_prompt with null builder should return none()"
-    );
+    assert!(result.is_none(), "system_prompt with null builder should return none()");
 }
 
 // ── mb_agent_builder_build ────────────────────────────────────────────────────
@@ -156,12 +143,9 @@ fn builder_system_prompt_null() {
 fn builder_build_configured() {
     let builder_val = unsafe { mb_agent_builder_new([].as_ptr(), 0) };
 
-    let provider_val =
-        unsafe { mb_agent_claude_provider([make_str_val("api-key-123")].as_ptr(), 1) };
+    let provider_val = unsafe { mb_agent_claude_provider([make_str_val("api-key-123")].as_ptr(), 1) };
     unsafe { mb_agent_builder_provider([builder_val, provider_val].as_ptr(), 2) };
-    unsafe {
-        mb_agent_builder_system_prompt([builder_val, make_str_val("Be helpful.")].as_ptr(), 2)
-    };
+    unsafe { mb_agent_builder_system_prompt([builder_val, make_str_val("Be helpful.")].as_ptr(), 2) };
 
     let agent_val = unsafe { mb_agent_builder_build([builder_val].as_ptr(), 1) };
     assert!(agent_val.is_ptr());
@@ -176,16 +160,10 @@ fn builder_build_configured() {
 fn builder_build_null() {
     // Null builder → returns agent with empty fields (no crash)
     let agent_val = unsafe { mb_agent_builder_build([MbValue::none()].as_ptr(), 1) };
-    assert!(
-        agent_val.is_ptr(),
-        "build with null should still return a ptr"
-    );
+    assert!(agent_val.is_ptr(), "build with null should still return a ptr");
     let addr = agent_val.as_ptr().unwrap();
     let agent = unsafe { &*(addr as *const MbLlmAgent) };
-    assert!(
-        agent.provider_name.is_empty(),
-        "provider_name should be empty for null build"
-    );
+    assert!(agent.provider_name.is_empty(), "provider_name should be empty for null build");
 }
 
 // ── mb_agent_run ──────────────────────────────────────────────────────────────
@@ -194,8 +172,7 @@ fn builder_build_null() {
 fn agent_run_stub() {
     // Build a gemini agent and run it — should return a stub response
     let builder_val = unsafe { mb_agent_builder_new([].as_ptr(), 0) };
-    let provider_val =
-        unsafe { mb_agent_gemini_provider([make_str_val("gemini-key")].as_ptr(), 1) };
+    let provider_val = unsafe { mb_agent_gemini_provider([make_str_val("gemini-key")].as_ptr(), 1) };
     unsafe { mb_agent_builder_provider([builder_val, provider_val].as_ptr(), 2) };
     let agent_val = unsafe { mb_agent_builder_build([builder_val].as_ptr(), 1) };
 
@@ -203,10 +180,7 @@ fn agent_run_stub() {
     let resp_val = unsafe { mb_agent_run(run_args.as_ptr(), 2) };
     assert!(resp_val.is_ptr());
     let resp = unsafe { read_str_val(resp_val) };
-    assert!(
-        resp.contains("stub"),
-        "gemini agent response should contain 'stub': {resp}"
-    );
+    assert!(resp.contains("stub"), "gemini agent response should contain 'stub': {resp}");
 }
 
 #[test]
@@ -215,10 +189,7 @@ fn agent_run_null_agent() {
     let resp_val = unsafe { mb_agent_run(args.as_ptr(), 2) };
     assert!(resp_val.is_ptr());
     let resp = unsafe { read_str_val(resp_val) };
-    assert!(
-        resp.contains("error"),
-        "null agent response should contain 'error': {resp}"
-    );
+    assert!(resp.contains("error"), "null agent response should contain 'error': {resp}");
 }
 
 // ── mb_agent_message_new ──────────────────────────────────────────────────────
@@ -249,9 +220,7 @@ fn message_new_default_role() {
 
 #[test]
 fn message_role_happy() {
-    let msg_val = unsafe {
-        mb_agent_message_new([make_str_val("assistant"), make_str_val("ok")].as_ptr(), 2)
-    };
+    let msg_val = unsafe { mb_agent_message_new([make_str_val("assistant"), make_str_val("ok")].as_ptr(), 2) };
     let role_val = unsafe { mb_agent_message_role([msg_val].as_ptr(), 1) };
     let role = unsafe { read_str_val(role_val) };
     assert_eq!(role, "assistant");
@@ -261,15 +230,9 @@ fn message_role_happy() {
 fn message_role_null() {
     let role_val = unsafe { mb_agent_message_role([MbValue::none()].as_ptr(), 1) };
     // Null ptr → returns empty string (not a panic)
-    assert!(
-        role_val.is_ptr(),
-        "message_role with null ptr should return a ptr (empty string)"
-    );
+    assert!(role_val.is_ptr(), "message_role with null ptr should return a ptr (empty string)");
     let role = unsafe { read_str_val(role_val) };
-    assert!(
-        role.is_empty(),
-        "role for null message should be empty string"
-    );
+    assert!(role.is_empty(), "role for null message should be empty string");
 }
 
 // ── mb_agent_message_content ──────────────────────────────────────────────────
@@ -278,10 +241,7 @@ fn message_role_null() {
 fn message_content_happy() {
     let content_text = "The answer is 42.";
     let msg_val = unsafe {
-        mb_agent_message_new(
-            [make_str_val("assistant"), make_str_val(content_text)].as_ptr(),
-            2,
-        )
+        mb_agent_message_new([make_str_val("assistant"), make_str_val(content_text)].as_ptr(), 2)
     };
     let content_val = unsafe { mb_agent_message_content([msg_val].as_ptr(), 1) };
     let content = unsafe { read_str_val(content_val) };
@@ -291,15 +251,9 @@ fn message_content_happy() {
 #[test]
 fn message_content_null() {
     let content_val = unsafe { mb_agent_message_content([MbValue::none()].as_ptr(), 1) };
-    assert!(
-        content_val.is_ptr(),
-        "message_content with null ptr should return a ptr"
-    );
+    assert!(content_val.is_ptr(), "message_content with null ptr should return a ptr");
     let content = unsafe { read_str_val(content_val) };
-    assert!(
-        content.is_empty(),
-        "content for null message should be empty string"
-    );
+    assert!(content.is_empty(), "content for null message should be empty string");
 }
 
 // ── mb_agent_tool_registry_new ────────────────────────────────────────────────
@@ -336,10 +290,7 @@ fn tool_registry_register_null() {
     let fn_ptr = MbValue::from_func(0xBEEF);
     let args = [MbValue::none(), make_str_val("tool"), fn_ptr];
     let result = unsafe { mb_agent_tool_registry_register(args.as_ptr(), 3) };
-    assert!(
-        result.is_none(),
-        "register with null registry should return none()"
-    );
+    assert!(result.is_none(), "register with null registry should return none()");
 }
 
 #[test]
@@ -352,11 +303,7 @@ fn tool_registry_multiple() {
     }
     let addr = reg_val.as_ptr().unwrap();
     let registry = unsafe { &*(addr as *const MbToolRegistry) };
-    assert_eq!(
-        registry.tools.len(),
-        3,
-        "should have 3 tools after 3 registrations"
-    );
+    assert_eq!(registry.tools.len(), 3, "should have 3 tools after 3 registrations");
     assert_eq!(registry.tools[0].0, "tool_a");
     assert_eq!(registry.tools[1].0, "tool_b");
     assert_eq!(registry.tools[2].0, "tool_c");
@@ -390,26 +337,23 @@ fn schema_object_field_required_build_round_trip() {
     // .field("name", Schema.string())
     let name_str = make_str_val("name");
     let str_schema = unsafe { mb_agent_schema_string([].as_ptr(), 0) };
-    let returned =
-        unsafe { mb_agent_schema_field([builder_val, name_str, str_schema].as_ptr(), 3) };
-    assert_eq!(
-        returned.to_bits(),
-        builder_val.to_bits(),
-        "field() must return the same builder ptr for chaining"
-    );
+    let returned = unsafe {
+        mb_agent_schema_field([builder_val, name_str, str_schema].as_ptr(), 3)
+    };
+    assert_eq!(returned.to_bits(), builder_val.to_bits(),
+        "field() must return the same builder ptr for chaining");
 
     // .required("name")
     let name_str2 = make_str_val("name");
-    let _ = unsafe { mb_agent_schema_required([builder_val, name_str2].as_ptr(), 2) };
+    let _ = unsafe {
+        mb_agent_schema_required([builder_val, name_str2].as_ptr(), 2)
+    };
 
     // .build()
     let schema_val = unsafe { mb_agent_schema_build([builder_val].as_ptr(), 1) };
     let schema = unsafe { &*(schema_val.as_ptr().unwrap() as *const MbSchema) };
     match &schema.0 {
-        agent::Schema::Object {
-            properties,
-            required,
-        } => {
+        agent::Schema::Object { properties, required } => {
             assert_eq!(properties.len(), 1);
             assert_eq!(properties[0].0, "name");
             assert!(matches!(properties[0].1, agent::Schema::String));
@@ -425,7 +369,9 @@ fn schema_required_is_variadic() {
     let n_a = make_str_val("a");
     let n_b = make_str_val("b");
     let n_c = make_str_val("c");
-    let _ = unsafe { mb_agent_schema_required([builder_val, n_a, n_b, n_c].as_ptr(), 4) };
+    let _ = unsafe {
+        mb_agent_schema_required([builder_val, n_a, n_b, n_c].as_ptr(), 4)
+    };
     let builder = unsafe { &*(builder_val.as_ptr().unwrap() as *const MbSchemaBuilder) };
     assert_eq!(builder.required, vec!["a", "b", "c"]);
 }
@@ -513,8 +459,5 @@ fn schema_validate_invalid_json_payload() {
     let json = make_str_val("not json {");
     let result = unsafe { mb_agent_schema_validate([s, json].as_ptr(), 2) };
     let msg = unsafe { read_str_val(result) };
-    assert!(
-        msg.starts_with("invalid JSON:"),
-        "expected invalid-json error, got: {msg}"
-    );
+    assert!(msg.starts_with("invalid JSON:"), "expected invalid-json error, got: {msg}");
 }

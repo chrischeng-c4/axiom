@@ -92,11 +92,7 @@ fn parse_typedef_struct(
         let trimmed = line.trim();
         if trimmed.starts_with('}') {
             // Extract name after closing brace
-            let after = trimmed
-                .trim_start_matches('}')
-                .trim()
-                .trim_end_matches(';')
-                .trim();
+            let after = trimmed.trim_start_matches('}').trim().trim_end_matches(';').trim();
             if !after.is_empty() {
                 name = after.to_string();
             }
@@ -107,9 +103,7 @@ fn parse_typedef_struct(
         }
     }
 
-    if name.is_empty() {
-        return None;
-    }
+    if name.is_empty() { return None; }
     Some(CStruct { name, fields })
 }
 
@@ -123,17 +117,13 @@ fn parse_single_line_struct(line: &str) -> Option<CStruct> {
         .split(';')
         .filter_map(|f| parse_struct_field(f.trim()))
         .collect();
-    if name.is_empty() {
-        return None;
-    }
+    if name.is_empty() { return None; }
     Some(CStruct { name, fields })
 }
 
 fn parse_struct_field(field_str: &str) -> Option<CField> {
     let field_str = field_str.trim().trim_end_matches(';').trim();
-    if field_str.is_empty() {
-        return None;
-    }
+    if field_str.is_empty() { return None; }
     let (ty_str, name) = split_type_and_name(field_str)?;
     Some(CField {
         name: name.to_string(),
@@ -155,11 +145,7 @@ fn parse_typedef_enum(
     for line in lines.by_ref() {
         let trimmed = line.trim();
         if trimmed.starts_with('}') {
-            let after = trimmed
-                .trim_start_matches('}')
-                .trim()
-                .trim_end_matches(';')
-                .trim();
+            let after = trimmed.trim_start_matches('}').trim().trim_end_matches(';').trim();
             if !after.is_empty() {
                 name = after.to_string();
             }
@@ -171,9 +157,7 @@ fn parse_typedef_enum(
         }
     }
 
-    if name.is_empty() {
-        return None;
-    }
+    if name.is_empty() { return None; }
     Some(CEnum { name, variants })
 }
 
@@ -187,35 +171,26 @@ fn parse_single_line_enum(line: &str) -> Option<CEnum> {
         .split(',')
         .filter_map(|v| parse_enum_variant(v.trim()))
         .collect();
-    if name.is_empty() {
-        return None;
-    }
+    if name.is_empty() { return None; }
     Some(CEnum { name, variants })
 }
 
 fn parse_enum_variant(s: &str) -> Option<CEnumVariant> {
     let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
+    if s.is_empty() { return None; }
     if let Some(eq_pos) = s.find('=') {
         let name = s[..eq_pos].trim().to_string();
         let value = s[eq_pos + 1..].trim().parse::<i64>().ok();
         Some(CEnumVariant { name, value })
     } else {
-        Some(CEnumVariant {
-            name: s.to_string(),
-            value: None,
-        })
+        Some(CEnumVariant { name: s.to_string(), value: None })
     }
 }
 
 /// Split a C declaration like "int32_t x" into ("int32_t", "x").
 fn split_type_and_name(decl: &str) -> Option<(&str, &str)> {
     let decl = decl.trim();
-    if decl.is_empty() {
-        return None;
-    }
+    if decl.is_empty() { return None; }
 
     // Handle pointer: "type *name" or "type* name"
     if let Some(star_pos) = decl.rfind('*') {
@@ -288,7 +263,9 @@ mod tests {
 
     #[test]
     fn test_parse_struct() {
-        let header = parse_c_header("typedef struct {\n  int32_t x;\n  int32_t y;\n} Point;\n");
+        let header = parse_c_header(
+            "typedef struct {\n  int32_t x;\n  int32_t y;\n} Point;\n"
+        );
         assert_eq!(header.structs.len(), 1);
         assert_eq!(header.structs[0].name, "Point");
         assert_eq!(header.structs[0].fields.len(), 2);
@@ -296,8 +273,9 @@ mod tests {
 
     #[test]
     fn test_parse_enum() {
-        let header =
-            parse_c_header("typedef enum {\n  Red = 0,\n  Green = 1,\n  Blue = 2,\n} Color;\n");
+        let header = parse_c_header(
+            "typedef enum {\n  Red = 0,\n  Green = 1,\n  Blue = 2,\n} Color;\n"
+        );
         assert_eq!(header.enums.len(), 1);
         assert_eq!(header.enums[0].name, "Color");
         assert_eq!(header.enums[0].variants.len(), 3);
@@ -373,8 +351,7 @@ mod tests {
 
     #[test]
     fn test_parse_multiple_functions() {
-        let src =
-            "int32_t add(int32_t a, int32_t b);\nvoid reset();\ndouble avg(float x, float y);\n";
+        let src = "int32_t add(int32_t a, int32_t b);\nvoid reset();\ndouble avg(float x, float y);\n";
         let header = parse_c_header(src);
         assert_eq!(header.functions.len(), 3);
         assert_eq!(header.functions[0].name, "add");

@@ -292,6 +292,7 @@ impl PackageManager {
     /// In CI (CI=true, GITHUB_ACTIONS, etc.) frozen lockfile is auto-enabled.
     pub async fn install_with_options(&self, frozen_lockfile: bool) -> Result<()> {
         tracing::info!("Installing dependencies...");
+        let frozen = frozen_lockfile || Self::is_ci_env();
 
         // Detect workspace mode first. Jet workspaces use a separate install
         // path that handles workspace: protocol deps via relative symlinks and
@@ -299,10 +300,9 @@ impl PackageManager {
         if let workspace::WorkspaceMode::Jet(mut ws_mgr) =
             workspace::WorkspaceMode::detect(&self.root_dir)?
         {
-            return self.workspace_install_all(&mut ws_mgr).await;
+            return self.workspace_install_all(&mut ws_mgr, frozen).await;
         }
 
-        let frozen = frozen_lockfile || Self::is_ci_env();
         let package_json = self.read_package_json()?;
         let mut all_deps = package_json.dependencies.clone();
         all_deps.extend(package_json.dev_dependencies.clone());
@@ -675,6 +675,11 @@ impl PackageManager {
     /// Remove a package from both dependencies and devDependencies.
     pub async fn remove(&self, package: &str) -> Result<()> {
         tracing::info!("Removing package: {}", package);
+        let lockfile_before = Lockfile::read(&self.root_dir.join("jet-lock.yaml")).ok();
+        let bins_to_remove = lockfile_before
+            .as_ref()
+            .map(|lockfile| lockfile_root_bin_names_for_package(lockfile, package))
+            .unwrap_or_default();
 
         let (mut doc, indent, trailing_newline) = self.read_package_json_raw()?;
         let mut changed = false;
@@ -689,6 +694,9 @@ impl PackageManager {
         }
         if changed {
             self.write_package_json_raw(&doc, &indent, trailing_newline)?;
+            self.install().await?;
+            remove_node_modules_package(&self.root_dir.join("node_modules"), package)?;
+            remove_node_modules_bins(&self.root_dir.join("node_modules/.bin"), &bins_to_remove)?;
         }
 
         Ok(())
@@ -938,9 +946,36 @@ impl PackageManager {
     ///
     /// A single `jet-lock.yaml` is written at the workspace root after all
     /// packages are installed.
-    async fn workspace_install_all(&self, ws_mgr: &mut workspace::WorkspaceManager) -> Result<()> {
+    async fn workspace_install_all(
+        &self,
+        ws_mgr: &mut workspace::WorkspaceManager,
+        frozen_lockfile: bool,
+    ) -> Result<()> {
         let order = ws_mgr.topological_order()?;
         let ws_root = &self.root_dir;
+        let workspace_deps_hash = compute_workspace_deps_hash(ws_mgr, &order)?;
+        if frozen_lockfile {
+            let lockfile_path = ws_root.join("jet-lock.yaml");
+            if !lockfile_path.exists() {
+                anyhow::bail!(
+                    "Frozen lockfile: jet-lock.yaml not found. \
+                     Run 'jet install' locally first."
+                );
+            }
+            let lockfile = Lockfile::read(&lockfile_path)?;
+            if !lockfile
+                .deps_hash
+                .as_deref()
+                .is_some_and(|stored| stored == workspace_deps_hash)
+            {
+                anyhow::bail!(
+                    "Frozen lockfile drift detected: \
+                     workspace package.json deps changed since lockfile was written. \
+                     Run 'jet install' locally and commit jet-lock.yaml."
+                );
+            }
+        }
+
         let mut lockfile = Lockfile::new();
 
         for pkg_name in &order {
@@ -1056,8 +1091,11 @@ impl PackageManager {
             }
         }
 
-        let lf_path = ws_root.join("jet-lock.yaml");
-        lockfile.write(&lf_path)?;
+        lockfile.deps_hash = Some(workspace_deps_hash);
+        if !frozen_lockfile {
+            let lf_path = ws_root.join("jet-lock.yaml");
+            lockfile.write(&lf_path)?;
+        }
 
         tracing::info!("Workspace install complete ({} packages)", order.len());
         Ok(())
@@ -1168,6 +1206,84 @@ fn lockfile_hash_matches_current_deps(
         .deps_hash
         .as_deref()
         .is_some_and(|stored| stored == Lockfile::compute_deps_hash(all_deps))
+}
+
+fn compute_workspace_deps_hash(
+    ws_mgr: &workspace::WorkspaceManager,
+    order: &[String],
+) -> Result<String> {
+    let mut all_deps = HashMap::new();
+    for pkg_name in order {
+        let pkg = ws_mgr
+            .get_package(pkg_name)
+            .ok_or_else(|| anyhow::anyhow!("Workspace package '{}' not found", pkg_name))?;
+        for (dep_name, dep_spec) in &pkg.dependencies {
+            all_deps.insert(
+                format!("{pkg_name}:dependencies:{dep_name}"),
+                dep_spec.clone(),
+            );
+        }
+        for (dep_name, dep_spec) in &pkg.dev_dependencies {
+            all_deps.insert(
+                format!("{pkg_name}:devDependencies:{dep_name}"),
+                dep_spec.clone(),
+            );
+        }
+    }
+    Ok(Lockfile::compute_deps_hash(&all_deps))
+}
+
+fn lockfile_root_bin_names_for_package(lockfile: &Lockfile, package: &str) -> Vec<String> {
+    lockfile
+        .to_resolved()
+        .values()
+        .filter(|pkg| pkg.name == package && pkg.nested_in.is_none())
+        .flat_map(|pkg| pkg.bin.keys().cloned())
+        .collect()
+}
+
+fn remove_node_modules_package(node_modules: &Path, package: &str) -> Result<()> {
+    let entry = node_modules.join(package);
+    match entry.symlink_metadata() {
+        Ok(meta) if meta.file_type().is_symlink() || meta.is_file() => {
+            std::fs::remove_file(&entry)?;
+        }
+        Ok(meta) if meta.is_dir() => {
+            std::fs::remove_dir_all(&entry)?;
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err).with_context(|| format!("Failed to stat {:?}", entry)),
+    }
+
+    if let Some((scope, _)) = package.split_once('/') {
+        let scope_dir = node_modules.join(scope);
+        if std::fs::read_dir(&scope_dir)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false)
+        {
+            std::fs::remove_dir(&scope_dir).ok();
+        }
+    }
+    Ok(())
+}
+
+fn remove_node_modules_bins(bin_dir: &Path, bins: &[String]) -> Result<()> {
+    for bin in bins {
+        let entry = bin_dir.join(bin);
+        match entry.symlink_metadata() {
+            Ok(meta) if meta.file_type().is_symlink() || meta.is_file() => {
+                std::fs::remove_file(&entry)?;
+            }
+            Ok(meta) if meta.is_dir() => {
+                std::fs::remove_dir_all(&entry)?;
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err).with_context(|| format!("Failed to stat {:?}", entry)),
+        }
+    }
+    Ok(())
 }
 
 /// GH #3211 — write the `.jet-marker` file containing the current
@@ -1439,6 +1555,37 @@ pub(crate) fn prefetch_install_one(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gh4160_remove_node_modules_package_prunes_direct_and_scoped_entries() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let node_modules = dir.path().join("node_modules");
+        std::fs::create_dir_all(node_modules.join("@scope/pkg")).unwrap();
+        std::fs::write(node_modules.join("@scope/pkg/package.json"), "{}").unwrap();
+        std::fs::create_dir_all(node_modules.join("plain")).unwrap();
+        std::fs::write(node_modules.join("plain/package.json"), "{}").unwrap();
+
+        remove_node_modules_package(&node_modules, "@scope/pkg").unwrap();
+        remove_node_modules_package(&node_modules, "plain").unwrap();
+
+        assert!(!node_modules.join("@scope/pkg").exists());
+        assert!(!node_modules.join("@scope").exists());
+        assert!(!node_modules.join("plain").exists());
+    }
+
+    #[test]
+    fn gh4160_remove_node_modules_bins_prunes_stale_shims() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bin_dir = dir.path().join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::write(bin_dir.join("tool"), "#!/bin/sh\n").unwrap();
+        std::fs::write(bin_dir.join("keep"), "#!/bin/sh\n").unwrap();
+
+        remove_node_modules_bins(&bin_dir, &["tool".to_string(), "missing".to_string()]).unwrap();
+
+        assert!(!bin_dir.join("tool").exists());
+        assert!(bin_dir.join("keep").exists());
+    }
 
     // ─── GH #3522: corrupt jet-lock.yaml silent fall-through ─────────────
 

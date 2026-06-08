@@ -9,12 +9,10 @@ use jet::test_runner::{self, RunnerConfig};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tokio::sync::Mutex;
 
 // Hard ceiling so a stuck runner fails the test (with a useful message) instead
 // of hanging cargo test indefinitely. Bug #2220.
 const RUNNER_HARD_TIMEOUT: Duration = Duration::from_secs(120);
-static AUTO_ARTIFACTS_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 fn node_available() -> bool {
     which::which("node").is_ok()
@@ -63,7 +61,6 @@ async fn run_spec(
     if !node_available() {
         return None;
     }
-    let _guard = AUTO_ARTIFACTS_TEST_LOCK.lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let spec_path = tmp.path().join("artifacts.spec.js");
     fs::write(&spec_path, spec).unwrap();

@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/mimetypes_1479.toml)
 issue = 1479
 lib = "mimetypes"
-fixture = "tests/cpython/fixtures/std-libs/mimetypes/bench/guess_type_bulk.py"
+fixture = "tests/cpython/_regression/std-libs/mimetypes/bench/guess_type_bulk.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 1

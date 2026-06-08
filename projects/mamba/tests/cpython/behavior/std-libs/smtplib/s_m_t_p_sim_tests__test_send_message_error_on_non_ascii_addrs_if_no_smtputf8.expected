@@ -1,0 +1,1 @@
+SMTPSimTests::test_send_message_error_on_non_ascii_addrs_if_no_smtputf8: ok

@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/warnings_1445.toml)
 issue = 1445
 lib = "warnings"
-fixture = "tests/cpython/fixtures/std-libs/warnings/bench/simplefilter_hot.py"
+fixture = "tests/cpython/_regression/std-libs/warnings/bench/simplefilter_hot.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 1

@@ -16,7 +16,7 @@
 //   - Repeating an install at the same version is an idempotent
 //     no-op that emits `no_op` to stderr.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use std::fs;
 use std::io::Write as _;
@@ -40,7 +40,9 @@ pub fn cmd_install(sub: &ArgMatches) -> Result<()> {
         .get_one::<String>("index")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os(FROZEN_INDEX_ENV).map(PathBuf::from))
-        .context("no frozen index configured (pass --index DIR or set $MAMBA_FROZEN_INDEX)")?;
+        .context(
+            "no frozen index configured (pass --index DIR or set $MAMBA_FROZEN_INDEX)",
+        )?;
     action_install(name, explicit_version.as_deref(), &index)
 }
 
@@ -48,7 +50,10 @@ fn action_install(name: &str, explicit_version: Option<&str>, index: &Path) -> R
     let normalized = normalize_pep503(name);
     let pkg_dir = index.join(&normalized);
     if !pkg_dir.exists() {
-        bail!("package `{name}` not found in index {}", index.display());
+        bail!(
+            "package `{name}` not found in index {}",
+            index.display()
+        );
     }
     let version = match explicit_version {
         Some(v) => {
@@ -77,15 +82,18 @@ fn action_install(name: &str, explicit_version: Option<&str>, index: &Path) -> R
 
     // Atomic-ish replace: write into a sibling tmp dir, swap on
     // success. Removes any prior version of the same tool.
-    fs::create_dir_all(&tools_root).with_context(|| format!("create {}", tools_root.display()))?;
+    fs::create_dir_all(&tools_root)
+        .with_context(|| format!("create {}", tools_root.display()))?;
     if tool_dir.exists() {
         fs::remove_dir_all(&tool_dir)
             .with_context(|| format!("remove old {}", tool_dir.display()))?;
     }
     let bin_dir = tool_dir.join("bin");
-    fs::create_dir_all(&bin_dir).with_context(|| format!("create {}", bin_dir.display()))?;
+    fs::create_dir_all(&bin_dir)
+        .with_context(|| format!("create {}", bin_dir.display()))?;
     let pkg_root = tool_dir.join("pkg");
-    fs::create_dir_all(&pkg_root).with_context(|| format!("create {}", pkg_root.display()))?;
+    fs::create_dir_all(&pkg_root)
+        .with_context(|| format!("create {}", pkg_root.display()))?;
     let init_body = format!(
         "# stub-installed by `mamba install` from a frozen local index\n\
          __mamba_tool__ = {:?}\n\
@@ -94,7 +102,9 @@ fn action_install(name: &str, explicit_version: Option<&str>, index: &Path) -> R
     );
     fs::write(pkg_root.join(format!("{normalized}.py")), init_body)
         .with_context(|| format!("write {}", pkg_root.display()))?;
-    let manifest = format!("name = \"{name}\"\nversion = \"{version}\"\n");
+    let manifest = format!(
+        "name = \"{name}\"\nversion = \"{version}\"\n"
+    );
     fs::write(tool_dir.join("manifest.toml"), manifest)
         .with_context(|| format!("write {}", tool_dir.display()))?;
     write_shim(&bin_dir, name, &tool_dir)?;
@@ -107,7 +117,9 @@ fn action_list() -> Result<()> {
         return Ok(());
     }
     let mut entries: Vec<(String, String)> = vec![];
-    for e in fs::read_dir(&tools_root).with_context(|| format!("read {}", tools_root.display()))? {
+    for e in fs::read_dir(&tools_root)
+        .with_context(|| format!("read {}", tools_root.display()))?
+    {
         let e = e?;
         if !e.file_type()?.is_dir() {
             continue;
@@ -151,7 +163,8 @@ fn action_uninstall(name: &str) -> Result<()> {
         eprintln!("no_op: {name} is not installed");
         return Ok(());
     }
-    fs::remove_dir_all(&tool_dir).with_context(|| format!("remove {}", tool_dir.display()))?;
+    fs::remove_dir_all(&tool_dir)
+        .with_context(|| format!("remove {}", tool_dir.display()))?;
     Ok(())
 }
 
@@ -172,7 +185,8 @@ fn write_shim(bin_dir: &Path, name: &str, tool_dir: &Path) -> Result<()> {
         tool_dir = tool_dir.display(),
         normalized = normalize_pep503(name),
     );
-    fs::write(&shim_path, body).with_context(|| format!("write {}", shim_path.display()))?;
+    fs::write(&shim_path, body)
+        .with_context(|| format!("write {}", shim_path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -203,11 +217,7 @@ pub fn resolve_tools_root() -> Result<PathBuf> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .context("no $HOME and no $MAMBA_TOOLS_DIR — set $MAMBA_TOOLS_DIR")?;
-    Ok(home
-        .join(".local")
-        .join("share")
-        .join("mamba")
-        .join("tools"))
+    Ok(home.join(".local").join("share").join("mamba").join("tools"))
 }
 
 fn normalize_pep503(name: &str) -> String {

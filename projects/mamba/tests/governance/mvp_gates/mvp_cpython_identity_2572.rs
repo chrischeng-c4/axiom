@@ -23,12 +23,8 @@ use std::process::Command;
 
 use serde_json::{json, Value};
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
 fn checker_script() -> PathBuf {
-    project_root()
+    crate::common::project_root()
         .join("scripts")
         .join("cpython_identity_check.py")
 }
@@ -38,7 +34,8 @@ fn unique_dir(tag: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let dir = std::env::temp_dir().join(format!("mamba-cpython-identity-{tag}-{nanos}"));
+    let dir = std::env::temp_dir()
+        .join(format!("mamba-cpython-identity-{tag}-{nanos}"));
     std::fs::create_dir_all(&dir).expect("create tempdir");
     dir
 }
@@ -53,7 +50,7 @@ fn run_checker_env(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String)
     let mut cmd = Command::new("python3");
     cmd.arg(checker_script());
     cmd.args(args);
-    cmd.current_dir(project_root());
+    cmd.current_dir(crate::common::project_root());
     // Clear the override env var unless the caller asked for it.
     cmd.env_remove("MAMBA_PERF_LOCAL_DEBUG_OVERRIDE");
     for (k, v) in env {
@@ -96,7 +93,8 @@ fn python_311_identity_fails_default_gate() {
         "implementation_name": "cpython",
     });
     let path = write_identity(&dir, "id.json", &body);
-    let (code, payload) = run_checker_json(&["--identity-json", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--identity-json", path.to_str().unwrap()]);
     assert_eq!(code, 1, "3.11 must fail default gate; payload={payload}");
     assert_eq!(payload["matches"], false);
     assert_eq!(payload["override_active"], false);
@@ -112,7 +110,8 @@ fn python_313_identity_fails_default_gate() {
         "implementation_name": "cpython",
     });
     let path = write_identity(&dir, "id.json", &body);
-    let (code, payload) = run_checker_json(&["--identity-json", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--identity-json", path.to_str().unwrap()]);
     assert_eq!(code, 1, "3.13 must fail default gate; payload={payload}");
     assert_eq!(payload["matches"], false);
 }
@@ -127,7 +126,8 @@ fn pypy_312_identity_fails_default_gate_even_with_matching_major_minor() {
         "implementation_name": "pypy",
     });
     let path = write_identity(&dir, "id.json", &body);
-    let (code, payload) = run_checker_json(&["--identity-json", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--identity-json", path.to_str().unwrap()]);
     assert_eq!(
         code, 1,
         "non-CPython implementation must fail even on 3.12; payload={payload}"
@@ -145,7 +145,8 @@ fn cpython_312_identity_passes_default_gate() {
         "implementation_name": "cpython",
     });
     let path = write_identity(&dir, "id.json", &body);
-    let (code, payload) = run_checker_json(&["--identity-json", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--identity-json", path.to_str().unwrap()]);
     assert_eq!(code, 0, "CPython 3.12 must pass; payload={payload}");
     assert_eq!(payload["matches"], true);
     assert_eq!(payload["override_active"], false);
@@ -163,7 +164,8 @@ fn json_summary_includes_executable_version_and_implementation() {
         "implementation_name": "cpython",
     });
     let path = write_identity(&dir, "id.json", &body);
-    let (_code, payload) = run_checker_json(&["--identity-json", path.to_str().unwrap()]);
+    let (_code, payload) =
+        run_checker_json(&["--identity-json", path.to_str().unwrap()]);
     assert_eq!(payload["executable"], "/abs/python3");
     assert_eq!(payload["version_major_minor"], "3.12");
     assert_eq!(payload["implementation_name"], "cpython");
@@ -291,7 +293,8 @@ fn checker_exits_101_when_identity_json_invalid() {
     let dir = unique_dir("bad-json");
     let path = dir.join("id.json");
     std::fs::write(&path, "{ not valid json").unwrap();
-    let (code, _stdout, stderr) = run_checker(&["--identity-json", path.to_str().unwrap()]);
+    let (code, _stdout, stderr) =
+        run_checker(&["--identity-json", path.to_str().unwrap()]);
     assert_eq!(code, 101);
     assert!(
         stderr.contains("invalid"),
@@ -309,7 +312,8 @@ fn version_major_minor_is_extracted_when_omitted_from_identity_json() {
         "implementation_name": "cpython",
     });
     let path = write_identity(&dir, "id.json", &body);
-    let (code, payload) = run_checker_json(&["--identity-json", path.to_str().unwrap()]);
+    let (code, payload) =
+        run_checker_json(&["--identity-json", path.to_str().unwrap()]);
     assert_eq!(code, 0);
     assert_eq!(payload["version_major_minor"], "3.12");
 }
@@ -321,9 +325,7 @@ fn probe_against_real_python3_emits_some_identity() {
     // We can't assert the version (CI runners differ); we only
     // assert the JSON shape and that probing succeeds.
     let (_code, payload) = run_checker_json(&[]);
-    assert!(payload["executable"]
-        .as_str()
-        .map_or(false, |s| !s.is_empty()));
+    assert!(payload["executable"].as_str().map_or(false, |s| !s.is_empty()));
     assert!(payload["version"].as_str().map_or(false, |s| !s.is_empty()));
     assert!(payload["implementation_name"]
         .as_str()

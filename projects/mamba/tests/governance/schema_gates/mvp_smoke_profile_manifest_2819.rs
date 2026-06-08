@@ -20,7 +20,11 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-const REQUIRED_COMMANDS: &[&str] = &["compile_list", "inventory_summary", "skip_debt_summary"];
+const REQUIRED_COMMANDS: &[&str] = &[
+    "compile_list",
+    "inventory_summary",
+    "skip_debt_summary",
+];
 
 const ALLOWED_KINDS: &[&str] = &["compile_list", "inventory", "skip_debt"];
 
@@ -45,19 +49,14 @@ fn scripts_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 fn require_str<'a>(table: &'a toml::value::Table, key: &str, id: &str) -> &'a str {
     table
         .get(key)
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| panic!("smoke command {id}: missing or empty required string `{key}`"))
+        .unwrap_or_else(|| {
+            panic!("smoke command {id}: missing or empty required string `{key}`")
+        })
 }
 
 fn require_int(table: &toml::value::Table, key: &str, id: &str) -> i64 {
@@ -76,7 +75,7 @@ fn require_bool(table: &toml::value::Table, key: &str, id: &str) -> bool {
 
 #[test]
 fn smoke_profile_manifest_has_required_commands() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("profile").and_then(|v| v.as_str()),
@@ -111,7 +110,7 @@ fn smoke_profile_manifest_has_required_commands() {
 
 #[test]
 fn smoke_profile_manifest_entries_are_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let commands = doc
         .get("commands")
         .and_then(|v| v.as_table())
@@ -155,7 +154,7 @@ fn smoke_profile_manifest_entries_are_well_formed() {
 
 #[test]
 fn smoke_profile_policy_excludes_long_running_benchmarks() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let policy = doc
         .get("policy")
@@ -214,7 +213,7 @@ fn smoke_profile_policy_excludes_long_running_benchmarks() {
 
 #[test]
 fn smoke_profile_commands_reference_scripts_directory() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let commands = doc
         .get("commands")
         .and_then(|v| v.as_table())
@@ -248,7 +247,7 @@ fn smoke_profile_commands_reference_scripts_directory() {
 
 #[test]
 fn mvp_umbrella_links_to_smoke_manifest() {
-    let doc = load_toml(&umbrella_path());
+    let doc = crate::common::load_toml(&umbrella_path());
     let smoke = doc
         .get("profiles")
         .and_then(|v| v.get("smoke"))

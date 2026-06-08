@@ -27,7 +27,7 @@ pub mod canvas_spy;
 pub mod react_oracle;
 pub mod snapshot;
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{ensure, Result};
 use jet::browser::{page::Page, Browser};
 use jet::browser_cli;
 use jet::wasm_build::{self, Profile};
@@ -192,72 +192,44 @@ impl JetTestApp {
             jet::build_target::BuildTarget::Web,
         )?;
 
-        let mut last_err = None;
-        for attempt in 0..2 {
-            let port = free_port().await;
-            let url = format!("http://127.0.0.1:{port}/");
+        let port = free_port().await;
+        let url = format!("http://127.0.0.1:{port}/");
 
-            let serve_root = demo.clone();
-            let serve_task = tokio::spawn(async move {
-                wasm_dev::serve(
-                    &serve_root,
-                    DevOptions {
-                        host: "127.0.0.1".to_string(),
-                        port,
-                        debug: true,
-                    },
-                )
-                .await
-            });
+        let serve_root = demo.clone();
+        let serve_task = tokio::spawn(async move {
+            wasm_dev::serve(
+                &serve_root,
+                DevOptions {
+                    host: "127.0.0.1".to_string(),
+                    port,
+                    debug: true,
+                },
+            )
+            .await
+        });
 
-            // Poll for readiness. Cold wasm-pack + wasm-bindgen can take
-            // tens of seconds on fresh caches; keep this above the
-            // release smoke budget so E2E does not fail just before bind.
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(2))
-                .build()?;
-            if !wait_for_http_ready(&client, &url).await {
-                serve_task.abort();
-                last_err = Some(anyhow!("wasm_dev never came up at {url}"));
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                continue;
-            }
+        // Poll for readiness. Cold wasm-pack + wasm-bindgen can take
+        // tens of seconds on fresh caches; keep this above the
+        // release smoke budget so E2E does not fail just before bind.
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()?;
+        let ready = wait_for_http_ready(&client, &url).await;
+        ensure!(ready, "wasm_dev never came up at {url}");
 
-            match browser_cli::prepare_session_with_init_scripts(&demo, &url, init_scripts).await {
-                Ok(browser) => {
-                    // wasm-bindgen init + first paint + JetDebug registration.
-                    tokio::time::sleep(Duration::from_millis(1500)).await;
-                    match browser_cli::attach(&demo).await {
-                        Ok(page) => {
-                            return Ok(Self {
-                                demo_dir: demo,
-                                page,
-                                url,
-                                browser,
-                                serve_task,
-                            });
-                        }
-                        Err(err) => {
-                            let _ = browser.close().await;
-                            serve_task.abort();
-                            browser_cli::session::clear(&demo);
-                            last_err = Some(err);
-                        }
-                    }
-                }
-                Err(err) => {
-                    serve_task.abort();
-                    browser_cli::session::clear(&demo);
-                    last_err = Some(err);
-                }
-            }
+        let browser =
+            browser_cli::prepare_session_with_init_scripts(&demo, &url, init_scripts).await?;
+        // wasm-bindgen init + first paint + JetDebug registration.
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let page = browser_cli::attach(&demo).await?;
 
-            if attempt == 0 {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| anyhow!("Jet test app launch failed without error")))
+        Ok(Self {
+            demo_dir: demo,
+            page,
+            url,
+            browser,
+            serve_task,
+        })
     }
 
     /// Click the canvas at (x, y) via a synthetic DOM MouseEvent.

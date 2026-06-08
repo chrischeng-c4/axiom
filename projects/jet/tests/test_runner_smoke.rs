@@ -215,4 +215,50 @@ describe("@jet/test contract", () => {
         summary.passed
     );
 }
+
+#[tokio::test]
+async fn jet_test_colon_virtual_module_resolves_for_ts_and_js_specs() {
+    if which::which("node").is_err() {
+        eprintln!("skipping: node not on PATH");
+        return;
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("virtual-ts.spec.ts"),
+        r#"
+import { test, expect } from "jet:test";
+
+test("TS spec can import Jet's virtual test module", () => {
+  const label: string = "jet:test";
+  expect(label).toBe("jet:test");
+});
+"#,
+    )
+    .unwrap();
+    fs::write(
+        tmp.path().join("virtual-js.spec.js"),
+        r#"
+import { test, expect } from "jet:test";
+
+test("JS spec can import Jet's virtual test module", () => {
+  expect([1, 2, 3]).toHaveLength(3);
+});
+"#,
+    )
+    .unwrap();
+
+    let mut cfg = RunnerConfig::default_for_root(tmp.path()).unwrap();
+    cfg.reporters = vec![];
+    let summary = test_runner::run(cfg).await.expect("runner should complete");
+    assert_eq!(
+        summary.failed, 0,
+        "`jet:test` must resolve to Jet's built-in runtime without npm install; reports = {:#?}",
+        summary.reports
+    );
+    assert_eq!(
+        summary.passed, 2,
+        "expected both virtual-module specs to pass"
+    );
+}
 // CODEGEN-END

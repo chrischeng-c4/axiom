@@ -1,7 +1,3 @@
-use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
-use super::super::value::MbValue;
-use crate::runtime::rc::MbRwLock as RwLock;
-use rustc_hash::FxHashMap;
 /// traceback module for Mamba (#431, #1441, #1265 Task — Wave-N).
 ///
 /// Provides the CPython 3.12 `traceback` 19-entry public surface:
@@ -44,17 +40,18 @@ use rustc_hash::FxHashMap;
 ///   - `format_exception_only(exc, value=None)` formats only `exc` —
 ///     the optional `value` arg is accepted positionally but ignored
 ///     (CPython's deprecated 3.12 binary-arg form).
+
 use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use crate::runtime::rc::MbRwLock as RwLock;
 use std::sync::atomic::AtomicU32;
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 /// Helper: extract a string from an MbValue.
 fn extract_str(val: MbValue) -> Option<String> {
     val.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Str(ref s) = (*ptr).data {
-            Some(s.clone())
-        } else {
-            None
-        }
+        if let ObjData::Str(ref s) = (*ptr).data { Some(s.clone()) } else { None }
     })
 }
 
@@ -62,9 +59,7 @@ fn extract_str(val: MbValue) -> Option<String> {
 
 macro_rules! disp_nullary {
     ($disp:ident, $fn:path) => {
-        unsafe extern "C" fn $disp(_a: *const MbValue, _n: usize) -> MbValue {
-            $fn()
-        }
+        unsafe extern "C" fn $disp(_a: *const MbValue, _n: usize) -> MbValue { $fn() }
     };
 }
 
@@ -87,26 +82,26 @@ macro_rules! disp_variadic {
 }
 
 // Callables (16 surface entries)
-disp_nullary!(d_format_exc, mb_traceback_format_exc);
-disp_unary!(d_format_exception, mb_traceback_format_exception);
+disp_nullary!(d_format_exc,           mb_traceback_format_exc);
+disp_unary!(d_format_exception,       mb_traceback_format_exception);
 disp_variadic!(d_format_exception_only, mb_traceback_format_exception_only);
-disp_unary!(d_format_tb, mb_traceback_format_tb);
-disp_nullary!(d_format_stack, mb_traceback_format_stack);
-disp_unary!(d_format_list, mb_traceback_format_list);
-disp_unary!(d_extract_tb, mb_traceback_extract_tb);
-disp_nullary!(d_extract_stack, mb_traceback_extract_stack);
-disp_unary!(d_print_tb, mb_traceback_print_tb);
-disp_variadic!(d_print_exception, mb_traceback_print_exception);
-disp_nullary!(d_print_exc, mb_traceback_print_exc);
-disp_nullary!(d_print_last, mb_traceback_print_last);
-disp_nullary!(d_print_stack, mb_traceback_print_stack);
-disp_unary!(d_clear_frames, mb_traceback_clear_frames);
-disp_unary!(d_walk_tb, mb_traceback_walk_tb);
-disp_nullary!(d_walk_stack, mb_traceback_walk_stack);
+disp_unary!(d_format_tb,              mb_traceback_format_tb);
+disp_nullary!(d_format_stack,         mb_traceback_format_stack);
+disp_unary!(d_format_list,            mb_traceback_format_list);
+disp_unary!(d_extract_tb,             mb_traceback_extract_tb);
+disp_nullary!(d_extract_stack,        mb_traceback_extract_stack);
+disp_unary!(d_print_tb,               mb_traceback_print_tb);
+disp_variadic!(d_print_exception,     mb_traceback_print_exception);
+disp_nullary!(d_print_exc,            mb_traceback_print_exc);
+disp_nullary!(d_print_last,           mb_traceback_print_last);
+disp_nullary!(d_print_stack,          mb_traceback_print_stack);
+disp_unary!(d_clear_frames,           mb_traceback_clear_frames);
+disp_unary!(d_walk_tb,                mb_traceback_walk_tb);
+disp_nullary!(d_walk_stack,           mb_traceback_walk_stack);
 
 // Class shells (3 surface entries)
-disp_variadic!(d_frame_summary, mb_traceback_frame_summary_new);
-disp_variadic!(d_stack_summary, mb_traceback_stack_summary_new);
+disp_variadic!(d_frame_summary,       mb_traceback_frame_summary_new);
+disp_variadic!(d_stack_summary,       mb_traceback_stack_summary_new);
 disp_variadic!(d_traceback_exception, mb_traceback_traceback_exception_new);
 
 /// Register the traceback module.
@@ -114,32 +109,26 @@ pub fn register() {
     let mut attrs = HashMap::new();
     let dispatchers: Vec<(&str, usize)> = vec![
         // Callables
-        ("format_exc", d_format_exc as *const () as usize),
-        ("format_exception", d_format_exception as *const () as usize),
-        (
-            "format_exception_only",
-            d_format_exception_only as *const () as usize,
-        ),
-        ("format_tb", d_format_tb as *const () as usize),
-        ("format_stack", d_format_stack as *const () as usize),
-        ("format_list", d_format_list as *const () as usize),
-        ("extract_tb", d_extract_tb as *const () as usize),
-        ("extract_stack", d_extract_stack as *const () as usize),
-        ("print_tb", d_print_tb as *const () as usize),
-        ("print_exception", d_print_exception as *const () as usize),
-        ("print_exc", d_print_exc as *const () as usize),
-        ("print_last", d_print_last as *const () as usize),
-        ("print_stack", d_print_stack as *const () as usize),
-        ("clear_frames", d_clear_frames as *const () as usize),
-        ("walk_tb", d_walk_tb as *const () as usize),
-        ("walk_stack", d_walk_stack as *const () as usize),
+        ("format_exc",             d_format_exc             as *const () as usize),
+        ("format_exception",       d_format_exception       as *const () as usize),
+        ("format_exception_only",  d_format_exception_only  as *const () as usize),
+        ("format_tb",              d_format_tb              as *const () as usize),
+        ("format_stack",           d_format_stack           as *const () as usize),
+        ("format_list",            d_format_list            as *const () as usize),
+        ("extract_tb",             d_extract_tb             as *const () as usize),
+        ("extract_stack",          d_extract_stack          as *const () as usize),
+        ("print_tb",               d_print_tb               as *const () as usize),
+        ("print_exception",        d_print_exception        as *const () as usize),
+        ("print_exc",              d_print_exc              as *const () as usize),
+        ("print_last",             d_print_last             as *const () as usize),
+        ("print_stack",            d_print_stack            as *const () as usize),
+        ("clear_frames",           d_clear_frames           as *const () as usize),
+        ("walk_tb",                d_walk_tb                as *const () as usize),
+        ("walk_stack",             d_walk_stack             as *const () as usize),
         // Class shells
-        ("FrameSummary", d_frame_summary as *const () as usize),
-        ("StackSummary", d_stack_summary as *const () as usize),
-        (
-            "TracebackException",
-            d_traceback_exception as *const () as usize,
-        ),
+        ("FrameSummary",           d_frame_summary          as *const () as usize),
+        ("StackSummary",           d_stack_summary          as *const () as usize),
+        ("TracebackException",     d_traceback_exception    as *const () as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -198,9 +187,7 @@ pub fn mb_traceback_format_exception_only(args: &[MbValue]) -> MbValue {
     // value-bearing instance for rendering — `format_exception_value` extracts
     // type + message from a real Instance, while the bare type passed as
     // arg[0] only yields its name.
-    let exc = args
-        .get(1)
-        .copied()
+    let exc = args.get(1).copied()
         .filter(|v| !v.is_none())
         .unwrap_or_else(|| args.first().copied().unwrap_or_else(MbValue::none));
     if exc.is_none() {
@@ -241,19 +228,17 @@ pub fn mb_traceback_format_list(_extracted: MbValue) -> MbValue {
 /// surface-coverage callers (test_traceback) expect a non-empty list with
 /// `.filename` / `.lineno` / `.name` attrs. Synthesize one FrameSummary
 /// stub when called.
-pub fn mb_traceback_extract_tb(_tb: MbValue) -> MbValue {
+pub fn mb_traceback_extract_tb(tb: MbValue) -> MbValue {
+    // CPython: extract_tb(None) -> empty StackSummary (len 0).
+    if tb.is_none() {
+        return MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    }
     let frame = make_instance(
         "FrameSummary",
         vec![
-            (
-                "filename",
-                MbValue::from_ptr(MbObject::new_str("<unknown>".to_string())),
-            ),
+            ("filename", MbValue::from_ptr(MbObject::new_str("<unknown>".to_string()))),
             ("lineno", MbValue::from_int(1)),
-            (
-                "name",
-                MbValue::from_ptr(MbObject::new_str("<module>".to_string())),
-            ),
+            ("name", MbValue::from_ptr(MbObject::new_str("<module>".to_string()))),
             ("line", MbValue::from_ptr(MbObject::new_str("".to_string()))),
             ("locals", MbValue::none()),
         ],
@@ -314,7 +299,11 @@ pub fn mb_traceback_clear_frames(_tb: MbValue) -> MbValue {
 ///
 /// Mamba returns an empty list (which is iterable). CPython returns a
 /// generator; surface-presence callers don't distinguish.
-pub fn mb_traceback_walk_tb(_tb: MbValue) -> MbValue {
+pub fn mb_traceback_walk_tb(tb: MbValue) -> MbValue {
+    // CPython: walk_tb(None) yields nothing -> empty iterable (len 0).
+    if tb.is_none() {
+        return MbValue::from_ptr(MbObject::new_list(Vec::new()));
+    }
     // Synthesize one (frame, lineno) tuple so surface-coverage tests can
     // iterate. Frame placeholder is None — callers only assert the tuple
     // shape and length.
@@ -343,10 +332,7 @@ fn make_instance(class_name: &str, fields_kv: Vec<(&str, MbValue)>) -> MbValue {
         fields.insert(k.to_string(), v);
     }
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
+        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
             fields: RwLock::new(fields),
@@ -361,20 +347,17 @@ fn make_instance(class_name: &str, fields_kv: Vec<(&str, MbValue)>) -> MbValue {
 /// Passive container carrying CPython's documented attribute names.
 pub fn mb_traceback_frame_summary_new(args: &[MbValue]) -> MbValue {
     let filename = args.first().copied().unwrap_or_else(MbValue::none);
-    let lineno = args.get(1).copied().unwrap_or_else(MbValue::none);
-    let name = args.get(2).copied().unwrap_or_else(MbValue::none);
-    let locals = args.get(4).copied().unwrap_or_else(MbValue::none);
-    let line = args.get(5).copied().unwrap_or_else(MbValue::none);
-    make_instance(
-        "FrameSummary",
-        vec![
-            ("filename", filename),
-            ("lineno", lineno),
-            ("name", name),
-            ("locals", locals),
-            ("line", line),
-        ],
-    )
+    let lineno   = args.get(1).copied().unwrap_or_else(MbValue::none);
+    let name     = args.get(2).copied().unwrap_or_else(MbValue::none);
+    let locals   = args.get(4).copied().unwrap_or_else(MbValue::none);
+    let line     = args.get(5).copied().unwrap_or_else(MbValue::none);
+    make_instance("FrameSummary", vec![
+        ("filename", filename),
+        ("lineno",   lineno),
+        ("name",     name),
+        ("locals",   locals),
+        ("line",     line),
+    ])
 }
 
 /// traceback.StackSummary() -> StackSummary Instance (empty list-shaped).
@@ -399,7 +382,7 @@ pub fn mb_traceback_exception_format(receiver: MbValue) -> MbValue {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let f = fields.read().unwrap();
                 let exc_value = f.get("exc_value").copied().unwrap_or_else(MbValue::none);
-                let exc_type = f.get("exc_type").copied().unwrap_or_else(MbValue::none);
+                let exc_type  = f.get("exc_type").copied().unwrap_or_else(MbValue::none);
                 drop(f);
                 if !exc_value.is_none() {
                     formatted = format_exception_value(exc_value);
@@ -424,17 +407,14 @@ pub fn mb_traceback_exception_format(receiver: MbValue) -> MbValue {
 /// (`exc_type`, `exc_value`, `exc_traceback`); behavioral methods like
 /// `.format()` are not provided.
 pub fn mb_traceback_traceback_exception_new(args: &[MbValue]) -> MbValue {
-    let exc_type = args.first().copied().unwrap_or_else(MbValue::none);
-    let exc_value = args.get(1).copied().unwrap_or_else(MbValue::none);
+    let exc_type      = args.first().copied().unwrap_or_else(MbValue::none);
+    let exc_value     = args.get(1).copied().unwrap_or_else(MbValue::none);
     let exc_traceback = args.get(2).copied().unwrap_or_else(MbValue::none);
-    make_instance(
-        "TracebackException",
-        vec![
-            ("exc_type", exc_type),
-            ("exc_value", exc_value),
-            ("exc_traceback", exc_traceback),
-        ],
-    )
+    make_instance("TracebackException", vec![
+        ("exc_type",      exc_type),
+        ("exc_value",     exc_value),
+        ("exc_traceback", exc_traceback),
+    ])
 }
 
 // ── Helpers ──
@@ -450,8 +430,7 @@ fn format_exception_value(exc: MbValue) -> String {
                 ObjData::Str(s) => format!("Exception: {s}"),
                 ObjData::Instance { class_name, fields } => {
                     let fields = fields.read().unwrap();
-                    let msg = fields
-                        .get("message")
+                    let msg = fields.get("message")
                         .or_else(|| fields.get("msg"))
                         .or_else(|| fields.get("args"))
                         .and_then(|v| extract_str(*v))
@@ -464,12 +443,10 @@ fn format_exception_value(exc: MbValue) -> String {
                 }
                 ObjData::Dict(ref lock) => {
                     let map = lock.read().unwrap();
-                    let type_name = map
-                        .get("_type")
+                    let type_name = map.get("_type")
                         .and_then(|v| extract_str(*v))
                         .unwrap_or_else(|| "Exception".to_string());
-                    let msg = map
-                        .get("message")
+                    let msg = map.get("message")
                         .or_else(|| map.get("msg"))
                         .and_then(|v| extract_str(*v))
                         .unwrap_or_default();
@@ -501,10 +478,7 @@ mod tests {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let mut map = fields.write().unwrap();
                 for (k, v) in field_entries {
-                    map.insert(
-                        k.to_string(),
-                        MbValue::from_ptr(MbObject::new_str(v.to_string())),
-                    );
+                    map.insert(k.to_string(), MbValue::from_ptr(MbObject::new_str(v.to_string())));
                 }
             }
         }
@@ -517,16 +491,10 @@ mod tests {
             if let ObjData::Dict(ref lock) = (*dict).data {
                 let mut map = lock.write().unwrap();
                 if let Some(t) = type_name {
-                    map.insert(
-                        "_type".into(),
-                        MbValue::from_ptr(MbObject::new_str(t.to_string())),
-                    );
+                    map.insert("_type".into(), MbValue::from_ptr(MbObject::new_str(t.to_string())));
                 }
                 if let Some(m) = msg {
-                    map.insert(
-                        "message".into(),
-                        MbValue::from_ptr(MbObject::new_str(m.to_string())),
-                    );
+                    map.insert("message".into(), MbValue::from_ptr(MbObject::new_str(m.to_string())));
                 }
             }
         }
@@ -538,9 +506,7 @@ mod tests {
             unsafe {
                 if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                     let f = fields.read().unwrap();
-                    if let Some(v) = f.get(field) {
-                        return *v;
-                    }
+                    if let Some(v) = f.get(field) { return *v; }
                 }
             }
         }
@@ -723,10 +689,7 @@ mod tests {
         ];
         let fs = mb_traceback_frame_summary_new(&args);
         assert!(fs.as_ptr().is_some());
-        assert_eq!(
-            extract_str(get_field(fs, "filename")),
-            Some("file.py".to_string())
-        );
+        assert_eq!(extract_str(get_field(fs, "filename")), Some("file.py".to_string()));
         assert_eq!(get_field(fs, "lineno").as_int(), Some(42));
         assert_eq!(extract_str(get_field(fs, "name")), Some("func".to_string()));
     }
@@ -737,9 +700,7 @@ mod tests {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ss.as_ptr().unwrap()).data {
                 assert_eq!(class_name, "StackSummary");
-            } else {
-                panic!("expected Instance");
-            }
+            } else { panic!("expected Instance"); }
         }
     }
 
@@ -749,9 +710,7 @@ mod tests {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*te.as_ptr().unwrap()).data {
                 assert_eq!(class_name, "TracebackException");
-            } else {
-                panic!("expected Instance");
-            }
+            } else { panic!("expected Instance"); }
         }
     }
 
@@ -759,8 +718,7 @@ mod tests {
 
     fn traceback_attr(name: &str) -> Option<MbValue> {
         super::super::super::module::MODULES.with(|mods| {
-            mods.borrow()
-                .get("traceback")
+            mods.borrow().get("traceback")
                 .and_then(|m| m.attrs.get(name).copied())
         })
     }
@@ -769,30 +727,16 @@ mod tests {
     fn test_register_installs_all_19_entries() {
         register();
         for name in [
-            "format_exc",
-            "format_exception",
-            "format_exception_only",
-            "format_tb",
-            "format_stack",
-            "format_list",
-            "extract_tb",
-            "extract_stack",
-            "print_tb",
-            "print_exception",
-            "print_exc",
-            "print_last",
+            "format_exc", "format_exception", "format_exception_only",
+            "format_tb", "format_stack", "format_list",
+            "extract_tb", "extract_stack",
+            "print_tb", "print_exception", "print_exc", "print_last",
             "print_stack",
-            "clear_frames",
-            "walk_tb",
-            "walk_stack",
-            "FrameSummary",
-            "StackSummary",
-            "TracebackException",
+            "clear_frames", "walk_tb", "walk_stack",
+            "FrameSummary", "StackSummary", "TracebackException",
         ] {
-            assert!(
-                traceback_attr(name).is_some(),
-                "traceback module missing entry: {name}"
-            );
+            assert!(traceback_attr(name).is_some(),
+                "traceback module missing entry: {name}");
         }
     }
 }

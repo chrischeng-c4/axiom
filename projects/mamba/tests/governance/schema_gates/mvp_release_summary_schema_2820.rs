@@ -52,7 +52,8 @@ fn example_path() -> PathBuf {
 fn load_json(path: &Path) -> Value {
     let raw = std::fs::read_to_string(path)
         .unwrap_or_else(|e| panic!("read {} failed: {e}", path.display()));
-    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {} failed: {e}", path.display()))
+    serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("parse {} failed: {e}", path.display()))
 }
 
 /// Returns Ok(()) iff `value` satisfies the JSON Schema `schema`.
@@ -92,7 +93,9 @@ fn validate(value: &Value, schema: &Value, path: &str) -> Result<(), String> {
 
     if let Some(en) = schema_obj.get("enum").and_then(|v| v.as_array()) {
         if !en.iter().any(|allowed| allowed == value) {
-            return Err(format!("{path}: value {value} not in enum {en:?}"));
+            return Err(format!(
+                "{path}: value {value} not in enum {en:?}"
+            ));
         }
     }
 
@@ -173,10 +176,12 @@ fn validate(value: &Value, schema: &Value, path: &str) -> Result<(), String> {
 /// Walks the schema and yields every JSON Pointer path that names a
 /// required field (top-level and nested through `properties`). Used to
 /// drive the "missing field fails" negative cases.
-fn collect_required_paths(schema: &Value, parent: &str, out: &mut Vec<(String, String)>) {
-    let Some(obj) = schema.as_object() else {
-        return;
-    };
+fn collect_required_paths(
+    schema: &Value,
+    parent: &str,
+    out: &mut Vec<(String, String)>,
+) {
+    let Some(obj) = schema.as_object() else { return };
     if let (Some(required), Some(props)) = (
         obj.get("required").and_then(|v| v.as_array()),
         obj.get("properties").and_then(|v| v.as_object()),
@@ -244,7 +249,8 @@ fn schema_lives_next_to_profile_manifests() {
 fn example_summary_validates_against_schema() {
     let schema = load_json(&schema_path());
     let example = load_json(&example_path());
-    validate(&example, &schema, "$").expect("example summary must validate against the schema");
+    validate(&example, &schema, "$")
+        .expect("example summary must validate against the schema");
 }
 
 #[test]

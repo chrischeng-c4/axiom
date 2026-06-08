@@ -2,7 +2,7 @@
 # Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/concurrent_futures_1473.toml)
 issue = 1473
 lib = "concurrent_futures"
-fixture = "tests/cpython/fixtures/std-libs/concurrent_futures/bench/executor_type_read_hot.py"
+fixture = "tests/cpython/_regression/std-libs/concurrent_futures/bench/executor_type_read_hot.py"
 floor = 1.0
 mem_floor = 1.0
 samples = 1

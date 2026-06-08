@@ -2,7 +2,7 @@
 # `def f[T]()`, `class C[T]`) conformance corpus.
 #
 # One [[case]] per fixture. `fixture_gen.py` turns this into the files under
-# tests/cpython/fixtures/pep/695/<dimension>/<case>.py:
+# tests/cpython/pep/695/<dimension>/<case>.py:
 #   - mechanical surface/errors come out complete (status="filled")
 #   - semantic behavior cases come out as fillable skeletons (status="generated")
 #

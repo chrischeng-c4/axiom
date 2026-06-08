@@ -128,7 +128,13 @@ where
 /// BFGS quasi-Newton minimization.
 ///
 /// Requires both the objective function and its gradient.
-pub fn bfgs<F, G>(f: F, grad: G, x0: &[f64], max_iter: usize, tol: f64) -> Result<MinimizeResult>
+pub fn bfgs<F, G>(
+    f: F,
+    grad: G,
+    x0: &[f64],
+    max_iter: usize,
+    tol: f64,
+) -> Result<MinimizeResult>
 where
     F: Fn(&[f64]) -> f64,
     G: Fn(&[f64]) -> Vec<f64>,
@@ -160,13 +166,7 @@ where
 
         // Search direction: p = -H_inv * g
         let p: Vec<f64> = (0..n)
-            .map(|i| {
-                -h_inv[i]
-                    .iter()
-                    .zip(g.iter())
-                    .map(|(&h, &gi)| h * gi)
-                    .sum::<f64>()
-            })
+            .map(|i| -h_inv[i].iter().zip(g.iter()).map(|(&h, &gi)| h * gi).sum::<f64>())
             .collect();
 
         // Line search (backtracking Armijo)
@@ -176,11 +176,7 @@ where
         let slope: f64 = g.iter().zip(p.iter()).map(|(&gi, &pi)| gi * pi).sum();
 
         for _ in 0..50 {
-            let x_new: Vec<f64> = x
-                .iter()
-                .zip(p.iter())
-                .map(|(&xi, &pi)| xi + alpha * pi)
-                .collect();
+            let x_new: Vec<f64> = x.iter().zip(p.iter()).map(|(&xi, &pi)| xi + alpha * pi).collect();
             if f(&x_new) <= f_x + c1 * alpha * slope {
                 break;
             }
@@ -195,31 +191,21 @@ where
 
         // Update gradient
         let g_new = grad(&x);
-        let y: Vec<f64> = g_new
-            .iter()
-            .zip(g.iter())
-            .map(|(&gn, &go)| gn - go)
-            .collect();
+        let y: Vec<f64> = g_new.iter().zip(g.iter()).map(|(&gn, &go)| gn - go).collect();
 
         // BFGS update of inverse Hessian
         let sy: f64 = s.iter().zip(y.iter()).map(|(&si, &yi)| si * yi).sum();
         if sy > 1e-14 {
             // H_inv update via Sherman-Morrison
             let hy: Vec<f64> = (0..n)
-                .map(|i| {
-                    h_inv[i]
-                        .iter()
-                        .zip(y.iter())
-                        .map(|(&h, &yi)| h * yi)
-                        .sum::<f64>()
-                })
+                .map(|i| h_inv[i].iter().zip(y.iter()).map(|(&h, &yi)| h * yi).sum::<f64>())
                 .collect();
             let yhy: f64 = y.iter().zip(hy.iter()).map(|(&yi, &hyi)| yi * hyi).sum();
 
             for i in 0..n {
                 for j in 0..n {
-                    h_inv[i][j] +=
-                        (sy + yhy) / (sy * sy) * s[i] * s[j] - (hy[i] * s[j] + s[i] * hy[j]) / sy;
+                    h_inv[i][j] += (sy + yhy) / (sy * sy) * s[i] * s[j]
+                        - (hy[i] * s[j] + s[i] * hy[j]) / sy;
                 }
             }
         }

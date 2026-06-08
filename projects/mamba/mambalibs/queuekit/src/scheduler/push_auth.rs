@@ -70,7 +70,12 @@ impl OidcValidator {
     /// * `issuer` - Expected `iss` claim
     /// * `jwks_url` - URL to fetch Google JWKS public keys
     /// * `cache_ttl` - TTL for cached JWKS keys
-    pub fn new(audience: String, issuer: String, jwks_url: String, cache_ttl: Duration) -> Self {
+    pub fn new(
+        audience: String,
+        issuer: String,
+        jwks_url: String,
+        cache_ttl: Duration,
+    ) -> Self {
         Self {
             audience,
             issuer,
@@ -86,7 +91,8 @@ impl OidcValidator {
     pub async fn validate_token(&self, token: &str) -> Result<(), TaskError> {
         let keys = self.get_keys().await?;
 
-        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
+        let mut validation =
+            jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::RS256);
         validation.set_issuer(&[&self.issuer]);
         validation.set_audience(&[&self.audience]);
 
@@ -108,18 +114,22 @@ impl OidcValidator {
     }
 
     /// Fetch and parse JWKS from the Google endpoint.
-    pub async fn fetch_jwks(&self) -> Result<Vec<jsonwebtoken::DecodingKey>, TaskError> {
+    pub async fn fetch_jwks(
+        &self,
+    ) -> Result<Vec<jsonwebtoken::DecodingKey>, TaskError> {
         let response = self
             .http_client
             .get(&self.jwks_url)
             .send()
             .await
-            .map_err(|e| TaskError::Connection(format!("Failed to fetch JWKS: {}", e)))?;
+            .map_err(|e| {
+                TaskError::Connection(format!("Failed to fetch JWKS: {}", e))
+            })?;
 
-        let jwks: jsonwebtoken::jwk::JwkSet = response
-            .json()
-            .await
-            .map_err(|e| TaskError::Deserialization(format!("Failed to parse JWKS: {}", e)))?;
+        let jwks: jsonwebtoken::jwk::JwkSet =
+            response.json().await.map_err(|e| {
+                TaskError::Deserialization(format!("Failed to parse JWKS: {}", e))
+            })?;
 
         let keys: Vec<jsonwebtoken::DecodingKey> = jwks
             .keys
@@ -147,7 +157,9 @@ impl OidcValidator {
     }
 
     /// Get JWKS keys, fetching from the endpoint if cache is expired.
-    async fn get_keys(&self) -> Result<Vec<jsonwebtoken::DecodingKey>, TaskError> {
+    async fn get_keys(
+        &self,
+    ) -> Result<Vec<jsonwebtoken::DecodingKey>, TaskError> {
         // Check cache
         {
             let cache = self.jwks_cache.read().await;
@@ -203,29 +215,43 @@ impl HmacValidator {
     /// Expected format: `sha256={hex_digest}`
     ///
     /// Uses constant-time comparison internally via `hmac::Mac::verify_slice`.
-    pub fn validate_signature(&self, body: &[u8], signature_header: &str) -> Result<(), TaskError> {
-        let hex_digest = signature_header.strip_prefix("sha256=").ok_or_else(|| {
-            TaskError::Authentication("HMAC signature validation failed".to_string())
-        })?;
+    pub fn validate_signature(
+        &self,
+        body: &[u8],
+        signature_header: &str,
+    ) -> Result<(), TaskError> {
+        let hex_digest =
+            signature_header.strip_prefix("sha256=").ok_or_else(|| {
+                TaskError::Authentication(
+                    "HMAC signature validation failed".to_string(),
+                )
+            })?;
 
         let provided_bytes = hex_decode(hex_digest).map_err(|_| {
-            TaskError::Authentication("HMAC signature validation failed".to_string())
+            TaskError::Authentication(
+                "HMAC signature validation failed".to_string(),
+            )
         })?;
 
-        let mut mac = HmacSha256::new_from_slice(&self.secret)
-            .map_err(|e| TaskError::Configuration(format!("HMAC key error: {}", e)))?;
+        let mut mac = HmacSha256::new_from_slice(&self.secret).map_err(|e| {
+            TaskError::Configuration(format!("HMAC key error: {}", e))
+        })?;
         mac.update(body);
 
         // Constant-time comparison
-        mac.verify_slice(&provided_bytes)
-            .map_err(|_| TaskError::Authentication("HMAC signature validation failed".to_string()))
+        mac.verify_slice(&provided_bytes).map_err(|_| {
+            TaskError::Authentication(
+                "HMAC signature validation failed".to_string(),
+            )
+        })
     }
 
     /// Compute the HMAC-SHA256 signature for a body.
     ///
     /// Returns `sha256={hex_digest}`.
     pub fn compute_signature(&self, body: &[u8]) -> String {
-        let mut mac = HmacSha256::new_from_slice(&self.secret).expect("valid HMAC key");
+        let mut mac =
+            HmacSha256::new_from_slice(&self.secret).expect("valid HMAC key");
         mac.update(body);
         let result = mac.finalize();
         let bytes = result.into_bytes();
@@ -293,10 +319,7 @@ mod tests {
     #[test]
     fn jwks_cache_new_is_invalid() {
         let cache = JwksCache::new(Duration::from_secs(3600));
-        assert!(
-            !cache.is_valid(),
-            "Fresh JwksCache should be invalid (no keys fetched)"
-        );
+        assert!(!cache.is_valid(), "Fresh JwksCache should be invalid (no keys fetched)");
         assert!(cache.keys.is_empty());
         assert!(cache.fetched_at.is_none());
     }
@@ -331,10 +354,7 @@ mod tests {
         );
         assert_eq!(validator.audience, "https://app.example.com");
         assert_eq!(validator.issuer, "https://accounts.google.com");
-        assert_eq!(
-            validator.jwks_url,
-            "https://www.googleapis.com/oauth2/v3/certs"
-        );
+        assert_eq!(validator.jwks_url, "https://www.googleapis.com/oauth2/v3/certs");
     }
 
     #[test]
@@ -399,10 +419,7 @@ mod tests {
         let body = b"test request body";
 
         let signature = validator.compute_signature(body);
-        assert!(
-            signature.starts_with("sha256="),
-            "Signature should have sha256= prefix"
-        );
+        assert!(signature.starts_with("sha256="), "Signature should have sha256= prefix");
 
         let result = validator.validate_signature(body, &signature);
         assert!(result.is_ok(), "Roundtrip should succeed");
@@ -434,10 +451,7 @@ mod tests {
         assert!(result.is_err(), "Wrong signature should fail");
         match result.unwrap_err() {
             TaskError::Authentication(msg) => {
-                assert!(
-                    msg.contains("HMAC signature validation failed"),
-                    "Error: {msg}"
-                );
+                assert!(msg.contains("HMAC signature validation failed"), "Error: {msg}");
             }
             other => panic!("Expected Authentication error, got: {:?}", other),
         }
@@ -488,10 +502,7 @@ mod tests {
         let validator = make_hmac_validator();
         let sig1 = validator.compute_signature(b"body one");
         let sig2 = validator.compute_signature(b"body two");
-        assert_ne!(
-            sig1, sig2,
-            "Different bodies should produce different signatures"
-        );
+        assert_ne!(sig1, sig2, "Different bodies should produce different signatures");
     }
 
     // S2: Same body always produces same signature (deterministic)
@@ -526,9 +537,6 @@ mod tests {
 
         // Validate with different-secret validator
         let result = v2.validate_signature(body, &sig_from_v1);
-        assert!(
-            result.is_err(),
-            "Signature from different secret should fail"
-        );
+        assert!(result.is_err(), "Signature from different secret should fail");
     }
 }

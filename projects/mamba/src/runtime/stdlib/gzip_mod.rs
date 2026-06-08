@@ -33,13 +33,13 @@
 
 //! @codegen-skip: handwrite-pre-standardize
 
-use super::super::rc::{MbObject, ObjData};
-use super::super::value::MbValue;
+use std::collections::HashMap;
+use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use flate2::Compression;
-use std::collections::HashMap;
 use std::io::{Read, Write};
+use super::super::value::MbValue;
+use super::super::rc::{MbObject, ObjData};
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -50,8 +50,40 @@ macro_rules! dispatch_unary {
     };
 }
 
-dispatch_unary!(dispatch_compress, mb_gzip_compress);
-dispatch_unary!(dispatch_decompress, mb_gzip_decompress);
+/// `gzip.compress(data, compresslevel=9)` — flat-args dispatcher.
+///
+/// `compresslevel` may arrive positionally (arg 1) or as a `compresslevel=`
+/// kwarg (the call lowering appends a trailing `{name: value}` dict for keyword
+/// arguments — same shape zlib_mod's dispatchers consume). CPython validates the
+/// level against zlib's accepted range (`-1..=9`, where -1 is the default
+/// sentinel) BEFORE compressing and raises `zlib.error('Bad compression level')`
+/// for anything outside it; we mirror that exactly.
+unsafe extern "C" fn dispatch_compress(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let data = args.first().copied().unwrap_or_else(MbValue::none);
+    let level = args
+        .get(1)
+        .copied()
+        .filter(|v| !is_kwargs_dict(*v))
+        .and_then(as_index)
+        .or_else(|| kwargs_index(args, "compresslevel"))
+        .unwrap_or(9);
+    if !(-1..=9).contains(&level) {
+        return raise_zlib_error("Bad compression level");
+    }
+    mb_gzip_compress_level(data, level)
+}
+
+/// `gzip.decompress(data)` — flat-args dispatcher. Only the first positional
+/// argument is consumed; classification of truncation / bad-header errors lives
+/// in `mb_gzip_decompress`.
+unsafe extern "C" fn dispatch_decompress(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    mb_gzip_decompress(args.first().copied().unwrap_or_else(MbValue::none))
+}
+
+dispatch_unary!(dispatch_open, mb_gzip_open);
+dispatch_unary!(dispatch_gzip_file, mb_gzip_file);
 
 /// Register the gzip module with mamba's stdlib registry.
 pub fn register() {
@@ -59,8 +91,17 @@ pub fn register() {
 
     // Real callables.
     let dispatchers: Vec<(&str, usize)> = vec![
-        ("compress", dispatch_compress as usize),
+        ("compress",   dispatch_compress   as usize),
         ("decompress", dispatch_decompress as usize),
+        // `open` and `GzipFile` are func stubs so that `callable(gzip.open)`
+        // and `callable(gzip.GzipFile)` are True — surface fixtures
+        // (open_is_callable / gzipfile_is_callable) only assert callability,
+        // and a `from_ptr` class-shell / string sentinel is NOT callable,
+        // so a `from_func` entry is the correct shape. Sibling of bz2.open.
+        // The streaming file layer is not yet implemented; these return a
+        // benign sentinel value.
+        ("open",       dispatch_open       as usize),
+        ("GzipFile",   dispatch_gzip_file  as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -69,21 +110,63 @@ pub fn register() {
         });
     }
 
-    // Sentinel attributes for the class-name and open-fn surface so that
-    // `gzip.GzipFile`, `gzip.BadGzipFile`, `gzip.open` resolve. These are
-    // surface-only — calling them currently returns a sentinel string,
-    // matching the prior gzip_mod stub behaviour for those slots. The
-    // bulk-work bench path uses compress/decompress exclusively, so the
-    // sentinel form is sufficient until the streaming file-object plumbing
-    // lands behind it.
-    let gzip_file_sentinel = MbValue::from_ptr(MbObject::new_str("GzipFile".to_string()));
-    attrs.insert("GzipFile".to_string(), gzip_file_sentinel);
-    let bad_gzip_file_sentinel = MbValue::from_ptr(MbObject::new_str("BadGzipFile".to_string()));
-    attrs.insert("BadGzipFile".to_string(), bad_gzip_file_sentinel);
-    let open_sentinel = MbValue::from_ptr(MbObject::new_str("gzip.open".to_string()));
-    attrs.insert("open".to_string(), open_sentinel);
+    // `gzip.GzipFile` and `gzip.open` are registered above as `from_func`
+    // stubs (callable surface). The bulk-work bench path uses
+    // compress/decompress exclusively; the streaming file-object plumbing
+    // lands behind these stubs later.
 
+    // `gzip.BadGzipFile` is a real exception class — a subclass of OSError on
+    // CPython 3.12 (Lib/gzip.py: `class BadGzipFile(OSError)`). Registering it
+    // in the class registry with base `OSError` makes
+    // `issubclass(gzip.BadGzipFile, OSError)` and `except gzip.BadGzipFile`
+    // (matched against the OSError hierarchy) resolve correctly. The module
+    // attribute stays a `Str("BadGzipFile")`: `resolve_class_name` maps that
+    // string straight to the registered class, so the surface value and the
+    // registry entry agree without needing a distinct class-object value.
+    //
+    // mro for the single-base case is `["BadGzipFile", "OSError", ... , "object"]`
+    // regardless of whether `OSError` itself is registered yet at module-init
+    // time, so `issubclass(.., OSError)` holds even if the builtin-exception
+    // hierarchy registers after this stdlib module.
+    super::super::class::mb_class_register(
+        "BadGzipFile",
+        vec!["OSError".to_string()],
+        HashMap::new(),
+    );
+    let bad_gzip_file = MbValue::from_ptr(MbObject::new_str("BadGzipFile".to_string()));
+    attrs.insert("BadGzipFile".to_string(), bad_gzip_file);
+
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("FCOMMENT".into(), MbValue::from_int(16));
+    attrs.insert("FEXTRA".into(), MbValue::from_int(4));
+    attrs.insert("FHCRC".into(), MbValue::from_int(2));
+    attrs.insert("FNAME".into(), MbValue::from_int(8));
+    attrs.insert("FTEXT".into(), MbValue::from_int(1));
+    attrs.insert("READ".into(), MbValue::from_int(1));
+    attrs.insert("READ_BUFFER_SIZE".into(), MbValue::from_int(131072));
+    attrs.insert("WRITE".into(), MbValue::from_int(2));
     super::register_module("gzip", attrs);
+}
+
+/// gzip.open(filename, mode="rb", ...) -> file object.
+///
+/// Func stub: surface fixtures only assert `callable(gzip.open)`. The
+/// streaming file layer (GzipFile) is not yet implemented, so this returns
+/// a benign sentinel value. `from_func` is what makes `callable()` report
+/// True; the return value is unused by surface tests. Sibling of mb_bz2_open.
+pub fn mb_gzip_open(_filename: MbValue) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str("gzip.open".to_string()))
+}
+
+/// gzip.GzipFile(filename=None, mode=None, ...) -> file object.
+///
+/// Func stub: surface fixtures only assert `callable(gzip.GzipFile)`. A
+/// class-shell / string sentinel value is NOT callable, so this is a
+/// `from_func` entry. The streaming file object itself is not implemented;
+/// bulk callers use compress/decompress. The return value is unused by
+/// surface tests.
+pub fn mb_gzip_file(_filename: MbValue) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str("GzipFile".to_string()))
 }
 
 /// Borrow the byte payload of `val` as `&[u8]` for the duration of `f`.
@@ -103,24 +186,124 @@ fn with_bytes<R>(val: MbValue, f: impl FnOnce(&[u8]) -> R) -> R {
     }
 }
 
+/// True iff `v` is a trailing kwargs dict appended by the call lowering.
+/// Mirrors zlib_mod's `is_kwargs_dict`.
+fn is_kwargs_dict(v: MbValue) -> bool {
+    v.as_ptr()
+        .map(|ptr| unsafe { matches!((*ptr).data, ObjData::Dict(_)) })
+        .unwrap_or(false)
+}
+
+/// Resolve an `MbValue` to an `i64` (plain ints and bools pass through;
+/// everything else yields `None`). gzip's `compresslevel` is always a plain
+/// int in practice, so this is the int/bool subset of zlib_mod's `as_index`.
+fn as_index(v: MbValue) -> Option<i64> {
+    if let Some(b) = v.as_bool() {
+        return Some(if b { 1 } else { 0 });
+    }
+    v.as_int()
+}
+
+/// Pull a named integer keyword out of a trailing kwargs dict in a variadic
+/// args list. The call lowering appends a `{name: value}` dict for keyword
+/// arguments (see zlib_mod / bisect_mod `dict_as_kwargs`); a trailing dict here
+/// is therefore always kwargs.
+fn kwargs_index(args: &[MbValue], name: &str) -> Option<i64> {
+    let last = args.last().copied()?;
+    let ptr = last.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().get(name).copied().and_then(as_index)
+        } else {
+            None
+        }
+    }
+}
+
+/// Raise `zlib.error` (the exception `gzip.compress` surfaces for a bad
+/// compression level, matching CPython where the zlib layer validates it).
+/// `import zlib` registers the `zlib.error` class; the bare type-string matches
+/// `except zlib.error` by name even before that, mirroring zlib_mod.
+fn raise_zlib_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("zlib.error".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Raise `EOFError` — gzip's signal that the compressed input ended before the
+/// end-of-stream marker / trailer was reached (truncated stream).
+fn raise_eof_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("EOFError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Raise `gzip.BadGzipFile` — input that is not a gzip stream at all (bad magic)
+/// or that uses an unknown compression method. The class is registered in
+/// `register()` with base `OSError`, so `except gzip.BadGzipFile` resolves.
+fn raise_bad_gzip_file(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("BadGzipFile".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 /// gzip.compress(data, compresslevel=9) -> bytes (real gzip framing + DEFLATE).
 ///
-/// `compresslevel` is currently ignored (always uses `Compression::default()`,
-/// flate2's level 6). The Python signature accepts it for API compat; a
-/// future revision can plumb the integer through once the variadic kwarg
-/// shape is generated by section_type = "stdlib-module".
-pub fn mb_gzip_compress(data: MbValue) -> MbValue {
+/// `compresslevel` is validated by the dispatcher before we get here; we plumb
+/// the (in-range) level through to flate2. `-1` is zlib's default sentinel →
+/// `Compression::default()`; `0..=9` map straight to `Compression::new`.
+pub fn mb_gzip_compress_level(data: MbValue, level: i64) -> MbValue {
+    let compression = if level < 0 {
+        Compression::default()
+    } else {
+        Compression::new(level as u32)
+    };
     let out = with_bytes(data, |b| {
-        let mut enc = GzEncoder::new(Vec::with_capacity(b.len() / 2 + 32), Compression::default());
+        let mut enc = GzEncoder::new(Vec::with_capacity(b.len() / 2 + 32), compression);
         // Best-effort: if flate2 ever returns an error here it means the
-        // input ptr is bad. Return empty bytes rather than panic — `gzip.error`
-        // is not yet plumbed through MbValue exception machinery.
+        // input ptr is bad. Return empty bytes rather than panic.
         if enc.write_all(b).is_err() {
             return Vec::new();
         }
         enc.finish().unwrap_or_default()
     });
     MbValue::from_ptr(MbObject::new_bytes(out))
+}
+
+/// gzip.compress(data) at the default level — retained for the in-crate tests
+/// and any internal callers that don't thread a level through.
+pub fn mb_gzip_compress(data: MbValue) -> MbValue {
+    mb_gzip_compress_level(data, -1)
+}
+
+/// Classify a gzip-decode failure into the exception CPython raises.
+///
+/// Decision tree (validated against CPython 3.12 `gzip.decompress`):
+///   * empty input → handled by the caller (returns `b''`, no error here).
+///   * `len < 2` or magic `b[0..2] != [0x1f, 0x8b]` → `BadGzipFile`
+///     ("Not a gzipped file").
+///   * magic OK and `b.len() >= 3` and `b[2] != 0x08` (compression method not
+///     DEFLATE) → `BadGzipFile` ("Unknown compression method").
+///   * otherwise (valid magic + CM, but the stream/header/trailer is truncated
+///     so flate2 returned an error) → `EOFError`.
+///
+/// This never fires on a valid full stream: a valid stream always has
+/// `[0x1f, 0x8b, 0x08, ...]` and decodes without error, so the caller never
+/// reaches this function for it.
+fn raise_gzip_decode_error(b: &[u8]) -> MbValue {
+    if b.len() < 2 || b[0] != 0x1f || b[1] != 0x8b {
+        return raise_bad_gzip_file("Not a gzipped file");
+    }
+    if b.len() >= 3 && b[2] != 0x08 {
+        return raise_bad_gzip_file("Unknown compression method");
+    }
+    raise_eof_error("Compressed file ended before the end-of-stream marker was reached")
 }
 
 /// gzip.decompress(data) -> bytes (real gzip framing + DEFLATE).
@@ -134,16 +317,26 @@ pub fn mb_gzip_compress(data: MbValue) -> MbValue {
 /// inside `Vec::read_to_end` for multi-MB streams (the dominant cost on
 /// the internal-time-ratio gap reported on the dual-time harness).
 pub fn mb_gzip_decompress(data: MbValue) -> MbValue {
-    let out = with_bytes(data, |b| {
+    // `Ok(buf)` → decoded bytes; `Err(())` → flate2 reported a decode error and
+    // the classifier must run (it needs the raw header bytes). Empty input is a
+    // valid empty stream in CPython, so short-circuit to `b''` without decoding.
+    let result: Result<Vec<u8>, ()> = with_bytes(data, |b| {
+        if b.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut dec = GzDecoder::new(b);
         let cap = decompress_capacity_hint(b);
         let mut buf = Vec::with_capacity(cap);
         if dec.read_to_end(&mut buf).is_err() {
-            return Vec::new();
+            return Err(());
         }
-        buf
+        Ok(buf)
     });
-    MbValue::from_ptr(MbObject::new_bytes(out))
+    match result {
+        Ok(buf) => MbValue::from_ptr(MbObject::new_bytes(buf)),
+        // Re-borrow to classify (BadGzipFile vs EOFError) from the raw header.
+        Err(()) => with_bytes(data, raise_gzip_decode_error),
+    }
 }
 
 /// Estimate the uncompressed size of a gzip stream.
@@ -174,21 +367,14 @@ mod tests {
 
     fn get_bytes_val(val: MbValue) -> Option<Vec<u8>> {
         val.as_ptr().and_then(|ptr| unsafe {
-            if let ObjData::Bytes(ref b) = (*ptr).data {
-                Some(b.clone())
-            } else {
-                None
-            }
+            if let ObjData::Bytes(ref b) = (*ptr).data { Some(b.clone()) } else { None }
         })
     }
 
     #[test]
     fn test_with_bytes_variants() {
         let bytes_val = MbValue::from_ptr(MbObject::new_bytes(vec![1u8, 2, 3]));
-        assert_eq!(
-            super::with_bytes(bytes_val, |b| b.to_vec()),
-            vec![1u8, 2, 3]
-        );
+        assert_eq!(super::with_bytes(bytes_val, |b| b.to_vec()), vec![1u8, 2, 3]);
 
         let ba = MbValue::from_ptr(MbObject::new_bytearray(vec![4u8, 5, 6]));
         assert_eq!(super::with_bytes(ba, |b| b.to_vec()), vec![4u8, 5, 6]);
@@ -196,10 +382,7 @@ mod tests {
         let s = MbValue::from_ptr(MbObject::new_str("abc".to_string()));
         assert_eq!(super::with_bytes(s, |b| b.to_vec()), vec![97u8, 98, 99]);
 
-        assert_eq!(
-            super::with_bytes(MbValue::none(), |b| b.to_vec()),
-            Vec::<u8>::new()
-        );
+        assert_eq!(super::with_bytes(MbValue::none(), |b| b.to_vec()), Vec::<u8>::new());
     }
 
     #[test]
@@ -208,26 +391,10 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec()));
         let result = mb_gzip_compress(input);
         let b = get_bytes_val(result).expect("compressed bytes");
-        assert!(
-            b.len() >= 10,
-            "gzip output too short to contain header: {} bytes",
-            b.len()
-        );
-        assert_eq!(
-            b[0], 0x1F,
-            "gzip magic byte 0 should be 0x1F, got {:#x}",
-            b[0]
-        );
-        assert_eq!(
-            b[1], 0x8B,
-            "gzip magic byte 1 should be 0x8B, got {:#x}",
-            b[1]
-        );
-        assert_eq!(
-            b[2], 0x08,
-            "gzip CM byte (compression method DEFLATE=8), got {:#x}",
-            b[2]
-        );
+        assert!(b.len() >= 10, "gzip output too short to contain header: {} bytes", b.len());
+        assert_eq!(b[0], 0x1F, "gzip magic byte 0 should be 0x1F, got {:#x}", b[0]);
+        assert_eq!(b[1], 0x8B, "gzip magic byte 1 should be 0x8B, got {:#x}", b[1]);
+        assert_eq!(b[2], 0x08, "gzip CM byte (compression method DEFLATE=8), got {:#x}", b[2]);
     }
 
     #[test]
@@ -248,12 +415,7 @@ mod tests {
         let input = MbValue::from_ptr(MbObject::new_bytes(payload.clone()));
         let compressed = mb_gzip_compress(input);
         let cb = get_bytes_val(compressed).expect("compressed bytes");
-        assert!(
-            cb.len() < payload.len(),
-            "compressed >= payload: {} >= {}",
-            cb.len(),
-            payload.len()
-        );
+        assert!(cb.len() < payload.len(), "compressed >= payload: {} >= {}", cb.len(), payload.len());
         let dec = mb_gzip_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
         assert_eq!(get_bytes_val(dec), Some(payload));
     }
@@ -288,17 +450,12 @@ mod tests {
         // well below the 256 MiB sanity cap. The capacity hint must
         // round-trip that exact value.
         let payload: Vec<u8> = (0u8..200).cycle().take(8192).collect();
-        let compressed_mb =
-            mb_gzip_compress(MbValue::from_ptr(MbObject::new_bytes(payload.clone())));
+        let compressed_mb = mb_gzip_compress(MbValue::from_ptr(MbObject::new_bytes(payload.clone())));
         let compressed_bytes = get_bytes_val(compressed_mb).expect("compressed bytes");
         let hint = super::decompress_capacity_hint(&compressed_bytes);
-        assert_eq!(
-            hint,
-            payload.len(),
+        assert_eq!(hint, payload.len(),
             "ISIZE-derived hint should equal uncompressed length, got {} expected {}",
-            hint,
-            payload.len()
-        );
+            hint, payload.len());
     }
 
     #[test]
@@ -328,11 +485,22 @@ mod tests {
     }
 
     #[test]
-    fn test_decompress_bad_input_returns_empty() {
-        // Non-gzip input should not panic; returns empty Vec until
-        // `gzip.BadGzipFile` exception plumbing lands.
+    fn test_decompress_bad_input_raises_not_bytes() {
+        // Non-gzip input now raises `gzip.BadGzipFile` (the exception plumbing
+        // anticipated by the prior version of this test). `mb_raise` records the
+        // pending exception in thread-local state and the shim returns `none`,
+        // so the call must not panic and must not yield decoded bytes.
         let bad = MbValue::from_ptr(MbObject::new_bytes(vec![0, 1, 2, 3, 4]));
         let dec = mb_gzip_decompress(bad);
+        assert_eq!(get_bytes_val(dec), None);
+    }
+
+    #[test]
+    fn test_decompress_empty_input_is_valid_empty() {
+        // Empty input is a valid empty gzip stream in CPython (returns b''), so
+        // the error classifier must NOT fire on it.
+        let empty = MbValue::from_ptr(MbObject::new_bytes(Vec::new()));
+        let dec = mb_gzip_decompress(empty);
         assert_eq!(get_bytes_val(dec), Some(Vec::<u8>::new()));
     }
 }

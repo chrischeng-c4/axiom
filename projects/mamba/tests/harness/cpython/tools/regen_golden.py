@@ -2,12 +2,12 @@
 """Regenerate conformance golden files from CPython 3.12.
 
 Usage:
-    python3 tests/harness/cpython/tools/regen_golden.py [tests/cpython/fixtures]
+    python3 tests/harness/cpython/tools/regen_golden.py [tests/cpython]
 
 Walks all .py files under the conformance directory, runs each with
 CPython, and writes the stdout to a .expected file alongside.
 
-Type-strict fixtures (under `tests/cpython/fixtures/type-strict/`) use the
+Type-strict fixtures (under `tests/cpython/type-strict/`) use the
 two-golden form: each fixture produces `<name>.cpython.expected` AND
 `<name>.mamba.expected` because the runtimes are EXPECTED to diverge
 by design (mamba raises TypeError where CPython accepts wrong-typed
@@ -66,7 +66,7 @@ def _write_if_changed(path: Path, content: str) -> bool:
 
 
 def main():
-    base = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("tests/cpython/fixtures")
+    base = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("tests/cpython")
     if not base.exists():
         print(f"Error: {base} does not exist", file=sys.stderr)
         sys.exit(1)

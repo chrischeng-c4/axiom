@@ -1,5 +1,3 @@
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 /// fastapi module for Mamba (#1519).
 ///
 /// Minimal callable-dispatcher shim covering four top-level
@@ -12,7 +10,10 @@ use super::super::value::MbValue;
 /// surface) is tracked separately under #1519; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the 3p
 /// conformance issues have closed against.
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::MbObject;
 
 unsafe extern "C" fn dispatch_fastapi(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
@@ -44,10 +45,7 @@ pub fn register() {
     attrs.insert("Depends".into(), MbValue::from_func(addr_depends));
 
     let addr_httpexception = dispatch_httpexception as *const () as usize;
-    attrs.insert(
-        "HTTPException".into(),
-        MbValue::from_func(addr_httpexception),
-    );
+    attrs.insert("HTTPException".into(), MbValue::from_func(addr_httpexception));
 
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         let mut set = s.borrow_mut();

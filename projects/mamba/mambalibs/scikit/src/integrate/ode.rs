@@ -78,10 +78,7 @@ where
     F: Fn(f64, &[f64]) -> Vec<f64>,
 {
     let dy = f(t, y);
-    y.iter()
-        .zip(dy.iter())
-        .map(|(&yi, &dyi)| yi + dt * dyi)
-        .collect()
+    y.iter().zip(dy.iter()).map(|(&yi, &dyi)| yi + dt * dyi).collect()
 }
 
 /// Classic Runge-Kutta (RK4) step.
@@ -205,7 +202,9 @@ where
         nfev += 1;
 
         let y4: Vec<f64> = (0..n)
-            .map(|i| y[i] + dt * (44.0 / 45.0 * k1[i] - 56.0 / 15.0 * k2[i] + 32.0 / 9.0 * k3[i]))
+            .map(|i| {
+                y[i] + dt * (44.0 / 45.0 * k1[i] - 56.0 / 15.0 * k2[i] + 32.0 / 9.0 * k3[i])
+            })
             .collect();
         let k4 = f(t + a4 * dt, &y4);
         nfev += 1;
@@ -237,7 +236,8 @@ where
         let y_new: Vec<f64> = (0..n)
             .map(|i| {
                 y[i] + dt
-                    * (35.0 / 384.0 * k1[i] + 500.0 / 1113.0 * k3[i] + 125.0 / 192.0 * k4[i]
+                    * (35.0 / 384.0 * k1[i] + 500.0 / 1113.0 * k3[i]
+                        + 125.0 / 192.0 * k4[i]
                         - 2187.0 / 6784.0 * k5[i]
                         + 11.0 / 84.0 * k6[i])
             })
@@ -247,7 +247,8 @@ where
         let y_err: Vec<f64> = (0..n)
             .map(|i| {
                 y[i] + dt
-                    * (5179.0 / 57600.0 * k1[i] + 7571.0 / 16695.0 * k3[i] + 393.0 / 640.0 * k4[i]
+                    * (5179.0 / 57600.0 * k1[i] + 7571.0 / 16695.0 * k3[i]
+                        + 393.0 / 640.0 * k4[i]
                         - 92097.0 / 339200.0 * k5[i]
                         + 187.0 / 2100.0 * k6[i]
                         + 1.0 / 40.0 * k6[i]) // simplified
@@ -375,7 +376,11 @@ mod tests {
             "y1 got {}, expected -1",
             y_final[0]
         );
-        assert!(y_final[1].abs() < 1e-4, "y2 got {}, expected 0", y_final[1]);
+        assert!(
+            y_final[1].abs() < 1e-4,
+            "y2 got {}, expected 0",
+            y_final[1]
+        );
     }
 
     #[test]

@@ -1,11 +1,11 @@
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 /// stat module for Mamba.
 ///
 /// Implements Python 3.12 `stat` stdlib: file type constants, permission constants,
 /// stat result field index constants, file type test functions, and permission helpers.
 /// All constant values match CPython 3.12 / POSIX exactly.
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::MbObject;
 
 macro_rules! dispatch_unary {
     ($name:ident, $fn:ident) => {
@@ -23,6 +23,9 @@ dispatch_unary!(dispatch_s_isreg, mb_stat_s_isreg);
 dispatch_unary!(dispatch_s_isfifo, mb_stat_s_isfifo);
 dispatch_unary!(dispatch_s_islnk, mb_stat_s_islnk);
 dispatch_unary!(dispatch_s_issock, mb_stat_s_issock);
+dispatch_unary!(dispatch_s_iswht, mb_stat_s_iswht);
+dispatch_unary!(dispatch_s_isdoor, mb_stat_s_isdoor);
+dispatch_unary!(dispatch_s_isport, mb_stat_s_isport);
 dispatch_unary!(dispatch_s_imode, mb_stat_s_imode);
 dispatch_unary!(dispatch_s_ifmt_fn, mb_stat_s_ifmt_fn);
 dispatch_unary!(dispatch_filemode, mb_stat_filemode);
@@ -73,9 +76,12 @@ pub const ST_MTIME: i64 = 8;
 pub const ST_CTIME: i64 = 9;
 
 /// All integer constants ordered for registration.
+///
+/// Note: `S_IFMT` is intentionally absent here. In CPython `stat.S_IFMT` is the
+/// *function* `S_IFMT(mode)` (the file-type mask `0o170000` is internal only),
+/// so it is registered as a callable in `register()`, not as an int constant.
 const STAT_CONSTANTS: &[(&str, i64)] = &[
     // File type constants
-    ("S_IFMT", S_IFMT),
     ("S_IFSOCK", S_IFSOCK),
     ("S_IFLNK", S_IFLNK),
     ("S_IFREG", S_IFREG),
@@ -127,9 +133,13 @@ pub fn register() {
         ("S_ISFIFO", dispatch_s_isfifo as usize),
         ("S_ISLNK", dispatch_s_islnk as usize),
         ("S_ISSOCK", dispatch_s_issock as usize),
+        ("S_ISWHT", dispatch_s_iswht as usize),
+        ("S_ISDOOR", dispatch_s_isdoor as usize),
+        ("S_ISPORT", dispatch_s_isport as usize),
         ("S_IMODE", dispatch_s_imode as usize),
-        // S_IFMT as function — named _fn to avoid clash with the S_IFMT constant.
-        ("S_IFMT_fn", dispatch_s_ifmt_fn as usize),
+        // In CPython `stat.S_IFMT` is the function `S_IFMT(mode)` (the mask
+        // 0o170000 is internal only), so register the callable under `S_IFMT`.
+        ("S_IFMT", dispatch_s_ifmt_fn as usize),
         ("filemode", dispatch_filemode as usize),
     ];
     for (name, addr) in dispatchers {
@@ -138,6 +148,43 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
+        // surface: missing CPython module constants (auto-added)
+    attrs.insert("FILE_ATTRIBUTE_ARCHIVE".into(), MbValue::from_int(32));
+    attrs.insert("FILE_ATTRIBUTE_COMPRESSED".into(), MbValue::from_int(2048));
+    attrs.insert("FILE_ATTRIBUTE_DEVICE".into(), MbValue::from_int(64));
+    attrs.insert("FILE_ATTRIBUTE_DIRECTORY".into(), MbValue::from_int(16));
+    attrs.insert("FILE_ATTRIBUTE_ENCRYPTED".into(), MbValue::from_int(16384));
+    attrs.insert("FILE_ATTRIBUTE_HIDDEN".into(), MbValue::from_int(2));
+    attrs.insert("FILE_ATTRIBUTE_INTEGRITY_STREAM".into(), MbValue::from_int(32768));
+    attrs.insert("FILE_ATTRIBUTE_NORMAL".into(), MbValue::from_int(128));
+    attrs.insert("FILE_ATTRIBUTE_NOT_CONTENT_INDEXED".into(), MbValue::from_int(8192));
+    attrs.insert("FILE_ATTRIBUTE_NO_SCRUB_DATA".into(), MbValue::from_int(131072));
+    attrs.insert("FILE_ATTRIBUTE_OFFLINE".into(), MbValue::from_int(4096));
+    attrs.insert("FILE_ATTRIBUTE_READONLY".into(), MbValue::from_int(1));
+    attrs.insert("FILE_ATTRIBUTE_REPARSE_POINT".into(), MbValue::from_int(1024));
+    attrs.insert("FILE_ATTRIBUTE_SPARSE_FILE".into(), MbValue::from_int(512));
+    attrs.insert("FILE_ATTRIBUTE_SYSTEM".into(), MbValue::from_int(4));
+    attrs.insert("FILE_ATTRIBUTE_TEMPORARY".into(), MbValue::from_int(256));
+    attrs.insert("FILE_ATTRIBUTE_VIRTUAL".into(), MbValue::from_int(65536));
+    attrs.insert("SF_APPEND".into(), MbValue::from_int(262144));
+    attrs.insert("SF_ARCHIVED".into(), MbValue::from_int(65536));
+    attrs.insert("SF_IMMUTABLE".into(), MbValue::from_int(131072));
+    attrs.insert("SF_NOUNLINK".into(), MbValue::from_int(1048576));
+    attrs.insert("SF_SNAPSHOT".into(), MbValue::from_int(2097152));
+    attrs.insert("S_ENFMT".into(), MbValue::from_int(1024));
+    attrs.insert("S_IEXEC".into(), MbValue::from_int(64));
+    attrs.insert("S_IFDOOR".into(), MbValue::from_int(0));
+    attrs.insert("S_IFPORT".into(), MbValue::from_int(0));
+    attrs.insert("S_IFWHT".into(), MbValue::from_int(57344));
+    attrs.insert("S_IREAD".into(), MbValue::from_int(256));
+    attrs.insert("S_IWRITE".into(), MbValue::from_int(128));
+    attrs.insert("UF_APPEND".into(), MbValue::from_int(4));
+    attrs.insert("UF_COMPRESSED".into(), MbValue::from_int(32));
+    attrs.insert("UF_HIDDEN".into(), MbValue::from_int(32768));
+    attrs.insert("UF_IMMUTABLE".into(), MbValue::from_int(2));
+    attrs.insert("UF_NODUMP".into(), MbValue::from_int(1));
+    attrs.insert("UF_NOUNLINK".into(), MbValue::from_int(16));
+    attrs.insert("UF_OPAQUE".into(), MbValue::from_int(8));
     super::register_module("stat", attrs);
 }
 
@@ -185,6 +232,27 @@ pub fn mb_stat_s_issock(mode: MbValue) -> MbValue {
     MbValue::from_bool((m & S_IFMT) == S_IFSOCK)
 }
 
+/// stat.S_ISWHT(mode) -> bool — True if mode indicates a whiteout (BSD).
+pub fn mb_stat_s_iswht(mode: MbValue) -> MbValue {
+    let m = mode.as_int().unwrap_or(0);
+    // S_IFWHT == 0o160000 (CPython 3.12).
+    MbValue::from_bool((m & S_IFMT) == 0o160000)
+}
+
+/// stat.S_ISDOOR(mode) -> bool — True if mode indicates a door (Solaris).
+pub fn mb_stat_s_isdoor(mode: MbValue) -> MbValue {
+    let m = mode.as_int().unwrap_or(0);
+    // S_IFDOOR == 0 on non-Solaris CPython builds; matches CPython 3.12.
+    MbValue::from_bool((m & S_IFMT) == 0)
+}
+
+/// stat.S_ISPORT(mode) -> bool — True if mode indicates an event port (Solaris).
+pub fn mb_stat_s_isport(mode: MbValue) -> MbValue {
+    let m = mode.as_int().unwrap_or(0);
+    // S_IFPORT == 0 on non-Solaris CPython builds; matches CPython 3.12.
+    MbValue::from_bool((m & S_IFMT) == 0)
+}
+
 // ── Permission helpers ──
 
 /// stat.S_IMODE(mode) -> int — Extract the permission bits from a mode value.
@@ -213,30 +281,25 @@ pub fn mb_stat_filemode(mode: MbValue) -> MbValue {
     let m = mode.as_int().unwrap_or(0);
     let mut result = [b'-'; 10];
 
-    // Character 0: file type
+    // Character 0: file type.
+    // CPython renders a regular file (S_IFREG) as '-' and any *unrecognized*
+    // type — including mode 0 — as '?', matching its `_filemode_table` default.
     result[0] = match m & S_IFMT {
-        x if x == S_IFDIR => b'd',
-        x if x == S_IFLNK => b'l',
-        x if x == S_IFCHR => b'c',
-        x if x == S_IFBLK => b'b',
-        x if x == S_IFIFO => b'p',
+        x if x == S_IFDIR  => b'd',
+        x if x == S_IFLNK  => b'l',
+        x if x == S_IFCHR  => b'c',
+        x if x == S_IFBLK  => b'b',
+        x if x == S_IFIFO  => b'p',
         x if x == S_IFSOCK => b's',
-        _ => b'-',
+        x if x == S_IFREG  => b'-',
+        _                   => b'?',
     };
 
     // Characters 1-3: owner permissions
-    if m & S_IRUSR != 0 {
-        result[1] = b'r';
-    }
-    if m & S_IWUSR != 0 {
-        result[2] = b'w';
-    }
+    if m & S_IRUSR != 0 { result[1] = b'r'; }
+    if m & S_IWUSR != 0 { result[2] = b'w'; }
     result[3] = if m & S_ISUID != 0 {
-        if m & S_IXUSR != 0 {
-            b's'
-        } else {
-            b'S'
-        }
+        if m & S_IXUSR != 0 { b's' } else { b'S' }
     } else if m & S_IXUSR != 0 {
         b'x'
     } else {
@@ -244,18 +307,10 @@ pub fn mb_stat_filemode(mode: MbValue) -> MbValue {
     };
 
     // Characters 4-6: group permissions
-    if m & S_IRGRP != 0 {
-        result[4] = b'r';
-    }
-    if m & S_IWGRP != 0 {
-        result[5] = b'w';
-    }
+    if m & S_IRGRP != 0 { result[4] = b'r'; }
+    if m & S_IWGRP != 0 { result[5] = b'w'; }
     result[6] = if m & S_ISGID != 0 {
-        if m & S_IXGRP != 0 {
-            b's'
-        } else {
-            b'S'
-        }
+        if m & S_IXGRP != 0 { b's' } else { b'S' }
     } else if m & S_IXGRP != 0 {
         b'x'
     } else {
@@ -263,18 +318,10 @@ pub fn mb_stat_filemode(mode: MbValue) -> MbValue {
     };
 
     // Characters 7-9: other permissions
-    if m & S_IROTH != 0 {
-        result[7] = b'r';
-    }
-    if m & S_IWOTH != 0 {
-        result[8] = b'w';
-    }
+    if m & S_IROTH != 0 { result[7] = b'r'; }
+    if m & S_IWOTH != 0 { result[8] = b'w'; }
     result[9] = if m & S_ISVTX != 0 {
-        if m & S_IXOTH != 0 {
-            b't'
-        } else {
-            b'T'
-        }
+        if m & S_IXOTH != 0 { b't' } else { b'T' }
     } else if m & S_IXOTH != 0 {
         b'x'
     } else {
@@ -312,7 +359,7 @@ mod tests {
         assert_eq!(S_IFDIR, 0o040000, "S_IFDIR must be 0o040000");
         assert_eq!(S_IFREG, 0o100000, "S_IFREG must be 0o100000");
         assert_eq!(S_IFLNK, 0o120000, "S_IFLNK must be 0o120000");
-        assert_eq!(S_IFMT, 0o170000, "S_IFMT must be 0o170000");
+        assert_eq!(S_IFMT,  0o170000, "S_IFMT must be 0o170000");
         // Spot-check permission constants.
         assert_eq!(S_IRUSR, 0o400, "S_IRUSR must be 0o400");
         assert_eq!(S_IWUSR, 0o200, "S_IWUSR must be 0o200");

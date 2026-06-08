@@ -28,16 +28,9 @@ fn manifest_path() -> PathBuf {
         .join("manifest.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_json_summary_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -68,7 +61,7 @@ fn pkgmgr_json_summary_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_json_summary_envelope_is_strict_json() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let env = doc.get("envelope").and_then(|v| v.as_table()).expect(
         "missing `[envelope]` block \
          (acceptance: \"JSON summary can be parsed without log scraping.\")",
@@ -85,8 +78,7 @@ fn pkgmgr_json_summary_envelope_is_strict_json() {
         "`[envelope].stream` must be \"stdout\" — workers parse stdout, not stderr"
     );
     assert_eq!(
-        env.get("one_object_per_invocation")
-            .and_then(|v| v.as_bool()),
+        env.get("one_object_per_invocation").and_then(|v| v.as_bool()),
         Some(true),
         "`[envelope].one_object_per_invocation` must be true"
     );
@@ -108,15 +100,12 @@ fn pkgmgr_json_summary_envelope_is_strict_json() {
 
 #[test]
 fn pkgmgr_json_summary_covers_all_required_verbs() {
-    let doc = load_toml(&manifest_path());
-    let covered = doc
-        .get("covered_workflows")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[covered_workflows]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let covered = doc.get("covered_workflows").and_then(|v| v.as_table()).expect(
+        "missing `[covered_workflows]` block \
          (acceptance: \"Emit or assert JSON summary fields for init, lock, sync, \
          install, run, and diagnostics.\")",
-        );
+    );
 
     let verbs: Vec<&str> = covered
         .get("verbs")
@@ -133,15 +122,12 @@ fn pkgmgr_json_summary_covers_all_required_verbs() {
 
 #[test]
 fn pkgmgr_json_summary_required_fields_pin_shared_and_per_verb() {
-    let doc = load_toml(&manifest_path());
-    let req = doc
-        .get("required_fields")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[required_fields]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let req = doc.get("required_fields").and_then(|v| v.as_table()).expect(
+        "missing `[required_fields]` block \
          (acceptance: \"Include package count, environment path, lockfile path, \
          and offline source identity.\")",
-        );
+    );
 
     let shared: Vec<&str> = req
         .get("shared")
@@ -180,14 +166,11 @@ fn pkgmgr_json_summary_required_fields_pin_shared_and_per_verb() {
 
 #[test]
 fn pkgmgr_json_summary_missing_field_assertion_fails_loud() {
-    let doc = load_toml(&manifest_path());
-    let mfa = doc
-        .get("missing_field_assertion")
-        .and_then(|v| v.as_table())
-        .expect(
-            "missing `[missing_field_assertion]` block \
+    let doc = crate::common::load_toml(&manifest_path());
+    let mfa = doc.get("missing_field_assertion").and_then(|v| v.as_table()).expect(
+        "missing `[missing_field_assertion]` block \
          (acceptance: \"Missing required fields fail the test.\")",
-        );
+    );
 
     for flag in &[
         "fail_on_missing_required",
@@ -204,7 +187,7 @@ fn pkgmgr_json_summary_missing_field_assertion_fails_loud() {
 
 #[test]
 fn pkgmgr_json_summary_success_case_covers_happy_path() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let success = doc
         .get("success_case")
         .and_then(|v| v.as_table())
@@ -225,9 +208,7 @@ fn pkgmgr_json_summary_success_case_covers_happy_path() {
         "`[success_case].expected_outcome` must be \"pass\""
     );
     assert_eq!(
-        success
-            .get("expected_exit_code")
-            .and_then(|v| v.as_integer()),
+        success.get("expected_exit_code").and_then(|v| v.as_integer()),
         Some(0),
         "`[success_case].expected_exit_code` must be 0"
     );
@@ -242,7 +223,7 @@ fn pkgmgr_json_summary_success_case_covers_happy_path() {
 
 #[test]
 fn pkgmgr_json_summary_failure_case_includes_command_status_and_diagnostic() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let fail = doc.get("failure_case").and_then(|v| v.as_table()).expect(
         "missing `[failure_case]` block \
          (acceptance: \"Failure path includes command, exit status, and diagnostic message.\")",
@@ -258,10 +239,7 @@ fn pkgmgr_json_summary_failure_case_includes_command_status_and_diagnostic() {
         .get("expected_exit_code")
         .and_then(|v| v.as_integer())
         .expect("`[failure_case].expected_exit_code` must be set");
-    assert_ne!(
-        exit, 0,
-        "`[failure_case].expected_exit_code` must be non-zero; got {exit}"
-    );
+    assert_ne!(exit, 0, "`[failure_case].expected_exit_code` must be non-zero; got {exit}");
 
     for flag in &[
         "must_include_command",
@@ -287,7 +265,7 @@ fn pkgmgr_json_summary_failure_case_includes_command_status_and_diagnostic() {
 
 #[test]
 fn pkgmgr_json_summary_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let isolation = doc
         .get("isolation")
         .and_then(|v| v.as_table())
@@ -309,7 +287,7 @@ fn pkgmgr_json_summary_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_json_summary_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -341,7 +319,7 @@ fn pkgmgr_json_summary_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_json_summary_pins_out_of_scope_per_issue_2687() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let oos = doc
         .get("out_of_scope")
         .and_then(|v| v.as_table())

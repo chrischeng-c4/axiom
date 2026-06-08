@@ -143,8 +143,12 @@ impl McpServer {
             Ok(value) => json!({ "jsonrpc": JSONRPC_VERSION, "id": id, "result": value }),
             Err(NovaError::InvalidArguments(msg))
             | Err(NovaError::ValidationFailed(msg))
-            | Err(NovaError::InvalidRequest(msg)) => jsonrpc_error(id, ERR_INVALID_PARAMS, &msg),
-            Err(NovaError::ToolNotFound(msg)) => jsonrpc_error(id, ERR_METHOD_NOT_FOUND, &msg),
+            | Err(NovaError::InvalidRequest(msg)) => {
+                jsonrpc_error(id, ERR_INVALID_PARAMS, &msg)
+            }
+            Err(NovaError::ToolNotFound(msg)) => {
+                jsonrpc_error(id, ERR_METHOD_NOT_FOUND, &msg)
+            }
             Err(err) => jsonrpc_error(id, ERR_INTERNAL, &err.to_string()),
         }
     }
@@ -175,8 +179,9 @@ impl McpServer {
             .ok_or_else(|| NovaError::ToolNotFound(format!("tools/call: {name}")))?;
 
         let result = registered.handler.invoke(arguments).await?;
-        serde_json::to_value(&result)
-            .map_err(|e| NovaError::ConfigError(format!("failed to serialize tool result: {e}")))
+        serde_json::to_value(&result).map_err(|e| {
+            NovaError::ConfigError(format!("failed to serialize tool result: {e}"))
+        })
     }
 }
 
@@ -209,7 +214,9 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn initialize_returns_protocol_and_server_info() {
         let server = McpServer::new("agentkit", "1.2.3");
-        let resp = server.handle_request(req(1, "initialize", json!({}))).await;
+        let resp = server
+            .handle_request(req(1, "initialize", json!({})))
+            .await;
         assert_eq!(resp["jsonrpc"], JSONRPC_VERSION);
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
@@ -227,7 +234,9 @@ mod tests {
             })
         });
 
-        let resp = server.handle_request(req(2, "tools/list", json!({}))).await;
+        let resp = server
+            .handle_request(req(2, "tools/list", json!({})))
+            .await;
         let tools = resp["result"]["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "echo");
@@ -303,7 +312,9 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn tools_call_without_name_yields_invalid_params() {
         let server = McpServer::new("agentkit", "0.1.0");
-        let resp = server.handle_request(req(7, "tools/call", json!({}))).await;
+        let resp = server
+            .handle_request(req(7, "tools/call", json!({})))
+            .await;
         assert_eq!(resp["error"]["code"], ERR_INVALID_PARAMS);
     }
 
@@ -326,10 +337,7 @@ mod tests {
                 is_error: false,
             })
         });
-        assert_eq!(
-            prev.unwrap().description.as_deref(),
-            Some("echo args verbatim")
-        );
+        assert_eq!(prev.unwrap().description.as_deref(), Some("echo args verbatim"));
     }
 
     #[tokio::test(flavor = "current_thread")]

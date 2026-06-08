@@ -92,9 +92,9 @@ pub fn parse_pylock_toml(src: &str) -> Result<PylockDocument, PylockParseError> 
             .ok_or_else(|| PylockParseError::WrongType("packages".into()))?;
         let mut out = Vec::with_capacity(arr.len());
         for (idx, entry) in arr.iter().enumerate() {
-            let t = entry
-                .as_table()
-                .ok_or_else(|| PylockParseError::WrongType(format!("packages[{idx}]")))?;
+            let t = entry.as_table().ok_or_else(|| {
+                PylockParseError::WrongType(format!("packages[{idx}]"))
+            })?;
             out.push(decode_package(t)?);
         }
         out
@@ -146,13 +146,20 @@ fn decode_dependencies(t: &toml::value::Table) -> Result<Vec<String>, PylockPars
         match entry {
             toml::Value::String(s) => out.push(s.clone()),
             toml::Value::Table(tbl) => {
-                let name = tbl.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
-                    PylockParseError::MissingField(format!("dependencies[{idx}].name"))
-                })?;
+                let name = tbl
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        PylockParseError::MissingField(format!(
+                            "dependencies[{idx}].name"
+                        ))
+                    })?;
                 out.push(name.to_string());
             }
             _ => {
-                return Err(PylockParseError::WrongType(format!("dependencies[{idx}]")));
+                return Err(PylockParseError::WrongType(format!(
+                    "dependencies[{idx}]"
+                )));
             }
         }
     }
@@ -188,7 +195,9 @@ fn decode_vcs(
     let kind = t
         .get("type")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| PylockParseError::MissingField(format!("packages.{pkg_name}.vcs.type")))?;
+        .ok_or_else(|| {
+            PylockParseError::MissingField(format!("packages.{pkg_name}.vcs.type"))
+        })?;
     if kind != "git" {
         return Err(PylockParseError::WrongType(format!(
             "packages.{pkg_name}.vcs.type"
@@ -215,9 +224,9 @@ fn decode_directory(
     v: &toml::Value,
     pkg_name: &str,
 ) -> Result<(String, String, SourceRef), PylockParseError> {
-    let t = v
-        .as_table()
-        .ok_or_else(|| PylockParseError::WrongType(format!("packages.{pkg_name}.directory")))?;
+    let t = v.as_table().ok_or_else(|| {
+        PylockParseError::WrongType(format!("packages.{pkg_name}.directory"))
+    })?;
     let path = t.get("path").and_then(|v| v.as_str()).ok_or_else(|| {
         PylockParseError::MissingField(format!("packages.{pkg_name}.directory.path"))
     })?;
@@ -237,15 +246,15 @@ fn decode_wheels(
     v: &toml::Value,
     pkg_name: &str,
 ) -> Result<(String, String, SourceRef), PylockParseError> {
-    let arr = v
-        .as_array()
-        .ok_or_else(|| PylockParseError::WrongType(format!("packages.{pkg_name}.wheels")))?;
-    let first = arr
-        .first()
-        .ok_or_else(|| PylockParseError::MissingField(format!("packages.{pkg_name}.wheels[0]")))?;
-    let t = first
-        .as_table()
-        .ok_or_else(|| PylockParseError::WrongType(format!("packages.{pkg_name}.wheels[0]")))?;
+    let arr = v.as_array().ok_or_else(|| {
+        PylockParseError::WrongType(format!("packages.{pkg_name}.wheels"))
+    })?;
+    let first = arr.first().ok_or_else(|| {
+        PylockParseError::MissingField(format!("packages.{pkg_name}.wheels[0]"))
+    })?;
+    let t = first.as_table().ok_or_else(|| {
+        PylockParseError::WrongType(format!("packages.{pkg_name}.wheels[0]"))
+    })?;
     let url = t.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
         PylockParseError::MissingField(format!("packages.{pkg_name}.wheels[0].url"))
     })?;
@@ -269,10 +278,9 @@ fn decode_sdist(
     let t = v
         .as_table()
         .ok_or_else(|| PylockParseError::WrongType(format!("packages.{pkg_name}.sdist")))?;
-    let url = t
-        .get("url")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| PylockParseError::MissingField(format!("packages.{pkg_name}.sdist.url")))?;
+    let url = t.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+        PylockParseError::MissingField(format!("packages.{pkg_name}.sdist.url"))
+    })?;
     let sha = artifact_sha256(t, &format!("packages.{pkg_name}.sdist"))?;
     Ok((
         url.to_string(),
@@ -287,10 +295,9 @@ fn decode_sdist(
 }
 
 fn artifact_sha256(t: &toml::value::Table, path: &str) -> Result<String, PylockParseError> {
-    let hashes = t
-        .get("hashes")
-        .and_then(|v| v.as_table())
-        .ok_or_else(|| PylockParseError::MissingField(format!("{path}.hashes")))?;
+    let hashes = t.get("hashes").and_then(|v| v.as_table()).ok_or_else(|| {
+        PylockParseError::MissingField(format!("{path}.hashes"))
+    })?;
     let sha = hashes
         .get("sha256")
         .and_then(|v| v.as_str())
@@ -308,7 +315,10 @@ fn required_string(t: &toml::value::Table, key: &str) -> Result<String, PylockPa
     Ok(s.to_string())
 }
 
-fn optional_string(t: &toml::value::Table, key: &str) -> Result<Option<String>, PylockParseError> {
+fn optional_string(
+    t: &toml::value::Table,
+    key: &str,
+) -> Result<Option<String>, PylockParseError> {
     match t.get(key) {
         None => Ok(None),
         Some(v) => {
@@ -475,10 +485,7 @@ mod tests {
         let got = &doc.lockfile.packages[0];
         let sref = got.source_ref.as_ref().unwrap();
         assert_eq!(sref.kind, SourceRefKind::Git);
-        assert_eq!(
-            sref.url.as_deref(),
-            Some("https://github.com/example/thing")
-        );
+        assert_eq!(sref.url.as_deref(), Some("https://github.com/example/thing"));
         assert_eq!(sref.rev.as_deref(), Some("abc123"));
     }
 

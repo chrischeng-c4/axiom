@@ -5119,15 +5119,20 @@ version = "0.3.61"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "clap",
+ "dirs",
+ "futures-util",
  "image",
  "rand_xoshiro",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-tungstenite 0.28.0",
 ]
 
 [[package]]
@@ -6030,6 +6035,7 @@ dependencies = [
  "anyhow",
  "arraykit-binding",
  "base64 0.22.1",
+ "blake2",
  "bzip2 0.4.4",
  "cclab-log-mamba",
  "cclab-mamba-registry",

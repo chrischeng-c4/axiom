@@ -274,12 +274,11 @@ mod tests {
         let pyc_count = std::fs::read_dir(&top_cache)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("pyc"))
+            .filter(|e| {
+                e.path().extension().and_then(|s| s.to_str()) == Some("pyc")
+            })
             .count();
-        assert!(
-            pyc_count >= 1,
-            "expected at least one .pyc under {top_cache:?}"
-        );
+        assert!(pyc_count >= 1, "expected at least one .pyc under {top_cache:?}");
     }
 
     #[test]

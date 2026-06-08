@@ -24,10 +24,16 @@ fn manifest() -> Value {
 fn header_is_well_formed() {
     let m = manifest();
     assert_eq!(m["version"].as_integer(), Some(1));
-    assert_eq!(m["fixture"].as_str(), Some("cue_backend_loader_gate"));
+    assert_eq!(
+        m["fixture"].as_str(),
+        Some("cue_backend_loader_gate")
+    );
     assert_eq!(m["issue"].as_integer(), Some(2939));
     assert_eq!(m["profile"].as_str(), Some("conformance"));
-    assert_eq!(m["family"].as_str(), Some("cue_backend_loader_gate"));
+    assert_eq!(
+        m["family"].as_str(),
+        Some("cue_backend_loader_gate")
+    );
     assert_eq!(m["network"].as_str(), Some("offline"));
 }
 
@@ -238,8 +244,14 @@ fn r3_concrete_api_and_main_blockers() {
         c["expected_main_py_blocker_construct"].as_str(),
         Some("unknown_type_WorkstreamError")
     );
-    assert_eq!(c["expected_main_py_blocker_line"].as_integer(), Some(81));
-    assert_eq!(c["expected_main_py_blocker_column"].as_integer(), Some(19));
+    assert_eq!(
+        c["expected_main_py_blocker_line"].as_integer(),
+        Some(81)
+    );
+    assert_eq!(
+        c["expected_main_py_blocker_column"].as_integer(),
+        Some(19)
+    );
     assert_eq!(
         c["api_py_blocker_silently_skipped_failure_kind"].as_str(),
         Some("mvp_cue_backend_loader_api_py_blocker_silently_skipped")
@@ -279,8 +291,14 @@ fn r4_canonical_local_dev_address_binding() {
         c["expected_canonical_dev_address"].as_str(),
         Some("127.0.0.1:43219")
     );
-    assert_eq!(c["expected_canonical_dev_host"].as_str(), Some("127.0.0.1"));
-    assert_eq!(c["expected_canonical_dev_port"].as_integer(), Some(43219));
+    assert_eq!(
+        c["expected_canonical_dev_host"].as_str(),
+        Some("127.0.0.1")
+    );
+    assert_eq!(
+        c["expected_canonical_dev_port"].as_integer(),
+        Some(43219)
+    );
     assert_eq!(
         c["non_loopback_bind_failure_kind"].as_str(),
         Some("mvp_cue_backend_loader_non_loopback_bind_in_dev")
@@ -317,7 +335,10 @@ fn r5_bridge_fallback_does_not_satisfy_product_target() {
         c["expected_bridge_mode_env_var"].as_str(),
         Some("CUE_BACKEND_MODE")
     );
-    assert_eq!(c["expected_bridge_mode_env_value"].as_str(), Some("bridge"));
+    assert_eq!(
+        c["expected_bridge_mode_env_value"].as_str(),
+        Some("bridge")
+    );
     let targets: Vec<_> = c["allowed_product_target_values"]
         .as_array()
         .expect("allowed_product_target_values")

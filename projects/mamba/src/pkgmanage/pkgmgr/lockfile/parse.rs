@@ -7,16 +7,15 @@
 
 use std::collections::BTreeSet;
 
-use crate::pkgmanage::pkgmgr::resolver::{Requirement, ResolvedGraph, ResolvedNode};
+use crate::pkgmanage::pkgmgr::resolver::{ResolvedGraph, ResolvedNode, Requirement};
 use crate::pkgmanage::pkgmgr::types::FileHash;
 
 use super::{Lockfile, LockfileError};
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/lockfile.md#logic (lockfile-parse)
 pub(super) fn from_toml(text: &str) -> Result<Lockfile, LockfileError> {
-    toml::from_str::<Lockfile>(text).map_err(|e| LockfileError::TomlDecode {
-        detail: e.to_string(),
-    })
+    toml::from_str::<Lockfile>(text)
+        .map_err(|e| LockfileError::TomlDecode { detail: e.to_string() })
 }
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/lockfile.md#logic (lockfile-parse)

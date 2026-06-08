@@ -166,8 +166,7 @@ impl RevocationStore for InMemoryRevocationStore {
         let mut removed = 0;
 
         // Collect expired task IDs
-        let expired_ids: Vec<TaskId> = self
-            .revoked
+        let expired_ids: Vec<TaskId> = self.revoked
             .iter()
             .filter(|entry| entry.value().is_expired())
             .map(|entry| entry.key().clone())
@@ -241,16 +240,14 @@ impl RevocationStore for RedisRevocationStore {
     async fn is_revoked(&self, task_id: &TaskId) -> Result<bool, TaskError> {
         use redis::AsyncCommands;
 
-        let mut conn =
-            self.pool.get().await.map_err(|e| {
-                TaskError::Backend(format!("Failed to get Redis connection: {}", e))
-            })?;
+        let mut conn = self.pool.get().await.map_err(|e| {
+            TaskError::Backend(format!("Failed to get Redis connection: {}", e))
+        })?;
 
         let key = self.task_key(task_id);
-        let exists: bool = conn
-            .exists(&key)
-            .await
-            .map_err(|e| TaskError::Backend(format!("Redis EXISTS failed: {}", e)))?;
+        let exists: bool = conn.exists(&key).await.map_err(|e| {
+            TaskError::Backend(format!("Redis EXISTS failed: {}", e))
+        })?;
 
         Ok(exists)
     }
@@ -258,10 +255,9 @@ impl RevocationStore for RedisRevocationStore {
     async fn revoke(&self, task_id: &TaskId, terminate: bool) -> Result<(), TaskError> {
         use redis::AsyncCommands;
 
-        let mut conn =
-            self.pool.get().await.map_err(|e| {
-                TaskError::Backend(format!("Failed to get Redis connection: {}", e))
-            })?;
+        let mut conn = self.pool.get().await.map_err(|e| {
+            TaskError::Backend(format!("Failed to get Redis connection: {}", e))
+        })?;
 
         let revoked_task = RevokedTask::new(task_id.clone(), terminate, self.default_ttl);
         let serialized = serde_json::to_string(&revoked_task).map_err(|e| {
@@ -272,23 +268,20 @@ impl RevocationStore for RedisRevocationStore {
         let set_key = self.set_key();
 
         // Store in hash and add to set
-        let _: () = conn
-            .set(&key, &serialized)
-            .await
-            .map_err(|e| TaskError::Backend(format!("Redis SET failed: {}", e)))?;
+        let _: () = conn.set(&key, &serialized).await.map_err(|e| {
+            TaskError::Backend(format!("Redis SET failed: {}", e))
+        })?;
 
-        let _: () = conn
-            .sadd(&set_key, task_id.to_string())
-            .await
-            .map_err(|e| TaskError::Backend(format!("Redis SADD failed: {}", e)))?;
+        let _: () = conn.sadd(&set_key, task_id.to_string()).await.map_err(|e| {
+            TaskError::Backend(format!("Redis SADD failed: {}", e))
+        })?;
 
         // Set TTL if specified
         if let Some(ttl) = self.default_ttl {
             let ttl_secs = ttl.as_secs() as i64;
-            let _: () = conn
-                .expire(&key, ttl_secs)
-                .await
-                .map_err(|e| TaskError::Backend(format!("Redis EXPIRE failed: {}", e)))?;
+            let _: () = conn.expire(&key, ttl_secs).await.map_err(|e| {
+                TaskError::Backend(format!("Redis EXPIRE failed: {}", e))
+            })?;
         }
 
         tracing::info!(
@@ -311,16 +304,14 @@ impl RevocationStore for RedisRevocationStore {
     async fn get_revoked(&self) -> Result<Vec<TaskId>, TaskError> {
         use redis::AsyncCommands;
 
-        let mut conn =
-            self.pool.get().await.map_err(|e| {
-                TaskError::Backend(format!("Failed to get Redis connection: {}", e))
-            })?;
+        let mut conn = self.pool.get().await.map_err(|e| {
+            TaskError::Backend(format!("Failed to get Redis connection: {}", e))
+        })?;
 
         let set_key = self.set_key();
-        let task_id_strings: Vec<String> = conn
-            .smembers(&set_key)
-            .await
-            .map_err(|e| TaskError::Backend(format!("Redis SMEMBERS failed: {}", e)))?;
+        let task_id_strings: Vec<String> = conn.smembers(&set_key).await.map_err(|e| {
+            TaskError::Backend(format!("Redis SMEMBERS failed: {}", e))
+        })?;
 
         let mut task_ids = Vec::new();
         for id_str in task_id_strings {
@@ -342,16 +333,14 @@ impl RevocationStore for RedisRevocationStore {
     async fn cleanup(&self) -> Result<usize, TaskError> {
         use redis::AsyncCommands;
 
-        let mut conn =
-            self.pool.get().await.map_err(|e| {
-                TaskError::Backend(format!("Failed to get Redis connection: {}", e))
-            })?;
+        let mut conn = self.pool.get().await.map_err(|e| {
+            TaskError::Backend(format!("Failed to get Redis connection: {}", e))
+        })?;
 
         let set_key = self.set_key();
-        let task_id_strings: Vec<String> = conn
-            .smembers(&set_key)
-            .await
-            .map_err(|e| TaskError::Backend(format!("Redis SMEMBERS failed: {}", e)))?;
+        let task_id_strings: Vec<String> = conn.smembers(&set_key).await.map_err(|e| {
+            TaskError::Backend(format!("Redis SMEMBERS failed: {}", e))
+        })?;
 
         let mut removed = 0;
 
@@ -362,17 +351,15 @@ impl RevocationStore for RedisRevocationStore {
             };
 
             let key = self.task_key(&task_id);
-            let exists: bool = conn
-                .exists(&key)
-                .await
-                .map_err(|e| TaskError::Backend(format!("Redis EXISTS failed: {}", e)))?;
+            let exists: bool = conn.exists(&key).await.map_err(|e| {
+                TaskError::Backend(format!("Redis EXISTS failed: {}", e))
+            })?;
 
             // If key doesn't exist (expired via TTL), remove from set
             if !exists {
-                let _: () = conn
-                    .srem(&set_key, &id_str)
-                    .await
-                    .map_err(|e| TaskError::Backend(format!("Redis SREM failed: {}", e)))?;
+                let _: () = conn.srem(&set_key, &id_str).await.map_err(|e| {
+                    TaskError::Backend(format!("Redis SREM failed: {}", e))
+                })?;
                 removed += 1;
             }
         }
@@ -431,7 +418,10 @@ impl RevokeRequest {
     }
 
     /// Execute the revocation request
-    pub async fn execute<S: RevocationStore>(self, store: &S) -> Result<(), TaskError> {
+    pub async fn execute<S: RevocationStore>(
+        self,
+        store: &S,
+    ) -> Result<(), TaskError> {
         if self.task_ids.is_empty() {
             return Ok(());
         }
@@ -801,8 +791,7 @@ mod tests {
 
         // One expired entry (tiny TTL)
         let expired_id = TaskId::new();
-        let rt_expired =
-            RevokedTask::new(expired_id.clone(), false, Some(Duration::from_millis(10)));
+        let rt_expired = RevokedTask::new(expired_id.clone(), false, Some(Duration::from_millis(10)));
         store.revoked.insert(expired_id.clone(), rt_expired);
 
         // One live entry (no TTL)
@@ -929,9 +918,7 @@ mod tests {
 
     #[test]
     fn revoke_by_name_debug_clone() {
-        let req = revoke_by_name("task_a")
-            .terminate(true)
-            .signal("SIGTERM".to_string());
+        let req = revoke_by_name("task_a").terminate(true).signal("SIGTERM".to_string());
         let debug_str = format!("{:?}", req);
         assert!(debug_str.contains("RevokeByNameRequest"));
         let cloned = req.clone();

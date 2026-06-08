@@ -10,7 +10,10 @@ use crate::pkgmanage::pkgmgr::resolver::ResolvedGraph;
 use super::{Lockfile, LockfileError, Package};
 
 /// @spec .aw/tech-design/projects/mamba/pkgmgr/lockfile.md#logic (lockfile-write)
-pub(super) fn to_toml(graph: &ResolvedGraph, input_hash: &str) -> Result<String, LockfileError> {
+pub(super) fn to_toml(
+    graph: &ResolvedGraph,
+    input_hash: &str,
+) -> Result<String, LockfileError> {
     let mut packages: Vec<Package> = graph
         .nodes
         .iter()
@@ -20,7 +23,11 @@ pub(super) fn to_toml(graph: &ResolvedGraph, input_hash: &str) -> Result<String,
                 .first()
                 .map(|f| f.digest.clone())
                 .unwrap_or_default();
-            let mut deps: Vec<String> = node.requires.iter().map(|r| r.name.clone()).collect();
+            let mut deps: Vec<String> = node
+                .requires
+                .iter()
+                .map(|r| r.name.clone())
+                .collect();
             deps.sort();
             deps.dedup();
             Package {
@@ -42,9 +49,8 @@ pub(super) fn to_toml(graph: &ResolvedGraph, input_hash: &str) -> Result<String,
         packages,
     };
 
-    toml::to_string_pretty(&lockfile).map_err(|e| LockfileError::TomlEncode {
-        detail: e.to_string(),
-    })
+    toml::to_string_pretty(&lockfile)
+        .map_err(|e| LockfileError::TomlEncode { detail: e.to_string() })
 }
 
 /// Synthesised provenance URL for Phase 1.4. The resolver does not yet

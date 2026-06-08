@@ -1,12 +1,18 @@
 # CPython Conformance Fixture Layout
 
-> Canonical spec for the `tests/cpython/fixtures/` tree consumed by the Rust
+> Canonical spec for the `tests/cpython/` tree consumed by the Rust
 > Cargo test harnesses under `tests/harness/cpython/`.
 > This is the **mamba-Python instantiation** of the repo-wide authoring
 > principle in the root `CONTRIBUTING.md` (small · regular · scriptable). Read
 > that first for the *why*; this file pins the *how* for Python fixtures: the
-> `[tool.mamba]` record, the dimension subdirs, the generate → fill → lint loop,
-> and the in-flight migration off the old monolith shape.
+> `[tool.mamba]` record, the dimension-first layout, the generate → fill → lint
+> loop, and the record-driven gate.
+>
+> **The record is the source of truth, not the path.** Every fixture lives at
+> `{facet}/{bucket}/{lib}/{case}.py` whose four segments equal its `[tool.mamba]`
+> `dimension` / `bucket` / `lib` / `case`. The harness reads the record to assign
+> gates; `fixture_lint` enforces `path == record`. Physical location is free;
+> meaning lives in the record.
 
 ## One case = one file
 
@@ -31,9 +37,9 @@ queryable database.
 
 | key            | req? | values |
 |----------------|------|--------|
-| `bucket`       | yes  | `core` · `builtin-libs` · `std-libs` · `pep` · `type-strict` · `3rd-libs` |
+| `bucket`       | yes  | per-lib: `core` · `builtin-libs` · `std-libs` · `pep` · `3rd-libs`; non-per-lib walls: `perf` · `security-matrix` |
 | `lib`          | yes  | the module/topic, e.g. `calendar` (dotted submodules use `_`: `xml_etree`) |
-| `dimension`    | yes  | `surface` · `behavior` · `errors` · `bench` · `real_world` · `security` |
+| `dimension`    | yes  | the **facet** = top path segment: `type` · `behavior` · `surface` · `errors` · `real_world` · `bench` · `security` · `perf` · `concurrency` |
 | `case`         | yes  | snake_case; **MUST equal the filename stem** |
 | `subject`      | yes  | the API under test, e.g. `calendar.isleap` |
 | `kind`         | yes  | `mechanical` \| `semantic` |
@@ -48,34 +54,54 @@ The block is plain TOML, each line prefixed `# ` (a blank line inside is a bare
 table**, not as loose comments (a legacy comment form is still read during
 migration — see *Inline directives*).
 
-## Dimension subdirs
+## Layout: facet-first
 
-For lib-shaped buckets (`std-libs`, `3rd-libs`, `pep`) a `<lib>/` dir holds
-**dimension subdirs**, each a flat bag of one-case files:
-
-| Subdir         | Gate         | One case = | kind |
-|----------------|--------------|------------|------|
-| `surface/`     | `surface`    | one API-existence probe (import / symbol resolves) | mechanical |
-| `behavior/`    | `behavior`   | one observable behavior (output matches CPython) | semantic |
-| `errors/`      | `errors`     | one exception path (CPython raises; mamba must too) | mechanical |
-| `bench/`       | `bench`      | one perf/memory scenario (wall + RSS gated) | semantic |
-| `real_world/`  | `real_world` | one end-user integration scenario | semantic |
-| `security/`    | `security`   | one adversarial / untrusted-input case | semantic |
+The tree is **facet-first**: the top dir is the test facet (the four-axis
+dimension), then bucket, then lib. The path reads *axis → lib-class → lib → case*.
 
 ```text
-fixtures/std-libs/<lib>/
-├── surface/<case>.py
-├── behavior/<case>.py
-├── errors/<case>.py
-├── bench/<case>.py
-├── real_world/<case>.py
-└── security/<case>.py
+tests/cpython/{facet}/{bucket}/{lib}/{case}.py
 ```
 
-`surface`, `behavior`, `errors`, `real_world`, and `security` share **one
-verdict path**: positive fixture, exit `0`, stdout matches CPython (the
-MISSING_RAISE promotion, crash ratchet, and type-strict logic apply unchanged).
-Only `bench` runs the wall-time + peak-RSS path.
+Per-lib facets — a `{bucket}/{lib}/` dir holds a flat bag of one-case files:
+
+| Facet `{facet}/` | Axis | One case = | kind |
+|------------------|------|------------|------|
+| `type/`        | ① Type     | one wrong-typed-arg case (mamba must raise where CPython may accept) | semantic |
+| `surface/`     | ② Behavior | one API-existence probe (import / symbol resolves) | mechanical |
+| `behavior/`    | ② Behavior | one observable behavior (output matches CPython) | semantic |
+| `errors/`      | ② Behavior | one exception path (CPython raises; mamba must too) | mechanical |
+| `real_world/`  | ② Behavior | one end-user integration scenario | semantic |
+| `bench/`       | ③ Perf     | one per-lib perf/memory scenario (wall + RSS gated) | semantic |
+| `security/`    | ④ Safety   | one adversarial / untrusted-input case | semantic |
+
+Non-per-lib walls — flat, the unit is not a `{bucket}/{lib}` pair:
+
+| Facet | Axis | Unit |
+|-------|------|------|
+| `perf/`            | ③ Perf   | one pyperformance workload (`perf/{workload}.py`) |
+| `security-matrix/` | ④ Safety | one (secret-class × exception) cell (`security-matrix/{secret}/{exc}.py`) |
+
+```text
+tests/cpython/
+├── type/{bucket}/{lib}/<case>.py
+├── behavior/{bucket}/{lib}/<case>.py
+├── surface/{bucket}/{lib}/<case>.py
+├── errors/{bucket}/{lib}/<case>.py
+├── real_world/{bucket}/{lib}/<case>.py
+├── bench/{bucket}/{lib}/<case>.py
+├── security/{bucket}/{lib}/<case>.py
+├── perf/<workload>.py
+├── security-matrix/<secret>/<exc>.py
+└── _regression/<bucket>/<lib>/<case>.py   # no-record, src-referenced
+```
+
+`type`, `surface`, `behavior`, `errors`, `real_world`, and `security` share
+**one verdict path**: positive fixture, exit `0`, stdout matches CPython (the
+MISSING_RAISE promotion, crash ratchet, and strict-type logic apply unchanged).
+`bench` and `perf` run the wall-time + peak-RSS path. `_regression/` holds
+no-`[tool.mamba]`-record fixtures referenced by path from `src/driver/tests`;
+`fixture_lint` exempts it.
 
 ## CPython replacement contract
 
@@ -87,10 +113,10 @@ represented and enforced:
 |------|------------------------------|
 | 100% compatibility, positive path | `surface`, `behavior`, and `real_world` fixtures exit 0 and match the CPython oracle. |
 | 100% compatibility, negative path | `errors` fixtures assert CPython's exception taxonomy; a missing raise is a failure. |
-| Strong typing | `type-strict` fixtures use inverse markers: CPython may print `no_typeerror:`, but mamba must print/raise `typeerror:`. |
-| Faster than CPython | every perf pin sets `floor = 1.0`; `perf_baseline.py record` stores CPython internal time + CPU time in SQLite, then `perf_pin` requires mamba ratios `<= 1.0`. |
+| Strong typing | `type/` fixtures use inverse markers: CPython may print `no_typeerror:`, but mamba must print/raise `typeerror:`. |
+| Faster than CPython | every perf pin sets `floor = 1.0`; `perf_baseline.py record` stores CPython internal time + CPU time in SQLite, then `perf_pin` requires mamba ratios `<= 1.0`. The `perf/` facet holds the pyperformance workload wall. |
 | Lower peak memory than CPython | every perf pin sets `mem_floor = 1.0`; the SQLite baseline stores CPython peak RSS, then `perf_pin` requires `cpython_rss / mamba_rss >= 1.0`. |
-| Stability and security | `security` fixtures plus `core/compiler_resilience` hostile-source fixtures must raise cleanly or xfail with a tracker, never crash/hang the harness. |
+| Stability and security | `security/` (per-lib) + `security-matrix/` (error-leak wall) fixtures plus `_regression/core/compiler_resilience` hostile-source fixtures must raise cleanly or xfail with a tracker, never crash/hang the harness. |
 
 `cargo test -p mamba --test conformance_contract` enforces the structure above.
 It is intentionally a meta-test: it checks that the replacement contract cannot
@@ -159,7 +185,8 @@ platform/resource gates, and helpers.
 
 Self-contained, CPython-3.12 green, deterministic, English, ends in a labelled
 `print(...)`. The header carries the PEP 723 block **and** the `[tool.mamba]`
-record:
+record. The record below puts the file at
+`tests/cpython/behavior/std-libs/calendar/isleap_rule.py` (`{dimension}/{bucket}/{lib}/{case}.py`):
 
 ```python
 # /// script
@@ -260,43 +287,34 @@ source = "Lib/test/test_calendar.py"
 
 ## Worked cases
 
-- **surface (mechanical)** — `calendar/surface/isleap_is_callable.py`: manifest
-  `probe = "callable"` → body `assert callable(calendar.isleap)`.
-- **errors (mechanical)** — `calendar/errors/month_13_raises.py`: manifest
-  `call`/`expect_exc` → a `try/except` that prints `type(e).__name__`.
-- **behavior (semantic)** — `calendar/behavior/isleap_rule.py`: the canonical
-  template above; the agent wrote the loop body and set `status = "filled"`.
-- **security (semantic)** — `zipfile/security/decompression_bomb_ratio_guard.py`:
+- **surface (mechanical)** — `surface/std-libs/calendar/isleap_is_callable.py`:
+  manifest `probe = "callable"` → body `assert callable(calendar.isleap)`.
+- **errors (mechanical)** — `errors/std-libs/calendar/month_13_raises.py`:
+  manifest `call`/`expect_exc` → a `try/except` that prints `type(e).__name__`.
+- **behavior (semantic)** — `behavior/std-libs/calendar/isleap_rule.py`: the
+  canonical template above; the agent wrote the loop body and set `status = "filled"`.
+- **type (semantic)** — `type/std-libs/calendar/monthrange_rejects_str_year.py`:
+  inverse markers — CPython may print `no_typeerror:`, mamba must print `typeerror:`.
+- **security (semantic)** — `security/std-libs/zipfile/decompression_bomb_ratio_guard.py`:
   `subject = "zipfile.ZipFile"`, `intent` names the attack + guard.
-- **known gap (xfail)** — `struct/errors/pack_value_out_of_range_raises.py`:
+- **known gap (xfail)** — `errors/std-libs/struct/pack_value_out_of_range_raises.py`:
   set `xfail = "struct shim truncates instead of raising (WI #3929)"` in the
   manifest; the `conformance` harness then skips mamba for it.
 
-## Gate assignment (DUAL-SHAPE)
+## Gate assignment (record-driven)
 
-The Rust harnesses under `tests/harness/cpython/` assign each `.py` under a lib
-dir to exactly one gate, in order:
+The Rust harnesses read each fixture's `[tool.mamba].dimension` (its facet) to
+assign the gate — **not** the path. `type` runs the strict-type inverse logic;
+`bench`/`perf` run the wall-time + peak-RSS path; the rest share the
+exit-0/stdout-matches-CPython verdict path. Because the gate comes from the
+record, the physical layout is free, and `fixture_lint`'s
+`path == {facet}/{bucket}/{lib}/{stem}.py` check keeps path and record in lock-step.
 
-1. `<lib>/<dim>/**.py` where `<dim>` is a dimension subdir → that gate (the
-   dimension subdir is the **first** path component under the lib dir).
-2. A legacy root monolith: `surface.py` → `surface`, `behavior.py` →
-   `behavior`, `errors.py` → `errors`.
-3. Anything else → the `feature` catch-all (same verdict path as `behavior`), so
-   **nothing is silently dropped** mid-migration.
-
-### Retired-but-supported monoliths
-
-The old shape was one monolith per gate at the lib root. These are **retired**
-but still **discovered** — migration is incremental, so both shapes are
-supported simultaneously and may coexist in one lib. Migrate by splitting each
-monolith into one-case files under the matching dimension subdir (author a
-manifest, generate, fill), then deleting the monolith.
-
-## Feature-shaped buckets
-
-`core`, `builtin-libs`, and `type-strict` are NOT lib-shaped: every `.py` under
-a lib dir is the `feature` gate (flat, recursive). They are unaffected by the
-dimension-subdir model (the `[tool.mamba]` record still applies as they migrate).
+`_regression/` (no `[tool.mamba]` record) is excluded from every facet gate; its
+fixtures are exercised only by the specific `src/driver/tests` that `include_str!`
+or read them by path. The `datatest_stable` harness still globs the whole
+`tests/cpython` root, so a new fixture is picked up automatically once its record
+places it under a facet.
 
 ## Inline directives (legacy form, still read)
 

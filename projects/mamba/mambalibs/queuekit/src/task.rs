@@ -275,22 +275,10 @@ mod tests {
         assert!(registry.router().is_some());
 
         // Test routing
-        assert_eq!(
-            registry.route_task("math.add", &serde_json::json!({})),
-            "math"
-        );
-        assert_eq!(
-            registry.route_task("email.send", &serde_json::json!({})),
-            "email"
-        );
-        assert_eq!(
-            registry.route_task("test_task", &serde_json::json!({})),
-            "testing"
-        );
-        assert_eq!(
-            registry.route_task("unknown", &serde_json::json!({})),
-            "default"
-        );
+        assert_eq!(registry.route_task("math.add", &serde_json::json!({})), "math");
+        assert_eq!(registry.route_task("email.send", &serde_json::json!({})), "email");
+        assert_eq!(registry.route_task("test_task", &serde_json::json!({})), "testing");
+        assert_eq!(registry.route_task("unknown", &serde_json::json!({})), "default");
     }
 
     #[test]
@@ -299,10 +287,7 @@ mod tests {
 
         // Without router, should return "default"
         assert!(registry.router().is_none());
-        assert_eq!(
-            registry.route_task("any_task", &serde_json::json!({})),
-            "default"
-        );
+        assert_eq!(registry.route_task("any_task", &serde_json::json!({})), "default");
     }
 
     #[test]
@@ -312,13 +297,12 @@ mod tests {
         let mut registry = TaskRegistry::new();
         assert!(registry.router().is_none());
 
-        let router = RouterConfig::new().route("task_a", "queue_a").build();
+        let router = RouterConfig::new()
+            .route("task_a", "queue_a")
+            .build();
 
         registry.set_router(router);
         assert!(registry.router().is_some());
-        assert_eq!(
-            registry.route_task("task_a", &serde_json::json!({})),
-            "queue_a"
-        );
+        assert_eq!(registry.route_task("task_a", &serde_json::json!({})), "queue_a");
     }
 }

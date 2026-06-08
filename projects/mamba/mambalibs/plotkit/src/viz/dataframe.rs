@@ -48,22 +48,18 @@ pub enum ColumnValues {
 
 impl ColumnData {
     pub fn new() -> Self {
-        Self {
-            columns: Vec::new(),
-        }
+        Self { columns: Vec::new() }
     }
 
     /// Add a numeric column.
     pub fn add_f64(mut self, name: &str, values: Vec<f64>) -> Self {
-        self.columns
-            .push((name.to_string(), ColumnValues::Float(values)));
+        self.columns.push((name.to_string(), ColumnValues::Float(values)));
         self
     }
 
     /// Add a string column.
     pub fn add_string(mut self, name: &str, values: Vec<String>) -> Self {
-        self.columns
-            .push((name.to_string(), ColumnValues::Text(values)));
+        self.columns.push((name.to_string(), ColumnValues::Text(values)));
         self
     }
 }
@@ -289,10 +285,7 @@ mod tests {
             .add_f64("x", vec![1.0, 2.0, 3.0, 4.0, 5.0])
             .add_f64("y1", vec![10.0, 20.0, 15.0, 25.0, 30.0])
             .add_f64("y2", vec![5.0, 15.0, 10.0, 20.0, 25.0])
-            .add_string(
-                "label",
-                vec!["A".into(), "B".into(), "C".into(), "D".into(), "E".into()],
-            )
+            .add_string("label", vec!["A".into(), "B".into(), "C".into(), "D".into(), "E".into()])
     }
 
     #[test]
@@ -431,13 +424,15 @@ mod tests {
 
     #[test]
     fn test_column_data_string_as_f64_returns_none() {
-        let data = ColumnData::new().add_string("names", vec!["A".into(), "B".into()]);
+        let data = ColumnData::new()
+            .add_string("names", vec!["A".into(), "B".into()]);
         assert!(data.get_f64_column("names").is_none());
     }
 
     #[test]
     fn test_column_data_f64_as_string_returns_none() {
-        let data = ColumnData::new().add_f64("nums", vec![1.0, 2.0]);
+        let data = ColumnData::new()
+            .add_f64("nums", vec![1.0, 2.0]);
         assert!(data.get_string_column("nums").is_none());
     }
 }

@@ -1,16 +1,14 @@
 //! SELECT query building methods for QueryBuilder.
 
+use crate::{ExtractedValue, Result};
 use super::builder::{QueryBuilder, WhereCondition};
-use super::helpers::{
-    adjust_param_indices, build_aggregate_sql, build_window_sql, quote_identifier,
+use super::types::{
+    CommonTableExpression, Subquery, Operator, AggregateFunction, HavingCondition,
+    OrderDirection, JoinType, SetOperation, SetQuery,
 };
 use super::join::{JoinClause, JoinCondition};
-use super::types::{
-    AggregateFunction, CommonTableExpression, HavingCondition, JoinType, Operator, OrderDirection,
-    SetOperation, SetQuery, Subquery,
-};
-use super::window::{WindowExpression, WindowFunction, WindowSpec};
-use crate::{ExtractedValue, Result};
+use super::window::{WindowFunction, WindowSpec, WindowExpression};
+use super::helpers::{quote_identifier, build_aggregate_sql, build_window_sql, adjust_param_indices};
 
 fn is_safe_numeric_select_literal(value: &str) -> bool {
     !value.is_empty() && value.chars().all(|ch| ch.is_ascii_digit())
@@ -132,12 +130,7 @@ impl QueryBuilder {
     /// * `field` - Column name
     /// * `operator` - Comparison operator
     /// * `value` - Value to compare against
-    pub fn where_clause(
-        mut self,
-        field: &str,
-        operator: Operator,
-        value: ExtractedValue,
-    ) -> Result<Self> {
+    pub fn where_clause(mut self, field: &str, operator: Operator, value: ExtractedValue) -> Result<Self> {
         Self::validate_identifier(field)?;
 
         // For IS NULL and IS NOT NULL, we don't need a value
@@ -184,11 +177,7 @@ impl QueryBuilder {
         lower: ExtractedValue,
         upper: ExtractedValue,
     ) -> Result<Self> {
-        self.where_clause(
-            field,
-            Operator::Between,
-            ExtractedValue::Array(vec![lower, upper]),
-        )
+        self.where_clause(field, Operator::Between, ExtractedValue::Array(vec![lower, upper]))
     }
 
     /// Add a SQLAlchemy-style `field NOT BETWEEN lower AND upper` condition.
@@ -198,11 +187,7 @@ impl QueryBuilder {
         lower: ExtractedValue,
         upper: ExtractedValue,
     ) -> Result<Self> {
-        self.where_clause(
-            field,
-            Operator::NotBetween,
-            ExtractedValue::Array(vec![lower, upper]),
-        )
+        self.where_clause(field, Operator::NotBetween, ExtractedValue::Array(vec![lower, upper]))
     }
 
     /// Adds a WHERE condition for IS NULL.
@@ -266,41 +251,25 @@ impl QueryBuilder {
     }
 
     /// Add a WHERE column IN (raw SQL subquery) condition
-    pub fn where_in_raw_sql(
-        mut self,
-        field: &str,
-        sql: &str,
-        params: Vec<ExtractedValue>,
-    ) -> Result<Self> {
+    pub fn where_in_raw_sql(mut self, field: &str, sql: &str, params: Vec<ExtractedValue>) -> Result<Self> {
         Self::validate_identifier(field)?;
         self.where_conditions.push(WhereCondition {
             field: field.to_string(),
             operator: Operator::InSubquery,
             value: None,
-            subquery: Some(Subquery {
-                sql: sql.to_string(),
-                params,
-            }),
+            subquery: Some(Subquery { sql: sql.to_string(), params }),
         });
         Ok(self)
     }
 
     /// Add a WHERE column NOT IN (raw SQL subquery) condition
-    pub fn where_not_in_raw_sql(
-        mut self,
-        field: &str,
-        sql: &str,
-        params: Vec<ExtractedValue>,
-    ) -> Result<Self> {
+    pub fn where_not_in_raw_sql(mut self, field: &str, sql: &str, params: Vec<ExtractedValue>) -> Result<Self> {
         Self::validate_identifier(field)?;
         self.where_conditions.push(WhereCondition {
             field: field.to_string(),
             operator: Operator::NotInSubquery,
             value: None,
-            subquery: Some(Subquery {
-                sql: sql.to_string(),
-                params,
-            }),
+            subquery: Some(Subquery { sql: sql.to_string(), params }),
         });
         Ok(self)
     }
@@ -311,28 +280,18 @@ impl QueryBuilder {
             field: String::new(),
             operator: Operator::Exists,
             value: None,
-            subquery: Some(Subquery {
-                sql: sql.to_string(),
-                params,
-            }),
+            subquery: Some(Subquery { sql: sql.to_string(), params }),
         });
         Ok(self)
     }
 
     /// Add a WHERE NOT EXISTS (raw SQL subquery) condition
-    pub fn where_not_exists_raw_sql(
-        mut self,
-        sql: &str,
-        params: Vec<ExtractedValue>,
-    ) -> Result<Self> {
+    pub fn where_not_exists_raw_sql(mut self, sql: &str, params: Vec<ExtractedValue>) -> Result<Self> {
         self.where_conditions.push(WhereCondition {
             field: String::new(),
             operator: Operator::NotExists,
             value: None,
-            subquery: Some(Subquery {
-                sql: sql.to_string(),
-                params,
-            }),
+            subquery: Some(Subquery { sql: sql.to_string(), params }),
         });
         Ok(self)
     }
@@ -376,13 +335,7 @@ impl QueryBuilder {
     /// Filter where JSONB column has any of the specified keys
     pub fn where_json_any_key_exists(mut self, field: &str, keys: &[&str]) -> Result<Self> {
         Self::validate_identifier(field)?;
-        let keys_array = format!(
-            "ARRAY[{}]",
-            keys.iter()
-                .map(|k| format!("'{}'", k))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        let keys_array = format!("ARRAY[{}]", keys.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(", "));
         self.where_conditions.push(WhereCondition {
             field: field.to_string(),
             operator: Operator::JsonAnyKeyExists,
@@ -395,13 +348,7 @@ impl QueryBuilder {
     /// Filter where JSONB column has all of the specified keys
     pub fn where_json_all_keys_exist(mut self, field: &str, keys: &[&str]) -> Result<Self> {
         Self::validate_identifier(field)?;
-        let keys_array = format!(
-            "ARRAY[{}]",
-            keys.iter()
-                .map(|k| format!("'{}'", k))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+        let keys_array = format!("ARRAY[{}]", keys.iter().map(|k| format!("'{}'", k)).collect::<Vec<_>>().join(", "));
         self.where_conditions.push(WhereCondition {
             field: field.to_string(),
             operator: Operator::JsonAllKeysExist,
@@ -446,11 +393,7 @@ impl QueryBuilder {
     ///     ExtractedValue::String("postgres".to_string()),
     /// ])
     /// ```
-    pub fn where_array_contains(
-        mut self,
-        field: &str,
-        values: Vec<ExtractedValue>,
-    ) -> Result<Self> {
+    pub fn where_array_contains(mut self, field: &str, values: Vec<ExtractedValue>) -> Result<Self> {
         Self::validate_identifier(field)?;
         self.where_conditions.push(WhereCondition {
             field: field.to_string(),
@@ -467,11 +410,7 @@ impl QueryBuilder {
     }
 
     /// Filter where array column is contained by the given values (array <@ ARRAY[values])
-    pub fn where_array_contained_by(
-        mut self,
-        field: &str,
-        values: Vec<ExtractedValue>,
-    ) -> Result<Self> {
+    pub fn where_array_contained_by(mut self, field: &str, values: Vec<ExtractedValue>) -> Result<Self> {
         Self::validate_identifier(field)?;
         self.where_conditions.push(WhereCondition {
             field: field.to_string(),
@@ -493,11 +432,7 @@ impl QueryBuilder {
     ///     ExtractedValue::String("go".to_string()),
     /// ])
     /// ```
-    pub fn where_array_overlaps(
-        mut self,
-        field: &str,
-        values: Vec<ExtractedValue>,
-    ) -> Result<Self> {
+    pub fn where_array_overlaps(mut self, field: &str, values: Vec<ExtractedValue>) -> Result<Self> {
         Self::validate_identifier(field)?;
         self.where_conditions.push(WhereCondition {
             field: field.to_string(),
@@ -567,12 +502,7 @@ impl QueryBuilder {
     }
 
     /// Add a raw SQL CTE
-    pub fn with_cte_raw(
-        mut self,
-        name: &str,
-        sql: &str,
-        params: Vec<ExtractedValue>,
-    ) -> Result<Self> {
+    pub fn with_cte_raw(mut self, name: &str, sql: &str, params: Vec<ExtractedValue>) -> Result<Self> {
         Self::validate_identifier(name)?;
         self.ctes.push(CommonTableExpression {
             name: name.to_string(),
@@ -626,13 +556,7 @@ impl QueryBuilder {
     }
 
     /// Add a JOIN clause.
-    pub fn join(
-        mut self,
-        join_type: JoinType,
-        table: &str,
-        alias: Option<&str>,
-        condition: JoinCondition,
-    ) -> Result<Self> {
+    pub fn join(mut self, join_type: JoinType, table: &str, alias: Option<&str>, condition: JoinCondition) -> Result<Self> {
         Self::validate_identifier(table)?;
         if let Some(a) = alias {
             Self::validate_identifier(a)?;
@@ -648,54 +572,34 @@ impl QueryBuilder {
     }
 
     /// Add an INNER JOIN.
-    pub fn inner_join(
-        self,
-        table: &str,
-        alias: Option<&str>,
-        condition: JoinCondition,
-    ) -> Result<Self> {
+    pub fn inner_join(self, table: &str, alias: Option<&str>, condition: JoinCondition) -> Result<Self> {
         self.join(JoinType::Inner, table, alias, condition)
     }
 
     /// Add a LEFT JOIN.
-    pub fn left_join(
-        self,
-        table: &str,
-        alias: Option<&str>,
-        condition: JoinCondition,
-    ) -> Result<Self> {
+    pub fn left_join(self, table: &str, alias: Option<&str>, condition: JoinCondition) -> Result<Self> {
         self.join(JoinType::Left, table, alias, condition)
     }
 
     /// Add a RIGHT JOIN.
-    pub fn right_join(
-        self,
-        table: &str,
-        alias: Option<&str>,
-        condition: JoinCondition,
-    ) -> Result<Self> {
+    pub fn right_join(self, table: &str, alias: Option<&str>, condition: JoinCondition) -> Result<Self> {
         self.join(JoinType::Right, table, alias, condition)
     }
 
     /// Add a FULL OUTER JOIN.
-    pub fn full_join(
-        self,
-        table: &str,
-        alias: Option<&str>,
-        condition: JoinCondition,
-    ) -> Result<Self> {
+    pub fn full_join(self, table: &str, alias: Option<&str>, condition: JoinCondition) -> Result<Self> {
         self.join(JoinType::Full, table, alias, condition)
     }
 
     /// Add an aggregate function to the query.
     pub fn aggregate(mut self, func: AggregateFunction, alias: Option<&str>) -> Result<Self> {
         match &func {
-            AggregateFunction::CountColumn(col)
-            | AggregateFunction::CountDistinct(col)
-            | AggregateFunction::Sum(col)
-            | AggregateFunction::Avg(col)
-            | AggregateFunction::Min(col)
-            | AggregateFunction::Max(col) => {
+            AggregateFunction::CountColumn(col) |
+            AggregateFunction::CountDistinct(col) |
+            AggregateFunction::Sum(col) |
+            AggregateFunction::Avg(col) |
+            AggregateFunction::Min(col) |
+            AggregateFunction::Max(col) => {
                 Self::validate_identifier(col)?;
             }
             AggregateFunction::Count => {}
@@ -731,12 +635,12 @@ impl QueryBuilder {
         value: ExtractedValue,
     ) -> Result<Self> {
         match &aggregate {
-            AggregateFunction::CountColumn(col)
-            | AggregateFunction::CountDistinct(col)
-            | AggregateFunction::Sum(col)
-            | AggregateFunction::Avg(col)
-            | AggregateFunction::Min(col)
-            | AggregateFunction::Max(col) => {
+            AggregateFunction::CountColumn(col) |
+            AggregateFunction::CountDistinct(col) |
+            AggregateFunction::Sum(col) |
+            AggregateFunction::Avg(col) |
+            AggregateFunction::Min(col) |
+            AggregateFunction::Max(col) => {
                 Self::validate_identifier(col)?;
             }
             AggregateFunction::Count => {}
@@ -852,42 +756,22 @@ impl QueryBuilder {
     ///     .build();
     /// // ... HAVING SUM("amount") > 1000
     /// ```
-    pub fn having_sum(
-        self,
-        column: &str,
-        operator: Operator,
-        value: ExtractedValue,
-    ) -> Result<Self> {
+    pub fn having_sum(self, column: &str, operator: Operator, value: ExtractedValue) -> Result<Self> {
         self.having(AggregateFunction::Sum(column.to_string()), operator, value)
     }
 
     /// Add HAVING AVG(column) condition.
-    pub fn having_avg(
-        self,
-        column: &str,
-        operator: Operator,
-        value: ExtractedValue,
-    ) -> Result<Self> {
+    pub fn having_avg(self, column: &str, operator: Operator, value: ExtractedValue) -> Result<Self> {
         self.having(AggregateFunction::Avg(column.to_string()), operator, value)
     }
 
     /// Add HAVING MIN(column) condition.
-    pub fn having_min(
-        self,
-        column: &str,
-        operator: Operator,
-        value: ExtractedValue,
-    ) -> Result<Self> {
+    pub fn having_min(self, column: &str, operator: Operator, value: ExtractedValue) -> Result<Self> {
         self.having(AggregateFunction::Min(column.to_string()), operator, value)
     }
 
     /// Add HAVING MAX(column) condition.
-    pub fn having_max(
-        self,
-        column: &str,
-        operator: Operator,
-        value: ExtractedValue,
-    ) -> Result<Self> {
+    pub fn having_max(self, column: &str, operator: Operator, value: ExtractedValue) -> Result<Self> {
         self.having(AggregateFunction::Max(column.to_string()), operator, value)
     }
 
@@ -947,11 +831,7 @@ impl QueryBuilder {
         spec: WindowSpec,
         alias: &str,
     ) -> Result<Self> {
-        self.window(
-            WindowFunction::Lag(column.to_string(), offset, default),
-            spec,
-            alias,
-        )
+        self.window(WindowFunction::Lag(column.to_string(), offset, default), spec, alias)
     }
 
     /// Add LEAD(column, offset, default) window function.
@@ -965,11 +845,7 @@ impl QueryBuilder {
         spec: WindowSpec,
         alias: &str,
     ) -> Result<Self> {
-        self.window(
-            WindowFunction::Lead(column.to_string(), offset, default),
-            spec,
-            alias,
-        )
+        self.window(WindowFunction::Lead(column.to_string(), offset, default), spec, alias)
     }
 
     /// Add FIRST_VALUE(column) window function.
@@ -1178,8 +1054,7 @@ impl QueryBuilder {
         // Build WITH clause first if CTEs exist
         if !self.ctes.is_empty() {
             sql.push_str("WITH ");
-            let cte_parts: Vec<String> = self
-                .ctes
+            let cte_parts: Vec<String> = self.ctes
                 .iter()
                 .map(|cte| {
                     let cte_param_offset = params.len();
@@ -1197,8 +1072,7 @@ impl QueryBuilder {
 
         // Add DISTINCT ON if specified
         if !self.distinct_on_columns.is_empty() {
-            let cols: Vec<String> = self
-                .distinct_on_columns
+            let cols: Vec<String> = self.distinct_on_columns
                 .iter()
                 .map(|c| quote_identifier(c))
                 .collect();
@@ -1215,9 +1089,7 @@ impl QueryBuilder {
                 select_parts.push(quote_identifier(col));
             }
 
-            let agg_parts: Vec<String> = self
-                .aggregates
-                .iter()
+            let agg_parts: Vec<String> = self.aggregates.iter()
                 .map(|(func, alias)| {
                     let agg_sql = build_aggregate_sql(func);
                     if let Some(alias_str) = alias {
@@ -1230,24 +1102,22 @@ impl QueryBuilder {
             select_parts.extend(agg_parts);
         } else if let Some(ref only_cols) = self.only_columns {
             // `only()` takes precedence - select exactly these columns
-            let quoted_cols: Vec<String> = only_cols.iter().map(|c| quote_identifier(c)).collect();
+            let quoted_cols: Vec<String> = only_cols.iter()
+                .map(|c| quote_identifier(c))
+                .collect();
             select_parts.extend(quoted_cols);
         } else if !self.select_columns.is_empty() {
             // Filter out deferred columns from select_columns
             if self.raw_select {
                 // Raw select columns are already properly formatted SQL expressions
-                let cols: Vec<String> = self
-                    .select_columns
-                    .iter()
+                let cols: Vec<String> = self.select_columns.iter()
                     .filter(|c| !self.deferred_columns.contains(c))
                     .cloned()
                     .collect();
                 select_parts.extend(cols);
             } else {
                 // Regular select columns need quoting
-                let quoted_cols: Vec<String> = self
-                    .select_columns
-                    .iter()
+                let quoted_cols: Vec<String> = self.select_columns.iter()
                     .filter(|c| !self.deferred_columns.contains(c))
                     .map(|c| quote_select_expression(c))
                     .collect();
@@ -1302,9 +1172,7 @@ impl QueryBuilder {
         // GROUP BY clause
         if !self.group_by_columns.is_empty() {
             sql.push_str(" GROUP BY ");
-            let group_parts: Vec<String> = self
-                .group_by_columns
-                .iter()
+            let group_parts: Vec<String> = self.group_by_columns.iter()
                 .map(|col| quote_identifier(col))
                 .collect();
             sql.push_str(&group_parts.join(", "));
@@ -1313,8 +1181,7 @@ impl QueryBuilder {
         // HAVING clause
         if !self.having_conditions.is_empty() {
             sql.push_str(" HAVING ");
-            let having_parts: Vec<String> = self
-                .having_conditions
+            let having_parts: Vec<String> = self.having_conditions
                 .iter()
                 .map(|cond| {
                     let agg_sql = build_aggregate_sql(&cond.aggregate);
@@ -1328,9 +1195,7 @@ impl QueryBuilder {
         // ORDER BY clause
         if !self.order_by_clauses.is_empty() {
             sql.push_str(" ORDER BY ");
-            let order_parts: Vec<String> = self
-                .order_by_clauses
-                .iter()
+            let order_parts: Vec<String> = self.order_by_clauses.iter()
                 .map(|(field, dir)| format!("{} {}", quote_identifier(field), dir.to_sql()))
                 .collect();
             sql.push_str(&order_parts.join(", "));
@@ -1360,11 +1225,7 @@ impl QueryBuilder {
     }
 
     /// Helper to build a single WHERE condition
-    fn build_where_condition(
-        &self,
-        cond: &WhereCondition,
-        params: &mut Vec<ExtractedValue>,
-    ) -> String {
+    fn build_where_condition(&self, cond: &WhereCondition, params: &mut Vec<ExtractedValue>) -> String {
         match cond.operator {
             Operator::InSubquery => {
                 if let Some(ref sq) = cond.subquery {
@@ -1379,11 +1240,7 @@ impl QueryBuilder {
                 if let Some(ref sq) = cond.subquery {
                     let adjusted_sql = adjust_param_indices(&sq.sql, params.len());
                     params.extend(sq.params.clone());
-                    format!(
-                        "{} NOT IN ({})",
-                        quote_identifier(&cond.field),
-                        adjusted_sql
-                    )
+                    format!("{} NOT IN ({})", quote_identifier(&cond.field), adjusted_sql)
                 } else {
                     format!("{} NOT IN (NULL)", quote_identifier(&cond.field))
                 }
@@ -1414,12 +1271,7 @@ impl QueryBuilder {
                 let quoted_field = quote_identifier(&cond.field);
                 if let Some(ref value) = cond.value {
                     params.push(value.clone());
-                    format!(
-                        "{} {} (${})",
-                        quoted_field,
-                        cond.operator.to_sql(),
-                        params.len()
-                    )
+                    format!("{} {} (${})", quoted_field, cond.operator.to_sql(), params.len())
                 } else {
                     format!("{} {} (NULL)", quoted_field, cond.operator.to_sql())
                 }
@@ -1448,48 +1300,33 @@ impl QueryBuilder {
             }
             Operator::JsonContains | Operator::JsonContainedBy => {
                 if let Some(ExtractedValue::String(json)) = &cond.value {
-                    format!(
-                        "{} {} '{}'::jsonb",
+                    format!("{} {} '{}'::jsonb",
                         quote_identifier(&cond.field),
                         cond.operator.to_sql(),
                         json.replace("'", "''")
                     )
                 } else {
-                    format!(
-                        "{} {} NULL",
-                        quote_identifier(&cond.field),
-                        cond.operator.to_sql()
-                    )
+                    format!("{} {} NULL", quote_identifier(&cond.field), cond.operator.to_sql())
                 }
             }
             Operator::JsonKeyExists => {
                 let quoted_field = quote_identifier(&cond.field);
                 if let Some(ref value) = cond.value {
                     params.push(value.clone());
-                    format!(
-                        "{} {} ${}",
-                        quoted_field,
-                        cond.operator.to_sql(),
-                        params.len()
-                    )
+                    format!("{} {} ${}", quoted_field, cond.operator.to_sql(), params.len())
                 } else {
                     format!("{} {} NULL", quoted_field, cond.operator.to_sql())
                 }
             }
             Operator::JsonAnyKeyExists | Operator::JsonAllKeysExist => {
                 if let Some(ExtractedValue::String(arr)) = &cond.value {
-                    format!(
-                        "{} {} {}",
+                    format!("{} {} {}",
                         quote_identifier(&cond.field),
                         cond.operator.to_sql(),
                         arr
                     )
                 } else {
-                    format!(
-                        "{} {} NULL",
-                        quote_identifier(&cond.field),
-                        cond.operator.to_sql()
-                    )
+                    format!("{} {} NULL", quote_identifier(&cond.field), cond.operator.to_sql())
                 }
             }
             // Array operators
@@ -1537,12 +1374,7 @@ impl QueryBuilder {
                 let quoted_field = quote_identifier(&cond.field);
                 if let Some(ref value) = cond.value {
                     params.push(value.clone());
-                    format!(
-                        "{} {} ${}",
-                        quoted_field,
-                        cond.operator.to_sql(),
-                        params.len()
-                    )
+                    format!("{} {} ${}", quoted_field, cond.operator.to_sql(), params.len())
                 } else {
                     format!("{} {} NULL", quoted_field, cond.operator.to_sql())
                 }

@@ -110,7 +110,11 @@ impl LoadState {
     }
 }
 
-fn load_one(path: &Path, state: &mut LoadState, mode: IncludeMode) -> Result<(), IndexError> {
+fn load_one(
+    path: &Path,
+    state: &mut LoadState,
+    mode: IncludeMode,
+) -> Result<(), IndexError> {
     if !state.visited.insert(path.to_path_buf()) {
         // Cycle: already visited. Pip silently skips re-includes.
         return Ok(());

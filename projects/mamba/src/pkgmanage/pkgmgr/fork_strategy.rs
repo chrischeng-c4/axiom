@@ -98,7 +98,10 @@ mod tests {
             ForkStrategy::parse("Requires_Python").unwrap(),
             ForkStrategy::RequiresPython
         );
-        assert_eq!(ForkStrategy::parse("FEWEST").unwrap(), ForkStrategy::Fewest);
+        assert_eq!(
+            ForkStrategy::parse("FEWEST").unwrap(),
+            ForkStrategy::Fewest
+        );
         assert_eq!(
             ForkStrategy::parse(" requires-python ").unwrap(),
             ForkStrategy::RequiresPython

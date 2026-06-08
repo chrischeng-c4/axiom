@@ -108,12 +108,10 @@ impl Lockfile {
         let toml_text = serialize::to_toml(graph, input_hash)?;
         // Atomic write: tmp + rename.
         let tmp = dest.with_extension("tmp");
-        std::fs::write(&tmp, toml_text.as_bytes()).map_err(|e| LockfileError::Io {
-            detail: e.to_string(),
-        })?;
-        std::fs::rename(&tmp, dest).map_err(|e| LockfileError::Io {
-            detail: e.to_string(),
-        })?;
+        std::fs::write(&tmp, toml_text.as_bytes())
+            .map_err(|e| LockfileError::Io { detail: e.to_string() })?;
+        std::fs::rename(&tmp, dest)
+            .map_err(|e| LockfileError::Io { detail: e.to_string() })?;
         Ok(())
     }
 
@@ -124,9 +122,8 @@ impl Lockfile {
         src: &Path,
         current_pyproject: Option<&Path>,
     ) -> Result<ResolvedGraph, LockfileError> {
-        let text = std::fs::read_to_string(src).map_err(|e| LockfileError::Io {
-            detail: e.to_string(),
-        })?;
+        let text = std::fs::read_to_string(src)
+            .map_err(|e| LockfileError::Io { detail: e.to_string() })?;
         let lockfile = parse::from_toml(&text)?;
         if lockfile.format_version > MAX_SUPPORTED_FORMAT_VERSION {
             return Err(LockfileError::UnsupportedFormatVersion {
@@ -189,19 +186,14 @@ impl Lockfile {
         added.sort();
         removed.sort();
         changed.sort_by(|a, b| a.name.cmp(&b.name));
-        LockfileDiff {
-            added,
-            removed,
-            changed,
-        }
+        LockfileDiff { added, removed, changed }
     }
 
     /// Convenience: read a lockfile without converting to ResolvedGraph
     /// (used by `diff` callers and tests for AC4 round-trip checks).
     pub fn read_raw(src: &Path) -> Result<Lockfile, LockfileError> {
-        let text = std::fs::read_to_string(src).map_err(|e| LockfileError::Io {
-            detail: e.to_string(),
-        })?;
+        let text = std::fs::read_to_string(src)
+            .map_err(|e| LockfileError::Io { detail: e.to_string() })?;
         parse::from_toml(&text)
     }
 }

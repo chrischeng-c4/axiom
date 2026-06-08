@@ -63,14 +63,8 @@ impl MetadataHint {
 /// at a `.whl` file — passing in a non-wheel URL is allowed but the
 /// resulting sidecar URL will not resolve.
 pub fn compose_sidecar_url(wheel_url: &str) -> String {
-    let trimmed_q = wheel_url
-        .find('?')
-        .map(|i| &wheel_url[..i])
-        .unwrap_or(wheel_url);
-    let trimmed = trimmed_q
-        .find('#')
-        .map(|i| &trimmed_q[..i])
-        .unwrap_or(trimmed_q);
+    let trimmed_q = wheel_url.find('?').map(|i| &wheel_url[..i]).unwrap_or(wheel_url);
+    let trimmed = trimmed_q.find('#').map(|i| &trimmed_q[..i]).unwrap_or(trimmed_q);
     format!("{trimmed}.metadata")
 }
 
@@ -93,12 +87,12 @@ pub fn parse_hint_attr(value: &str) -> Result<MetadataHint, IndexError> {
         "false" => return Ok(MetadataHint::Absent),
         _ => {}
     }
-    let (algo, digest) = trimmed
-        .split_once('=')
-        .ok_or_else(|| IndexError::ParseError {
-            url: String::new(),
-            detail: format!("PEP 658 hint attribute is not '<algo>=<hex>': {trimmed:?}"),
-        })?;
+    let (algo, digest) = trimmed.split_once('=').ok_or_else(|| IndexError::ParseError {
+        url: String::new(),
+        detail: format!(
+            "PEP 658 hint attribute is not '<algo>=<hex>': {trimmed:?}"
+        ),
+    })?;
     validate_algo_digest(algo, digest)?;
     Ok(MetadataHint::AvailableHashed(FileHash {
         algorithm: algo.to_ascii_lowercase(),
@@ -251,10 +245,7 @@ mod tests {
 
     #[test]
     fn attr_with_hash_is_hashed() {
-        let hint = parse_hint_attr(
-            "sha256=ABCdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-        )
-        .unwrap();
+        let hint = parse_hint_attr("sha256=ABCdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789").unwrap();
         match hint {
             MetadataHint::AvailableHashed(fh) => {
                 assert_eq!(fh.algorithm, "sha256");

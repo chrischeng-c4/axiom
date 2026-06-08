@@ -214,6 +214,14 @@ fn transform_export(
         match child.kind() {
             "export" => continue,
             "default" => {
+                if let Some((declaration, name)) =
+                    extract_default_named_declaration(source, node, module_map, current_dir)?
+                {
+                    return Ok(format!(
+                        "{}; module.exports[\"default\"] = {};",
+                        declaration, name
+                    ));
+                }
                 let value = extract_export_value(source, node)?;
                 return Ok(format!("module.exports[\"default\"] = {};", value));
             }
@@ -277,6 +285,36 @@ fn transform_export(
     }
 
     Ok(String::new())
+}
+
+fn extract_default_named_declaration(
+    source: &str,
+    node: &Node,
+    module_map: &HashMap<PathBuf, usize>,
+    current_dir: Option<&Path>,
+) -> Result<Option<(String, String)>> {
+    let mut cursor = node.walk();
+    let mut found_default = false;
+
+    for child in node.children(&mut cursor) {
+        if child.kind() == "default" {
+            found_default = true;
+            continue;
+        }
+        if !found_default {
+            continue;
+        }
+        if matches!(child.kind(), "function_declaration" | "class_declaration") {
+            if let Some(name_node) = child.child_by_field_name("name") {
+                let name = source[name_node.byte_range()].to_string();
+                let declaration = transform_node(source, &child, module_map, current_dir)?;
+                return Ok(Some((declaration, name)));
+            }
+            return Ok(None);
+        }
+    }
+
+    Ok(None)
 }
 
 /// Extract source path from re-export: export { X } from "./X" → Some("./X")
@@ -383,6 +421,57 @@ fn lookup_module_id(module_map: &HashMap<PathBuf, usize>, path: &Path) -> Option
     })
 }
 
+fn lookup_module_id_with_extensions(
+    module_map: &HashMap<PathBuf, usize>,
+    path: &Path,
+    extensions: &[&str],
+) -> Option<usize> {
+    if let Some(id) = lookup_module_id(module_map, path) {
+        return Some(id);
+    }
+
+    for ext in extensions {
+        let mut test_path = path.to_path_buf();
+        test_path.set_extension(ext);
+        if let Some(id) = lookup_module_id(module_map, &test_path) {
+            return Some(id);
+        }
+    }
+
+    None
+}
+
+fn lookup_package_entry_module_id(
+    module_map: &HashMap<PathBuf, usize>,
+    package_root: &Path,
+    entry: &str,
+) -> Option<usize> {
+    let entry = entry.trim_start_matches("./");
+    let entry_path = package_root.join(entry);
+    if let Some(id) = lookup_module_id_with_extensions(
+        module_map,
+        &entry_path,
+        &["js", "jsx", "ts", "tsx", "mjs", "cjs", "json"],
+    ) {
+        return Some(id);
+    }
+
+    for index in &[
+        "index.js",
+        "index.ts",
+        "index.tsx",
+        "index.mjs",
+        "index.cjs",
+    ] {
+        let index_path = entry_path.join(index);
+        if let Some(id) = lookup_module_id(module_map, &index_path) {
+            return Some(id);
+        }
+    }
+
+    None
+}
+
 fn collect_package_entry_candidates(pkg: &serde_json::Value, out: &mut Vec<String>) {
     fn push_string(value: Option<&serde_json::Value>, out: &mut Vec<String>) {
         if let Some(s) = value.and_then(|v| v.as_str()) {
@@ -471,9 +560,9 @@ fn resolve_module_path(
                     let mut entries = Vec::new();
                     collect_package_entry_candidates(&pkg, &mut entries);
                     for entry in entries {
-                        let entry = entry.trim_start_matches("./");
-                        let entry_path = resolved.join(entry);
-                        if let Some(id) = lookup_module_id(module_map, &entry_path) {
+                        if let Some(id) =
+                            lookup_package_entry_module_id(module_map, &resolved, &entry)
+                        {
                             return format!("require({})", id);
                         }
                     }
@@ -512,6 +601,20 @@ fn resolve_module_path(
                         }
                     }
 
+                    for index in &[
+                        "index.js",
+                        "index.jsx",
+                        "index.ts",
+                        "index.tsx",
+                        "index.mjs",
+                        "index.cjs",
+                    ] {
+                        let index_path = candidate.join(index);
+                        if let Some(id) = lookup_module_id(module_map, &index_path) {
+                            return format!("require({})", id);
+                        }
+                    }
+
                     // Try package.json resolution
                     let pkg_json = candidate.join("package.json");
                     if pkg_json.exists() {
@@ -522,11 +625,9 @@ fn resolve_module_path(
                                         let mut entries = Vec::new();
                                         collect_package_entry_candidates(&pkg, &mut entries);
                                         for entry in entries {
-                                            let entry = entry.trim_start_matches("./");
-                                            let main_path = candidate.join(entry);
-                                            if let Some(id) =
-                                                lookup_module_id(module_map, &main_path)
-                                            {
+                                            if let Some(id) = lookup_package_entry_module_id(
+                                                module_map, &candidate, &entry,
+                                            ) {
                                                 return format!("require({})", id);
                                             }
                                         }
@@ -619,7 +720,11 @@ fn extract_export_value(source: &str, node: &Node) -> Result<String> {
             found_default = true;
             continue;
         }
-        if found_default && child.kind() != "export" && child.kind() != ";" {
+        if found_default
+            && child.kind() != "export"
+            && child.kind() != ";"
+            && child.kind() != "comment"
+        {
             return Ok(source[child.byte_range()].to_string());
         }
     }
@@ -648,7 +753,7 @@ fn extract_declaration_names(node: &Node, source: &str) -> Result<Vec<String>> {
         match child.kind() {
             "variable_declarator" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
-                    names.push(source[name_node.byte_range()].to_string());
+                    extract_binding_names_from_pattern(&name_node, source, &mut names);
                 }
             }
             "function_declaration" | "class_declaration" => {
@@ -661,7 +766,7 @@ fn extract_declaration_names(node: &Node, source: &str) -> Result<Vec<String>> {
                 for inner in child.children(&mut inner_cursor) {
                     if inner.kind() == "variable_declarator" {
                         if let Some(name_node) = inner.child_by_field_name("name") {
-                            names.push(source[name_node.byte_range()].to_string());
+                            extract_binding_names_from_pattern(&name_node, source, &mut names);
                         }
                     }
                 }
@@ -671,6 +776,41 @@ fn extract_declaration_names(node: &Node, source: &str) -> Result<Vec<String>> {
     }
 
     Ok(names)
+}
+
+fn extract_binding_names_from_pattern(node: &Node, source: &str, names: &mut Vec<String>) {
+    match node.kind() {
+        "identifier" | "shorthand_property_identifier_pattern" => {
+            names.push(source[node.byte_range()].to_string());
+        }
+        "object_pattern" | "array_pattern" => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                match child.kind() {
+                    "pair_pattern" => {
+                        if let Some(value) = child.child_by_field_name("value") {
+                            extract_binding_names_from_pattern(&value, source, names);
+                        }
+                    }
+                    "shorthand_property_identifier_pattern"
+                    | "rest_pattern"
+                    | "object_pattern"
+                    | "array_pattern"
+                    | "assignment_pattern" => {
+                        extract_binding_names_from_pattern(&child, source, names);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        "rest_pattern" | "assignment_pattern" => {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                extract_binding_names_from_pattern(&child, source, names);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Parse export clause: export { foo, bar as baz }
@@ -901,12 +1041,138 @@ mod tests {
     }
 
     #[test]
+    fn test_export_default_named_function_keeps_local_binding() {
+        let source = "export default function useUpdate(callback) { return callback(); }\nexport function useUpdateState() { return useUpdate(() => 1); }";
+        let map = HashMap::new();
+        let result = transform_modules(source, &map).unwrap();
+
+        assert!(
+            result
+                .code
+                .contains("function useUpdate(callback) { return callback(); }"),
+            "named default function should remain module-scoped, got: {}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("module.exports[\"default\"] = useUpdate"),
+            "default export should point at local binding, got: {}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("function useUpdateState() { return useUpdate(() => 1); }"),
+            "sibling export must still be able to reference local binding, got: {}",
+            result.code
+        );
+        assert!(
+            !result
+                .code
+                .contains("module.exports[\"default\"] = function useUpdate"),
+            "named default function expression would hide the binding from siblings, got: {}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_export_default_named_class_keeps_local_binding() {
+        let source = "export default class Store {}\nexport const make = () => Store;";
+        let map = HashMap::new();
+        let result = transform_modules(source, &map).unwrap();
+
+        assert!(
+            result.code.contains("class Store {}"),
+            "named default class should remain module-scoped, got: {}",
+            result.code
+        );
+        assert!(
+            result.code.contains("module.exports[\"default\"] = Store"),
+            "default export should point at local class binding, got: {}",
+            result.code
+        );
+        assert!(
+            result.code.contains("const make = () => Store"),
+            "sibling export must still be able to reference class binding, got: {}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_export_default_ternary_function_expression() {
+        let source = "function useRenderTimes() {}\nexport default process.env.NODE_ENV !== 'production' ? useRenderTimes : function () {};";
+        let map = HashMap::new();
+        let result = transform_modules(source, &map).unwrap();
+
+        assert!(
+            result
+                .code
+                .contains("module.exports[\"default\"] = process.env.NODE_ENV !== 'production' ? useRenderTimes : function () {}"),
+            "default export ternary expression should be preserved, got: {}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("module.exports[\"default\"] = ;"),
+            "default export value must not be empty, got: {}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_export_default_skips_pure_comment_before_expression() {
+        let source = "import { createContext } from 'react';\nexport default /*#__PURE__*/createContext(undefined);";
+        let map = HashMap::new();
+        let result = transform_modules(source, &map).unwrap();
+
+        assert!(
+            result
+                .code
+                .contains("module.exports[\"default\"] = createContext(undefined)"),
+            "default export should use expression after PURE comment, got: {}",
+            result.code
+        );
+        assert!(
+            !result
+                .code
+                .contains("module.exports[\"default\"] = /*#__PURE__*/;"),
+            "PURE comment must not become an empty default expression, got: {}",
+            result.code
+        );
+    }
+
+    #[test]
     fn test_export_named() {
         let source = "export const foo = 1;";
         let map = HashMap::new();
         let result = transform_modules(source, &map).unwrap();
         assert!(result.code.contains("const foo"));
         assert!(result.code.contains("module.exports"));
+    }
+
+    #[test]
+    fn test_export_destructured_const_alias() {
+        let source = "export const { Consumer: ConfigConsumer } = ConfigContext;";
+        let map = HashMap::new();
+        let result = transform_modules(source, &map).unwrap();
+
+        assert!(
+            result.code.contains("const { Consumer: ConfigConsumer }"),
+            "destructuring declaration should remain valid: {}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("module.exports[\"ConfigConsumer\"] = ConfigConsumer"),
+            "export assignment should use the bound alias, not the object pattern: {}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("module.exports[\"{"),
+            "object pattern must not become an export key: {}",
+            result.code
+        );
     }
 
     #[test]
@@ -1042,6 +1308,62 @@ mod tests {
             Some(&importer_dir),
         );
         assert_eq!(out, "require(7)");
+    }
+
+    #[test]
+    fn resolve_module_path_bare_package_module_entry_without_extension() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let importer_dir = tmp
+            .path()
+            .join("node_modules")
+            .join("@rc-component")
+            .join("color-picker")
+            .join("es");
+        let package_dir = tmp
+            .path()
+            .join("node_modules")
+            .join("@rc-component")
+            .join("color-picker")
+            .join("node_modules")
+            .join("@ant-design")
+            .join("fast-color");
+        let entry = package_dir.join("es").join("index.js");
+        std::fs::create_dir_all(&importer_dir).expect("create importer dir");
+        std::fs::create_dir_all(entry.parent().unwrap()).expect("create package entry dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            br#"{"module":"./es/index","main":"./lib/index"}"#,
+        )
+        .expect("write package.json");
+        std::fs::write(&entry, "export * from './FastColor';").expect("write entry");
+
+        let mut map: HashMap<PathBuf, usize> = HashMap::new();
+        map.insert(entry, 4131);
+
+        let out = resolve_module_path("@ant-design/fast-color", &map, Some(&importer_dir));
+        assert_eq!(out, "require(4131)");
+    }
+
+    #[test]
+    fn resolve_module_path_bare_package_subpath_directory_index() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let importer_dir = tmp.path().join("src");
+        let entry = tmp
+            .path()
+            .join("node_modules")
+            .join("antd")
+            .join("es")
+            .join("alert")
+            .join("index.js");
+        std::fs::create_dir_all(&importer_dir).expect("create importer dir");
+        std::fs::create_dir_all(entry.parent().unwrap()).expect("create package subpath dir");
+        std::fs::write(&entry, "export default function Alert() {}").expect("write entry");
+
+        let mut map: HashMap<PathBuf, usize> = HashMap::new();
+        map.insert(entry, 14);
+
+        let out = resolve_module_path("antd/es/alert", &map, Some(&importer_dir));
+        assert_eq!(out, "require(14)");
     }
 
     #[test]

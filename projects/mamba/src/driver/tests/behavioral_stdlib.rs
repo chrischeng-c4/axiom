@@ -16,6 +16,7 @@
 ///
 /// Tests marked `#[ignore]` require features not yet implemented (tracked as xfail
 /// in the fixture-based harness). Remove `#[ignore]` as features land.
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -96,12 +97,7 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
@@ -110,39 +106,9 @@ fn assert_output(actual: &str, expected: &str) {
     }
 }
 
-/// Load a fixture file and its expected output, run through JIT, compare.
-fn run_fixture(fixture_rel_path: &str) {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/fixtures")
-        .join(fixture_rel_path);
-    let py_path = base.with_extension("py");
-    let expected_path = base.with_extension("expected");
-
-    let src = std::fs::read_to_string(&py_path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", py_path.display()));
-    let expected = std::fs::read_to_string(&expected_path)
-        .unwrap_or_else(|e| panic!("cannot read {}: {e}", expected_path.display()));
-
-    let clean_src: String = src
-        .lines()
-        .filter(|l| !l.trim().starts_with("# mamba-xfail:"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-
-    let actual = jit_capture(&clean_src);
-    assert_output(&actual, &expected);
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // T6: math Module (R6)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// T6 full fixture.
-#[test]
-fn test_t6_math_fixture() {
-    run_fixture("stdlib/math/math_conformance");
-}
 
 /// T6.1: math.floor(3.7) == 3.
 #[test]
@@ -223,12 +189,6 @@ print(math.e)
 // T7: json Module (R7)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T7 full fixture.
-#[test]
-fn test_t7_json_fixture() {
-    run_fixture("stdlib/json/json_conformance");
-}
-
 /// T7.1: json.dumps({'a': 1}, sort_keys=True).
 #[test]
 fn test_t7_1_json_dumps_sort_keys() {
@@ -308,12 +268,6 @@ print("done")
 // T8: re Module (R8)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T8 full fixture.
-#[test]
-fn test_t8_re_fixture() {
-    run_fixture("stdlib/re/re_conformance");
-}
-
 /// T8.1: re.match(r'\d+', '123abc').group() == '123'.
 #[test]
 fn test_t8_1_re_match() {
@@ -374,12 +328,6 @@ print(m.group('name'))
 // T9: collections Module (R9)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T9 full fixture.
-#[test]
-fn test_t9_collections_fixture() {
-    run_fixture("stdlib/collections/collections_conformance");
-}
-
 /// T9.1: Counter('abracadabra').most_common(3).
 #[test]
 fn test_t9_1_counter_most_common() {
@@ -435,12 +383,6 @@ print(p)
 // T10: datetime Module (R10)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// T10 full fixture.
-#[test]
-fn test_t10_datetime_fixture() {
-    run_fixture("stdlib/datetime/datetime_conformance");
-}
-
 /// T10.1: datetime strftime.
 #[test]
 fn test_t10_1_datetime_strftime() {
@@ -482,12 +424,6 @@ print(d1 < d2)
 // ═══════════════════════════════════════════════════════════════════════════════
 // T11: itertools Module (R12)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// T11 full fixture.
-#[test]
-fn test_t11_itertools_fixture() {
-    run_fixture("stdlib/itertools/itertools_conformance");
-}
 
 /// T11.1: list(chain([1,2], [3,4])) == [1, 2, 3, 4].
 #[test]
@@ -593,12 +529,6 @@ print(list(islice(count(0), 5)))
 // ═══════════════════════════════════════════════════════════════════════════════
 // T12: functools Module (R12)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/// T12 full fixture.
-#[test]
-fn test_t12_functools_fixture() {
-    run_fixture("stdlib/functools/functools_conformance");
-}
 
 /// T12.1: reduce(lambda a,b: a+b, [1,2,3,4]) == 10.
 #[test]

@@ -1,5 +1,6 @@
-// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures.md#component
+// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures-production-build-regression.md#component
 // CODEGEN-BEGIN
+// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-fixtures-production-build-regression.md#source
 import React from "react";
 import ReactDOM from "react-dom/client";
 import Button from "@mui/material/Button";

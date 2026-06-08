@@ -4,10 +4,13 @@
 //!
 //! Runtime imports are a codegen boundary: React hooks are known to
 //! the compiler, CSS side-effect imports are owned by the host build,
-//! and type-only imports disappear after type checking. Everything
-//! else must fail clearly until Jet can lower that module.
+//! type-only imports disappear after type checking, and supported UI
+//! library adapters lower to Jet-native WASM intrinsics.
 
 use jet::tsx_to_rust::{transpile, transpile_compat_with_source};
+
+const MUI_VISUAL_FIXTURE_TSX: &str =
+    include_str!("../../../examples/mui-visual-demo/src/MuiVisualFixture.tsx");
 
 #[test]
 fn react_imports_do_not_block_transpile() {
@@ -55,8 +58,8 @@ export function App({ count }: AppProps) {
 }
 
 #[test]
-fn runtime_imports_fail_with_wasm_diagnostic() {
-    let err = transpile(
+fn mui_runtime_imports_lower_with_wasm_adapter() {
+    let out = transpile(
         r#"
 import Box from '@mui/material/Box';
 
@@ -69,19 +72,11 @@ export function App({ count }: AppProps) {
 }
 "#,
     )
-    .unwrap_err();
-    let msg = format!("{err:#}");
+    .expect("supported MUI imports should lower through WASM adapters");
 
-    assert!(
-        msg.contains(
-            "runtime import from `@mui/material/Box` is not lowered by jet build --wasm yet"
-        ),
-        "unexpected diagnostic: {msg}"
-    );
-    assert!(
-        msg.contains("2:1"),
-        "diagnostic should include source position: {msg}"
-    );
+    assert!(out.contains("Element::intrinsic(\"div\""));
+    assert!(out.contains("Element::text(count.to_string())"));
+    assert!(!out.contains("@mui/material"));
 }
 
 #[test]
@@ -147,71 +142,44 @@ export function App() {
 }
 
 #[test]
-fn compat_lowering_preserves_mui_visual_fixture_state_and_style() {
-    let out = transpile_compat_with_source(
+fn mui_visual_fixture_strict_lowering_preserves_form_controls() {
+    let out = transpile(MUI_VISUAL_FIXTURE_TSX)
+        .expect("strict lowering should preserve the visible MUI form-control fixture");
+
+    let rust = out;
+    assert!(rust.contains("Element::intrinsic(\"main\""));
+    assert!(rust.contains("Element::intrinsic(\"h1\""));
+    assert!(rust.contains("Element::intrinsic(\"label\""));
+    assert!(rust.contains("Element::intrinsic(\"input\""));
+    assert!(rust.contains("Element::intrinsic(\"button\""));
+    assert!(rust.contains("Element::intrinsic(\"p\""));
+    assert!(rust.contains("id: Some(\"visual-root\".to_string())"));
+    assert!(rust.contains("id: Some(\"mui-name\".to_string())"));
+    assert!(rust.contains("id: Some(\"mui-accept\".to_string())"));
+    assert!(rust.contains("border-radius: 8px"));
+    assert!(rust.contains("use_state::<String>(\"Ada\".to_string())"));
+    assert!(rust.contains("use_state::<bool>(true)"));
+    assert!(rust.contains("html_for: Some(\"mui-accept\".to_string())"));
+    assert!(rust.contains("on_checked_change: Some"));
+    assert!(!rust.contains("@mui/material"));
+}
+
+#[test]
+fn clipboard_write_text_lowers_to_host_bridge() {
+    let out = transpile(
         r#"
-import React, { useState } from 'react';
-import Button from '@mui/material/Button';
-import Checkbox from '@mui/material/Checkbox';
-import TextField from '@mui/material/TextField';
+import React from 'react';
 
-export function MuiVisualFixture() {
-  const [name, setName] = useState("Ada");
-  const [accepted, setAccepted] = useState(true);
-
-  return (
-    <main
-      id="visual-root"
-      style={{
-        fontFamily: "Inter, system-ui, sans-serif",
-        maxWidth: 440,
-        margin: "32px auto",
-        padding: 24,
-        border: "1px solid #d7dde8",
-        borderRadius: 8,
-      }}
-    >
-      <h1 style={{ fontSize: 24, margin: "0 0 16px" }}>MUI visual fixture</h1>
-      <TextField
-        id="mui-name"
-        label="Name"
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-      />
-      <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
-        <Checkbox
-          id="mui-accept"
-          checked={accepted}
-          onChange={(event) => setAccepted(event.target.checked)}
-        />
-        Accept library terms
-      </label>
-      <Button id="mui-button">MUI Primary</Button>
-      <p id="echo" style={{ marginTop: 18 }}>
-        hello {name}; accepted: {String(accepted)}
-      </p>
-    </main>
-  );
+export function App() {
+  const copied = "hello\tworld";
+  return <button id="copy" onClick={() => navigator.clipboard.writeText(copied)}>Copy</button>;
 }
 "#,
-        "src/MuiVisualFixture.tsx",
-        "MuiVisualFixture",
     )
-    .expect("compat lowering should preserve the visible MUI fixture state");
+    .expect("clipboard writes should lower through the WASM host bridge");
 
-    let rust = out.rust_source;
-    assert!(rust.contains("let (name, setName) = use_state::<String>(\"Ada\".to_string());"));
-    assert!(rust.contains("let (accepted, setAccepted) = use_state::<bool>(true);"));
-    assert!(rust.contains("max-width: 440px"));
-    assert!(rust.contains("border-radius: 8px"));
-    assert!(rust.contains("font-size: 24px"));
-    assert!(rust.contains("value: Some(name.clone()),"));
-    assert!(rust.contains("on_change: Some(Callback::new"));
-    assert!(rust.contains("input_type: Some(\"checkbox\".to_string()),"));
-    assert!(rust.contains("checked: Some(accepted),"));
-    assert!(rust.contains("on_checked_change: Some(Callback::new"));
-    assert!(rust.contains("Element::text(name.to_string())"));
-    assert!(rust.contains("Element::text(accepted.to_string())"));
+    assert!(out.contains("let copied = \"hello\\tworld\".to_string();"));
+    assert!(out.contains("jet_wasm::host::write_clipboard_text(copied.as_ref())"));
 }
 
 #[test]

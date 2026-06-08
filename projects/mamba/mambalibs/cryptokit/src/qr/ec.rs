@@ -131,9 +131,7 @@ mod tests {
         // Version 1-M: 16 data codewords, 10 EC codewords
         // Known test vector: "HELLO WORLD" in alphanumeric mode
         // Data codewords for "01100001011" ... (simplified test)
-        let data = vec![
-            32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17,
-        ];
+        let data = vec![32, 91, 11, 120, 209, 114, 220, 77, 67, 64, 236, 17, 236, 17, 236, 17];
         let ec = rs_encode(&data, 10);
         assert_eq!(ec.len(), 10);
         // Verify it's deterministic

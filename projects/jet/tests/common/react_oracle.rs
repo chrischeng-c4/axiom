@@ -1,12 +1,13 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests-common.md#tests
 // CODEGEN-BEGIN
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub const LAYOUT_TOLERANCE_CSS_PX: f64 = 1.0;
 pub const SCREENSHOT_BOUNDS_TOLERANCE_PX: i64 = 8;
 pub const SCREENSHOT_FOREGROUND_RATIO_TOLERANCE: f64 = 0.50;
+pub const SCREENSHOT_PHASH_HAMMING_TOLERANCE: u32 = 16;
 const SCREENSHOT_FOREGROUND_COLOR_DISTANCE: i16 = 24;
 
 enum ReactDomAssets {
@@ -636,9 +637,6 @@ pub fn fixture_diff_message(
     actual: &Value,
 ) -> String {
     let payload = json!({
-        "failure_kind": "dom_wasm_parity_mismatch",
-        "expected_source": "react_dom",
-        "actual_source": "jet_wasm",
         "fixture_id": fixture_id,
         "phase": phase,
         "expected": expected,
@@ -659,9 +657,6 @@ pub fn library_fixture_diff_message(
     actual: &Value,
 ) -> String {
     let payload = json!({
-        "failure_kind": "library_dom_wasm_parity_mismatch",
-        "expected_source": "react_dom",
-        "actual_source": "jet_wasm",
         "library_id": library_id,
         "fixture_id": fixture_id,
         "phase": phase,
@@ -677,9 +672,6 @@ pub fn library_fixture_diff_message(
 /// @spec .aw/tech-design/projects/jet/specs/4004.md#schema
 pub fn controlled_input_diff_message(phase: &str, expected: &Value, actual: &Value) -> String {
     let payload = json!({
-        "failure_kind": "controlled_input_dom_wasm_parity_mismatch",
-        "expected_source": "react_dom",
-        "actual_source": "jet_wasm",
         "phase": phase,
         "expected": expected,
         "actual": actual,
@@ -693,9 +685,6 @@ pub fn controlled_input_diff_message(phase: &str, expected: &Value, actual: &Val
 /// @spec .aw/tech-design/projects/jet/specs/4015.md#schema
 pub fn controlled_textarea_diff_message(phase: &str, expected: &Value, actual: &Value) -> String {
     let payload = json!({
-        "failure_kind": "controlled_textarea_dom_wasm_parity_mismatch",
-        "expected_source": "react_dom",
-        "actual_source": "jet_wasm",
         "phase": phase,
         "expected": expected,
         "actual": actual,
@@ -714,9 +703,6 @@ pub fn layout_diff_message(
     actual: &Value,
 ) -> String {
     let payload = json!({
-        "failure_kind": "layout_dom_wasm_parity_mismatch",
-        "expected_source": "react_dom",
-        "actual_source": "jet_wasm",
         "fixture_id": fixture_id,
         "phase": phase,
         "tolerance_css_px": LAYOUT_TOLERANCE_CSS_PX,
@@ -770,6 +756,187 @@ pub fn screenshot_summary_from_png(bytes: &[u8]) -> Value {
         "foreground_count": foreground_count,
         "bounds": bounds,
     })
+}
+
+/// @spec .aw/tech-design/projects/jet/specs/3972.md#unit-test
+pub fn screenshot_visual_probe_from_png(bytes: &[u8]) -> Value {
+    let image = image::load_from_memory(bytes)
+        .unwrap_or_else(|err| panic!("decode screenshot PNG for visual probe: {err}"))
+        .to_rgba8();
+    let (width, height) = image.dimensions();
+    let mut non_transparent = 0_u64;
+    let mut non_white = 0_u64;
+    let mut non_black = 0_u64;
+    let mut buckets = HashSet::new();
+
+    for pixel in image.pixels() {
+        let [r, g, b, a] = pixel.0;
+        if a > 0 {
+            non_transparent += 1;
+        }
+        if a > 0 && (r < 250 || g < 250 || b < 250) {
+            non_white += 1;
+        }
+        if a > 0 && (r > 5 || g > 5 || b > 5) {
+            non_black += 1;
+        }
+        buckets.insert((r >> 5, g >> 5, b >> 5, a >> 5));
+    }
+
+    let summary = screenshot_summary_from_png(bytes);
+    let full_hash = screenshot_phash_for_image(&image, ScreenshotPHashMode::RgbLuma);
+    let (crop_image, crop_bounds, hash_scope) = screenshot_foreground_crop(&image, &summary)
+        .unwrap_or_else(|| {
+            (
+                image.clone(),
+                json!({ "x": 0, "y": 0, "w": width, "h": height }),
+                "full",
+            )
+        });
+    let cropped_hash = screenshot_phash_for_image(&crop_image, ScreenshotPHashMode::ForegroundMask);
+
+    json!({
+        "schema_version": "jet.screenshot_visual_probe.v1",
+        "width": width,
+        "height": height,
+        "nonTransparent": non_transparent,
+        "nonWhite": non_white,
+        "nonBlack": non_black,
+        "uniqueBuckets": buckets.len(),
+        "foregroundCount": summary
+            .get("foreground_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "foregroundBounds": summary.get("bounds").cloned().unwrap_or(Value::Null),
+        "hashScope": hash_scope,
+        "hashBounds": crop_bounds,
+        "hashMode": "foreground-mask-phash",
+        "averageLuma": cropped_hash.average_luma,
+        "averageForegroundMask": cropped_hash.average_luma,
+        "hash": cropped_hash.hash,
+        "hashOnes": cropped_hash.ones,
+        "fullHashMode": "rgb-luma-phash",
+        "fullAverageLuma": full_hash.average_luma,
+        "fullHash": full_hash.hash,
+        "fullHashOnes": full_hash.ones,
+    })
+}
+
+struct ScreenshotPHash {
+    hash: String,
+    ones: u64,
+    average_luma: f64,
+}
+
+enum ScreenshotPHashMode {
+    RgbLuma,
+    ForegroundMask,
+}
+
+fn screenshot_phash_for_image(
+    image: &image::RgbaImage,
+    mode: ScreenshotPHashMode,
+) -> ScreenshotPHash {
+    let background = match mode {
+        ScreenshotPHashMode::RgbLuma => None,
+        ScreenshotPHashMode::ForegroundMask => Some(screenshot_background_color(image)),
+    };
+    let sample = image::imageops::resize(image, 32, 32, image::imageops::FilterType::Triangle);
+    let mut luma = Vec::with_capacity(32 * 32);
+    for pixel in sample.pixels() {
+        luma.push(match background {
+            Some(background) => screenshot_pixel_foreground_mask_luma(pixel.0, background),
+            None => {
+                let [r, g, b, _a] = pixel.0;
+                (299_u32 * r as u32 + 587_u32 * g as u32 + 114_u32 * b as u32) as f64 / 1000.0
+            }
+        });
+    }
+
+    let mut block_luma = Vec::with_capacity(64);
+    for by in 0..8 {
+        for bx in 0..8 {
+            let mut sum = 0.0;
+            for y in 0..4 {
+                for x in 0..4 {
+                    sum += luma[(by * 4 + y) * 32 + (bx * 4 + x)];
+                }
+            }
+            block_luma.push(sum / 16.0);
+        }
+    }
+    let average_luma = block_luma.iter().sum::<f64>() / block_luma.len() as f64;
+    let mut hash = String::new();
+    let mut ones = 0_u64;
+    for chunk in block_luma.chunks(4) {
+        let mut nibble = 0_u8;
+        for value in chunk {
+            let bit = u8::from(*value >= average_luma);
+            ones += u64::from(bit);
+            nibble = (nibble << 1) | bit;
+        }
+        hash.push_str(&format!("{nibble:x}"));
+    }
+
+    ScreenshotPHash {
+        hash,
+        ones,
+        average_luma,
+    }
+}
+
+fn screenshot_pixel_foreground_mask_luma(pixel: [u8; 4], background: [u8; 4]) -> f64 {
+    if pixel[3] == 0 {
+        return 0.0;
+    }
+    let rgb_delta = (pixel[0] as i16 - background[0] as i16).abs()
+        + (pixel[1] as i16 - background[1] as i16).abs()
+        + (pixel[2] as i16 - background[2] as i16).abs();
+    f64::from(rgb_delta.min(255))
+}
+
+fn screenshot_foreground_crop(
+    image: &image::RgbaImage,
+    summary: &Value,
+) -> Option<(image::RgbaImage, Value, &'static str)> {
+    let (image_width, image_height) = image.dimensions();
+    let bounds = summary.get("bounds")?;
+    let x = bounds.get("x")?.as_u64()? as u32;
+    let y = bounds.get("y")?.as_u64()? as u32;
+    let width = bounds.get("w")?.as_u64()? as u32;
+    let height = bounds.get("h")?.as_u64()? as u32;
+    if width == 0 || height == 0 || image_width == 0 || image_height == 0 {
+        return None;
+    }
+
+    let padding = SCREENSHOT_BOUNDS_TOLERANCE_PX.max(0) as u32;
+    let x0 = x.saturating_sub(padding).min(image_width);
+    let y0 = y.saturating_sub(padding).min(image_height);
+    let x1 = x
+        .saturating_add(width)
+        .saturating_add(padding)
+        .min(image_width);
+    let y1 = y
+        .saturating_add(height)
+        .saturating_add(padding)
+        .min(image_height);
+    let crop_width = x1.saturating_sub(x0);
+    let crop_height = y1.saturating_sub(y0);
+    if crop_width == 0 || crop_height == 0 {
+        return None;
+    }
+
+    let crop = image::imageops::crop_imm(image, x0, y0, crop_width, crop_height).to_image();
+    Some((
+        crop,
+        json!({
+            "x": x0,
+            "y": y0,
+            "w": crop_width,
+            "h": crop_height,
+        }),
+        "foreground",
+    ))
 }
 
 fn screenshot_background_color(image: &image::RgbaImage) -> [u8; 4] {
@@ -840,6 +1007,44 @@ pub fn screenshot_summaries_match(expected: &Value, actual: &Value) -> bool {
     })
 }
 
+/// @spec .aw/tech-design/projects/jet/specs/3972.md#unit-test
+pub fn screenshot_phash_hamming_distance(expected: &Value, actual: &Value) -> Option<u32> {
+    let expected = u64::from_str_radix(expected.get("hash")?.as_str()?, 16).ok()?;
+    let actual = u64::from_str_radix(actual.get("hash")?.as_str()?, 16).ok()?;
+    Some((expected ^ actual).count_ones())
+}
+
+/// @spec .aw/tech-design/projects/jet/specs/3972.md#unit-test
+pub fn screenshot_phashes_match(expected: &Value, actual: &Value) -> bool {
+    screenshot_phash_hamming_distance(expected, actual)
+        .map(|distance| distance <= SCREENSHOT_PHASH_HAMMING_TOLERANCE)
+        .unwrap_or(false)
+}
+
+/// @spec .aw/tech-design/projects/jet/specs/3972.md#unit-test
+pub fn screenshot_phash_diff_message(
+    fixture_id: &str,
+    phase: &str,
+    expected: &Value,
+    actual: &Value,
+    distance: Option<u32>,
+) -> String {
+    let payload = json!({
+        "fixture_id": fixture_id,
+        "phase": phase,
+        "tolerance": {
+            "phash_hamming_distance": SCREENSHOT_PHASH_HAMMING_TOLERANCE,
+        },
+        "distance": distance,
+        "expected": expected,
+        "actual": actual,
+    });
+    format!(
+        "React DOM/WASM screenshot pHash mismatch\n{}",
+        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
+    )
+}
+
 fn screenshot_pixel_is_foreground(pixel: [u8; 4], background: [u8; 4]) -> bool {
     if pixel[3] == 0 {
         return false;
@@ -858,9 +1063,6 @@ pub fn screenshot_diff_message(
     actual: &Value,
 ) -> String {
     let payload = json!({
-        "failure_kind": "screenshot_dom_wasm_parity_mismatch",
-        "expected_source": "react_dom",
-        "actual_source": "jet_wasm",
         "fixture_id": fixture_id,
         "phase": phase,
         "tolerance": {
@@ -884,9 +1086,6 @@ pub fn paint_diff_message(
     actual_methods: &[String],
 ) -> String {
     let payload = json!({
-        "failure_kind": "paint_dom_wasm_parity_mismatch",
-        "expected_source": "jet_wasm_paint_ops",
-        "actual_source": "canvas_runtime_calls",
         "fixture_id": fixture_id,
         "phase": phase,
         "expected_methods": expected_methods,

@@ -16,6 +16,7 @@
 ///   R9:  Yield-from throw/close passthrough
 ///   R10: MRO introspection and descriptors
 ///   R11: Stdlib fixture simplification (12 modules, 18 files)
+
 use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::{CodegenBackend, CodegenOutput};
 use crate::lower::{lower_hir_to_mir_with_symbols, lower_module};
@@ -96,12 +97,7 @@ fn assert_output(actual: &str, expected: &str) {
             let a = a_lines.get(i).copied().unwrap_or("<missing>");
             let e = e_lines.get(i).copied().unwrap_or("<missing>");
             if a != e {
-                diff.push_str(&format!(
-                    "  line {}: expected {:?}, got {:?}\n",
-                    i + 1,
-                    e,
-                    a
-                ));
+                diff.push_str(&format!("  line {}: expected {:?}, got {:?}\n", i + 1, e, a));
             }
         }
         panic!(
@@ -113,7 +109,7 @@ fn assert_output(actual: &str, expected: &str) {
 /// Load a fixture file and its expected output, run through JIT, compare.
 fn run_fixture(fixture_rel_path: &str) {
     let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/cpython/fixtures")
+        .join(crate::conformance::FIXTURES_ROOT)
         .join(fixture_rel_path);
     let py_path = base.with_extension("py");
     let expected_path = base.with_extension("expected");
@@ -260,7 +256,9 @@ fn test_s5_lambda_in_list() {
 /// THEN: inner lambda captures x, output is 7
 #[test]
 fn test_s6_nested_lambda() {
-    let output = jit_capture("add = lambda x: lambda y: x + y\nprint(add(3)(4))\n");
+    let output = jit_capture(
+        "add = lambda x: lambda y: x + y\nprint(add(3)(4))\n",
+    );
     assert_output(&output, "7\n");
 }
 
@@ -285,15 +283,18 @@ print(list(iter(counter, 4)))
 /// Lambda composed with map (R2 supplement).
 #[test]
 fn test_r2_lambda_with_map() {
-    let output = jit_capture("nums = list(map(lambda x: x * 2, [1, 2, 3]))\nprint(nums)\n");
+    let output = jit_capture(
+        "nums = list(map(lambda x: x * 2, [1, 2, 3]))\nprint(nums)\n",
+    );
     assert_output(&output, "[2, 4, 6]\n");
 }
 
 /// Lambda composed with filter (R2 supplement).
 #[test]
 fn test_r2_lambda_with_filter() {
-    let output =
-        jit_capture("evens = list(filter(lambda x: x % 2 == 0, range(10)))\nprint(evens)\n");
+    let output = jit_capture(
+        "evens = list(filter(lambda x: x % 2 == 0, range(10)))\nprint(evens)\n",
+    );
     assert_output(&output, "[0, 2, 4, 6, 8]\n");
 }
 
@@ -912,8 +913,8 @@ fn test_fixture_stdlib_struct_conformance() {
 /// Scans all .py files under tests/cpython/ for active xfail directives.
 #[test]
 fn test_s18_zero_xfail_markers() {
-    let conformance_dir =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/fixtures");
+    let conformance_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(crate::conformance::FIXTURES_ROOT);
 
     let mut xfail_files = Vec::new();
     scan_for_xfail(&conformance_dir, &mut xfail_files);
@@ -952,7 +953,8 @@ fn scan_for_xfail(dir: &std::path::Path, results: &mut Vec<String>) {
 /// Verify that all previously-xfail non-stdlib fixtures do NOT have xfail markers.
 #[test]
 fn test_xfail_removed_from_non_stdlib_fixtures() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/fixtures");
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(crate::conformance::FIXTURES_ROOT);
 
     let fixtures = [
         "data_structures/bytes_edge_cases.py",
@@ -978,9 +980,7 @@ fn test_xfail_removed_from_non_stdlib_fixtures() {
         let content = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
         assert!(
-            !content
-                .lines()
-                .any(|l| l.trim().starts_with("# mamba-xfail:")),
+            !content.lines().any(|l| l.trim().starts_with("# mamba-xfail:")),
             "{fixture} should not have active mamba-xfail marker"
         );
     }
@@ -989,7 +989,8 @@ fn test_xfail_removed_from_non_stdlib_fixtures() {
 /// Verify that all previously-xfail stdlib fixtures do NOT have xfail markers.
 #[test]
 fn test_xfail_removed_from_stdlib_fixtures() {
-    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cpython/fixtures");
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(crate::conformance::FIXTURES_ROOT);
 
     let fixtures = [
         "stdlib/math_basic.py",
@@ -1018,9 +1019,7 @@ fn test_xfail_removed_from_stdlib_fixtures() {
         let content = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
         assert!(
-            !content
-                .lines()
-                .any(|l| l.trim().starts_with("# mamba-xfail:")),
+            !content.lines().any(|l| l.trim().starts_with("# mamba-xfail:")),
             "{fixture} should not have active mamba-xfail marker"
         );
     }

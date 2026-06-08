@@ -3,8 +3,8 @@
 //! This file contains extensive fuzzing tests to validate security boundaries
 //! and input validation in the cclab-titan crate.
 
-use cclab_pg::{ExtractedValue, Operator, OrderDirection, QueryBuilder};
-use qc::security::{FuzzConfig, Fuzzer, PayloadDatabase, SqlInjectionTester};
+use cclab_pg::{QueryBuilder, Operator, ExtractedValue, OrderDirection};
+use qc::security::{PayloadDatabase, SqlInjectionTester, Fuzzer, FuzzConfig};
 use qc::{expect, AssertionError};
 
 // ============================================================================
@@ -26,9 +26,11 @@ fn test_fuzz_table_names_comprehensive() -> Result<(), AssertionError> {
 
     let max_iterations = config.max_iterations;
     let fuzzer = Fuzzer::new(config);
-    let result = fuzzer.fuzz(|input| match QueryBuilder::new(input) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    let result = fuzzer.fuzz(|input| {
+        match QueryBuilder::new(input) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     });
 
     // Allow a reasonable crash rate for extreme fuzzing
@@ -38,12 +40,8 @@ fn test_fuzz_table_names_comprehensive() -> Result<(), AssertionError> {
 
     // Log crash statistics
     if !result.crashes.is_empty() {
-        eprintln!(
-            "\n[FUZZ] Table name fuzzing found {} crashes out of {} iterations ({:.1}%)",
-            result.crashes.len(),
-            max_iterations,
-            crash_rate * 100.0
-        );
+        eprintln!("\n[FUZZ] Table name fuzzing found {} crashes out of {} iterations ({:.1}%)",
+                  result.crashes.len(), max_iterations, crash_rate * 100.0);
         if let Some(crash) = result.crashes.first() {
             eprintln!("[FUZZ] Example crash input: {:?}", crash.input);
         }
@@ -82,12 +80,8 @@ fn test_fuzz_column_names() -> Result<(), AssertionError> {
     expect(crash_rate < 0.6).to_be_true()?;
 
     if !result.crashes.is_empty() {
-        eprintln!(
-            "\n[FUZZ] Column name fuzzing found {} crashes out of {} iterations ({:.1}%)",
-            result.crashes.len(),
-            max_iterations,
-            crash_rate * 100.0
-        );
+        eprintln!("\n[FUZZ] Column name fuzzing found {} crashes out of {} iterations ({:.1}%)",
+                  result.crashes.len(), max_iterations, crash_rate * 100.0);
     }
 
     Ok(())
@@ -107,9 +101,11 @@ fn test_fuzz_schema_qualified_names() -> Result<(), AssertionError> {
         ]);
 
     let fuzzer = Fuzzer::new(config);
-    let result = fuzzer.fuzz(|input| match QueryBuilder::new(input) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    let result = fuzzer.fuzz(|input| {
+        match QueryBuilder::new(input) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     });
 
     let crash_rate = result.crashes.len() as f64 / max_iterations as f64;
@@ -166,10 +162,7 @@ fn test_sql_injection_payloads_table_names() -> Result<(), AssertionError> {
             blocked_count += 1;
         } else {
             allowed_count += 1;
-            eprintln!(
-                "[WARN] SQL injection payload allowed as table name: {:?}",
-                payload
-            );
+            eprintln!("[WARN] SQL injection payload allowed as table name: {:?}", payload);
         }
     }
 
@@ -178,12 +171,8 @@ fn test_sql_injection_payloads_table_names() -> Result<(), AssertionError> {
     let block_rate = blocked_count as f64 / total as f64;
     expect(block_rate >= 0.95).to_be_true()?;
 
-    eprintln!(
-        "\n[SQL-INJ] Table names: {}/{} blocked ({:.1}%)",
-        blocked_count,
-        total,
-        block_rate * 100.0
-    );
+    eprintln!("\n[SQL-INJ] Table names: {}/{} blocked ({:.1}%)",
+              blocked_count, total, block_rate * 100.0);
 
     Ok(())
 }
@@ -202,10 +191,7 @@ fn test_sql_injection_payloads_column_names() -> Result<(), AssertionError> {
             blocked_count += 1;
         } else {
             allowed_count += 1;
-            eprintln!(
-                "[WARN] SQL injection payload allowed as column name: {:?}",
-                payload
-            );
+            eprintln!("[WARN] SQL injection payload allowed as column name: {:?}", payload);
         }
     }
 
@@ -213,12 +199,8 @@ fn test_sql_injection_payloads_column_names() -> Result<(), AssertionError> {
     let block_rate = blocked_count as f64 / total as f64;
     expect(block_rate >= 0.95).to_be_true()?;
 
-    eprintln!(
-        "\n[SQL-INJ] Column names: {}/{} blocked ({:.1}%)",
-        blocked_count,
-        total,
-        block_rate * 100.0
-    );
+    eprintln!("\n[SQL-INJ] Column names: {}/{} blocked ({:.1}%)",
+              blocked_count, total, block_rate * 100.0);
 
     Ok(())
 }
@@ -235,15 +217,14 @@ fn test_identifier_injection_payloads() -> Result<(), AssertionError> {
 
         // Some payloads are database-specific (SQL Server, MySQL)
         // We only need to block PostgreSQL-specific threats
-        let is_postgres_threat = payload.starts_with("pg_")
-            || payload.starts_with("information_schema")
-            || payload.contains("pg_catalog")
-            || payload.contains(['\'', '"', ';', '-', '`', '[', ']', '/', '\\', ' '])
-            || payload.to_lowercase().split('.').any(|part| {
-                [
-                    "select", "drop", "table", "where", "union", "insert", "delete", "update",
-                ]
-                .contains(&part)
+        let is_postgres_threat =
+            payload.starts_with("pg_") ||
+            payload.starts_with("information_schema") ||
+            payload.contains("pg_catalog") ||
+            payload.contains(['\'', '"', ';', '-', '`', '[', ']', '/', '\\', ' ']) ||
+            payload.to_lowercase().split('.').any(|part| {
+                ["select", "drop", "table", "where", "union", "insert", "delete", "update"]
+                    .contains(&part)
             });
 
         if is_postgres_threat {
@@ -261,12 +242,8 @@ fn test_identifier_injection_payloads() -> Result<(), AssertionError> {
         let block_rate = blocked_count as f64 / total as f64;
         expect(block_rate >= 0.90).to_be_true()?;
 
-        eprintln!(
-            "\n[ID-INJ] Identifiers: {}/{} PostgreSQL threats blocked ({:.1}%)",
-            blocked_count,
-            total,
-            block_rate * 100.0
-        );
+        eprintln!("\n[ID-INJ] Identifiers: {}/{} PostgreSQL threats blocked ({:.1}%)",
+                  blocked_count, total, block_rate * 100.0);
     }
 
     Ok(())
@@ -289,10 +266,7 @@ fn test_sql_injection_where_clause_fields() -> Result<(), AssertionError> {
     // Should block at least 90% of injection attempts
     expect(blocked_count >= 45).to_be_true()?;
 
-    eprintln!(
-        "\n[SQL-INJ] WHERE clause fields: {}/50 blocked",
-        blocked_count
-    );
+    eprintln!("\n[SQL-INJ] WHERE clause fields: {}/50 blocked", blocked_count);
 
     Ok(())
 }
@@ -369,10 +343,8 @@ fn test_unicode_tricks_payloads() -> Result<(), AssertionError> {
     // Should block all dangerous Unicode tricks
     if total_dangerous > 0 {
         expect(blocked_dangerous).to_equal(&total_dangerous)?;
-        eprintln!(
-            "\n[UNICODE] Dangerous tricks: {}/{} blocked",
-            blocked_dangerous, total_dangerous
-        );
+        eprintln!("\n[UNICODE] Dangerous tricks: {}/{} blocked",
+                  blocked_dangerous, total_dangerous);
     }
 
     Ok(())
@@ -389,25 +361,23 @@ fn test_fuzz_unicode_identifiers() -> Result<(), AssertionError> {
             "users".to_string(),
             "tаble".to_string(), // Cyrillic 'а'
             "tablé".to_string(), // Accented e
-            "表".to_string(),    // CJK character
+            "表".to_string(),     // CJK character
         ]);
 
     let fuzzer = Fuzzer::new(config);
-    let result = fuzzer.fuzz(|input| match QueryBuilder::new(input) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    let result = fuzzer.fuzz(|input| {
+        match QueryBuilder::new(input) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     });
 
     let crash_rate = result.crashes.len() as f64 / max_iterations as f64;
     expect(crash_rate < 0.95).to_be_true()?;
 
     if !result.crashes.is_empty() {
-        eprintln!(
-            "\n[FUZZ] Unicode identifiers: {} crashes out of {} iterations ({:.1}%)",
-            result.crashes.len(),
-            max_iterations,
-            crash_rate * 100.0
-        );
+        eprintln!("\n[FUZZ] Unicode identifiers: {} crashes out of {} iterations ({:.1}%)",
+                  result.crashes.len(), max_iterations, crash_rate * 100.0);
     }
 
     Ok(())
@@ -454,9 +424,11 @@ fn test_fuzz_long_identifiers() -> Result<(), AssertionError> {
         ]);
 
     let fuzzer = Fuzzer::new(config);
-    let result = fuzzer.fuzz(|input| match QueryBuilder::new(input) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    let result = fuzzer.fuzz(|input| {
+        match QueryBuilder::new(input) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     });
 
     // Should reject identifiers > 63 chars
@@ -498,9 +470,11 @@ fn test_comprehensive_injection_testing() -> Result<(), AssertionError> {
     let tester = SqlInjectionTester::new();
 
     // Test all payload categories
-    let results = tester.test_all(|input| match QueryBuilder::new(input) {
-        Ok(_) => Ok(input.to_string()),
-        Err(e) => Err(e.to_string()),
+    let results = tester.test_all(|input| {
+        match QueryBuilder::new(input) {
+            Ok(_) => Ok(input.to_string()),
+            Err(e) => Err(e.to_string()),
+        }
     });
 
     let (blocked, allowed, _errors) = SqlInjectionTester::summarize(&results);
@@ -510,12 +484,8 @@ fn test_comprehensive_injection_testing() -> Result<(), AssertionError> {
     let block_rate = blocked as f64 / total as f64;
     expect(block_rate >= 0.90).to_be_true()?;
 
-    eprintln!(
-        "\n[COMPREHENSIVE] All payloads: {}/{} blocked ({:.1}%)",
-        blocked,
-        total,
-        block_rate * 100.0
-    );
+    eprintln!("\n[COMPREHENSIVE] All payloads: {}/{} blocked ({:.1}%)",
+              blocked, total, block_rate * 100.0);
 
     Ok(())
 }
@@ -525,9 +495,11 @@ fn test_comprehensive_injection_testing() -> Result<(), AssertionError> {
 fn test_injection_tester_identifiers() -> Result<(), AssertionError> {
     let tester = SqlInjectionTester::new();
 
-    let results = tester.test_identifiers(|input| match QueryBuilder::new(input) {
-        Ok(_) => Ok(input.to_string()),
-        Err(e) => Err(e.to_string()),
+    let results = tester.test_identifiers(|input| {
+        match QueryBuilder::new(input) {
+            Ok(_) => Ok(input.to_string()),
+            Err(e) => Err(e.to_string()),
+        }
     });
 
     let (blocked, allowed, _errors) = SqlInjectionTester::summarize(&results);
@@ -535,11 +507,8 @@ fn test_injection_tester_identifiers() -> Result<(), AssertionError> {
     // Most identifier injections should be blocked
     expect(blocked > allowed).to_be_true()?;
 
-    eprintln!(
-        "\n[ID-TESTER] Identifiers: {}/{} blocked",
-        blocked,
-        blocked + allowed
-    );
+    eprintln!("\n[ID-TESTER] Identifiers: {}/{} blocked",
+              blocked, blocked + allowed);
 
     Ok(())
 }
@@ -550,13 +519,12 @@ fn test_injection_tester_sql() -> Result<(), AssertionError> {
     let tester = SqlInjectionTester::new();
     let payloads = PayloadDatabase::new();
 
-    let results = tester.test(
-        |input| match QueryBuilder::new(input) {
+    let results = tester.test(|input| {
+        match QueryBuilder::new(input) {
             Ok(_) => Ok(input.to_string()),
             Err(e) => Err(e.to_string()),
-        },
-        payloads.sql_injection(),
-    );
+        }
+    }, payloads.sql_injection());
 
     let (blocked, allowed, _errors) = SqlInjectionTester::summarize(&results);
 
@@ -564,12 +532,8 @@ fn test_injection_tester_sql() -> Result<(), AssertionError> {
     let block_rate = blocked as f64 / (blocked + allowed) as f64;
     expect(block_rate >= 0.95).to_be_true()?;
 
-    eprintln!(
-        "\n[SQL-TESTER] SQL injections: {}/{} blocked ({:.1}%)",
-        blocked,
-        blocked + allowed,
-        block_rate * 100.0
-    );
+    eprintln!("\n[SQL-TESTER] SQL injections: {}/{} blocked ({:.1}%)",
+              blocked, blocked + allowed, block_rate * 100.0);
 
     Ok(())
 }
@@ -594,19 +558,18 @@ fn test_fuzz_relation_config_fields() -> Result<(), AssertionError> {
     let fuzzer = Fuzzer::new(config);
 
     // Test relation name fuzzing
-    let name_result = fuzzer.fuzz(|input| match QueryBuilder::validate_identifier(input) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    let name_result = fuzzer.fuzz(|input| {
+        match QueryBuilder::validate_identifier(input) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     });
 
     let crash_rate = name_result.crashes.len() as f64 / max_iterations as f64;
     expect(crash_rate < 0.6).to_be_true()?;
 
-    eprintln!(
-        "\n[FUZZ] RelationConfig names: {} crashes out of {} iterations",
-        name_result.crashes.len(),
-        max_iterations
-    );
+    eprintln!("\n[FUZZ] RelationConfig names: {} crashes out of {} iterations",
+              name_result.crashes.len(), max_iterations);
 
     Ok(())
 }
@@ -646,12 +609,8 @@ fn test_relation_config_payload_injection() -> Result<(), AssertionError> {
     let block_rate = blocked_count as f64 / total_count as f64;
     expect(block_rate >= 0.95).to_be_true()?;
 
-    eprintln!(
-        "\n[REL-CONFIG] RelationConfig fields: {}/{} blocked ({:.1}%)",
-        blocked_count,
-        total_count,
-        block_rate * 100.0
-    );
+    eprintln!("\n[REL-CONFIG] RelationConfig fields: {}/{} blocked ({:.1}%)",
+              blocked_count, total_count, block_rate * 100.0);
 
     Ok(())
 }
@@ -680,11 +639,8 @@ fn test_fuzz_where_value_parameterization() -> Result<(), AssertionError> {
             return Ok(());
         }
 
-        let qb = qb.unwrap().where_clause(
-            "name",
-            Operator::Eq,
-            ExtractedValue::String(input.to_string()),
-        );
+        let qb = qb.unwrap()
+            .where_clause("name", Operator::Eq, ExtractedValue::String(input.to_string()));
 
         if qb.is_err() {
             return Ok(());
@@ -707,11 +663,8 @@ fn test_fuzz_where_value_parameterization() -> Result<(), AssertionError> {
     // Should have zero crashes (all values must be parameterized)
     expect(result.crashes.len()).to_equal(&0)?;
 
-    eprintln!(
-        "\n[PARAM] WHERE value parameterization: {} iterations, {} crashes",
-        max_iterations,
-        result.crashes.len()
-    );
+    eprintln!("\n[PARAM] WHERE value parameterization: {} iterations, {} crashes",
+              max_iterations, result.crashes.len());
 
     Ok(())
 }
@@ -735,10 +688,7 @@ fn test_fuzz_insert_value_parameterization() -> Result<(), AssertionError> {
             return Ok(());
         }
 
-        let values = vec![(
-            "name".to_string(),
-            ExtractedValue::String(input.to_string()),
-        )];
+        let values = vec![("name".to_string(), ExtractedValue::String(input.to_string()))];
         let build_result = qb.unwrap().build_insert(&values);
 
         if build_result.is_err() {
@@ -757,11 +707,8 @@ fn test_fuzz_insert_value_parameterization() -> Result<(), AssertionError> {
 
     expect(result.crashes.len()).to_equal(&0)?;
 
-    eprintln!(
-        "\n[PARAM] INSERT value parameterization: {} iterations, {} crashes",
-        max_iterations,
-        result.crashes.len()
-    );
+    eprintln!("\n[PARAM] INSERT value parameterization: {} iterations, {} crashes",
+              max_iterations, result.crashes.len());
 
     Ok(())
 }
@@ -785,10 +732,7 @@ fn test_fuzz_update_value_parameterization() -> Result<(), AssertionError> {
             return Ok(());
         }
 
-        let values = vec![(
-            "name".to_string(),
-            ExtractedValue::String(input.to_string()),
-        )];
+        let values = vec![("name".to_string(), ExtractedValue::String(input.to_string()))];
         let build_result = qb.unwrap().build_update(&values);
 
         if build_result.is_err() {
@@ -807,11 +751,8 @@ fn test_fuzz_update_value_parameterization() -> Result<(), AssertionError> {
 
     expect(result.crashes.len()).to_equal(&0)?;
 
-    eprintln!(
-        "\n[PARAM] UPDATE value parameterization: {} iterations, {} crashes",
-        max_iterations,
-        result.crashes.len()
-    );
+    eprintln!("\n[PARAM] UPDATE value parameterization: {} iterations, {} crashes",
+              max_iterations, result.crashes.len());
 
     Ok(())
 }
@@ -837,9 +778,11 @@ fn test_fuzz_special_sql_characters() -> Result<(), AssertionError> {
         ]);
 
     let fuzzer = Fuzzer::new(config);
-    let result = fuzzer.fuzz(|input| match QueryBuilder::new(input) {
-        Ok(_) => Ok(()),
-        Err(e) => Err(e.to_string()),
+    let result = fuzzer.fuzz(|input| {
+        match QueryBuilder::new(input) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     });
 
     // Special SQL characters should be rejected - high crash rate is expected
@@ -847,12 +790,8 @@ fn test_fuzz_special_sql_characters() -> Result<(), AssertionError> {
     let crash_rate = result.crashes.len() as f64 / max_iterations as f64;
 
     // Accept crash rate up to 100% since we're fuzzing already-dangerous characters
-    eprintln!(
-        "\n[FUZZ] Special SQL characters: {} crashes out of {} iterations ({:.1}%)",
-        result.crashes.len(),
-        max_iterations,
-        crash_rate * 100.0
-    );
+    eprintln!("\n[FUZZ] Special SQL characters: {} crashes out of {} iterations ({:.1}%)",
+              result.crashes.len(), max_iterations, crash_rate * 100.0);
 
     // The test passes as long as the fuzzer runs and generates results
     // Most dangerous SQL characters should be rejected
@@ -884,7 +823,7 @@ fn test_fuzz_null_bytes() -> Result<(), AssertionError> {
                 } else {
                     Ok(())
                 }
-            }
+            },
             Err(e) => Err(e.to_string()),
         }
     });
@@ -893,12 +832,8 @@ fn test_fuzz_null_bytes() -> Result<(), AssertionError> {
     // The fuzzer mutates null byte strings into more null byte combinations
     let crash_rate = result.crashes.len() as f64 / max_iterations as f64;
 
-    eprintln!(
-        "\n[FUZZ] Null bytes: {} crashes out of {} iterations ({:.1}%)",
-        result.crashes.len(),
-        max_iterations,
-        crash_rate * 100.0
-    );
+    eprintln!("\n[FUZZ] Null bytes: {} crashes out of {} iterations ({:.1}%)",
+              result.crashes.len(), max_iterations, crash_rate * 100.0);
 
     // Test passes as long as the fuzzer runs - null bytes SHOULD cause crashes
     // Almost all null byte inputs should be rejected

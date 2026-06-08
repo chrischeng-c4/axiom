@@ -255,11 +255,7 @@ impl<T: ArrayElement> NdArray<T> {
         }
 
         // Calculate output shape
-        let out_dims: Vec<usize> = dims
-            .iter()
-            .zip(tile_reps.iter())
-            .map(|(&d, &r)| d * r)
-            .collect();
+        let out_dims: Vec<usize> = dims.iter().zip(tile_reps.iter()).map(|(&d, &r)| d * r).collect();
         let out_size: usize = out_dims.iter().product();
         let mut result = Vec::with_capacity(out_size);
 

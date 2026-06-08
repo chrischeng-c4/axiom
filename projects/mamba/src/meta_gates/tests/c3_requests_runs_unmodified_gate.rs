@@ -330,7 +330,7 @@ fn r4_conformance_fixture_runs_against_httpbin_mirror() {
     }
     assert_eq!(
         c["fixture_relative_path"].as_str(),
-        Some("projects/mamba/tests/cpython/fixtures/3rd-libs/requests_https_get")
+        Some("projects/mamba/tests/cpython/3rd-libs/requests_https_get")
     );
     assert_eq!(
         c["fixture_relative_path_field_name"].as_str(),

@@ -40,16 +40,9 @@ fn profile_path() -> PathBuf {
         .join("package_manager.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn pkgmgr_init_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("fixture").and_then(|v| v.as_str()),
@@ -80,7 +73,7 @@ fn pkgmgr_init_manifest_header_is_well_formed() {
 
 #[test]
 fn pkgmgr_init_outputs_pin_expected_files() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let outputs = doc
         .get("outputs")
@@ -141,17 +134,18 @@ fn pkgmgr_init_outputs_pin_expected_files() {
 
 #[test]
 fn pkgmgr_init_reentry_policy_is_pinned() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let reentry = doc
         .get("reentry")
         .and_then(|v| v.as_table())
         .expect("manifest.toml missing `[reentry]` block");
 
-    let policy = reentry.get("policy").and_then(|v| v.as_str()).expect(
-        "`[reentry].policy` must be set (acceptance: \
-         \"Re-running init fails or is idempotent according to documented policy.\")",
-    );
+    let policy = reentry
+        .get("policy")
+        .and_then(|v| v.as_str())
+        .expect("`[reentry].policy` must be set (acceptance: \
+         \"Re-running init fails or is idempotent according to documented policy.\")");
     assert!(
         matches!(
             policy,
@@ -198,12 +192,13 @@ fn pkgmgr_init_reentry_policy_is_pinned() {
 
 #[test]
 fn pkgmgr_init_isolation_pins_no_global_state() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
-    let isolation = doc.get("isolation").and_then(|v| v.as_table()).expect(
-        "manifest.toml missing `[isolation]` block \
-         (acceptance: \"No user home or global cache state is modified.\")",
-    );
+    let isolation = doc
+        .get("isolation")
+        .and_then(|v| v.as_table())
+        .expect("manifest.toml missing `[isolation]` block \
+         (acceptance: \"No user home or global cache state is modified.\")");
 
     for flag in &[
         "forbid_writes_outside_project",
@@ -223,7 +218,7 @@ fn pkgmgr_init_isolation_pins_no_global_state() {
 
 #[test]
 fn pkgmgr_init_runner_contract_declares_outcome_keys() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let contract = doc
         .get("runner_contract")
         .and_then(|v| v.as_table())
@@ -254,7 +249,7 @@ fn pkgmgr_init_runner_contract_declares_outcome_keys() {
 
 #[test]
 fn pkgmgr_profile_links_to_init_fixture_directory() {
-    let doc = load_toml(&profile_path());
+    let doc = crate::common::load_toml(&profile_path());
     let init = doc
         .get("families")
         .and_then(|v| v.get("init"))

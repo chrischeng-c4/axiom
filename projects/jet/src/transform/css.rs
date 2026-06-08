@@ -9,22 +9,19 @@ use super::{TransformOptions, TransformResult};
 pub fn transform_css(source: &str, _options: &TransformOptions) -> Result<TransformResult> {
     tracing::debug!("Transforming CSS to JS injection code");
 
-    let escaped_css = source
-        .replace('\\', "\\\\")
-        .replace('`', "\\`")
-        .replace("${", "\\${");
+    let css_literal = serde_json::to_string(source)?;
 
     let injection_code = format!(
         r#"// CSS Module Injection
 (function() {{
   if (typeof document !== 'undefined') {{
     var style = document.createElement('style');
-    style.textContent = `{}`;
+    style.textContent = {};
     document.head.appendChild(style);
   }}
 }})();
 "#,
-        escaped_css
+        css_literal
     );
 
     Ok(TransformResult {
@@ -54,8 +51,10 @@ mod tests {
         let options = TransformOptions::default();
         let result = transform_css(source, &options).unwrap();
 
-        assert!(result.code.contains("\\`"));
-        assert!(result.code.contains("\\${"));
+        assert!(!result.code.contains("style.textContent = `"));
+        assert!(result
+            .code
+            .contains(r#".test { content: \"hello `world` ${foo}\"; }"#));
     }
 }
 // CODEGEN-END

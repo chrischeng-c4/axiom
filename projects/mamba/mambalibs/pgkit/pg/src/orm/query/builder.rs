@@ -1,13 +1,13 @@
 //! QueryBuilder struct and core implementation.
 
-use super::helpers::{validate_identifier, validate_identifier_part};
-use super::join::JoinClause;
-use super::types::{
-    AggregateFunction, CommonTableExpression, HavingCondition, Operator, OrderDirection, SetQuery,
-    Subquery,
-};
-use super::window::WindowExpression;
 use crate::{ExtractedValue, Result};
+use super::types::{
+    CommonTableExpression, Subquery, Operator, AggregateFunction, HavingCondition,
+    OrderDirection, SetQuery,
+};
+use super::join::JoinClause;
+use super::window::WindowExpression;
+use super::helpers::{validate_identifier, validate_identifier_part};
 
 /// Represents a WHERE condition.
 #[derive(Debug, Clone)]

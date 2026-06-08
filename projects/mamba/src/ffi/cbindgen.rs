@@ -4,27 +4,25 @@ use std::process::Command;
 use crate::error::MambaError;
 
 /// Run cbindgen on a Rust crate to produce a C header (#255).
-pub fn run_cbindgen(crate_dir: &Path, output_header: &Path) -> crate::error::Result<PathBuf> {
+pub fn run_cbindgen(
+    crate_dir: &Path,
+    output_header: &Path,
+) -> crate::error::Result<PathBuf> {
     // Write cbindgen.toml config
     let config_path = crate_dir.join("cbindgen.toml");
     std::fs::write(&config_path, CBINDGEN_CONFIG)?;
 
     let output = Command::new("cbindgen")
         .args([
-            "--config",
-            config_path.to_str().unwrap_or("cbindgen.toml"),
-            "--crate",
-            &crate_name_from_dir(crate_dir),
-            "--output",
-            output_header.to_str().unwrap_or("output.h"),
+            "--config", config_path.to_str().unwrap_or("cbindgen.toml"),
+            "--crate", &crate_name_from_dir(crate_dir),
+            "--output", output_header.to_str().unwrap_or("output.h"),
         ])
         .current_dir(crate_dir)
         .output()
-        .map_err(|e| {
-            MambaError::Other(format!(
-                "failed to run cbindgen: {e}. Install with: cargo install cbindgen"
-            ))
-        })?;
+        .map_err(|e| MambaError::Other(format!(
+            "failed to run cbindgen: {e}. Install with: cargo install cbindgen"
+        )))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -55,7 +53,10 @@ args = "Auto"
 "#;
 
 /// Orchestrate the full FFI pipeline: cbindgen → parse → map types → generate stubs.
-pub fn generate_ffi_bindings(crate_dir: &Path, output_dir: &Path) -> crate::error::Result<PathBuf> {
+pub fn generate_ffi_bindings(
+    crate_dir: &Path,
+    output_dir: &Path,
+) -> crate::error::Result<PathBuf> {
     std::fs::create_dir_all(output_dir)?;
 
     let header_path = output_dir.join("bindings.h");

@@ -48,8 +48,8 @@ impl Default for CompilerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pkgmanage::manifest::schema::{CrateConfig, CrateEntry, ProjectConfig};
     use std::collections::HashMap;
+    use crate::pkgmanage::manifest::schema::{ProjectConfig, CrateConfig, CrateEntry};
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -183,7 +183,8 @@ mod tests {
         )
         .unwrap();
 
-        let (cfg, found_path) = MambaConfig::discover(dir.path()).expect("should find mamba.toml");
+        let (cfg, found_path) =
+            MambaConfig::discover(dir.path()).expect("should find mamba.toml");
         assert_eq!(cfg.entry_point(), Some("src/main.py"));
         assert_eq!(found_path, dir.path().join("mamba.toml"));
     }
@@ -241,7 +242,8 @@ mod tests {
 
     #[test]
     fn from_file_error_on_missing_file() {
-        let result = MambaConfig::from_file(std::path::Path::new("/nonexistent/path/mamba.toml"));
+        let result =
+            MambaConfig::from_file(std::path::Path::new("/nonexistent/path/mamba.toml"));
         assert!(result.is_err(), "missing file should produce an error");
     }
 

@@ -142,4 +142,99 @@ fn font_spec_defaults_stable_under_theme_default() {
         }
     );
 }
+
+#[test]
+fn styled_table_cell_paints_background_and_border() {
+    let cell = Element::intrinsic(
+        "td",
+        Props {
+            style: Some(
+                "width: 72px; height: 24px; background: #ffffff; border: 1px solid #d7dde8;"
+                    .to_string(),
+            ),
+            ..Default::default()
+        },
+        vec![Element::text("cell 0")],
+    );
+    let table = Element::intrinsic(
+        "table",
+        Props {
+            style: Some("width: 72px;".to_string()),
+            ..Default::default()
+        },
+        vec![Element::intrinsic(
+            "tbody",
+            Props::default(),
+            vec![Element::intrinsic("tr", Props::default(), vec![cell])],
+        )],
+    );
+
+    let tree = layout(&table, vp());
+    let ops = paint(&tree, &Theme::default());
+    let cell_fill = ops.iter().any(|op| {
+        matches!(
+            op,
+            PaintOp::FillRect {
+                rect,
+                color
+            } if *rect == Rect { x: 0.0, y: 0.0, w: 73.0, h: 25.0 }
+                && *color == Color::rgb(0xff, 0xff, 0xff)
+        )
+    });
+    let cell_border = ops.iter().any(|op| {
+        matches!(
+            op,
+            PaintOp::StrokeRect {
+                rect,
+                color,
+                width
+            } if *rect == Rect { x: 0.0, y: 0.0, w: 73.0, h: 25.0 }
+                && *color == Color::rgb(0xd7, 0xdd, 0xe8)
+                && (*width - 1.0).abs() < f32::EPSILON
+        )
+    });
+
+    assert!(cell_fill, "styled td should paint its background");
+    assert!(cell_border, "styled td should paint its border");
+}
+
+#[test]
+fn styled_table_cell_text_uses_cell_font_size_and_color() {
+    let cell = Element::intrinsic(
+        "td",
+        Props {
+            style: Some("width: 72px; height: 24px; color: #1f2937; font-size: 12px;".to_string()),
+            ..Default::default()
+        },
+        vec![Element::text("cell 0")],
+    );
+    let table = Element::intrinsic(
+        "table",
+        Props {
+            style: Some("width: 72px;".to_string()),
+            ..Default::default()
+        },
+        vec![Element::intrinsic(
+            "tbody",
+            Props::default(),
+            vec![Element::intrinsic("tr", Props::default(), vec![cell])],
+        )],
+    );
+
+    let tree = layout(&table, vp());
+    let ops = paint(&tree, &Theme::default());
+    let text = ops.iter().find_map(|op| match op {
+        PaintOp::Text {
+            content,
+            font,
+            color,
+            ..
+        } if content == "cell 0" => Some((font, color)),
+        _ => None,
+    });
+
+    let (font, color) = text.expect("styled table cell should paint text");
+    assert_eq!(font.size_px, 12.0);
+    assert_eq!(*color, Color::rgb(0x1f, 0x29, 0x37));
+}
 // CODEGEN-END

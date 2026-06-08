@@ -44,6 +44,7 @@ use crate::task::TaskId;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Signal {
     // ==================== Task Signals ====================
+
     /// Before a task message is published to the broker
     BeforeTaskPublish {
         task_id: TaskId,
@@ -132,6 +133,7 @@ pub enum Signal {
     },
 
     // ==================== Worker Signals ====================
+
     /// Worker is initializing
     WorkerInit {
         worker_name: String,
@@ -140,7 +142,9 @@ pub enum Signal {
     },
 
     /// Worker is ready to accept tasks
-    WorkerReady { worker_name: String },
+    WorkerReady {
+        worker_name: String,
+    },
 
     /// Worker is shutting down
     WorkerShutdown {
@@ -157,6 +161,7 @@ pub enum Signal {
     },
 
     // ==================== Rate Limit Signals ====================
+
     /// Task was rate limited
     TaskRateLimited {
         task_id: TaskId,
@@ -476,9 +481,8 @@ mod tests {
             }
         }
 
-        let dispatcher = SignalDispatcher::new().on_all(CountingHandler {
-            counter: counter_clone,
-        });
+        let dispatcher = SignalDispatcher::new()
+            .on_all(CountingHandler { counter: counter_clone });
 
         let signal = Signal::TaskSuccess {
             task_id: TaskId::new(),
@@ -497,32 +501,29 @@ mod tests {
         let success_count = Arc::new(AtomicUsize::new(0));
         let success_clone = success_count.clone();
 
-        let dispatcher = SignalDispatcher::new().on(vec!["task_success"], move |_| {
-            success_clone.fetch_add(1, Ordering::SeqCst);
-        });
+        let dispatcher = SignalDispatcher::new()
+            .on(vec!["task_success"], move |_| {
+                success_clone.fetch_add(1, Ordering::SeqCst);
+            });
 
         // Send success signal
-        dispatcher
-            .dispatch(Signal::TaskSuccess {
-                task_id: TaskId::new(),
-                task_name: "test".to_string(),
-                result: serde_json::json!(null),
-                runtime: Duration::ZERO,
-                worker_name: "w".to_string(),
-            })
-            .await;
+        dispatcher.dispatch(Signal::TaskSuccess {
+            task_id: TaskId::new(),
+            task_name: "test".to_string(),
+            result: serde_json::json!(null),
+            runtime: Duration::ZERO,
+            worker_name: "w".to_string(),
+        }).await;
 
         // Send failure signal (should not trigger handler)
-        dispatcher
-            .dispatch(Signal::TaskFailure {
-                task_id: TaskId::new(),
-                task_name: "test".to_string(),
-                error: "error".to_string(),
-                traceback: None,
-                runtime: Duration::ZERO,
-                worker_name: "w".to_string(),
-            })
-            .await;
+        dispatcher.dispatch(Signal::TaskFailure {
+            task_id: TaskId::new(),
+            task_name: "test".to_string(),
+            error: "error".to_string(),
+            traceback: None,
+            runtime: Duration::ZERO,
+            worker_name: "w".to_string(),
+        }).await;
 
         assert_eq!(success_count.load(Ordering::SeqCst), 1);
     }

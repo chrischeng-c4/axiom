@@ -1,6 +1,3 @@
-use super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
-use super::value::MbValue;
-use rustc_hash::FxHashMap;
 /// Closure and nested function support for the Mamba runtime (#289).
 ///
 /// Closures capture variables from their enclosing scope. This module
@@ -8,7 +5,11 @@ use rustc_hash::FxHashMap;
 /// - Creating closure objects with captured environments
 /// - Accessing captured variables from within closures
 /// - Decorator application (wrapping functions)
+
 use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use super::value::MbValue;
+use super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
 
 /// A closure object — a function paired with its captured environment.
 pub struct MbClosure {
@@ -73,9 +74,7 @@ pub fn mb_closure_set_defaults(closure_handle: MbValue, defaults_list: MbValue) 
             if let Some(Some(c)) = vec.get_mut(idx) {
                 // REQ: R1 — release prior defaults before overwriting
                 for old_val in c.defaults.drain(..) {
-                    unsafe {
-                        super::rc::release_if_ptr(old_val);
-                    }
+                    unsafe { super::rc::release_if_ptr(old_val); }
                 }
                 c.defaults = vals;
             }
@@ -137,14 +136,11 @@ pub fn mb_closure_get_capture(closure_handle: MbValue, index: MbValue) -> MbValu
         CLOSURES.with(|closures| {
             let vec = closures.borrow();
             let slot_idx = (id as u64).wrapping_sub(1) as usize;
-            let val = vec
-                .get(slot_idx)
+            let val = vec.get(slot_idx)
                 .and_then(|slot| slot.as_ref())
                 .and_then(|c| c.captures.get(idx as usize).copied())
                 .unwrap_or(MbValue::none());
-            unsafe {
-                super::rc::retain_if_ptr(val);
-            }
+            unsafe { super::rc::retain_if_ptr(val); }
             val
         })
     } else {
@@ -164,9 +160,7 @@ pub fn mb_closure_set_capture(closure_handle: MbValue, index: MbValue, value: Mb
                     c.captures.resize(idx + 1, MbValue::none());
                 }
                 // REQ: R1 — release prior capture value before overwriting
-                unsafe {
-                    super::rc::release_if_ptr(c.captures[idx]);
-                }
+                unsafe { super::rc::release_if_ptr(c.captures[idx]); }
                 c.captures[idx] = value;
             }
         });
@@ -179,15 +173,12 @@ pub fn mb_closure_get_func(closure_handle: MbValue) -> MbValue {
         CLOSURES.with(|closures| {
             let vec = closures.borrow();
             let idx = (id as u64).wrapping_sub(1) as usize;
-            let val = vec
-                .get(idx)
+            let val = vec.get(idx)
                 .and_then(|slot| slot.as_ref())
                 .map(|c| c.func)
                 .unwrap_or(MbValue::none());
             // REQ: R2 — retain returned func, symmetric with mb_closure_get_capture
-            unsafe {
-                super::rc::retain_if_ptr(val);
-            }
+            unsafe { super::rc::retain_if_ptr(val); }
             val
         })
     } else {
@@ -202,22 +193,14 @@ pub fn mb_closure_release(closure_handle: MbValue) {
         let dead = CLOSURES.with(|closures| {
             let mut vec = closures.borrow_mut();
             let idx = (id as u64).wrapping_sub(1) as usize;
-            if idx < vec.len() {
-                vec[idx].take()
-            } else {
-                None
-            }
+            if idx < vec.len() { vec[idx].take() } else { None }
         });
         if let Some(closure) = dead {
             for cap in closure.captures {
-                unsafe {
-                    super::rc::release_if_ptr(cap);
-                }
+                unsafe { super::rc::release_if_ptr(cap); }
             }
             for def in closure.defaults {
-                unsafe {
-                    super::rc::release_if_ptr(def);
-                }
+                unsafe { super::rc::release_if_ptr(def); }
             }
         }
     }
@@ -298,14 +281,8 @@ pub fn mb_property_new(fget: MbValue, fset: MbValue, fdel: MbValue) -> MbValue {
     fields.insert("fset".to_string(), fset);
     fields.insert("fdel".to_string(), fdel);
     let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: std::sync::atomic::AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
-        data: ObjData::Instance {
-            class_name: "property".to_string(),
-            fields: crate::runtime::rc::MbRwLock::new(fields),
-        },
+        header: MbObjectHeader { rc: std::sync::atomic::AtomicU32::new(1), kind: ObjKind::Instance },
+        data: ObjData::Instance { class_name: "property".to_string(), fields: crate::runtime::rc::MbRwLock::new(fields) },
     });
     MbValue::from_ptr(Box::into_raw(obj))
 }
@@ -318,6 +295,15 @@ thread_local! {
     static FUNC_DOCS: std::cell::RefCell<HashMap<u64, String>> =
         std::cell::RefCell::new(HashMap::new());
     static FUNC_MODULES: std::cell::RefCell<HashMap<u64, String>> =
+        std::cell::RefCell::new(HashMap::new());
+    // Code-object introspection metadata (CORE #3): positional argument count
+    // (`co_argcount`) and local/parameter variable names (`co_varnames`) for
+    // each user-defined function, keyed by the function value's bits. Populated
+    // at module init alongside FUNC_NAMES so `f.__code__.co_argcount` and
+    // `f.__code__.co_varnames` return the real compiled signature metadata.
+    static FUNC_ARGCOUNTS: std::cell::RefCell<HashMap<u64, i64>> =
+        std::cell::RefCell::new(HashMap::new());
+    static FUNC_VARNAMES: std::cell::RefCell<HashMap<u64, Vec<String>>> =
         std::cell::RefCell::new(HashMap::new());
 }
 
@@ -332,8 +318,7 @@ pub fn mb_func_set_name(func: MbValue, name: MbValue) {
 pub fn mb_func_get_name(func: MbValue) -> MbValue {
     let key = func.to_bits();
     FUNC_NAMES.with(|m| {
-        m.borrow()
-            .get(&key)
+        m.borrow().get(&key)
             .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
             .unwrap_or(MbValue::none())
     })
@@ -351,8 +336,7 @@ pub fn mb_func_set_doc(func: MbValue, doc: MbValue) {
 pub fn mb_func_get_doc(func: MbValue) -> MbValue {
     let key = func.to_bits();
     FUNC_DOCS.with(|m| {
-        m.borrow()
-            .get(&key)
+        m.borrow().get(&key)
             .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
             .unwrap_or(MbValue::none())
     })
@@ -376,6 +360,85 @@ pub fn mb_func_get_module(func: MbValue) -> MbValue {
     })
 }
 
+/// Register a function's positional argument count (for `f.__code__.co_argcount`).
+/// Called at module init for every user-defined `def`. `argcount` excludes
+/// `*args` / `**kwargs` (CPython counts those in co_varnames but not co_argcount).
+pub fn mb_func_set_argcount(func: MbValue, argcount: MbValue) {
+    let n = argcount.as_int().unwrap_or(0);
+    let key = func.to_bits();
+    FUNC_ARGCOUNTS.with(|m| m.borrow_mut().insert(key, n));
+}
+
+/// Get a function's registered argument count. Returns None-MbValue if not
+/// registered (so callers can distinguish a real `def` from an arbitrary value).
+pub fn mb_func_get_argcount(func: MbValue) -> MbValue {
+    let key = func.to_bits();
+    FUNC_ARGCOUNTS.with(|m| {
+        m.borrow()
+            .get(&key)
+            .map(|n| MbValue::from_int(*n))
+            .unwrap_or(MbValue::none())
+    })
+}
+
+/// Register a function's local variable names (for `f.__code__.co_varnames`).
+/// The list is the parameter names in declaration order (CPython also appends
+/// other locals, but parameters come first and are what fixtures assert on).
+/// Names are passed packed as a tuple/list MbValue of strings.
+pub fn mb_func_set_varnames(func: MbValue, names: MbValue) {
+    let mut collected: Vec<String> = Vec::new();
+    if let Some(ptr) = names.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Tuple(items) => {
+                    for item in items.iter() {
+                        if let Some(s) = extract_str(*item) {
+                            collected.push(s);
+                        }
+                    }
+                }
+                ObjData::List(lock) => {
+                    let items = lock.read().unwrap();
+                    for item in items.iter() {
+                        if let Some(s) = extract_str(*item) {
+                            collected.push(s);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    let key = func.to_bits();
+    FUNC_VARNAMES.with(|m| m.borrow_mut().insert(key, collected));
+}
+
+/// Get a function's registered varnames as a tuple MbValue (CPython returns a
+/// tuple for `co_varnames`). Returns None-MbValue if not registered.
+pub fn mb_func_get_varnames(func: MbValue) -> MbValue {
+    let key = func.to_bits();
+    FUNC_VARNAMES.with(|m| {
+        m.borrow().get(&key).map(|names| {
+            let items: Vec<MbValue> = names
+                .iter()
+                .map(|s| MbValue::from_ptr(MbObject::new_str(s.clone())))
+                .collect();
+            MbValue::from_ptr(MbObject::new_tuple(items))
+        })
+        .unwrap_or(MbValue::none())
+    })
+}
+
+/// True if `func` is a registered user-defined function (present in any of the
+/// function metadata registries). Used to gate `__code__` synthesis so we don't
+/// fabricate a code object for arbitrary ints / pointers.
+pub fn mb_func_is_registered(func: MbValue) -> bool {
+    let key = func.to_bits();
+    FUNC_NAMES.with(|m| m.borrow().contains_key(&key))
+        || FUNC_ARGCOUNTS.with(|m| m.borrow().contains_key(&key))
+        || FUNC_VARNAMES.with(|m| m.borrow().contains_key(&key))
+}
+
 // ── Cell Variables (for nonlocal/closure mutable capture) ──
 // Vec-indexed by cell ID for O(1) lookup (#1199). ID N maps to index N-1.
 
@@ -390,9 +453,7 @@ pub fn mb_cell_new(value: MbValue) -> MbValue {
     // Fix C-prime: CELLS takes its own +1 so JIT epilogue release of the
     // source VReg cannot UAF the raw reference stored in the cell slot.
     // Mirrors the symmetric pattern in mb_cell_set.
-    unsafe {
-        super::rc::retain_if_ptr(value);
-    }
+    unsafe { super::rc::retain_if_ptr(value); }
     CELLS.with(|cells| {
         let mut vec = cells.borrow_mut();
         let id = (vec.len() + 1) as u64; // IDs start at 1
@@ -407,13 +468,10 @@ pub fn mb_cell_get(cell_handle: MbValue) -> MbValue {
         CELLS.with(|cells| {
             let vec = cells.borrow();
             let idx = (id as u64).wrapping_sub(1) as usize;
-            let val = vec
-                .get(idx)
+            let val = vec.get(idx)
                 .and_then(|slot| *slot)
                 .unwrap_or(MbValue::none());
-            unsafe {
-                super::rc::retain_if_ptr(val);
-            }
+            unsafe { super::rc::retain_if_ptr(val); }
             val
         })
     } else {
@@ -425,18 +483,14 @@ pub fn mb_cell_get(cell_handle: MbValue) -> MbValue {
 pub fn mb_cell_set(cell_handle: MbValue, value: MbValue) {
     if let Some(id) = cell_handle.as_int() {
         // Retain so value survives the JIT epilogue releasing the source VReg.
-        unsafe {
-            super::rc::retain_if_ptr(value);
-        }
+        unsafe { super::rc::retain_if_ptr(value); }
         CELLS.with(|cells| {
             let mut vec = cells.borrow_mut();
             let idx = (id as u64).wrapping_sub(1) as usize;
             if idx < vec.len() {
                 // Release the old cell value being overwritten.
                 if let Some(prev) = vec[idx] {
-                    unsafe {
-                        super::rc::release_if_ptr(prev);
-                    }
+                    unsafe { super::rc::release_if_ptr(prev); }
                 }
                 vec[idx] = Some(value);
             }
@@ -458,14 +512,8 @@ thread_local! {
 pub fn mb_global_get(name: MbValue) -> MbValue {
     let var_name = extract_str(name).unwrap_or_default();
     GLOBAL_NAMESPACE.with(|ns| {
-        let val = ns
-            .borrow()
-            .get(&var_name)
-            .copied()
-            .unwrap_or(MbValue::none());
-        unsafe {
-            super::rc::retain_if_ptr(val);
-        }
+        let val = ns.borrow().get(&var_name).copied().unwrap_or(MbValue::none());
+        unsafe { super::rc::retain_if_ptr(val); }
         val
     })
 }
@@ -474,15 +522,11 @@ pub fn mb_global_get(name: MbValue) -> MbValue {
 pub fn mb_global_set(name: MbValue, value: MbValue) {
     let var_name = extract_str(name).unwrap_or_default();
     // Retain so value survives the JIT epilogue releasing the source VReg.
-    unsafe {
-        super::rc::retain_if_ptr(value);
-    }
+    unsafe { super::rc::retain_if_ptr(value); }
     GLOBAL_NAMESPACE.with(|ns| {
         let old = ns.borrow_mut().insert(var_name, value);
         if let Some(prev) = old {
-            unsafe {
-                super::rc::release_if_ptr(prev);
-            }
+            unsafe { super::rc::release_if_ptr(prev); }
         }
     });
 }
@@ -494,9 +538,7 @@ pub fn mb_global_get_id(id: MbValue) -> MbValue {
     let key = id.to_bits() as i64;
     GLOBAL_ID_NAMESPACE.with(|ns| {
         let val = ns.borrow().get(&key).copied().unwrap_or(MbValue::none());
-        unsafe {
-            super::rc::retain_if_ptr(val);
-        }
+        unsafe { super::rc::retain_if_ptr(val); }
         val
     })
 }
@@ -506,16 +548,12 @@ pub fn mb_global_get_id(id: MbValue) -> MbValue {
 pub fn mb_global_set_id(id: MbValue, value: MbValue) {
     let key = id.to_bits() as i64;
     // Retain the value so it survives the JIT epilogue releasing the source VReg.
-    unsafe {
-        super::rc::retain_if_ptr(value);
-    }
+    unsafe { super::rc::retain_if_ptr(value); }
     GLOBAL_ID_NAMESPACE.with(|ns| {
         let old = ns.borrow_mut().insert(key, value);
         // Release the previous value being overwritten.
         if let Some(prev) = old {
-            unsafe {
-                super::rc::release_if_ptr(prev);
-            }
+            unsafe { super::rc::release_if_ptr(prev); }
         }
     });
 }
@@ -568,6 +606,26 @@ pub fn snapshot_global_id_namespace() -> HashMap<i64, MbValue> {
     GLOBAL_ID_NAMESPACE.with(|ns| ns.borrow().clone())
 }
 
+/// Merge entries into the current GLOBAL_ID_NAMESPACE without clearing it.
+///
+/// Used after an imported module finishes executing: its module-level global
+/// bindings (constants and `import` results) are merged back so the module's
+/// own functions can read them when invoked later from the caller. SymbolIds
+/// are unique per compilation, so these keys never collide with the caller's.
+/// Existing entries are not overwritten (the caller's namespace wins on the
+/// off chance of a shared id), and contained pointer values are retained.
+pub fn merge_global_id_namespace(entries: &HashMap<i64, MbValue>) {
+    GLOBAL_ID_NAMESPACE.with(|ns| {
+        let mut ns = ns.borrow_mut();
+        for (k, v) in entries {
+            ns.entry(*k).or_insert_with(|| {
+                unsafe { super::rc::retain_if_ptr(*v); }
+                *v
+            });
+        }
+    });
+}
+
 // HANDWRITE-BEGIN gap="standardize:projects-mamba-src-runtime-closure-rs" tracker="standardize-gap-projects-mamba-src-runtime-closure-rs" reason="introspection-builtins (issue: enhancement-mamba-introspection-builtins-globals-locals-vars-dir)."
 // Runtime SymbolId → (name, type-tag) registry for `globals()` / `locals()`.
 // Populated by the driver (driver/mod.rs::Driver::run/run_stdin) and by
@@ -611,8 +669,7 @@ pub fn set_module_func_info(info: HashMap<String, MbValue>) {
 }
 
 /// Snapshot for save_and_restore around module imports.
-pub fn save_and_clear_module_sym_info() -> (HashMap<i64, (String, SymTy)>, HashMap<String, MbValue>)
-{
+pub fn save_and_clear_module_sym_info() -> (HashMap<i64, (String, SymTy)>, HashMap<String, MbValue>) {
     let syms = MODULE_SYM_INFO.with(|m| {
         let mut b = m.borrow_mut();
         let saved = b.clone();
@@ -648,7 +705,11 @@ pub fn build_globals_dict() -> MbValue {
         let Some((name, ty)) = sym_info.get(id) else {
             continue;
         };
-        if name.starts_with("__") && name != "__name__" && name != "__doc__" && name != "__all__" {
+        if name.starts_with("__")
+            && name != "__name__"
+            && name != "__doc__"
+            && name != "__all__"
+        {
             continue;
         }
         let boxed = match ty {
@@ -704,6 +765,8 @@ pub(crate) fn cleanup_all_closures() {
     let _ = FUNC_NAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_DOCS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_MODULES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_ARGCOUNTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_VARNAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
 }
 
 #[cfg(test)]
@@ -917,11 +980,7 @@ mod tests {
         assert!(prop.is_ptr());
         unsafe {
             let ptr = prop.as_ptr().unwrap();
-            if let ObjData::Instance {
-                ref class_name,
-                ref fields,
-            } = (*ptr).data
-            {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 assert_eq!(class_name, "property");
                 let f = fields.read().unwrap();
                 assert_eq!(f["fget"], fget);
@@ -944,10 +1003,8 @@ mod tests {
 
         cleanup_all_closures();
 
-        assert!(
-            mb_closure_get_func(handle).is_none(),
-            "closures should be empty after cleanup"
-        );
+        assert!(mb_closure_get_func(handle).is_none(),
+            "closures should be empty after cleanup");
     }
 
     #[test]
@@ -957,10 +1014,8 @@ mod tests {
 
         cleanup_all_closures();
 
-        assert!(
-            mb_cell_get(cell).is_none(),
-            "cells should be empty after cleanup"
-        );
+        assert!(mb_cell_get(cell).is_none(),
+            "cells should be empty after cleanup");
     }
 
     #[test]
@@ -971,10 +1026,8 @@ mod tests {
         cleanup_all_closures();
 
         let name2 = MbValue::from_ptr(MbObject::new_str("cleanup_var".into()));
-        assert!(
-            mb_global_get(name2).is_none(),
-            "global namespace should be empty after cleanup"
-        );
+        assert!(mb_global_get(name2).is_none(),
+            "global namespace should be empty after cleanup");
     }
 
     #[test]
@@ -985,10 +1038,8 @@ mod tests {
 
         cleanup_all_closures();
 
-        assert!(
-            mb_global_get_id(id).is_none(),
-            "global ID namespace should be empty after cleanup"
-        );
+        assert!(mb_global_get_id(id).is_none(),
+            "global ID namespace should be empty after cleanup");
     }
 
     #[test]
@@ -1007,11 +1058,8 @@ mod tests {
         let caps2 = MbValue::from_ptr(MbObject::new_list(vec![]));
         let h2 = mb_closure_new(name2, func2, caps2);
         // Both should have the same ID (1) since counter was reset
-        assert_eq!(
-            h1.as_int(),
-            h2.as_int(),
-            "closure ID counter should reset to 1 after cleanup"
-        );
+        assert_eq!(h1.as_int(), h2.as_int(),
+            "closure ID counter should reset to 1 after cleanup");
     }
 
     #[test]
@@ -1129,9 +1177,7 @@ mod tests {
         // returned_func was retained by get_func — still points to valid object
         assert!(returned_func.is_ptr());
         // Clean up the extra retain from get_func
-        unsafe {
-            crate::runtime::rc::release_if_ptr(returned_func);
-        }
+        unsafe { crate::runtime::rc::release_if_ptr(returned_func); }
     }
 
     #[test]

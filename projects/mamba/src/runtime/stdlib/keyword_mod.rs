@@ -23,16 +23,17 @@
 //! Phase-2 sweep; will be replaced when aw standardize lands the
 //! stdlib-shim section type. Issue #1414 cluster anchor + see
 //! `.aw/handoffs/1414-patrol-handoff.md`.
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::MbObject;
 
 /// Python 3.12 hard keywords — 35 total (authoritative list).
 const KEYWORDS: &[&str] = &[
-    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
-    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
-    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
-    "with", "yield",
+    "False", "None", "True", "and", "as", "assert", "async", "await",
+    "break", "class", "continue", "def", "del", "elif", "else", "except",
+    "finally", "for", "from", "global", "if", "import", "in", "is",
+    "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+    "while", "with", "yield",
 ];
 
 /// Python 3.12 soft keywords — 4 total, sorted alphabetically (matches CPython).
@@ -180,9 +181,6 @@ mod tests {
                 panic!("softkwlist must return a List")
             }
         };
-        assert_eq!(
-            len, 4,
-            "CPython 3.12 has exactly 4 soft keywords (_, case, match, type)"
-        );
+        assert_eq!(len, 4, "CPython 3.12 has exactly 4 soft keywords (_, case, match, type)");
     }
 }

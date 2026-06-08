@@ -38,16 +38,9 @@ fn umbrella_path() -> PathBuf {
         .join("mvp.toml")
 }
 
-fn load_toml(path: &Path) -> toml::Value {
-    let raw = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("manifest {} unreadable: {e}", path.display()));
-    raw.parse()
-        .unwrap_or_else(|e| panic!("{} parse error: {e}", path.display()))
-}
-
 #[test]
 fn performance_profile_manifest_header_is_well_formed() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     assert_eq!(
         doc.get("profile").and_then(|v| v.as_str()),
@@ -74,7 +67,7 @@ fn performance_profile_manifest_header_is_well_formed() {
 
 #[test]
 fn performance_profile_requires_cpython_3_12() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let identity = doc
         .get("runtime_identity")
@@ -103,7 +96,7 @@ fn performance_profile_requires_cpython_3_12() {
 
 #[test]
 fn performance_profile_policy_pins_floors() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
     let policy = doc
         .get("policy")
         .and_then(|v| v.as_table())
@@ -178,7 +171,7 @@ fn performance_profile_policy_pins_floors() {
 
 #[test]
 fn performance_profile_summary_names_slowest_blockers() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let summary = doc
         .get("summary")
@@ -225,7 +218,7 @@ fn performance_profile_summary_names_slowest_blockers() {
 
 #[test]
 fn performance_profile_baseline_exists_and_matches_summary_contract() {
-    let doc = load_toml(&manifest_path());
+    let doc = crate::common::load_toml(&manifest_path());
 
     let baseline_rel = doc
         .get("baseline")
@@ -263,8 +256,8 @@ fn performance_profile_baseline_exists_and_matches_summary_contract() {
         .and_then(|v| v.as_str())
         .expect("`[summary.source].name_key` must be set");
 
-    let raw =
-        std::fs::read_to_string(&canonical).unwrap_or_else(|e| panic!("baseline read failed: {e}"));
+    let raw = std::fs::read_to_string(&canonical)
+        .unwrap_or_else(|e| panic!("baseline read failed: {e}"));
     let parsed: serde_json::Value =
         serde_json::from_str(&raw).unwrap_or_else(|e| panic!("baseline parse failed: {e}"));
 
@@ -298,7 +291,7 @@ fn performance_profile_baseline_exists_and_matches_summary_contract() {
 
 #[test]
 fn mvp_umbrella_links_to_performance_manifest() {
-    let doc = load_toml(&umbrella_path());
+    let doc = crate::common::load_toml(&umbrella_path());
     let entry = doc
         .get("profiles")
         .and_then(|v| v.get("performance"))

@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
+import harness_lib  # shared oracle/SUT runner (tools/): isolated scratch CWD + PYTHONBREAKPOINT=0
+
 TOOLS_DIR = Path(__file__).resolve().parent
-FIXTURES_DIR = TOOLS_DIR.parents[2] / "cpython" / "fixtures"
+FIXTURES_DIR = TOOLS_DIR.parents[2] / "cpython"
 
 # longest suffix first so `.cpython.expected` wins over `.expected`
 SUFFIXES = (".cpython.expected", ".mamba.expected", ".py.expected", ".expected")
@@ -46,12 +47,9 @@ def fixture_for(golden: Path) -> tuple[Path | None, str]:
 
 
 def run(side: str, fixture: Path, mamba_bin: str) -> str | None:
-    env = dict(os.environ, PYTHONBREAKPOINT="0")
     argv = ["python3.12", str(fixture)] if side == "cpython" else [mamba_bin, "run", str(fixture)]
-    try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=20, env=env).stdout
-    except Exception:  # noqa: BLE001
-        return None
+    rc, out, _err = harness_lib.run_fixture(argv, 20)
+    return None if rc is None else out
 
 
 def main() -> int:

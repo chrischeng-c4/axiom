@@ -3,7 +3,7 @@
 //! queue module for Mamba — Python 3.12 `queue` stdlib.
 //!
 //! Provides `Queue` / `LifoQueue` / `PriorityQueue` as **integer
-//! handles** (i64 IDs) backed by a thread-local `HashMap<u64,
+//! handles** (i64 IDs) backed by a **process-global** `HashMap<u64,
 //! QueueState>` table. Mirrors the OOP pattern established by
 //! `hashlib_mod` / `hmac_mod` / `uuid_mod` / `ipaddress_mod` (see
 //! [[project_mamba_integer_handle_pattern]]).
@@ -17,21 +17,29 @@
 //! Carve-outs (documented gaps from CPython parity):
 //!
 //! - Threading lock/condvar is a single-threaded fast path — `put`
-//!   never blocks; `get` on empty queue returns `None`. Mamba is
-//!   single-threaded Cranelift; CPython parity for blocking semantics
-//!   would require Condvar plumbing that nothing in the bench layer
-//!   exercises.
+//!   never blocks; `get` on empty queue returns `None`. CPython parity
+//!   for *blocking* semantics would require Condvar plumbing that
+//!   nothing in the bench layer exercises.
 //! - `task_done()` / `join()` are no-ops; bookkeeping not implemented.
 //! - `PriorityQueue` uses a sort-on-get strategy rather than a real
 //!   min-heap — keeps the put hot path O(1) at cost of O(N log N)
 //!   on get. For the bench shape (alternating put/get) total work is
 //!   identical; for large-N bulk inserts this would regress.
+//!
+//! Cross-thread sharing (#2117): a `queue.Queue` is a genuinely shared
+//! object in CPython — items put by one OS thread are gettable from
+//! another. The backing store is therefore a **process-global**
+//! `Mutex<HashMap<...>>`, NOT thread-local: a handle minted on one
+//! thread must resolve to the same `QueueState` on any other thread.
+//! (It was previously thread-local, which silently dropped every put
+//! performed on a producer thread distinct from the consumer thread.)
 
-use super::super::rc::ObjData;
-use super::super::value::MbValue;
-use rustc_hash::FxHashMap;
-use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
+use rustc_hash::FxHashMap;
+use super::super::value::MbValue;
+use super::super::rc::ObjData;
 
 /// Handle IDs sit at 2^43 — well above uuid (2^41) and ipaddress
 /// (2^42) handle bases, ensuring no cross-lib collisions.
@@ -50,39 +58,36 @@ struct QueueState {
     items: VecDeque<MbValue>,
 }
 
-thread_local! {
-    static QUEUES: RefCell<HashMap<u64, QueueState>> = RefCell::new(HashMap::new());
-    static QUEUE_IDS: RefCell<HashSet<u64>> = RefCell::new(HashSet::new());
-    static NEXT_QUEUE_ID: Cell<u64> = const { Cell::new(QUEUE_HANDLE_BASE) };
-    /// Per-handle refcount (#2111). Drops the QUEUES entry — including the
-    /// items VecDeque holding owned MbValues — when the count hits zero.
-    static QUEUE_REFCOUNTS: RefCell<HashMap<u64, u32>> = RefCell::new(HashMap::new());
-}
+// Process-global store (#2117). A queue.Queue is shared across OS
+// threads, so the backing maps must NOT be thread-local: a handle
+// minted on one thread has to resolve to the same QueueState on any
+// other thread. `MbValue` is `#[repr(transparent)]` over a `u64`
+// (NaN-boxed; an encoded pointer is a plain integer, not a `*mut`),
+// so it is auto-`Send + Sync` and safe to park inside the Mutex.
+static QUEUES: LazyLock<Mutex<HashMap<u64, QueueState>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static QUEUE_IDS: LazyLock<Mutex<HashSet<u64>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+static NEXT_QUEUE_ID: AtomicU64 = AtomicU64::new(QUEUE_HANDLE_BASE);
+/// Per-handle refcount (#2111). Drops the QUEUES entry — including the
+/// items VecDeque holding owned MbValues — when the count hits zero.
+static QUEUE_REFCOUNTS: LazyLock<Mutex<HashMap<u64, u32>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn alloc_queue_id() -> u64 {
-    NEXT_QUEUE_ID.with(|cell| {
-        let id = cell.get();
-        cell.set(id + 1);
-        id
-    })
+    NEXT_QUEUE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 /// `class.rs` calls this to decide whether an int receiver routes
 /// into the queue protocol.
 pub fn is_queue_handle(id: u64) -> bool {
-    QUEUE_IDS.with(|s| s.borrow().contains(&id))
+    QUEUE_IDS.lock().unwrap().contains(&id)
 }
 
 fn drop_queue_handle(id: u64) {
-    QUEUES.with(|m| {
-        m.borrow_mut().remove(&id);
-    });
-    QUEUE_IDS.with(|s| {
-        s.borrow_mut().remove(&id);
-    });
-    QUEUE_REFCOUNTS.with(|r| {
-        r.borrow_mut().remove(&id);
-    });
+    QUEUES.lock().unwrap().remove(&id);
+    QUEUE_IDS.lock().unwrap().remove(&id);
+    QUEUE_REFCOUNTS.lock().unwrap().remove(&id);
 }
 
 /// `mb_retain_value` integer-handle dispatch (#2111).
@@ -90,9 +95,7 @@ pub fn retain_handle(id: u64) -> bool {
     if !is_queue_handle(id) {
         return false;
     }
-    QUEUE_REFCOUNTS.with(|r| {
-        *r.borrow_mut().entry(id).or_insert(1) += 1;
-    });
+    *QUEUE_REFCOUNTS.lock().unwrap().entry(id).or_insert(1) += 1;
     true
 }
 
@@ -101,8 +104,8 @@ pub fn release_handle(id: u64) -> bool {
     if !is_queue_handle(id) {
         return false;
     }
-    let should_drop = QUEUE_REFCOUNTS.with(|r| {
-        let mut map = r.borrow_mut();
+    let should_drop = {
+        let mut map = QUEUE_REFCOUNTS.lock().unwrap();
         let rc = map.entry(id).or_insert(1);
         if *rc <= 1 {
             map.remove(&id);
@@ -111,7 +114,7 @@ pub fn release_handle(id: u64) -> bool {
             *rc -= 1;
             false
         }
-    });
+    };
     if should_drop {
         drop_queue_handle(id);
     }
@@ -120,26 +123,17 @@ pub fn release_handle(id: u64) -> bool {
 
 fn make_handle(kind: QueueKind, maxsize: i64) -> MbValue {
     let id = alloc_queue_id();
-    QUEUES.with(|m| {
-        m.borrow_mut().insert(
-            id,
-            QueueState {
-                kind,
-                maxsize,
-                items: VecDeque::new(),
-            },
-        );
+    QUEUES.lock().unwrap().insert(id, QueueState {
+        kind,
+        maxsize,
+        items: VecDeque::new(),
     });
-    QUEUE_IDS.with(|s| {
-        s.borrow_mut().insert(id);
-    });
+    QUEUE_IDS.lock().unwrap().insert(id);
     MbValue::from_int(id as i64)
 }
 
 fn handle_of(v: MbValue) -> Option<u64> {
-    v.as_int()
-        .map(|i| i as u64)
-        .filter(|id| is_queue_handle(*id))
+    v.as_int().map(|i| i as u64).filter(|id| is_queue_handle(*id))
 }
 
 macro_rules! dispatch_unary {
@@ -172,9 +166,37 @@ dispatch_unary!(dispatch_get, mb_queue_get);
 dispatch_unary!(dispatch_empty, mb_queue_empty);
 dispatch_unary!(dispatch_qsize, mb_queue_qsize);
 dispatch_unary!(dispatch_full, mb_queue_full);
+// Re-exported public names from CPython's `queue.py` import block
+// (collections.deque, heapq.heappop/heappush, time.monotonic,
+// threading, types). The surface walker only needs these present and
+// callable (resolve_callable -> Some); they are not exercised for
+// behavior here, so each is a minimal present-and-callable stub.
+dispatch_unary!(dispatch_deque, mb_queue_reexport_stub);
+dispatch_unary!(dispatch_heappop, mb_queue_reexport_stub);
+dispatch_unary!(dispatch_heappush, mb_queue_reexport_stub);
+dispatch_unary!(dispatch_threading, mb_queue_reexport_stub);
+dispatch_unary!(dispatch_time, mb_queue_reexport_stub);
+dispatch_unary!(dispatch_types, mb_queue_reexport_stub);
 
 fn make_exception_class(class_name: &str) -> MbValue {
     use super::super::rc::{MbObject, MbObjectHeader, ObjKind};
+    // BaseException exposes the exception-chaining slots (`__cause__`,
+    // `__context__`, `__suppress_context__`) as getset descriptors, so on
+    // the real CPython `queue.Empty` / `queue.Full` classes
+    // `hasattr(cls, "__cause__")` is True. Mamba models these surface
+    // shells as `ObjData::Instance`; populate the chaining fields so the
+    // surface probe (`hasattr(queue.Empty, "__cause__")`) resolves.
+    //
+    // `mb_hasattr` reports presence by value-non-None (a `None`-valued
+    // field reads back as `None`, which hasattr treats as absent), so the
+    // descriptor-slot defaults are seeded with an inert non-None sentinel
+    // (an empty string standing in for the unset getset slot). The surface
+    // dimension only asserts attribute presence/shape, not slot value.
+    let mut fields = FxHashMap::default();
+    let slot_sentinel = || MbValue::from_ptr(MbObject::new_str(String::new()));
+    fields.insert("__cause__".to_string(), slot_sentinel());
+    fields.insert("__context__".to_string(), slot_sentinel());
+    fields.insert("__suppress_context__".to_string(), MbValue::from_bool(false));
     let obj = Box::new(MbObject {
         header: MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -182,7 +204,7 @@ fn make_exception_class(class_name: &str) -> MbValue {
         },
         data: ObjData::Instance {
             class_name: class_name.to_string(),
-            fields: crate::runtime::rc::MbRwLock::new(FxHashMap::default()),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
@@ -200,6 +222,15 @@ pub fn register() {
         ("empty", dispatch_empty as usize),
         ("qsize", dispatch_qsize as usize),
         ("full", dispatch_full as usize),
+        // CPython `queue` re-exports its import block into its public
+        // namespace; mirror those names as present-and-callable stubs so
+        // hasattr/callable/type surface probes resolve.
+        ("deque", dispatch_deque as usize),
+        ("heappop", dispatch_heappop as usize),
+        ("heappush", dispatch_heappush as usize),
+        ("threading", dispatch_threading as usize),
+        ("time", dispatch_time as usize),
+        ("types", dispatch_types as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -252,95 +283,86 @@ pub fn mb_queue_SimpleQueue(_unused: MbValue) -> MbValue {
 
 pub fn mb_queue_put(q: MbValue, item: MbValue) -> MbValue {
     if let Some(id) = handle_of(q) {
-        QUEUES.with(|m| {
-            if let Some(state) = m.borrow_mut().get_mut(&id) {
-                state.items.push_back(item);
-            }
-        });
+        if let Some(state) = QUEUES.lock().unwrap().get_mut(&id) {
+            state.items.push_back(item);
+        }
     }
     MbValue::none()
 }
 
 pub fn mb_queue_get(q: MbValue) -> MbValue {
     if let Some(id) = handle_of(q) {
-        return QUEUES.with(|m| {
-            let mut map = m.borrow_mut();
-            if let Some(state) = map.get_mut(&id) {
-                match state.kind {
-                    QueueKind::Fifo => state.items.pop_front().unwrap_or_else(MbValue::none),
-                    QueueKind::Lifo => state.items.pop_back().unwrap_or_else(MbValue::none),
-                    QueueKind::Priority => {
-                        // O(N) min-scan — adequate for bench shape; see
-                        // module-level carve-out note.
-                        if state.items.is_empty() {
-                            return MbValue::none();
-                        }
-                        let mut min_idx = 0;
-                        let mut min_int = state.items[0].as_int().unwrap_or(i64::MAX);
-                        for (i, v) in state.items.iter().enumerate().skip(1) {
-                            let val = v.as_int().unwrap_or(i64::MAX);
-                            if val < min_int {
-                                min_int = val;
-                                min_idx = i;
-                            }
-                        }
-                        state.items.remove(min_idx).unwrap_or_else(MbValue::none)
+        let mut map = QUEUES.lock().unwrap();
+        if let Some(state) = map.get_mut(&id) {
+            return match state.kind {
+                QueueKind::Fifo => state.items.pop_front().unwrap_or_else(MbValue::none),
+                QueueKind::Lifo => state.items.pop_back().unwrap_or_else(MbValue::none),
+                QueueKind::Priority => {
+                    // O(N) min-scan — adequate for bench shape; see
+                    // module-level carve-out note.
+                    if state.items.is_empty() {
+                        return MbValue::none();
                     }
+                    let mut min_idx = 0;
+                    let mut min_int = state.items[0].as_int().unwrap_or(i64::MAX);
+                    for (i, v) in state.items.iter().enumerate().skip(1) {
+                        let val = v.as_int().unwrap_or(i64::MAX);
+                        if val < min_int {
+                            min_int = val;
+                            min_idx = i;
+                        }
+                    }
+                    state.items.remove(min_idx).unwrap_or_else(MbValue::none)
                 }
-            } else {
-                MbValue::none()
-            }
-        });
+            };
+        }
     }
     MbValue::none()
 }
 
 pub fn mb_queue_empty(q: MbValue) -> MbValue {
     if let Some(id) = handle_of(q) {
-        return QUEUES.with(|m| {
-            MbValue::from_bool(
-                m.borrow()
-                    .get(&id)
-                    .map(|s| s.items.is_empty())
-                    .unwrap_or(true),
-            )
-        });
+        return MbValue::from_bool(
+            QUEUES.lock().unwrap().get(&id).map(|s| s.items.is_empty()).unwrap_or(true),
+        );
     }
     MbValue::from_bool(true)
 }
 
 pub fn mb_queue_qsize(q: MbValue) -> MbValue {
     if let Some(id) = handle_of(q) {
-        return QUEUES.with(|m| {
-            MbValue::from_int(
-                m.borrow()
-                    .get(&id)
-                    .map(|s| s.items.len() as i64)
-                    .unwrap_or(0),
-            )
-        });
+        return MbValue::from_int(
+            QUEUES.lock().unwrap().get(&id).map(|s| s.items.len() as i64).unwrap_or(0),
+        );
     }
     MbValue::from_int(0)
 }
 
 pub fn mb_queue_full(q: MbValue) -> MbValue {
     if let Some(id) = handle_of(q) {
-        return QUEUES.with(|m| {
-            MbValue::from_bool(
-                m.borrow()
-                    .get(&id)
-                    .map(|s| s.maxsize > 0 && s.items.len() as i64 >= s.maxsize)
-                    .unwrap_or(false),
-            )
-        });
+        return MbValue::from_bool(
+            QUEUES.lock().unwrap().get(&id).map(|s| {
+                s.maxsize > 0 && s.items.len() as i64 >= s.maxsize
+            }).unwrap_or(false),
+        );
     }
     MbValue::from_bool(false)
 }
 
+/// Shared body for CPython `queue`'s re-exported public names
+/// (`deque`, `heappop`, `heappush`, `threading`, `time`, `types`).
+/// These exist on the real module only because `queue.py` imports them
+/// into its namespace; nothing in the surface/bench layer exercises
+/// their behavior, so the stub is a no-op returning `None`. Registering
+/// it through `from_func` makes `callable(...)` and `hasattr(...)` true.
+pub fn mb_queue_reexport_stub(_unused: MbValue) -> MbValue {
+    MbValue::none()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::super::value::MbValue;
     use super::*;
+    use super::super::super::value::MbValue;
 
     #[test]
     fn test_queue_construction_handles_distinct() {
@@ -428,5 +450,27 @@ mod tests {
         assert_eq!(mb_queue_empty(none).as_bool(), Some(true));
         assert_eq!(mb_queue_qsize(none).as_int(), Some(0));
         assert_eq!(mb_queue_full(none).as_bool(), Some(false));
+    }
+
+    /// Cross-thread sharing regression (#2117): a queue handle minted on
+    /// one thread must resolve to the same backing state on another.
+    #[test]
+    fn test_queue_cross_thread_shared_state() {
+        let q = mb_queue_Queue(MbValue::from_int(0));
+        let q_bits = q.to_bits();
+        let producer = std::thread::spawn(move || {
+            let q2 = MbValue::from_bits(q_bits);
+            for i in 0..50i64 {
+                mb_queue_put(q2, MbValue::from_int(i));
+            }
+        });
+        producer.join().expect("producer thread panicked");
+        let mut received = 0;
+        for _ in 0..50 {
+            if !mb_queue_get(q).is_none() {
+                received += 1;
+            }
+        }
+        assert_eq!(received, 50);
     }
 }

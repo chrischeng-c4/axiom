@@ -135,50 +135,58 @@ mod tests {
 
     #[test]
     fn test_bar_chart() {
-        let chart = Chart::new().add_series(DataSeries::bar(
-            vec!["A".into(), "B".into(), "C".into()],
-            vec![10.0, 20.0, 30.0],
-        ));
+        let chart = Chart::new()
+            .add_series(DataSeries::bar(
+                vec!["A".into(), "B".into(), "C".into()],
+                vec![10.0, 20.0, 30.0],
+            ));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("<rect"));
     }
 
     #[test]
     fn test_scatter_chart() {
-        let chart = Chart::new().add_series(DataSeries::scatter(
-            vec![1.0, 2.0, 3.0],
-            vec![4.0, 5.0, 6.0],
-        ));
+        let chart = Chart::new()
+            .add_series(DataSeries::scatter(
+                vec![1.0, 2.0, 3.0],
+                vec![4.0, 5.0, 6.0],
+            ));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("<circle"));
     }
 
     #[test]
     fn test_histogram() {
-        let chart = Chart::new().add_series(DataSeries::histogram(
-            vec![1.0, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0],
-            5,
-        ));
+        let chart = Chart::new()
+            .add_series(DataSeries::histogram(
+                vec![1.0, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0],
+                5,
+            ));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("<rect"));
     }
 
     #[test]
     fn test_box_plot() {
-        let chart = Chart::new().add_series(DataSeries::box_plot(
-            vec![vec![1.0, 2.0, 3.0, 4.0, 5.0], vec![2.0, 3.0, 4.0, 5.0, 6.0]],
-            vec!["A".into(), "B".into()],
-        ));
+        let chart = Chart::new()
+            .add_series(DataSeries::box_plot(
+                vec![
+                    vec![1.0, 2.0, 3.0, 4.0, 5.0],
+                    vec![2.0, 3.0, 4.0, 5.0, 6.0],
+                ],
+                vec!["A".into(), "B".into()],
+            ));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("<line"));
     }
 
     #[test]
     fn test_heatmap() {
-        let chart = Chart::new().add_series(DataSeries::heatmap(vec![
-            vec![1.0, 2.0, 3.0],
-            vec![4.0, 5.0, 6.0],
-        ]));
+        let chart = Chart::new()
+            .add_series(DataSeries::heatmap(vec![
+                vec![1.0, 2.0, 3.0],
+                vec![4.0, 5.0, 6.0],
+            ]));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("<rect"));
     }
@@ -198,10 +206,11 @@ mod tests {
 
     #[test]
     fn test_area_chart() {
-        let chart = Chart::new().add_series(DataSeries::area(
-            vec![1.0, 2.0, 3.0, 4.0],
-            vec![10.0, 20.0, 15.0, 25.0],
-        ));
+        let chart = Chart::new()
+            .add_series(DataSeries::area(
+                vec![1.0, 2.0, 3.0, 4.0],
+                vec![10.0, 20.0, 15.0, 25.0],
+            ));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("<path"));
         assert!(svg.contains("opacity=\"0.3\"")); // filled area
@@ -255,10 +264,11 @@ mod tests {
 
     #[test]
     fn test_stacked_bar_single_dataset() {
-        let chart = Chart::new().add_series(DataSeries::stacked_bar(
-            vec!["A".into(), "B".into()],
-            vec![("Only".into(), vec![10.0, 20.0])],
-        ));
+        let chart = Chart::new()
+            .add_series(DataSeries::stacked_bar(
+                vec!["A".into(), "B".into()],
+                vec![("Only".into(), vec![10.0, 20.0])],
+            ));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("<rect"));
     }
@@ -282,10 +292,11 @@ mod tests {
 
     #[test]
     fn test_violin_single_group() {
-        let chart = Chart::new().add_series(DataSeries::violin(
-            vec![vec![1.0, 2.0, 3.0, 4.0, 5.0]],
-            vec!["Solo".into()],
-        ));
+        let chart = Chart::new()
+            .add_series(DataSeries::violin(
+                vec![vec![1.0, 2.0, 3.0, 4.0, 5.0]],
+                vec!["Solo".into()],
+            ));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("Solo"));
     }
@@ -304,15 +315,12 @@ mod tests {
 
     #[test]
     fn test_polar_chart() {
-        let chart = Chart::new().title("Radar").add_series(DataSeries::polar(
-            vec![
-                "Speed".into(),
-                "Power".into(),
-                "Range".into(),
-                "Stealth".into(),
-            ],
-            vec![("Fighter".into(), vec![90.0, 70.0, 60.0, 50.0])],
-        ));
+        let chart = Chart::new()
+            .title("Radar")
+            .add_series(DataSeries::polar(
+                vec!["Speed".into(), "Power".into(), "Range".into(), "Stealth".into()],
+                vec![("Fighter".into(), vec![90.0, 70.0, 60.0, 50.0])],
+            ));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("<path"));
         assert!(svg.contains("Speed"));
@@ -321,11 +329,13 @@ mod tests {
 
     #[test]
     fn test_donut_chart() {
-        let chart = Chart::new().title("Donut").add_series(DataSeries::donut(
-            vec!["A".into(), "B".into(), "C".into()],
-            vec![40.0, 35.0, 25.0],
-            0.5,
-        ));
+        let chart = Chart::new()
+            .title("Donut")
+            .add_series(DataSeries::donut(
+                vec!["A".into(), "B".into(), "C".into()],
+                vec![40.0, 35.0, 25.0],
+                0.5,
+            ));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("<path"));
         assert!(svg.contains("Donut"));
@@ -355,10 +365,7 @@ mod tests {
             .title("With Labels")
             .x_label("Time (s)")
             .y_label("Value")
-            .add_series(DataSeries::line(
-                vec![1.0, 2.0, 3.0],
-                vec![10.0, 20.0, 30.0],
-            ));
+            .add_series(DataSeries::line(vec![1.0, 2.0, 3.0], vec![10.0, 20.0, 30.0]));
         let svg = chart.to_svg().unwrap();
         assert!(svg.contains("Time (s)"));
         assert!(svg.contains("Value"));
@@ -374,7 +381,9 @@ mod tests {
                 vec![1.0, 2.0, 3.0, 4.0],
                 vec![10.0, 20.0, 15.0, 25.0],
             ))
-            .annotate(Annotation::Text(TextAnnotation::new(2.0, 20.0, "peak")))
+            .annotate(Annotation::Text(
+                TextAnnotation::new(2.0, 20.0, "peak"),
+            ))
             .annotate(Annotation::ReferenceLine(
                 ReferenceLineAnnotation::horizontal(17.5).label("avg"),
             ));

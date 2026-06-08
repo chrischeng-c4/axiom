@@ -196,12 +196,18 @@ fn r3_cclab_mamba_registry_abi_semver_gate() {
         c["abi_semver_violation_failure_kind"].as_str(),
         Some("mvp_mambalibs_abi_semver_violation")
     );
-    assert_eq!(c["abi_semver_violation_exit_code"].as_integer(), Some(368));
+    assert_eq!(
+        c["abi_semver_violation_exit_code"].as_integer(),
+        Some(368)
+    );
     assert_eq!(
         c["missing_abi_metadata_failure_kind"].as_str(),
         Some("mvp_mambalibs_abi_metadata_missing")
     );
-    assert_eq!(c["missing_abi_metadata_exit_code"].as_integer(), Some(369));
+    assert_eq!(
+        c["missing_abi_metadata_exit_code"].as_integer(),
+        Some(369)
+    );
     assert_eq!(
         c["silent_load_incompatible_failure_kind"].as_str(),
         Some("mvp_mambalibs_silent_load_incompatible_crate")
@@ -267,7 +273,8 @@ fn r4_mode_2_lockfile_is_source_of_truth() {
 
 #[test]
 fn r5_from_mambalibs_import_resolves_to_rust_crate_module() {
-    let c = &manifest()["r5_from_mambalibs_import_resolves_to_rust_crate_module_contract"];
+    let c =
+        &manifest()["r5_from_mambalibs_import_resolves_to_rust_crate_module_contract"];
     assert_eq!(
         c["case"].as_str(),
         Some("from_mambalibs_import_xxxx_resolves_to_cclab_rust_crate_module")

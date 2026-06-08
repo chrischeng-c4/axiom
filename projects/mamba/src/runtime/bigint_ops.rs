@@ -11,11 +11,12 @@
 /// - Any MbValue that `is_ptr()` with `ObjKind::BigInt` is a big integer.
 /// - Comparison and hashing convert both sides to `BigInt` before operating.
 /// - Mixed arithmetic (inline + big) promotes the inline operand first.
+
 use num_bigint::BigInt;
 use num_traits::{ToPrimitive, Zero};
 
-use super::rc::{mb_release, mb_retain, MbObject, ObjData, ObjKind};
 use super::value::MbValue;
+use super::rc::{MbObject, ObjData, ObjKind, mb_retain, mb_release};
 
 /// 48-bit signed integer bounds (inline NaN-box range).
 const INT48_MAX: i64 = (1i64 << 47) - 1;
@@ -195,8 +196,7 @@ pub unsafe fn mb_int_hash(val: MbValue) -> i64 {
             return small % HASH_MODULUS;
         }
         // For very large values, use the low 61 bits with sign.
-        let low: i64 = big
-            .iter_u64_digits()
+        let low: i64 = big.iter_u64_digits()
             .next()
             .map(|d| (d & (HASH_MODULUS as u64)) as i64)
             .unwrap_or(0);
@@ -306,9 +306,9 @@ pub extern "C" fn mb_bigint_cmp(a_bits: u64, b_bits: u64) -> i64 {
     let b = MbValue::from_bits(b_bits);
     unsafe {
         match mb_int_cmp(a, b) {
-            std::cmp::Ordering::Less => -1,
-            std::cmp::Ordering::Equal => 0,
-            std::cmp::Ordering::Greater => 1,
+            std::cmp::Ordering::Less    => -1,
+            std::cmp::Ordering::Equal   =>  0,
+            std::cmp::Ordering::Greater =>  1,
         }
     }
 }
@@ -361,9 +361,7 @@ pub extern "C" fn mb_bigint_from_i64(v: i64) -> u64 {
 mod tests {
     use super::*;
 
-    fn inline(i: i64) -> MbValue {
-        MbValue::from_int(i)
-    }
+    fn inline(i: i64) -> MbValue { MbValue::from_int(i) }
 
     #[test]
     fn test_fits_inline_boundary() {
@@ -395,9 +393,7 @@ mod tests {
             let big = extract_bigint(r).expect("should be BigInt");
             assert_eq!(big, BigInt::from(INT48_MAX) + BigInt::from(1));
             // Cleanup
-            if let Some(ptr) = r.as_ptr() {
-                mb_release(ptr);
-            }
+            if let Some(ptr) = r.as_ptr() { mb_release(ptr); }
         }
     }
 
@@ -410,9 +406,7 @@ mod tests {
             assert!(r.is_ptr());
             let big = extract_bigint(r).expect("should be BigInt");
             assert_eq!(big, BigInt::from(INT48_MIN) - BigInt::from(1));
-            if let Some(ptr) = r.as_ptr() {
-                mb_release(ptr);
-            }
+            if let Some(ptr) = r.as_ptr() { mb_release(ptr); }
         }
     }
 
@@ -425,9 +419,7 @@ mod tests {
             assert!(r.is_ptr());
             let big = extract_bigint(r).expect("BigInt");
             assert_eq!(big, BigInt::from(1_000_000_000_000_000_000i64));
-            if let Some(ptr) = r.as_ptr() {
-                mb_release(ptr);
-            }
+            if let Some(ptr) = r.as_ptr() { mb_release(ptr); }
         }
     }
 
@@ -451,9 +443,7 @@ mod tests {
             assert_eq!(extract_bigint(r).unwrap(), expected);
             mb_release(big_a);
             mb_release(big_b);
-            if let Some(ptr) = r.as_ptr() {
-                mb_release(ptr);
-            }
+            if let Some(ptr) = r.as_ptr() { mb_release(ptr); }
         }
     }
 
@@ -478,10 +468,7 @@ mod tests {
         unsafe {
             assert_eq!(mb_int_cmp(inline(3), inline(5)), std::cmp::Ordering::Less);
             assert_eq!(mb_int_cmp(inline(5), inline(5)), std::cmp::Ordering::Equal);
-            assert_eq!(
-                mb_int_cmp(inline(7), inline(5)),
-                std::cmp::Ordering::Greater
-            );
+            assert_eq!(mb_int_cmp(inline(7), inline(5)), std::cmp::Ordering::Greater);
         }
     }
 
@@ -543,8 +530,8 @@ mod tests {
         let a = MbValue::from_int(3).to_bits();
         let b = MbValue::from_int(5).to_bits();
         assert_eq!(mb_bigint_cmp(a, b), -1);
-        assert_eq!(mb_bigint_cmp(b, a), 1);
-        assert_eq!(mb_bigint_cmp(a, a), 0);
+        assert_eq!(mb_bigint_cmp(b, a),  1);
+        assert_eq!(mb_bigint_cmp(a, a),  0);
     }
 
     #[test]

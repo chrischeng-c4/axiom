@@ -1,5 +1,3 @@
-use super::super::rc::MbObject;
-use super::super::value::MbValue;
 /// orjson module for Mamba (#1500).
 ///
 /// Minimal callable-dispatcher shim covering four top-level
@@ -12,7 +10,10 @@ use super::super::value::MbValue;
 /// surface) is tracked separately under #1500; this shim ships the
 /// Gate 2 module-attr-read perf surface that the rest of the 3p
 /// conformance issues have closed against.
+
 use std::collections::HashMap;
+use super::super::value::MbValue;
+use super::super::rc::MbObject;
 
 unsafe extern "C" fn dispatch_dumps(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
@@ -22,17 +23,11 @@ unsafe extern "C" fn dispatch_loads(_args_ptr: *const MbValue, _nargs: usize) ->
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_json_decode_error(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_json_decode_error(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 
-unsafe extern "C" fn dispatch_json_encode_error(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
-) -> MbValue {
+unsafe extern "C" fn dispatch_json_encode_error(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
     MbValue::from_ptr(MbObject::new_dict())
 }
 

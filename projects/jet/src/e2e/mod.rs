@@ -45,7 +45,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
@@ -79,6 +79,16 @@ pub enum E2eMode {
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum E2eServeMode {
+    #[default]
+    Off,
+    Dev,
+    Prod,
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct E2eRunOptions {
     pub project_root: PathBuf,
@@ -88,6 +98,10 @@ pub struct E2eRunOptions {
     pub workers: Option<usize>,
     pub trace: WireTraceMode,
     pub evidence_dir: PathBuf,
+    #[serde(default)]
+    pub serve: E2eServeMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
     pub print_json: bool,
 }
 
@@ -124,6 +138,10 @@ pub struct E2eEvidenceBundle {
     pub cases: Vec<E2eCaseEvidence>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<E2eArtifactRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serve_session: Option<crate::dev_server::session::ServeSession>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub browser_sessions: Vec<crate::test_runner::reporter::BrowserSessionReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub open_control: Option<E2eOpenControlProtocol>,
 }
@@ -293,6 +311,40 @@ pub enum E2eEvidenceEvent {
         mode: E2eMode,
         ts_ms: u64,
     },
+    ServeSessionStarted {
+        run_id: String,
+        mode: String,
+        target: String,
+        url: String,
+        host: String,
+        port: u16,
+        pid: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        log_file: Option<String>,
+        ts_ms: u64,
+    },
+    BrowserSessionStarted {
+        run_id: String,
+        session_id: String,
+        driver: String,
+        anchor: String,
+        headless: bool,
+        spec_file: PathBuf,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ws_endpoint: Option<String>,
+        ts_ms: u64,
+    },
+    BrowserSessionFinished {
+        run_id: String,
+        session_id: String,
+        state: String,
+        graceful_close: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        ts_ms: u64,
+    },
     StepStarted {
         run_id: String,
         case_id: String,
@@ -330,8 +382,42 @@ pub enum E2eEvidenceEvent {
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 pub async fn run_agent_mode(opts: E2eRunOptions) -> Result<E2eRunResult> {
+    if opts.serve != E2eServeMode::Off && opts.base_url.is_some() {
+        anyhow::bail!("`jet e2e run --serve` and `--base-url` cannot be used together");
+    }
+
     let started_at_ms = now_ms();
-    let summary = run_cases(
+    let mut launched_serve = match opts.serve {
+        E2eServeMode::Off => None,
+        E2eServeMode::Dev => Some(
+            crate::dev_server::serve_process::launch_detached(
+                crate::dev_server::serve_process::ServeProcessOptions::dom_dev(
+                    opts.project_root.clone(),
+                ),
+            )
+            .await
+            .context("starting `jet serve` for e2e run")?,
+        ),
+        E2eServeMode::Prod => Some(
+            crate::dev_server::serve_process::launch_detached(
+                crate::dev_server::serve_process::ServeProcessOptions {
+                    ready_timeout: Duration::from_secs(30),
+                    ..crate::dev_server::serve_process::ServeProcessOptions::dom_prod(
+                        opts.project_root.clone(),
+                    )
+                },
+            )
+            .await
+            .context("starting `jet serve --prod` for e2e run")?,
+        ),
+    };
+    let base_url = launched_serve
+        .as_ref()
+        .map(|serve| serve.session.url.clone())
+        .or_else(|| opts.base_url.clone());
+    let serve_session = launched_serve.as_ref().map(|serve| serve.session.clone());
+
+    let run_result = run_cases(
         &opts.project_root,
         &opts.cases,
         opts.grep.clone(),
@@ -339,11 +425,37 @@ pub async fn run_agent_mode(opts: E2eRunOptions) -> Result<E2eRunResult> {
         opts.workers,
         opts.trace,
         true,
+        base_url,
         None,
     )
-    .await?;
+    .await;
+
+    let shutdown_result = if let Some(serve) = launched_serve.take() {
+        let result = crate::dev_server::serve_process::shutdown_host_port(
+            &serve.session.host,
+            serve.session.port,
+        )
+        .await;
+        crate::dev_server::session::clear(&opts.project_root);
+        Some(result.context("shutting down e2e serve session"))
+    } else {
+        None
+    };
+
+    let summary = run_result?;
+    if let Some(shutdown) = shutdown_result {
+        shutdown?;
+    }
+
     let finished_at_ms = now_ms();
-    let bundle = build_evidence_bundle(E2eMode::Run, summary, started_at_ms, finished_at_ms, None);
+    let bundle = build_evidence_bundle(
+        E2eMode::Run,
+        summary,
+        started_at_ms,
+        finished_at_ms,
+        serve_session,
+        None,
+    );
     let written = write_evidence_bundle(&opts.evidence_dir, &bundle)?;
     if opts.print_json {
         println!("{}", serde_json::to_string_pretty(&written.bundle)?);
@@ -408,6 +520,7 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
         initial_summary,
         started_at_ms,
         started_at_ms,
+        None,
         Some(control.clone()),
     );
     initial_bundle.run_id = run_id.clone();
@@ -438,6 +551,7 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
             Some(1),
             WireTraceMode::RetainOnFailure,
             false,
+            None,
             if opts.no_open {
                 None
             } else {
@@ -456,6 +570,7 @@ pub async fn open_human_mode(opts: E2eOpenOptions) -> Result<E2eRunResult> {
         summary,
         started_at_ms,
         finished_at_ms,
+        None,
         Some(control),
     );
     bundle.run_id = run_id;
@@ -586,6 +701,7 @@ async fn replay_open_case(
         Some(1),
         WireTraceMode::RetainOnFailure,
         false,
+        None,
         Some(LiveE2eConfig {
             event_log: live_files.event_log.clone(),
             control_path: live_files.control_path.clone(),
@@ -599,6 +715,7 @@ async fn replay_open_case(
         summary,
         replay_started_at,
         replay_finished_at,
+        None,
         Some(open_control.clone()),
     );
     replay_bundle.run_id = make_run_id(replay_started_at, E2eMode::Open);
@@ -1079,11 +1196,13 @@ async fn run_cases(
     workers: Option<usize>,
     trace: WireTraceMode,
     headless: bool,
+    base_url: Option<String>,
     live_e2e: Option<LiveE2eConfig>,
 ) -> Result<Summary> {
     let mut cfg = RunnerConfig::default_for_root(project_root)?;
     cfg.only_files = cases.to_vec();
     cfg.grep = grep;
+    cfg.base_url = base_url;
     if let Some(timeout_ms) = timeout_ms {
         cfg.timeout_ms = timeout_ms;
     }
@@ -1103,6 +1222,7 @@ pub fn build_evidence_bundle(
     summary: Summary,
     started_at_ms: u64,
     finished_at_ms: u64,
+    serve_session: Option<crate::dev_server::session::ServeSession>,
     open_control: Option<E2eOpenControlProtocol>,
 ) -> E2eEvidenceBundle {
     let run_id = make_run_id(started_at_ms, mode);
@@ -1127,6 +1247,15 @@ pub fn build_evidence_bundle(
             case
         })
         .collect();
+    if let Some(session) = &serve_session {
+        if let Some(log_file) = &session.log_file {
+            artifacts.push(E2eArtifactRef {
+                kind: "serve-log".to_string(),
+                path: PathBuf::from(log_file),
+                label: Some(format!("jet serve {} log", session.target)),
+            });
+        }
+    }
     E2eEvidenceBundle {
         schema_version: EVIDENCE_SCHEMA_VERSION.to_string(),
         mode,
@@ -1142,6 +1271,8 @@ pub fn build_evidence_bundle(
         },
         cases,
         artifacts,
+        serve_session,
+        browser_sessions: summary.browser_sessions.clone(),
         open_control,
     }
 }
@@ -1301,6 +1432,43 @@ pub fn events_for_bundle(bundle: &E2eEvidenceBundle) -> Vec<E2eEvidenceEvent> {
         mode: bundle.mode,
         ts_ms: bundle.started_at_ms,
     }];
+    if let Some(session) = &bundle.serve_session {
+        events.push(E2eEvidenceEvent::ServeSessionStarted {
+            run_id: bundle.run_id.clone(),
+            mode: session.mode.clone(),
+            target: session.target.clone(),
+            url: session.url.clone(),
+            host: session.host.clone(),
+            port: session.port,
+            pid: session.pid,
+            log_file: session.log_file.clone(),
+            ts_ms: bundle.started_at_ms,
+        });
+    }
+    for session in &bundle.browser_sessions {
+        events.push(E2eEvidenceEvent::BrowserSessionStarted {
+            run_id: bundle.run_id.clone(),
+            session_id: session.session_id.clone(),
+            driver: session.driver.clone(),
+            anchor: session.anchor.clone(),
+            headless: session.headless,
+            spec_file: session.spec_file.clone(),
+            pid: session.pid,
+            ws_endpoint: session.ws_endpoint.clone(),
+            ts_ms: session.started_at_ms,
+        });
+        events.push(E2eEvidenceEvent::BrowserSessionFinished {
+            run_id: bundle.run_id.clone(),
+            session_id: session.session_id.clone(),
+            state: session.state.as_str().to_string(),
+            graceful_close: session.graceful_close,
+            error: session.error.clone(),
+            ts_ms: session
+                .closed_at_ms
+                .or(session.ready_at_ms)
+                .unwrap_or(session.started_at_ms),
+        });
+    }
     let mut cursor_ms = bundle.started_at_ms;
     for case in &bundle.cases {
         for step in &case.steps {
@@ -1533,6 +1701,21 @@ button:focus-visible {{ outline: 2px solid var(--focus); outline-offset: 2px; }}
 .browser {{ min-height: 178px; margin-bottom: 12px; }}
 .browser + .browser {{ margin-top: 10px; }}
 .browser code {{ display: block; white-space: pre-wrap; overflow-wrap: anywhere; color: #cbd5e1; }}
+.artifact-list {{ display: grid; gap: 8px; }}
+.artifact-link {{
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  background: #0e141c;
+  color: #dbeafe;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}}
+.artifact-link:hover {{ border-color: var(--focus); background: #122032; }}
+.artifact-link span {{ color: var(--muted); font: 11px/1.4 "Fira Code", ui-monospace, monospace; }}
+.artifact-link.disabled {{ color: var(--muted); opacity: .72; }}
 .statusline {{ font-size: 12px; line-height: 1.35; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }}
 .command-log {{ display: grid; gap: 6px; margin-top: 10px; }}
 .command {{
@@ -1694,6 +1877,7 @@ body:not([data-mode="pm-report"]) #pm-failures {{ display: none; }}
 <div class="panel"><h3>Selectors</h3><pre id="selectors"></pre></div>
 <div class="panel"><h3>Assertions</h3><pre id="assertions"></pre></div>
 <div class="panel"><h3>Screenshots</h3><pre id="screenshots"></pre></div>
+<div class="panel"><h3>Artifacts</h3><div id="artifacts" class="artifact-list"></div></div>
 <div class="panel"><h3>Console</h3><pre id="console"></pre></div>
 <div class="panel"><h3>Network</h3><pre id="network"></pre></div>
 </div>
@@ -1714,6 +1898,14 @@ const byId = (id) => document.getElementById(id);
 function statusClass(outcome) {{ return outcome === 'passed' ? 'passed' : outcome === 'failed' ? 'failed' : outcome === 'running' ? 'running' : 'skipped'; }}
 function reviewShell() {{ return (bundle.open_control && bundle.open_control.review_shell) || {{kind: 'export-only', driver: 'none'}}; }}
 function browserTarget() {{ return (bundle.open_control && bundle.open_control.browser) || {{kind: 'export-only', driver: 'none'}}; }}
+function escapeHtml(value) {{
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({{'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}})[ch]);
+}}
+function artifactUrl(path) {{
+  const raw = String(path || '');
+  if (!raw || raw.startsWith('/') || raw.includes('..')) return null;
+  return raw.replace(/\\/g, '/');
+}}
 function fullTitleFromTest(test) {{
   const suite = Array.isArray(test.suite) ? test.suite : [];
   return [...suite, test.name].filter(Boolean).join(' > ');
@@ -1837,6 +2029,24 @@ function renderCommands(c) {{
     render();
   }});
 }}
+function renderArtifacts() {{
+  const artifacts = Array.isArray(bundle.artifacts) ? bundle.artifacts : [];
+  if (!artifacts.length) {{
+    byId('artifacts').innerHTML = '<div class="statusline">No top-level artifacts</div>';
+    return;
+  }}
+  byId('artifacts').innerHTML = artifacts.map((artifact) => {{
+    const path = artifact.path || '';
+    const kind = artifact.kind || 'artifact';
+    const label = artifact.label || kind;
+    const meta = [kind, path].filter(Boolean).join(' · ');
+    const url = artifactUrl(path);
+    if (!url) {{
+      return `<div class="artifact-link disabled"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(meta)}}</span></div>`;
+    }}
+    return `<a class="artifact-link" href="${{escapeHtml(url)}}" target="_blank" rel="noreferrer"><strong>${{escapeHtml(label)}}</strong><span>${{escapeHtml(meta)}}</span></a>`;
+  }}).join('');
+}}
 function render() {{
   maybeAutoSelectCase();
   const c = currentCase();
@@ -1853,6 +2063,7 @@ function render() {{
   byId('selectors').textContent = JSON.stringify(selectors, null, 2);
   byId('assertions').textContent = JSON.stringify(assertion || {{status: command ? (command.status || 'running') : c.outcome}}, null, 2);
   byId('screenshots').textContent = JSON.stringify(screenshots, null, 2);
+  renderArtifacts();
   byId('console').textContent = JSON.stringify(consoleRows, null, 2);
   byId('network').textContent = JSON.stringify(networkRows, null, 2);
   const shell = reviewShell();
@@ -2107,6 +2318,18 @@ pub fn parse_workers(raw: Option<&usize>) -> Option<usize> {
 }
 
 /// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
+pub fn parse_serve_mode(raw: Option<&String>) -> anyhow::Result<E2eServeMode> {
+    match raw.map(String::as_str) {
+        None | Some("off") => Ok(E2eServeMode::Off),
+        Some("dev") => Ok(E2eServeMode::Dev),
+        Some("prod") => Ok(E2eServeMode::Prod),
+        Some(other) => {
+            anyhow::bail!("Unknown --serve value '{other}'. Valid values: off, dev, prod")
+        }
+    }
+}
+
+/// @spec .aw/tech-design/projects/jet/semantic/jet-e2e.md#schema
 pub fn summary_exit_code(bundle: &E2eEvidenceBundle) -> i32 {
     bundle.summary.exit_code
 }
@@ -2172,6 +2395,99 @@ mod tests {
     }
 
     #[test]
+    fn parse_serve_mode_accepts_basic_dom_targets() {
+        assert_eq!(parse_serve_mode(None).unwrap(), E2eServeMode::Off);
+        assert_eq!(
+            parse_serve_mode(Some(&"off".to_string())).unwrap(),
+            E2eServeMode::Off
+        );
+        assert_eq!(
+            parse_serve_mode(Some(&"dev".to_string())).unwrap(),
+            E2eServeMode::Dev
+        );
+        assert_eq!(
+            parse_serve_mode(Some(&"prod".to_string())).unwrap(),
+            E2eServeMode::Prod
+        );
+        assert!(parse_serve_mode(Some(&"wasm".to_string())).is_err());
+    }
+
+    #[test]
+    fn evidence_bundle_can_carry_serve_session() {
+        let tmp = TempDir::new().unwrap();
+        let serve_session = crate::dev_server::session::ServeSession {
+            schema_version: crate::dev_server::session::SCHEMA_VERSION.to_string(),
+            mode: crate::dev_server::session::MODE_DETACHED.to_string(),
+            target: crate::dev_server::session::TARGET_DOM.to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 43127,
+            url: "http://127.0.0.1:43127/".to_string(),
+            pid: 123,
+            root_dir: tmp.path().display().to_string(),
+            log_file: Some(
+                crate::dev_server::session::log_path(tmp.path())
+                    .display()
+                    .to_string(),
+            ),
+            started_at: crate::dev_server::session::now_unix(),
+        };
+        let bundle = build_evidence_bundle(
+            E2eMode::Run,
+            Summary::default(),
+            10,
+            20,
+            Some(serve_session),
+            None,
+        );
+
+        let session = bundle.serve_session.expect("serve session evidence");
+        assert_eq!(session.target, crate::dev_server::session::TARGET_DOM);
+        assert_eq!(session.url, "http://127.0.0.1:43127/");
+        let serve_log = bundle
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.kind == "serve-log")
+            .expect("managed serve log is a shareable artifact");
+        assert_eq!(
+            serve_log.label.as_deref(),
+            Some("jet serve dom log"),
+            "serve log artifact label should name the served target",
+        );
+        assert!(
+            serve_log.path.ends_with(".jet/serve.log"),
+            "serve log artifact should point at the session log file: {serve_log:?}",
+        );
+    }
+
+    #[tokio::test]
+    async fn run_agent_mode_rejects_managed_serve_and_base_url_before_launching() {
+        let tmp = TempDir::new().unwrap();
+        let opts = E2eRunOptions {
+            project_root: tmp.path().to_path_buf(),
+            cases: vec![],
+            grep: None,
+            timeout_ms: None,
+            workers: None,
+            trace: WireTraceMode::Off,
+            evidence_dir: tmp.path().join("evidence"),
+            serve: E2eServeMode::Dev,
+            base_url: Some("http://127.0.0.1:43127/".to_string()),
+            print_json: false,
+        };
+
+        let err = run_agent_mode(opts).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("--serve") && msg.contains("--base-url"),
+            "error should name conflicting flags: {msg}"
+        );
+        assert!(
+            !crate::dev_server::session::session_path(tmp.path()).exists(),
+            "conflict must be rejected before launching a managed serve session"
+        );
+    }
+
+    #[test]
     fn evidence_bundle_carries_case_step_and_context() {
         let summary = Summary {
             schema_version: crate::test_runner::reporter::SCHEMA_VERSION,
@@ -2181,8 +2497,9 @@ mod tests {
             duration_ms: 42,
             reports: vec![report(Outcome::Failed)],
             coverage: None,
+            browser_sessions: Vec::new(),
         };
-        let bundle = build_evidence_bundle(E2eMode::Run, summary, 10, 20, None);
+        let bundle = build_evidence_bundle(E2eMode::Run, summary, 10, 20, None, None);
         assert_eq!(bundle.schema_version, EVIDENCE_SCHEMA_VERSION);
         assert_eq!(bundle.summary.exit_code, 1);
         assert_eq!(bundle.cases.len(), 1);
@@ -2202,8 +2519,9 @@ mod tests {
             duration_ms: 12,
             reports: vec![report(Outcome::Passed)],
             coverage: None,
+            browser_sessions: Vec::new(),
         };
-        let bundle = build_evidence_bundle(E2eMode::Run, summary, 10, 20, None);
+        let bundle = build_evidence_bundle(E2eMode::Run, summary, 10, 20, None, None);
         let written = write_evidence_bundle(tmp.path(), &bundle).unwrap();
         assert!(written.evidence_path.exists());
         assert!(written.jsonl_path.exists());
@@ -2224,6 +2542,7 @@ mod tests {
             duration_ms: 12,
             reports: vec![report(Outcome::Passed)],
             coverage: None,
+            browser_sessions: Vec::new(),
         };
         let protocol = E2eOpenControlProtocol {
             protocol_version: CONTROL_PROTOCOL_VERSION.to_string(),
@@ -2260,7 +2579,7 @@ mod tests {
             ],
             event_log: tmp.path().join("events.jsonl"),
         };
-        let bundle = build_evidence_bundle(E2eMode::Open, summary, 10, 20, Some(protocol));
+        let bundle = build_evidence_bundle(E2eMode::Open, summary, 10, 20, None, Some(protocol));
         let path = write_open_runner_shell(tmp.path(), &bundle).unwrap();
         let html = std::fs::read_to_string(path).unwrap();
         assert!(html.contains("Pause"));
@@ -2330,8 +2649,9 @@ mod tests {
             duration_ms: 12,
             reports: vec![report(Outcome::Passed)],
             coverage: None,
+            browser_sessions: Vec::new(),
         };
-        build_evidence_bundle(E2eMode::Open, summary, 10, 20, None)
+        build_evidence_bundle(E2eMode::Open, summary, 10, 20, None, None)
     }
 
     /// The review UI must render from the same data source for both the
@@ -2417,6 +2737,26 @@ mod tests {
         assert!(!pm.contains("/api/live-control"));
     }
 
+    #[test]
+    fn pm_report_mode_surfaces_top_level_artifacts_panel() {
+        let mut bundle = minimal_bundle();
+        bundle.artifacts.push(E2eArtifactRef {
+            kind: "serve-log".to_string(),
+            path: PathBuf::from("artifacts/serve.log"),
+            label: Some("jet serve dom log".to_string()),
+        });
+
+        let pm = render_pm_report_html(&bundle).expect("pm html");
+
+        assert!(pm.contains(r#"<h3>Artifacts</h3>"#));
+        assert!(pm.contains(r#"id="artifacts""#));
+        assert!(pm.contains("function renderArtifacts()"));
+        assert!(pm.contains("artifact-link"));
+        assert!(pm.contains("serve-log"));
+        assert!(pm.contains("artifacts/serve.log"));
+        assert!(pm.contains("jet serve dom log"));
+    }
+
     /// PM mode shares the JS read-only short-circuit with the agent
     /// report so opening the report from file:// never fires a control
     /// POST. The renderer relies on the `isReadOnly` flag the body's
@@ -2497,6 +2837,8 @@ mod tests {
                 },
             ],
             artifacts: vec![],
+            serve_session: None,
+            browser_sessions: vec![],
             open_control: None,
         };
         write_open_runner_shell(dir.path(), &bundle).expect("write shell");
@@ -2591,6 +2933,8 @@ mod tests {
                 },
             ],
             artifacts: vec![],
+            serve_session: None,
+            browser_sessions: vec![],
             open_control: None,
         }
     }
@@ -2693,6 +3037,109 @@ mod tests {
     }
 
     #[test]
+    fn events_include_managed_serve_session_metadata_when_present() {
+        let tmp = TempDir::new().unwrap();
+        let mut bundle = bundle_with_named_steps();
+        bundle.serve_session = Some(crate::dev_server::session::ServeSession {
+            schema_version: crate::dev_server::session::SCHEMA_VERSION.to_string(),
+            mode: crate::dev_server::session::MODE_DETACHED.to_string(),
+            target: crate::dev_server::session::TARGET_DOM.to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 43127,
+            url: "http://127.0.0.1:43127/".to_string(),
+            pid: 123,
+            root_dir: tmp.path().display().to_string(),
+            log_file: Some(
+                crate::dev_server::session::log_path(tmp.path())
+                    .display()
+                    .to_string(),
+            ),
+            started_at: crate::dev_server::session::now_unix(),
+        });
+
+        let events = events_for_bundle(&bundle);
+        assert!(matches!(
+            events.first(),
+            Some(E2eEvidenceEvent::RunStarted { .. })
+        ));
+        let Some(E2eEvidenceEvent::ServeSessionStarted {
+            target, url, port, ..
+        }) = events.get(1)
+        else {
+            panic!("managed serve session event should follow run_started: {events:?}");
+        };
+        assert_eq!(target, crate::dev_server::session::TARGET_DOM);
+        assert_eq!(url, "http://127.0.0.1:43127/");
+        assert_eq!(*port, 43127);
+    }
+
+    #[test]
+    fn events_include_browser_session_metadata_when_present() {
+        let mut bundle = bundle_with_named_steps();
+        let mut session = crate::test_runner::reporter::BrowserSessionReport::launching(
+            PathBuf::from("e2e/browser.spec.js"),
+            true,
+            1_050,
+        );
+        session.ready(
+            Some(42),
+            "ws://127.0.0.1/devtools/browser/abc".to_string(),
+            1_075,
+        );
+        session.close(true, 1_200);
+        let session_id = session.session_id.clone();
+        bundle.browser_sessions.push(session);
+
+        let events = events_for_bundle(&bundle);
+        let kinds: Vec<&'static str> = events.iter().map(event_kind).collect();
+        assert!(
+            kinds.contains(&"browser_session_started"),
+            "events should carry browser session start: {kinds:?}",
+        );
+        assert!(
+            kinds.contains(&"browser_session_finished"),
+            "events should carry browser session finish: {kinds:?}",
+        );
+
+        let start = events
+            .iter()
+            .find_map(|event| match event {
+                E2eEvidenceEvent::BrowserSessionStarted {
+                    session_id: got,
+                    driver,
+                    headless,
+                    pid,
+                    ws_endpoint,
+                    ..
+                } if got == &session_id => Some((driver, headless, pid, ws_endpoint)),
+                _ => None,
+            })
+            .expect("browser session started event");
+        assert_eq!(start.0, "chromium");
+        assert!(*start.1);
+        assert_eq!(*start.2, Some(42));
+        assert_eq!(
+            start.3.as_deref(),
+            Some("ws://127.0.0.1/devtools/browser/abc")
+        );
+
+        let finish = events
+            .iter()
+            .find_map(|event| match event {
+                E2eEvidenceEvent::BrowserSessionFinished {
+                    session_id: got,
+                    state,
+                    graceful_close,
+                    ..
+                } if got == &session_id => Some((state, graceful_close)),
+                _ => None,
+            })
+            .expect("browser session finished event");
+        assert_eq!(finish.0, "closed");
+        assert!(*finish.1);
+    }
+
+    #[test]
     fn jsonl_round_trip_preserves_step_event_payloads() {
         let bundle = bundle_with_named_steps();
         let events = events_for_bundle(&bundle);
@@ -2748,6 +3195,9 @@ mod tests {
     fn event_kind(e: &E2eEvidenceEvent) -> &'static str {
         match e {
             E2eEvidenceEvent::RunStarted { .. } => "run_started",
+            E2eEvidenceEvent::ServeSessionStarted { .. } => "serve_session_started",
+            E2eEvidenceEvent::BrowserSessionStarted { .. } => "browser_session_started",
+            E2eEvidenceEvent::BrowserSessionFinished { .. } => "browser_session_finished",
             E2eEvidenceEvent::StepStarted { .. } => "step_started",
             E2eEvidenceEvent::StepFinished { .. } => "step_finished",
             E2eEvidenceEvent::CaseFinished { .. } => "case_finished",
@@ -2822,8 +3272,9 @@ mod tests {
                 report_with_outcome(Outcome::TimedOut),
             ],
             coverage: None,
+            browser_sessions: Vec::new(),
         };
-        let bundle = build_evidence_bundle(E2eMode::Run, summary, 1, 2, None);
+        let bundle = build_evidence_bundle(E2eMode::Run, summary, 1, 2, None, None);
         assert_eq!(bundle.summary.exit_code, E2E_EXIT_TIMEOUT);
     }
 
@@ -2837,8 +3288,9 @@ mod tests {
             duration_ms: 5,
             reports: vec![report_with_outcome(Outcome::Passed)],
             coverage: None,
+            browser_sessions: Vec::new(),
         };
-        let bundle = build_evidence_bundle(E2eMode::Run, summary, 1, 2, None);
+        let bundle = build_evidence_bundle(E2eMode::Run, summary, 1, 2, None, None);
         let serialized = serde_json::to_string(&bundle).expect("serialise");
         let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
         assert_eq!(parsed["schema_version"], EVIDENCE_SCHEMA_VERSION);
@@ -2862,8 +3314,9 @@ mod tests {
             duration_ms: 5,
             reports: vec![report_with_outcome(Outcome::Passed)],
             coverage: None,
+            browser_sessions: Vec::new(),
         };
-        let bundle = build_evidence_bundle(E2eMode::Run, summary, 1, 2, None);
+        let bundle = build_evidence_bundle(E2eMode::Run, summary, 1, 2, None, None);
         assert!(
             bundle.open_control.is_none(),
             "run mode must never launch a review shell or carry control protocol",

@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Group, GroupResult, TaskOptions, TaskSignature};
 use crate::{Broker, TaskError};
+use super::{Group, GroupResult, TaskOptions, TaskSignature};
 
 /// Chunks: Split items into batches, each batch processed as one task
 ///
@@ -60,8 +60,7 @@ impl Chunks {
             return Group::new(vec![]).with_options(self.options.clone());
         }
 
-        let chunks: Vec<Vec<Value>> = self
-            .items
+        let chunks: Vec<Vec<Value>> = self.items
             .chunks(self.chunk_size)
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -71,9 +70,8 @@ impl Chunks {
             .map(|chunk| {
                 TaskSignature::new(
                     self.task_name.clone(),
-                    Value::Array(vec![Value::Array(chunk)]),
-                )
-                .with_options(self.options.clone())
+                    Value::Array(vec![Value::Array(chunk)])
+                ).with_options(self.options.clone())
             })
             .collect();
 
@@ -81,7 +79,10 @@ impl Chunks {
     }
 
     /// Execute the chunks as a group (convenience method)
-    pub async fn apply_async<B: Broker>(&self, broker: &B) -> Result<GroupResult, TaskError> {
+    pub async fn apply_async<B: Broker>(
+        &self,
+        broker: &B,
+    ) -> Result<GroupResult, TaskError> {
         self.to_group().apply_async(broker).await
     }
 }
@@ -222,7 +223,11 @@ mod tests {
 
     #[test]
     fn test_chunks_complex_types() {
-        let items = vec![json!({"id": 1}), json!({"id": 2}), json!({"id": 3})];
+        let items = vec![
+            json!({"id": 1}),
+            json!({"id": 2}),
+            json!({"id": 3}),
+        ];
         let chunks = Chunks::new("batch_process", items, 2);
 
         let group = chunks.to_group();

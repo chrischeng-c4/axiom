@@ -56,11 +56,7 @@ pub(crate) fn parse(version: &str) -> Option<Pep440Version> {
     let s = without_local.to_lowercase();
 
     // Split on '!' for epoch — we ignore epoch (treat as 0) but consume it.
-    let s = if let Some((_epoch, rest)) = s.split_once('!') {
-        rest
-    } else {
-        &s
-    };
+    let s = if let Some((_epoch, rest)) = s.split_once('!') { rest } else { &s };
 
     // Extract dev suffix: ".dev<N>" at the end.
     let (s, dev) = if let Some((base, dev_str)) = s.rsplit_once(".dev") {
@@ -106,12 +102,7 @@ pub(crate) fn parse(version: &str) -> Option<Pep440Version> {
         return None;
     }
 
-    Some(Pep440Version {
-        release,
-        dev,
-        pre,
-        post,
-    })
+    Some(Pep440Version { release, dev, pre, post })
 }
 
 /// Split a version string at the pre-release suffix (a/b/rc + digits).
@@ -119,21 +110,13 @@ pub(crate) fn parse(version: &str) -> Option<Pep440Version> {
 /// Returns `(release_part, Option<(PrePhase, N)>)`.
 fn parse_pre_suffix(s: &str) -> (&str, Option<(PrePhase, u64)>) {
     // Check for "rc" first (2 chars) before "a"/"b" (1 char).
-    for (tag, phase) in [
-        ("rc", PrePhase::Rc),
-        ("b", PrePhase::Beta),
-        ("a", PrePhase::Alpha),
-    ] {
+    for (tag, phase) in [("rc", PrePhase::Rc), ("b", PrePhase::Beta), ("a", PrePhase::Alpha)] {
         if let Some((base, num_str)) = s.rsplit_once(tag) {
             // Ensure num_str is all digits (could be empty → 0) and base ends with digit or '.'.
             if num_str.chars().all(|c| c.is_ascii_digit()) {
                 let last_char = base.chars().last();
                 if last_char.map(|c| c.is_ascii_digit()).unwrap_or(false) {
-                    let n: u64 = if num_str.is_empty() {
-                        0
-                    } else {
-                        num_str.parse().unwrap_or(0)
-                    };
+                    let n: u64 = if num_str.is_empty() { 0 } else { num_str.parse().unwrap_or(0) };
                     return (base, Some((phase, n)));
                 }
             }
@@ -242,7 +225,7 @@ pub(crate) fn sort_versions_newest_first(versions: &mut Vec<String>) {
             (Some(va), Some(vb)) => vb.cmp(&va), // descending
             (Some(_), None) => Ordering::Less,   // parseable < unparseable
             (None, Some(_)) => Ordering::Greater,
-            (None, None) => b.cmp(a), // both unparseable: lex desc
+            (None, None) => b.cmp(a),            // both unparseable: lex desc
         }
     });
 }
@@ -258,12 +241,8 @@ mod tests {
     // REQ: D2-test-a — pre-releases rank below release; 1.0.1 is latest
     #[test]
     fn test_pep440_sort_pre_releases_below_release() {
-        let mut versions = vec![
-            "1.0.0".to_string(),
-            "1.0.0a1".to_string(),
-            "1.0.0rc1".to_string(),
-            "1.0.1".to_string(),
-        ];
+        let mut versions =
+            vec!["1.0.0".to_string(), "1.0.0a1".to_string(), "1.0.0rc1".to_string(), "1.0.1".to_string()];
         sort_versions_newest_first(&mut versions);
         // Latest must be 1.0.1; pre-releases ranked below the full release 1.0.0
         assert_eq!(versions[0], "1.0.1", "1.0.1 must be newest");
@@ -278,17 +257,11 @@ mod tests {
     // REQ: D2-test-b — numeric segment comparison (1.10 > 1.2); post-release > base
     #[test]
     fn test_pep440_sort_numeric_segments_and_post() {
-        let mut versions = vec![
-            "1.2".to_string(),
-            "1.10".to_string(),
-            "1.2.post1".to_string(),
-        ];
+        let mut versions =
+            vec!["1.2".to_string(), "1.10".to_string(), "1.2.post1".to_string()];
         sort_versions_newest_first(&mut versions);
         // 1.10 > 1.2.post1 > 1.2
-        assert_eq!(
-            versions[0], "1.10",
-            "1.10 must be newest (10 > 2 numerically)"
-        );
+        assert_eq!(versions[0], "1.10", "1.10 must be newest (10 > 2 numerically)");
         let idx_post = versions.iter().position(|v| v == "1.2.post1").unwrap();
         let idx_base = versions.iter().position(|v| v == "1.2").unwrap();
         assert!(idx_post < idx_base, "1.2.post1 must rank above 1.2");
@@ -315,10 +288,7 @@ mod tests {
         // Both 1.0 and 1.0.0 pad to [1,0,0] — must tie as equal-rank releases, both above rc
         let idx_pad = versions.iter().position(|v| v == "1.0").unwrap();
         let idx_full = versions.iter().position(|v| v == "1.0.0").unwrap();
-        assert!(
-            idx_pad < idx_rc && idx_full < idx_rc,
-            "1.0 and 1.0.0 must both outrank pre-releases"
-        );
+        assert!(idx_pad < idx_rc && idx_full < idx_rc, "1.0 and 1.0.0 must both outrank pre-releases");
     }
 
     // REQ: dev-release ranks below pre-release; local-version + epoch + unparseable edges
@@ -329,23 +299,16 @@ mod tests {
             "1.0.0a1".to_string(),
             "1.0.0.dev1".to_string(),
             "1.0.0+deadbeef".to_string(), // local — strips to 1.0.0, ties with "1.0.0"
-            "1!0.1".to_string(),          // epoch — stripped, becomes 0.1
-            "not-a-version".to_string(),  // unparseable — goes to end
+            "1!0.1".to_string(),           // epoch — stripped, becomes 0.1
+            "not-a-version".to_string(),   // unparseable — goes to end
         ];
         sort_versions_newest_first(&mut versions);
         // Rank: 1.0.0 == 1.0.0+deadbeef > 1.0.0a1 > 1.0.0.dev1 > 0.1 (epoch-stripped) > unparseable
-        assert_eq!(
-            versions.last().unwrap(),
-            "not-a-version",
-            "unparseable must sink to end"
-        );
+        assert_eq!(versions.last().unwrap(), "not-a-version", "unparseable must sink to end");
         let idx_a1 = versions.iter().position(|v| v == "1.0.0a1").unwrap();
         let idx_dev = versions.iter().position(|v| v == "1.0.0.dev1").unwrap();
         assert!(idx_a1 < idx_dev, "alpha must rank above dev (dev < alpha)");
         let idx_epoch = versions.iter().position(|v| v == "1!0.1").unwrap();
-        assert!(
-            idx_dev < idx_epoch,
-            "1.0.0.dev1 must rank above epoch-stripped 0.1"
-        );
+        assert!(idx_dev < idx_epoch, "1.0.0.dev1 must rank above epoch-stripped 0.1");
     }
 }

@@ -55,14 +55,7 @@ pub fn parse(input: &str) -> Result<Requirement, ParseError> {
     let (head, marker) = match s.split_once(';') {
         Some((h, m)) => {
             let m = m.trim();
-            (
-                h.trim(),
-                if m.is_empty() {
-                    None
-                } else {
-                    Some(m.to_string())
-                },
-            )
+            (h.trim(), if m.is_empty() { None } else { Some(m.to_string()) })
         }
         None => (s, None),
     };
@@ -108,12 +101,7 @@ pub fn parse(input: &str) -> Result<Requirement, ParseError> {
             .map_err(|e| ParseError::BadSpecifier(e.to_string()))?
     };
 
-    Ok(Requirement {
-        name,
-        specifiers,
-        extras,
-        marker,
-    })
+    Ok(Requirement { name, specifiers, extras, marker })
 }
 
 /// PEP 503 distribution-name normalisation: lowercase, runs of `[-_.]` → `-`.
