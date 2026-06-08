@@ -22,11 +22,13 @@
 //! so the handler still maps them to the right HTTP status.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Result};
-use futures::StreamExt;
-use tokio::sync::watch;
+use futures::{FutureExt, StreamExt};
+use rustc_hash::FxHashMap;
+use tokio::sync::oneshot;
 
 use crate::log_entry::RaftLogEntry;
 use crate::storage::{ApplyOutcome, Engine};
@@ -37,11 +39,32 @@ use crate::wal::{SharedWal, WalRecord};
 /// inside this window; outcomes for sequences no local handler is
 /// waiting on (writes that originated on other nodes) age out.
 const OUTCOME_WINDOW: u64 = 8192;
+const APPLY_LOOP_BATCH: usize = 128;
+
+struct PendingApply {
+    seq: u64,
+    rec: WalRecord,
+    aof_rec: Option<WalRecord>,
+}
+
+struct CompletionState {
+    outcomes: BTreeMap<u64, Result<ApplyOutcome>>,
+    waiters: FxHashMap<u64, oneshot::Sender<Result<ApplyOutcome>>>,
+}
+
+/// The optional local AOF the apply loop appends every applied record to (Stage
+/// 2 Phase 2f-3). Wrapped in a `Mutex` because the apply loop appends from the
+/// async task while the periodic checkpoint snapshotter calls `truncate_through`
+/// from another task; the lock is held only for the (buffered) append/truncate.
+/// `None` on the default / non-AOF path, so `start_from` is byte-identical to
+/// today. The everysec fsync runs off the hot path via `maybe_sync` (driven by
+/// the loop after each batch), so an append never blocks on the disk.
+pub type SharedAof = Arc<Mutex<crate::aof::AofWriter>>;
 
 pub struct WriteCoordinator {
     wal: SharedWal,
-    applied: watch::Sender<u64>,
-    outcomes: Mutex<BTreeMap<u64, Result<ApplyOutcome>>>,
+    applied: AtomicU64,
+    completions: Mutex<CompletionState>,
 }
 
 impl WriteCoordinator {
@@ -55,11 +78,40 @@ impl WriteCoordinator {
     /// — used when a snapshot (RDB) already seeded the engine up to that
     /// sequence.
     pub fn start_from(wal: SharedWal, engine: Arc<Engine>, from_seq: u64) -> Arc<Self> {
-        let (applied_tx, _rx) = watch::channel(from_seq);
+        // The default / non-AOF path. Delegates with no AOF, so the apply loop is
+        // byte-identical to today.
+        Self::start_from_inner(wal, engine, from_seq, None)
+    }
+
+    /// Like [`start_from`](Self::start_from) but also appends every APPLIED
+    /// `(seq, record)` to a local AOF (Stage 2 Phase 2f-3), AFTER the apply
+    /// succeeds and `applied` advances. The default / non-AOF path is unchanged —
+    /// this is the only entry point that wires an AOF in.
+    pub fn start_from_with_aof(
+        wal: SharedWal,
+        engine: Arc<Engine>,
+        from_seq: u64,
+        aof: SharedAof,
+    ) -> Arc<Self> {
+        Self::start_from_inner(wal, engine, from_seq, Some(aof))
+    }
+
+    /// The apply-loop spawner. Identical structure regardless of the AOF; the
+    /// only AOF-specific work is the append after `complete`, conditioned on the
+    /// `aof` being `Some` (the default `start_from` passes `None`).
+    fn start_from_inner(
+        wal: SharedWal,
+        engine: Arc<Engine>,
+        from_seq: u64,
+        aof: Option<SharedAof>,
+    ) -> Arc<Self> {
         let coord = Arc::new(Self {
             wal: wal.clone(),
-            applied: applied_tx,
-            outcomes: Mutex::new(BTreeMap::new()),
+            applied: AtomicU64::new(from_seq),
+            completions: Mutex::new(CompletionState {
+                outcomes: BTreeMap::new(),
+                waiters: FxHashMap::default(),
+            }),
         });
         let loop_coord = coord.clone();
         tokio::spawn(async move {
@@ -71,7 +123,7 @@ impl WriteCoordinator {
             // applying after a broker blip. Resuming from `applied` is safe:
             // redelivery is skipped idempotently below.
             loop {
-                let from = *loop_coord.applied.borrow();
+                let from = loop_coord.applied.load(Ordering::Acquire);
                 let mut sub = match wal.subscribe(from).await {
                     Ok(s) => {
                         backoff = std::time::Duration::from_millis(100);
@@ -85,35 +137,104 @@ impl WriteCoordinator {
                     }
                 };
                 while let Some(item) = sub.next().await {
+                    let mut stream_ended = false;
                     match item {
                         Ok((seq, rec)) => {
                             // Idempotent under redelivery: skip anything at or
                             // below what we've already applied.
-                            if seq <= *loop_coord.applied.borrow() {
+                            if seq <= loop_coord.applied.load(Ordering::Acquire) {
                                 continue;
                             }
-                            // apply_raft_entry is synchronous and CPU-bound (a
-                            // bulk index folds thousands of items + BM25 stats).
-                            // Running it directly on the async worker would block
-                            // the tokio runtime and starve the NATS client's I/O
-                            // (missed pings → reconnect → the consumer stream
-                            // stalls), wedging the apply loop under tight CPU.
-                            // Offload to a blocking thread so I/O keeps flowing.
+                            let mut batch = Vec::with_capacity(APPLY_LOOP_BATCH);
+                            batch.push(PendingApply {
+                                seq,
+                                aof_rec: aof.as_ref().map(|_| rec.clone()),
+                                rec,
+                            });
+                            while batch.len() < APPLY_LOOP_BATCH {
+                                match sub.next().now_or_never() {
+                                    Some(Some(Ok((seq, rec)))) => {
+                                        if seq <= loop_coord.applied.load(Ordering::Acquire) {
+                                            continue;
+                                        }
+                                        batch.push(PendingApply {
+                                            seq,
+                                            aof_rec: aof.as_ref().map(|_| rec.clone()),
+                                            rec,
+                                        });
+                                    }
+                                    Some(Some(Err(e))) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            "apply loop: stream item error"
+                                        );
+                                    }
+                                    Some(None) => {
+                                        stream_ended = true;
+                                        break;
+                                    }
+                                    None => break,
+                                }
+                            }
+                            // apply_raft_entry is synchronous and CPU-bound (a bulk index folds
+                            // thousands of items + BM25 stats). Run ready records in one blocking
+                            // task to keep NATS I/O moving without paying a thread handoff per WAL
+                            // record.
                             let eng = engine.clone();
-                            let outcome = match tokio::task::spawn_blocking(move || {
-                                eng.apply_raft_entry(rec.entry)
+                            let seqs: Vec<u64> = batch.iter().map(|pending| pending.seq).collect();
+                            let results = match tokio::task::spawn_blocking(move || {
+                                let mut results = Vec::with_capacity(batch.len());
+                                for pending in batch {
+                                    let outcome = eng.apply_raft_entry(pending.rec.entry);
+                                    results.push((pending.seq, outcome, pending.aof_rec));
+                                }
+                                results
                             })
                             .await
                             {
-                                Ok(o) => o,
-                                Err(e) => Err(anyhow::anyhow!("apply task panicked: {e}")),
+                                Ok(results) => results,
+                                Err(e) => {
+                                    let err = e.to_string();
+                                    seqs.into_iter()
+                                        .map(|seq| {
+                                            (
+                                                seq,
+                                                Err(anyhow::anyhow!(
+                                                    "apply batch task panicked: {err}"
+                                                )),
+                                                None,
+                                            )
+                                        })
+                                        .collect()
+                                }
                             };
-                            if let Err(e) = &outcome {
-                                tracing::warn!(seq, error = %e, "apply error (entry no-ops)");
+
+                            for (seq, outcome, aof_rec) in results {
+                                let applied_ok = outcome.is_ok();
+                                if let Err(e) = &outcome {
+                                    tracing::warn!(seq, error = %e, "apply error (entry no-ops)");
+                                }
+                                loop_coord.complete(seq, outcome);
+                                // AOF append AFTER apply + advancing `applied`: the log mirrors
+                                // exactly what the engine folded in. A failed apply no-ops the
+                                // engine, so it is NOT appended.
+                                if applied_ok {
+                                    if let (Some(aof), Some(rec)) = (aof.as_ref(), aof_rec) {
+                                        let mut w = aof.lock().expect("aof writer poisoned");
+                                        if let Err(e) = w.append(seq, &rec) {
+                                            tracing::warn!(seq, error = %e, "AOF append failed");
+                                        }
+                                        // everysec fsync, off the hot path (no-op unless dirty AND
+                                        // ≥1s elapsed; Always already synced).
+                                        let _ = w.maybe_sync();
+                                    }
+                                }
                             }
-                            loop_coord.complete(seq, outcome);
                         }
                         Err(e) => tracing::warn!(error = %e, "apply loop: stream item error"),
+                    }
+                    if stream_ended {
+                        break;
                     }
                 }
                 // Stream ended (e.g. broker restart killed the ephemeral
@@ -127,50 +248,57 @@ impl WriteCoordinator {
     }
 
     fn complete(&self, seq: u64, outcome: Result<ApplyOutcome>) {
+        let mut direct = None;
         {
-            let mut m = self.outcomes.lock().expect("outcomes poisoned");
-            m.insert(seq, outcome);
+            let mut m = self.completions.lock().expect("completions poisoned");
+            if let Some(tx) = m.waiters.remove(&seq) {
+                direct = Some((tx, outcome));
+            } else {
+                m.outcomes.insert(seq, outcome);
+            }
             // Prune everything older than the retention window.
             let cutoff = seq.saturating_sub(OUTCOME_WINDOW);
-            while let Some((&k, _)) = m.iter().next() {
+            while let Some((&k, _)) = m.outcomes.iter().next() {
                 if k < cutoff {
-                    m.remove(&k);
+                    m.outcomes.remove(&k);
                 } else {
                     break;
                 }
             }
         }
-        // Publish the new applied head AFTER the outcome is stored, so a
-        // waiter that observes `applied >= seq` always finds its outcome.
-        let _ = self.applied.send(seq);
+        // Publish the new applied head AFTER the outcome is stored, so checkpoint
+        // readers never see a seq before its engine mutation has been applied.
+        self.applied.store(seq, Ordering::Release);
+        if let Some((tx, outcome)) = direct {
+            let _ = tx.send(outcome);
+        }
+    }
+
+    fn register_waiter(&self, seq: u64) -> Result<oneshot::Receiver<Result<ApplyOutcome>>> {
+        let mut m = self.completions.lock().expect("completions poisoned");
+        if let Some(result) = m.outcomes.remove(&seq) {
+            let (tx, rx) = oneshot::channel();
+            let _ = tx.send(result);
+            return Ok(rx);
+        }
+        let (tx, rx) = oneshot::channel();
+        if m.waiters.insert(seq, tx).is_some() {
+            bail!("duplicate waiter for sequence {seq}");
+        }
+        Ok(rx)
     }
 
     /// Publish `entry`, wait for local apply, and return its outcome.
     pub async fn submit(&self, entry: RaftLogEntry) -> Result<ApplyOutcome> {
-        let seq = self.wal.publish(&WalRecord::new(entry)).await?;
-        let mut rx = self.applied.subscribe();
-        // `watch` always exposes the latest value on borrow and coalesces
-        // without losing it, so this converges even if the loop races
-        // ahead between checks.
-        while *rx.borrow() < seq {
-            if rx.changed().await.is_err() {
-                bail!("apply loop stopped before sequence {seq} was applied");
-            }
-        }
-        let out = self
-            .outcomes
-            .lock()
-            .expect("outcomes poisoned")
-            .remove(&seq);
-        match out {
-            Some(result) => result,
-            None => bail!("outcome for sequence {seq} was pruned before retrieval"),
-        }
+        let seq = self.wal.publish(WalRecord::new(entry)).await?;
+        let rx = self.register_waiter(seq)?;
+        rx.await
+            .map_err(|_| anyhow::anyhow!("apply loop stopped before sequence {seq} was applied"))?
     }
 
     /// Highest sequence this node has applied.
     pub fn applied_seq(&self) -> u64 {
-        *self.applied.borrow()
+        self.applied.load(Ordering::Acquire)
     }
 }
 

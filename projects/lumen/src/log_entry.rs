@@ -3,10 +3,10 @@
 //! `Engine::apply_raft_entry`) and the apply-step response marker.
 //!
 //! These are pure serde data types with no consensus dependency. They live in
-//! their own always-compiled module so the load-bearing write path does not
-//! pull in the (feature-gated, `experimental`) openraft consensus machinery in
-//! [`crate::raft_node`]. The `RaftLogEntry` name is retained for historical
-//! continuity — every variant still maps 1:1 to an `Engine::*` method.
+//! their own always-compiled module so the load-bearing write path stays free of
+//! any heavier replication machinery (NATS JetStream is the replication
+//! substrate). The `RaftLogEntry` name is retained for historical continuity —
+//! every variant still maps 1:1 to an `Engine::*` method.
 
 use serde::{Deserialize, Serialize};
 

@@ -20,31 +20,94 @@
 //!   cursor. When the node dies, the consumer is cleaned up — exactly
 //!   right for Deployment + HPA cattle.
 
-use anyhow::{Context, Result};
+use std::sync::{Arc, Mutex};
+
+use std::time::Duration;
+
+use anyhow::{bail, Context, Result};
 use async_nats::jetstream::{self, consumer::DeliverPolicy};
 use async_trait::async_trait;
 use futures::StreamExt;
+use rustc_hash::FxHashMap;
 
 use crate::wal::{WalLog, WalRecord, WalStream};
 
-const STREAM_NAME: &str = "lumen_wal";
-const SUBJECT: &str = "lumen.wal";
+const DEFAULT_STREAM_NAME: &str = "lumen_wal";
+const DEFAULT_SUBJECT: &str = "lumen.wal";
+const APPLY_PULL_BATCH: usize = 256;
+const APPLY_PULL_EXPIRES: Duration = Duration::from_micros(500);
+const LOCAL_PUBLISH_WINDOW: u64 = 16_384;
+const LOCAL_PUBLISH_RETAIN_AFTER: usize = LOCAL_PUBLISH_WINDOW as usize * 2;
 
 pub struct NatsWal {
     js: jetstream::Context,
+    config: NatsWalConfig,
+    // Local writes still apply only when the NATS tail delivers their sequence.
+    // This cache just lets that local tail use the original record instead of
+    // deserializing the payload this process just serialized.
+    local_publishes: Arc<Mutex<FxHashMap<u64, WalRecord>>>,
+}
+
+/// JetStream stream/subject binding for one WAL partition.
+///
+/// The default is the historical single stream (`lumen_wal` / `lumen.wal`).
+/// Sharded write apply uses one config per shard so each shard has its own
+/// ordered log and apply loop instead of every write contending on one stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NatsWalConfig {
+    pub stream_name: String,
+    pub subject: String,
+}
+
+impl Default for NatsWalConfig {
+    fn default() -> Self {
+        Self {
+            stream_name: DEFAULT_STREAM_NAME.to_string(),
+            subject: DEFAULT_SUBJECT.to_string(),
+        }
+    }
+}
+
+impl NatsWalConfig {
+    pub fn new(stream_name: impl Into<String>, subject: impl Into<String>) -> Result<Self> {
+        let stream_name = stream_name.into();
+        let subject = subject.into();
+        if stream_name.trim().is_empty() {
+            bail!("NATS WAL stream name cannot be empty");
+        }
+        if subject.trim().is_empty() {
+            bail!("NATS WAL subject cannot be empty");
+        }
+        Ok(Self {
+            stream_name,
+            subject,
+        })
+    }
+
+    pub fn shard(shard: usize) -> Self {
+        Self {
+            stream_name: format!("{DEFAULT_STREAM_NAME}_{shard}"),
+            subject: format!("{DEFAULT_SUBJECT}.{shard}"),
+        }
+    }
 }
 
 impl NatsWal {
     /// Connect to NATS at `url` (e.g. `nats://localhost:4222`) and
     /// ensure the WAL stream exists.
     pub async fn connect(url: &str) -> Result<Self> {
+        Self::connect_with_config(url, NatsWalConfig::default()).await
+    }
+
+    /// Connect to NATS using an explicit WAL stream/subject binding.
+    pub async fn connect_with_config(url: &str, config: NatsWalConfig) -> Result<Self> {
         let client = async_nats::connect(url)
             .await
             .with_context(|| format!("connect NATS at {url}"))?;
         let js = jetstream::new(client);
         js.get_or_create_stream(jetstream::stream::Config {
-            name: STREAM_NAME.to_string(),
-            subjects: vec![SUBJECT.to_string()],
+            name: config.stream_name.clone(),
+            subjects: vec![config.subject.clone()],
             // File storage = durable across broker restart. Retention is
             // limits-based; operators size it to cover the gap between
             // RDB snapshots (a node behind retention re-bootstraps from
@@ -53,28 +116,43 @@ impl NatsWal {
         })
         .await
         .context("get_or_create_stream")?;
-        Ok(Self { js })
+        Ok(Self {
+            js,
+            config,
+            local_publishes: Arc::new(Mutex::new(FxHashMap::default())),
+        })
     }
 }
 
 #[async_trait]
 impl WalLog for NatsWal {
-    async fn publish(&self, record: &WalRecord) -> Result<u64> {
+    async fn publish(&self, record: WalRecord) -> Result<u64> {
         let payload = record.encode()?;
         let ack = self
             .js
-            .publish(SUBJECT, payload.into())
+            .publish(self.config.subject.clone(), payload.into())
             .await
             .context("jetstream publish")?
             .await
             .context("jetstream publish ack")?;
+        {
+            let mut local = self
+                .local_publishes
+                .lock()
+                .expect("local publish cache poisoned");
+            local.insert(ack.sequence, record);
+            if local.len() > LOCAL_PUBLISH_RETAIN_AFTER {
+                let cutoff = ack.sequence.saturating_sub(LOCAL_PUBLISH_WINDOW);
+                local.retain(|seq, _| *seq >= cutoff);
+            }
+        }
         Ok(ack.sequence)
     }
 
     async fn subscribe(&self, from_seq: u64) -> Result<WalStream> {
         let stream = self
             .js
-            .get_stream(STREAM_NAME)
+            .get_stream(self.config.stream_name.clone())
             .await
             .context("get_stream")?;
         // ByStartSequence is inclusive, so start at from_seq + 1 to get
@@ -89,23 +167,40 @@ impl WalLog for NatsWal {
             })
             .await
             .context("create ephemeral consumer")?;
-        let messages = consumer.messages().await.context("consumer.messages")?;
-
-        let out = messages.filter_map(|msg| async move {
-            let msg = match msg {
-                Ok(m) => m,
-                Err(e) => return Some(Err(anyhow::anyhow!("nats message error: {e}"))),
-            };
-            let seq = match msg.info() {
-                Ok(info) => info.stream_sequence,
-                Err(e) => return Some(Err(anyhow::anyhow!("nats message info: {e}"))),
-            };
-            // Best-effort ack; redelivery is handled idempotently by the
-            // apply loop (it tracks applied-seq and skips <= applied).
-            let _ = msg.ack().await;
-            match WalRecord::decode(&msg.payload) {
-                Ok(rec) => Some(Ok((seq, rec))),
-                Err(e) => Some(Err(e)),
+        // Continuous pull stream: it prefetches the next batch as the local
+        // buffer drains and yields each message as soon as it arrives. That keeps
+        // the high-load batch behavior without adding the low-concurrency expiry
+        // floor caused by draining a whole `batch()` before yielding the first
+        // record to the apply loop.
+        let messages = consumer
+            .stream()
+            .max_messages_per_batch(APPLY_PULL_BATCH)
+            .expires(APPLY_PULL_EXPIRES)
+            .messages()
+            .await
+            .context("create continuous pull stream")?;
+        let local_publishes = self.local_publishes.clone();
+        let out = messages.then(move |msg| {
+            let local_publishes = local_publishes.clone();
+            async move {
+                let msg = msg.map_err(|e| anyhow::anyhow!("nats message error: {e}"))?;
+                let seq = msg
+                    .info()
+                    .map_err(|e| anyhow::anyhow!("nats message info: {e}"))?
+                    .stream_sequence;
+                // Best-effort ack; redelivery is handled idempotently by the apply
+                // loop (it tracks applied-seq and skips <= applied).
+                let _ = msg.ack().await;
+                let local_record = {
+                    let mut local = local_publishes
+                        .lock()
+                        .expect("local publish cache poisoned");
+                    local.remove(&seq)
+                };
+                match local_record {
+                    Some(rec) => Ok((seq, rec)),
+                    None => WalRecord::decode(&msg.payload).map(|rec| (seq, rec)),
+                }
             }
         });
 
@@ -115,10 +210,29 @@ impl WalLog for NatsWal {
     async fn latest_seq(&self) -> Result<u64> {
         let stream = self
             .js
-            .get_stream(STREAM_NAME)
+            .get_stream(self.config.stream_name.clone())
             .await
             .context("get_stream")?;
         let info = stream.cached_info();
         Ok(info.state.last_sequence)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shard_config_uses_distinct_stream_and_subject() {
+        assert_eq!(NatsWalConfig::default().stream_name, "lumen_wal");
+        assert_eq!(NatsWalConfig::default().subject, "lumen.wal");
+        assert_eq!(NatsWalConfig::shard(3).stream_name, "lumen_wal_3");
+        assert_eq!(NatsWalConfig::shard(3).subject, "lumen.wal.3");
+    }
+
+    #[test]
+    fn config_rejects_empty_stream_or_subject() {
+        assert!(NatsWalConfig::new("", "lumen.wal").is_err());
+        assert!(NatsWalConfig::new("lumen_wal", "").is_err());
     }
 }

@@ -4,9 +4,16 @@
 //! double as executable documentation for the wire shapes — if the
 //! README's API examples change, these tests will need to change too.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use axum_test::TestServer;
+use lumen::coordinator::WriteCoordinator;
+use lumen::routing::{document_shard_index, EngineShardSearch, EngineShardWrite};
+use lumen::types::{
+    CreateCollectionRequest, FieldSpec, FieldType, FieldValue, IndexItem, IndexRequest,
+};
+use lumen::wal::MemWal;
 use serde_json::{json, Value};
 
 fn server() -> TestServer {
@@ -63,6 +70,182 @@ async fn create_collection_and_index_keyword_then_search() {
         .map(|h| h["external_id"].as_str().unwrap())
         .collect();
     assert_eq!(eids, vec!["u1", "u3"]);
+}
+
+#[tokio::test]
+async fn search_can_use_injected_sharded_backend() {
+    let shard_a = test_search_shard([("u1", "a@x.com", 40), ("u2", "b@y.com", 30)]);
+    let shard_b = test_search_shard([("u3", "a@x.com", 20)]);
+    let state = lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new()))
+        .with_search_backend(Arc::new(EngineShardSearch::new(vec![shard_a, shard_b])));
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    let resp = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "a@x.com" } },
+            "sort": [{ "field": "age", "order": "asc" }],
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 2);
+    let eids: Vec<&str> = body["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(eids, vec!["u3", "u1"]);
+}
+
+#[tokio::test]
+async fn index_can_use_injected_sharded_write_backend() {
+    let engines: Vec<Arc<lumen::storage::Engine>> = (0..2)
+        .map(|_| Arc::new(lumen::storage::Engine::new()))
+        .collect();
+    let writers = engines
+        .iter()
+        .map(|engine| WriteCoordinator::start(Arc::new(MemWal::new()), engine.clone()))
+        .collect();
+    let state = lumen::api::AppState::open(Arc::new(lumen::storage::Engine::new()))
+        .with_search_backend(Arc::new(EngineShardSearch::new(engines.clone())))
+        .with_write_backend(Arc::new(EngineShardWrite::new(writers)));
+    let s = TestServer::new(lumen::api::router(state)).expect("test server");
+
+    s.put("/collections/users")
+        .json(&json!({
+            "fields": {
+                "email": { "type": "keyword" },
+                "age": { "type": "number" }
+            }
+        }))
+        .await
+        .assert_status_ok();
+
+    let eid0 = eid_for_document_shard("users", 0, 2);
+    let eid1 = eid_for_document_shard("users", 1, 2);
+    let resp = s
+        .post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": eid0, "field": "email", "value": "a@x.com" },
+                { "external_id": eid0, "field": "age", "value": 40 },
+                { "external_id": eid1, "field": "email", "value": "a@x.com" },
+                { "external_id": eid1, "field": "age", "value": 20 }
+            ]
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["indexed"], 4);
+
+    for (expected_shard, eid) in [(0, eid0.as_str()), (1, eid1.as_str())] {
+        let shard = document_shard_index("users", eid, 2);
+        assert_eq!(shard, expected_shard);
+        let found = engines[expected_shard]
+            .search(
+                "users",
+                serde_json::from_value(json!({
+                    "query": { "term": { "field": "email", "value": "a@x.com" } },
+                    "limit": 10
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        assert!(
+            found.hits.iter().any(|hit| hit.external_id == eid),
+            "expected {eid} on shard {expected_shard}"
+        );
+    }
+
+    let resp = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "a@x.com" } },
+            "sort": [{ "field": "age", "order": "asc" }],
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 2);
+    let eids: Vec<&str> = body["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(eids, vec![eid1.as_str(), eid0.as_str()]);
+}
+
+fn eid_for_document_shard(collection_id: &str, shard: usize, shard_count: usize) -> String {
+    for i in 0..10_000 {
+        let eid = format!("u{shard}_{i}");
+        if document_shard_index(collection_id, &eid, shard_count) == shard {
+            return eid;
+        }
+    }
+    panic!("could not find eid for shard {shard}");
+}
+
+fn test_search_shard<const N: usize>(docs: [(&str, &str, i32); N]) -> Arc<lumen::storage::Engine> {
+    let engine = Arc::new(lumen::storage::Engine::new());
+    let mut fields = BTreeMap::new();
+    fields.insert(
+        "email".to_string(),
+        FieldSpec {
+            field_type: FieldType::Keyword,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        },
+    );
+    fields.insert(
+        "age".to_string(),
+        FieldSpec {
+            field_type: FieldType::Number,
+            analyzer: None,
+            multi: None,
+            dim: None,
+            metric: None,
+            backend: None,
+            quantize: None,
+        },
+    );
+    engine
+        .create_collection("users", CreateCollectionRequest { fields })
+        .unwrap();
+    engine
+        .index(
+            "users",
+            IndexRequest {
+                items: docs
+                    .into_iter()
+                    .flat_map(|(external_id, email, age)| {
+                        [
+                            IndexItem {
+                                external_id: external_id.to_string(),
+                                field: "email".to_string(),
+                                value: FieldValue::String(email.to_string()),
+                            },
+                            IndexItem {
+                                external_id: external_id.to_string(),
+                                field: "age".to_string(),
+                                value: FieldValue::Number(age as f64),
+                            },
+                        ]
+                    })
+                    .collect(),
+                request_id: None,
+            },
+        )
+        .unwrap();
+    engine
 }
 
 #[tokio::test]

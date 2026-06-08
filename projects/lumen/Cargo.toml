@@ -40,13 +40,23 @@ async-trait = { workspace = true }
 axum.workspace = true
 base64.workspace = true
 byteorder = "1.5"
-bytemuck = { version = "1", features = ["derive"], optional = true }
+# On-disk snapshots: CBOR (self-describing binary) + lz4, replacing serde_json.
+# Self-describing is required because the persisted types reuse the wire types,
+# which use `skip_serializing_if` / untagged / internally-tagged serde — none of
+# which a non-self-describing codec (bincode/postcard) can round-trip.
+ciborium = "0.2"
+bytemuck = { version = "1", features = ["derive"] }
 roaring = "0.10"
 chrono.workspace = true
 clap = { workspace = true, features = ["env"] }
 crc32fast = "1.4"
 futures.workspace = true
-hnsw_rs = "0.3"
+rayon = "1.10"
+# simdeez_f compiles anndists' SIMD distance kernels (aarch64 NEON `asimd`,
+# x86 AVX2/SSE2) for DistL2/DistDot. The cosine path routes through DistDot on
+# internally unit-normalized vectors to use the NEON kernel (DistCosine has no
+# SIMD path and recomputes both operand norms per comparison).
+hnsw_rs = { version = "0.3", features = ["simdeez_f"] }
 jieba-rs = { version = "0.7", optional = true }
 # K8s Operator (feature `operator`). Versions mirror the workspace's existing
 # kube-rs user (mambalibs/queuekit) so the lockfile stays single-versioned.
@@ -55,11 +65,13 @@ k8s-openapi = { version = "0.24", features = ["v1_32"], optional = true }
 schemars = { version = "0.8", optional = true }
 serde_yaml = { version = "0.9", optional = true }
 lz4_flex = "0.11"
+memmap2 = "0.9"
 moka = { version = "0.12", features = ["sync"] }
-pollster = { version = "0.4", optional = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json.workspace = true
+rustc-hash = "2.1"
+smallvec = "1"
 thiserror.workspace = true
 tokio = { workspace = true }
 tower = "0.5"
@@ -67,17 +79,11 @@ tower-http = { version = "0.6", features = ["trace", "request-id", "util"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 utoipa = { workspace = true, features = ["axum_extras"] }
-wgpu = { version = "24", optional = true }
 
 [features]
 default = []
 jieba = ["dep:jieba-rs"]
-gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster"]
 operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:serde_yaml"]
-# Gates the not-yet-wired LSM disk backend (storage_lsm) until WS4 promotes it
-# to a runtime-selectable tier. (openraft consensus was retired — NATS is the
-# replication substrate.)
-experimental = []
 
 [dev-dependencies]
 axum-test = "17"
@@ -86,6 +92,18 @@ proptest = "1"
 rand = "0.8"
 serde_json.workspace = true
 tempfile = "3"
+# Native pg driver for the competitive perf gate (tests/perf_gate.rs). Postgres
+# is driven over its own wire protocol so the lumen-vs-pg end-to-end comparison
+# is honest. lumen + OpenSearch are driven via reqwest (already a dependency).
+tokio-postgres = "0.7"
+# Stage 2 Phase 2i scale proof (tests/disk_scale_proof.rs). `memory-stats` reads
+# cross-platform PHYSICAL resident set size (macOS task_info, Linux /proc/self/statm)
+# so the disk-engine's bounded-RSS claim is measured, not asserted. `libc` exposes
+# getrusage(RUSAGE_SELF) for ru_majflt/ru_minflt — the demand-paging (major page
+# fault) evidence. libc is already a transitive dep; naming it here is a no-op on
+# the lockfile. Both are test-only.
+memory-stats = "1"
+libc = "0.2"
 
 [[bench]]
 name = "bench_index"

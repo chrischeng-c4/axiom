@@ -14,6 +14,8 @@
 //! The output is a `Vec<String>` — duplicate tokens within one value are
 //! preserved so callers can compute term frequency for BM25 later.
 
+use std::borrow::Cow;
+
 use crate::types::Analyzer;
 
 /// Default n-gram window (inclusive on both sides).
@@ -23,20 +25,51 @@ pub const DEFAULT_NGRAM_MAX: usize = 3;
 /// Tokenize `text` with the chosen `analyzer`.
 pub fn tokenize(text: &str, analyzer: Analyzer) -> Vec<String> {
     match analyzer {
-        Analyzer::WhitespaceLower => whitespace_lower(text),
+        Analyzer::WhitespaceLower => {
+            let mut out = Vec::new();
+            for_whitespace_lower(text, |tok| out.push(tok));
+            out
+        }
         Analyzer::Jieba => jieba(text),
         Analyzer::Ngram => ngram(text, DEFAULT_NGRAM_MIN, DEFAULT_NGRAM_MAX),
     }
 }
 
-fn whitespace_lower(text: &str) -> Vec<String> {
-    text.split_whitespace()
-        .map(|t| {
-            t.trim_matches(|c: char| !c.is_alphanumeric())
-                .to_lowercase()
-        })
-        .filter(|t| !t.is_empty())
-        .collect()
+pub(crate) fn for_whitespace_lower(text: &str, mut emit: impl FnMut(String)) -> u32 {
+    for_whitespace_lower_cow(text, |tok| emit(tok.into_owned()))
+}
+
+pub(crate) fn for_whitespace_lower_cow<'a>(
+    mut text: &'a str,
+    mut emit: impl FnMut(Cow<'a, str>),
+) -> u32 {
+    let mut emitted = 0u32;
+    while !text.is_empty() {
+        let trimmed_start = text.trim_start();
+        if trimmed_start.is_empty() {
+            break;
+        }
+        let skipped = text.len() - trimmed_start.len();
+        text = &text[skipped..];
+        let end = text.find(char::is_whitespace).unwrap_or(text.len());
+        let raw = &text[..end];
+        text = &text[end..];
+        let token = raw.trim_matches(|c: char| !c.is_alphanumeric());
+        if token.is_empty() {
+            continue;
+        }
+        emitted += 1;
+        if token
+            .as_bytes()
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        {
+            emit(Cow::Borrowed(token));
+        } else {
+            emit(Cow::Owned(token.to_lowercase()));
+        }
+    }
+    emitted
 }
 
 #[cfg(feature = "jieba")]

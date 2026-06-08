@@ -415,7 +415,11 @@ class Mongo(Engine):
 
     def __init__(self):
         import pymongo
-        self.cli = pymongo.MongoClient(MONGO_URI)
+        # Fail fast if mongo is down so the engine is skipped at construction
+        # (pymongo connects lazily, so without an explicit ping a dead mongo
+        # only surfaces as a 30s timeout mid-load that aborts the whole run).
+        self.cli = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=800)
+        self.cli.admin.command("ping")
         self.db = self.cli["lumenbench"]
         self.col = self.db["docs"]
 
@@ -487,6 +491,8 @@ class OpenSearch(Engine):
         from opensearchpy import OpenSearch as OS
         self.os = OS(hosts=[{"host": OS_HOST, "port": OS_PORT}], use_ssl=False,
                      timeout=60, max_retries=3, retry_on_timeout=True)
+        if not self.os.ping():  # fail fast if OpenSearch is down → skipped at construction
+            raise RuntimeError("opensearch not reachable")
 
     def setup(self, docs):
         from opensearchpy import helpers
@@ -548,12 +554,19 @@ def main():
         except Exception as e:
             print(f"  ! {cls.name} unavailable: {e}")
 
-    # load
+    # load (skip an engine whose load fails rather than aborting the whole run)
+    loaded = []
     for e in engines:
         t0 = time.time()
         print(f"loading {e.name}…", flush=True)
-        e.setup(docs)
+        try:
+            e.setup(docs)
+        except Exception as ex:
+            print(f"  ! {e.name} load failed, skipping: {str(ex)[:80]}", flush=True)
+            continue
+        loaded.append(e)
         print(f"  {e.name} loaded in {time.time()-t0:.1f}s", flush=True)
+    engines = loaded
 
     # bench
     results = {}  # cell -> {engine: (min,p50,p99,hits,server_ms) | 'N/A'}

@@ -14,6 +14,7 @@
 //! lumen serve --host 0.0.0.0 --port 7373 --log-format json
 //! ```
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -97,6 +98,19 @@ enum LogFormat {
     Json,
 }
 
+/// Cold-start / snapshot persistence mode for `--data-dir` (Stage 2 Phase 2f-2).
+/// Selected at runtime via `--persistence`; defaults to the CBOR RDB, so the
+/// default `serve` path is byte-identical to today unless `segment` is passed.
+#[derive(Clone, Copy, PartialEq, ValueEnum)]
+enum Persistence {
+    /// CBOR RDB blob (`rdb-<seq>.lrb`) — the default, byte-identical to today.
+    Cbor,
+    /// Columnar segment checkpoint (`gen-<seq>/<collection>/...`) — the disk
+    /// engine as persistence. Cold start reopens segments WITHOUT a whole-
+    /// collection load; the periodic snapshotter re-seals (re-seal-capable).
+    Segment,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 enum SpecFormat {
     /// Full OpenAPI 3 document (default).
@@ -151,6 +165,17 @@ struct ServeArgs {
     /// no snapshots are taken and a node rebuilds from the full log.
     #[arg(long, env = "LUMEN_DATA_DIR")]
     data_dir: Option<String>,
+    /// Persistence mode for `--data-dir`: `cbor` (the CBOR RDB, default) or
+    /// `segment` (the columnar disk-engine checkpoint). Defaults to `cbor`; pass
+    /// `--persistence=segment` to opt into the disk tier.
+    #[arg(long = "persistence", env = "LUMEN_PERSISTENCE", value_enum, default_value_t = Persistence::Cbor)]
+    persistence: Persistence,
+    /// Comma-separated segment-checkpoint roots to serve as read shards. Each
+    /// root must contain a committed `gen-<seq>/` checkpoint. When set, search
+    /// requests fan in across these roots through the API SearchBackend seam;
+    /// writes still apply to the node's local engine/log.
+    #[arg(long, env = "LUMEN_SEARCH_SHARD_SEGMENT_DIRS", value_delimiter = ',')]
+    search_shard_segment_dirs: Vec<PathBuf>,
     /// Seconds between RDB snapshots when `--data-dir` is set.
     #[arg(long, env = "LUMEN_SNAPSHOT_SECS", default_value_t = 300)]
     snapshot_secs: u64,
@@ -213,10 +238,6 @@ async fn serve(args: ServeArgs) -> Result<()> {
 
     let engine = Arc::new(Engine::new());
 
-    // GPU probe is informational — log it so operators know whether
-    // `wgpu-brute-force` vector fields will hit the GPU or fall back.
-    let _ = lumen::gpu_probe::probe_and_log();
-
     // Select the write log.
     let wal: SharedWal = match args.wal {
         WalBackend::Embedded => {
@@ -233,29 +254,91 @@ async fn serve(args: ServeArgs) -> Result<()> {
         }
     };
 
-    // RDB bootstrap: load the latest snapshot (if any) so we tail from
-    // its sequence instead of replaying the whole log.
-    let rdb_store = match &args.data_dir {
-        Some(dir) => Some(Arc::new(
-            LocalFsRdbStore::new(dir).context("open RDB store")?,
-        )),
-        None => None,
-    };
-    let start_seq = if let Some(store) = &rdb_store {
-        match store.load_latest().await? {
-            Some(rdb) => {
-                let seq = rdb.up_to_seq;
-                rdb.restore_into(&engine).context("restore RDB")?;
-                tracing::info!(up_to_seq = seq, "restored RDB baseline");
-                seq
-            }
-            None => 0,
-        }
+    // Persistence bootstrap: load the latest checkpoint (if any) so we tail from
+    // its sequence instead of replaying the whole log. Two modes share the
+    // `--data-dir`: the default CBOR RDB and (opt-in) the columnar segment
+    // checkpoint. `segment_mode` is `false` unless `--persistence=segment` is
+    // passed, so the block below is byte-identical to today in the default mode.
+    let segment_mode = use_segment_persistence(&args);
+
+    // The CBOR RDB store — built unless segment persistence is selected.
+    let rdb_store = if segment_mode {
+        None
     } else {
-        0
+        match &args.data_dir {
+            Some(dir) => Some(Arc::new(
+                LocalFsRdbStore::new(dir).context("open RDB store")?,
+            )),
+            None => None,
+        }
     };
 
-    let writer = WriteCoordinator::start_from(wal, engine.clone(), start_seq);
+    // The segment-checkpoint store — built only in segment mode.
+    let segment_store: Option<Arc<lumen::segment_rdb::SegmentRdbStore>> = if segment_mode {
+        match &args.data_dir {
+            Some(dir) => Some(Arc::new(
+                lumen::segment_rdb::SegmentRdbStore::new(dir)
+                    .context("open segment-checkpoint store")?,
+            )),
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    // Cold-start sequence: the WAL position the checkpoint is current as of, so
+    // the apply loop tails from `start_seq + 1`.
+    let mut start_seq = {
+        if let Some(store) = &segment_store {
+            // Segment mode: reopen every collection from the newest checkpoint
+            // INTO `engine` (no whole-collection load), replacing the CBOR restore.
+            match store
+                .reopen_into(&engine)
+                .context("load latest segment checkpoint")?
+            {
+                Some(seq) => {
+                    tracing::info!(up_to_seq = seq, "restored segment-checkpoint baseline");
+                    seq
+                }
+                None => 0,
+            }
+        } else {
+            cbor_cold_start(&rdb_store, &engine).await?
+        }
+    };
+
+    // Local AOF (segment mode only): RDB (segment checkpoint, up to `start_seq`)
+    // → AOF replay (`start_seq+1 .. A`) → NATS tail (`A+1 ..`). After replay the
+    // apply loop keeps appending to this same writer, and the checkpoint
+    // snapshotter trims it. The default CBOR path never builds one.
+    let aof_writer: Option<lumen::coordinator::SharedAof> = if segment_mode {
+        match &args.data_dir {
+            Some(dir) => {
+                let aof_path = std::path::Path::new(dir).join("aof.log");
+                // (b) Replay the AOF over the RDB baseline, advancing the cold-start
+                // sequence to the AOF head `A` so the loop tails NATS from `A+1`.
+                let replayed = lumen::aof::replay_aof_into(&engine, &aof_path, start_seq)
+                    .context("replay AOF over segment baseline")?;
+                if replayed > start_seq {
+                    tracing::info!(from = start_seq, to = replayed, "replayed AOF tail");
+                    start_seq = replayed;
+                }
+                // Open the same AOF for continued appends (truncates any torn tail).
+                let w = lumen::aof::AofWriter::open(&aof_path).context("open AOF")?;
+                Some(std::sync::Arc::new(std::sync::Mutex::new(w)))
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+
+    // (c) Start the apply loop. In segment mode with an AOF, the loop appends
+    // every applied record to it; otherwise the default loop runs unchanged.
+    let writer = match aof_writer.clone() {
+        Some(aof) => WriteCoordinator::start_from_with_aof(wal, engine.clone(), start_seq, aof),
+        None => WriteCoordinator::start_from(wal, engine.clone(), start_seq),
+    };
 
     let auth = Arc::new(AuthConfig::from_env()?);
     if auth.required {
@@ -264,7 +347,12 @@ async fn serve(args: ServeArgs) -> Result<()> {
         tracing::warn!("auth=off — set LUMEN_AUTH=required for production");
     }
 
-    let state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
+    let mut state = lumen::api::AppState::with_components(engine.clone(), auth, writer.clone());
+    if !args.search_shard_segment_dirs.is_empty() {
+        let shards = load_search_shard_segment_roots(&args.search_shard_segment_dirs)?;
+        tracing::info!(shard_count = shards.len(), "search backend=segment-sharded");
+        state = state.with_search_backend(Arc::new(lumen::routing::EngineShardSearch::new(shards)));
+    }
     let app = lumen::api::router(state);
 
     // Periodic RDB snapshotter.
@@ -293,6 +381,61 @@ async fn serve(args: ServeArgs) -> Result<()> {
         });
     }
 
+    // Periodic segment-checkpoint snapshotter (segment mode only). Re-seals every
+    // collection into a fresh generation, tagged with the applied seq, atomically
+    // (stage + rename). The seal is CPU-bound (re-materializes columns) and takes
+    // the per-collection state write lock, so it runs on a blocking thread to keep
+    // the async runtime free — mirroring the apply loop's `spawn_blocking`.
+    if let Some(store) = segment_store {
+        let snap_engine = engine.clone();
+        let snap_writer = writer.clone();
+        let snap_aof = aof_writer.clone();
+        let period = Duration::from_secs(args.snapshot_secs.max(1));
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(period);
+            ticker.tick().await; // skip immediate fire
+            loop {
+                ticker.tick().await;
+                let seq = snap_writer.applied_seq();
+                let store2 = store.clone();
+                let eng2 = snap_engine.clone();
+                let res = tokio::task::spawn_blocking(move || {
+                    store2
+                        .save(&eng2, seq)
+                        .map(|()| store2.prune(3).map(|_| ()))
+                })
+                .await;
+                match res {
+                    Ok(Ok(_)) => {
+                        tracing::info!(up_to_seq = seq, "segment checkpoint written");
+                        // The checkpoint at `seq` is now durable in the segment
+                        // RDB, so every AOF frame with `seq <= C` is redundant —
+                        // trim it (crash-safe rewrite-survivors + rename). Off the
+                        // hot path: a blocking thread, since it rewrites the file.
+                        if let Some(aof) = &snap_aof {
+                            let aof2 = aof.clone();
+                            let trim = tokio::task::spawn_blocking(move || {
+                                aof2.lock()
+                                    .map_err(|_| anyhow::anyhow!("aof writer poisoned"))?
+                                    .truncate_through(seq)
+                            })
+                            .await;
+                            match trim {
+                                Ok(Ok(())) => {
+                                    tracing::info!(through = seq, "AOF trimmed to checkpoint")
+                                }
+                                Ok(Err(e)) => tracing::warn!(error = %e, "AOF trim failed"),
+                                Err(e) => tracing::warn!(error = %e, "AOF trim task panicked"),
+                            }
+                        }
+                    }
+                    Ok(Err(e)) => tracing::warn!(error = %e, "segment checkpoint save failed"),
+                    Err(e) => tracing::warn!(error = %e, "segment checkpoint task panicked"),
+                }
+            }
+        });
+    }
+
     let bind = format!("{}:{}", args.host, args.port);
     let listener = tokio::net::TcpListener::bind(&bind)
         .await
@@ -304,6 +447,60 @@ async fn serve(args: ServeArgs) -> Result<()> {
         .with_graceful_shutdown(shutdown_signal(engine.clone(), grace))
         .await?;
     Ok(())
+}
+
+/// Whether segment persistence is selected. Driven purely by `--persistence`:
+/// `false` for the default `cbor` mode (the binary's cold-start + snapshotter are
+/// byte-identical to today), `true` only when `--persistence=segment` is passed.
+fn use_segment_persistence(args: &ServeArgs) -> bool {
+    args.persistence == Persistence::Segment
+}
+
+fn load_search_shard_segment_roots(dirs: &[PathBuf]) -> Result<Vec<Arc<Engine>>> {
+    let mut shards = Vec::with_capacity(dirs.len());
+    for dir in dirs {
+        let store = lumen::segment_rdb::SegmentRdbStore::new(dir)
+            .with_context(|| format!("open search shard segment root {}", dir.display()))?;
+        let Some((engine, seq)) = store
+            .load_latest()
+            .with_context(|| format!("load search shard segment root {}", dir.display()))?
+        else {
+            anyhow::bail!(
+                "search shard segment root {} has no committed gen-<seq> checkpoint",
+                dir.display()
+            );
+        };
+        tracing::info!(
+            root = %dir.display(),
+            up_to_seq = seq,
+            "loaded search shard segment root"
+        );
+        shards.push(engine);
+    }
+    Ok(shards)
+}
+
+/// The CBOR-RDB cold start: load the latest `rdb-<seq>.lrb` (if any) into
+/// `engine` and return its sequence so the apply loop tails from there. This is
+/// the exact restore the binary has always done; factored out so the segment
+/// branch can sit beside it without duplicating it.
+async fn cbor_cold_start(
+    rdb_store: &Option<Arc<LocalFsRdbStore>>,
+    engine: &Arc<Engine>,
+) -> Result<u64> {
+    if let Some(store) = rdb_store {
+        match store.load_latest().await? {
+            Some(rdb) => {
+                let seq = rdb.up_to_seq;
+                rdb.restore_into(engine).context("restore RDB")?;
+                tracing::info!(up_to_seq = seq, "restored RDB baseline");
+                Ok(seq)
+            }
+            None => Ok(0),
+        }
+    } else {
+        Ok(0)
+    }
 }
 
 /// Connect to NATS, retrying the initial connect with exponential backoff

@@ -1,12 +1,11 @@
 //! Vector index backends for `FieldType::Vector`.
 //!
-//! Two backends ship in v1:
+//! Two CPU backends ship in this version:
 //!
 //! - [`HnswCpuIndex`] — pure-Rust HNSW via `hnsw_rs`. Default. Sub-ms
 //!   kNN at ≤ 10 M vectors per field.
-//! - [`WgpuBruteForceIndex`] — WGSL compute shader, built behind the
-//!   `gpu` feature. Auto-falls-back to [`HnswCpuIndex`] when no
-//!   compatible adapter is available at construction time.
+//! - [`FlatCpuIndex`] — exact CPU brute-force full scan. 100% recall;
+//!   no index build. GPU-native vector search is a future chapter.
 //!
 //! Scalar quantization (f32 → u8 linear) is applied transparently
 //! when the field's `VectorSpec::quantize` slot is `Some(Sq)`. The
@@ -18,9 +17,7 @@
 //! matching the BM25 contract used by the text path.
 
 use std::collections::HashMap;
-#[cfg(feature = "gpu")]
-use std::sync::Mutex;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
@@ -32,8 +29,8 @@ use crate::types::{VectorMetric, VectorQuantize, VectorSpec};
 // ---------------------------------------------------------------------------
 
 /// Common backend contract — every concrete index implementation
-/// (HNSW, wgpu brute force, future GPU HNSW) goes through this trait
-/// so the storage layer doesn't care which one is in use.
+/// (HNSW, flat CPU brute force) goes through this trait so the storage
+/// layer doesn't care which one is in use.
 pub trait VectorIndex: Send + Sync {
     /// Insert (or overwrite) the vector associated with `external_id`.
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()>;
@@ -67,6 +64,15 @@ pub trait VectorIndex: Send + Sync {
         self.search_knn_filtered(query, k, &|_| true)
     }
 
+    /// Batched top-`k` kNN: answer many query vectors in one call, returning
+    /// one result list per query (same order as `queries`). This is the heavy
+    /// RAG / re-rank / fan-out access pattern. The default implementation loops
+    /// [`VectorIndex::search_knn`]; a backend may override it to amortize
+    /// per-query setup across the batch.
+    fn search_knn_batch(&self, queries: &[Vec<f32>], k: usize) -> Result<Vec<Vec<(String, f32)>>> {
+        queries.iter().map(|q| self.search_knn(q, k)).collect()
+    }
+
     /// Number of vectors currently held by the index.
     fn len(&self) -> usize;
 
@@ -81,6 +87,35 @@ pub trait VectorIndex: Send + Sync {
     /// override this.
     fn dump_for_snapshot(&self) -> Result<(Vec<(String, Vec<f32>)>, Option<ScalarCodebook>)> {
         Ok((Vec::new(), None))
+    }
+
+    /// TEST SEAM (Stage 2 Phase 2d): seal the exact-CPU flat corpus into a
+    /// columnar mmap vector segment at `path` and attach it, so the flat kNN
+    /// scan reads each vector zero-copy off the page instead of the in-RAM
+    /// `FlatVecs::data`. The corpus row order (the eid↔row mapping) is locked
+    /// when the cached flat buffer is built and is reused verbatim, so the
+    /// segment-backed scan returns byte-identical (eid, distance) pairs.
+    ///
+    /// Returns `Ok(Some(n))` with the sealed vector count for a [`FlatCpuIndex`];
+    /// `Ok(None)` for any other backend (HNSW is out of scope for this slice).
+    /// No scalar quantization — the segment stores decoded `f32`, so the scan
+    /// stays a pure `&[f32]` read.
+    #[cfg(test)]
+    fn __seal_flat_to_segment(&self, _path: &std::path::Path) -> Result<Option<u32>> {
+        Ok(None)
+    }
+
+    /// PRODUCTION seal (Stage 2 Phase 2f-1): seal the exact-CPU flat corpus into
+    /// a columnar mmap vector segment at `path`, attach it, and DROP the in-RAM
+    /// `data` buffer so the field's vectors leave RAM (the scan reads each row
+    /// zero-copy off the mmap). Returns `Ok(Some(row_eids))` — the eid of each
+    /// sealed vector row in segment-row order — for a [`FlatCpuIndex`], so the
+    /// caller can persist that row→eid mapping (the vector segment stores only
+    /// f32 rows) and rebuild the index on reopen. `Ok(None)` for any other
+    /// backend (HNSW is out of scope) — the default trait impl no-ops, so a
+    /// non-`FlatCpuIndex` backend simply returns `Ok(None)`.
+    fn seal_to_segment_prod(&self, _path: &std::path::Path) -> Result<Option<Vec<String>>> {
+        Ok(None)
     }
 }
 
@@ -185,9 +220,25 @@ fn l2_squared(a: &[f32], b: &[f32]) -> f32 {
         .sum()
 }
 
-#[allow(dead_code)]
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+/// Scale `v` to *just under* unit norm (‖·‖ = 1 − 1e-6) for the DistDot cosine
+/// path. Scaling both the stored and the query vector by a constant is exactly
+/// rank-preserving for cosine (the cosine angle is scale-invariant), so recall
+/// is unaffected. Staying a hair under unit keeps `dot(v,v) < 1`, which dodges
+/// anndists `scalar_dot_f32`'s `assert!(1 - dot >= 0)` — that fires on
+/// near-duplicate clustered vectors when float rounding pushes a unit self-dot
+/// just above 1. A zero vector passes through unchanged (its dot is 0 →
+/// distance 1, identical to what DistCosine yields for a zero-norm input).
+fn normalize_unit_safe(v: &[f32]) -> Vec<f32> {
+    let norm = dot(v, v).sqrt();
+    if norm == 0.0 {
+        return v.to_vec();
+    }
+    let inv = (1.0 - 1e-6) / norm;
+    v.iter().map(|x| x * inv).collect()
 }
 
 #[allow(dead_code)]
@@ -313,6 +364,10 @@ struct HnswCpuInner {
     id_to_eid: HashMap<usize, String>,
     next_id: usize,
     hnsw: HnswBackend,
+    /// Search-time beam width (recall/latency trade-off). Defaults to
+    /// [`hnsw_search_ef`]; a tuning/bench harness can override it via
+    /// [`HnswCpuIndex::set_ef_search`] without rebuilding the graph.
+    ef_search: usize,
 }
 
 /// HNSW dispatch by metric. We keep an `Option` because for f32-SQ
@@ -320,7 +375,11 @@ struct HnswCpuInner {
 /// metric-specific cases below we eagerly build at construction.
 enum HnswBackend {
     L2(hnsw_rs::hnsw::Hnsw<'static, f32, hnsw_rs::anndists::dist::DistL2>),
-    Cosine(hnsw_rs::hnsw::Hnsw<'static, f32, hnsw_rs::anndists::dist::DistCosine>),
+    // Cosine is served by DistDot over internally unit-normalized vectors:
+    // dot(â,b̂) == cos, so the distance (1 − dot) is identical to DistCosine's,
+    // but DistDot has a NEON/AVX kernel and skips the two per-comparison norm
+    // recomputations that make DistCosine the hot-path cost.
+    Cosine(hnsw_rs::hnsw::Hnsw<'static, f32, hnsw_rs::anndists::dist::DistDot>),
     Dot(hnsw_rs::hnsw::Hnsw<'static, f32, hnsw_rs::anndists::dist::DistDot>),
 }
 
@@ -336,11 +395,23 @@ const HNSW_MAX_NB_CONNECTION: usize = 32;
 const HNSW_EF_CONSTRUCTION: usize = 400;
 const HNSW_MAX_LAYER: usize = 16;
 const HNSW_DEFAULT_MAX_ELEMENTS: usize = 10_000;
-// ef controls the recall/latency trade-off at query time. HNSW graph
-// construction is randomized and recall thins as the graph grows, so ef scales
-// with target list quality: 512 keeps mean recall@10 ≥ 0.95 out to 1M while
-// staying inside the kNN latency budget (~1–4ms p99 vs the 2–5ms budgets).
-const HNSW_SEARCH_EF: usize = 512;
+// ef controls the recall/latency trade-off at query time. The previous default
+// (512) over-fetched ~4–5x more graph nodes than needed: the dense M=32 graph
+// already holds recall@10 ≥ 0.95 at a far smaller beam. 128 is the recall-matched
+// default (validated against brute-force ground truth on a clustered corpus);
+// override with `LUMEN_HNSW_EF` for tuning sweeps.
+const HNSW_SEARCH_EF_DEFAULT: usize = 128;
+
+/// Resolve the default search-`ef` (env `LUMEN_HNSW_EF`, else the const).
+/// Read once per index at construction; the bench harness can still override
+/// per-index via [`HnswCpuIndex::set_ef_search`].
+fn hnsw_search_ef() -> usize {
+    std::env::var("LUMEN_HNSW_EF")
+        .ok()
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&e| e > 0)
+        .unwrap_or(HNSW_SEARCH_EF_DEFAULT)
+}
 
 impl HnswBackend {
     fn new(metric: VectorMetric, max_elements: usize) -> Self {
@@ -357,7 +428,7 @@ impl HnswBackend {
                 max_elements.max(HNSW_DEFAULT_MAX_ELEMENTS),
                 HNSW_MAX_LAYER,
                 HNSW_EF_CONSTRUCTION,
-                hnsw_rs::anndists::dist::DistCosine,
+                hnsw_rs::anndists::dist::DistDot,
             )),
             VectorMetric::Dot => HnswBackend::Dot(hnsw_rs::hnsw::Hnsw::new(
                 HNSW_MAX_NB_CONNECTION,
@@ -372,16 +443,20 @@ impl HnswBackend {
     fn insert(&self, vec: &[f32], id: usize) {
         match self {
             HnswBackend::L2(h) => h.insert((vec, id)),
-            HnswBackend::Cosine(h) => h.insert((vec, id)),
+            // Cosine: feed the unit-normalized vector so DistDot == cosine.
+            HnswBackend::Cosine(h) => h.insert((&normalize_unit_safe(vec), id)),
             HnswBackend::Dot(h) => h.insert((vec, id)),
         }
     }
 
-    fn search(&self, vec: &[f32], k: usize) -> Vec<(usize, f32)> {
-        let ef = k.max(HNSW_SEARCH_EF);
+    fn search(&self, vec: &[f32], k: usize, ef: usize) -> Vec<(usize, f32)> {
+        let ef = k.max(ef);
         let raw = match self {
             HnswBackend::L2(h) => h.search(vec, k, ef),
-            HnswBackend::Cosine(h) => h.search(vec, k, ef),
+            HnswBackend::Cosine(h) => {
+                let q = normalize_unit_safe(vec);
+                h.search(&q, k, ef)
+            }
             HnswBackend::Dot(h) => h.search(vec, k, ef),
         };
         raw.into_iter().map(|n| (n.d_id, n.distance)).collect()
@@ -398,6 +473,7 @@ impl HnswCpuIndex {
                 id_to_eid: HashMap::new(),
                 next_id: 0,
                 hnsw: HnswBackend::new(spec.metric, HNSW_DEFAULT_MAX_ELEMENTS),
+                ef_search: hnsw_search_ef(),
             }),
         }
     }
@@ -412,10 +488,7 @@ impl HnswCpuIndex {
     ) -> Result<Self> {
         let idx = Self::new(spec);
         {
-            let mut inner = idx
-                .inner
-                .write()
-                .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+            let mut inner = idx.inner.write().map_err(|_| anyhow!("hnsw lock poisoned"))?;
             // Override the freshly-initialized codebook with the one
             // that was actually used to encode the persisted bytes.
             // Required so decode_sq() round-trips exactly.
@@ -428,14 +501,20 @@ impl HnswCpuIndex {
         }
         Ok(idx)
     }
+
+    /// Override the search-time `ef` (beam width). Used by tuning/bench
+    /// harnesses to sweep recall/latency on an already-built graph; production
+    /// uses the [`hnsw_search_ef`] default set at construction.
+    pub fn set_ef_search(&self, ef: usize) {
+        if let Ok(mut inner) = self.inner.write() {
+            inner.ef_search = ef.max(1);
+        }
+    }
 }
 
 impl VectorIndex for HnswCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
-        let mut inner = self
-            .inner
-            .write()
-            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let mut inner = self.inner.write().map_err(|_| anyhow!("hnsw lock poisoned"))?;
         if vector.len() != inner.store.spec.dim as usize {
             bail!(
                 "vector dim mismatch on add: expected {}, got {}",
@@ -470,10 +549,7 @@ impl VectorIndex for HnswCpuIndex {
     }
 
     fn remove(&self, external_id: &str) -> Result<bool> {
-        let mut inner = self
-            .inner
-            .write()
-            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let mut inner = self.inner.write().map_err(|_| anyhow!("hnsw lock poisoned"))?;
         let removed = inner.store.drop(external_id);
         if let Some(id) = inner.eid_to_id.remove(external_id) {
             inner.id_to_eid.remove(&id);
@@ -487,10 +563,7 @@ impl VectorIndex for HnswCpuIndex {
         k: usize,
         allow: &dyn Fn(&str) -> bool,
     ) -> Result<Vec<(String, f32)>> {
-        let inner = self
-            .inner
-            .read()
-            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let inner = self.inner.read().map_err(|_| anyhow!("hnsw lock poisoned"))?;
         if query.len() != inner.store.spec.dim as usize {
             bail!(
                 "kNN query dim mismatch: expected {}, got {}",
@@ -510,8 +583,9 @@ impl VectorIndex for HnswCpuIndex {
         // the first pass already yields `k`, so the widening loop never
         // iterates — the hot path is unchanged.
         let mut pool = (k * 4 + k).min(n);
+        let ef = inner.ef_search;
         loop {
-            let raw = inner.hnsw.search(query, pool);
+            let raw = inner.hnsw.search(query, pool, ef);
             let mut out = Vec::with_capacity(k);
             for (id, dist) in raw {
                 let Some(eid) = inner.id_to_eid.get(&id) else {
@@ -535,14 +609,14 @@ impl VectorIndex for HnswCpuIndex {
     }
 
     fn len(&self) -> usize {
-        self.inner.read().map(|i| i.store.len()).unwrap_or(0)
+        self.inner
+            .read()
+            .map(|i| i.store.len())
+            .unwrap_or(0)
     }
 
     fn dump_for_snapshot(&self) -> Result<(Vec<(String, Vec<f32>)>, Option<ScalarCodebook>)> {
-        let inner = self
-            .inner
-            .read()
-            .map_err(|_| anyhow!("hnsw lock poisoned"))?;
+        let inner = self.inner.read().map_err(|_| anyhow!("hnsw lock poisoned"))?;
         let vectors: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
         Ok((vectors, inner.store.codebook))
     }
@@ -557,391 +631,338 @@ impl std::fmt::Debug for HnswCpuIndex {
 }
 
 // ---------------------------------------------------------------------------
-// wgpu brute-force backend (feature `gpu`)
+// Exact CPU brute-force backend (`flat-cpu`)
 // ---------------------------------------------------------------------------
 
-/// wgpu-backed brute-force kNN. Lays out all stored vectors as a flat
-/// `[f32; N*dim]` buffer and runs a WGSL compute shader that emits
-/// per-vector distances; the host-side top-K sort runs on CPU after
-/// the readback.
-#[cfg(feature = "gpu")]
-pub struct WgpuBruteForceIndex {
-    state: Mutex<WgpuState>,
+/// Exact CPU brute-force kNN. No graph, no build cost: it stores the raw
+/// vectors in a contiguous `[N*dim]` buffer and scans them all per query —
+/// parallel across rows (rayon) with an auto-vectorized distance kernel. For
+/// moderate N this beats both an approximate index's build cost and a
+/// single-threaded exact scan (e.g. pgvector's `seqscan`), while giving 100%
+/// recall. The flat buffer is cached and rebuilt lazily after a mutation.
+pub struct FlatCpuIndex {
+    inner: Mutex<FlatInner>,
 }
 
-#[cfg(feature = "gpu")]
-struct WgpuState {
-    spec: VectorSpec,
+struct FlatInner {
     store: VectorStore,
-    eid_order: Vec<String>,
-    /// Optional GPU context. `None` means the adapter probe failed at
-    /// construction time and every operation transparently falls back
-    /// to a CPU brute-force computation. The fields below are
-    /// currently held for the in-flight kernel-dispatch landing (see
-    /// `search_knn`); the kernel + bind-group layout already compile
-    /// against the live device, but the dispatch itself is wired in a
-    /// follow-up.
-    #[allow(dead_code)]
-    gpu: Option<WgpuCtx>,
+    flat: Option<FlatVecs>,
 }
 
-#[cfg(feature = "gpu")]
-#[allow(dead_code)]
-struct WgpuCtx {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    pipeline: wgpu::ComputePipeline,
-    bind_group_layout: wgpu::BindGroupLayout,
+struct FlatVecs {
+    /// Stage 2 Phase 2k-1: with no segment attached this is the full
+    /// contiguous `N*dim` corpus (every row). With a segment
+    /// attached it holds ONLY the live TAIL — rows `[n_base..total)` — appended
+    /// after the seal; the base rows `[0..n_base)` live on the mmap (`seg`).
+    /// Empty when there is no tail.
+    data: Vec<f32>,
+    eids: Vec<String>,
+    dim: usize,
+    /// Stage 2 disk-tier (Phase 2d): when present, the flat kNN scan reads each
+    /// BASE row's `dim` f32s ZERO-COPY off this mmap'd segment instead of `data`.
+    /// Base row `i` (`i < n_base`, paired with `eids[i]`) is
+    /// `seg.vector_at(i, dim)`. DEFAULTS to `None`; while it is `None` (nothing
+    /// sealed) the scan is byte-for-byte the
+    /// in-RAM `&data[i*dim..]` read.
+    seg: Option<std::sync::Arc<crate::segment::SegmentReader>>,
+    /// Stage 2 Phase 2k-1: number of BASE rows served from `seg` (the mmap).
+    /// Rows `[0..n_base)` are demand-paged off the segment; rows `[n_base..)`
+    /// are the live tail in `data` (`data[(i-n_base)*dim..]`). `0` when no
+    /// segment is attached (the freshly-built in-RAM buffer is all "tail").
+    n_base: usize,
+    /// Stage 2 Phase 2k-1: tombstoned ROW indices (over `0..eids.len()`). A
+    /// removed row is skipped by the scan and excluded from `len`, mirroring the
+    /// in-RAM remove's effect on subsequent searches WITHOUT mutating the
+    /// immutable base segment. Empty when nothing was removed post-seal.
+    tomb: roaring::RoaringBitmap,
+    /// Stage 2 Phase 2k-1: eid → row index, for O(1) `remove` (tombstone the row)
+    /// and tail de-dup (an overwrite of an existing eid). This is identity-level
+    /// state (`String`+`u32` per row), NOT the O(N*dim) vector payload — the
+    /// vectors stay on the mmap. Built when a segment is attached.
+    eid_to_row: HashMap<String, u32>,
 }
 
-#[cfg(feature = "gpu")]
-impl WgpuBruteForceIndex {
-    /// Open a wgpu brute-force index, transparently falling back to
-    /// [`HnswCpuIndex`] when no compatible GPU adapter is present.
-    pub fn open(spec: VectorSpec) -> Box<dyn VectorIndex> {
-        let probe = pollster::block_on(Self::init_gpu(spec.dim as usize));
-        match probe {
-            Ok(ctx) => Box::new(Self {
-                state: Mutex::new(WgpuState {
-                    spec,
-                    store: VectorStore::new(spec),
-                    eid_order: Vec::new(),
-                    gpu: Some(ctx),
-                }),
-            }),
-            Err(e) => {
-                tracing::warn!(
-                    target = "lumen.vector",
-                    error = %e,
-                    "wgpu adapter unavailable; falling back to CPU HNSW index"
-                );
-                Box::new(HnswCpuIndex::new(spec))
+impl FlatVecs {
+    /// Row `i`'s `dim`-long vector slice. BASE rows (`i < n_base`) come off the
+    /// segment mmap (zero-copy); TAIL rows come from the in-RAM `data` buffer at
+    /// `data[(i-n_base)*dim..]`. With no segment attached `n_base == 0` so every
+    /// row reads `data` — byte-for-byte the old in-RAM path. The segment is built
+    /// from the exact base rows, so a base hit is bit-identical to what `data`
+    /// held; if a segment read ever misses (torn column) we have no in-RAM copy of
+    /// the base, so we fall through and panic-index `data` — that index is
+    /// out-of-range, surfacing the torn read loudly rather than returning garbage.
+    #[inline]
+    fn row(&self, i: usize) -> &[f32] {
+        if i < self.n_base {
+            if let Some(seg) = &self.seg {
+                if let Some(v) = seg.vector_at(i as u32, self.dim) {
+                    return v;
+                }
+            }
+            // No in-RAM fallback exists for a base row (the payload is on the
+            // mmap); a miss here is a torn segment and must surface.
+        }
+        let local = i - self.n_base;
+        &self.data[local * self.dim..(local + 1) * self.dim]
+    }
+}
+
+impl FlatCpuIndex {
+    pub fn new(spec: VectorSpec) -> Self {
+        Self { inner: Mutex::new(FlatInner { store: VectorStore::new(spec), flat: None }) }
+    }
+
+    /// Restore from a snapshot (re-store the saved vectors).
+    pub fn restore(
+        spec: VectorSpec,
+        vectors: Vec<(String, Vec<f32>)>,
+        codebook: Option<ScalarCodebook>,
+    ) -> Result<Self> {
+        let idx = Self::new(spec);
+        {
+            let mut inner = idx.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+            if codebook.is_some() {
+                inner.store.codebook = codebook;
             }
         }
+        for (eid, v) in vectors {
+            idx.add(&eid, &v)?;
+        }
+        Ok(idx)
     }
 
-    async fn init_gpu(_dim: usize) -> Result<WgpuCtx> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions::default())
-            .await
-            .ok_or_else(|| anyhow!("no wgpu adapter available"))?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default(), None)
-            .await
-            .map_err(|e| anyhow!("request_device failed: {e}"))?;
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("lumen.knn.brute_force"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/brute_force_knn.wgsl").into()),
+    /// Ensure the cached scan buffer exists.
+    ///
+    /// FIRST-TIME build (`flat == None`): materialize every stored vector into a
+    /// contiguous in-RAM `data` buffer (`n_base == 0`, no segment) — byte-for-byte
+    /// the original behavior, and the only path taken while no segment is attached.
+    ///
+    /// Phase 2k-1: when a segment is ALREADY attached, the base rows live ONLY on
+    /// the mmap and are NOT in `store`, so this MUST NOT rebuild from `store`
+    /// (that would either lose the base or — pre-fix — re-materialize it). The
+    /// mutation paths (`add`/`remove`) therefore keep the segment-backed `flat`
+    /// LIVE in place instead of invalidating it, so a segment-backed index never
+    /// re-enters this fn with `flat == None`. The `debug_assert` documents that.
+    fn ensure_flat(inner: &mut FlatInner) {
+        if inner.flat.is_some() {
+            return;
+        }
+        let dim = inner.store.spec.dim as usize;
+        let mut data = Vec::with_capacity(inner.store.len() * dim);
+        let mut eids = Vec::with_capacity(inner.store.len());
+        for (eid, v) in inner.store.iter_decoded() {
+            data.extend_from_slice(&v);
+            eids.push(eid);
+        }
+        inner.flat = Some(FlatVecs {
+            data,
+            eids,
+            dim,
+            // A freshly built flat buffer is wholly in-RAM (all "tail", no base):
+            // sealing/reopen is what attaches a segment and sets `n_base`.
+            seg: None,
+            n_base: 0,
+            tomb: roaring::RoaringBitmap::new(),
+            eid_to_row: HashMap::new(),
         });
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("lumen.knn.bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("lumen.knn.pl"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
-        });
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("lumen.knn.pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: Some("kmain"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        Ok(WgpuCtx {
-            device,
-            queue,
-            pipeline,
-            bind_group_layout,
-        })
     }
 
-    fn cpu_brute_force(state: &WgpuState, query: &[f32], k: usize) -> Vec<(String, f32)> {
-        Self::cpu_brute_force_filtered(state, query, k, &|_| true)
+    /// Live vector count (Phase 2k-1). When a segment is attached the base rows
+    /// live on the mmap (NOT in `store`), so the count is `total rows − tombstoned`
+    /// off the composed `flat`. Otherwise it's `store.len()` — the original
+    /// in-RAM count, byte-for-byte unchanged while no segment is attached.
+    #[inline]
+    fn live_len(inner: &FlatInner) -> usize {
+        if let Some(flat) = inner.flat.as_ref() {
+            if flat.seg.is_some() {
+                return flat.eids.len() - flat.tomb.len() as usize;
+            }
+        }
+        inner.store.len()
     }
 
-    fn cpu_brute_force_filtered(
-        state: &WgpuState,
-        query: &[f32],
-        k: usize,
-        allow: &dyn Fn(&str) -> bool,
-    ) -> Vec<(String, f32)> {
-        let mut scored: Vec<(String, f32)> = Vec::new();
-        for (eid, v) in state.store.iter_decoded() {
-            if !allow(&eid) {
+    /// Whether row `i` of `flat` is tombstoned. `false` whenever no row has been
+    /// deleted after a seal (the tombstone bitmap is empty) so the scan is unchanged.
+    #[inline]
+    fn row_tombstoned(flat: &FlatVecs, i: usize) -> bool {
+        flat.tomb.contains(i as u32)
+    }
+
+    /// PRODUCTION seal (Phase 2f-1): build/reuse the cached flat buffer, write a
+    /// vector segment, attach it, and DROP the in-RAM `data`. Returns the eid of
+    /// each sealed row in segment-row order so the caller can persist the
+    /// row→eid mapping. Mirrors `__seal_flat_to_segment` but is reachable from
+    /// production code and surfaces the row eids.
+    fn seal_to_segment_prod(&self, path: &std::path::Path) -> Result<Option<Vec<String>>> {
+        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        Self::ensure_flat(&mut inner);
+        let flat = inner.flat.as_mut().expect("flat built");
+        let dim = flat.dim;
+        let total = flat.eids.len();
+        // RE-SEAL-CAPABLE, TOMBSTONE-AWARE gather (Phase 2f-2 + 2k-1): read each
+        // LIVE row through `flat.row(i)`, NOT raw `&flat.data[..]`. With the
+        // composed model a row is either a BASE row on the prior segment mmap
+        // (`i < n_base`) or a live TAIL row in `data` (`i >= n_base`); `row(i)`
+        // serves the right one. Tombstoned rows (deleted post-seal) are SKIPPED so
+        // the new segment bakes the deletes in (it never resurrects them) and the
+        // reopened index starts with an empty tombstone set. Copy each live row
+        // into an owned buffer so the new segment write does not alias the old
+        // mmap. A first-time seal has `n_base == 0`, an empty `tomb`, and `data`
+        // holding every row → `row(i)` reads `data` for all `i`, byte-identical to
+        // before.
+        let mut owned: Vec<Vec<f32>> = Vec::with_capacity(total);
+        let mut row_eids: Vec<String> = Vec::with_capacity(total);
+        for i in 0..total {
+            if flat.tomb.contains(i as u32) {
                 continue;
             }
-            let d = distance(state.spec.metric, query, &v);
-            scored.push((eid, -d));
+            owned.push(flat.row(i).to_vec());
+            row_eids.push(flat.eids[i].clone());
         }
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(k);
-        scored
+        let n = owned.len();
+        let vectors: Vec<Option<&[f32]>> =
+            owned.iter().map(|v| Some(v.as_slice())).collect();
+        crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
+        let reader = crate::segment::SegmentReader::open(path)?;
+        debug_assert_eq!(reader.n_docs() as usize, n);
+        // Every sealed row is now a BASE row on the fresh mmap; the tail is empty
+        // and tombstones are cleared (the deletes were baked into the new segment).
+        let mut eid_to_row = HashMap::with_capacity(n);
+        for (row, eid) in row_eids.iter().enumerate() {
+            eid_to_row.insert(eid.clone(), row as u32);
+        }
+        flat.seg = Some(std::sync::Arc::new(reader)); // drops any prior segment Arc
+        flat.data = Vec::new(); // payload now on the mmap, drop the RAM copy
+        flat.eids = row_eids.clone();
+        flat.n_base = n;
+        flat.tomb = roaring::RoaringBitmap::new();
+        flat.eid_to_row = eid_to_row;
+        Ok(Some(row_eids))
     }
 
-    /// Dispatch the brute-force kNN compute shader against the live
-    /// device. Iterates `eid_order` so the result index `i` maps back
-    /// to the matching `external_id` deterministically.
-    fn gpu_brute_force(state: &WgpuState, query: &[f32], k: usize) -> Result<Vec<(String, f32)>> {
-        use wgpu::util::DeviceExt;
-
-        let ctx = state
-            .gpu
-            .as_ref()
-            .ok_or_else(|| anyhow!("gpu context missing"))?;
-        let dim = state.spec.dim as usize;
-
-        // Build the flat [N * dim] vector buffer in `eid_order` so the
-        // index-to-eid mapping below is stable. We only emit a row for
-        // eids whose vector is actually still in the store — `remove()`
-        // strips eid_order entries, so this should always be a 1:1 map,
-        // but the explicit filter keeps us safe against future refactors.
-        let mut eids: Vec<String> = Vec::with_capacity(state.eid_order.len());
-        let mut flat: Vec<f32> = Vec::with_capacity(state.eid_order.len() * dim);
-        for eid in &state.eid_order {
-            if let Some(v) = state.store.get_decoded(eid) {
-                debug_assert_eq!(v.len(), dim);
-                flat.extend_from_slice(&v);
-                eids.push(eid.clone());
-            }
-        }
-        let n = eids.len() as u32;
-        if n == 0 {
-            return Ok(Vec::new());
-        }
-
-        let metric_code: u32 = match state.spec.metric {
-            VectorMetric::Cosine => 0,
-            VectorMetric::Dot => 1,
-            VectorMetric::L2 => 2,
-        };
-        // Std140-friendly uniform: 4 × u32 = 16 B (minimum-alignment safe).
-        let params: [u32; 4] = [n, dim as u32, metric_code, 0];
-
-        let query_buf = ctx
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("lumen.knn.query"),
-                contents: bytemuck::cast_slice(query),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-        let vectors_buf = ctx
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("lumen.knn.vectors"),
-                contents: bytemuck::cast_slice(&flat),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-        let out_size = (n as u64) * std::mem::size_of::<f32>() as u64;
-        let out_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("lumen.knn.out"),
-            size: out_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        let params_buf = ctx
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("lumen.knn.params"),
-                contents: bytemuck::cast_slice(&params),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
-        let read_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("lumen.knn.read"),
-            size: out_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("lumen.knn.bg"),
-            layout: &ctx.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: query_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: vectors_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: out_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: params_buf.as_entire_binding(),
-                },
-            ],
-        });
-
-        let mut encoder = ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("lumen.knn.encoder"),
-            });
+    /// Reopen a flat-cpu index DIRECTLY from a sealed vector segment plus its
+    /// row→eid mapping (Phase 2f-1), with NO snapshot. Row `i`'s vector is
+    /// `seg.vector_at(i, dim)` (demand-paged off the mmap) and its external_id is
+    /// `row_eids[i]`. The reconstructed `FlatVecs` keeps the segment attached and
+    /// leaves `data` empty, so the kNN scan still reads zero-copy off the page —
+    /// the vectors never re-enter RAM. Used by `Collection::open_from_segments`.
+    pub fn open_from_segment(
+        spec: VectorSpec,
+        seg: std::sync::Arc<crate::segment::SegmentReader>,
+        row_eids: Vec<String>,
+    ) -> Result<Self> {
+        let dim = spec.dim as usize;
+        let n = row_eids.len();
+        // Phase 2k-1: the base vectors live ONLY on the mmap. We do NOT `store.put`
+        // them — that O(N*dim) re-materialization is exactly the gap this phase
+        // closes (it made a reopened vector collection NOT bound RAM; the 2i scale
+        // proof showed the reopen delta growing ~1.5x when dim doubled). The store
+        // holds NO base vectors (only spec/codebook, and tail vectors once added);
+        // the kNN scan, snapshot, remove, and len all read the base off `seg`.
+        let idx = Self::new(spec);
         {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("lumen.knn.pass"),
-                timestamp_writes: None,
+            let mut inner = idx.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+            // Identity-level eid → base-row map (O(N) Strings + u32s, NOT vectors)
+            // for remove + tail de-dup. The actual `dim`-wide rows stay on the mmap.
+            let mut eid_to_row = HashMap::with_capacity(n);
+            for (i, eid) in row_eids.iter().enumerate() {
+                eid_to_row.insert(eid.clone(), i as u32);
+            }
+            // Attach the segment as the BASE (`n_base == n`), the exact row order it
+            // was sealed with, an EMPTY tail (`data`), and an empty tombstone set.
+            // `row(i)` serves rows `[0..n)` from the mmap.
+            inner.flat = Some(FlatVecs {
+                data: Vec::new(),
+                eids: row_eids,
+                dim,
+                seg: Some(seg),
+                n_base: n,
+                tomb: roaring::RoaringBitmap::new(),
+                eid_to_row,
             });
-            pass.set_pipeline(&ctx.pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
-            // One workgroup per ceil(N / 64); the shader gates `i >= n`
-            // so the tail-most workgroup tolerates over-dispatch.
-            let groups = n.div_ceil(64);
-            pass.dispatch_workgroups(groups, 1, 1);
         }
-        encoder.copy_buffer_to_buffer(&out_buf, 0, &read_buf, 0, out_size);
-        ctx.queue.submit(std::iter::once(encoder.finish()));
+        debug_assert_eq!(idx.len(), n);
+        Ok(idx)
+    }
 
-        // Map for readback. Use a channel to coordinate the async callback
-        // with the blocking `device.poll(Wait)` below — the standard wgpu
-        // readback pattern.
-        let slice = read_buf.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        slice.map_async(wgpu::MapMode::Read, move |res| {
-            let _ = tx.send(res);
-        });
-        ctx.device.poll(wgpu::Maintain::Wait);
-        pollster::block_on(async {
-            rx.recv()
-                .map_err(|e| anyhow!("map_async channel closed: {e}"))?
-                .map_err(|e| anyhow!("map_async failed: {e:?}"))
-        })?;
-        let distances: Vec<f32> = {
-            let data = slice.get_mapped_range();
-            bytemuck::cast_slice::<u8, f32>(&data).to_vec()
-        };
-        read_buf.unmap();
-
-        // Partial top-K on the host. The shader writes per-vector
-        // *distance* (cosine: 1-cos, dot: -dot_qv, l2: sqrt(sum sq)). We
-        // emit `score = -distance` so the caller's monotone-decreasing
-        // contract holds.
-        let mut idxs: Vec<u32> = (0..n).collect();
-        let idxs_len = idxs.len();
-        let want = k.min(idxs_len);
-        // `select_nth_unstable_by` + sort gives O(n + k log k) which beats
-        // a full sort for k << n.
-        let pivot = want.saturating_sub(1).min(idxs_len - 1);
-        idxs.select_nth_unstable_by(pivot, |&a, &b| {
-            distances[a as usize]
-                .partial_cmp(&distances[b as usize])
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let mut top: Vec<u32> = idxs.into_iter().take(want).collect();
-        top.sort_by(|&a, &b| {
-            distances[a as usize]
-                .partial_cmp(&distances[b as usize])
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        let out: Vec<(String, f32)> = top
-            .into_iter()
-            .map(|i| (eids[i as usize].clone(), -distances[i as usize]))
-            .collect();
-        Ok(out)
+    /// top-k of (idx, score) by score-desc, returned as (eid, score).
+    fn topk(mut cand: Vec<(usize, f32)>, k: usize, eids: &[String]) -> Vec<(String, f32)> {
+        let want = k.min(cand.len());
+        if want > 0 && want < cand.len() {
+            cand.select_nth_unstable_by(want - 1, |a, b| {
+                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            cand.truncate(want);
+        }
+        cand.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        cand.into_iter().map(|(i, s)| (eids[i].clone(), s)).collect()
     }
 }
 
-#[cfg(feature = "gpu")]
-impl VectorIndex for WgpuBruteForceIndex {
+impl VectorIndex for FlatCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("wgpu state poisoned"))?;
-        if vector.len() != state.spec.dim as usize {
-            bail!(
-                "vector dim mismatch on add: expected {}, got {}",
-                state.spec.dim,
-                vector.len()
-            );
+        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        // Phase 2k-1: when a SEGMENT is attached the base rows live ONLY on the
+        // mmap (not in `store`), so we CANNOT invalidate `flat` and rebuild from
+        // `store` — that would drop the base. Instead append the new vector as a
+        // live TAIL row in place, keeping the segment. An overwrite of an existing
+        // eid (base or tail) tombstones the old row first, mirroring the in-RAM
+        // overwrite (the latest value wins). The vector also goes into `store` so
+        // a later snapshot/codebook stays consistent for the TAIL.
+        if inner.flat.as_ref().is_some_and(|f| f.seg.is_some()) {
+            let dim = inner.store.spec.dim as usize;
+            if vector.len() != dim {
+                bail!("vector dim mismatch: expected {}, got {}", dim, vector.len());
+            }
+            // Decode-normalize through the store so SQ tail rows round-trip like
+            // the base did, then read the (possibly re-quantized) f32 view back.
+            inner.store.put(external_id, vector)?;
+            let v_dec = inner
+                .store
+                .get_decoded(external_id)
+                .unwrap_or_else(|| vector.to_vec());
+            let flat = inner.flat.as_mut().expect("segment-backed flat present");
+            // Overwrite: tombstone the prior row for this eid (it may be a base row
+            // on the mmap or an earlier tail row), then append the fresh row.
+            if let Some(&old_row) = flat.eid_to_row.get(external_id) {
+                flat.tomb.insert(old_row);
+            }
+            let new_row = flat.eids.len() as u32;
+            flat.data.extend_from_slice(&v_dec);
+            flat.eids.push(external_id.to_string());
+            flat.eid_to_row.insert(external_id.to_string(), new_row);
+            // The freshly-appended row is live even if a same-eid base row was
+            // tombstoned above.
+            flat.tomb.remove(new_row);
+            return Ok(());
         }
-        let already = state.store.put(external_id, vector).map(|_| true)?;
-        if already && !state.eid_order.iter().any(|e| e == external_id) {
-            state.eid_order.push(external_id.to_string());
-        }
+        inner.store.put(external_id, vector)?;
+        inner.flat = None; // invalidate the cached scan buffer (in-RAM path)
         Ok(())
     }
 
     fn remove(&self, external_id: &str) -> Result<bool> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("wgpu state poisoned"))?;
-        let removed = state.store.drop(external_id);
-        state.eid_order.retain(|e| e != external_id);
+        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        // Phase 2k-1: when a SEGMENT is attached, TOMBSTONE the row (look up via
+        // the eid → row map) so the scan skips it and `len` excludes it — WITHOUT
+        // mutating the immutable base segment or rebuilding from `store`. This is
+        // the same observable effect as the in-RAM remove on subsequent searches.
+        // Also drop any tail copy from `store` so a snapshot won't re-emit it.
+        if inner.flat.as_ref().is_some_and(|f| f.seg.is_some()) {
+            let _ = inner.store.drop(external_id);
+            let flat = inner.flat.as_mut().expect("segment-backed flat present");
+            return match flat.eid_to_row.remove(external_id) {
+                Some(row) if !flat.tomb.contains(row) => {
+                    flat.tomb.insert(row);
+                    Ok(true)
+                }
+                // Already tombstoned (or never present) → no live row removed.
+                _ => Ok(false),
+            };
+        }
+        let removed = inner.store.drop(external_id);
+        inner.flat = None;
         Ok(removed)
-    }
-
-    fn search_knn(&self, query: &[f32], k: usize) -> Result<Vec<(String, f32)>> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("wgpu state poisoned"))?;
-        if query.len() != state.spec.dim as usize {
-            bail!(
-                "kNN query dim mismatch: expected {}, got {}",
-                state.spec.dim,
-                query.len()
-            );
-        }
-        if state.store.len() == 0 || k == 0 {
-            return Ok(Vec::new());
-        }
-        // If the GPU context didn't come up at construction, fall back
-        // to a CPU brute-force pass — identical scoring contract.
-        if state.gpu.is_none() {
-            return Ok(Self::cpu_brute_force(&state, query, k));
-        }
-        Self::gpu_brute_force(&state, query, k)
     }
 
     fn search_knn_filtered(
@@ -950,48 +971,135 @@ impl VectorIndex for WgpuBruteForceIndex {
         k: usize,
         allow: &dyn Fn(&str) -> bool,
     ) -> Result<Vec<(String, f32)>> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("wgpu state poisoned"))?;
-        if query.len() != state.spec.dim as usize {
-            bail!(
-                "kNN query dim mismatch: expected {}, got {}",
-                state.spec.dim,
-                query.len()
-            );
+        use rayon::prelude::*;
+        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let dim = inner.store.spec.dim as usize;
+        if query.len() != dim {
+            bail!("kNN query dim mismatch: expected {}, got {}", dim, query.len());
         }
-        if state.store.len() == 0 || k == 0 {
+        if Self::live_len(&inner) == 0 || k == 0 {
             return Ok(Vec::new());
         }
-        // A brute-force pass scores every vector, so filtering is exact
-        // and cheap: drop disallowed ids before taking top-`k`. The GPU
-        // kernel only returns a global top-`k`, so a filtered query uses
-        // the CPU scan — correctness over acceleration on the
-        // experimental GPU path.
-        Ok(Self::cpu_brute_force_filtered(&state, query, k, allow))
+        let metric = inner.store.spec.metric;
+        Self::ensure_flat(&mut inner);
+        let flat = inner.flat.as_ref().expect("flat built");
+        let n = flat.eids.len();
+        // Parallel distance over every row (the expensive part). The filter is
+        // applied sequentially after, so `allow` need not be Send/Sync. Phase
+        // 2k-1: tombstoned rows are skipped so a deleted base/tail row never enters
+        // the candidate set. With no segment `tomb` is empty → the full scan as
+        // before. `row(i)` reads the base off the mmap, the tail off `data`.
+        let scores: Vec<f32> = (0..n)
+            .into_par_iter()
+            .map(|i| -distance(metric, query, flat.row(i)))
+            .collect();
+        let cand: Vec<(usize, f32)> = (0..n)
+            .filter(|&i| !Self::row_tombstoned(flat, i))
+            .filter(|&i| allow(&flat.eids[i]))
+            .map(|i| (i, scores[i]))
+            .collect();
+        Ok(Self::topk(cand, k, &flat.eids))
+    }
+
+    fn search_knn_batch(&self, queries: &[Vec<f32>], k: usize) -> Result<Vec<Vec<(String, f32)>>> {
+        use rayon::prelude::*;
+        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        let dim = inner.store.spec.dim as usize;
+        for q in queries {
+            if q.len() != dim {
+                bail!("kNN query dim mismatch: expected {}, got {}", dim, q.len());
+            }
+        }
+        if Self::live_len(&inner) == 0 || k == 0 {
+            return Ok(queries.iter().map(|_| Vec::new()).collect());
+        }
+        let metric = inner.store.spec.metric;
+        Self::ensure_flat(&mut inner);
+        let flat = inner.flat.as_ref().expect("flat built");
+        let n = flat.eids.len();
+        // Parallel across queries; each query scans the shared flat buffer.
+        // Tombstoned rows (Phase 2k-1) are skipped so a deleted vector never lands
+        // in any query's candidate set.
+        Ok(queries
+            .par_iter()
+            .map(|q| {
+                let cand: Vec<(usize, f32)> = (0..n)
+                    .filter(|&i| !Self::row_tombstoned(flat, i))
+                    .map(|i| (i, -distance(metric, q, flat.row(i))))
+                    .collect();
+                Self::topk(cand, k, &flat.eids)
+            })
+            .collect())
     }
 
     fn len(&self) -> usize {
-        self.state.lock().map(|s| s.store.len()).unwrap_or(0)
+        self.inner.lock().map(|i| Self::live_len(&i)).unwrap_or(0)
     }
 
     fn dump_for_snapshot(&self) -> Result<(Vec<(String, Vec<f32>)>, Option<ScalarCodebook>)> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| anyhow!("wgpu state poisoned"))?;
-        let vectors: Vec<(String, Vec<f32>)> = state.store.iter_decoded().collect();
-        Ok((vectors, state.store.codebook))
+        let inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        // Phase 2k-1: when a segment is attached the base vectors are NOT in
+        // `store` (they live on the mmap), so a CBOR snapshot must read every LIVE
+        // (non-tombstoned) row through the composed `flat` — base off the mmap,
+        // tail off `data` — instead of `store.iter_decoded()`. With no segment the
+        // store still holds everything; fall through to the original path.
+        if let Some(flat) = inner.flat.as_ref() {
+            if flat.seg.is_some() {
+                let mut vectors: Vec<(String, Vec<f32>)> = Vec::with_capacity(flat.eids.len());
+                for i in 0..flat.eids.len() {
+                    if flat.tomb.contains(i as u32) {
+                        continue;
+                    }
+                    vectors.push((flat.eids[i].clone(), flat.row(i).to_vec()));
+                }
+                return Ok((vectors, inner.store.codebook.clone()));
+            }
+        }
+        let vectors: Vec<(String, Vec<f32>)> = inner.store.iter_decoded().collect();
+        Ok((vectors, inner.store.codebook.clone()))
+    }
+
+    fn seal_to_segment_prod(&self, path: &std::path::Path) -> Result<Option<Vec<String>>> {
+        FlatCpuIndex::seal_to_segment_prod(self, path)
+    }
+
+    #[cfg(test)]
+    fn __seal_flat_to_segment(&self, path: &std::path::Path) -> Result<Option<u32>> {
+        let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
+        // Build (or reuse) the cached flat buffer; this fixes the eid↔row order
+        // for the lifetime of the cache, so the sealed segment's row order and
+        // the live `eids` agree exactly.
+        Self::ensure_flat(&mut inner);
+        let flat = inner.flat.as_mut().expect("flat built");
+        let dim = flat.dim;
+        let n = flat.eids.len();
+        // Dense, decoded f32[n*dim] in the SAME row order as `eids` — every row
+        // is present (the flat buffer holds only stored vectors).
+        let vectors: Vec<Option<&[f32]>> =
+            (0..n).map(|i| Some(&flat.data[i * dim..(i + 1) * dim])).collect();
+        crate::segment::write_vector_segment(path, n as u64, dim, &vectors)?;
+        let reader = crate::segment::SegmentReader::open(path)?;
+        debug_assert_eq!(reader.n_docs() as usize, n);
+        // Attach the segment and drop the in-RAM data so the scan provably reads
+        // the mmap; with `n_base = n` every row is a BASE row served from
+        // `seg.vector_at(i, dim)`. Phase 2k-1: also populate `eid_to_row` (so a
+        // post-seal remove/overwrite can find its row) and leave `tomb` empty.
+        let mut eid_to_row = HashMap::with_capacity(n);
+        for (row, eid) in flat.eids.iter().enumerate() {
+            eid_to_row.insert(eid.clone(), row as u32);
+        }
+        flat.seg = Some(std::sync::Arc::new(reader));
+        flat.data = Vec::new();
+        flat.n_base = n;
+        flat.tomb = roaring::RoaringBitmap::new();
+        flat.eid_to_row = eid_to_row;
+        Ok(Some(n as u32))
     }
 }
 
-#[cfg(feature = "gpu")]
-impl std::fmt::Debug for WgpuBruteForceIndex {
+impl std::fmt::Debug for FlatCpuIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("WgpuBruteForceIndex")
-            .field("len", &self.len())
-            .finish()
+        f.debug_struct("FlatCpuIndex").field("len", &self.len()).finish()
     }
 }
 
@@ -999,22 +1107,13 @@ impl std::fmt::Debug for WgpuBruteForceIndex {
 // Backend selection
 // ---------------------------------------------------------------------------
 
-/// Construct the backend implied by `spec.backend`. The `gpu` feature
-/// is mandatory to actually select a wgpu backend — without it,
-/// every spec falls through to CPU HNSW.
+/// Construct the backend implied by `spec.backend`. This version ships
+/// CPU backends only (HNSW + flat brute-force); GPU-native vector search
+/// is a future chapter.
 pub fn open_backend(spec: VectorSpec) -> Box<dyn VectorIndex> {
     match spec.backend {
         crate::types::VectorBackend::HnswCpu => Box::new(HnswCpuIndex::new(spec)),
-        #[cfg(feature = "gpu")]
-        crate::types::VectorBackend::WgpuBruteForce => WgpuBruteForceIndex::open(spec),
-        #[cfg(not(feature = "gpu"))]
-        crate::types::VectorBackend::WgpuBruteForce => {
-            tracing::warn!(
-                target = "lumen.vector",
-                "vector field requested `wgpu-brute-force` backend but the `gpu` feature is not compiled in; falling back to CPU HNSW"
-            );
-            Box::new(HnswCpuIndex::new(spec))
-        }
+        crate::types::VectorBackend::FlatCpu => Box::new(FlatCpuIndex::new(spec)),
     }
 }
 
@@ -1084,10 +1183,7 @@ mod tests {
         let d_high = distance(VectorMetric::Dot, &q, &high);
         let d_low = distance(VectorMetric::Dot, &q, &low);
         // distance = -dot ; higher dot ⇒ smaller (more negative) distance
-        assert!(
-            d_high < d_low,
-            "higher dot product must be closer (smaller distance)"
-        );
+        assert!(d_high < d_low, "higher dot product must be closer (smaller distance)");
         assert!((d_high + 4.0).abs() < 1e-5, "dot distance == -dot");
     }
 
@@ -1111,10 +1207,7 @@ mod tests {
                 );
             }
             // the exact-match query vector ("near") must be the top hit.
-            assert_eq!(
-                hits[0].0, "near",
-                "metric {metric:?}: nearest is the query itself"
-            );
+            assert_eq!(hits[0].0, "near", "metric {metric:?}: nearest is the query itself");
         }
     }
 
@@ -1131,8 +1224,9 @@ mod tests {
             idx.add(&format!("v{i:02}"), &[i as f32, 0.0, 0.0]).unwrap();
         }
         let query = [0.0_f32, 0.0, 0.0];
-        let allowed_from =
-            |eid: &str| -> bool { eid.trim_start_matches('v').parse::<usize>().unwrap() >= 20 };
+        let allowed_from = |eid: &str| -> bool {
+            eid.trim_start_matches('v').parse::<usize>().unwrap() >= 20
+        };
 
         // Baseline: unfiltered nearest is v00.
         let all = idx.search_knn(&query, 3).unwrap();
@@ -1281,12 +1375,8 @@ mod tests {
         let back = decode_sq(&bytes, &cb);
         let span = cb.max - cb.min;
         let tol = span / 255.0;
-        let mean_err: f32 = v
-            .iter()
-            .zip(back.iter())
-            .map(|(a, b)| (a - b).abs())
-            .sum::<f32>()
-            / dim as f32;
+        let mean_err: f32 =
+            v.iter().zip(back.iter()).map(|(a, b)| (a - b).abs()).sum::<f32>() / dim as f32;
         assert!(
             mean_err <= tol,
             "mean SQ error {mean_err} > 1/255 of range {tol}"
@@ -1341,16 +1431,127 @@ mod tests {
         let mut b: Vec<_> = vecs2.iter().map(|(e, v)| (e.clone(), v.clone())).collect();
         a.sort_by(|x, y| x.0.cmp(&y.0));
         b.sort_by(|x, y| x.0.cmp(&y.0));
-        assert_eq!(
-            a, b,
-            "snapshot→restore must preserve every (eid, vector) exactly"
-        );
+        assert_eq!(a, b, "snapshot→restore must preserve every (eid, vector) exactly");
 
         // Invariant 2 (robust): the exact-match query still tops kNN
         // after restore.
         let after = restored.search_knn(&q, 5).unwrap();
         assert_eq!(before[0].0, "e25");
         assert_eq!(after[0].0, "e25", "exact-match neighbour survives restore");
+    }
+
+    // -----------------------------------------------------------------
+    // Phase 2k-1: composed base-segment + live-tail + tombstone model for
+    // the flat-cpu index. After a reopen-from-segment the base vectors live
+    // ONLY on the mmap; a TAIL of adds and a mix of base+tail DELETEs must
+    // compose so kNN is byte-identical to an in-RAM oracle that ran the same
+    // ops. This is the direct proof that the three pieces compose correctly.
+    // -----------------------------------------------------------------
+    #[test]
+    fn reopen_base_seg_plus_tail_plus_tombstone_equals_inram_oracle() {
+        use rand::SeedableRng;
+
+        fn flat_spec(dim: u32, metric: VectorMetric) -> VectorSpec {
+            VectorSpec { dim, metric, backend: crate::types::VectorBackend::FlatCpu, quantize: None }
+        }
+
+        for metric in [VectorMetric::L2, VectorMetric::Cosine, VectorMetric::Dot] {
+            let mut rng = rand::rngs::StdRng::seed_from_u64(0xBADCAFE ^ metric as u64);
+            let dim = 12u32;
+            let s = flat_spec(dim, metric);
+
+            // 30 BASE vectors. (Dot wants unit-norm inputs.)
+            let mk = |rng: &mut rand::rngs::StdRng| -> Vec<f32> {
+                let raw = rand_vec(rng, dim as usize);
+                if matches!(metric, VectorMetric::Dot) { normalize(raw) } else { raw }
+            };
+            let base_idx = FlatCpuIndex::new(s);
+            let mut all: Vec<(String, Vec<f32>)> = Vec::new();
+            for i in 0..30usize {
+                let v = mk(&mut rng);
+                base_idx.add(&format!("b{i}"), &v).unwrap();
+                all.push((format!("b{i}"), v));
+            }
+
+            // SEAL the base to a segment, then REOPEN from it: the base vectors are
+            // now ONLY on the mmap (open_from_segment does NOT store.put them).
+            let dir = tempfile::tempdir().unwrap();
+            let seg_path = dir.path().join("emb.lseg");
+            let row_eids = base_idx
+                .seal_to_segment_prod(&seg_path)
+                .unwrap()
+                .expect("flat-cpu seal returns row eids");
+            let reader = std::sync::Arc::new(crate::segment::SegmentReader::open(&seg_path).unwrap());
+            let reopened = FlatCpuIndex::open_from_segment(s, reader, row_eids).unwrap();
+
+            // The store must NOT hold the base vectors (they live on the mmap) —
+            // this is the RAM-bound invariant. `len` still reports all 30 (live).
+            {
+                let inner = reopened.inner.lock().unwrap();
+                assert_eq!(inner.store.len(), 0, "{metric:?}: reopen must NOT re-store base vectors");
+                let flat = inner.flat.as_ref().unwrap();
+                assert!(flat.seg.is_some(), "{metric:?}: segment attached");
+                assert_eq!(flat.n_base, 30, "{metric:?}: all 30 rows are base");
+                assert!(flat.data.is_empty(), "{metric:?}: empty tail after reopen");
+            }
+            assert_eq!(reopened.len(), 30, "{metric:?}: reopened live count");
+
+            // ADD a TAIL of 10 vectors (appended in `data`, base stays on mmap).
+            let oracle = FlatCpuIndex::new(s);
+            for (eid, v) in &all {
+                oracle.add(eid, v).unwrap();
+            }
+            for i in 0..10usize {
+                let v = mk(&mut rng);
+                let eid = format!("t{i}");
+                reopened.add(&eid, &v).unwrap();
+                oracle.add(&eid, &v).unwrap();
+                all.push((eid, v));
+            }
+            assert_eq!(reopened.len(), 40, "{metric:?}: base 30 + tail 10");
+
+            // DELETE a mix: some BASE rows (on the mmap) and some TAIL rows.
+            for eid in ["b3", "b17", "b29", "t0", "t7"] {
+                assert!(reopened.remove(eid).unwrap(), "{metric:?}: {eid} was live");
+                assert!(oracle.remove(eid).unwrap());
+            }
+            // Double-remove of a base id is a no-op (already tombstoned).
+            assert!(!reopened.remove("b3").unwrap(), "{metric:?}: double-remove is no-op");
+            assert_eq!(reopened.len(), 35, "{metric:?}: 40 - 5 deleted");
+
+            // kNN must be BYTE-IDENTICAL to the in-RAM oracle: same eids, same order,
+            // same f32 score bits — across a battery of probes (including exact-match
+            // probes that land on base, tail, and deleted rows).
+            let mut probes: Vec<Vec<f32>> = vec![all[5].1.clone(), all[35].1.clone(), all[3].1.clone()];
+            for _ in 0..6 {
+                probes.push(mk(&mut rng));
+            }
+            for (pi, q) in probes.iter().enumerate() {
+                for k in [1usize, 5, 12, 40] {
+                    let a = reopened.search_knn(q, k).unwrap();
+                    let b = oracle.search_knn(q, k).unwrap();
+                    let ab: Vec<(String, u32)> = a.iter().map(|(e, s)| (e.clone(), s.to_bits())).collect();
+                    let bb: Vec<(String, u32)> = b.iter().map(|(e, s)| (e.clone(), s.to_bits())).collect();
+                    assert_eq!(
+                        ab, bb,
+                        "{metric:?}: probe {pi} k={k} kNN diverged from in-RAM oracle (base-seg + tail + tombstone compose broke)"
+                    );
+                    // A deleted id must never appear.
+                    for (e, _) in &a {
+                        assert!(!["b3", "b17", "b29", "t0", "t7"].contains(&e.as_str()),
+                            "{metric:?}: deleted id {e} leaked into kNN");
+                    }
+                }
+            }
+
+            // Snapshot of the reopened (sealed) index must read every LIVE row off
+            // the mmap+tail (NOT store) and match the oracle's live set.
+            let (mut snap, _) = reopened.dump_for_snapshot().unwrap();
+            let (mut osnap, _) = oracle.dump_for_snapshot().unwrap();
+            snap.sort_by(|a, b| a.0.cmp(&b.0));
+            osnap.sort_by(|a, b| a.0.cmp(&b.0));
+            assert_eq!(snap, osnap, "{metric:?}: snapshot of reopened index must match oracle live set");
+        }
     }
 
     #[test]
@@ -1365,7 +1566,13 @@ mod tests {
         // The vector at e7 is its own top neighbour; remove it.
         let q_idx = 7;
         let q_eid = format!("e{q_idx}");
-        let q = idx.inner.read().unwrap().store.get_decoded(&q_eid).unwrap();
+        let q = idx
+            .inner
+            .read()
+            .unwrap()
+            .store
+            .get_decoded(&q_eid)
+            .unwrap();
         assert!(idx.remove(&q_eid).unwrap());
         let hits = idx.search_knn(&q, 5).unwrap();
         assert!(
@@ -1374,118 +1581,4 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "gpu")]
-    #[test]
-    fn wgpu_init_returns_index_without_panicking() {
-        // Even when no GPU adapter exists in CI, this must not panic;
-        // it either constructs a usable index, or transparently falls
-        // back. Either way, search returns a sensible top-K.
-        use rand::SeedableRng;
-        let mut rng = rand::rngs::StdRng::seed_from_u64(19);
-        let s = spec(8, VectorMetric::L2, None);
-        let idx = WgpuBruteForceIndex::open(s);
-        for i in 0..16 {
-            let v = rand_vec(&mut rng, 8);
-            idx.add(&format!("e{i}"), &v).unwrap();
-        }
-        let q = rand_vec(&mut rng, 8);
-        let hits = idx.search_knn(&q, 4).unwrap();
-        assert_eq!(hits.len(), 4);
-    }
-
-    /// Probe for a live wgpu adapter without touching any global
-    /// state. Returns `true` only when both `request_adapter` *and*
-    /// `request_device` succeed — matching `WgpuBruteForceIndex::open`'s
-    /// fallback policy.
-    #[cfg(feature = "gpu")]
-    fn gpu_adapter_available() -> bool {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
-        let adapter =
-            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()));
-        let Some(adapter) = adapter else {
-            return false;
-        };
-        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None)).is_ok()
-    }
-
-    /// 1 000-vector / 64-dim parity check: GPU top-K must match the
-    /// CPU brute-force top-K on the same corpus within 1e-3 cosine.
-    /// Gated on adapter availability; on headless / no-GPU runners
-    /// the test is skipped (logged via `eprintln!`) instead of failing.
-    ///
-    /// Marked `#[ignore]` so it doesn't accidentally regress noisy CI
-    /// — opt in with `cargo test -- --ignored`. The gate above also
-    /// makes the body a no-op when no GPU is present, so `--ignored`
-    /// is safe to run on any host.
-    #[cfg(feature = "gpu")]
-    #[test]
-    #[ignore = "requires a working wgpu adapter; run with --ignored on hosts with GPU"]
-    fn wgpu_top_k_matches_cpu_brute_force_within_tolerance() {
-        use rand::SeedableRng;
-
-        if !gpu_adapter_available() {
-            eprintln!("skipping: no wgpu adapter available on this host");
-            return;
-        }
-
-        let dim = 64u32;
-        let n = 1_000usize;
-        let s = VectorSpec {
-            dim,
-            metric: VectorMetric::Cosine,
-            backend: crate::types::VectorBackend::WgpuBruteForce,
-            quantize: None,
-        };
-        let mut rng = rand::rngs::StdRng::seed_from_u64(0xC0DEC0DE);
-        let mut corpus: Vec<(String, Vec<f32>)> = Vec::with_capacity(n);
-        for i in 0..n {
-            corpus.push((format!("e{i}"), rand_vec(&mut rng, dim as usize)));
-        }
-        let query = rand_vec(&mut rng, dim as usize);
-        let k = 10;
-
-        // CPU reference: full brute-force scan, ranked by cosine distance.
-        let mut cpu_scored: Vec<(String, f32)> = corpus
-            .iter()
-            .map(|(eid, v)| {
-                let d = 1.0 - cosine_similarity(&query, v);
-                (eid.clone(), -d)
-            })
-            .collect();
-        cpu_scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        cpu_scored.truncate(k);
-
-        // GPU path: same corpus through the WgpuBruteForceIndex.
-        let idx = WgpuBruteForceIndex::open(s);
-        for (eid, v) in &corpus {
-            idx.add(eid, v).unwrap();
-        }
-        let gpu_hits = idx.search_knn(&query, k).unwrap();
-        assert_eq!(gpu_hits.len(), k, "expected k={k} GPU hits");
-
-        // Top-K eids must match in order. Scores can differ by a small
-        // FP epsilon between the WGSL kernel and the f64-promoted CPU
-        // path; require ≤ 1e-3 on the score channel.
-        for (i, ((c_eid, c_score), (g_eid, g_score))) in
-            cpu_scored.iter().zip(gpu_hits.iter()).enumerate()
-        {
-            assert_eq!(
-                c_eid, g_eid,
-                "rank {i}: CPU eid {c_eid} != GPU eid {g_eid} (cpu={cpu_scored:?}, gpu={gpu_hits:?})"
-            );
-            let diff = (c_score - g_score).abs();
-            assert!(
-                diff <= 1e-3,
-                "rank {i} score drift {diff} > 1e-3 (cpu={c_score}, gpu={g_score})"
-            );
-        }
-
-        // Scores must still be monotone-non-increasing on the GPU path.
-        for w in gpu_hits.windows(2) {
-            assert!(
-                w[0].1 >= w[1].1,
-                "GPU scores not monotone non-increasing: {gpu_hits:?}"
-            );
-        }
-    }
 }

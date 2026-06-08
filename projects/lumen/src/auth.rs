@@ -138,6 +138,12 @@ pub async fn auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Response {
+    if !cfg.required && cfg.tokens.is_empty() && !req.headers().contains_key(header::AUTHORIZATION)
+    {
+        req.extensions_mut().insert(AuthContext::Open);
+        return next.run(req).await;
+    }
+
     let token = req
         .headers()
         .get(header::AUTHORIZATION)

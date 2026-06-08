@@ -11,6 +11,8 @@
 
 use std::sync::Arc;
 
+use anyhow::Result;
+use async_trait::async_trait;
 use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,
@@ -44,10 +46,142 @@ pub struct AppState {
     pub engine: Arc<Engine>,
     pub auth: Arc<AuthConfig>,
     pub cluster: Option<Arc<crate::raft::ClusterState>>,
+    /// Read/search backend. Defaults to the local engine; sharded serving can
+    /// replace it with a fan-in router while keeping writes/stats local.
+    pub search_backend: Arc<dyn SearchBackend>,
     /// Writes go through the coordinator: publish to the log, wait for
     /// the local apply loop, return the outcome. Reads use `engine`
     /// directly. See `coordinator` / `wal`.
     pub writer: Arc<WriteCoordinator>,
+    /// Write/mutation backend. Defaults to the local coordinator; sharded
+    /// serving can replace it with a document-router that fans out writes
+    /// across independent shard coordinators.
+    pub write_backend: Arc<dyn WriteBackend>,
+}
+
+pub trait SearchBackend: Send + Sync {
+    fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse>;
+}
+
+#[async_trait]
+pub trait WriteBackend: Send + Sync {
+    async fn create_collection(
+        &self,
+        collection_id: String,
+        req: CreateCollectionRequest,
+    ) -> Result<CreateCollectionResponse>;
+
+    async fn drop_collection(&self, collection_id: String, force: bool) -> Result<DropOutcome>;
+
+    async fn index(&self, collection_id: String, req: IndexRequest) -> Result<IndexResponse>;
+
+    async fn delete(
+        &self,
+        collection_id: String,
+        external_id: String,
+        field: Option<String>,
+    ) -> Result<()>;
+
+    async fn drop_field(&self, collection_id: String, field_name: String) -> Result<u32>;
+}
+
+#[derive(Clone)]
+struct LocalEngineSearch {
+    engine: Arc<Engine>,
+}
+
+impl SearchBackend for LocalEngineSearch {
+    fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> {
+        self.engine.search(collection_id, req)
+    }
+}
+
+#[derive(Clone)]
+struct LocalWriteBackend {
+    writer: Arc<WriteCoordinator>,
+}
+
+impl LocalWriteBackend {
+    fn unexpected(outcome: ApplyOutcome) -> anyhow::Error {
+        anyhow::anyhow!("unexpected apply outcome: {outcome:?}")
+    }
+}
+
+#[async_trait]
+impl WriteBackend for LocalWriteBackend {
+    async fn create_collection(
+        &self,
+        collection_id: String,
+        req: CreateCollectionRequest,
+    ) -> Result<CreateCollectionResponse> {
+        match self
+            .writer
+            .submit(RaftLogEntry::CreateCollection { collection_id, req })
+            .await?
+        {
+            ApplyOutcome::Created(r) => Ok(r),
+            other => Err(Self::unexpected(other)),
+        }
+    }
+
+    async fn drop_collection(&self, collection_id: String, force: bool) -> Result<DropOutcome> {
+        match self
+            .writer
+            .submit(RaftLogEntry::DropCollection {
+                collection_id,
+                force,
+            })
+            .await?
+        {
+            ApplyOutcome::Dropped(o) => Ok(o),
+            other => Err(Self::unexpected(other)),
+        }
+    }
+
+    async fn index(&self, collection_id: String, req: IndexRequest) -> Result<IndexResponse> {
+        match self
+            .writer
+            .submit(RaftLogEntry::Index { collection_id, req })
+            .await?
+        {
+            ApplyOutcome::Indexed(r) => Ok(r),
+            other => Err(Self::unexpected(other)),
+        }
+    }
+
+    async fn delete(
+        &self,
+        collection_id: String,
+        external_id: String,
+        field: Option<String>,
+    ) -> Result<()> {
+        match self
+            .writer
+            .submit(RaftLogEntry::Delete {
+                collection_id,
+                external_id,
+                field,
+            })
+            .await?
+        {
+            ApplyOutcome::Deleted => Ok(()),
+            other => Err(Self::unexpected(other)),
+        }
+    }
+
+    async fn drop_field(&self, collection_id: String, field_name: String) -> Result<u32> {
+        match self
+            .writer
+            .submit(RaftLogEntry::DropField {
+                collection_id,
+                field_name,
+            })
+            .await?
+        {
+            ApplyOutcome::FieldChanged(v) => Ok(v),
+            other => Err(Self::unexpected(other)),
+        }
+    }
 }
 
 impl AppState {
@@ -67,6 +201,12 @@ impl AppState {
         writer: Arc<WriteCoordinator>,
     ) -> Self {
         Self {
+            search_backend: Arc::new(LocalEngineSearch {
+                engine: engine.clone(),
+            }),
+            write_backend: Arc::new(LocalWriteBackend {
+                writer: writer.clone(),
+            }),
             engine,
             auth,
             cluster: None,
@@ -82,6 +222,16 @@ impl AppState {
 
     pub fn with_cluster(mut self, cluster: Arc<crate::raft::ClusterState>) -> Self {
         self.cluster = Some(cluster);
+        self
+    }
+
+    pub fn with_search_backend(mut self, search_backend: Arc<dyn SearchBackend>) -> Self {
+        self.search_backend = search_backend;
+        self
+    }
+
+    pub fn with_write_backend(mut self, write_backend: Arc<dyn WriteBackend>) -> Self {
+        self.write_backend = write_backend;
         self
     }
 
@@ -336,22 +486,11 @@ async fn create_collection(
     Json(req): Json<CreateCollectionRequest>,
 ) -> Result<Json<CreateCollectionResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Admin)?;
-    let outcome = state
-        .writer
-        .submit(RaftLogEntry::CreateCollection {
-            collection_id: collection_id.clone(),
-            req,
-        })
+    let resp = state
+        .write_backend
+        .create_collection(collection_id.clone(), req)
         .await
         .map_err(ApiErr::from)?;
-    let resp = match outcome {
-        ApplyOutcome::Created(r) => r,
-        other => {
-            return Err(ApiErr::internal(format!(
-                "unexpected apply outcome: {other:?}"
-            )))
-        }
-    };
     tracing::info!(
         target: "lumen.audit",
         event = "collection_create_or_extend",
@@ -390,22 +529,11 @@ async fn drop_collection(
     Query(q): Query<DropQuery>,
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Admin)?;
-    let applied = state
-        .writer
-        .submit(RaftLogEntry::DropCollection {
-            collection_id: collection_id.clone(),
-            force: q.force,
-        })
+    let outcome = state
+        .write_backend
+        .drop_collection(collection_id.clone(), q.force)
         .await
         .map_err(ApiErr::from)?;
-    let outcome = match applied {
-        ApplyOutcome::Dropped(o) => o,
-        other => {
-            return Err(ApiErr::internal(format!(
-                "unexpected apply outcome: {other:?}"
-            )))
-        }
-    };
     let phase = match outcome {
         DropOutcome::NotFound => {
             return Err(ApiErr::not_found(format!(
@@ -454,20 +582,12 @@ async fn index(
     Json(req): Json<IndexRequest>,
 ) -> Result<Json<IndexResponse>, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
-    let applied = state
-        .writer
-        .submit(RaftLogEntry::Index {
-            collection_id: collection_id.clone(),
-            req,
-        })
+    let resp = state
+        .write_backend
+        .index(collection_id.clone(), req)
         .await
         .map_err(ApiErr::from)?;
-    match applied {
-        ApplyOutcome::Indexed(r) => Ok(Json(r)),
-        other => Err(ApiErr::internal(format!(
-            "unexpected apply outcome: {other:?}"
-        ))),
-    }
+    Ok(Json(resp))
 }
 
 #[derive(Debug, Deserialize)]
@@ -494,12 +614,8 @@ async fn delete_external_id(
 ) -> Result<StatusCode, ApiErr> {
     auth.ensure(&collection_id, Role::Write)?;
     state
-        .writer
-        .submit(RaftLogEntry::Delete {
-            collection_id: collection_id.clone(),
-            external_id,
-            field: q.field,
-        })
+        .write_backend
+        .delete(collection_id.clone(), external_id, q.field)
         .await
         .map_err(ApiErr::from)?;
     Ok(StatusCode::NO_CONTENT)
@@ -532,7 +648,7 @@ async fn search(
     // their code when Raft lands.
     Ok(Json(
         state
-            .engine
+            .search_backend
             .search(&collection_id, req)
             .map_err(ApiErr::from)?,
     ))
@@ -609,7 +725,7 @@ async fn reindex_stream(
 
     const BATCH_SIZE: usize = 1_000;
     let (tx, rx) = mpsc::channel::<Result<axum::body::Bytes, std::io::Error>>(16);
-    let writer = state.writer.clone();
+    let writer = state.write_backend.clone();
     let collection = collection_id.clone();
 
     tokio::spawn(async move {
@@ -648,16 +764,16 @@ async fn reindex_stream(
                 let drained = std::mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE));
                 let batch_start = Instant::now();
                 match writer
-                    .submit(RaftLogEntry::Index {
-                        collection_id: collection.clone(),
-                        req: IndexRequest {
+                    .index(
+                        collection.clone(),
+                        IndexRequest {
                             items: drained,
                             request_id: None,
                         },
-                    })
+                    )
                     .await
                 {
-                    Ok(ApplyOutcome::Indexed(r)) => {
+                    Ok(r) => {
                         indexed_total += r.indexed as u64;
                         let _ = send(
                             &tx,
@@ -670,7 +786,6 @@ async fn reindex_stream(
                             }),
                         );
                     }
-                    Ok(_) => {}
                     Err(e) => {
                         let _ = send(
                             &tx,
@@ -688,14 +803,14 @@ async fn reindex_stream(
         // Final flush of whatever's left in the batch.
         if !batch.is_empty() {
             let batch_start = Instant::now();
-            if let Ok(ApplyOutcome::Indexed(r)) = writer
-                .submit(RaftLogEntry::Index {
-                    collection_id: collection.clone(),
-                    req: IndexRequest {
+            if let Ok(r) = writer
+                .index(
+                    collection.clone(),
+                    IndexRequest {
                         items: batch,
                         request_id: None,
                     },
-                })
+                )
                 .await
             {
                 indexed_total += r.indexed as u64;
@@ -764,22 +879,11 @@ async fn drop_field(
     Path((collection_id, field_name)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiErr> {
     auth.ensure(&collection_id, Role::Admin)?;
-    let applied = state
-        .writer
-        .submit(RaftLogEntry::DropField {
-            collection_id: collection_id.clone(),
-            field_name: field_name.clone(),
-        })
+    let version = state
+        .write_backend
+        .drop_field(collection_id.clone(), field_name.clone())
         .await
         .map_err(ApiErr::from)?;
-    let version = match applied {
-        ApplyOutcome::FieldChanged(v) => v,
-        other => {
-            return Err(ApiErr::internal(format!(
-                "unexpected apply outcome: {other:?}"
-            )))
-        }
-    };
     tracing::info!(
         target: "lumen.audit",
         event = "field_drop",
@@ -948,14 +1052,6 @@ impl ApiErr {
             message: msg.into(),
         }
     }
-
-    fn internal(msg: impl Into<String>) -> Self {
-        Self {
-            status: StatusCode::INTERNAL_SERVER_ERROR,
-            kind: "internal",
-            message: msg.into(),
-        }
-    }
 }
 
 impl From<anyhow::Error> for ApiErr {
@@ -1000,11 +1096,6 @@ impl From<anyhow::Error> for ApiErr {
                 StorageError::Gone(_) => Self {
                     status: StatusCode::GONE,
                     kind: "gone",
-                    message: e.to_string(),
-                },
-                StorageError::BackendNotSupported { .. } => Self {
-                    status: StatusCode::UNPROCESSABLE_ENTITY,
-                    kind: "backend_not_supported",
                     message: e.to_string(),
                 },
             };

@@ -5,7 +5,7 @@ A K8s-native, **log-replicated search specialist**. Five flavors of
 
 - **Exact** — `keyword` / `number` / `set`
 - **Lexical** — `text` (BM25, with tokenize built in)
-- **Semantic** — `vector` (HNSW; optional wgpu GPU kNN)
+- **Semantic** — `vector` (CPU: HNSW + exact flat brute-force)
 - **Perceptual / structural** — `hash` (pHash / SimHash / b-bit MinHash, Hamming distance)
 - **Duplicates** — find which `external_id`s share the same value (a search-flavor of group-by; bounded, posting-list-cheap)
 
@@ -15,12 +15,10 @@ The caller owns the representation:
 - Perceptual hashes? **Caller** runs `imagehash` / `datasketch`; lumen indexes the bits.
 - Lexical tokenization? **lumen** does it — that's the one place caller doesn't compute (`whitespace_lower` / `ngram` / `jieba`).
 
-The caller also owns the **source of truth**: lumen is a parallel
-derived index, not an OLTP store and not an analytics engine.
+The caller also owns the **source of truth**: lumen is a parallel derived index,
+never the system of record or an analytics engine — documents are *not* a lumen
+concept, only the caller's `external_id` is.
 
-- **Caller owns the source of truth**. lumen is a parallel index, never
-  the system of record. Documents are *not* a lumen concept — only the
-  caller's `external_id` is.
 - **Log-driven, derived, rebuildable**. A write is *published to a log*,
   not applied where it lands; every serving node tails the log and folds
   it into its own index. Lossable but rebuildable from the log + the
@@ -64,20 +62,50 @@ yet formally `--verify`-proven"; `candidate` means "promised, partially shipped"
 - **Ingestion is the caller's own pub/sub** into `POST /index` (CDC / logical
   replication / app writes). lumen bundles no connector and owns no upstream
   subscription — it is a parallel derived index, rebuildable from the source + log.
-- **Lexical ranking at scale** has no WAND / block-max yet, so pure unfiltered
-  single-term ranking trails an ES-class peer at high scale.
-- **Wide-range filters** trail a BKD points-tree peer; no segment range index yet.
-- **GPU (`wgpu`) kNN** is experimental and not exercised in CI; CPU HNSW is the
-  proven path.
+- **Rust speed target is broader than today's gate.** Because lumen is a focused
+  Rust index (no JVM, no document store, no analytics surface), the product target
+  is **several-x faster than OpenSearch across every search shape**. Current release
+  evidence now clears the 1M in-memory and segment-disk search gates vs OpenSearch
+  on every search cell, and clears Postgres on every non-home-turf or native-binary
+  search cell. pg cheap btree predicates remain
+  explicit EXEMPT home turf for the public HTTP/JSON serial loopback comparison,
+  but the same cheap predicates now have a prepared native binary gate over Unix
+  socket/TCP fallback. qps10/qps100/qps1000 are paced, usable, and strict-gated
+  through `LUMEN_PERF_STRICT=1`; the latest retained 1M evidence clears every
+  qps tier against OpenSearch, including a dedicated qps10 rerun whose lowest
+  retained row is `filtered_search` at **2.66x**. qps10 is still close to the
+  co-located low-QPS floor, so guarded harness-bound retries and isolated-host
+  repeats remain part of making "several-x everywhere" release-stable.
+  Write-path QPS is also report-only by default but strict-gated by the same
+  perf-strict mode. Isolated load hosts are the next lever for making
+  "several-x everywhere" a default CI claim.
+- **Wide-range filters** drive from an on-disk **sorted-value range index** (the
+  distinct values as a page-aligned ascending column, binary-searched on the mmap)
+  + per-value posting lists. The standalone disk `range` planner streams only the
+  selected sorted-value window and the keyword-filtered sort path drives from lazy
+  `(keyword term -> docs sorted by number)` skip lists, so both now clear the
+  OpenSearch disk target. pg's cheap HTTP range predicate remains exempt home turf;
+  the prepared native binary path gates the same range predicate against pg's
+  prepared Unix-socket path.
+- **Vector search is CPU-only** in this version (HNSW + exact flat brute-force).
+  The **flat-cpu** backend is disk-RAM-bounded (base vectors demand-paged off the
+  mmap); **HNSW** keeps its vectors in RAM (the `hnsw_rs` graph owns them), so true
+  disk-resident approximate kNN (DiskANN-class) + GPU-native vector search are a
+  future chapter, not shipped here.
 - **No application consensus layer** — durability + replication is the NATS
-  JetStream write-log; serving nodes are full replicas that tail it. The LSM disk
-  backend (`storage_lsm`) is the one subsystem still behind the `experimental`
-  feature, pending its promotion to a runtime-selectable tier.
+  JetStream write-log; serving nodes are full replicas that tail it. The **columnar
+  mmap segment disk tier** (RAM=hot/disk=all) + a local **RDB+AOF** is now
+  default-compiled and runtime-selectable via `--persistence=segment` (default
+  `cbor`); the old never-wired `storage_lsm` LSM backend and the `experimental`
+  feature were removed.
 - **K8s deployment** ships a real `Lumen` CRD + kube-rs reconcile loop, proven
   on a live kind cluster (`LUMEN_E2E_MODE=operator` kind-e2e: operator brings up
   the fleet + broker, survives serving-pod kill and broker kill with identical
   results), and is HA-safe via Lease leader-election (`replicas > 1` runs one
-  active reconciler + standbys).
+  active reconciler + standbys). This is a real operator baseline, not just YAML,
+  but it is not yet the final production-hardening story: CRD validation,
+  Kubernetes Conditions, TLS/NetworkPolicy/Ingress, observability parity, and
+  upgrade/canary policy remain explicit deployment gaps below.
 
 ### Search
 
@@ -97,7 +125,7 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 | Query planner & boolean eval (roaring postings) | epic | - | implemented | passing | conformance | projects/lumen/tests/planner_diff.rs |
 | Filter + sort early-termination | epic | - | implemented | passing | conformance | projects/lumen/scripts/bench_vs_db.py (filter_sort, pure_sort) |
 | selective-match-driver (drive cheapest positive incl. match) | epic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs |
-| Wide-range filter index (BKD) | epic | - | planned | none | none | - |
+| Wide-range filter index (on-disk sorted-value range) | epic | - | implemented | passing | conformance | projects/lumen/src/storage.rs (segment_number_range_diff_tests); projects/lumen/tests/perf_gate_vs_db.rs (range cell) |
 
 #### Lexical (BM25)
 
@@ -107,7 +135,8 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| BM25 ranking + analyzers | subepic | - | partial | passing | conformance | projects/lumen/scripts/bench_vs_db.py (text_bm25); WAND/block-max not yet implemented |
+| BM25 ranking + analyzers (HashMap-free single-term / AND scoring fast path) | subepic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (text_bm25, text_and); projects/lumen/src/storage.rs (segment_text_diff_tests — byte-identical disk BM25) |
+| WAND / block-max early termination (skip non-competitive docs) | subepic | - | planned | none | none | next lexical lever for skewed tf / cold term corpora; the hot ranked-cache path now clears the 1M BM25 gate vs OpenSearch, but block-max is still the scalable answer for broad unseen ranked terms |
 
 #### Exact & Filter (keyword / number / set)
 
@@ -117,20 +146,22 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| term / range / set + early-termination | subepic | - | implemented | passing | conformance | projects/lumen/scripts/bench_vs_db.py (kw_term, range) |
+| term / range / set + early-termination | subepic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (kw_term, range, bool_filter) |
+| On-disk inverted (keyword/set) + sorted-value range (number) indexes — reopen drives from the mmap, RAM-bounded | subepic | - | implemented | passing | conformance | projects/lumen/src/storage.rs (segment_keyword/set_inverted_diff_tests, segment_number_range_diff_tests) |
 
 #### Semantic & Perceptual (vector + hash)
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| search-vector | - | auditing | Semantic kNN (`vector`; HNSW, optional `wgpu` GPU) and perceptual/structural `hash` (pHash / SimHash / b-bit MinHash) queried by Hamming distance. The caller owns all embeddings and hashes; lumen indexes the bits. kNN composes with filters **without recall collapse** (filter-correct kNN). | smoke, conformance | projects/lumen/tests/vector_e2e.rs; projects/lumen/tests/hash_hamming.rs; projects/lumen/scripts/bench_vs_db.py (knn) |
+| search-vector | - | auditing | Semantic kNN (`vector`; CPU HNSW + exact flat brute-force) and perceptual/structural `hash` (pHash / SimHash / b-bit MinHash) queried by Hamming distance. The caller owns all embeddings and hashes; lumen indexes the bits. kNN composes with filters **without recall collapse** (filter-correct kNN). | smoke, conformance | projects/lumen/tests/vector_e2e.rs; projects/lumen/tests/hash_hamming.rs; projects/lumen/scripts/bench_vs_db.py (knn) |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | HNSW vector kNN (CPU) | subepic | - | implemented | passing | conformance | projects/lumen/tests/vector_e2e.rs |
 | Filtered kNN — allow-list primitive (`search_knn_filtered`) | subepic | 4141 | implemented | passing | conformance | projects/lumen/src/vector_index.rs (filtered_knn_returns_nearest_within_allowlist_not_global_topk) |
 | Filtered kNN — planner wiring (`knn AND filter`) + recall gate | subepic | 4142 | implemented | passing | conformance | projects/lumen/tests/vector_e2e.rs (filtered_knn_returns_nearest_within_filter_no_recall_collapse) |
-| GPU kNN (wgpu) | subepic | - | partial | planned | smoke | experimental; not exercised in CI |
+| flat-cpu vectors RAM-bounded on the disk tier (base rows demand-paged off the mmap, not re-materialized on reopen) | subepic | - | implemented | passing | conformance | projects/lumen/src/vector_index.rs (reopen_base_seg_plus_tail_plus_tombstone_equals_inram_oracle); projects/lumen/tests/disk_scale_proof.rs |
+| HNSW graph on disk (DiskANN-class) — vectors stay in RAM in the graph; only flat-cpu is disk-RAM-bounded | subepic | - | planned | none | none | future GPU-native vector chapter (`hnsw_rs` owns the vectors internally) |
 | Hash / Hamming search (`hash` field + `hamming` query) | subepic | - | implemented | passing | conformance | projects/lumen/tests/hash_hamming.rs |
 
 #### Hybrid (lexical + semantic fusion)
@@ -165,18 +196,20 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 | has_child boolean clause | subepic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs (has_child_composes_in_boolean_tree) |
 | enum level_match + CJK substring | subepic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs (enum_path_and_level_match, ngram_cjk_substring) |
 
-### Elastic Scale (collection-LRU)
+### Elastic Scale (columnar mmap disk tier — RAM=hot / disk=all)
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| elastic-scale | - | auditing | RAM is a working set: idle collections snapshot to disk and restore on demand (collection-LRU), so hot tables run at full in-memory speed while dataset and vector scale are bounded by cheap disk, not RAM. | smoke, conformance | projects/lumen/tests/collection_lru.rs |
+| elastic-scale | - | auditing | **RAM is the hot working set; disk holds all the data.** Each field's bulk (forward payload + inverted index) is sealed into immutable, `applied_seq`-tagged, **columnar mmap segments**; the in-RAM driver is dropped on seal and queries demand-page off the mmap (a bounded `moka` decoded-posting cache is the inverted-index hot-zone). A collection far larger than RAM stays queryable — measured reopen+query resident growth is ~30-47% of full-in-RAM and **does not grow with N**. Per-field results stay byte-identical to the in-RAM path. | smoke, conformance | projects/lumen/tests/disk_scale_proof.rs; projects/lumen/docs/benchmarks-scale.md |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| collection-LRU evict / restore | epic | - | implemented | passing | conformance | projects/lumen/tests/collection_lru.rs |
-| LRU budget enforcement + thread-safe restore | epic | - | implemented | passing | conformance | projects/lumen/tests/collection_lru.rs (budget_enforced_and_lru, concurrent_restore_thread_safe) |
-| has_child against an evicted child collection | epic | - | implemented | passing | conformance | projects/lumen/tests/collection_lru.rs (has_child_restores_evicted_child_collection) |
-| LSM disk backend (`storage_lsm`, experimental feature, unwired) | epic | - | out_of_scope | none | none | - |
+| Columnar mmap segment engine (Number/Keyword/Set/Text/Hash/Vector) | epic | - | implemented | passing | conformance | projects/lumen/src/segment.rs (tests); projects/lumen/src/storage.rs (segment_predicate/keyword/set/number_range/text/vector_diff_tests, triple_path_diff_tests) |
+| On-disk inverted/selective index — reopen does NOT rebuild the RAM driver (bound RAM) + per-field delete tombstone | epic | - | implemented | passing | conformance | projects/lumen/src/storage.rs (segment_keyword/set_inverted_diff_tests, segment_number_range_diff_tests, segment_text_diff_tests) |
+| RAM=hot/disk=all bounded-RSS scale proof (demand-paged, flat in N) | epic | - | implemented | passing | conformance | projects/lumen/tests/disk_scale_proof.rs (scale_proof_reopen_rss_is_bounded) |
+| Segment checkpoint (RDB) + local AOF durability (NATS-trim) | epic | - | implemented | passing | conformance | projects/lumen/src/storage.rs (checkpoint_engine_tests); projects/lumen/src/segment_rdb.rs; projects/lumen/src/aof.rs (crux_recovery_tests) |
+| Bounded decoded-posting cache (warm-query hot-zone) + competitive disk gate | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (competitive_perf_gate_disk) |
+| Runtime selection: `--persistence=segment` (default `cbor`); segment engine default-compiled (the `experimental` feature + the never-wired `storage_lsm` backend were removed) | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs |
 
 ### Resilience & Log Replication
 
@@ -201,6 +234,87 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 | Lumen CRD + reconcile loop (kube-rs operator) | epic | - | implemented | passing | conformance | projects/lumen/src/operator; projects/lumen/tests/operator_render.rs |
 | Operator kind-e2e deploy path | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh (LUMEN_E2E_MODE=operator) |
 | Leader-election HA (multi-replica operator) | epic | - | implemented | passing | conformance | projects/lumen/src/operator/lease.rs (election unit tests) |
+
+**How to deploy — what lumen ships, and the few params you set.** lumen ships a
+`Dockerfile` and a kustomize tree (`k8s/base` + overlays); you build + push the
+image to your **own** registry and `kubectl apply -k` an overlay. There is no
+published image (no Docker Hub) and no extra tool to install — kustomize is built
+into `kubectl`. The handoff is **fill-in-the-blanks**, designed so a human *or an
+agent* edits a copy of `k8s/overlays/template/` and self-checks with one grep:
+
+```bash
+# 1. build + push to your registry (e.g. Google Artifact Registry — no Docker Hub)
+IMG=asia-east1-docker.pkg.dev/PROJECT/REPO/lumen:v1
+docker build -t "$IMG" -f projects/lumen/Dockerfile .   # or: gcloud builds submit --tag "$IMG"
+docker push "$IMG"
+
+# 2. copy the template overlay and fill every REPLACE_ME__*
+cp -r k8s/overlays/template k8s/overlays/myenv
+#    edit k8s/overlays/myenv/kustomization.yaml
+
+# 3. self-check — MUST print nothing before you apply (.example template skipped)
+grep -rn REPLACE_ME k8s/overlays/myenv --include='*.yaml' | grep -v '\.example\.'
+
+# 4. deploy
+kubectl apply -k k8s/overlays/myenv
+```
+
+The required params all live in **your overlay copy**, never in `base`:
+
+| Param | Where | Why it is required |
+|---|---|---|
+| image registry + tag | `images:` transformer | base ships `lumen:latest`; a cluster cannot pull an unprefixed name — point it at the registry you pushed to |
+| `SHARD_COUNT` | ConfigMap patch | install-time crc32 client fan-out; **fixed for the cluster's life** — changing it after data exists re-routes every client and needs a rebuild |
+| storage class | NATS `StatefulSet` patch | the one stateful component's PVC; template defaults to GKE SSD `premium-rwo` (balanced PD: `standard-rwo`, or delete the patch to use the cluster default) |
+| auth + `LUMEN_TOKENS` | `secret.example.yaml` (optional) | off by default; to require bearer auth, copy the secret, fill tokens, and uncomment the auth block |
+
+`k8s/overlays/{dev,staging,prod}` stay as worked references (real patch
+examples); `template/` is the copy-to-customize blank. For BYO NATS, point
+`LUMEN_NATS_URL` at your broker and drop the `nats-*` resources.
+
+**Deployment footprint — what each path leaves on the cluster.** The two
+declarative paths differ less in *what they run* than in the **cluster-scoped
+footprint** they leave behind — the deciding factor when deploying into an
+existing cluster where you do not hold cluster-admin. A `Lumen` deployment spans
+four objects at three different scopes:
+
+| Object | Scope | Notes |
+|---|---|---|
+| operator controller (`Deployment` + `ServiceAccount`) | namespaced | lives in `lumen-system` — an isolated namespace, but only the controller |
+| `Lumen` **CRD** (the definition) | **cluster-scoped** | installed once, visible cluster-wide; K8s has no namespaced CRDs |
+| operator **RBAC** (`ClusterRole` + `ClusterRoleBinding`) | **cluster-scoped** | cluster-wide watch of `Lumen` CRs (`k8s/operator/rbac.yaml`) |
+| `Lumen` CR instance + serving children (`Deployment`/`Service`/`ConfigMap`/`HPA`/`PDB`/`SA`, NATS `StatefulSet`) | namespaced | the CR is `scope: Namespaced` — create it in any ns; children render in the same ns |
+
+The `scope: Namespaced` line on the CRD describes the **CR instances** (you
+create them in any namespace), *not* the CRD definition object — that is always
+cluster-scoped. So the two paths have very different blast radii:
+
+- **kustomize base + overlays is namespaced-only.** Every kind under
+  `k8s/{base,overlays,components}` is namespaced except the `Namespace` it
+  creates (`k8s/base/namespace.yaml` — drop it or point at an existing namespace
+  for a shared cluster). **No CRD, no ClusterRole.**
+- **CRD + operator adds two cluster-scoped objects** on top of the serving
+  workload — the `Lumen` CRD and a `ClusterRole`/`ClusterRoleBinding` for
+  cluster-wide CR watch — plus the controller in `lumen-system`. The controller
+  is namespaced; the *global* footprint is the CRD + ClusterRole.
+
+To deploy into an existing cluster with the smallest footprint, prefer the
+namespaced-only kustomize path (a future offline `lumen k8s render` would emit
+the same namespaced children from the same `render()` the operator uses, with no
+cluster-scoped install). Reach for the operator when you want declarative
+reconcile / drift-repair across many instances and can own the cluster-scoped
+install.
+
+**Known deployment hardening gaps:**
+
+| Gap | Current State | Why It Matters |
+|---|---|---|
+| Live operator e2e recency | Scripted via `LUMEN_E2E_MODE=operator projects/lumen/scripts/kind-e2e.sh`; must be rerun on a machine with `kind` for each release. | Proves the CRD path still reconciles a real cluster, then survives serving-pod kill and broker kill. |
+| CRD validation / immutability | Basic OpenAPI schema exists; stronger CEL-style invariants are not encoded yet. | Prevents unsafe live changes such as changing `shardCount`, invalid replica bounds, missing `tokensSecret` when auth is required, or undersized NATS storage. |
+| Kubernetes Conditions | Status currently exposes phase, ready counts, shard count, `natsReady`, and message. | Production operators expect structured `Ready`, `Progressing`, `Degraded`, and `Reconciled` conditions with timestamps/reasons. |
+| Observability parity | Kustomize prod/staging include the fuller ServiceMonitor + PrometheusRule bundle; operator render emits a smaller built-in observability set. | CRD users should get the same SLO alerts and scrape behavior as the hand-written prod overlay. |
+| Network boundary / TLS / ingress | Auth is implemented; TLS binding is partial and not e2e-gated; NetworkPolicy/Ingress are not first-class CRD fields. | Production clusters need explicit traffic policy, TLS termination story, and ingress/service exposure controls. |
+| Upgrade / rollout policy | Deployment uses rolling update, probes, HPA, and PDB; no explicit canary/version-skew policy is encoded. | Release operators need a safe story for image upgrades, CRD evolution, and broker/client compatibility. |
 
 ### HTTP / REST Integration
 
@@ -316,19 +430,21 @@ than left as an adjective.
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
 | ops-operability | - | auditing | Operate it without a DBA. Serving nodes are stateless cattle (`Deployment` + `HPA`, **no PVC**) with the index rebuilt from the log; the NATS broker is the only stateful component; there is **no consensus, leader election, or split-brain to run**; deploy declaratively via kustomize overlays or a `Lumen` CRD + operator. Search load lives on its own nodes — it never contends with the OLTP primary's CPU/RAM. | conformance, dogfood | projects/lumen/scripts/kind-e2e.sh; projects/lumen/k8s; projects/lumen/src/operator |
-| ops-speed | - | auditing | Low-latency search from an early-terminating planner over roaring-bitmap postings, in-memory serving, and HNSW kNN — no GC pauses (Rust). Perf-gate envelope on a dev box: `term` < 20 ms, BM25 `match` over 10k docs < 50 ms, 5k keyword writes < 1 s. | conformance | projects/lumen/tests/perf_gate.rs; projects/lumen/scripts/bench_vs_db.py |
-| ops-footprint | - | auditing | Lightweight: a single Rust binary, **no JVM**. RAM is a working set — idle collections snapshot to disk (collection-LRU), so dataset and vector scale are bounded by cheap disk, not RAM. A single node runs on an embedded in-process log with no broker at all. | conformance | projects/lumen/tests/collection_lru.rs |
+| ops-speed | - | auditing | Low-latency search from an early-terminating planner over roaring-bitmap postings, in-memory serving, and HNSW kNN — no GC pauses (Rust). **Standing competitive commitment: lumen beats Postgres and OpenSearch on every *gated* search cell, every release.** Enforced as a **ratcheting regression gate** — per-cell min-latency thresholds in `tests/perf-baseline.json`; a release that loses a gated cell, or drops >20% below its recorded winning margin, fails the gate. Both peers are judged on end-to-end latency where the transport class is comparable: lumen and OpenSearch share HTTP/JSON, while pg cheap btree predicates keep an annotated HTTP exemption but are separately gated through lumen's prepared native binary wire over Unix socket/TCP fallback. Absolute envelope: `term` < 20 ms, BM25 `match` over 10k docs < 50 ms, 5k keyword writes < 1 s. qps and write-path QPS (`PUT` schema and `POST /index`) are reported by default and strict-gated with `LUMEN_PERF_STRICT=1` when NATS/pg/OpenSearch services are available. | conformance | projects/lumen/tests/perf_gate.rs (absolute envelope); projects/lumen/tests/perf_gate_vs_db.rs + projects/lumen/tests/perf-baseline.json (competitive gate vs pg/OS); projects/lumen/tests/write_qps.rs (write-path QPS) |
+| ops-footprint | - | auditing | Lightweight: a single Rust binary, **no JVM**. RAM is the hot working set; **disk holds all the data** via columnar mmap segments — a collection far larger than RAM stays queryable by demand-paging (measured reopen RSS ~30-47% of full-in-RAM, flat in N). The index is also **5-7× smaller on disk than Postgres / OpenSearch** (~28.7 bytes/doc). A single node runs on an embedded in-process log with no broker at all. | conformance | projects/lumen/tests/disk_scale_proof.rs; projects/lumen/docs/benchmarks-scale.md |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Stateless serving + rebuild-from-log (no PVC) | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
-| Perf-gate envelope (latency + throughput floors) | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate.rs |
-| RAM-as-working-set (collection-LRU) + embedded single-node log | epic | - | implemented | passing | conformance | projects/lumen/tests/collection_lru.rs |
+| Perf-gate envelope (absolute latency + throughput floors) | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate.rs |
+| Competitive regression gate (beat pg + OS per-cell, ratcheting) | epic | - | implemented | passing — all OS search cells and pg non-home-turf/native cells are WIN-gated | conformance | projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json |
+| RAM=hot/disk=all columnar mmap segment tier + embedded single-node log | epic | - | implemented | passing | conformance | projects/lumen/tests/disk_scale_proof.rs; projects/lumen/src/storage.rs (checkpoint_engine_tests) |
 
 **Stability (穩)** is the **Resilience & Log Replication** capability above: a
 deployment survives broker kill and serving-pod kill with byte-identical
 post-recovery results (`scripts/chaos.sh`, `scripts/soak.sh`), memory is bounded
-by the LRU budget, and every node is a deterministic rebuild from the log.
+because the bulk lives on mmap'd segments (RAM=hot/disk=all) demand-paged by the
+kernel, and every node is a deterministic rebuild from the log.
 
 ### Non-goals (deliberate scope-out)
 
@@ -369,43 +485,78 @@ design, not by backlog.
 
 ## Benchmarks
 
-Indicative head-to-head on one machine — a single seeded 100k-doc corpus loaded
-byte-identically into every engine, warm. Latency is `bench_vs_db.py` (client
-min, warm persistent connection); throughput is `h2load` for lumen/OpenSearch
-and `pgbench` (prepared, persistent — Postgres's best case) for PG. **Numbers are
-illustrative of the shape, not a certified SLA** — reproduce with
-`scripts/bench_vs_db.py`.
+### Performance contract — enforced & ratcheting
 
-**vs PostgreSQL — throughput (the workload that matters):** lumen serves search
-over an h2c connection *pool* (a few connections, many multiplexed streams).
+Beating Postgres and OpenSearch on search is a **standing CI commitment, not a
+one-time measurement**: `tests/perf_gate_vs_db.rs` drives lumen, Postgres
+(`tokio-postgres`) and OpenSearch (`reqwest`) against one byte-identical corpus
+and **fails the build** if lumen loses any *gated* search cell. The authoritative
+thresholds live in **`tests/perf-baseline.json`**; full methodology, per-tier
+numbers, resource columns, and reproduction live in
+**[`docs/benchmarks-scale.md`](docs/benchmarks-scale.md)**.
 
-| Query | lumen | PostgreSQL | lumen advantage |
+How the comparison stays honest (separate metrics, never conflated):
+
+- **End-to-end, single-client** is the gated metric — lumen and OpenSearch share
+  HTTP/JSON so the transport tax cancels. pg's binary wire beats HTTP/JSON on
+  cheap btree point/range lookups on loopback, so those cells are **HTTP-EXEMPT**
+  (annotated) and gated instead through a **native prepared-binary** path (Rust
+  wire over Unix socket) — the cheap predicates still carry a hard floor.
+- **Concurrent qps (10/100/1000)** and **write-path qps** are report-only by
+  default; `LUMEN_PERF_STRICT=1` strict-gates the rows recorded in
+  `perf-baseline.json`. Co-located CI keeps them report-only until CPU isolation;
+  isolated-host repeats are the release-stable bar.
+
+Each cell carries a threshold in `perf-baseline.json`: a **WIN cell** must hold
+`max(1.0, 0.8 × recorded margin)` — a **ratchet**, so improving a cell locks the
+new bar and it can only get better. **HTTP-EXEMPT cells** (pg btree lookups on
+loopback) are separately gated by `pg_native` floors through the native path.
+**Scale tiers:** 1K smoke/trend, **1M official competitive proof**; above 1M is
+research-only.
+
+**Current status — GREEN** (release, N=1M, in-memory + disk tier). Representative
+serial search margins (full set, qps 10/100/1000 tiers, and history in
+[`docs/benchmarks-scale.md`](docs/benchmarks-scale.md) / `perf-baseline.json`):
+
+| Cell | vs Postgres | vs OpenSearch (in-mem) | vs OpenSearch (disk) |
 |---|---:|---:|---:|
-| `kw_term` (keyword) | 219k req/s | 64k tps | **3.4×** |
-| `filtered_search` (BM25 + filter) | 74k req/s | 8.7k tps | **8.4×** |
-| `text_bm25` | 38k req/s | 2.8k tps | **13×** |
-| `group_nested_count` (no early-stop in PG) | — | — | **40×** |
+| `text_bm25` | 815× | 4.5× | 23.0× |
+| `text_and` | 96.9× | 7.7× | 10.9× |
+| `filtered_search` | 61.4× | 7.3× | 4.6× |
+| `filter_sort` | 43.9× | 4.1× | 6.0× |
+| `pure_sort` | 83.6× | 3.9× | 5.2× |
+| `kw_term` | EXEMPT¹ | 4.0× | 9.3× |
+| `range` | EXEMPT¹ | 5.2× | 11.3× |
+| `bool_filter` | EXEMPT¹ | 5.2× | 6.6× |
 
-Single trivial point-lookups (one `term`/`range`, tiny result) are the one place
-PG's binary wire protocol beats lumen's HTTP+JSON on *per-request* latency — a
-protocol tax, not an engine gap (the throughput above is the engine truth). At
-volume lumen wins across the board.
+¹ pg cheap btree predicates are HTTP-EXEMPT; gated via the native prepared-binary
+path — `kw_term` 6.2×, `range` 2.9×, `bool_filter` 39.6× vs pg prepared Unix socket.
+Every OpenSearch cell holds a 3.0× WIN baseline (2.4× floor after the ratchet);
+paced qps tiers stay ahead of OpenSearch on every WIN cell.
 
-**vs OpenSearch — same HTTP/JSON protocol, so protocol overhead cancels:**
+**Write path** — `tests/write_qps.rs` drives the real HTTP `POST /index`; treat
+**JetStream as the standard write comparison** (embedded/local-sharded rows are
+developer-loop trend checks). Latest 100-worker strict JetStream run: **8.5× vs
+Postgres**, **3.4× vs OpenSearch**, 0 errors. `LUMEN_PERF_STRICT=1` strict-gates
+the write margins when peer services are present; per-mode numbers and tuning
+history live in `benchmarks-scale.md`.
 
-| Dimension | lumen | OpenSearch | lumen advantage |
-|---|---:|---:|---:|
-| Search latency (per cell, min) | 0.47–0.77 ms | 1.06–1.94 ms | **2.3–3.1× faster** |
-| Tail p99 (`text_bm25`) | **1.0 ms** | 18 ms | no GC vs JVM GC pauses |
-| Throughput (`filtered_search`, HTTP/1.1) | **62k req/s** | 17k req/s | **3.6×** |
-| Resident memory | **168 MB** | 1.4 GB | **8.4× smaller** |
+### Footprint & stability
 
-lumen beats an ES-class engine on latency, tail, throughput, and footprint at
-once — because it does far less (pure index, no documents, no JVM).
+- **Index ~28.8 bytes/doc at 1M** — 5–7× smaller on disk than Postgres /
+  OpenSearch; reported as a first-class disk-size metric alongside
+  `pg_total_relation_size` and OpenSearch `_stats/store`.
+- **RAM=hot/disk=all proven** (`tests/disk_scale_proof.rs`): a reopened
+  collection's resident growth is ~30–47% of full-in-RAM and **does not grow with
+  N** (forward payload demand-paged off the mmap).
+- **Resident ~168 MB vs OpenSearch ~1.4 GB** (~8× smaller); tail p99
+  `text_bm25` **1.0 ms** vs OpenSearch ~18 ms (no GC vs JVM pauses).
+- **Stability:** 2M sustained searches held RSS flat with zero failed/errored/
+  timed-out requests (Rust, no GC; mmap'd segments demand-paged by the kernel).
 
-**Stability:** 2M sustained searches held RSS flat at ~170 MB with zero failed /
-errored / timed-out requests (Rust, no GC; bounded `moka` + collection-LRU
-caches).
+Full row-count × qps scaling, footprint tables, and the vs-pg / vs-OS breakdowns
+live in **[`docs/benchmarks-scale.md`](docs/benchmarks-scale.md)** (reproduce with
+`./scripts/lumen_scale.sh`; rows above 1M are research-only).
 
 ## Data model
 
@@ -434,7 +585,7 @@ auto-inference.
 | `keyword` | Exact inverted index (whole value as one term)                                | `term`, `terms`            | Yes                 |
 | `number`  | Sorted inverted index (range-scannable)                                       | `term`, `range`            | Yes                 |
 | `set`     | Multi-keyword (one posting per element)                                       | `term` (matches any element) | Yes (per element) |
-| `vector`  | Dense `[f32; dim]` + ANN graph (HNSW CPU default; `gpu` feature → wgpu brute-force kNN) | `knn { vector, k }` with `cosine` / `dot` / `l2` metric | No |
+| `vector`  | Dense `[f32; dim]` + ANN graph (HNSW CPU default; exact flat CPU brute-force) | `knn { vector, k }` with `cosine` / `dot` / `l2` metric | No |
 
 Analyzers available for `text`: `jieba` (Chinese), `whitespace_lower`
 (English / generic), `ngram` (configurable min/max). A field is bound
@@ -661,4 +812,3 @@ cargo run -q -p lumen --bin lumen-openapi-dump > /tmp/lumen-openapi.json
 Pipe that into your codegen tool of choice. There is no in-tree
 snapshot — the live endpoint and the dump binary are the single source
 of truth.
-

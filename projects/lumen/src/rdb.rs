@@ -9,9 +9,9 @@
 //! retain history back to the oldest live RDB.
 //!
 //! An [`RdbStore`] is where snapshots live. v1 ships [`LocalFsRdbStore`]
-//! (a directory of `rdb-<seq>.json` + a `latest` pointer); S3/GCS
-//! adapters slot in behind the same trait (the bytes and layout are
-//! identical, only the put/get changes).
+//! (a directory of `rdb-<seq>.lrb` — bincode + lz4); S3/GCS adapters slot in
+//! behind the same trait (the bytes and layout are identical, only the
+//! put/get changes).
 
 use std::path::{Path, PathBuf};
 
@@ -46,12 +46,17 @@ impl RdbSnapshot {
         engine.restore(self.snapshot)
     }
 
+    /// Encode as CBOR + lz4 (compact binary). Vectors are raw IEEE-754, not
+    /// text float arrays — far smaller and faster to parse than JSON.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        Ok(serde_json::to_vec(self)?)
+        let mut raw = Vec::new();
+        ciborium::into_writer(self, &mut raw).map_err(|e| anyhow::anyhow!("cbor encode RDB: {e}"))?;
+        Ok(lz4_flex::compress_prepend_size(&raw))
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        Ok(serde_json::from_slice(bytes)?)
+        let raw = lz4_flex::decompress_size_prepended(bytes).context("lz4 decompress RDB")?;
+        ciborium::from_reader(&raw[..]).map_err(|e| anyhow::anyhow!("cbor decode RDB: {e}"))
     }
 }
 
@@ -69,8 +74,8 @@ pub trait RdbStore: Send + Sync {
     async fn prune(&self, keep: usize) -> Result<usize>;
 }
 
-/// Filesystem-backed RDB store: `<root>/rdb-<seq>.json`. The newest
-/// `rdb-*.json` (by sequence) is the latest — no separate pointer file
+/// Filesystem-backed RDB store: `<root>/rdb-<seq>.lrb`. The newest
+/// `rdb-*.lrb` (by sequence) is the latest — no separate pointer file
 /// needed, the sequence in the name is the total order.
 #[derive(Debug, Clone)]
 pub struct LocalFsRdbStore {
@@ -97,7 +102,7 @@ impl LocalFsRdbStore {
         let mut out = Vec::new();
         for entry in std::fs::read_dir(&self.root)? {
             let path = entry?.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("json") {
+            if path.extension().and_then(|e| e.to_str()) == Some("lrb") {
                 if let Some(seq) = Self::seq_of(&path) {
                     out.push((seq, path));
                 }
@@ -112,9 +117,9 @@ impl LocalFsRdbStore {
 impl RdbStore for LocalFsRdbStore {
     async fn save(&self, rdb: &RdbSnapshot) -> Result<()> {
         let bytes = rdb.encode()?;
-        let path = self.root.join(format!("rdb-{}.json", rdb.up_to_seq));
+        let path = self.root.join(format!("rdb-{}.lrb", rdb.up_to_seq));
         // Write to a temp file then rename for atomic visibility.
-        let tmp = self.root.join(format!(".rdb-{}.json.tmp", rdb.up_to_seq));
+        let tmp = self.root.join(format!(".rdb-{}.lrb.tmp", rdb.up_to_seq));
         let (tmp2, path2) = (tmp.clone(), path.clone());
         tokio::task::spawn_blocking(move || -> Result<()> {
             std::fs::write(&tmp2, &bytes).with_context(|| format!("write {}", tmp2.display()))?;

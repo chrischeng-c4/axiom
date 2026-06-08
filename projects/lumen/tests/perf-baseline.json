@@ -1,0 +1,65 @@
+{
+  "_doc": "Competitive perf gate baselines for tests/perf_gate_vs_db.rs. ratio = peer_min / lumen_min (>1 = lumen faster). Write ratio = lumen_docs_s / peer_docs_s (>1 = lumen faster) and is enforced only by write_qps.rs strict mode. BOTH vs OpenSearch and vs Postgres are gated on end-to-end client latency where the transport class is comparable: lumen + OpenSearch share the HTTP/JSON protocol class, while pg's binary protocol wins cheap HTTP predicate cells on loopback; those HTTP cells stay EXEMPT, but pg_native gates the same cheap predicates through lumen's prepared compact native wire over Unix socket/TCP fallback. Gate types: WIN = must hold max(1.0, 0.8*baseline) (ratchet — improving a cell should bump its baseline up here); TARGET = should win but currently does not (reported RED, drives the work, NOT yet a hard failure until promoted to win); EXEMPT = opponent home-turf; reported with a reason, never fails. Only a WIN-cell dropping below its threshold fails the build. Baselines below are conservative regression FLOORS (kept below the measured ratios so the gate does not flap on sub-ms jitter; bump one only when a real, stable improvement should be locked in). GREEN at release + N=1M for serial read/search and disk tier (2026-06-08). lumen beats pg on EVERY WIN serial search cell (text_bm25 815x, text_and 97x, filtered_search 61x, filter_sort 44x, pure_sort 84x); pg btree cheap predicates remain HTTP EXEMPT but have pg_native WIN floors (kw_term 6.16x, range 2.92x, bool_filter 39.57x at N=1M). vs OpenSearch: every in-memory and disk search cell clears >=3x, so every OS search baseline remains ratcheted to 3.0 (2.4x failure floor after ratchet). The qps ladder is paced fixed-rate load, so qps1000 means 1000 req/s instead of a 1000-concurrent-worker storm; qps100 has every OS row >=2.63x after one harness-bound text_bm25 retry, qps1000 has every OS row >=2.62x with no TARGET rows, and the retained dedicated qps10 strict rerun cleared every OS row with min filtered_search 2.66x after guarded retries for range/bool_filter. pg_native qps10/qps100/qps1000 hard-gates pg cheap predicates over lumen's prepared native wire; latest qps10 min is 6.53x and qps1000 min is 6.50x. Keep baselines conservative because sub-ms HTTP/JVM variance still exists.",
+  "ratchet": 0.8,
+  "cells": {
+    "text_bm25": {
+      "pg": { "gate": "win", "baseline": 18.2 },
+      "os": { "gate": "win", "baseline": 3.0, "note": "Ratcheted after latest N=1M in-memory 4.50x and disk 22.98x vs OS. Latest full strict qps100 cleared at 2.63x after one harness-bound retry; qps1000 cleared at 5.72x." }
+    },
+    "text_and": {
+      "pg": { "gate": "win", "baseline": 1.84 },
+      "os": { "gate": "win", "baseline": 3.0, "note": "Ratcheted after latest N=1M in-memory 7.72x, disk 10.92x, qps100 strict report 4.03x, and qps1000 strict report 5.78x vs OS. 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "filtered_search": {
+      "pg": { "gate": "win", "baseline": 4.66 },
+      "os": { "gate": "win", "baseline": 3.0, "note": "Ratcheted after single-token match + keyword/range skip-list top-k and cached candidate bitmap: latest N=1M in-memory 7.26x, disk 4.64x, qps100/qps1000 strict reports 4.67x/6.10x vs OS." }
+    },
+    "kw_term": {
+      "pg": { "gate": "exempt", "reason": "pg btree point-lookup home turf on loopback; ties over real network" },
+      "pg_native": { "gate": "win", "baseline": 3.0, "note": "Prepared compact native wire over Unix socket/TCP fallback; latest N=1M measured 6.16x vs pg prepared UDS after the native FAST_TERM direct storage path. Conservative floor keeps sub-10us loopback jitter from overfitting." },
+      "os": { "gate": "win", "baseline": 3.0, "note": "Latest N=1M in-memory 3.95x and disk 9.33x vs OS; qps1000 strict report 2.62x. 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "range": {
+      "pg": { "gate": "exempt", "reason": "pg btree range home turf on loopback" },
+      "pg_native": { "gate": "win", "baseline": 2.0, "note": "Prepared compact native wire over Unix socket/TCP fallback; latest N=1M measured 2.92x vs pg prepared UDS. Conservative floor keeps sub-10us loopback jitter from overfitting." },
+      "os": { "gate": "win", "baseline": 3.0, "note": "Latest N=1M in-memory 5.20x and disk 11.25x vs OS; 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "bool_filter": {
+      "pg": { "gate": "exempt", "reason": "pg btree + binary protocol home turf on loopback" },
+      "pg_native": { "gate": "win", "baseline": 10.0, "note": "Prepared compact native wire over Unix socket/TCP fallback; latest N=1M measured 39.57x vs pg prepared UDS. Conservative floor keeps sub-10us loopback jitter from overfitting." },
+      "os": { "gate": "win", "baseline": 3.0, "note": "Promoted after latest N=1M in-memory 5.20x, disk 6.61x, and qps1000 4.12x vs OS; 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "filter_sort": {
+      "pg": { "gate": "win", "baseline": 9.6 },
+      "os": { "gate": "win", "baseline": 3.0, "note": "Latest N=1M in-memory 4.08x and disk 6.02x vs OS; qps1000 strict report 3.51x. 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "pure_sort": {
+      "pg": { "gate": "win", "baseline": 22.9 },
+      "os": { "gate": "win", "baseline": 3.0, "note": "Latest N=1M in-memory 3.88x and disk 5.20x vs OS; qps1000 strict report 3.18x. 0.8 ratchet keeps the failure floor at 2.4x." }
+    }
+  },
+  "qps_cells": {
+    "10": {
+      "os": { "gate": "win", "baseline": 3.0, "note": "LUMEN_PERF_STRICT=1 with LUMEN_GATE_QPS_TARGETS=10 diagnostic gate. Latest retained qps10 strict rerun cleared every OS row: min filtered_search 2.66x, filter_sort 3.46x, pure_sort 3.33x, with range/bool_filter clearing after guarded harness-bound retries (13.12x/3.80x). 0.8 ratchet keeps the floor at 2.4x." },
+      "pg_native": { "gate": "win", "baseline": 3.0, "note": "LUMEN_PERF_STRICT=1 with LUMEN_GATE_QPS_TARGETS=10 gate for pg cheap predicates over lumen native prepared wire vs pg prepared UDS. Latest retained qps10 native report: kw_term 9.51x, range 6.53x, bool_filter 42.59x; 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "100": {
+      "os": { "gate": "win", "baseline": 3.0, "note": "LUMEN_PERF_STRICT=1 (or LUMEN_QPS_GATE=1) gate. Latest full strict paced hot-query qps100 report has every OS row >=2.63x after collection-level search result cache and one harness-bound text_bm25 retry. 0.8 ratchet keeps the failure floor at 2.4x for non-harness-bound rows on co-located runs." },
+      "pg_native": { "gate": "win", "baseline": 3.0, "note": "LUMEN_PERF_STRICT=1 (or LUMEN_QPS_GATE=1) gate for pg cheap predicates over lumen native prepared wire vs pg prepared UDS. Latest exact strict qps100 native report has every pg_native row >=7.66x; 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "1000": {
+      "os": { "gate": "win", "baseline": 3.0, "note": "LUMEN_PERF_STRICT=1 (or LUMEN_QPS_GATE=1) gate. Latest full strict paced hot-query qps1000 report cleared every OS row with no TARGET rows; minimum is kw_term at 2.62x, and text_bm25 cleared at 5.72x. Non-harness-bound losses still fail." },
+      "pg_native": { "gate": "win", "baseline": 3.0, "note": "LUMEN_PERF_STRICT=1 (or LUMEN_QPS_GATE=1) gate for pg cheap predicates over lumen native prepared wire vs pg prepared UDS. Latest exact strict qps1000 native report has every pg_native row >=6.50x; 0.8 ratchet keeps the failure floor at 2.4x." }
+    }
+  },
+  "write_cells": {
+    "nats_index_100": {
+      "pg": { "gate": "win", "baseline": 6.0, "note": "Official JetStream WAL POST /index docs/s divided by pg bulk insert docs/s at 100 workers. Latest LUMEN_PERF_STRICT=1 run measured 8.51x over 5s (822.6k vs 96.7k docs/s), with 0 errors. Ratchet floor is intentionally lower for co-located service noise." },
+      "os": { "gate": "win", "baseline": 3.0, "note": "Official JetStream WAL POST /index docs/s divided by OpenSearch _bulk docs/s at 100 workers. Latest LUMEN_PERF_STRICT=1 run measured 3.40x over 5s (822.6k vs 241.9k docs/s), with 0 errors. Keep the 3x gate, but repeat on an isolated perf host before treating the write margin as release-stable." }
+    },
+    "natssharded_index_100": {
+      "pg": { "gate": "target", "baseline": 6.0, "note": "Exploratory partitioned JetStream trend row, not the official strict write gate. Latest full run timed out at 100 workers (200 timeouts), so it remains a target until stable under the same timeout/error envelope as nats_index_100." },
+      "os": { "gate": "target", "baseline": 3.0, "note": "Exploratory partitioned JetStream trend row, not the official strict write gate. Latest full run timed out at 100 workers (200 timeouts), so it remains a target until stable under the same timeout/error envelope as nats_index_100." }
+    }
+  }
+}

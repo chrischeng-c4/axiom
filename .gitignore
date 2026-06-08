@@ -104,3 +104,7 @@ test-results/
 
 # mamba conformance perf-baseline cache (derived; regenerates from fixtures)
 projects/mamba/tests/cpython/.cache/
+
+# cargo-mutants output
+mutants.out
+mutants.out.old

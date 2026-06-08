@@ -87,12 +87,17 @@ pub enum VectorMetric {
 }
 
 /// Index backend for `FieldType::Vector`. Wire forms are
-/// `hnsw-cpu` / `wgpu-brute-force` (kebab-case).
+/// `hnsw-cpu` / `flat-cpu` (kebab-case).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum VectorBackend {
+    /// Approximate HNSW graph (CPU). Sub-linear, recall < 1.
     HnswCpu,
-    WgpuBruteForce,
+    /// Exact CPU brute-force: no index/build, parallel + vectorized full scan.
+    /// 100% recall; for moderate N it beats both an approximate index's build
+    /// cost and a single-threaded exact scan, and is the default CPU choice when
+    /// exactness matters.
+    FlatCpu,
 }
 
 impl Default for VectorBackend {

@@ -185,7 +185,7 @@ async fn two_nodes_fan_out_from_one_published_stream() {
     ];
     for e in &entries {
         producer
-            .publish(&WalRecord::new(e.clone()))
+            .publish(WalRecord::new(e.clone()))
             .await
             .expect("publish");
     }
@@ -215,14 +215,14 @@ async fn late_node_replays_backlog_then_sees_live() {
 
     // Publish a backlog BEFORE the node subscribes.
     producer
-        .publish(&WalRecord::new(RaftLogEntry::CreateCollection {
+        .publish(WalRecord::new(RaftLogEntry::CreateCollection {
             collection_id: "users".into(),
             req: users_schema(),
         }))
         .await
         .unwrap();
     producer
-        .publish(&WalRecord::new(index_one(
+        .publish(WalRecord::new(index_one(
             "users",
             "old",
             "email",
@@ -240,7 +240,7 @@ async fn late_node_replays_backlog_then_sees_live() {
 
     // Then a live append must reach it too.
     producer
-        .publish(&WalRecord::new(index_one(
+        .publish(WalRecord::new(index_one(
             "users",
             "new",
             "email",

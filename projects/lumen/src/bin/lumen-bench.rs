@@ -443,6 +443,11 @@ const TYPES: &[SearchType] = &[
         needs_vec: false,
     },
     SearchType {
+        name: "bool_filter",
+        class: Class::BoundedRange,
+        needs_vec: false,
+    },
+    SearchType {
         name: "match_single",
         class: Class::Bm25Single,
         needs_vec: false,
@@ -454,6 +459,11 @@ const TYPES: &[SearchType] = &[
     },
     SearchType {
         name: "match_or",
+        class: Class::Bm25Bool,
+        needs_vec: false,
+    },
+    SearchType {
+        name: "filtered_search",
         class: Class::Bm25Bool,
         needs_vec: false,
     },
@@ -473,6 +483,24 @@ const TYPES: &[SearchType] = &[
         needs_vec: false,
     },
 ];
+
+fn wide_terms(q: usize, cardinality: usize) -> Vec<FieldValue> {
+    let c = cardinality.max(1);
+    let width = (c / 50).clamp(1, 1024);
+    (0..width)
+        .map(|k| FieldValue::String(format!("kw{}", (q + k) % c)))
+        .collect()
+}
+
+fn wide_terms_set(q: usize, cardinality: usize) -> HashSet<String> {
+    wide_terms(q, cardinality)
+        .into_iter()
+        .filter_map(|v| match v {
+            FieldValue::String(s) => Some(s),
+            _ => None,
+        })
+        .collect()
+}
 
 /// Build the q-th query of a given type. Varying `q` avoids measuring a single
 /// hot value, while keeping the selectivity class fixed.
@@ -498,6 +526,19 @@ fn make_query(ty: &str, q: usize, corpus: &Corpus) -> SearchRequest {
             lt: Some(range_hi),
             lte: None,
         }),
+        "bool_filter" => QueryNode::And(vec![
+            QueryNode::Terms(TermsQuery {
+                field: "tier".into(),
+                values: wide_terms(q, c),
+            }),
+            QueryNode::Range(RangeQuery {
+                field: "score".into(),
+                gt: None,
+                gte: Some(0.30),
+                lt: Some(0.46),
+                lte: None,
+            }),
+        ]),
         "match_single" => QueryNode::Match(MatchQuery {
             field: "bio".into(),
             text: "rust".into(),
@@ -513,6 +554,24 @@ fn make_query(ty: &str, q: usize, corpus: &Corpus) -> SearchRequest {
             text: "rust engineer".into(),
             op: MatchOp::Or,
         }),
+        "filtered_search" => QueryNode::And(vec![
+            QueryNode::Match(MatchQuery {
+                field: "bio".into(),
+                text: "backend".into(),
+                op: MatchOp::And,
+            }),
+            QueryNode::Terms(TermsQuery {
+                field: "tier".into(),
+                values: wide_terms(q, c),
+            }),
+            QueryNode::Range(RangeQuery {
+                field: "score".into(),
+                gt: None,
+                gte: Some(0.30),
+                lt: Some(0.46),
+                lte: None,
+            }),
+        ]),
         "not" => QueryNode::And(vec![
             QueryNode::Match(MatchQuery {
                 field: "bio".into(),
@@ -575,6 +634,23 @@ fn verify(ty: &str, q: usize, corpus: &Corpus) -> Result<(f64, f64)> {
             let truth = (0..n).filter(|&i| doc_number(i) < hi).count();
             resp.total as usize == truth
         }
+        "bool_filter" => {
+            let want = wide_terms_set(q, c);
+            let truth = (0..n)
+                .filter(|&i| {
+                    want.contains(&doc_keyword(i, c))
+                        && doc_number(i) >= 0.30
+                        && doc_number(i) < 0.46
+                })
+                .count();
+            resp.total as usize == truth
+                && resp.hits.iter().all(|h| {
+                    let i = eid(&h.external_id);
+                    want.contains(&doc_keyword(i, c))
+                        && doc_number(i) >= 0.30
+                        && doc_number(i) < 0.46
+                })
+        }
         "knn" => {
             // Distance-based recall@k vs exact brute-force kNN. Returned early
             // as a fraction (the caller averages over the sample).
@@ -608,6 +684,30 @@ fn verify(ty: &str, q: usize, corpus: &Corpus) -> Result<(f64, f64)> {
                 .iter()
                 .all(|h| doc_tokens(eid(&h.external_id), n).contains(&"rust"));
             descending && members
+        }
+        "filtered_search" => {
+            let want = wide_terms_set(q, c);
+            let truth = (0..n)
+                .filter(|&i| {
+                    doc_tokens(i, n).contains(&"backend")
+                        && want.contains(&doc_keyword(i, c))
+                        && doc_number(i) >= 0.30
+                        && doc_number(i) < 0.46
+                })
+                .count();
+            let descending = resp
+                .hits
+                .windows(2)
+                .all(|w| w[0].score >= w[1].score - 1e-6);
+            resp.total as usize == truth
+                && descending
+                && resp.hits.iter().all(|h| {
+                    let i = eid(&h.external_id);
+                    doc_tokens(i, n).contains(&"backend")
+                        && want.contains(&doc_keyword(i, c))
+                        && doc_number(i) >= 0.30
+                        && doc_number(i) < 0.46
+                })
         }
         "duplicates" => true, // graded separately below
         _ => false,
@@ -658,9 +758,8 @@ fn run_cell(
     queries: usize,
 ) -> Result<Cell> {
     // Correctness on a small sample first (cheap O(N) brute-force each).
-    let mut correct = true;
     let mut selectivity = 0.0;
-    if ty.name == "duplicates" {
+    let correct = if ty.name == "duplicates" {
         let resp = corpus
             .engine
             .duplicates(
@@ -673,7 +772,7 @@ fn run_cell(
                 },
             )
             .context("duplicates")?;
-        correct = resp.groups.iter().all(|g| g.external_ids.len() >= 2);
+        resp.groups.iter().all(|g| g.external_ids.len() >= 2)
     } else {
         // knn is approximate → grade on MEAN recall over a larger sample;
         // exact types must score 1.0 on every sampled query.
@@ -689,12 +788,12 @@ fn run_cell(
             selectivity = sel;
         }
         let mean = score_sum / sample as f64;
-        correct = if ty.name == "knn" {
+        if ty.name == "knn" {
             mean >= 0.95
         } else {
             mean >= 0.999
-        };
-    }
+        }
+    };
 
     // Latency: each pass times `iters` calls; we keep the LEAST-CONTENDED pass
     // (lowest p99) — a min-of-N estimate that rejects transient OS/CPU spikes
@@ -705,9 +804,9 @@ fn run_cell(
     let passes = if is_group { 1 } else { 3 };
     let one_pass = || -> Result<Vec<u128>> {
         let mut samples = Vec::with_capacity(iters);
-        for q in 0..iters {
-            let t0 = Instant::now();
-            if ty.name == "duplicates" {
+        if ty.name == "duplicates" {
+            for _ in 0..iters {
+                let t0 = Instant::now();
                 let _ = corpus.engine.duplicates(
                     COLL,
                     DuplicatesRequest {
@@ -717,10 +816,16 @@ fn run_cell(
                         offset: 0,
                     },
                 )?;
-            } else {
-                let _ = corpus.engine.search(COLL, make_query(ty.name, q, corpus))?;
+                samples.push(t0.elapsed().as_nanos());
             }
-            samples.push(t0.elapsed().as_nanos());
+        } else {
+            let requests: Vec<SearchRequest> =
+                (0..iters).map(|q| make_query(ty.name, q, corpus)).collect();
+            for req in requests {
+                let t0 = Instant::now();
+                let _ = corpus.engine.search(COLL, req)?;
+                samples.push(t0.elapsed().as_nanos());
+            }
         }
         samples.sort_unstable();
         Ok(samples)
