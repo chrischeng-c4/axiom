@@ -1,0 +1,13 @@
+- spec_id: frontend-codegen-main
+  action: create
+  main_spec_ref: cclab-sdd/generate/frontend-codegen.md
+  sections:
+  - overview
+  - schema
+  - logic
+  - interaction
+  - component
+  - wireframe
+  - design-token
+  - template
+  - test-plan

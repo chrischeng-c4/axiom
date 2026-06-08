@@ -1,0 +1,44 @@
+{
+  "group_id": "jet-install-enhancements",
+  "verdict": "REVIEWED",
+  "summary": "Findings: `jet-pkg-perf-spec` and `jet-pnpm-parity-spec` are the right high-level package-manager specs, and `jet-pnpm-parity-spec` directly covers host-platform optional dependency filtering. However, the reference context still misses multiple scoped areas. Pre-clarifications require migration to `~/.cache/jet` with `XDG_CACHE_HOME` support and inline warning behavior while continuing hoisted resolution, but the cited specs describe `~/.jet-store`, `.jet-cache`, lifecycle-hook warnings, and hoisting generally rather than those clarified behaviors. `requirements.md` also adds persistent disk metadata cache, HTTP/2 multiplexing/speculative prefetch, and a dependency-hash skip marker, while the cited specs only describe in-memory `DashMap` caching and `depsHash` for frozen-lockfile drift. The table also leaves `Key Requirements` blank for both specs, so the claimed coverage is not traceable to actual requirement anchors. Based on those findings, the artifact needs revision before approval.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Host-platform optional dependency filtering is covered by `jet-pnpm-parity-spec`, but no cited spec covers the `~/.cache/jet` / `XDG_CACHE_HOME` migration or the clarified inline-warning-while-continuing-hoisted-resolution behavior. `requirements.md` also adds uncovered persistent disk metadata cache, HTTP/2/speculative prefetch, and dependency-hash skip-marker work."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": true,
+      "note": "Both cited specs are directly in the `cclab-jet` install/resolver area, so `high` is reasonable even though they do not cover every clarified requirement."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "`reference_context.md` lists `—` for both entries, so there are no actual requirement IDs or named requirement anchors to verify against the spec files. The artifact should cite concrete requirements or section names instead of leaving the column blank."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "Both entries are relevant package-manager specs. The problem is missing coverage and missing requirement traceability, not irrelevant inclusions."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "The reference context does not cover two explicit pre-clarified areas for this group: migration to `~/.cache/jet` with `XDG_CACHE_HOME` support and inline warning behavior that continues with hoisted resolution. `jet-pkg-perf-spec` still documents `~/.jet-store` and a `.talos-cache` to `.jet-cache` rename, while `jet-pnpm-parity-spec` covers hoisting generally but not the clarified warning/continue semantics.",
+      "recommendation": "Add or cite specs that explicitly define the XDG cache-directory migration and the warning/hoisted-resolution behavior before approving this reference context."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Several install-enhancement requirements in `requirements.md` are not backed by the cited specs: persistent disk metadata cache, HTTP/2 multiplexing, speculative transitive prefetch, and a smart dependency-hash skip marker. The current references only show in-memory `DashMap` caching and `depsHash` for frozen-lockfile drift detection.",
+      "recommendation": "Revise the reference context to include specs that directly cover these install-performance behaviors, or create/update the relevant `cclab-jet` specs first."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "The `Key Requirements` column is blank for both cited specs, so the artifact provides no traceable mapping from the group scope to actual requirement anchors in the referenced spec files.",
+      "recommendation": "Replace `—` with concrete requirement IDs where available, or with specific named requirement/section anchors when the spec does not use `R*` identifiers."
+    }
+  ]
+}

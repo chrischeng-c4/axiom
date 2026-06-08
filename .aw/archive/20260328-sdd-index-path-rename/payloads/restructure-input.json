@@ -1,0 +1,12 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-index-path-rename",
+  "groups": [
+    {
+      "id": "index-path-and-cli-hints",
+      "issues": [],
+      "requirements": "1. Rename `.cclab/lens/` to `cclab/.index/` across the codebase:\n   - Update `storage.rs` path constants (lens_dir, daemon_pid_path, daemon_sock_path, cache_dir)\n   - Update `daemon.rs` references in both cclab-sdd-cli and cclab-sdd/src/server/\n   - Update `.gitignore` (replace `.cclab/lens/` with `cclab/.index/`)\n   - Remove old `.cclab/lens/` directory from disk\n2. Add code intelligence CLI hints to the implementation prompt in `create_change_impl.rs`:\n   - In `build_implement_code_prompt()`, add a section listing available CLI commands (symbols, hover, references, impact, context)\n   - Only add hints when executor is mainthread (Claude has bash access)",
+      "questions": []
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "group_id": "new-section-types",
+  "specs": [
+    {
+      "spec_id": "change-spec",
+      "spec_group": "section-types",
+      "relevance": "high",
+      "key_requirements": [
+        "Section Type \u2192 Spec Lang Mapping table: add 16 new types (e2e-scenario, test-fixture, perf-test, threat-model, auth-matrix, security-test, container, deploy, cloud-resource, pipeline, observability, grpc, graphql, model, prompt) with lang and code fence",
+        "section_rules: add keyword patterns for grpc, graphql, e2e-scenario, threat-model, auth-matrix, security-test, container, deploy, cloud-resource, pipeline, observability, model, prompt, test-fixture, perf-test",
+        "fill_order: assign priority positions \u2014 e2e-scenario after test-plan (p1), security types p2, all SRE/BE/MLE/Agent types p3",
+        "section_prompts: add CLI flag descriptions and guidance for all 16 new types",
+        "Cross-reference: new types use existing _sdd.id / _sdd.refs conventions (YAML DSL types) or language-specific id/ref (json for grpc/graphql, markdown for prompt)"
+      ]
+    },
+    {
+      "spec_id": "reference-context",
+      "spec_group": "section-types",
+      "relevance": "high",
+      "key_requirements": [
+        "spec_plan.sections enum in artifact schema: extend allowed values with all 16 new section type names",
+        "Section rule engine keyword-to-type matching updated to recognize new types"
+      ]
+    },
+    {
+      "spec_id": "codegen-system",
+      "spec_group": "generate",
+      "relevance": "medium",
+      "key_requirements": [
+        "SpecIR enum needs new variants for grpc, graphql, prompt, model, e2e-scenario, threat-model, auth-matrix, security-test, container, deploy, cloud-resource, pipeline, observability, test-fixture, perf-test",
+        "Router data flow: route new section types through SpecIR parser path (JSON Schema envelope for grpc/graphql, markdown for prompt)"
+      ]
+    },
+    {
+      "spec_id": "spec-ir-contract",
+      "spec_group": "generate",
+      "relevance": "medium",
+      "key_requirements": [
+        "SpecIR enum type: new variants for the new section types follow the same pattern as existing Deploy, Wireframe, Component, DesignToken",
+        "SpecBundle multi-spec context supports new types for generators"
+      ]
+    },
+    {
+      "spec_id": "artifact-tools",
+      "spec_group": "interfaces",
+      "relevance": "medium",
+      "key_requirements": [
+        "sdd_artifact_create_change_spec payload schema sections enum must include all new type names for validation to pass"
+      ]
+    },
+    {
+      "spec_id": "spec-ir-schema",
+      "spec_group": "generate",
+      "relevance": "medium",
+      "key_requirements": [
+        "SpecIR YAML manifest kind enum: grpc, graphql, model, prompt may need new Kind values"
+      ]
+    },
+    {
+      "spec_id": "spec-model",
+      "spec_group": "generate",
+      "relevance": "low",
+      "key_requirements": [
+        "Background on spec type semantics \u2014 justifies why new types are distinct rather than overloading existing types (e.g. grpc is not rest-api, prompt is not logic)"
+      ]
+    },
+    {
+      "spec_id": "code-generator-contract",
+      "spec_group": "generate",
+      "relevance": "low",
+      "key_requirements": [
+        "Generator output patterns \u2014 establishes how new section types will eventually map to generated output files (.proto, .graphql SDL, Dockerfile, etc.)"
+      ]
+    },
+    {
+      "spec_id": "generator-react",
+      "spec_group": "generate",
+      "relevance": "low",
+      "key_requirements": [
+        "SpecIRGenerator trait pattern \u2014 reference for how new section types will plug into generator routing (can_generate + generate_from_ir)"
+      ]
+    },
+    {
+      "spec_id": "cli-commands",
+      "spec_group": "interfaces",
+      "relevance": "low",
+      "key_requirements": [
+        "cclab sdd artifact command routing \u2014 context for how per-section-type CLI flags (section_prompts) are structured and invoked"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "change-spec-types",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/change-spec.md",
+      "source": "crates/cclab-sdd/logic/change-spec.md",
+      "sections": [
+        "overview",
+        "changes"
+      ]
+    },
+    {
+      "spec_id": "reference-context-types",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/reference-context.md",
+      "source": "crates/cclab-sdd/logic/reference-context.md",
+      "sections": [
+        "overview",
+        "changes"
+      ]
+    }
+  ]
+}

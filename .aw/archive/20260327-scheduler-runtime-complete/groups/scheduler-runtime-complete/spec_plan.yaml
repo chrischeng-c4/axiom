@@ -1,0 +1,29 @@
+- spec_id: push-receiver
+  action: create
+  main_spec_ref: crates/cclab-fetch/scheduler/push-receiver.md
+  sections:
+  - overview
+  - schema
+  - rest-api
+  - changes
+- spec_id: k8s-cronjob-backend
+  action: create
+  main_spec_ref: crates/cclab-fetch/scheduler/k8s-cronjob-backend.md
+  sections:
+  - overview
+  - schema
+  - changes
+- spec_id: schedule-monitor
+  action: create
+  main_spec_ref: crates/cclab-fetch/scheduler/schedule-monitor.md
+  sections:
+  - overview
+  - schema
+  - changes
+- spec_id: scheduler-mode-selection
+  action: create
+  main_spec_ref: crates/cclab-fetch/scheduler/scheduler-mode-selection.md
+  sections:
+  - overview
+  - schema
+  - changes

@@ -1,0 +1,55 @@
+{
+  "change_id": "mamba-test-coverage-remaining",
+  "group_id": "mamba-test-coverage-remaining",
+  "verdict": "REVISE",
+  "summary": "The reference_context.md artifact is completely blank — all 38 rows contain '?' for every field (Spec, Group, Relevance, Key Requirements). The CLI materialization failed entirely. The underlying create-reference-context.json payload is well-structured (37 specs, 12 sections, reasonable relevance scoring), but has two coverage gaps: stdlib/testing.md (for unittest_mod.rs at 31%) and array_mod.rs (no dedicated spec). Key requirements column is empty throughout — no requirement IDs are mapped to any spec entry.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Artifact is blank so zero areas are covered. Even the payload has gaps: (1) stdlib/testing.md is not listed despite unittest_mod.rs being a Batch A target at 31% coverage — the spec directly covers this file (files: runtime/stdlib/unittest_mod.rs); (2) array_mod.rs (35%) has no dedicated spec entry — stdlib/collections.md covers collections_mod.rs not array_mod.rs; (3) errno_mod.rs (37%) and platform_mod.rs (25%) are covered only indirectly via stdlib/os.md — acceptable but should be noted. All other 19 target files have at least one corresponding spec in the payload."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "Cannot evaluate artifact (all '?'). The payload's relevance scores are mostly reasonable: per-module specs correctly at 'high', README.md correctly at 'low', testing/test-harness.md and testing/stdlib-coverage-lower.md correctly at 'medium'. However, all-mamba-p0.md and conductor-mamba-p0-*.md at 'medium' is generous — these are project roadmap specs providing background context, better suited as 'low'. Not a blocking issue."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "No requirement IDs are present anywhere — artifact has '—' for all entries, and the payload's spec entries lack key_requirements fields entirely. For a test coverage change, requirement IDs are essential: each target file's uncovered branches need to trace back to the spec requirements they implement (e.g., ffi/c-parser-and-types.md R3 CType Enum, R4 Type Mapping, R5 Size and Alignment for ffi/c_types.rs; stdlib/argparse.md R1-R8 for argparse_mod.rs)."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "All 37 specs in the payload are relevant to the scope. The broadest entries (all-mamba-p0.md, conductor specs, mamba-crate-wiring) provide useful context for understanding which features must be tested. pattern-matching.md is relevant since parser/expr_compound.rs (Batch C, 78%) handles match/case compound expressions. No truly irrelevant specs detected."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "Artifact materialization failure: reference_context.md has 38 rows where every field is '?'. Zero specs, groups, relevance scores, or key requirements were rendered. The artifact provides no value for the change-spec phase.",
+      "recommendation": "Re-run the artifact materialization step. Investigate whether the 'read_path:' prefix in spec paths caused the rendering failure. The payload's spec_plan is sound — the problem is in the artifact generation, not the spec selection."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Missing key requirements mapping: No requirement IDs are mapped to any spec entry. For a test coverage change targeting 23 specific files with per-branch granularity, the reference context must link each target file to its spec's requirement IDs so change-specs can enumerate exactly which requirements have uncovered branches.",
+      "recommendation": "Add key_requirements to each spec entry in the payload. Examples: ffi/c-parser-and-types.md → R3 (CType Enum), R4 (Type Mapping), R5 (Size/Alignment); stdlib/argparse.md → R1-R8; stdlib/network.md → R1-R4 (socket lifecycle); stdlib/concurrency.md → R1-R5 (thread lifecycle, locks, barriers)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Missing stdlib/testing.md: unittest_mod.rs is a Batch A target at 31% coverage. The spec stdlib/testing.md directly maps to this file (files: runtime/stdlib/unittest_mod.rs) and defines requirements R1-R5 covering TestCase, assertions, discovery, and reporting — all needed to write branch-coverage tests.",
+      "recommendation": "Add stdlib/testing.md as a high-relevance spec in the stdlib-coverage section."
+    },
+    {
+      "severity": "LOW",
+      "description": "No dedicated spec for array_mod.rs (Batch A, 35%). stdlib/collections.md covers collections_mod.rs (different module). Python's array module (typed numeric arrays) may not have a spec yet.",
+      "recommendation": "Check if a spec exists for array_mod.rs. If not, note it as a gap — the change-spec phase will need to work from source code directly for this file. Consider adding stdlib/numeric.md or stdlib/struct-and-binary.md as indirect references (array uses typed buffers similar to struct)."
+    },
+    {
+      "severity": "LOW",
+      "description": "Relevance inflation for context specs: all-mamba-p0.md, conductor-mamba-p0-spec.md, conductor-mamba-p0-remaining-spec.md are project roadmap documents at 'medium' relevance. They provide background on which features exist but don't define the per-function behavior needed for branch-coverage tests.",
+      "recommendation": "Downgrade to 'low' relevance. Reserve 'medium' for specs that define test infrastructure patterns (test-harness.md, stdlib-coverage-lower.md) and 'high' for specs that define target file behavior."
+    }
+  ]
+}

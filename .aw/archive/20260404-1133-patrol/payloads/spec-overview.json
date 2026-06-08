@@ -1,0 +1,10 @@
+{
+  "project_path": "/Users/chrischeng/projects/wt/mamba",
+  "change_id": "1133-patrol",
+  "spec_id": "name-builtin-init",
+  "group_id": "fix-name-builtin",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-mamba/lower/hir-to-mir.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "content": "<!-- type: overview lang: markdown -->\n\nFix `__name__` module-level dunder variable initialization in the HIR-to-MIR `lower_top_level()` pass. Currently, `__name__` resolves to `0.0` (uninitialized VReg → NaN-boxed zero) instead of `\"__main__\"` because no `StoreGlobal` is emitted for module-scope dunder variables before user code runs.\n\nThe fix adds a `StoreGlobal(__name__, \"__main__\")` emission at the start of `lower_top_level()`, after the existing `mb_register_builtins` call, so the standard `if __name__ == \"__main__\"` entry-point pattern works correctly. The REPL variant `lower_top_level_repl()` requires the same initialization.\n\nRoot cause: `types/builtins.rs` declares `__name__` as a `str`-typed symbol, but the lowering pass never emits an initialization instruction. When user code references `__name__`, it falls through to the `VariableClass::Local` path which allocates an uninitialized VReg (bit pattern 0 → f64 `0.0` under NaN-boxing)."
+}

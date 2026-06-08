@@ -1,0 +1,9 @@
+{
+  "spec_id": "mcp-refs-cleanup",
+  "group_id": "mcp-cleanup",
+  "section": "overview",
+  "content": "Bulk refactor of ~28 spec files under `cclab/specs/crates/cclab-sdd/`. SDD has fully migrated from MCP server to CLI execution, but specs still contain stale MCP references — wrong `files:` frontmatter paths (`mcp/tools/*.rs`), outdated terminology (\"MCP tool\", \"MCP server\"), dead `mcp__cclab-mcp__*` disallowedTools patterns, and one potentially obsolete spec (`generate/template-mcp-configs.md`).\n\nThis change updates all references to reflect the current architecture: tools live at `tools/*.rs` and `services/*.rs`, execution is via `cclab sdd` CLI commands, and `sdd-cli.md` R5 no longer references MCP parity.\n\nNo code changes. Spec-only refactor.",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/interfaces/cli/sdd-cli.md",
+  "merge_strategy": "extend"
+}

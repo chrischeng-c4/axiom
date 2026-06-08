@@ -1,0 +1,57 @@
+version = 1
+project = "cap"
+td_path = "projects/cap/tech-design"
+generated_at = "2026-06-07T08:09:54.708056+00:00"
+digest = "sha256:cf29a38b02439457c64a41e68cc0d0eb765666cc549ed6af9fa09472537fe2ba"
+
+[[files]]
+path = "logic/external-contracts.md"
+digest = "sha256:599dd2dbb9e3aca539a57ab7d4dfe8023ae2b8febc57a0b0485d163703498075"
+
+[[files]]
+path = "semantic/cap-src.md"
+digest = "sha256:c7dcb6457c1a37e7d6d4f3895a4926e09a440222ae33dec98ecee993b40f165d"
+
+[[files]]
+path = "semantic/source/cli.md"
+digest = "sha256:f8c26a18c5195720a9be813fab00debc63fed15a862e0203ba7b3f7784919d3b"
+
+[[files]]
+path = "semantic/source/config.md"
+digest = "sha256:ebc0d839785f50d6dbace6b0b7b7d58612aa9c07d2139b7c3a998cae1c36bc1a"
+
+[[files]]
+path = "semantic/source/daemon.md"
+digest = "sha256:914513b0d0883461e92b01a6ec89ab8b7d345b07115646ab3208542cdc2162ec"
+
+[[files]]
+path = "semantic/source/eventlog.md"
+digest = "sha256:ff269c5ea5389d3f6fc93f85372588273aca50bb222d06453803c8a515072007"
+
+[[files]]
+path = "semantic/source/hook-install.md"
+digest = "sha256:326e558dc9cf5f65641d5ce601c1f7dc8f772e135da1409335f310309426180e"
+
+[[files]]
+path = "semantic/source/hook.md"
+digest = "sha256:33d1908aa95f27f24fe2abc71235acf9102781c3aed18f84923389937020728a"
+
+[[files]]
+path = "semantic/source/lib.md"
+digest = "sha256:e96493c9bfcf22a97a055a79a902405177f25cbd3dd7ba40fb3e1fa1c5a44d4d"
+
+[[files]]
+path = "semantic/source/main.md"
+digest = "sha256:33ed3aca977aa50360c77a962605eb249d0945779121cac25396d2e26c053639"
+
+[[files]]
+path = "semantic/source/reap.md"
+digest = "sha256:1ed5ff5d2c2687d4f4d7821330ffeb1e9628584cff7290d7f2a03b654ffb93df"
+
+[[files]]
+path = "semantic/source/sampler.md"
+digest = "sha256:98d3aa382d0fb80da594ff7f4c678515de5edb1734412431980e31dbe9af1fc6"
+
+[[files]]
+path = "semantic/source/throttle.md"
+digest = "sha256:1043f4373c90186c5c6f30208b3372f65820ab45e085a11f2e7b4cddc79b212b"

@@ -1,0 +1,1 @@
+{"group_id":"asgi-fix","specs":[{"spec_id":"cclab-api-app","spec_group":"python/cclab/api","relevance":"high","key_requirements":[]}],"spec_plan":[{"spec_id":"asgi-dispatch-spec","action":"create","main_spec_ref":"crates/cclab-api/logic/asgi-dispatch.md","sections":["overview","requirements","changes"]}]}

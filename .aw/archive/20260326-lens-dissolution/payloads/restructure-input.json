@@ -1,0 +1,27 @@
+{
+  "groups": [
+    {
+      "id": "lens-dissolution",
+      "title": "Dissolve lens/ into SDD top-level + wire cross-file types + agent context/output tools",
+      "issues": [1087, 944, 946, 949],
+      "requirements": "1. Dissolve lens/ sub-module: promote all lens sub-modules (lint/, semantic/, types/, refactoring/, search/, lsp/, gen/, graph/, syntax/, server/, spec/, schemas/, format/, core/) to cclab-sdd/src/ top-level. Resolve naming collisions (e.g. types/ → type_inference/). Migrate specs from cclab/specs/crates/cclab-lens/ to cclab/specs/crates/cclab-sdd/. Update all imports, remove pub mod lens, verify CLI still works.\n2. Wire cross-file type propagation: Connect DeepTypeInferencer::propagate_types() into the analysis pipeline after per-file inference. Run in topological order via ImportGraph. Cache propagated types in daemon FileAnalysis. Make lens_type_at/lens_hover return propagated types. Focus Python first.\n3. Agent context builder: New lens_context MCP tool + CLI (cclab sdd context <file:symbol> --depth N). Combines import graph forward traversal + call graph backward traversal + test file detection. Returns must_read (dependencies) + may_affect (reverse deps) + type_context (cross-boundary signatures). Configurable depth (default 2). Multi-language.\n4. Agent-optimized output: New --format agent output mode for lens check. Symbol-centric JSON with symbol map, import edges, issues, impact scope. Compact (no SARIF boilerplate). Available via lens_check MCP tool format parameter.",
+      "questions": [
+        {
+          "id": "q1",
+          "question": "Should #1087 (dissolve lens/) be done FIRST as the foundation (so #944/#946/#949 land in the new structure) or LAST (implement features in current structure, then restructure)?",
+          "why": "User already noted this ordering matters. Doing it first means features are built in final locations. Doing it last means less merge friction but a big rename at the end."
+        },
+        {
+          "id": "q2",
+          "question": "For #944 cross-file type propagation: should the propagation run eagerly (on every file change) or lazily (on query like lens_type_at)?",
+          "why": "Eager gives fast queries but slow indexing. Lazy gives fast indexing but first-query latency. Affects daemon cache design."
+        },
+        {
+          "id": "q3",
+          "question": "For #946 lens_context: after dissolution, the CLI path will be 'cclab sdd context' (not 'cclab lens context'). The MCP tool name — should it stay 'lens_context' for familiarity or become 'sdd_context'?",
+          "why": "Naming affects all downstream agent integrations."
+        }
+      ]
+    }
+  ]
+}

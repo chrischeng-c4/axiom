@@ -1,0 +1,159 @@
+{
+  "group_id": "mamba-codegen-runtime-fixes",
+  "specs": [
+    {
+      "spec_id": "hir-to-mir",
+      "spec_group": "lower",
+      "relevance": "high",
+      "key_requirements": [
+        "BUILTIN_MAP routes list->mb_list_from_iterable, tuple->mb_tuple_from_iterable, set->mb_set_from_iterable \u2014 zero-arg calls with 0 args must short-circuit to mb_list_new/mb_tuple_new/mb_set_new before dispatching to the iterable variant",
+        "R1: Comprehension lowering uses mb_list_new()/mb_set_new()/mb_dict_new() directly \u2014 the zero-param construction pattern exists and works",
+        "fix location: hir_to_mir.rs Call lowering for builtin names with empty args \u2014 add arity check before BUILTIN_MAP lookup"
+      ]
+    },
+    {
+      "spec_id": "cranelift",
+      "spec_group": "codegen",
+      "relevance": "high",
+      "key_requirements": [
+        "R5: Function Signature Generation \u2014 Signature built from MirExtern.params; zero-param externs produce a Signature with no AbiParams",
+        "R2: MIR Instruction Translation \u2014 emit_extern_call builds arg_vals from args slice; when args=[] the call instruction emits zero operands; mismatch with wrong sig causes verifier error",
+        "declare_extern iterates ext.params to push AbiParam \u2014 if wrong extern (mb_list_from_iterable with 1 param) is called with 0 args the IR is malformed",
+        "R3: Runtime Symbol Wiring \u2014 mb_list_new/mb_tuple_new/mb_set_new are declared with [], I64 and wired; calling them with zero args is valid once routing is fixed in lowering"
+      ]
+    },
+    {
+      "spec_id": "string-ops",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "mb_str_slice_full(s, start, stop, step): negative step branch calls clamp_rev_str(stop.as_int().unwrap_or(-1), len)",
+        "Bug root: clamp_rev_str(-1, 6) = -1+6 = 5 (normalises -1 as last char index), making e_idx=5 and s_idx=clamp_rev_str(5,6)=5, loop condition 5>5 is immediately false \u2014 empty result",
+        "Correct behaviour: absent stop with negative step means iterate down to index 0 inclusive \u2014 sentinel must bypass clamp_rev_str or use -1 as literal lower bound in loop condition",
+        "R1: slice methods must handle full Python slice semantics including step=-1 reversal (s[::-1] == reversed string)"
+      ]
+    },
+    {
+      "spec_id": "mamba-thread-safe-spec",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R5: thread_local! state in closure.rs (3 statics), generator.rs (5 statics), exception.rs (1), class.rs (3 statics), iter.rs (1) \u2014 when cargo test runs multiple conformance tests in parallel these thread-locals are shared/aliased across OS threads causing SIGBUS",
+        "R3: No-GIL \u2014 all allocations/ref-adjustments must not depend on thread-local GIL; conformance tests run in separate Rust threads via cargo test -j N",
+        "R7: Atomic Global Counters \u2014 ID allocation in generator.rs uses thread_local increments; must migrate to AtomicU64",
+        "gc.rs uses GC_TEST_LOCK: LazyLock<Mutex<()>> to serialise GC tests \u2014 similar serialisation pattern may be needed for conformance tests as short-term fix"
+      ]
+    },
+    {
+      "spec_id": "cranelift-jit",
+      "spec_group": "codegen",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: JIT Module Initialization \u2014 CraneliftJitBackend holds Option<JITModule>; JITModule contains an ISA object with internal mutable state; concurrent instantiation from multiple cargo test threads races",
+        "R4: Executable Memory Management \u2014 JIT finalise_module() marks pages executable via mprotect; concurrent calls from separate threads can alias the same memory region",
+        "R2: Symbol Table Population \u2014 register_symbols iterates RUNTIME_SYMBOLS static; if ISA builder has internal thread-local state concurrent init causes SIGBUS on aarch64 (bus error on misaligned executable page)",
+        "fix: either wrap JITModule init in a global Mutex, or ensure each test thread creates an isolated JITModule with no shared state"
+      ]
+    },
+    {
+      "spec_id": "builtins",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R6: Symbol Registration \u2014 mb_builtin_* registered in symbols.rs with correct MirExtern (param count + return type)",
+        "Constructor dispatch: list()/tuple()/set() with args route to mb_list_from_iterable etc; zero-arg case needs separate _new variant",
+        "R5: P1 builtins \u2014 all use extern C calling convention with explicit param counts"
+      ]
+    },
+    {
+      "spec_id": "list-ops",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R5: Construction \u2014 mb_list_new() creates empty list (0 params, I64 return); mb_list_from_values(values, count) creates from C array",
+        "mb_list_new registered as rt_sym!(\"mb_list_new\", ..., [], I64) \u2014 zero-param signature is correct; calling it via CallExtern with args=[] is valid"
+      ]
+    },
+    {
+      "spec_id": "symbols",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R2: MirExtern Declarations \u2014 mb_list_new: params=[], return=I64; mb_tuple_new: params=[], return=I64; mb_set_new: params=[], return=I64 \u2014 all zero-param constructors already registered correctly",
+        "R1: Symbol Name-to-Address Mapping \u2014 all mb_* registered; the constructors exist; the bug is in routing not in symbol registration",
+        "R4: Naming convention \u2014 mb_<category>_new pattern for zero-arg constructors"
+      ]
+    },
+    {
+      "spec_id": "gc",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "GC state already uses LazyLock<Mutex<GcState>> and GC_TEST_LOCK for test serialisation \u2014 established pattern for safe concurrent access",
+        "thread_local! at gc.rs:70 for per-thread GC registration \u2014 this pattern is what needs to be replicated safely for runtime state",
+        "Safepoint-based STW design in spec provides model for coordinating concurrent thread pause"
+      ]
+    },
+    {
+      "spec_id": "cclab-mamba-fix-xfail-spec",
+      "spec_group": "testing",
+      "relevance": "medium",
+      "key_requirements": [
+        "Conformance test runner: cargo test -p cclab-mamba --test conformance_tests (multi-threaded by default)",
+        "Single-threaded workaround -- --test-threads=1 passes for #1114; fix must make multi-threaded safe",
+        "xfail fixtures for list()/tuple()/set() and string[::-1] will be unblocked once #1109 and #1111 are fixed"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "no-arg-constructor-codegen-fix",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/lower/hir-to-mir.md",
+      "source": "cclab/specs/crates/cclab-mamba/lower/hir-to-mir.md",
+      "sections": [
+        "overview",
+        "requirements",
+        "scenarios",
+        "changes"
+      ]
+    },
+    {
+      "spec_id": "string-reverse-slice-fix",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/string-ops.md",
+      "source": "cclab/specs/crates/cclab-mamba/runtime/string-ops.md",
+      "sections": [
+        "overview",
+        "requirements",
+        "scenarios",
+        "changes"
+      ]
+    },
+    {
+      "spec_id": "sigbus-runtime-thread-safety-fix",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/thread-safe-runtime.md",
+      "source": "cclab/specs/crates/cclab-mamba/runtime/thread-safe-runtime.md",
+      "sections": [
+        "overview",
+        "requirements",
+        "state-machine",
+        "scenarios",
+        "changes"
+      ]
+    },
+    {
+      "spec_id": "sigbus-jit-concurrency-fix",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/codegen/cranelift-jit.md",
+      "source": "cclab/specs/crates/cclab-mamba/codegen/cranelift-jit.md",
+      "sections": [
+        "overview",
+        "requirements",
+        "scenarios",
+        "changes"
+      ]
+    }
+  ]
+}

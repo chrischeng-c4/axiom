@@ -1,0 +1,61 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-mamba",
+  "change_id": "mamba-all-p1",
+  "group_id": "syntax-features",
+  "verdict": "FAIL",
+  "summary": "The reference context artifact is an unfilled stub — all three rows contain `? | ? | high | —` placeholders. No actual spec is listed. The syntax-features group spans 7 issues (#830 PEP 695 generics, #831 dict unpacking, #832 parenthesized with, #845 star expressions, #846 global/nonlocal, #847 decorators, #848 string literals). A full set of relevant specs exists in the codebase and was verified: generics-and-protocols.md, parser/statements.md, parser/ast.md, parser/expressions.md, lower/hir-to-mir.md, lower/ast-to-hir.md, runtime/closure.md, resolve/name-resolution.md, runtime/bytes-ops.md, runtime/dict-ops.md, and lexer/tokens-and-indent.md. Three additional spec gaps were found: (1) no spec covers TypeVarTuple or ParamSpec, which pre-clarification Q1 explicitly flags as MISSING; (2) parser/expressions.md has no requirement for `**expr` inside dict literals — the parser side of #831 is unspecified; (3) lexer/tokens-and-indent.md R4 omits `rb`/`fr` prefix combos and Unicode/hex/octal escape sequences needed for #848. The artifact must be fully written before implementation can proceed.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "All rows are `?` placeholders — zero specs are listed. Verified specs that should be present: #830 → generics-and-protocols.md (R1-R4), parser/statements.md (R4), parser/ast.md (R2); #831 → runtime/dict-ops.md (R5), lower/hir-to-mir.md (R7 draft), parser/expressions.md (R2 needs extension); #832 → parser/statements.md (R2), lower/ast-to-hir.md (R3); #845 → lower/hir-to-mir.md (R6), parser/expressions.md (R4), lower/ast-to-hir.md; #846 → resolve/name-resolution.md (R1-R5), runtime/closure.md (R1-R5); #847 → parser/statements.md (R3), lower/ast-to-hir.md (R1); #848 → lexer/tokens-and-indent.md (R4), runtime/bytes-ops.md (R1, R3). Additionally, TypeVarTuple and ParamSpec (explicitly MISSING per Q1) have no spec coverage anywhere."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "All relevance entries are `?`. Correct scoring for the primary specs: generics-and-protocols.md = HIGH (#830 directly), parser/statements.md = HIGH (#830 R4 + #832 R2 + #847 R3), parser/ast.md = HIGH (#830 R2 — type_params field on FnDef/ClassDef/TypeAlias), lower/hir-to-mir.md = HIGH (#831 R7 draft + #845 R6), runtime/closure.md = HIGH (#846 — closure/nonlocal runtime), resolve/name-resolution.md = HIGH (#846 — global/nonlocal resolver), lexer/tokens-and-indent.md = HIGH (#848 R4), runtime/bytes-ops.md = HIGH (#848 R1+R3), runtime/dict-ops.md = HIGH (#831 R5), parser/expressions.md = MEDIUM (#831 needs extension, #845 R4), lower/ast-to-hir.md = MEDIUM (#847 R1 decorator desugar, #832 R3 with desugar), types/type-representations.md = LOW (#830 background — TypeVar in Ty enum)."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "All key requirement entries are `—`. Verified requirements per spec: generics-and-protocols.md: R1 (PEP 695 generics), R2 (type param substitution), R4 (constraint checking); parser/statements.md: R3 (decorator parsing), R4 (PEP 695 generic syntax), R2 (with statement); parser/ast.md: R2 (PEP 695 type_params field), R1 (TypeAlias stmt node); lower/hir-to-mir.md: R6 (starred unpacking codegen), R7 draft (dict unpacking lowering); runtime/closure.md: R1 (free variable capture), R2 (cell variable indirection), R3 (closure creation); resolve/name-resolution.md: R1 (global processing), R2 (nonlocal processing), R3 (cell variable creation), R5 (MIR instruction extensions); lexer/tokens-and-indent.md: R4 (string literal lexing — ByteStr, RawStr, FStr prefixes); runtime/bytes-ops.md: R1 (bytes sequence ops), R3 (encoding/decoding); runtime/dict-ops.md: R5 (mb_dict_merge for dict unpacking)."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "The artifact lists no real specs (only `?` placeholders), so no irrelevant specs are present. This trivially passes, but only because the artifact is empty."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "The entire artifact is a stub — three rows all containing `? | ? | high | —`. No spec is named for any of the 7 issues in the group. An implementer would find zero spec guidance for #830 (generics), #831 (dict unpacking), #832 (parenthesized with), #845 (star expressions), #846 (global/nonlocal), #847 (decorators), or #848 (string literals). The following specs were verified as directly relevant: generics-and-protocols.md, parser/statements.md, parser/ast.md, parser/expressions.md, lower/hir-to-mir.md, lower/ast-to-hir.md, runtime/closure.md, resolve/name-resolution.md, runtime/bytes-ops.md, runtime/dict-ops.md, lexer/tokens-and-indent.md.",
+      "recommendation": "Fully rewrite the reference context with all 11 specs mapped to their issues, correct relevance scores (HIGH/MEDIUM/LOW), and accurate requirement IDs for each spec."
+    },
+    {
+      "severity": "HIGH",
+      "description": "TypeVarTuple and ParamSpec have no spec coverage. Pre-clarification Q1 explicitly states 'MISSING: TypeVarTuple (no matches), ParamSpec (no matches)' and recommends implementing them in this change. Neither types/generics-and-protocols.md (covers TypeVar R1-R4 only) nor types/type-representations.md (TypeVar variant in Ty enum, no TypeVarTuple/ParamSpec) nor any other spec mentions these PEP 646 / PEP 612 constructs. This is a spec gap, not just a missing reference context entry — the implementing developer has no spec contract for TypeVarTuple (`*Ts`) or ParamSpec (`**P`) type parameter kinds.",
+      "recommendation": "Before or during reference context revision, add TypeVarTuple and ParamSpec requirements to types/generics-and-protocols.md (R5: TypeVarTuple support, R6: ParamSpec support) and add the corresponding Ty enum variants to types/type-representations.md. Then include both specs at HIGH relevance for #830."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Dict literal `**expr` parsing is unspecified. parser/expressions.md R2 describes DictLit as `{k: v}` with simple key-value pairs and no requirement for `**expr` unpacking entries. Pre-clarification Q2 confirms 'NOT IMPLEMENTED in parser — DictLit stores simple key-value pairs only (Vec<(Expr, Expr)>) with no unpacking markers.' While lower/hir-to-mir.md R7 (draft) specifies the lowering side, there is no parser-level requirement for `DictUnpack` entries in dict literals. An implementer cannot extend the parser without a spec requirement defining the new AST node or the parsing algorithm.",
+      "recommendation": "Add R5 (or extend R2) to parser/expressions.md to specify: (a) new `DictUnpack(Box<Expr>)` entry kind in DictLit, (b) parsing `**expr` inside `{...}`, (c) interaction with existing `{k: v}` pairs. Then include parser/expressions.md at MEDIUM relevance for #831."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "lexer/tokens-and-indent.md R4 is incomplete for #848 string literal completeness. The table in R4 lists only five forms (Regular, Triple-quoted, F-string, Raw, Byte) and notes 'escape processing: Yes' for regular/byte without specifying which escape sequences. It omits: (a) `rb`/`br` raw-bytes prefix combo, (b) `fr`/`rf` raw-fstring prefix combo, (c) Unicode escapes `\\uXXXX`, `\\UXXXXXXXX`, `\\N{name}`, (d) hex `\\xNN` and octal `\\NNN` escapes. Pre-clarification Q5 states these are in scope for #848.",
+      "recommendation": "Extend lexer/tokens-and-indent.md R4 to enumerate all prefix combos (r, b, rb, f, fr and uppercase variants) and define the escape sequence processing rules. Then include lexer/tokens-and-indent.md at HIGH relevance for #848."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "parser/statements.md R2 does not explicitly cover the parenthesized `with` form for #832. R2 shows `with expr as name, expr2: body` (comma-separated contexts on one line), but PEP 617 parenthesized form `with (cm1 as a, cm2 as b,):` has different parsing requirements: the opening `(` must be recognized as the start of a parenthesized context list (not a tuple/generator expression), and a trailing comma before `)` must be accepted. The pre-clars note this is a 'parser-only change, rest of pipeline reuses existing with-handling.'",
+      "recommendation": "Extend parser/statements.md R2 to explicitly state the parenthesized form: `with (cm1 as a, cm2 as b,):` — consume `(`, collect comma-separated `(expr, optional as name)` pairs allowing trailing comma, expect `)`. Reference PEP 617 explicitly."
+    },
+    {
+      "severity": "LOW",
+      "description": "lower/ast-to-hir.md has no explicit requirement for starred assignment unpacking lowering. Pre-clarification Q3 cites ast_to_hir.rs:1098 as the HIR lowering site for UnpackTarget. However, ast-to-hir.md R1-R5 cover decorator desugar, comprehension lowering, with-statement, for-else, and augmented assignments only — none explicitly covers `a, *b, c = iterable` lowering to HIR. The MIR side (hir-to-mir.md R6) is well-specified, but the HIR representation of UnpackTarget is not contractually defined.",
+      "recommendation": "Add R6 to lower/ast-to-hir.md to specify that starred assignment targets (`Assign` with `UnpackTarget` in the LHS) are lowered to HIR as an assignment with the target sequence preserved, enabling hir-to-mir.md R6 to emit the indexed-access pattern. Then include lower/ast-to-hir.md at MEDIUM relevance for #845."
+    }
+  ]
+}

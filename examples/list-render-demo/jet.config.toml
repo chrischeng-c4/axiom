@@ -1,0 +1,4 @@
+[wasm]
+entry = "src/ListRender.tsx"
+root_component = "ListRender"
+root_props = [3]

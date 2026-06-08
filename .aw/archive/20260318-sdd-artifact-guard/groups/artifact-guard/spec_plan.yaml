@@ -1,0 +1,7 @@
+- spec_id: artifact-guard-spec
+  action: create
+  main_spec_ref: cclab-sdd/logic/executor-resolution.md
+  sections:
+  - overview
+  - logic
+  - changes

@@ -1,0 +1,6 @@
+{
+  "group_id": "future-stdlib-module",
+  "verdict": "approve",
+  "summary": "Reference context correctly identifies native-implementations.md and idlelib.md as high-relevance specs, module.md and value-and-rc.md as medium-relevance. Spec plan creates crates/cclab-mamba/stdlib/future.md with overview and changes sections. Adequate for a simple constant-only stdlib module.",
+  "issues": []
+}

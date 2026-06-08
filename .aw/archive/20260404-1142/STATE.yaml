@@ -1,0 +1,41 @@
+change_id: '1142'
+schema_version: '2.0'
+created_at: 2026-04-04T08:41:43.827844Z
+updated_at: 2026-04-04T15:48:57.397555Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:check-alignment-phase3: 1
+  impl:artifact-tools-phase3: 1
+current_task_id: artifact-tools-phase3
+task_revisions:
+  artifact-tools-phase3: 1
+impl_spec_phase:
+  check-alignment-phase3: tests
+telemetry: null
+dag:
+  issues:
+  - number: 1142
+    title: 'feat(sdd): check-alignment workflow integration — Phase 3'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  reference_context:
+  - check-alignment-phase3
+  post_clarifications:
+  - check-alignment-phase3
+  change_spec: []
+  pre_clarifications:
+  - check-alignment-phase3

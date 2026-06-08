@@ -1,0 +1,7 @@
+{
+  "schema_version": "cue.runtime-config.v0",
+  "runtime": {
+    "kind": "workflow_app",
+    "entrypoint": null
+  }
+}

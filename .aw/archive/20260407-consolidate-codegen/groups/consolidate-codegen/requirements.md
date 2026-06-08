@@ -1,0 +1,9 @@
+---
+change: consolidate-codegen
+group: consolidate-codegen
+date: 2026-04-07
+---
+
+# Requirements
+
+Move cclab-compass generate/ module (spec_ir, generators, engine) into sdd crate. Merge compass SpecIR (10 variants) with sdd SpecManifest (6 kinds) into one unified type. Rename packages/@score/* → @sdd/*. Update pnpm-workspace.yaml and Conductor FE imports. Update sdd Cargo.toml to own the Tera engine and generator code directly.

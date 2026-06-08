@@ -1,0 +1,7 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-index-path-rename",
+  "group_id": "index-path-and-cli-hints",
+  "answers": [],
+  "summary": "No post-clarification questions. Scope is clear: rename .cclab/lens/ to cclab/.index/ in storage.rs/daemon.rs/.gitignore, and add CLI hints to implementation prompt. No contradictions with existing specs."
+}

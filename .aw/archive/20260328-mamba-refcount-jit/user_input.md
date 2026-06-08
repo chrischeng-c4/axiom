@@ -1,0 +1,1 @@
+Implement CPython 3.12 reference counting in JIT codegen #1129. Phase 1: register mb_retain/mb_release as JIT symbols. Phase 2: emit release at variable reassignment. Phase 3: emit release at function return. Phase 4: immortal compile-time constants. Phase 5: track compile-time allocations. Phase 6: re-enable GC.

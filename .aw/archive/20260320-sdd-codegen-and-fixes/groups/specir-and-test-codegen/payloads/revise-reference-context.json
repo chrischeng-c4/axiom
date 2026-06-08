@@ -1,0 +1,86 @@
+{
+  "change_id": "sdd-codegen-and-fixes",
+  "group_id": "specir-and-test-codegen",
+  "specs": [
+    {
+      "spec_id": "cclab-sdd/README",
+      "group": "overview",
+      "relevance": "medium",
+      "key_requirements": "Spec index, phase flow diagram, separation of interfaces and logic layers, link to generate/README.md"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/codegen-system",
+      "group": "codegen-architecture",
+      "relevance": "high",
+      "key_requirements": "Unified internal representation based on JSON Schema, Template-based generation engine (Tera/MiniJinja), Pluggable generators for different frameworks/targets, Pre-generation spec validation, Test generation support via TestGenerator component"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/template-engine",
+      "group": "generators",
+      "relevance": "high",
+      "key_requirements": "Tera initialization with recursive template discovery (.j2/.tera files), render(template_name, context) contract returning Result<String, TemplateError>, filter registration for case conversions (pascal_case, snake_case, kebab_case, camel_case), TemplateError variants (NotFound, ParseError, ContextMismatch). Directly required by Q2 (include_str! embedding) and wired into both Axum and FastAPI generators"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/spec-ir-contract",
+      "group": "spec-ir",
+      "relevance": "high",
+      "key_requirements": "SpecIR enum variants for all 6 spec types (ApiSpec, SequencePlus, FlowchartPlus, ClassPlus, ErdPlus, RequirementPlus), SpecIR metadata (source file path, spec group, spec ID, tags), From<T> implementations from Generate types, Public API export from cclab-sdd lib.rs with Serialize+Deserialize for MCP transport, SpecBundle for multi-spec input (Vec<SpecIR> + dependency graph) — DEFERRED per Q3, Phase 2 only"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/spec-ir-schema",
+      "group": "spec-ir",
+      "relevance": "high",
+      "key_requirements": "Standard envelope structure (apiVersion, kind, metadata, spec), Kind registry (Api, FlowchartPlus, SequencePlus, ClassPlus, ErdPlus, RequirementPlus), Strict YAML serialization with unknown field rejection, Language-agnostic interface for code generators"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/generator-axum",
+      "group": "generators",
+      "relevance": "high",
+      "key_requirements": "Generator interface accepting Spec + output directory, Context transformation to Rust-specific types (i32, String, Option<T>, Vec<T>), Model generation with Serde derives, Router and handler generation with Axum config, Error handling with standardized GeneratorError"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/generator-fastapi",
+      "group": "generators",
+      "relevance": "high",
+      "key_requirements": "Input mapping from schema IR to FastAPI context, Template rendering with TemplateEngine, Standard FastAPI project layout generation, Type mapping to Pydantic (str, int, float, bool, List, BaseModel), Deterministic output ordering, structured error reporting"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/test-generation",
+      "group": "generators",
+      "relevance": "high",
+      "key_requirements": "Test artifact generation (fixtures, client helpers, test cases) for FastAPI, Express, Axum — in scope per Q5. R2 probe adapter packaging with metadata — DEFERRED per Q5; deliverable is file scaffold generation only, no probe integration. Deterministic test file naming and content ordering, Structured error reporting (generator type, template name, human-readable cause)"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/requirement-plus-enhancement",
+      "group": "diagram-types",
+      "relevance": "high",
+      "key_requirements": "SysML v1.6 type support (functionalRequirement, interfaceRequirement, performanceRequirement, etc.), Risk levels (Low, Medium, High) and verification methods (Analysis, Inspection, Test, Demonstration), Relationship types (satisfies, verifies, refines, traces, contains, copies, derives), YAML frontmatter validation for all new types"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/code-generator-contract",
+      "group": "codegen-architecture",
+      "relevance": "high",
+      "key_requirements": "Generator responsibilities (framework-specific code from agnostic specs), Spec-to-code mappings (API schema → Models, Sequence+ → Function signatures, Requirement+ → Tests), Inference rules (auto-infer patterns from spec semantics), SequencePlus macro/micro level code generation, RequirementPlus N:M test generation (N Requirements → N Test Classes, N Scenarios → N Functions)"
+    },
+    {
+      "spec_id": "cclab-sdd/generate/README",
+      "group": "overview",
+      "relevance": "medium",
+      "key_requirements": "Code generation and template library organization, Spec IR contract and schema specifications, Code generator contract definition, Generator implementations (Axum, FastAPI, Express), Integration architecture"
+    }
+  ],
+  "revision_summary": {
+    "added": ["cclab-sdd/generate/template-engine"],
+    "removed": ["cclab-sdd/sdd-cli"],
+    "upgraded": [],
+    "downgraded": ["cclab-sdd/README (HIGH → MEDIUM)"],
+    "corrected": [
+      "spec-ir-contract: R5 now correctly shows SpecBundle scope (Phase 2, deferred per Q3)",
+      "test-generation: R2 probe adapter flagged as DEFERRED per Q5"
+    ],
+    "grouped": "All specs assigned logical groups (generators, codegen-architecture, spec-ir, diagram-types, overview)"
+  },
+  "issues_resolved": 5,
+  "issues_outstanding": 1,
+  "outstanding_note": "BDD given/when/then field mapping deferred to Phase 7 (change_impl) — requires formalization in code-generator-contract.md or new spec for RequirementPlus test codegen"
+}

@@ -1,0 +1,6 @@
+{
+  "spec_id": "enhancement-native-trace-viewer-trace-capture-standalone-html-spec",
+  "verdict": "APPROVED",
+  "summary": "Spec is implementation-ready. Overview is substantive (~1400 chars) and clearly identifies the three components (capture, format, viewer) with their source locations. Requirements R1-R12 are well-defined as a Mermaid requirementDiagram with IDs, text, risk, and verifymethod fields. Scenarios cover capture, retain-on-failure, trace file discovery, and viewer workflow (S1-S12+). Interaction diagram shows browser/test-runner/viewer sequences. Logic flowchart covers the capture and viewer flows. State-machine covers trace buffer lifecycle. CLI section documents `jet trace view/show/extract` subcommands per R5-R9 of the issue. Schema defines the TraceManifest + event types as JSON schema. Changes section enumerates files added/modified. Test plan has T1-T10 with element→requires-verifies edges. No duplicate section types. Sections follow logical order.",
+  "findings": []
+}

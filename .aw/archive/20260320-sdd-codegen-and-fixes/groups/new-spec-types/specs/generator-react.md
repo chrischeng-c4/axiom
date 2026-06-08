@@ -1,0 +1,387 @@
+---
+id: generator-react
+main_spec_ref: cclab-sdd/generate/generator-react
+merge_strategy: new
+create_complete: true
+filled_sections: [overview, requirements, scenarios, logic, dependency, schema, test-plan, changes]
+---
+
+# Generator React
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Defines the `ReactGenerator` — a `SpecIRGenerator` that converts a `SpecIR::Wireframe` payload into a React functional component scaffold (TypeScript). It accepts only the `wireframe` section type and produces three output files: `{ComponentName}.tsx` (the component), `{ComponentName}.types.ts` (the props interface), and `index.ts` (barrel re-export). When Tera templates are present under the `react/` directory they are used; otherwise inline string generation is the fallback. Overwrite behaviour is governed by `GeneratorSettings.overwrite_policy`.
+
+## Requirements
+<!-- type: requirements lang: markdown -->
+
+### R1: SpecIRGenerator trait implementation
+
+`ReactGenerator` must implement the `SpecIRGenerator` trait:
+- `can_generate(spec)` returns `true` only for `SpecIR::Wireframe` variants.
+- `generate_from_ir(spec, settings, engine)` returns a `Manifest` with exactly three entries.
+- `template_dir()` returns `"react"`.
+
+**Priority**: high
+
+### R2: Component file output
+
+`generate_from_ir` must produce a React functional component at `<output_dir>/{ComponentName}.tsx` with:
+- An import of the props interface from `./{ComponentName}.types`.
+- A named export function `{ComponentName}({props}: {ComponentName}Props)`.
+- Props destructuring with default values when `PropDef.default_value` is set.
+- A JSX body rendered from `WireframeSpec.layout` using `render_jsx_body`.
+- A `@componentType` JSDoc comment when `WireframeSpec.component_type` is non-empty.
+- A default export of the component.
+- Component name derived from `WireframeSpec.name` (PascalCase); falls back to `GeneratorSettings.name` when empty.
+
+**Priority**: high
+
+### R3: Types file output
+
+`generate_from_ir` must produce a TypeScript props interface at `<output_dir>/{ComponentName}.types.ts` with:
+- An `export interface {ComponentName}Props` block.
+- One entry per `PropDef`: required props use `name: type`, optional props use `name?: type`.
+- JSDoc comment per prop when `PropDef.description` is set.
+
+**Priority**: high
+
+### R4: Barrel index file output
+
+`generate_from_ir` must produce `<output_dir>/index.ts` that re-exports:
+- The named component export and `default` from `./{ComponentName}`.
+- The props type from `./{ComponentName}.types`.
+
+**Priority**: high
+
+### R5: Template fallback
+
+When the Tera template engine does not contain a template at `react/{ComponentName}.tsx.j2`, `react/{ComponentName}.types.ts.j2`, or `react/index.ts.j2`, the generator falls back to inline string generation. No error is raised if templates are absent.
+
+**Priority**: medium
+
+### R6: Overwrite policy enforcement
+
+Before writing each output file the generator checks whether it already exists:
+- `OverwritePolicy::Error` → return `GeneratorError::OverwriteNotAllowed`.
+- `OverwritePolicy::Skip` → add a `Skipped` entry to the manifest and continue.
+- `OverwritePolicy::Overwrite` → proceed and overwrite.
+
+**Priority**: medium
+
+## Scenarios
+<!-- type: scenarios lang: markdown -->
+
+### Scenario: can_generate returns true for Wireframe variant
+
+**GIVEN** a `SpecIR::Wireframe` value
+**WHEN** `ReactGenerator::can_generate()` is called
+**THEN** it returns `true`
+
+### Scenario: can_generate returns false for non-Wireframe variant
+
+**GIVEN** a `SpecIR::Api` value
+**WHEN** `ReactGenerator::can_generate()` is called
+**THEN** it returns `false`
+
+### Scenario: generate produces three files
+
+**GIVEN** a valid `SpecIR::Wireframe` with `name="UserCard"`, two props, and a layout tree
+**WHEN** `generate_from_ir()` is called with a fresh `output_dir`
+**THEN** the manifest contains exactly three entries: `UserCard.tsx`, `UserCard.types.ts`, and `index.ts`
+
+### Scenario: types file contains correct props interface
+
+**GIVEN** a `WireframeSpec` with `name="UserCard"`, required prop `userId: number`, optional prop `showAvatar?: boolean`
+**WHEN** `generate_types_ts()` is called
+**THEN** the output contains `interface UserCardProps`, `userId: number` (no `?`), and `showAvatar?: boolean`
+
+### Scenario: index.ts re-exports component and props
+
+**GIVEN** a `WireframeSpec` with `name="UserCard"`
+**WHEN** `generate_index_ts()` is called
+**THEN** the output contains `UserCard` and `UserCardProps` re-exports
+
+### Scenario: JSX body renders layout nodes
+
+**GIVEN** a layout with a `text` node and a `button` node
+**WHEN** `render_jsx_body()` is called
+**THEN** the output contains `<span` and `<button` elements
+
+## Diagrams
+
+### Interaction
+<!-- type: interaction lang: mermaid -->
+<!-- TODO -->
+
+### Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+flowchart TD
+    A[generate_from_ir called] --> B{is SpecIR::Wireframe?}
+    B -- no --> C[return SchemaError]
+    B -- yes --> D[build_context: WireframeSpec + settings → ReactContext]
+    D --> E[for each output file: .tsx, .types.ts, index.ts]
+    E --> F{file exists?}
+    F -- yes, Error policy --> G[return OverwriteNotAllowed]
+    F -- yes, Skip policy --> H[add Skipped entry]
+    F -- yes, Overwrite policy --> I[proceed]
+    F -- no --> I
+    I --> J{engine has template?}
+    J -- yes --> K[engine.render template]
+    J -- no --> L[inline_gen function]
+    K --> M[add Written entry to manifest]
+    L --> M
+    H --> N[next file]
+    M --> N
+    N --> O{more files?}
+    O -- yes --> E
+    O -- no --> P[return Manifest with 3 entries]
+```
+
+### Dependencies
+<!-- type: dependency lang: mermaid -->
+
+```mermaid
+classDiagram
+    class ReactGenerator {
+        +new() Self
+        +can_generate(spec: SpecIR) bool
+        +generate_from_ir(spec, settings, engine) Manifest
+        +template_dir() str
+    }
+    class SpecIRGenerator {
+        <<trait>>
+        +can_generate(SpecIR) bool
+        +generate_from_ir(SpecIR, GeneratorSettings, TemplateEngine) Manifest
+        +template_dir() str
+    }
+    class WireframeSpec {
+        +name: String
+        +component_type: String
+        +props: Vec~PropDef~
+        +layout: Vec~WireframeNode~
+    }
+    class PropDef {
+        +name: String
+        +prop_type: String
+        +required: bool
+        +default_value: Option~String~
+        +description: Option~String~
+    }
+    class WireframeNode {
+        +kind: String
+        +label: Option~String~
+        +children: Vec~WireframeNode~
+    }
+    class GeneratorSettings {
+        +name: String
+        +output_dir: PathBuf
+        +overwrite_policy: OverwritePolicy
+    }
+    class TemplateEngine {
+        +has_template(name) bool
+        +render(name, ctx) String
+    }
+    class Manifest {
+        +files: BTreeMap~PathBuf, GeneratedFile~
+        +add(GeneratedFile)
+    }
+    ReactGenerator ..|> SpecIRGenerator : implements
+    ReactGenerator --> WireframeSpec : reads
+    ReactGenerator --> GeneratorSettings : reads
+    ReactGenerator --> TemplateEngine : uses
+    ReactGenerator --> Manifest : produces
+    WireframeSpec *-- PropDef : contains
+    WireframeSpec *-- WireframeNode : contains
+    WireframeNode *-- WireframeNode : children
+```
+
+### State Machine
+<!-- type: state-machine lang: mermaid -->
+<!-- TODO -->
+
+### Data Model
+<!-- type: db-model lang: mermaid -->
+<!-- TODO -->
+
+## API Spec
+
+### REST API
+<!-- type: rest-api lang: yaml -->
+<!-- TODO -->
+
+### RPC API
+<!-- type: rpc-api lang: json -->
+<!-- TODO -->
+
+### Async API
+<!-- type: async-api lang: yaml -->
+<!-- TODO -->
+
+### CLI
+<!-- type: cli lang: yaml -->
+<!-- TODO -->
+
+### Schema
+<!-- type: schema lang: json -->
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WireframeSpec",
+  "description": "Wireframe specification for React component scaffold generation (wireframe section type).",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Component name in PascalCase (e.g. 'UserCard'). Falls back to GeneratorSettings.name when empty.",
+      "default": ""
+    },
+    "component_type": {
+      "type": "string",
+      "description": "High-level component type: 'page', 'layout', 'card', 'form', etc.",
+      "default": ""
+    },
+    "props": {
+      "type": "array",
+      "description": "TypeScript props exposed by the component.",
+      "items": {
+        "$ref": "#/definitions/PropDef"
+      },
+      "default": []
+    },
+    "layout": {
+      "type": "array",
+      "description": "Top-level layout nodes rendered by the component.",
+      "items": {
+        "$ref": "#/definitions/WireframeNode"
+      },
+      "default": []
+    }
+  },
+  "definitions": {
+    "PropDef": {
+      "title": "PropDef",
+      "type": "object",
+      "required": ["name", "prop_type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Prop name in camelCase."
+        },
+        "prop_type": {
+          "type": "string",
+          "description": "TypeScript type string, e.g. 'string', 'number', 'User'."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether the prop is required (no '?' in the interface).",
+          "default": false
+        },
+        "default_value": {
+          "type": "string",
+          "description": "Default value expression as a string (used in destructuring)."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional JSDoc description."
+        }
+      }
+    },
+    "WireframeNode": {
+      "title": "WireframeNode",
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Element kind: 'text', 'button', 'input', 'list', 'container', HTML semantic tags, or any div-mapped kind."
+        },
+        "label": {
+          "type": "string",
+          "description": "Display label or placeholder text."
+        },
+        "children": {
+          "type": "array",
+          "description": "Nested child nodes.",
+          "items": {
+            "$ref": "#/definitions/WireframeNode"
+          },
+          "default": []
+        }
+      }
+    }
+  }
+}
+```
+
+### Config
+<!-- type: config lang: json -->
+<!-- TODO -->
+
+## Test Plan
+<!-- type: test-plan lang: markdown -->
+
+| Test | Requirement | Method |
+|------|-------------|--------|
+| `test_can_generate_wireframe` | R1 | Assert `can_generate(SpecIR::Wireframe)` returns `true` |
+| `test_cannot_generate_non_wireframe` | R1 | Assert `can_generate(SpecIR::Api)` returns `false` |
+| `test_generate_produces_three_files` | R2, R3, R4 | Assert manifest has exactly 3 entries: `UserCard.tsx`, `UserCard.types.ts`, `index.ts` |
+| `test_component_tsx_content` | R2 | Assert `UserCard.tsx` entry has a content hash (confirming content was generated) |
+| `test_types_ts_props_interface` | R3 | Assert `UserCard.types.ts` contains `interface UserCardProps`, `userId: number`, `showAvatar?: boolean` |
+| `test_index_ts_exports` | R4 | Assert `index.ts` contains `UserCard` and `UserCardProps` re-exports |
+| `test_jsx_body_render` | R2 | Assert `render_jsx_body` produces `<span` for text nodes and `<button` for button nodes |
+
+All tests are in `crates/cclab-sdd/src/generate/generators/react.rs` under `#[cfg(test)]`.
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+files:
+  - path: crates/cclab-sdd/src/generate/generators/react.rs
+    action: CREATE
+    desc: >
+      New file implementing ReactGenerator with SpecIRGenerator trait.
+      Generates {ComponentName}.tsx (React functional component with TypeScript),
+      {ComponentName}.types.ts (props interface), and index.ts (barrel re-export)
+      from SpecIR::Wireframe payloads. Supports template-based and inline
+      generation, overwrite policy, typed props with optional defaults,
+      and recursive JSX body rendering from WireframeNode trees.
+  - path: crates/cclab-sdd/src/generate/generators/mod.rs
+    action: MODIFY
+    desc: Export ReactGenerator from generators module.
+  - path: crates/cclab-sdd/src/generate/spec_ir/types.rs
+    action: MODIFY
+    desc: >
+      Add WireframeSpec, PropDef, WireframeNode structs and SpecIR::Wireframe
+      variant. Add From<WireframeSpec> impl for SpecIR.
+  - path: crates/cclab-sdd/src/generate/lib.rs
+    action: MODIFY
+    desc: Re-export ReactGenerator, WireframeSpec, PropDef, WireframeNode from generate crate public API.
+```
+
+## Wireframe
+<!-- type: wireframe lang: yaml -->
+
+<!-- TODO -->
+
+## Component
+<!-- type: component lang: json -->
+
+<!-- TODO -->
+
+## Design Token
+<!-- type: design-token lang: json -->
+
+<!-- TODO -->
+
+## Doc
+<!-- type: doc lang: markdown -->
+
+<!-- TODO -->
+
+# Reviews

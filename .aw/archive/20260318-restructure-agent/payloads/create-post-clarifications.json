@@ -1,0 +1,6 @@
+{
+  "change_id": "restructure-agent",
+  "group_id": "restructure-agent-core",
+  "skipped": true,
+  "reason": "No contradictions found. The existing Agent trait is designed for multi-turn tool-calling agents (CodingAgent, AnalystAgent). RestructureAgent is a single-call agent (no tools, no turns, no streaming). The new TypedAgent<I, O> trait complements (not conflicts with) the existing Agent trait — different model for different use cases. No naming/pattern/error-handling conflicts."
+}

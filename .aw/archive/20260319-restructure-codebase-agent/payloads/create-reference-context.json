@@ -1,0 +1,195 @@
+{
+  "group_id": "restructure-codebase-agent",
+  "group": "restructure-codebase-agent",
+  "description": "Gather reference context for RestructureCodebaseAgent - understands agent framework, token budgeting, context management, and LLM integration",
+  "specs": [
+    {
+      "spec_id": "cclab-agent/agents.md",
+      "spec_group": "Agent Core Framework",
+      "relevance": "high",
+      "reasoning": "Defines Agent trait and execution loop that RestructureCodebaseAgent must implement. Essential for understanding agent architecture, builder pattern, and tool integration.",
+      "key_requirements": [
+        "Agent trait with run() and run_with_handler() methods",
+        "AnalystAgent and CodingAgent implementations",
+        "Agent execution loop: context manager, LLM completion, tool execution, approval flow",
+        "Agent builders with configuration support"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/architecture.md",
+      "spec_group": "System Architecture",
+      "relevance": "high",
+      "reasoning": "Shows module dependencies and how agents integrate with LLM providers, tools, storage, security, and context management. Critical for understanding where RestructureCodebaseAgent fits in the cclab-agent system.",
+      "key_requirements": [
+        "Module dependency graph: agents depend on tools, security, context, storage",
+        "C4 container diagram showing integration with external APIs",
+        "Class diagram showing Agent trait and its relationships with LLMProvider, ToolRegistry, SecurityPolicy, ContextManager"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/core-types.md",
+      "spec_group": "Core Types",
+      "relevance": "high",
+      "reasoning": "Defines fundamental message types, roles, tool calls, and token usage tracking. RestructureCodebaseAgent will use these types for LLM interaction and message history.",
+      "key_requirements": [
+        "Message schema with role, content, tool_calls, timestamp",
+        "ToolCall and ToolResult types for tool invocation",
+        "TokenUsage type for tracking prompt/completion/total tokens",
+        "Role enum: system, user, assistant, tool"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/context.md",
+      "spec_group": "Context Management",
+      "relevance": "high",
+      "reasoning": "Describes ContextManager for token budget tracking and message window management. Directly addresses pre-clarification Q1 (30K token budget per group) and message compression strategies.",
+      "key_requirements": [
+        "ContextManager tracks estimated_tokens, max_tokens, available_tokens",
+        "Token estimation formula: content.len() / 4",
+        "Compression flow: keep system prompt, remove oldest messages when over budget",
+        "ContextStats interface for querying context state",
+        "Preset defaults: 128k, 32k token limits"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/llm-providers.md",
+      "spec_group": "LLM Integration",
+      "relevance": "high",
+      "reasoning": "Defines LLMProvider trait for communicating with external LLMs. RestructureCodebaseAgent must use an LLMProvider to analyze codebases and generate groupings.",
+      "key_requirements": [
+        "LLMProvider trait: provider_name(), supported_models(), validate_model(), complete(), complete_stream()",
+        "CompletionRequest schema with messages, model, temperature, max_tokens, tools",
+        "CompletionResponse with content, tool_calls, finish_reason, usage",
+        "Supported models from Claude, OpenAI, Gemini providers"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/tools.md",
+      "spec_group": "Tool System",
+      "relevance": "medium",
+      "reasoning": "Describes Tool trait, ToolRegistry, and ToolExecutor. RestructureCodebaseAgent may use tools for codebase analysis and group validation during implementation.",
+      "key_requirements": [
+        "Tool trait: name(), description(), parameters(), execute(), definition(), validate_arguments()",
+        "ToolRegistry: register, unregister, get, contains, tool_names",
+        "ToolExecutor with timeout and retry logic",
+        "ToolParameter schema with type validation"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/tools-coding.md",
+      "spec_group": "File/Codebase Tools",
+      "relevance": "medium",
+      "reasoning": "Describes file reading, glob, grep, and bash tools. May be used during implementation for validating manifest files (pyproject.toml, package.json, Cargo.toml) and analyzing codebase structure.",
+      "key_requirements": [
+        "ReadFileTool for reading manifest files (offset, limit, max 10MB)",
+        "GlobTool for finding files matching patterns",
+        "GrepTool for searching code by regex",
+        "BashTool for executing commands with timeout and output truncation"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/error-handling.md",
+      "spec_group": "Error Handling",
+      "relevance": "medium",
+      "reasoning": "Defines NovaError classification for all error types in agent framework. RestructureCodebaseAgent must properly handle and classify errors during execution.",
+      "key_requirements": [
+        "NovaError variants: LLMError, ToolError, ApprovalRequired, SecurityViolation, ContextOverflow, CommandFailed, etc.",
+        "Error classification: is_retriable() vs requires_user_action()",
+        "NovaResult type wrapper for agent functions"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/security.md",
+      "spec_group": "Security & Approval",
+      "relevance": "medium",
+      "reasoning": "Describes SecurityPolicy and ApprovalHandler for safe tool execution. Framework context for understanding execution constraints and approval flow.",
+      "key_requirements": [
+        "SecurityPolicy: blocked_paths, allowed_paths, blocked_commands, tools_requiring_approval",
+        "ApprovalRequest/Response types for tool execution approval",
+        "Path validation and command filtering logic",
+        "Tool approval flow integration with agents"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/streaming.md",
+      "spec_group": "Streaming & Events",
+      "relevance": "medium",
+      "reasoning": "Describes StreamEvent types and StreamHandler for async execution. Framework context for potential streaming implementation of agent execution.",
+      "key_requirements": [
+        "StreamEvent schema: started, thinking, text_chunk, tool_call_requested, tool_execution_*, approval_requested, completed, error",
+        "Event flow state machine",
+        "StreamHandler implementations: NoOpHandler, PrintHandler, CollectingHandler, CallbackHandler"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/tools-analysis.md",
+      "spec_group": "Analysis Tools",
+      "relevance": "medium",
+      "reasoning": "Describes analysis and discovery tools like AskUserTool, TakeNoteTool, RecordFindingTool. May be relevant for user clarification during group generation if needed.",
+      "key_requirements": [
+        "AskUserTool for pausing execution and requesting user input",
+        "TakeNoteTool and RecordFindingTool for capturing insights",
+        "WebSearchTool and WebFetchTool for external research",
+        "PostCommentTool for asynchronous communication"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/reference-context-agent.md",
+      "spec_group": "Related Agents",
+      "relevance": "low",
+      "reasoning": "Describes a different agent focused on spec context discovery. Related but distinct from RestructureCodebaseAgent's codebase grouping responsibilities. Useful for understanding agent pattern.",
+      "key_requirements": [
+        "Reference context generation pattern with SpecStore search and read",
+        "Relevance scoring: high/medium/low",
+        "CRR cycle integration with ReviewAgent",
+        "Contradiction detection in specifications"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/integrations.md",
+      "spec_group": "Platform Integrations",
+      "relevance": "low",
+      "reasoning": "Describes GitHub/GitLab/Jira platform integrations. Not directly relevant to codebase grouping logic, but provides context on integration patterns used in cclab-agent.",
+      "key_requirements": [
+        "PlatformIntegration trait for issue and comment APIs",
+        "Issue schema with state, labels, comments",
+        "GitHub, GitLab, Jira OpenAPI mappings"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/storage.md",
+      "spec_group": "Session Storage",
+      "relevance": "low",
+      "reasoning": "Describes session state storage for AnalystAgent. Not directly needed for RestructureCodebaseAgent's grouping logic, but useful context on agent state persistence patterns.",
+      "key_requirements": [
+        "Storage trait: save_session, load_session, list_sessions, delete_session",
+        "SessionState schema with messages, notes, findings",
+        "MemoryStorage and FileStorage implementations"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/README.md",
+      "spec_group": "Overview",
+      "relevance": "low",
+      "reasoning": "High-level overview of cclab-agent framework. Useful as reference table of all specs and their purposes.",
+      "key_requirements": [
+        "Spec organization: interfaces, core types, agents, tools, storage, security",
+        "Reference to all available specification files"
+      ]
+    }
+  ],
+  "contradictions": [],
+  "gaps": [
+    "PyO3 bindings spec not found - agent must be exposed via PyO3 per pre-clarification Q6",
+    "Manifest parsing spec not found - need to define support for pyproject.toml, package.json, Cargo.toml",
+    "Grouping algorithm spec not found - drill-down termination logic and token estimation need detailed design"
+  ],
+  "metadata": {
+    "generated_date": "2026-03-19",
+    "generated_by": "reference-context-gathering",
+    "total_specs": 15,
+    "high_relevance_count": 5,
+    "medium_relevance_count": 6,
+    "low_relevance_count": 4
+  }
+}

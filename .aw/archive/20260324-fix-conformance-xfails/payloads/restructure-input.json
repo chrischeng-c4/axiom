@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "mamba-conformance-xfails",
+      "issues": [1037],
+      "requirements": "Fix all 31 conformance xfails in the cclab-mamba crate so that each affected fixture produces output identical to CPython 3.12. The xfails span four categories:\n\n1. **Codegen IR bugs** (4 fixtures): classmethod, descriptor `__get__`, getattr/setattr/delattr, and super() each emit invalid or incompatible Cranelift IR — resulting in compilation errors, duplicate function definitions, or SIGBUS crashes. These must be fixed at the IR-generation layer (likely in the class-system and attribute-access codegen passes).\n\n2. **Runtime bugs** (multiple fixtures): (a) Several stdlib module wrappers (itertools, io, pathlib, random, re, struct) return non-iterable objects where CPython returns iterables, causing downstream TypeError at runtime. (b) bytes/bytearray methods — replace, strip, startswith, endswith — are partially unimplemented or return wrong values. (c) Exception chaining: `__cause__` and `__context__` attributes are not populated, and ExceptionGroup is not implemented.\n\n3. **Parser gaps** (2 fixtures): Nested f-strings (arbitrary nesting introduced in Python 3.12) cause parse failures; the metaclass= keyword in class declarations is not recognized by the parser.\n\n4. **Compiler bugs** (3 fixtures): (a) Walrus operator (:=) inside comprehensions assigns to the comprehension's inner scope instead of the enclosing scope (violates PEP 572). (b) Integer literal patterns in match statements produce wrong values. (c) Comprehension scope isolation (PEP 709) not fully enforced.\n\nAll fixes must preserve existing passing tests. Acceptance: every xfail fixture transitions to passing in `cclab mamba test --conformance`.",
+      "questions": [
+        {
+          "topic": "Fix scope",
+          "question": "Should this change address all four bug categories (codegen IR, runtime, parser, compiler) in one implementation unit, or should we limit scope to the user-input categories only (classmethod/descriptor/getattr/super codegen, stdlib-return-None runtime, bytes methods, exception chaining, nested f-strings, metaclass keyword, match int patterns, comprehension scope, walrus scope) and explicitly exclude the additional xfails found (e.g., ExceptionGroup, async generators, type-checker annotation rejections)?"
+        },
+        {
+          "topic": "Codegen IR root cause",
+          "question": "For the classmethod and descriptor `__get__` IR bugs — is the root cause a calling-convention mismatch (wrong function signature emitted), a missing descriptor protocol dispatch in the attribute-access IR pass, or a type-system issue during IR lowering? Do you have a minimal Python reproducer that isolates one of these?"
+        },
+        {
+          "topic": "Stdlib non-iterable returns",
+          "question": "The stdlib return-None/non-iterable bug affects itertools, io, pathlib, random, re, and struct. Is there a single shared FFI wrapper or return-type coercion path causing all six failures, or are these independent missing method implementations? Knowing this determines whether it is one fix or six."
+        },
+        {
+          "topic": "Parser nested f-string approach",
+          "question": "Python 3.12 changed f-string tokenization to allow arbitrary nesting (PEP 701). Is the existing Mamba parser a hand-written recursive-descent parser or generated (e.g., from a PEG grammar)? This determines whether nested f-strings require a lexer-level change (re-entrant tokenizer state) or only a grammar rule addition."
+        },
+        {
+          "topic": "Walrus scope fix layer",
+          "question": "For the walrus (:=) scope bug in comprehensions — is the fix needed in the symbol-table construction pass (wrong scope assigned during name resolution) or in the compiler's variable-binding pass (correct scope resolved but wrong slot used during codegen)?"
+        }
+      ]
+    }
+  ]
+}

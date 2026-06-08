@@ -1,0 +1,18 @@
+{
+  "group_id": "jet-aot-build-gaps",
+  "verdict": "pass",
+  "summary": "Reference context covers all 7 AOT build gaps. spec_plan targets logic/aot-build.md (modify) with correct sections and valid subdirectory path.",
+  "findings": [
+    "All checklist items pass",
+    "main_spec_ref uses proper subdirectory: crates/cclab-jet/logic/aot-build.md"
+  ],
+  "checklist": {
+    "all_crates_covered": true,
+    "relevance_scores_reasonable": true,
+    "requirements_accurate": true,
+    "no_irrelevant_specs": true,
+    "spec_plan_main_spec_ref_set": true,
+    "spec_plan_sections_reasonable": true,
+    "spec_plan_modify_sources_valid": true
+  }
+}

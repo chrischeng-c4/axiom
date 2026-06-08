@@ -1,0 +1,7 @@
+{
+  "change_id": "bug-init-change-writes-score-changes-to-main-repo-inst",
+  "group_id": "default",
+  "spec_id": "bug-init-change-writes-score-changes-to-main-repo-inst-spec",
+  "section": "requirements",
+  "content": "<!-- type: requirements lang: mermaid -->\n\n```mermaid\n---\nid: requirements\n---\nrequirementDiagram\n\nrequirement R1 {\n  id: R1\n  text: \"Changes pseudocode in issue-centric-workflow.md must explicitly state change_dir is relative to project_root (main repo), not worktree_path\"\n  risk: low\n  verifymethod: inspection\n}\n\nrequirement R2 {\n  id: R2\n  text: \"A Storage Model section must be added to issue-centric-workflow.md documenting control plane (main repo) vs data plane (worktree) split\"\n  risk: low\n  verifymethod: inspection\n}\n\nrequirement R3 {\n  id: R3\n  text: \"The spec must document that init_change's execution order (change_dir before worktree creation) is correct by design\"\n  risk: low\n  verifymethod: inspection\n}\n```"
+}

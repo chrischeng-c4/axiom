@@ -1,0 +1,10 @@
+{
+  "change_id": "mamba-conformance-p0",
+  "spec_id": "mamba-conformance-p0-spec",
+  "group_id": "mamba-p0-fixes",
+  "section": "overview",
+  "content": "<!-- type: overview lang: markdown -->\n\nFix 6 P0 conformance gaps that block real Python programs on the Mamba JIT backend. Three are SIGBUS crashes in Cranelift codegen, one is stdlib functions returning None due to incomplete module dispatch, and two are scope resolution bugs.\n\n| ID | Bug | Root Cause | File |\n|----|-----|-----------|------|\n| P0-R1 | Lambda SIGBUS | Closure codegen in cranelift/mod.rs doesn't handle anonymous function signatures | codegen/cranelift/mod.rs |\n| P0-R2 | With-statement SIGBUS | `__enter__`/`__exit__` calling convention mismatch in codegen | codegen/cranelift/mod.rs |\n| P0-R3 | @decorator SIGBUS | Stacked decorator application emits invalid Cranelift IR | codegen/cranelift/mod.rs |\n| P0-R4 | Stdlib functions return None | (a) Module Dict callable dispatch incomplete in class.rs; (b) CallExtern return slot discarded in hir_to_mir.rs | runtime/class.rs, lower/hir_to_mir.rs |\n| P0-R5 | Comprehension scope leaks | resolve/pass.rs doesn't create isolated scope for list/dict/set comprehensions | resolve/pass.rs |\n| P0-R6 | Walrus := wrong scope | NamedExpr in comprehensions binds to comprehension scope instead of enclosing function scope | resolve/pass.rs |\n\nAll 6 fixes are independent — no ordering dependency. Acceptance: all targeted xfail fixtures pass with `cargo test -p cclab-mamba --test conformance_tests`.",
+  "fill_sections": ["overview", "requirements", "scenarios", "test_plan", "changes"],
+  "main_spec_ref": "crates/cclab-mamba/testing/mamba-py312-conformance.md",
+  "merge_strategy": "append"
+}

@@ -1,0 +1,1 @@
+python是有gil，所以很多東西都是non-thread-safe，但mamba我想要變成thread-safe但no gil

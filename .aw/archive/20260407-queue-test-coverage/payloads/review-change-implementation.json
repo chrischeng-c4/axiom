@@ -1,0 +1,40 @@
+{
+  "spec_id": "error-types",
+  "group_id": "queue-unit-test-coverage",
+  "verdict": "REJECTED",
+  "summary": "The implementation.md diff records only ratelimit.rs changes and contains zero additions to crates/cclab-queue/src/error.rs — the sole file the spec requires. The spec has a 31-test Test Plan (T1-T31) and the Implementation diff shows no [test] blocks added to error.rs. This triggers the Hard Reject Rule. Notably, all 31 tests ARE present in the working tree (git diff confirms) and all 35 tests pass — the code itself is complete and correct, but the implementation.md artifact was never updated to capture the error.rs diff.",
+  "checklist_results": [
+    {
+      "item": "Code matches all spec requirements",
+      "passed": false,
+      "note": "The implementation.md diff is entirely about ratelimit.rs and its summary states 'All production code for ratelimit module is complete.' It documents the wrong spec. The spec Change entry requires modifying crates/cclab-queue/src/error.rs with 31 unit tests, but that file appears nowhere in the diff. The actual working-tree file does have all 31 tests and they pass — the mismatch is between the recorded diff and the actual code state."
+    },
+    {
+      "item": "Spec has Test Plan section: diff contains at least one #[test] function",
+      "passed": false,
+      "note": "The spec defines 31 tests (T1-T31) in its Test Plan targeting crates/cclab-queue/src/error.rs. The implementation.md diff includes #[test] blocks only within ratelimit.rs — no #[test] additions appear for error.rs. Hard Reject Rule triggered: Test Plan present, zero #[test] for the spec's target file."
+    },
+    {
+      "item": "Existing tests still pass (no regressions)",
+      "passed": true,
+      "note": "cargo test -p cclab-queue --lib error ran 35 tests: 31 new + 4 pre-existing. All pass in 0.00s. No regressions observed."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "implementation.md diff does not include crates/cclab-queue/src/error.rs. The diff only shows ratelimit.rs edits (lines 16-601 of the diff). The spec's Changes section explicitly lists path: crates/cclab-queue/src/error.rs as the sole target. The implementation record is factually wrong for this spec.",
+      "recommendation": "Update implementation.md to include the full git diff for crates/cclab-queue/src/error.rs. The working-tree diff (git diff -- crates/cclab-queue/src/error.rs) shows the complete +235 line addition of #[cfg(test)] mod tests containing all 31 test functions T1-T31. Append this diff block and update the summary to reflect error-types coverage completion alongside ratelimit."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "The implementation.md summary says 'All production code for ratelimit module is complete. The module provides RateLimitConfig, RateLimitResult, RateLimiter trait, TokenBucket, SlidingWindow, and RateLimitManager — all supporting the 54-test coverage plan. All 60 tests (6 original + 54 new) pass.' This summary describes the ratelimit.md spec, not error-types. A reviewer checking only implementation.md for this spec cannot determine whether error-types work was done.",
+      "recommendation": "Prepend or append a section in implementation.md that explicitly covers error-types: summarise the 31 tests added to error.rs, the 4 From conversion branches tested (T18-T27), the serde_json/uuid From impls (T28-T29), and the Send+Sync/Debug bounds (T30-T31)."
+    },
+    {
+      "severity": "LOW",
+      "description": "T16 display_rate_limited tests that the string contains '5s'. The spec's Display Format table specifies the format as 'Rate limited, retry after {d:?}'. With Duration::from_secs(5), std Debug formats this as '5s', so the assertion msg.contains(\"5s\") is correct. However the assertion is minimal — it does not verify the 'Rate limited, retry after' prefix. Future refactoring of the #[error] template would silently pass this test.",
+      "recommendation": "Consider tightening the assertion to: assert!(msg.starts_with(\"Rate limited, retry after\"), \"…\"); assert!(msg.contains(\"5s\"), \"…\"); This matches the spec's Display Format table exactly and guards against accidental template changes."
+    }
+  ]
+}

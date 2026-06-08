@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jet-wasm-line-bidi",
+  "title": "LineBidiPublicTypes",
+  "description": "Public types for the icu_segmenter + unicode-bidi backed line-breaking and bidirectional-text engine (Phase 6b). Companion machine-readable contract for `line-bidi.md`. Cross-references: text-shaping.md (ShapedRun + FontError + shape_text inputs), paint-runtime.md (consumes Paragraph after visual-order resolution), layout-runtime.md (consumes line_breaks for line wrap).",
+  "$defs": {
+    "LineBreakKind": {
+      "$id": "line-break-kind",
+      "type": "string",
+      "enum": ["Mandatory", "Allowed"]
+    },
+    "LineBreakOpportunity": {
+      "$id": "line-break-opportunity",
+      "type": "object",
+      "required": ["byte_offset", "kind"],
+      "properties": {
+        "byte_offset": { "type": "integer", "format": "uint64", "minimum": 1 },
+        "kind": { "$ref": "#/$defs/LineBreakKind" }
+      },
+      "additionalProperties": false
+    },
+    "Direction": {
+      "$id": "direction",
+      "type": "string",
+      "enum": ["Ltr", "Rtl", "Auto"]
+    },
+    "ByteRange": {
+      "$id": "byte-range",
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "integer", "format": "uint64" },
+        "end": { "type": "integer", "format": "uint64" }
+      },
+      "additionalProperties": false
+    },
+    "BidiRun": {
+      "$id": "bidi-run",
+      "type": "object",
+      "required": ["byte_range", "level"],
+      "properties": {
+        "byte_range": { "$ref": "#/$defs/ByteRange" },
+        "level": { "type": "integer", "format": "uint8", "minimum": 0, "maximum": 125 }
+      },
+      "additionalProperties": false
+    },
+    "ScriptRun": {
+      "$id": "script-run",
+      "type": "object",
+      "required": ["byte_range", "script"],
+      "description": "UAX #24 script run. `script` MUST be `unicode_script::Script::full_name()` PascalCase form. Common/Inherited codepoints lookahead-merge into the FIRST concrete script run that follows; pure-Common input emits a single ScriptRun with script=\"Common\".",
+      "properties": {
+        "byte_range": { "$ref": "#/$defs/ByteRange" },
+        "script": {
+          "type": "string",
+          "description": "PascalCase Unicode script property name (e.g. Latin, Han, Arabic, Common). NOT the ISO 15924 short_name."
+        }
+      },
+      "additionalProperties": false
+    },
+    "Paragraph": {
+      "$id": "paragraph",
+      "type": "object",
+      "description": "Aggregate output of shape_paragraph. `runs` is in LOGICAL byte-offset order — consumers iterate `bidi_runs.level` to resolve visual order at paint time.",
+      "required": ["runs", "line_breaks", "bidi_runs", "script_runs"],
+      "properties": {
+        "runs": {
+          "type": "array",
+          "description": "ShapedRun values in LOGICAL byte-offset order. References text-shaping.md ShapedRun shape."
+        },
+        "line_breaks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/LineBreakOpportunity" }
+        },
+        "bidi_runs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/BidiRun" }
+        },
+        "script_runs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ScriptRun" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

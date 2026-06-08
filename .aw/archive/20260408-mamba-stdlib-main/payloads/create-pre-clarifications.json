@@ -1,0 +1,9 @@
+{
+  "group_id": "stdlib-main-module",
+  "answers": [
+    {
+      "topic": "Implementation pattern",
+      "answer": "Follow future_mod.rs pattern. Register as __main__ module with __name__='__main__', __doc__=None, __loader__=None, __spec__=None. Simple constants-only module."
+    }
+  ]
+}

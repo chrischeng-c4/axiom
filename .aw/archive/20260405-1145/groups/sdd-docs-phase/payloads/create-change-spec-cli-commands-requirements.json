@@ -1,0 +1,8 @@
+{
+  "spec_id": "cli-commands-docs-phase",
+  "group_id": "sdd-docs-phase",
+  "section": "requirements",
+  "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "cli", "changes"],
+  "content": "| ID | Requirement | Priority |\n|----|-------------|----------|\n| CR1 | Update `is_artifact_permitted_under_guard()` to map docs-phase workflow guard actions (`create_change_docs`, `revise_change_docs`) to their permitted artifact action (`create_change_docs`). Pattern: `revise_change_docs` delegates to `create_change_docs` artifact (same as implementation phase pattern). | high |\n| CR2 | Update `is_artifact_permitted_under_guard()` to map `review_change_docs` workflow guard to `review_change_docs` artifact action. | high |\n| CR3 | Update CLI → Logic Mapping table in main spec with 6 new action entries: 3 workflow actions and 3 artifact actions, all routing through `ToolRegistry::call_tool()`. | high |\n| CR4 | Update Command Tree documentation in main spec to list the new docs-phase action names under `workflow` and `artifact` subcommands. | medium |\n| CR5 | No new `Commands` enum variants needed — existing `Workflow` and `Artifact` variants handle all docs-phase actions via dynamic dispatch. | info |"
+}

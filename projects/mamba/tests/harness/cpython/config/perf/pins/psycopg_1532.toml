@@ -1,0 +1,9 @@
+# Perf-pin regression gate (#1532).
+# Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/psycopg_1532.toml)
+issue = 1532
+lib = "psycopg"
+fixture = "tests/cpython/fixtures/3rd-libs/psycopg/bench/psycopg_type_read_hot.py"
+floor = 1.0
+mem_floor = 1.0
+samples = 9
+prereq_imports = ["psycopg"]

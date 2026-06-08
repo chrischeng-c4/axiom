@@ -1,0 +1,172 @@
+{
+  "change_id": "mamba-test-coverage",
+  "group_id": "mamba-stdlib-coverage-lower",
+  "group": "mamba-stdlib-coverage-lower",
+  "specs": [
+    {
+      "path": "read_path:specs/cclab-mamba/stdlib/datetime.md",
+      "relevance": "high",
+      "section": "target-module-datetime"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/stdlib/typing-and-inspect.md",
+      "relevance": "high",
+      "section": "target-module-typing"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/stdlib/concurrency.md",
+      "relevance": "high",
+      "section": "target-module-concurrency"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/stdlib/numeric.md",
+      "relevance": "high",
+      "section": "target-module-numeric"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/stdlib/archive-and-compression.md",
+      "relevance": "medium",
+      "section": "target-module-archive"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/stdlib/text-processing.md",
+      "relevance": "medium",
+      "section": "target-module-text"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/stdlib/hashlib.md",
+      "relevance": "medium",
+      "section": "target-module-secrets"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/stdlib/random.md",
+      "relevance": "medium",
+      "section": "target-module-secrets"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/testing/test-harness.md",
+      "relevance": "medium",
+      "section": "testing-infrastructure"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/stdlib/native-implementations.md",
+      "relevance": "low",
+      "section": "stdlib-context"
+    },
+    {
+      "path": "read_path:specs/cclab-mamba/README.md",
+      "relevance": "low",
+      "section": "overview"
+    }
+  ],
+  "spec_plan": {
+    "title": "Reference Context for Stdlib Test Coverage — Lower Coverage Tier",
+    "summary": "The mamba-stdlib-coverage-lower group targets 10 lowest-coverage stdlib modules (queue_mod, statistics_mod, shlex_mod, calendar_mod, locale_mod, lzma_mod, zlib_mod, secrets_mod, bisect_mod, abc_mod) ranging from 4% to 14% coverage. Per pre-clarifications, these map to 6-7 existing stdlib spec groups. This reference context documents the specification-driven foundation for each module, test infrastructure, and coverage targets (100% line + branch).",
+    "scope": {
+      "in_scope": [
+        "10 lowest-coverage stdlib modules (4%-14% current coverage)",
+        "Inline #[cfg(test)] unit tests for per-function branch paths",
+        "Integration tests in crates/cclab-mamba/tests/",
+        "Self-contained tests: no network, no external files",
+        "Real C bindings with fixed in-memory byte arrays (lzma/zlib)",
+        "Concurrent tests using std::thread or tokio::task (queue_mod)",
+        "Target: 100% line + 100% branch coverage per cargo-llvm-cov --branch",
+        "Mapping to existing stdlib spec groups (datetime, typing-and-inspect, concurrency, numeric, archive-and-compression, text-processing, hashlib)"
+      ],
+      "out_of_scope": [
+        "stdlib modules with >14% coverage",
+        "core compiler modules (parser, types, codegen)",
+        "FFI / C type system",
+        "Platform-specific guards and dead code removal"
+      ]
+    },
+    "sections": [
+      {
+        "name": "overview",
+        "relevance": "low",
+        "candidate_specs": [
+          "cclab-mamba/README.md"
+        ],
+        "reasoning": "Provides crate structure and spec organization for locating stdlib modules under runtime/stdlib/. Helps contextualize how specs map to source files."
+      },
+      {
+        "name": "target-module-datetime",
+        "relevance": "high",
+        "candidate_specs": [
+          "cclab-mamba/stdlib/datetime.md"
+        ],
+        "reasoning": "calendar_mod is date/time functionality. Spec defines datetime, date, timedelta classes with arithmetic operations and strftime formatting. Critical for understanding calendar module requirements and API surface."
+      },
+      {
+        "name": "target-module-typing",
+        "relevance": "high",
+        "candidate_specs": [
+          "cclab-mamba/stdlib/typing-and-inspect.md"
+        ],
+        "reasoning": "abc_mod provides abstract base classes and introspection. Spec covers typing type aliases and inspect methods (isfunction, isclass, ismethod, getmembers, signature). Essential for ABC implementation and testing reflection capabilities."
+      },
+      {
+        "name": "target-module-concurrency",
+        "relevance": "high",
+        "candidate_specs": [
+          "cclab-mamba/stdlib/concurrency.md"
+        ],
+        "reasoning": "queue_mod implements thread-safe queue operations. Spec defines threading.Thread, Lock, Event, subprocess.run/Popen primitives. Provides foundation for concurrent queue testing with synchronization patterns."
+      },
+      {
+        "name": "target-module-numeric",
+        "relevance": "high",
+        "candidate_specs": [
+          "cclab-mamba/stdlib/numeric.md"
+        ],
+        "reasoning": "statistics_mod and bisect_mod are numeric operations. Spec covers Decimal, Fraction, array types. statistics and bisect are algorithms operating on numeric sequences. Defines numeric type constraints and edge cases."
+      },
+      {
+        "name": "target-module-archive",
+        "relevance": "medium",
+        "candidate_specs": [
+          "cclab-mamba/stdlib/archive-and-compression.md"
+        ],
+        "reasoning": "lzma_mod and zlib_mod are compression utilities. Spec mentions lzma/zlib as deferred but covers gzip/zipfile/tarfile compression ecosystem. Provides patterns for compress/decompress round-trip testing with in-memory buffers."
+      },
+      {
+        "name": "target-module-text",
+        "relevance": "medium",
+        "candidate_specs": [
+          "cclab-mamba/stdlib/text-processing.md"
+        ],
+        "reasoning": "shlex_mod provides shell-like string lexing. Spec covers textwrap and string constants. Related to text parsing and string manipulation patterns. shlex conceptually fits text-processing ecosystem."
+      },
+      {
+        "name": "target-module-secrets",
+        "relevance": "medium",
+        "candidate_specs": [
+          "cclab-mamba/stdlib/hashlib.md",
+          "cclab-mamba/stdlib/random.md"
+        ],
+        "reasoning": "secrets_mod generates cryptographically secure random tokens. hashlib spec covers hash algorithms and incremental updates (used in token generation). random spec defines PRNG interface. Secrets contrasts with general randomness and emphasizes security."
+      },
+      {
+        "name": "testing-infrastructure",
+        "relevance": "medium",
+        "candidate_specs": [
+          "cclab-mamba/testing/test-harness.md"
+        ],
+        "reasoning": "Defines Mamba's test infrastructure with fixture discovery, directive dispatch (parse/typecheck/jit), and error reporting. Essential for understanding how inline #[cfg(test)] modules and integration tests fit into cargo-llvm-cov coverage measurement."
+      },
+      {
+        "name": "stdlib-context",
+        "relevance": "low",
+        "candidate_specs": [
+          "cclab-mamba/stdlib/native-implementations.md"
+        ],
+        "reasoning": "Discusses stdlib modernization via native Rust crates. Provides background on how stdlib modules are rewritten for robustness. Contextualizes why high-quality test coverage is important for production-grade implementations."
+      }
+    ]
+  },
+  "metadata": {
+    "created_by": "Claude",
+    "phase": "reference-context",
+    "status": "ready"
+  }
+}

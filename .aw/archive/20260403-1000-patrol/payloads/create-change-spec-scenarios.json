@@ -1,0 +1,6 @@
+{
+  "spec_id": "idlelib-stub",
+  "group_id": "add-idlelib-stdlib",
+  "section": "scenarios",
+  "content": "### Scenario: Basic import succeeds\n- **WHEN** `import idlelib` is executed.\n- **THEN** No error is raised and `idlelib` is available in the namespace.\n- **AND** `idlelib.__name__` equals `\"idlelib\"`.\n\n### Scenario: Submodule attribute access returns stub\n- **WHEN** `from idlelib import idle` is executed.\n- **THEN** `idle` is bound to a stub value (symbol string).\n- **AND** Calling `idle()` raises `NotImplementedError` with message containing `\"idlelib.idle\"`.\n\n### Scenario: Package attributes present\n- **WHEN** `idlelib.__package__` is accessed.\n- **THEN** It returns `\"idlelib\"`.\n- **AND** `idlelib.__path__` is present as an empty list.\n\n### Scenario: Multiple stub attributes accessible\n- **WHEN** `idlelib.PyShell`, `idlelib.config`, `idlelib.editor` are accessed.\n- **THEN** Each returns a valid stub attribute (no `AttributeError`).\n\n### Scenario: Module cached in sys.modules\n- **WHEN** `import idlelib` is called twice.\n- **THEN** The same module object is returned (sys.modules caching)."
+}

@@ -1,0 +1,29 @@
+change_id: sdd-structured-issue
+schema_version: '2.0'
+created_at: 2026-04-09T10:35:40.090866Z
+updated_at: 2026-04-09T11:27:58.197103Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: new_branch
+revision_counts:
+  ref_ctx:structured-issue-format: 1
+current_task_id: sdd-structured-issue
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec: []
+  post_clarifications:
+  - structured-issue-format
+  reference_context:
+  - structured-issue-format
+  change_implementation: []
+  pre_clarifications:
+  - structured-issue-format

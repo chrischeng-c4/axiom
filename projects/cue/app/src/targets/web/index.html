@@ -1,0 +1,22 @@
+<!doctype html>
+<!--
+  Web target html shell for the Cue dogfood app (#1240, Slice 2c-4).
+  Stable, build-input contract for `jet build --target web` (#1239):
+  the bundler walks this file → `bootstrap.ts` → `start_web` →
+  `boot(...)` → `paint_to_dom`. Hand-written, intentionally minimal —
+  no inline styles, no analytics, no service-worker bootstrap. The
+  paint walker owns everything that ends up under #cue-app, so any
+  attribute / child added here would just be noise the walker ignores
+  on first paint.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cue</title>
+  </head>
+  <body>
+    <div id="cue-app"></div>
+    <script type="module" src="./bootstrap.ts"></script>
+  </body>
+</html>

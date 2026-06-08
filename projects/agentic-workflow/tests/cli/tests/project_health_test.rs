@@ -1,0 +1,778 @@
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/surface/generate/project-health-test-source.md#source
+// CODEGEN-BEGIN
+use std::collections::BTreeMap;
+
+use agentic_workflow::cli::cb::{CbColdVerifySummary, CbGeneratorMaturitySummary, CbVerifySummary};
+use agentic_workflow::cli::project::{
+    project_health_summary, project_health_summary_with_payload_path, ProjectHealthReport,
+    ProjectHealthStatus, ProjectTestGateReport, ProjectTestGateStatus,
+};
+use agentic_workflow::cli::regenerability_policy::RegenerabilityAuthority;
+use agentic_workflow::cli::standardize::{
+    DependencyPolicyFinding, MarkerCounts, RegenerabilityCoverage, SemanticCoverage,
+    StackMigrationCoverage, StandardizationCoverage, TraceabilityBlocker, TraceabilityBlockerKind,
+    TraceabilityCoverage, WorkspaceStackMigration,
+};
+use agentic_workflow::models::{
+    default_preflight_gates, ArtifactKind, PreFlightEvidence, PreFlightEvidenceKind,
+    PreFlightEvidenceStatus, PreFlightGate, PreFlightGateReport, PreFlightGateSeverity,
+};
+
+fn managed(percent: f64, uncovered_files: Vec<String>) -> StandardizationCoverage {
+    StandardizationCoverage {
+        scope: vec!["projects/demo/**".to_string()],
+        total_files: 2,
+        managed_files: 2 - uncovered_files.len(),
+        percent,
+        by_language: BTreeMap::new(),
+        by_marker: MarkerCounts {
+            codegen: 2 - uncovered_files.len(),
+            handwrite: 0,
+        },
+        uncovered_files,
+    }
+}
+
+fn regenerable(
+    percent: f64,
+    handwrite_files: usize,
+    unmarked_files: usize,
+) -> RegenerabilityCoverage {
+    RegenerabilityCoverage {
+        scope: vec!["projects/demo/**".to_string()],
+        total_files: 2,
+        eligible_files: 2,
+        codegen_files: 2 - handwrite_files - unmarked_files,
+        fully_codegen_files: 2 - handwrite_files - unmarked_files,
+        handwrite_files,
+        unmarked_files,
+        unsupported_codegen_files: Vec::new(),
+        non_replayable_codegen_files: Vec::new(),
+        codegen_drift_evaluated: false,
+        codegen_drift_files: Vec::new(),
+        percent,
+        gap_files: Vec::new(),
+        semantic_percent: 100.0,
+        generator_primitive_gaps: 0,
+        primitive_covered_files: 2 - handwrite_files - unmarked_files,
+        missing_generator_primitive_gaps: 0,
+        insufficient_td_section_gaps: 0,
+        human_decision_required_gaps: 0,
+        next_gap: None,
+        authority_mode: RegenerabilityAuthority::ExternalAdvisory,
+        required_for_production: false,
+        authority_reason: "test fixture".to_string(),
+    }
+}
+
+fn semantic(percent: f64, uncovered_files: Vec<String>) -> SemanticCoverage {
+    SemanticCoverage {
+        scope: vec!["projects/demo/**".to_string()],
+        total_files: 2,
+        source_units: 2,
+        source_symbols: 0,
+        claim_files: 0,
+        semantic_files: 1,
+        semantically_covered_files: 2 - uncovered_files.len(),
+        percent,
+        source_ir: Vec::new(),
+        source_evidence_graph: None,
+        frontend_ecosystem: None,
+        coverage_map: Vec::new(),
+        generator_primitive_gaps: Vec::new(),
+        uncovered_files,
+        next_gap: None,
+        blocked_gap_count: 0,
+        human_decision_required_count: 0,
+    }
+}
+
+fn traceability(blockers: Vec<TraceabilityBlocker>) -> TraceabilityCoverage {
+    TraceabilityCoverage {
+        project: "demo".to_string(),
+        scope: vec!["projects/demo/**".to_string()],
+        cap_path: "projects/demo/README.md".to_string(),
+        total_td_files: 1,
+        traceable_td_files: if blockers.is_empty() { 1 } else { 0 },
+        traceability_percent: if blockers.is_empty() { 100.0 } else { 0.0 },
+        internal_td_count: 0,
+        orphan_td_count: blockers
+            .iter()
+            .filter(|blocker| blocker.kind == TraceabilityBlockerKind::TdNoCapabilityRef)
+            .count(),
+        source_edge_count: 1,
+        cb_edge_count: 1,
+        command_traceability:
+            agentic_workflow::cli::standardize::CommandTraceabilityCoverage::ready_fixture(),
+        blocker_count: blockers.len(),
+        next_gap: blockers.first().cloned(),
+        blockers,
+    }
+}
+
+fn cb_summary(clean: bool) -> CbVerifySummary {
+    CbVerifySummary {
+        clean,
+        public_api_covered: 4,
+        public_api_total: 4,
+        semantic_review_required: 0,
+        failures: if clean {
+            Vec::new()
+        } else {
+            vec!["drift".to_string()]
+        },
+    }
+}
+
+fn cold_summary(clean: bool) -> Vec<CbColdVerifySummary> {
+    vec![CbColdVerifySummary {
+        workspace: Some("demo-backend".to_string()),
+        clean,
+        spec_count: 2,
+        source_root_count: 1,
+        generated_files: if clean { 2 } else { 1 },
+        expected_files: 2,
+        generator_maturity: CbGeneratorMaturitySummary {
+            target_files: 2,
+            artifact_replay_files: 0,
+            source_template_files: 0,
+            generator_primitive_files: 2,
+        },
+        failures: if clean {
+            Vec::new()
+        } else {
+            vec!["src/lib.rs: differs after cold TD rebuild".to_string()]
+        },
+    }]
+}
+
+fn stack_migration(normalized: bool) -> StackMigrationCoverage {
+    StackMigrationCoverage {
+        project: "demo".to_string(),
+        workspaces: vec![WorkspaceStackMigration {
+            name: "demo-backend".to_string(),
+            target: Some("python".to_string()),
+            paths: vec!["projects/demo/**".to_string()],
+            manifest_stacks: vec!["fastapi".to_string(), "sqlalchemy".to_string()],
+            source_stacks: vec!["fastapi".to_string()],
+            migration_state: "sqlalchemy_alloydb".to_string(),
+            persistence_annotations: usize::from(normalized),
+            dependency_policies: vec![DependencyPolicyFinding {
+                dependency: "fastapi".to_string(),
+                classification: "core_external".to_string(),
+                action: "keep".to_string(),
+                reason: "test fixture".to_string(),
+            }],
+            deployment_manifest_count: 0,
+            deployment_facets: Vec::new(),
+            unsupported_deployment_kinds: Vec::new(),
+            normalized,
+            notes: vec!["test fixture".to_string()],
+        }],
+        migration_normalized_percent: if normalized { 100.0 } else { 0.0 },
+        incomplete_workspace_count: if normalized { 0 } else { 1 },
+        dependency_policy_blockers: Vec::new(),
+        deployment_policy_blockers: Vec::new(),
+        blockers: if normalized {
+            Vec::new()
+        } else {
+            vec!["demo-backend stack migration classification incomplete".to_string()]
+        },
+    }
+}
+
+fn stack_migration_with_dependency_blocker() -> StackMigrationCoverage {
+    let mut coverage = stack_migration(true);
+    coverage.dependency_policy_blockers = vec![
+        "demo-frontend dependency `legacy-editor`: legacy editor should not be a target dependency"
+            .to_string(),
+    ];
+    coverage.blockers = coverage.dependency_policy_blockers.clone();
+    coverage
+}
+
+#[test]
+fn clean_project_health_json_fields_are_healthy() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Healthy);
+    assert!(report.capability_ready);
+    assert!(report.managed_ready);
+    assert!(report.semantic_ready);
+    assert!(report.traceability_ready);
+    assert!(report.takeover_ready);
+    assert!(report.generator_request_ready);
+    assert!(report.production_ready);
+    assert!(report.blockers.is_empty());
+    assert!(report.capability.root_runner_ready);
+    assert_eq!(report.capability.capability_count, 1);
+    assert_eq!(report.capability.production_percent, 100.0);
+    assert!(report.optional_regenerability_gaps.is_empty());
+    assert!(report.cb_verify_clean);
+    assert_eq!(report.public_api_covered, 4);
+    assert!(report.cold_rebuild_evaluated);
+    assert!(report.cold_rebuild_clean);
+    assert_eq!(report.cold_rebuild_workspace_count, 1);
+}
+
+#[test]
+fn project_health_summary_marks_complete_health_done() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(summary["schema_version"].as_str(), Some("aw.cli.v1"));
+    assert_eq!(summary["event"].as_str(), Some("result"));
+    assert_eq!(summary["status"].as_str(), Some("done"));
+    assert_eq!(
+        summary["completion"]["workflow_complete"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(summary["next"]["kind"].as_str(), Some("done"));
+    assert_eq!(
+        summary["readiness"]["production_ready"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        summary["readiness"]["codegen_percent"].as_f64(),
+        Some(100.0)
+    );
+    assert_eq!(
+        summary["readiness"]["full_codegen_percent"].as_f64(),
+        Some(100.0)
+    );
+    assert_eq!(summary["readiness"]["codegen_files"].as_u64(), Some(2));
+    assert_eq!(
+        summary["readiness"]["fully_codegen_files"].as_u64(),
+        Some(2)
+    );
+    assert_eq!(summary["report"]["codegen_percent"].as_f64(), Some(100.0));
+    assert_eq!(summary["report"]["project"].as_str(), Some("demo"));
+}
+
+#[test]
+fn project_health_summary_with_payload_path_is_bounded_result() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        CbVerifySummary {
+            clean: false,
+            public_api_covered: 1,
+            public_api_total: 4,
+            semantic_review_required: 0,
+            failures: (0..30).map(|idx| format!("drift {idx}")).collect(),
+        },
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.blockers = (0..30).map(|idx| format!("blocker {idx}")).collect();
+
+    let summary =
+        project_health_summary_with_payload_path(&report, "/tmp/aw/demo/health/report.json");
+
+    assert_eq!(summary["event"].as_str(), Some("result"));
+    assert_eq!(
+        summary["payload_path"].as_str(),
+        Some("/tmp/aw/demo/health/report.json")
+    );
+    assert_eq!(summary["report"]["blocker_count"].as_u64(), Some(30));
+    assert_eq!(
+        summary["report"]["blockers_preview"]
+            .as_array()
+            .map(|items| items.len()),
+        Some(20)
+    );
+    assert!(summary["report"].get("blockers").is_none());
+}
+
+#[test]
+fn project_health_summary_points_to_full_verify_when_gates_are_missing() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::not_evaluated("demo"),
+    );
+    report.traceability_evaluated = false;
+    report.cb_verify_evaluated = false;
+    report.cold_rebuild_evaluated = false;
+    report.production_ready = false;
+    report.status = ProjectHealthStatus::Blocked;
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(summary["status"].as_str(), Some("continue"));
+    assert_eq!(
+        summary["completion"]["workflow_complete"].as_bool(),
+        Some(false)
+    );
+    assert_eq!(summary["next"]["kind"].as_str(), Some("run_command"));
+    assert_eq!(summary["next"]["command"].as_str(), Some("aw health demo"));
+}
+
+#[test]
+fn project_health_summary_routes_managed_blockers_to_standardize() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(50.0, vec!["projects/demo/src/lib.rs".to_string()]),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(summary["status"].as_str(), Some("continue"));
+    assert_eq!(summary["next"]["kind"].as_str(), Some("run_command"));
+    assert_eq!(
+        summary["next"]["command"].as_str(),
+        Some("aw standardize managed run demo --non-interactive --max-ticks 1")
+    );
+}
+
+#[test]
+fn no_cold_rebuild_workspace_routes_back_to_health() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(50.0, vec!["projects/demo/src/lib.rs".to_string()]),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        Vec::new(),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.cold_rebuild_evaluated = false;
+    report.cold_rebuild_workspace_count = 0;
+    report.cold_rebuild_clean = false;
+    let note =
+        "not evaluated; project `demo` has no workspace with `verify_cold = true`".to_string();
+    report.cold_rebuild_note = Some(note.clone());
+    report.blockers.push(note);
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(summary["next"]["command"].as_str(), Some("aw health demo"));
+    let missing = summary["completion"]["missing"].as_array().unwrap();
+    assert!(missing
+        .iter()
+        .any(|value| value.as_str().unwrap_or("").contains("verify_cold")));
+}
+
+#[test]
+fn unparseable_capability_map_blocks_without_invalid_next_command() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    report.capability_ready = false;
+    report.production_ready = false;
+    report.status = ProjectHealthStatus::Blocked;
+    report.capability.format = "unparseable".to_string();
+    report.capability.root_runner_ready = false;
+    report.capability.capability_count = 0;
+    report.capability.blocker_count = 1;
+    report.capability.blockers =
+        vec!["capability document parse failed: no capability sections found".to_string()];
+    report.blockers = report.capability.blockers.clone();
+
+    let summary = project_health_summary(&report);
+
+    assert_eq!(summary["next"]["kind"].as_str(), Some("blocked"));
+    assert!(summary["next"].get("command").is_none());
+    assert_eq!(
+        summary["next"]["reason"].as_str(),
+        Some("capability document parse failed: no capability sections found")
+    );
+}
+
+#[test]
+fn traceability_blockers_make_project_health_not_ready() {
+    let blocker = TraceabilityBlocker {
+        kind: TraceabilityBlockerKind::TdNoCapabilityRef,
+        target: "projects/demo/tech-design/app.md".to_string(),
+        reason: "TD has no capability_refs".to_string(),
+        source: None,
+    };
+    let report = ProjectHealthReport::from_components_with_traceability(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        traceability(vec![blocker]),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Blocked);
+    assert!(report.capability_ready);
+    assert!(report.managed_ready);
+    assert!(report.semantic_ready);
+    assert!(!report.traceability_ready);
+    assert!(!report.takeover_ready);
+    assert!(!report.generator_request_ready);
+    assert!(!report.production_ready);
+    assert_eq!(report.traceability_blocker_count, 1);
+    assert_eq!(report.traceability_orphan_td_count, 1);
+    assert!(report
+        .blockers
+        .iter()
+        .any(|blocker| blocker.contains("traceability closure incomplete")));
+}
+
+#[test]
+fn blocked_project_health_collects_governance_blockers() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(50.0, vec!["projects/demo/src/lib.rs".to_string()]),
+        semantic(50.0, vec!["projects/demo/src/lib.rs".to_string()]),
+        regenerable(0.0, 1, 1),
+        stack_migration(false),
+        CbVerifySummary {
+            clean: false,
+            public_api_covered: 1,
+            public_api_total: 4,
+            semantic_review_required: 2,
+            failures: vec!["byte drift".to_string()],
+        },
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Blocked);
+    assert!(report.capability_ready);
+    assert!(!report.managed_ready);
+    assert!(!report.semantic_ready);
+    assert!(report.traceability_ready);
+    assert!(!report.takeover_ready);
+    assert!(!report.generator_request_ready);
+    assert!(!report.production_ready);
+    assert!(report.blockers.iter().any(|b| b.contains("unmanaged")));
+    assert!(report
+        .optional_regenerability_gaps
+        .iter()
+        .any(|b| b.contains("HANDWRITE")));
+    assert!(report.blockers.iter().any(|b| b.contains("public API")));
+    assert_eq!(report.semantic_review_required, 2);
+    assert!(!report
+        .blockers
+        .iter()
+        .any(|b| b.contains("semantic review")));
+    assert!(report
+        .blockers
+        .iter()
+        .any(|b| b.contains("stack migration")));
+}
+
+#[test]
+fn regenerability_gaps_are_advisory_when_production_gates_clean() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(50.0, 1, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Healthy);
+    assert!(report.production_ready);
+    assert!(report.blockers.is_empty());
+    assert_eq!(report.codegen_percent, 50.0);
+    assert_eq!(report.full_codegen_percent, 50.0);
+    assert_eq!(report.regenerable_percent, 50.0);
+    assert!(report
+        .optional_regenerability_gaps
+        .iter()
+        .any(|b| b.contains("HANDWRITE")));
+    assert_eq!(
+        report.regenerability_authority.authority,
+        RegenerabilityAuthority::ExternalAdvisory
+    );
+    assert!(!report.regenerability_authority.required_for_production);
+    assert_eq!(report.regenerability_authority.gap_count, 1);
+}
+
+#[test]
+fn authoritative_regenerability_gaps_block_project_health() {
+    let report = ProjectHealthReport::from_components(
+        "agentic-workflow",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(50.0, 1, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Blocked);
+    assert!(!report.production_ready);
+    assert_eq!(
+        report.regenerability_authority.authority,
+        RegenerabilityAuthority::GeneratorAuthoritative
+    );
+    assert!(report.regenerability_authority.required_for_production);
+    assert_eq!(report.regenerability_authority.gap_count, 1);
+    assert!(report.optional_regenerability_gaps.is_empty());
+    assert!(report
+        .blockers
+        .iter()
+        .any(|blocker| blocker.contains("regenerability required")));
+}
+
+#[test]
+fn semantic_review_required_is_reported_without_blocking_project_health() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        CbVerifySummary {
+            clean: true,
+            public_api_covered: 4,
+            public_api_total: 4,
+            semantic_review_required: 2,
+            failures: Vec::new(),
+        },
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Healthy);
+    assert_eq!(report.semantic_review_required, 2);
+    assert!(report.blockers.is_empty());
+}
+
+#[test]
+fn dependency_policy_blockers_block_even_when_stack_migration_is_normalized() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration_with_dependency_blocker(),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Blocked);
+    assert!(report.blockers.iter().any(|b| b.contains("legacy-editor")));
+}
+
+#[test]
+fn cold_rebuild_failures_block_project_health() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(false),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Blocked);
+    assert!(!report.cold_rebuild_clean);
+    assert!(report
+        .blockers
+        .iter()
+        .any(|b| b.contains("cold rebuild failed")));
+    assert!(report.blockers.iter().any(|b| b.contains("demo-backend")));
+}
+
+#[test]
+fn tests_not_evaluated_blocks_production_ready() {
+    let report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::not_evaluated("demo"),
+    );
+
+    assert_eq!(report.status, ProjectHealthStatus::Blocked);
+    assert!(!report.production_ready);
+    assert_eq!(
+        report.test_gates.status,
+        ProjectTestGateStatus::NotEvaluated
+    );
+    assert!(report.blockers.iter().any(|b| b.contains("not evaluated")));
+}
+
+#[test]
+fn missing_hard_preflight_gate_blocks_project_health() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    let preflight = PreFlightGateReport::evaluate(
+        "projects/demo/src/lib.rs",
+        &[preflight_gate(PreFlightGateSeverity::Hard)],
+        &[],
+    );
+
+    report.apply_preflight_gate_report(preflight);
+
+    assert_eq!(report.status, ProjectHealthStatus::Blocked);
+    assert!(!report.production_ready);
+    assert!(report
+        .production_blockers
+        .iter()
+        .any(|blocker| blocker.contains("missing test evidence")));
+    assert!(report.optional_quality_warnings.is_empty());
+}
+
+#[test]
+fn missing_frontend_preflight_evidence_blocks_project_health() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    let preflight = PreFlightGateReport::evaluate(
+        "projects/demo/frontend/src/App.tsx",
+        &default_preflight_gates(ArtifactKind::FrontendPage),
+        &[],
+    );
+
+    report.apply_preflight_gate_report(preflight);
+
+    assert_eq!(report.status, ProjectHealthStatus::Blocked);
+    assert!(!report.production_ready);
+    assert!(report
+        .production_blockers
+        .iter()
+        .any(|blocker| blocker.contains("frontend-page-viewport-screenshots")));
+    assert!(report
+        .production_blockers
+        .iter()
+        .any(|blocker| blocker.contains("frontend-page-interaction-smoke")));
+}
+
+#[test]
+fn advisory_preflight_gate_warns_without_blocking_project_health() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    let preflight = PreFlightGateReport::evaluate(
+        "projects/demo/README.md",
+        &[preflight_gate(PreFlightGateSeverity::Advisory)],
+        &[],
+    );
+
+    report.apply_preflight_gate_report(preflight);
+
+    assert_eq!(report.status, ProjectHealthStatus::Healthy);
+    assert!(report.production_ready);
+    assert!(report.production_blockers.is_empty());
+    assert!(report
+        .optional_quality_warnings
+        .iter()
+        .any(|warning| warning.contains("missing advisory test evidence")));
+}
+
+#[test]
+fn accepted_preflight_evidence_keeps_project_health_ready() {
+    let mut report = ProjectHealthReport::from_components(
+        "demo",
+        managed(100.0, Vec::new()),
+        semantic(100.0, Vec::new()),
+        regenerable(100.0, 0, 0),
+        stack_migration(true),
+        cb_summary(true),
+        cold_summary(true),
+        ProjectTestGateReport::passed_fixture("true"),
+    );
+    let evidence = PreFlightEvidence {
+        gate_id: "code-artifact-test".to_string(),
+        evidence_kind: PreFlightEvidenceKind::Test,
+        source_ref: "cargo test -p demo".to_string(),
+        status: PreFlightEvidenceStatus::Accepted,
+    };
+    let preflight = PreFlightGateReport::evaluate(
+        "projects/demo/src/lib.rs",
+        &[preflight_gate(PreFlightGateSeverity::Hard)],
+        &[evidence],
+    );
+
+    report.apply_preflight_gate_report(preflight);
+
+    assert_eq!(report.status, ProjectHealthStatus::Healthy);
+    assert!(report.production_ready);
+    assert!(report.production_blockers.is_empty());
+    assert!(report.optional_quality_warnings.is_empty());
+}
+
+fn preflight_gate(severity: PreFlightGateSeverity) -> PreFlightGate {
+    PreFlightGate {
+        id: "code-artifact-test".to_string(),
+        artifact_kind: ArtifactKind::CodeArtifact,
+        severity,
+        evidence_kind: PreFlightEvidenceKind::Test,
+        description: "targeted test evidence".to_string(),
+    }
+}
+// CODEGEN-END

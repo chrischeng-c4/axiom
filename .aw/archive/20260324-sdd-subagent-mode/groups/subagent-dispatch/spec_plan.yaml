@@ -1,0 +1,26 @@
+- spec_id: subagent-skill-dispatch
+  action: modify
+  main_spec_ref: crates/cclab-sdd/skills/run-change.md
+  source: crates/cclab-sdd/skills/run-change.md
+  sections:
+  - overview
+  - logic
+  - interaction
+  - changes
+- spec_id: subagent-workflow-dispatch
+  action: modify
+  main_spec_ref: crates/cclab-sdd/tools/utils/delegate-agent.md
+  source: crates/cclab-sdd/tools/utils/delegate-agent.md
+  sections:
+  - overview
+  - logic
+  - interaction
+  - changes
+- spec_id: subagent-executor-resolution
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/executor-resolution.md
+  source: crates/cclab-sdd/logic/executor-resolution.md
+  sections:
+  - overview
+  - config
+  - changes

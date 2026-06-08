@@ -1,0 +1,13 @@
+{
+  "group_id": "mamba-stdlib-test",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "requirements.md: Add native stdlib test module with TestCase class and basic assertions (assertEqual, assertTrue, assertFalse, assertRaises) plus main() test runner.",
+    "success_criteria": "Module registers as 'test' in stdlib, provides TestCase class, assertion methods, and main() runner. All existing cclab-mamba tests pass without regressions.",
+    "boundary": {
+      "in_scope": "test_mod.rs creation, mod.rs registration, unit tests for all assertion methods",
+      "out_of_scope": "test.support sub-module utilities, advanced test discovery, setUp/tearDown lifecycle hooks",
+      "constraints": "Must follow existing stdlib module pattern (register() + register_module()), keep under 500 lines"
+    }
+  }
+}

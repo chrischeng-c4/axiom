@@ -1,0 +1,32 @@
+{
+  "change_id": "agent-pyo3",
+  "group_id": "agent-pyo3-bindings",
+  "answers": [
+    {
+      "question_id": "Q1",
+      "question": "Are all dependent crates ready?",
+      "answer": "Yes. All 4 SDD agents (RestructureIssueAgent, ReferenceContextAgent, ChangeSpecAgent, CodeAgent), ReviewAgent, CRRCycle, and integration extensions are implemented with 173 tests passing."
+    },
+    {
+      "question_id": "Q2",
+      "question": "Tool executor callable API?",
+      "answer": "Accept async callable: async def handler(args: dict) -> str. The tool name and description are registered separately. Signature: register_python_tool(name: str, description: str, parameters: dict, handler: Callable). Handler receives parsed args dict, returns string result."
+    },
+    {
+      "question_id": "Q3",
+      "question": "complete_structured return type?",
+      "answer": "Return Python dict (deserialized JSON). Schema passed as dict (JSON Schema). This matches Python conventions — users work with dicts, not Rust types."
+    },
+    {
+      "question_id": "Q4",
+      "question": "Crate structure?",
+      "answer": "Follow the standard pyo3_bindings/ layout from CLAUDE.md: mod.rs (module entry), types.rs (Py* wrappers), methods.rs (method impls). Split by domain if needed: providers.rs, agents.rs, tools.rs."
+    },
+    {
+      "question_id": "Q5",
+      "question": "Stub generation timing?",
+      "answer": "Manual step after maturin develop. Stubs checked into git so consumers get type hints without building from source. Run: cclab lens gen-stub."
+    }
+  ],
+  "status": "answered"
+}

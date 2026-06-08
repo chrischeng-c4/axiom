@@ -1,0 +1,195 @@
+# jet multi-target — capability matrix
+#
+# Schema: ./target-profiles.yaml.schema.json
+# Spec:   ./target-profiles.md
+#
+# This file is the machine-readable form of the per-target capability
+# profile. Each entry describes ONE target. Build-pipeline plumbing
+# (#1239) reads this file to:
+#
+#   1. Wire the matching renderer feature flag.
+#   2. Reject UI sources that demand a capability the target lacks.
+#   3. Materialize a `&'static TargetProfile` for use_target() (H1).
+#
+# Adding a new target = adding one entry here + one renderer crate.
+
+version: 1
+
+profiles:
+  # ── web ────────────────────────────────────────────────────────────
+  - target: web
+    inherits: null
+    display_kinds: [block, flex]
+    color_depth: rgba
+    text:
+      shaping: full
+      bidi: true
+      fonts: any
+    input:
+      pointer: true
+      keyboard: true
+      touch: true              # primary touches synthesize into mouse
+    events: [mouse, key, focus, lifecycle]
+    hooks:
+      - useState
+      - useEffect
+      - useRef
+      - useCallback
+      - useMemo
+      - useTarget
+    limits:
+      max_layout_nodes: 65535
+    animation:
+      paint_loop: raf
+      css_transitions: true
+    markdown:
+      inline_styles: true
+      lists: true
+      code_blocks: true
+      tables: true
+      images: true
+      links: true
+    notes: |
+      The baseline. All ../../wasm-renderer/ specs verified against this
+      profile. No degradation rules apply on web.
+
+  # ── desktop ────────────────────────────────────────────────────────
+  - target: desktop
+    inherits: web
+    overrides:
+      events:
+        # additive: lifecycle.suspend / resume from OS power events
+        # (the value is otherwise inherited; this is informational)
+        sources:
+          mouse: native-window
+          key: native-window
+          focus: native-window
+          lifecycle: [native-window, os-power]
+    notes: |
+      Desktop wraps the web bundle in Tauri (#1242). Paint, layout,
+      text, and input are identical to web. The only divergence is
+      OS-shell behavior (chrome / notifications / tray / file dialogs)
+      which lives outside the renderer-neutral contract.
+
+  # ── tui ────────────────────────────────────────────────────────────
+  - target: tui
+    inherits: null              # NOT inherits: web — too lossy
+    display_kinds: [block, flex]
+    color_depth: ansi-16        # default; opt-in indexed-256 via env
+    text:
+      shaping: grid
+      bidi: false               # v1
+      fonts: terminal
+    input:
+      pointer: optional         # true iff terminal supports mouse escape sequences
+      keyboard: true
+      touch: false
+    events: [key, focus, lifecycle]
+                                # mouse appears at runtime iff input.pointer resolves true
+    hooks:
+      - useState
+      - useEffect
+      - useRef
+      - useCallback
+      - useMemo
+      - useTarget
+    limits:
+      max_layout_nodes: 4096    # informational; ratatui handles more, but Cue UIs are small
+    animation:
+      paint_loop: poll
+      paint_loop_hz: 30
+      css_transitions: false
+    markdown:
+      inline_styles: true     # bold/italic/code spans render in terminal cells
+      lists: true             # bullet + ordered render as text
+      code_blocks: true       # fenced blocks render in monospace
+      tables: false           # T11 — replaced by `[table omitted]` placeholder
+      images: false           # T11 — replaced by aria-label or `[image]`
+      links: true             # rendered as label inline + footnote-style `(URL)` after paragraph
+    degradation:
+      # See target-profiles.md §"TUI degradation" for the full prose.
+      # This list mirrors the IDs so the build pipeline can enforce
+      # them.
+      - id: T1
+        applies_to: pixel-dimensions
+        rule: round-to-cell
+      - id: T2
+        applies_to: percent-dimensions
+        rule: pass-through
+      - id: T3
+        applies_to: auto-dimensions
+        rule: pass-through
+      - id: T4
+        applies_to: rgba-color
+        rule: quantize-to-ansi
+      - id: T5
+        applies_to: font-family-weight-style
+        rule: drop-silent
+      - id: T6
+        applies_to: text-shadow-box-shadow
+        rule: drop-silent
+      - id: T7
+        applies_to: border-radius
+        rule: round-to-zero
+      - id: T8
+        applies_to: css-transitions-transforms
+        rule: drop-silent
+      - id: T9
+        applies_to: mouse-events-no-terminal-support
+        rule: synthesize-keyboard-equivalent
+      - id: T10
+        applies_to: unsupported-element
+        rule: render-placeholder
+      - id: T11
+        applies_to: markdown-features-exceeding-capability
+        rule: render-placeholder
+    notes: |
+      TUI deliberately does NOT inherit from web — too many capabilities
+      degrade or drop, and inheritance would give a misleading "yes" to
+      capabilities like rgba color or HarfBuzz shaping. The TUI profile
+      is hand-curated.
+
+      `input.pointer` is a build-time `optional`; the runtime resolution
+      to true/false happens at TUI renderer mount when the terminal
+      negotiates mouse capability. Consumers MUST gate mouse-dependent
+      paths with `use_target().input.pointer_at_runtime()` rather than
+      reading the build-time profile.
+
+# ── degradation rule index ──────────────────────────────────────────
+# Cross-reference table for the rules above. The build pipeline uses
+# this to emit warnings / errors when a UI source uses a feature whose
+# rule resolves to drop-silent on the active target.
+degradation_rules:
+  - id: T1
+    severity: warn
+    rationale: "Pixel→cell rounding loses precision."
+  - id: T2
+    severity: info
+    rationale: "Pass-through; no fidelity loss."
+  - id: T3
+    severity: info
+    rationale: "Pass-through; no fidelity loss."
+  - id: T4
+    severity: warn
+    rationale: "Color quantization may collide; UIs MAY override per-element."
+  - id: T5
+    severity: warn
+    rationale: "Font props ignored; visible drift from web."
+  - id: T6
+    severity: info
+    rationale: "Decorative; no behavior impact."
+  - id: T7
+    severity: info
+    rationale: "Decorative; no behavior impact."
+  - id: T8
+    severity: warn
+    rationale: "Animation absent; UIs MAY render the end state."
+  - id: T9
+    severity: error
+    rationale: "Without keyboard equivalents, mouse-only handlers are unreachable. Build MUST refuse to ship a TUI target if any handler lacks a fallback."
+  - id: T10
+    severity: error
+    rationale: "Unsupported element types are visible bugs. Should ship as build error in Cue dogfood (#1240)."
+  - id: T11
+    severity: warn
+    rationale: "Per-feature markdown drop on TUI (tables / images) is expected; warn so app authors know to pre-substitute via use_target().markdown when fidelity matters."

@@ -1,0 +1,19 @@
+[package]
+name = "cap-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "cap-core — client + protocol + supervised-run helper for the cap resource-protection daemon. Shared by the cap CLI and other tools (e.g. vat) that want to register their child processes as cap leases."
+
+[lib]
+name = "cap_core"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+dirs = "5"
+libc = "0.2"

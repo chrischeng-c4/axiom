@@ -1,0 +1,6 @@
+{
+  "spec_id": "metrics",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: metrics-changes\n  refs:\n    - $ref: \"#task-metrics-schema\"\nchanges:\n  - path: crates/cclab-queue/src/metrics.rs\n    action: modify\n    description: Add #[cfg(test)] mod tests with 19 unit tests covering TaskMetrics construction, all record_* methods, label isolation, histogram buckets, gather_metrics output, METRICS static, and concurrent safety\n  - path: crates/cclab-queue/tests/feature_gates.rs\n    action: create\n    description: Add compile-gate verification test (T20) asserting metrics module excluded when feature disabled\n  - path: crates/cclab-queue/Cargo.toml\n    action: modify\n    description: Add serial_test to dev-dependencies for metric registration isolation\n```"
+}

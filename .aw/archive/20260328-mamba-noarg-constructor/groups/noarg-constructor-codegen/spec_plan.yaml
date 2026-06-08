@@ -1,0 +1,9 @@
+- spec_id: no-arg-constructor-codegen-fix
+  action: modify
+  main_spec_ref: crates/cclab-mamba/lower/hir-to-mir.md
+  source: cclab/specs/crates/cclab-mamba/lower/hir-to-mir.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes

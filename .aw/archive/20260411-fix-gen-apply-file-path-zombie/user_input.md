@@ -1,0 +1,1 @@
+Fix bug: score gen apply parser expects path: field but specs use file:, resulting in silent no-op. Accept both path: and file: keys in extract_change_entries. Add warning for 0 entries extracted. Add regression tests. Refs bug-score-gen-apply-expects-path-but-specs-use-file-si

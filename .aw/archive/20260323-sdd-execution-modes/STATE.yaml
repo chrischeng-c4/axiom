@@ -1,0 +1,100 @@
+change_id: sdd-execution-modes
+schema_version: '2.0'
+created_at: 2026-03-23T09:10:52.113931Z
+updated_at: 2026-03-23T11:02:24.968390Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: new_branch
+revision_counts:
+  impl:sdd-execution-modes: 1
+current_task_id: sdd-execution-modes
+task_revisions:
+  sdd-execution-modes: 2
+impl_spec_phase: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 162295
+    timestamp: 2026-03-23T09:13:42.751106Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 948050
+    tokens_out: 1602
+    cost_usd: null
+    duration_ms: 195236
+    timestamp: 2026-03-23T09:21:28.545493Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 173340
+    timestamp: 2026-03-23T09:25:09.144821Z
+  - step: analyze_spec_sdd-execution-modes
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 549974
+    timestamp: 2026-03-23T09:36:11.577310Z
+  - step: review_impl_sdd-execution-modes
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 216590
+    timestamp: 2026-03-23T09:53:52.191327Z
+  - step: review_impl_sdd-execution-modes
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 247036
+    timestamp: 2026-03-23T10:28:00.868511Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1042776
+    timestamp: 2026-03-23T10:28:44.536964Z
+  total_cost_usd: 0.0
+  total_tokens_in: 948050
+  total_tokens_out: 1602
+dag:
+  issues:
+  - number: 1046
+    title: 'feat(sdd): subagent execution mode — Claude Code agents with least-privilege tooling'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec:
+  - sdd-execution-modes
+  post_clarifications:
+  - sdd-execution-modes
+  pre_clarifications:
+  - sdd-execution-modes
+  reference_context:
+  - sdd-execution-modes
+  change_implementation: []

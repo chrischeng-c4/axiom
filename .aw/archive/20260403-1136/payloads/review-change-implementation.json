@@ -1,0 +1,67 @@
+{
+  "change_id": "1136",
+  "spec_id": "merge-tool-openrpc",
+  "verdict": "REJECTED",
+  "summary": "The OpenRPC definition added to workflow-tools.md diverges from the spec on four requirements. R2 (P0): specs_merged is defined as array-of-strings instead of array-of-objects {spec_id, target}. R4 (P0): all three error definitions are missing the required data.description field. R6 (P1): x-merge-strategies uses a completely different structure and strategy names (section-append, 3-way-merge, conflict-marker) instead of the spec-mandated flat keys {3way, overwrite, create}. R7 (P1): x-post-archive-git uses a steps array with 3 entries instead of the spec-mandated sequence array with 9 named operations. Spec has no Test Plan section so the hard reject rule on missing tests does not apply; rejections are purely from schema mismatches.",
+  "issues": [
+    {
+      "severity": "hard",
+      "requirement": "R2",
+      "title": "specs_merged is array-of-strings instead of array-of-objects {spec_id, target}",
+      "location": "cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "lines": "268-272",
+      "description": "Spec R2 (P0) states: 'Response required array includes specs_merged (array of {spec_id, target})'. The implementation defines items: { \"type\": \"string\" } with a plain description. The spec's RPC API section defines items as { \"type\": \"object\", \"required\": [\"spec_id\", \"target\"], \"properties\": { \"spec_id\": { \"type\": \"string\" }, \"target\": { \"type\": \"string\" } } }. This schema mismatch will break clients that expect the structured form to extract spec_id and target_path separately."
+    },
+    {
+      "severity": "hard",
+      "requirement": "R4",
+      "title": "Error definitions missing data.description field",
+      "location": "cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "lines": "307-319",
+      "description": "Spec R4 (P0) defines each error with a data object: { \"code\": -32001, \"message\": \"missing main_spec_ref\", \"data\": { \"description\": \"...\" } }. The implementation omits the data field on all three errors (-32001, -32002, -32003) and uses different message text (e.g. 'Missing main_spec_ref — change spec has no main_spec_ref field...' instead of 'missing main_spec_ref'). The spec specifies exact message strings and requires the data.description discriminator for tooling."
+    },
+    {
+      "severity": "hard",
+      "requirement": "R6",
+      "title": "x-merge-strategies uses wrong structure and wrong strategy names",
+      "location": "cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "lines": "324-331",
+      "description": "Spec R6 (P1) requires x-merge-strategies to be a flat object with keys '3way', 'overwrite', and 'create', each mapping to a descriptive string: { \"3way\": \"When .base.md sibling exists AND target exists AND git available: git merge-file\", \"overwrite\": \"When no .base.md or target already exists: write/overwrite directly\", \"create\": \"When target does not exist: create new file\" }. The implementation instead uses { \"description\": \"...\", \"strategies\": [{\"name\": \"section-append\", ...}, {\"name\": \"3-way-merge\", ...}, {\"name\": \"conflict-marker\", ...}] } — a different structure with different strategy names that do not match the spec's 3way/overwrite/create taxonomy."
+    },
+    {
+      "severity": "hard",
+      "requirement": "R7",
+      "title": "x-post-archive-git uses steps array (3 entries) instead of sequence array (9 named operations)",
+      "location": "cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "lines": "332-339",
+      "description": "Spec R7 (P1) requires x-post-archive-git.sequence to list 9 ordered named steps: [load_config, check_auto_commit, find_git_binary, git_status, git_add, git_commit, check_auto_pr, dispatch_pr_agent, gh_pr_create]. The implementation uses a 'steps' key (not 'sequence') with only 3 entries structured as {step: N, action: '...', condition: '...'} objects. The missing entries omit critical steps such as find_git_binary, git_status, dispatch_pr_agent, and gh_pr_create, making the spec non-conformant."
+    },
+    {
+      "severity": "soft",
+      "title": "status enum includes undocumented 'conflict' value",
+      "location": "cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "lines": "267",
+      "description": "Spec defines status enum as [\"ok\", \"error\"]. The implementation adds a third value 'conflict' not present in the spec. Conflict scenarios are handled via error code -32003 per spec R4; a separate status value is redundant and contradicts the enum definition."
+    },
+    {
+      "severity": "soft",
+      "title": "result wrapper missing name: MergeResult",
+      "location": "cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "lines": "262-305",
+      "description": "The spec's RPC API section defines the result as { \"name\": \"MergeResult\", \"schema\": { ... } }. The implementation omits the name field, writing result: { \"schema\": { ... } } directly. This is a minor deviation but inconsistent with the spec."
+    },
+    {
+      "severity": "soft",
+      "title": "Missing prompt_path and executor properties in result schema",
+      "location": "cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "lines": "262-305",
+      "description": "The spec's Changes section lists result.properties as: status, prompt_path, executor, specs_merged[], archive_path, audit_log[], git_commit_sha, pr_url, git_warning, next_actions[]. The implementation omits prompt_path and executor from the properties object. These are not in required[], so it is a soft gap, but they should appear in properties for completeness."
+    }
+  ],
+  "checklist": {
+    "code_matches_spec_requirements": "FAIL — R2 (specs_merged type), R4 (missing error data fields), R6 (x-merge-strategies structure), R7 (x-post-archive-git structure) all diverge from spec",
+    "test_plan_exists": false,
+    "hard_reject_rule_applies": false,
+    "existing_tests_pass": "PASS — no logic changes; spec-file-only change does not break existing tests"
+  }
+}

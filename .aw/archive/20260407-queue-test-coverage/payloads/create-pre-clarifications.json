@@ -1,0 +1,17 @@
+{
+  "group_id": "queue-unit-test-coverage",
+  "answers": [
+    {
+      "question": "Should we also add integration tests requiring running infrastructure (NATS/Redis), or focus purely on unit tests?",
+      "answer": "Both. Add unit tests AND integration tests. Integration tests that need NATS/Redis should use real services."
+    },
+    {
+      "question": "For cloud_scheduler_backend and external API modules, how should we handle tests?",
+      "answer": "For Google Cloud: use homebrew-installable emulators (e.g. google-cloud-sdk emulators). For services that can be started locally via homebrew, use those real local services instead of mocking."
+    },
+    {
+      "question": "Should metrics tests require the 'metrics' feature flag?",
+      "answer": "Test both paths: test metric recording under #[cfg(feature=\"metrics\")] AND test the no-op path without the feature flag."
+    }
+  ]
+}

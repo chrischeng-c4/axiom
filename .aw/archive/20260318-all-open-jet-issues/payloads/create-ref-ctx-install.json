@@ -1,0 +1,7 @@
+{
+  "group_id": "jet-install-optimizations",
+  "specs": [
+    {"spec": "pkg-manager", "group": "cclab-jet", "relevance": "high", "key_requirements": "Install Flow, BFS Resolution, Parallel Download, Store Operations"},
+    {"spec": "pkg-manager-pnpm-parity", "group": "cclab-jet", "relevance": "high", "key_requirements": "Frozen Lockfile, Optional Dep Platform Check, Override Resolution"}
+  ]
+}

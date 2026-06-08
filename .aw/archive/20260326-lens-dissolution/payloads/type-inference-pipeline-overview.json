@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "lens-dissolution",
+  "spec_id": "type-inference-pipeline",
+  "group_id": "lens-dissolution",
+  "section": "overview",
+  "content": "Cross-file type propagation pipeline that wires `DeepTypeInferencer::propagate_types()` into the analysis flow. After per-file inference completes, runs type propagation in topological order via `ImportGraph`, caches propagated types in daemon `FileAnalysis` entries, and ensures `lens_type_at`/`lens_hover` return resolved types instead of `Type::Unknown` for imported symbols.\n\n| Attribute | Value |\n|-----------|-------|\n| Crate | cclab-sdd (post lens dissolution) |\n| Module | `type_inference` (renamed from `lens/types/`, top-level after dissolution) |\n| Interface | Internal pipeline — consumed by check, type_at, hover, diagnostics |\n| Issue | #944 |\n| Depends on | DeepTypeInferencer (deep_inference), ImportGraph (deep_inference), TypeInferencer (infer), TypeChecker (check), FileAnalysis (deep_inference), ModuleGraph (modules), AnalysisCache (cache) |\n| Language priority | Python first, then Rust, TypeScript, Go |"
+}

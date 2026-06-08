@@ -1,0 +1,6 @@
+{
+  "spec_id": "idlelib-stub",
+  "group_id": "add-idlelib-stdlib",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: crates/cclab-mamba/src/runtime/stdlib/idlelib_mod.rs\n    action: create\n    description: |\n      New stub module file for idlelib.\n      - `pub fn register()`: registers \"idlelib\" via `register_module(\"idlelib\", attrs)`\n      - Attrs map: idle, run, idle_test, PyShell, config, colorizer, autocomplete,\n        calltip, debugger, editor, filelist, outwin, rpc → symbol strings\n      - Package attrs: __package__ = \"idlelib\", __path__ = empty list\n      - Stub functions: `mb_idlelib_*()` each raises NotImplementedError\n      - Unit tests: test_register, test_stub_raises\n    requirements: [R1, R2, R3]\n\n  - path: crates/cclab-mamba/src/runtime/stdlib/mod.rs\n    action: modify\n    description: |\n      - Add `pub mod idlelib_mod;` under `// P3 stdlib modules` block\n      - Add `idlelib_mod::register();` in `register_stdlib()` function\n    requirements: [R1]\n```"
+}

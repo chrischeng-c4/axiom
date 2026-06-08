@@ -1,0 +1,1 @@
+feat(sdd): spec format validation + logical duplicate/conflict detection — check-alignment Phase 1

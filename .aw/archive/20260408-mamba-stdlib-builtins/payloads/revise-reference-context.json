@@ -1,0 +1,43 @@
+{
+  "group_id": "stdlib-builtins-module",
+  "specs": [
+    {
+      "path": "crates/cclab-mamba/stdlib/future.md",
+      "relevance": "high",
+      "reason": "Direct pattern reference: future_mod.rs is the model for the new builtins_mod.rs (register() pattern, HashMap attrs, register_module call)"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/main.md",
+      "relevance": "high",
+      "reason": "Direct pattern reference: main_mod.rs is the other model for the new builtins_mod.rs"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/builtins.md",
+      "relevance": "high",
+      "reason": "Defines all mb_* runtime builtin functions that the builtins module will expose as importable attributes"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/functools.md",
+      "relevance": "medium",
+      "reason": "Shows how stdlib modules expose callable functions via dispatch wrappers and NATIVE_FUNC_ADDRS registration"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/native-implementations.md",
+      "relevance": "medium",
+      "reason": "Documents the overall stdlib registration pattern and symbol resolution approach"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/value-and-rc.md",
+      "relevance": "medium",
+      "reason": "MbValue representation (from_func, from_bool, from_int, none) used to create module attributes"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "mamba-stdlib-builtins-spec",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/stdlib/builtins.md",
+      "sections": ["overview", "changes", "acceptance_criteria"]
+    }
+  ]
+}

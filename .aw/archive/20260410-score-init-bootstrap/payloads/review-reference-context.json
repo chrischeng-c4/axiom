@@ -1,0 +1,6 @@
+{
+  "group_id": "default",
+  "verdict": "approved",
+  "issues": [],
+  "summary": "Reference context accurately covers the scope. All affected areas (init.rs, commands.rs, agent files, hook files, settings.json, skill templates) are represented. Spec plan creates the init-command spec. No irrelevant specs included. The change is primarily code files (not in tech_design specs), so direct code references are appropriate."
+}

@@ -1,0 +1,70 @@
+# The operator runs in its own namespace and needs cluster-wide permission to
+# manage the child kinds it renders for every Lumen CR.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lumen-system
+  labels:
+    app.kubernetes.io/name: lumen-operator
+    app.kubernetes.io/part-of: lumen
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lumen-operator
+  namespace: lumen-system
+  labels:
+    app.kubernetes.io/name: lumen-operator
+    app.kubernetes.io/part-of: lumen
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lumen-operator
+  labels:
+    app.kubernetes.io/name: lumen-operator
+    app.kubernetes.io/part-of: lumen
+rules:
+  # The custom resource it owns + its status subresource.
+  - apiGroups: ["lumen.dev"]
+    resources: ["lumens", "lumens/status", "lumens/finalizers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Serving + NATS workloads.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Serving Service/ConfigMap/ServiceAccount + NATS Services/ConfigMap.
+  - apiGroups: [""]
+    resources: ["services", "configmaps", "serviceaccounts"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Observability objects (only used when spec.observability=true; harmless to
+  # grant always — the CRDs may be absent on dev clusters).
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors", "prometheusrules"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Leader-election Lease (HA: only the holder reconciles).
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lumen-operator
+  labels:
+    app.kubernetes.io/name: lumen-operator
+    app.kubernetes.io/part-of: lumen
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lumen-operator
+subjects:
+  - kind: ServiceAccount
+    name: lumen-operator
+    namespace: lumen-system

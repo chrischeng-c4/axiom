@@ -1,0 +1,20 @@
+{
+  "change_id": "codegen-td-to-code",
+  "group_id": "codegen-td-to-code-main",
+  "verdict": "APPROVED",
+  "summary": "Reference context covers all affected areas. Spec plan is comprehensive with 7 new specs covering the full codegen pipeline: graph envelope, type system, marker system, structural/behavioral/documentation generators, and validation harness. All main_spec_ref paths have subfolders under logic/. Specs are scoped correctly — each covers one logical unit.",
+  "checklist_results": [
+    {"item": "All affected crates/areas from pre-clarifications are covered by at least one spec", "passed": true},
+    {"item": "Relevance scores are reasonable", "passed": true},
+    {"item": "Key requirements listed per spec are accurate", "passed": true},
+    {"item": "No irrelevant specs included", "passed": true},
+    {"item": "spec_plan: every entry has main_spec_ref set", "passed": true},
+    {"item": "spec_plan: sections are reasonable for the requirements", "passed": true},
+    {"item": "spec_plan: modify entries have valid source paths", "passed": true, "note": "All entries are create, not modify"},
+    {"item": "spec_plan: main_spec_ref paths include a subfolder", "passed": true},
+    {"item": "spec_plan: each spec file covers exactly one logical unit", "passed": true},
+    {"item": "spec_plan: no duplicate section types within a file", "passed": true},
+    {"item": "spec_plan: spec paths mirror source structure", "passed": true}
+  ],
+  "issues": []
+}

@@ -1,0 +1,126 @@
+{
+  "group_id": "check-alignment-phase3",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-sdd/logic/check-alignment.md",
+      "spec_group": "spec-validation",
+      "relevance": "high",
+      "key_requirements": [
+        "Existing Phase 1+2 check() and check_with_coverage() entry points in spec_alignment::check module",
+        "CheckResult schema: { files, total_violations, passed, coverage } — Phase 3 consumers need violations as alignment_warnings",
+        "ViolationKind enum covers all violation types that need to be surfaced in workflow responses",
+        "Scope boundary in Phase 2 spec explicitly defers workflow integration to Phase 3 (#1142)",
+        "Architecture: spec_alignment::check(path) is callable from any tool — takes a Path, returns CheckResult synchronously"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "spec_group": "mcp-tools",
+      "relevance": "high",
+      "key_requirements": [
+        "sdd_run_change result schema currently has: change_id, action, current_phase, executor, message, next_actions — needs alignment_warnings added",
+        "Q3 answer: alignment_warnings field must carry full violation list as complete JSON in sdd_run_change response",
+        "sdd_workflow_create_change_merge response schema: currently has specs_merged, archive_path, audit_log, git_commit_sha, pr_url, git_warning — may need alignment_warnings too",
+        "workflow/mod.rs route() function returns Value — alignment check runs after routing and injects warnings field"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+      "spec_group": "mcp-tools",
+      "relevance": "high",
+      "key_requirements": [
+        "Q1 answer: sdd_artifact_create_change_spec must run spec_alignment::check() on the ENTIRE spec file after writing any section — not just the section written",
+        "Artifact tool response currently returns filled_sections, status, next_actions — needs alignment_violations array added",
+        "payload_path convention: CLI invocation pattern cclab sdd artifact create-change-spec {change_id} {spec_id} — check runs on the spec file path after write",
+        "Artifact tool is the last step that writes to the spec file before review — validation at this point catches format/logical errors early"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/change-merge.md",
+      "spec_group": "workflow-logic",
+      "relevance": "high",
+      "key_requirements": [
+        "Q2 answer: after specs are merged to cclab/specs/, run check() on each merged spec and append alignment warnings to implementation.md review section",
+        "Merge flow: FindSpecs → ReadFM → Strip → Write → Archive → Move → GitOps — alignment check inserts between Write and Archive steps",
+        "implementation.md format: inline ## Review: {spec_id} sections — alignment warnings appended there as ## Alignment Warnings subsection",
+        "Non-fatal: alignment violations should NOT block the merge — they are warnings only (consistent with Q2: 'write to implementation.md')",
+        "Existing merge writes to cclab/specs/{main_spec_ref} — check runs on that written path"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/state-machine.md",
+      "spec_group": "workflow-logic",
+      "relevance": "medium",
+      "key_requirements": [
+        "Phase routing table: ChangeSpec* phases → sdd_workflow_create_change_spec; ChangeMerge* → sdd_workflow_create_change_merge",
+        "sdd_run_change is the outer bridge — alignment_warnings added to its response means the skill sees them on every loop iteration",
+        "State transitions do not change for Phase 3 — alignment check is a non-blocking side effect, not a new state"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/change-spec.md",
+      "spec_group": "workflow-logic",
+      "relevance": "medium",
+      "key_requirements": [
+        "Section fill lifecycle: skeleton → fill sections via sdd_artifact_create_change_spec → prune → review — Q1 check runs after each fill call",
+        "Artifact writing enforcement: agents must use CLI artifact tools — the post-write check runs inside the tool, not the CLI wrapper",
+        "filled_sections tracking in frontmatter: check runs on the full spec file, not just the section just written",
+        "create_complete=true: spec is fully filled — this is not when check runs (check runs on every section write)"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/implement-task.md",
+      "spec_group": "workflow-logic",
+      "relevance": "medium",
+      "key_requirements": [
+        "implementation.md inline review format: ## Review: {spec_id} sections with Verdict, Summary, Checklist",
+        "Q2: alignment warnings appended to the review section of implementation.md — need to know the exact format to append correctly",
+        "implementation.md is created by sdd_artifact_create_change_implementation — it already exists when merge runs, so append is safe",
+        "Revision tracking in STATE.yaml: task_revisions field — alignment warnings are informational, do not affect revision count"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/skills/run-change.md",
+      "spec_group": "skills",
+      "relevance": "medium",
+      "key_requirements": [
+        "Skill loop calls sdd_run_change repeatedly — alignment_warnings in response will be visible to mainthread on each iteration",
+        "Q3 implies skill should surface alignment_warnings to user when present (display or log)",
+        "Executor dispatch branches: mainthread, subagent:*, other — alignment_warnings is a passive field, no new branch needed",
+        "Verification step after agent: skill checks STATE.yaml phase + artifact existence — alignment_warnings does not affect verification logic"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/reference-context.md",
+      "spec_group": "workflow-logic",
+      "relevance": "low",
+      "key_requirements": [
+        "Artifact writing enforcement pattern (two-layer: prompt constraint + post-agent verification) is reused by change-spec phase — context for understanding where artifact tools are called",
+        "Agent retry mechanism: MAX_AGENT_RETRIES=2 — alignment check result is returned in tool response, retry logic is unchanged"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "check-alignment-phase3",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/check-alignment.md",
+      "source": "crates/cclab-sdd/logic/check-alignment.md",
+      "sections": ["overview", "requirements", "scenarios", "logic", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "workflow-tools-phase3",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "source": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "artifact-tools-phase3",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+      "source": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

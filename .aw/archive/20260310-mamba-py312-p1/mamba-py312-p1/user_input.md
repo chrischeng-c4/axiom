@@ -1,0 +1,1 @@
+Py3.12 conformance P1: #755 exception hierarchy, #756 generator/iterator protocol, #759 data structure ops (list, dict, set, tuple, str, bytes). Add conformance test fixtures and implement missing runtime features.

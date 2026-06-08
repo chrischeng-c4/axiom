@@ -1,0 +1,25 @@
+{
+  "group_id": "rename-agents-and-add-hook",
+  "specs": [
+    {
+      "path": "crates/sdd/logic/dispatch-model.md",
+      "relevance": "high",
+      "summary": "Defines agent phase mapping — lists sdd-* agent names in R1 table and scenario flows. Must update agent names to score-*."
+    },
+    {
+      "path": "crates/sdd/config/agents.md",
+      "relevance": "high",
+      "summary": "Agent definitions config spec — defines sdd-doc-writer, sdd-doc-reviewer, sdd-issue-author. Needs agent name updates."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "score-agent-rename-hook-dispatch",
+      "action": "modify",
+      "main_spec_ref": "crates/sdd/logic/dispatch-model.md",
+      "source": ".score/tech_design/crates/sdd/logic/dispatch-model.md",
+      "sections": ["overview", "requirements", "scenarios", "changes"]
+    }
+  ],
+  "codebase_notes": "Key files to modify: (1) .claude/agents/sdd-*.md → rename to score-*.md, (2) .claude/hooks/sdd-*.sh → rename to score-*.sh, (3) .claude/settings.json → add SubagentStop hook + update PreToolUse hook patterns, (4) crates/sdd/src/workflow/mod.rs → update sdd-* agent name strings to score-*, (5) CLAUDE.md → update agent name references, (6) new file .claude/hooks/score-next-step.sh. Workflow mod.rs injects 'default_agent' field with values like 'sdd-reference-context', 'sdd-change-spec', 'sdd-change-implementation' — these all need renaming to score-*."
+}

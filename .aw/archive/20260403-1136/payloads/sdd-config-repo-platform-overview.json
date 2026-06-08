@@ -1,0 +1,9 @@
+{
+  "spec_id": "sdd-config-repo-platform",
+  "group_id": "platform-config-and-merge-git",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "config", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/config/agents.md",
+  "merge_strategy": "extend",
+  "content": "## Overview\n<!-- type: overview lang: markdown -->\n\nExtend the SDD config schema (`cclab/config.toml`) with three new platform sections under `[sdd.*]`, adding them to `SddConfig` and the main config spec.\n\n| Section | Purpose | Status |\n|---------|---------|--------|\n| `[sdd.issue_platform]` | Issue tracking (GitHub/GitLab/Jira) | Existing — unchanged |\n| `[sdd.repo_platform]` | Git repo operations, auto-commit, auto-PR | New — this change |\n| `[sdd.spec_platform]` | Spec storage location (local/remote) | New — this change |\n| `[sdd.docs_platform]` | User-facing documentation platform | Future — commented template only |\n\nThe `agents.md` main spec documents the full `SddConfig` schema. This change extends it with:\n- `repo_platform: Option<RepoPlatformConfig>` — git/PR operations config consumed by merge workflow\n- `spec_platform: Option<SpecPlatformConfig>` — spec storage backend config\n- Both fields are `#[serde(default)]` → `None` when section absent (backward compatible)\n\nCross-references: `platform-config-repo-spec` defines the structs and CLI. `change-merge-git-integration` defines how `repo_platform` is consumed by merge."
+}

@@ -1,0 +1,6 @@
+{
+  "spec_id": "subagent-workflow-dispatch",
+  "group_id": "subagent-dispatch",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  # build_workflow_response() — add subagent:* routing branch\n  - path: crates/cclab-sdd/src/tools/workflow_common.rs\n    action: MODIFY\n    desc: |\n      Add third dispatch branch in build_workflow_response(): when executor starts with\n      \"subagent:\", return prompt_path + executor to caller (like mainthread) instead of\n      calling run_agent(). Add is_subagent check:\n        let is_subagent = executor.iter().any(|e| e.starts_with(\"subagent:\"));\n        if is_mainthread_only || is_subagent { return response } else { run_agent() }\n      No changes to run_agent() itself — subagent:* never reaches it.\n\n  # Main spec update — delegate-agent.md\n  - path: cclab/specs/crates/cclab-sdd/tools/utils/delegate-agent.md\n    action: MODIFY\n    desc: |\n      Update Behavior Flowchart to show three-branch dispatch at build_workflow_response()\n      level: mainthread (return), subagent:* (return), external (run_agent). Update\n      Sequence Diagram to show subagent path returning to skill instead of calling\n      run_agent(). Add routing logic documentation with is_subagent check.\n```"
+}

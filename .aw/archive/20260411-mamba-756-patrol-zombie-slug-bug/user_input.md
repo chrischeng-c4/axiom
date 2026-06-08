@@ -1,0 +1,1 @@
+Py3.12 conformance: Generator & iterator protocol #756

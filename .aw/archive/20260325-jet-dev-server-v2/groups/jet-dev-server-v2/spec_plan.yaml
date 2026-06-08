@@ -1,0 +1,22 @@
+- spec_id: jet-dev-prebundle
+  action: create
+  main_spec_ref: crates/cclab-jet/dev-server.md
+  sections:
+  - overview
+  - requirements
+  - changes
+- spec_id: jet-ts-transform
+  action: create
+  main_spec_ref: crates/cclab-jet/ts-transform.md
+  sections:
+  - overview
+  - requirements
+  - changes
+- spec_id: jet-store-nested-deps
+  action: modify
+  main_spec_ref: crates/cclab-jet/pkg-manager.md
+  source: cclab/specs/crates/cclab-jet/pkg-manager.md
+  sections:
+  - overview
+  - requirements
+  - changes

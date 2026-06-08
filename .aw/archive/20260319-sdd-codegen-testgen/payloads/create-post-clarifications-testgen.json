@@ -1,0 +1,6 @@
+{
+  "change_id": "sdd-codegen-testgen",
+  "group_id": "testgen-requirementplus",
+  "skipped": true,
+  "reason": "No contradictions found. Test generation is standalone (CLI subcommand per Q1), uses comments+todo!() not assertion heuristics (Q2), warnings+strict flag (Q3), probe deferred (Q4). All consistent with existing test-generation.md and requirement-plus-enhancement.md specs. No conflicts with specir-codegen group."
+}

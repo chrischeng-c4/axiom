@@ -1,0 +1,86 @@
+# Local 3-pod lumen cluster for development.
+#
+#   docker compose -f projects/lumen/compose.yaml up --build
+#
+# Three containers on an internal bridge network. The headless-DNS
+# style hostnames `lumen-0` / `lumen-1` / `lumen-2` resolve to each
+# other via Docker's embedded DNS, so the production raft.rs peer
+# discovery code works unmodified — no `LUMEN_PEERS` env override
+# needed here. Client API is exposed on the host as :8080.
+#
+# Persistence: each pod gets its own named volume mounted at
+# /var/lib/lumen/data. The LSM backend writes there when configured;
+# in-memory engine ignores it. Volumes survive `docker compose down`
+# but are cleaned by `docker compose down -v`.
+
+services:
+  lumen-0:
+    build:
+      context: ../..
+      dockerfile: projects/lumen/Dockerfile
+    image: lumen:dev
+    hostname: lumen-0
+    environment:
+      POD_NAME: lumen-0
+      SHARD_COUNT: "1"
+      REPLICAS_PER_SHARD: "3"
+      VOTER_COUNT: "3"
+      LUMEN_HEADLESS_SERVICE: lumen.local
+      LUMEN_PORT: "8080"
+      LUMEN_RAFT_PORT: "8082"
+      LUMEN_AUTH: "off"
+      LUMEN_LOG: pretty
+      RUST_LOG: "info,lumen=debug"
+    ports:
+      - "8080:8080"
+    volumes:
+      - lumen-0-data:/var/lib/lumen/data
+
+  lumen-1:
+    image: lumen:dev
+    hostname: lumen-1
+    depends_on: [lumen-0]
+    environment:
+      POD_NAME: lumen-1
+      SHARD_COUNT: "1"
+      REPLICAS_PER_SHARD: "3"
+      VOTER_COUNT: "3"
+      LUMEN_HEADLESS_SERVICE: lumen.local
+      LUMEN_PORT: "8080"
+      LUMEN_RAFT_PORT: "8082"
+      LUMEN_AUTH: "off"
+      LUMEN_LOG: pretty
+      RUST_LOG: "info,lumen=debug"
+    ports:
+      - "8081:8080"
+    volumes:
+      - lumen-1-data:/var/lib/lumen/data
+
+  lumen-2:
+    image: lumen:dev
+    hostname: lumen-2
+    depends_on: [lumen-0]
+    environment:
+      POD_NAME: lumen-2
+      SHARD_COUNT: "1"
+      REPLICAS_PER_SHARD: "3"
+      VOTER_COUNT: "3"
+      LUMEN_HEADLESS_SERVICE: lumen.local
+      LUMEN_PORT: "8080"
+      LUMEN_RAFT_PORT: "8082"
+      LUMEN_AUTH: "off"
+      LUMEN_LOG: pretty
+      RUST_LOG: "info,lumen=debug"
+    ports:
+      - "8082:8080"
+    volumes:
+      - lumen-2-data:/var/lib/lumen/data
+
+networks:
+  default:
+    name: lumen.local
+
+volumes:
+  lumen-0-data:
+  lumen-1-data:
+  lumen-2-data:

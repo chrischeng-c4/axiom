@@ -1,0 +1,6 @@
+{
+  "group_id": "mamba-stdlib-test",
+  "spec_id": "stdlib-test-module",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: crates/cclab-mamba/src/runtime/stdlib/test_mod.rs\n    action: CREATE\n    description: >\n      New stdlib module implementing the `test` package. Provides register()\n      function, TestCase class constructor, assertion methods (assertEqual,\n      assertTrue, assertFalse, assertRaises), main() test runner, and\n      comprehensive unit tests.\n\n  - path: crates/cclab-mamba/src/runtime/stdlib/mod.rs\n    action: MODIFY\n    targets:\n      - type: function\n        name: register_stdlib\n        change: Add test_mod::register() call\n    description: Add pub mod test_mod declaration and register() call in register_stdlib()\n    do_not_touch: [register_module]\n```\n"
+}

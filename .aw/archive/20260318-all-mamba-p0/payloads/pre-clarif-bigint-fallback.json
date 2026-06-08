@@ -1,0 +1,15 @@
+{
+  "group_id": "bigint-fallback",
+  "answers": [
+    {
+      "topic": "BigInt library",
+      "question": "Use num-bigint crate, or implement a minimal BigInt in-house for tighter NaN-boxing integration?",
+      "answer": "Use num-bigint crate — battle-tested and full-featured."
+    },
+    {
+      "topic": "Demotion",
+      "question": "Should BigInt results that fit in 48 bits be automatically demoted back to inline int (like V8 does), or stay as BigInt once promoted?",
+      "answer": "Auto-demote — if result fits in 48 bits, demote back to inline int (V8 Smi strategy). Better performance for temporary overflows."
+    }
+  ]
+}

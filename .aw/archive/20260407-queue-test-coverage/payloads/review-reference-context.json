@@ -1,0 +1,94 @@
+{
+  "group_id": "queue-unit-test-coverage",
+  "verdict": "REVIEWED",
+  "summary": "The reference context draws entirely on cross-domain analogous specs (cclab-nova, AnalystAgent) while omitting 8+ specs in cclab/specs/crates/cclab-fetch/ that directly reference cclab-queue source files (broker-traits, cloudtasks, scheduler-backends, cloud-scheduler-backend, push-receiver, schedule-monitor, k8s-cronjob-backend). These cclab-fetch specs contain actual requirement IDs and acceptance criteria for the exact modules being tested and must be included as HIGH relevance entries. The spec plan also violates the 'one logical unit per file' rule in 4 of 7 entries: backend-scheduler.md conflates the result backend subsystem (src/backend/) with the scheduler backend subsystem (src/scheduler/); routing-ratelimit.md, signals-revocation.md, and metrics-worker.md each pair two unrelated module concerns.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": true,
+      "note": "The 7 planned spec files collectively span all modules mentioned in pre-clarifications (unit + integration tests for NATS/Redis, cloud scheduler emulators, metrics feature flag paths)."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "The two 'medium' entries (cclab-nova-persistence.md, storage-backend.md) describe unrelated systems (agent conversation history, AnalystAgent sessions) and should be 'low'. More critically, 8+ specs in cclab/specs/crates/cclab-fetch/ that directly reference cclab-queue source (e.g., broker/broker-traits.md → crates/cclab-queue/src/broker/mod.rs) were omitted entirely — these should be HIGH."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": true,
+      "note": "All four referenced requirement IDs (R1-R4) were verified against the actual spec files and match correctly."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "The four included specs are weakly relevant as test-pattern analogies. Not irrelevant, but all are LOW relevance at best."
+    },
+    {
+      "item": "spec_plan: every entry has main_spec_ref set (not null)",
+      "passed": true,
+      "note": "All 7 entries have non-null main_spec_ref."
+    },
+    {
+      "item": "spec_plan: sections are reasonable for the requirements",
+      "passed": true,
+      "note": "Section lists are individually plausible. However, backend-scheduler.md sections (overview, async-api, test-plan, changes) collapse two very different async-api surfaces into one, which will produce a confused document."
+    },
+    {
+      "item": "spec_plan: modify entries have valid source paths",
+      "passed": true,
+      "note": "All entries are 'create' actions; N/A for source paths."
+    },
+    {
+      "item": "spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)",
+      "passed": true,
+      "note": "All paths are crates/cclab-queue/logic/... — correctly under the logic/ subfolder."
+    },
+    {
+      "item": "spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)",
+      "passed": false,
+      "note": "4 of 7 spec entries violate this rule: (1) backend-scheduler.md conflates result backends (src/backend/ — ResultBackend trait, RedisBackend, IonBackend) with scheduler backends (src/scheduler/ — SchedulerBackend trait, MemorySchedulerBackend, IonSchedulerBackend, CloudSchedulerBackend). (2) routing-ratelimit.md pairs routing (src/routing.rs) with rate limiting (src/ratelimit.rs) — unrelated logic. (3) signals-revocation.md pairs signal dispatch (src/signals.rs) with revocation storage (src/revocation.rs). (4) metrics-worker.md pairs metrics instrumentation (src/metrics.rs) with the worker runtime (src/worker/mod.rs)."
+    },
+    {
+      "item": "spec_plan: no spec file would require duplicate section types (split into separate files if needed)",
+      "passed": false,
+      "note": "backend-scheduler.md would require two distinct async-api or state-machine sections — one for result backend lifecycle (set_state, get_result, wait_for_result) and one for scheduler backend FSM (acquire_leader, renew_leader, release_leader). This signals the file should be split."
+    },
+    {
+      "item": "spec_plan: spec paths mirror source structure (interfaces/, logic/, generate/)",
+      "passed": true,
+      "note": "All new specs are placed under logic/ which is correct for test-plan and business-logic documents."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "8+ directly relevant specs in cclab/specs/crates/cclab-fetch/ were omitted. These specs explicitly cite cclab-queue source files: crates/cclab-fetch/broker/broker-traits.md (Source: crates/cclab-queue/src/broker/mod.rs), crates/cclab-fetch/broker/cloudtasks.md, crates/cclab-fetch/scheduler/scheduler-backends.md (Source: crates/cclab-queue/src/scheduler/mod.rs + backend.rs), crates/cclab-fetch/scheduler/cloud-scheduler-backend.md, crates/cclab-fetch/scheduler/push-receiver.md, crates/cclab-fetch/scheduler/schedule-monitor.md, crates/cclab-fetch/scheduler/k8s-cronjob-backend.md, crates/cclab-fetch/scheduler/scheduler-mode-selection.md. These contain requirement IDs and acceptance criteria for the broker, scheduler, and workflow test plans. They are HIGH relevance and must be included.",
+      "recommendation": "Add all 8 cclab-fetch specs to the reference context table with relevance=high and accurate key requirements (e.g., broker-traits R1-R8 for the broker-integration test plan, scheduler-backends R4-R6 for the backend-scheduler test plan). Re-evaluate spec plan entries to reference these specs as authoritative requirements sources."
+    },
+    {
+      "severity": "HIGH",
+      "description": "backend-scheduler.md conflates two completely separate subsystems: (a) result backends (src/backend/ — ResultBackend trait with set_state/get_state/set_result/get_result/wait_for_result, RedisBackend, IonBackend) and (b) scheduler backends (src/scheduler/ — SchedulerBackend trait with acquire_leader/renew_leader/release_leader/get_task_state/set_task_state, MemorySchedulerBackend, IonSchedulerBackend, CloudSchedulerBackend). These are separate directories, separate traits, separate spec coverage areas.",
+      "recommendation": "Split into two specs: crates/cclab-queue/logic/result-backend.md (covering ResultBackend trait and Redis/Ion implementations, sections: overview, async-api, test-plan) and crates/cclab-queue/logic/scheduler-backend.md (covering SchedulerBackend trait and memory/ion/cloud implementations, sections: overview, state-machine, async-api, test-plan)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "routing-ratelimit.md combines two unrelated concerns: task routing (src/routing.rs — Router, RouterConfig, PatternType, glob/regex matching) and rate limiting (src/ratelimit.rs — TokenBucket, SlidingWindow, RateLimitManager). These have no shared data structures or coupling at the source level.",
+      "recommendation": "Split into crates/cclab-queue/logic/routing.md (sections: overview, logic, test-plan) and crates/cclab-queue/logic/ratelimit.md (sections: overview, logic, test-plan)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "signals-revocation.md combines two unrelated concerns: the Signal/SignalDispatcher event bus (src/signals.rs) and the RevocationStore/InMemoryRevocationStore/RedisRevocationStore storage system (src/revocation.rs). Different patterns (observer vs CRUD store), different state machines.",
+      "recommendation": "Split into crates/cclab-queue/logic/signals.md (sections: overview, state-machine, logic, test-plan) and crates/cclab-queue/logic/revocation.md (sections: overview, logic, test-plan)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "metrics-worker.md combines two unrelated concerns: TaskMetrics Prometheus instrumentation (src/metrics.rs — feature-gated, no-op vs real counters) and the Worker runtime (src/worker/mod.rs — WorkerConfig, TaskExecutor, lifecycle, semaphore, heartbeat, shutdown). These are separate modules with different test strategies.",
+      "recommendation": "Split into crates/cclab-queue/logic/metrics.md (sections: overview, logic, test-plan focusing on feature-flag paths) and crates/cclab-queue/logic/worker.md (sections: overview, state-machine, async-api, test-plan covering concurrency, timeout, revocation check, signal dispatch)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "cclab-nova-persistence.md and storage-backend.md are rated 'medium' but both describe completely different systems (agent conversation history storage and AnalystAgent session persistence). Their relevance to cclab-queue is only as indirect test-pattern analogies.",
+      "recommendation": "Downgrade both to relevance=low. The key requirements should be annotated as 'pattern reference only, not direct constraint' to avoid confusion during implementation."
+    }
+  ]
+}

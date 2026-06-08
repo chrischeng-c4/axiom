@@ -1,0 +1,9 @@
+{
+  "spec_id": "scheduler-backends-gcp",
+  "group_id": "gcp-cloud-integration",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "main_spec_ref": "crates/cclab-fetch/scheduler/scheduler-backends.md",
+  "merge_strategy": "new",
+  "content": "Extends the scheduler-backends module to register `CloudSchedulerBackend` as a third backend variant alongside `IonSchedulerBackend` (production, distributed locking via cclab-ion) and `MemorySchedulerBackend` (testing). The Cloud Scheduler backend offloads cron/interval scheduling to GCP Cloud Scheduler service, eliminating the self-hosted leader election loop. Module registration adds `#[cfg(feature = \"cloud-scheduler\")] pub mod cloud_scheduler_backend` and corresponding re-exports to `scheduler/mod.rs`, following the same conditional compilation pattern as the existing `#[cfg(feature = \"scheduler\")] pub mod ion_backend`. The existing `SchedulerBackend` trait (R1), Ion backend (R2), and InMemory backend (R3) are unchanged — this change adds R4 for the Cloud Scheduler variant. Implementation details of `CloudSchedulerBackend` are specified in the companion `cloud-scheduler-backend` change spec.\n\nSource: `crates/cclab-queue/src/scheduler/mod.rs` (module registration), `crates/cclab-queue/src/scheduler/backend.rs` (SchedulerBackend trait)"
+}

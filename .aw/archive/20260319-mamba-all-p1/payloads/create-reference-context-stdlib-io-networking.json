@@ -1,0 +1,21 @@
+{
+  "change_id": "mamba-all-p1",
+  "group_id": "stdlib-io-networking",
+  "specs": [
+    {
+      "spec_path": "specs/cclab-mamba/README.md",
+      "relevance": "high",
+      "reason": "Codebase spec index providing comprehensive overview of stdlib organization at runtime/stdlib/ (lines 92-126). Directly references stdlib/network.md covering socket_mod.rs and http_mod.rs (line 120) which are foundational for SSL/TLS and urllib implementations. References stdlib/concurrency.md covering threading_mod.rs and subprocess_mod.rs (line 119) which are foundations for multiprocessing and concurrent.futures. Identifies runtime/async.md (line 89) covering async_rt.rs and async_task.rs essential for selectors async integration with tokio I/O driver."
+    },
+    {
+      "spec_path": "specs/cclab-mamba/all-mamba-p0.md",
+      "relevance": "medium",
+      "reason": "P0 initiative spec defining runtime architecture (value representation, RC, GC), module system with imports (R1), and async/await support (line 89). Provides context for understanding how stdlib-io-networking modules integrate with Mamba's overall runtime pipeline. Relevant for selectors which must use async/await and tokio runtime, and for multiprocessing/concurrent.futures which use thread pool backends referenced in pre-clarifications."
+    },
+    {
+      "spec_path": "specs/cclab-mamba/pattern-matching.md",
+      "relevance": "low",
+      "reason": "Detailed spec for PEP 634 pattern matching (match/case). While not directly implementing stdlib-io-networking, pattern matching provides language feature infrastructure that may be used within module implementations for complex control flow in SSL negotiation, request routing, or process management."
+    }
+  ]
+}

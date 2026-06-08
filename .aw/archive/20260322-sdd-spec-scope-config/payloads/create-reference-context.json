@@ -1,0 +1,57 @@
+{
+  "group_id": "sdd-spec-scope-config",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-sdd/config/agents.md",
+      "spec_group": "sdd-config",
+      "relevance": "high",
+      "key_requirements": [
+        "Configurable spec scope resolution via prefix matching in cclab/config.toml using [specs.scopes]."
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-cli/init.md",
+      "spec_group": "cli",
+      "relevance": "high",
+      "key_requirements": [
+        "Auto-detect scope mapping from Cargo.toml workspace, pyproject.toml, package.json during initialization."
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-agent/reference-context-agent.md",
+      "spec_group": "agent",
+      "relevance": "medium",
+      "key_requirements": [
+        "Implement FileSystemSpecStore using the configured spec scopes from cclab/config.toml."
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "sdd-config-scopes",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/config/agents.md",
+      "source": "crates/cclab-sdd/config/agents.md",
+      "sections": ["overview", "config", "test-plan", "changes"]
+    },
+    {
+      "spec_id": "cli-init-scopes",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-cli/init.md",
+      "source": "crates/cclab-cli/init.md",
+      "sections": ["overview", "cli", "logic", "test-plan", "changes"]
+    },
+    {
+      "spec_id": "sdd-scope-resolution",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/logic/scope-resolution.md",
+      "sections": ["overview", "dependency", "logic", "test-plan", "changes"]
+    },
+    {
+      "spec_id": "agent-file-system-spec-store",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-agent/spec-store.md",
+      "sections": ["overview", "dependency", "logic", "test-plan", "changes"]
+    }
+  ]
+}

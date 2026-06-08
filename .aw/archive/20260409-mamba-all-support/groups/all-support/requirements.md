@@ -1,0 +1,9 @@
+---
+change: mamba-all-support
+group: all-support
+date: 2026-04-09
+---
+
+# Requirements
+
+Implement Python __all__ support in the Mamba compiler (#975). When a module defines `__all__ = ["foo", "bar"]`, only those names should be exported by `from module import *`. Without `__all__`, all public names (not starting with `_`) are exported. Changes needed: (1) runtime: add `mb_import_star` function in module.rs that reads __all__ from the module attrs and returns the filtered set of names/values, (2) resolve: handle star imports by not defining `*` as a literal symbol, (3) codegen (hir_to_mir): emit a call to `mb_import_star` instead of per-name getattr for the `*` case, (4) codegen/cranelift: register the new extern function.

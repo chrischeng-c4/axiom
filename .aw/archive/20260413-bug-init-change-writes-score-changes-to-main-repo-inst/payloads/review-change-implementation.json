@@ -1,0 +1,12 @@
+{
+  "group_id": "default",
+  "spec_id": "bug-init-change-writes-score-changes-to-main-repo-inst-spec",
+  "verdict": "APPROVED",
+  "summary": "Storage Model section added. Pseudocode clarified with explicit project_root base and step numbering. Execution order documented as by design.",
+  "hard_checklist": {
+    "code_matches_spec": true,
+    "tests_present": false,
+    "no_regressions": true
+  },
+  "issues": []
+}

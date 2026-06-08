@@ -1,0 +1,51 @@
+{
+  "change_id": "mamba-noarg-constructor",
+  "spec_id": "no-arg-constructor-codegen-fix",
+  "verdict": "APPROVED",
+  "summary": "Implementation correctly fixes zero-arg constructor calls for list()/tuple()/set()/dict() (#1109). The old dict-only special case is replaced by a unified arity guard (hir_to_mir.rs:3451-3468) that matches all four _from_iterable/_from_pairs extern names when boxed_args.is_empty() and redirects to the corresponding _new variant. All spec requirements R1-R4 are satisfied. The ## Test Plan section exists in the spec but contains only a TODO placeholder; however, the ## Changes section explicitly specifies the test names, and 7 #[test] functions are present and all pass (4 zero-arg: list/tuple/set/dict; 3 one-arg: list/tuple/set). Fix is correctly localized to hir_to_mir.rs with no runtime or symbol changes. cargo check passes cleanly.",
+  "hard_checklist": {
+    "code_matches_spec": {
+      "result": "pass",
+      "notes": "R1 (zero-arg arity guard): hir_to_mir.rs:3451-3468 — when boxed_args.is_empty(), a match on extern_name redirects mb_list_from_iterable→mb_list_new, mb_tuple_from_iterable→mb_tuple_new, mb_set_from_iterable→mb_set_new, mb_dict_from_pairs→mb_dict_new; emits CallExtern{args:vec![]} and returns early. R2 (non-zero-arg path unchanged): the guard is inside `if boxed_args.is_empty()` so 1-arg calls fall through to the existing generic CallExtern path unchanged. R3 (Cranelift verifier): the _new variants are registered with params=[], matching the zero-arg emission; no arity mismatch. R4 (runtime correctness): routing is correct — _new variants return empty containers matching CPython 3.12 semantics. Constraint: only hir_to_mir.rs is modified, no runtime or symbols.rs changes. Constraint: mb_list_new/mb_tuple_new/mb_set_new/mb_dict_new are already registered — no new registrations needed. The Changes section's required tests (test_zero_arg_{list,tuple,set,dict} and test_one_arg_{list,tuple,set}) are all present and named correctly."
+    },
+    "tests_present_when_test_plan_exists": {
+      "result": "pass",
+      "notes": "Spec has a ## Test Plan section (line 124) but its content is <!-- TODO -->. The spec's ## Changes section (line 129) explicitly prescribes the unit test names. The implementation adds 7 #[test] functions in the mod tests block of hir_to_mir.rs: test_zero_arg_list_constructor_emits_mb_list_new (line 4860), test_zero_arg_tuple_constructor_emits_mb_tuple_new (line 4874), test_zero_arg_set_constructor_emits_mb_set_new (line 4888), test_zero_arg_dict_constructor_emits_mb_dict_new (line 4902), test_one_arg_list_constructor_emits_mb_list_from_iterable (line 4916), test_one_arg_tuple_constructor_emits_mb_tuple_from_iterable (line 4932), test_one_arg_set_constructor_emits_mb_set_from_iterable (line 4948). Hard reject rule does not fire — #[test] blocks are present."
+    },
+    "no_regressions": {
+      "result": "pass",
+      "notes": "cargo check -p cclab-mamba produces no errors. cargo test -p cclab-mamba --lib zero_arg: 4 passed, 0 failed. cargo test -p cclab-mamba --lib one_arg: 3 passed, 0 failed. The change is a narrowly scoped guard inserted before an existing code path — existing callers with 1+ args are unaffected. The previous dict-only special case (mb_dict_from_pairs + boxed_args.is_empty()) is subsumed by the new generic guard without behavioral change."
+    }
+  },
+  "soft_findings": [
+    {
+      "severity": "info",
+      "title": "## Test Plan section in spec remains <!-- TODO -->",
+      "details": "The spec's ## Test Plan section (line 124) was never filled in — it contains only a placeholder comment. The test prescription is embedded in the ## Changes section instead, which is non-standard. The spec format expects Test Plan to list scenario-to-test mappings. Not blocking since the tests themselves are correct and complete, but the spec is left with an unfilled section.",
+      "locations": [
+        "cclab/changes/mamba-noarg-constructor/groups/noarg-constructor-codegen/specs/no-arg-constructor-codegen-fix.md:124-128"
+      ],
+      "recommendation": "Fill in ## Test Plan to formally map S1-S7 scenarios to the 7 unit test functions."
+    },
+    {
+      "severity": "info",
+      "title": "test_one_arg_* tests create an unused local TypeContext",
+      "details": "The three test_one_arg_* functions each create `let tcx = TypeContext::new(); let any_ty = tcx.any();` before calling lower_builtin_call(), which itself creates its own internal TypeContext. The external tcx is used only to produce any_ty for the HirExpr::Var argument. This means two TypeContext instances are created per test; the external tcx is effectively dropped unused. The tests pass because TypeId (any_ty) is a trivially copyable index and cross-context type IDs happen to be identical. Not a correctness issue, but a minor code quality concern.",
+      "locations": [
+        "crates/cclab-mamba/src/lower/hir_to_mir.rs:4918-4920",
+        "crates/cclab-mamba/src/lower/hir_to_mir.rs:4934-4936",
+        "crates/cclab-mamba/src/lower/hir_to_mir.rs:4950-4952"
+      ],
+      "recommendation": "Either expose any_ty from lower_builtin_call's return or make lower_builtin_call accept an optional extra arg. Alternatively, add a comment explaining that TypeContext::any() is context-independent."
+    },
+    {
+      "severity": "info",
+      "title": "No test_one_arg_dict coverage for dict(pairs) → mb_dict_from_pairs routing",
+      "details": "The spec's Changes section lists test_one_arg_{list,tuple,set} only — dict is intentionally omitted from the one-arg test prescription, and the implementation follows this. However, dict(pairs) → mb_dict_from_pairs is a live non-zero-arg code path (R2 applies to dict too) with no unit test. Consistent with the spec as written, but a minor coverage gap in the non-zero-arg dict path.",
+      "locations": [
+        "cclab/changes/mamba-noarg-constructor/groups/noarg-constructor-codegen/specs/no-arg-constructor-codegen-fix.md:146"
+      ],
+      "recommendation": "Consider adding test_one_arg_dict_constructor_emits_mb_dict_from_pairs for completeness, even though the spec doesn't require it."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "group_id": "changes-section-targets",
+  "specs": [
+    {"spec_id": "change-spec", "spec_group": "logic", "relevance": "high", "key_requirements": ["changes section schema", "section_prompts", "fill_order"]},
+    {"spec_id": "implement-task", "spec_group": "logic", "relevance": "high", "key_requirements": ["implementation prompt builder", "codegen routing"]},
+    {"spec_id": "code-generator-contract", "spec_group": "generate", "relevance": "medium", "key_requirements": ["generator responsibilities", "inference rules"]}
+  ],
+  "spec_plan": [
+    {"spec_id": "changes-section-schema", "action": "modify", "main_spec_ref": "crates/cclab-sdd/logic/change-spec.md", "source": "crates/cclab-sdd/logic/change-spec.md", "sections": ["overview", "schema", "changes"]},
+    {"spec_id": "lens-impl-prompt", "action": "modify", "main_spec_ref": "crates/cclab-sdd/logic/implement-task.md", "source": "crates/cclab-sdd/logic/implement-task.md", "sections": ["overview", "logic", "changes"]}
+  ]
+}

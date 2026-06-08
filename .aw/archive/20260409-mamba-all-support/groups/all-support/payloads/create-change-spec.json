@@ -1,0 +1,7 @@
+{
+  "change_id": "mamba-all-support",
+  "group_id": "all-support",
+  "spec_id": "mamba-all-support-spec",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: crates/cclab-mamba/src/runtime/module.rs\n    action: modify\n    description: |\n      1. Add mb_import_star function that loads a module and returns a dict\n         of exported names respecting __all__ if present.\n      2. In compile_and_exec_module, preserve __all__ in module attrs\n         (add it to the whitelist alongside __name__ and __doc__).\n      3. Add unit tests for mb_import_star.\n  - path: crates/cclab-mamba/src/runtime/symbols.rs\n    action: modify\n    description: |\n      Register mb_import_star in RT_SYMBOLS with signature\n      fn(MbValue) -> MbValue, [I64], I64.\n  - path: crates/cclab-mamba/src/lower/hir_to_mir.rs\n    action: modify\n    description: |\n      In the HirStmt::Import lowering, detect when names == [(star, None)]\n      and emit CallExtern to mb_import_star instead of per-name getattr.\n  - path: crates/cclab-mamba/src/resolve/pass.rs\n    action: modify\n    description: |\n      Skip defining star as a symbol when processing from-import-star.\n```"
+}

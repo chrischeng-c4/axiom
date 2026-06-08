@@ -1,0 +1,11 @@
+{"spec_id":"resolver-compat-spec","section":"changes","content":"### Modified Files
+
+| File | Description |
+|------|-------------|
+| `crates/cclab-jet/src/pkg_manager/resolver.rs` | Add hyphen range parsing, scoped bare alias detection |
+
+### New Files
+
+| File | Description |
+|------|-------------|
+| `crates/cclab-jet/tests/fixtures/nx-monorepo/package.json` | Trimmed tech-platform fixture for CI |"}

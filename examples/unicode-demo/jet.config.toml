@@ -1,0 +1,4 @@
+[wasm]
+entry = "src/Unicode.tsx"
+root_component = "Unicode"
+root_props = ["你好 👋 мир"]

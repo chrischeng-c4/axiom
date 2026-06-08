@@ -1,0 +1,9 @@
+- spec_id: generator-thread-pool-design
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/generator.md
+  source: cclab/specs/crates/cclab-mamba/runtime/generator.md
+  sections:
+  - overview
+  - state-machine
+  - changes
+  - test-plan

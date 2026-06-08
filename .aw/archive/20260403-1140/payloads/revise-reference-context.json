@@ -1,0 +1,62 @@
+{
+  "group_id": "check-alignment-phase1",
+  "specs": [
+    {
+      "spec": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "group": "cli",
+      "relevance": "high",
+      "key_requirements": "Add `check-alignment [path]` subcommand to the `cclab sdd` command tree. Add CLI→Logic mapping row: `sdd check-alignment [path]` → `check_alignment::run()`."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/spec-structure.md",
+      "group": "cli",
+      "relevance": "high",
+      "key_requirements": "Defines the sibling validate-spec-structure CLI command pattern — --json flag, ValidationViolation schema (kind + path fields), hard-error exit non-zero on any violation. check-alignment follows the same pattern."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/change-spec.md",
+      "group": "state-machine",
+      "relevance": "high",
+      "key_requirements": "Section type system: 17 section types with type→lang mapping (state-machine→mermaid, logic→mermaid, cli→yaml, config→json, rpc-api→json, changes→yaml). Section annotation format: `<!-- type: X lang: Y -->`. overview/requirements/scenarios sections do NOT require code blocks."
+    },
+    {
+      "spec": "crates/cclab-sdd/interfaces/cli/sdd-cli.md",
+      "group": "cli",
+      "relevance": "medium",
+      "key_requirements": "CLI as the sole execution path — new commands are standalone subcommands."
+    },
+    {
+      "spec": "crates/cclab-sdd/tools/utils/validate-spec-completeness.md",
+      "group": "changes",
+      "relevance": "medium",
+      "key_requirements": "Related spec validator: checks required diagrams/api-spec by spec_type. check-alignment Phase 1 is section-level block presence — complementary concern."
+    },
+    {
+      "spec": "crates/cclab-sdd/tools/utils/validate-change.md",
+      "group": "changes",
+      "relevance": "low",
+      "key_requirements": "Severity model (HIGH/MEDIUM/LOW) and validation pipeline pattern for reference."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/state-machine.md",
+      "group": "state-machine",
+      "relevance": "low",
+      "key_requirements": "Confirms check-alignment is a standalone CLI command not coupled to workflow state machine."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "check-alignment",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/logic/check-alignment.md",
+      "sections": ["overview", "schema", "logic", "cli", "test-plan", "changes"]
+    },
+    {
+      "spec_id": "cli-commands-check-alignment",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "source": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "sections": ["cli", "changes"]
+    }
+  ]
+}

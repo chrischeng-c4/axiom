@@ -1,0 +1,33 @@
+- spec_id: check-alignment-phase3
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/check-alignment.md
+  source: cclab/specs/crates/cclab-sdd/logic/check-alignment.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - logic
+  - changes
+  - test-plan
+- spec_id: workflow-tools-phase3
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/tools/workflow-tools.md
+  source: cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md
+  sections:
+  - overview
+  - changes
+- spec_id: artifact-tools-phase3
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/tools/artifact-tools.md
+  source: cclab/specs/crates/cclab-sdd/interfaces/tools/artifact-tools.md
+  sections:
+  - overview
+  - changes
+- spec_id: change-merge-phase3
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-merge.md
+  source: cclab/specs/crates/cclab-sdd/logic/change-merge.md
+  sections:
+  - overview
+  - logic
+  - changes

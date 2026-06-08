@@ -1,0 +1,6 @@
+{
+  "group_id": "subagent-dispatch",
+  "verdict": "APPROVED",
+  "summary": "Comprehensive reference context covering executor-resolution, agents config, run-change skill, delegate-agent, workflow-tools, state-machine, and reference-context specs. Three spec_plan entries correctly target the skill, delegate-agent, and executor-resolution specs.",
+  "findings": []
+}

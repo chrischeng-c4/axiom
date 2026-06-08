@@ -1,0 +1,11 @@
+{
+  "groups": [
+    {
+      "id": "decomposition-rules",
+      "title": "Add spec file decomposition rules to reference_context and change_spec CRR",
+      "issues": [],
+      "requirements": "Two specs need updates:\n\n1. **reference-context.md** — Add file decomposition rules to Create prompt and Review checklist:\n   - 1 spec file = 1 logical unit (service, module, component)\n   - No duplicate section types in one file — split into separate files\n   - Spec path mirrors source path (src/api/external.rs → specs/interfaces/external-api.md)\n   - Cross-file refs use $ref\n\n2. **change-spec.md** — Add section order enforcement to Review checklist:\n   - Verify fill_order was respected (data → behavior → interface → test → changes)\n   - Verify no duplicate section types in any spec file\n\nBoth Create and Review prompts must enforce these rules. This is spec-only — no Rust code changes.",
+      "questions": []
+    }
+  ]
+}

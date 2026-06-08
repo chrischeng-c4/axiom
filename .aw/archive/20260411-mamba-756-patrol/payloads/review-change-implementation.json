@@ -1,0 +1,71 @@
+{
+  "group_id": "default",
+  "spec_id": "mamba-756-patrol-spec",
+  "verdict": "APPROVED",
+  "summary": "Implementation satisfies all hard checklist items for a conformance-gate change. The spec's Test Plan requires porting CPython 3.12 test_generators.py subset; the implementation delivers exactly that as 6 new test files (1088 lines) under crates/cclab-mamba/tests/conformance/generators/ driven by a new conformance_generators.rs test binary. 36 #[test] functions total: 23 passing (R1-R5 core generator protocol) + 12 #[ignore] (R6 iterator protocol on user classes, R7 async generators) — ignored cases document pre-existing runtime gaps with the same root cause as existing generator_conformance_tests, explicitly scoped out of this change per post_clarifications. Per issue #756's design, this change is the conformance GATE that #1187's coroutine rewrite must pass unmodified (AC8) — landing the tests against the current channel-based runtime establishes the baseline. @spec annotations on every test function provide spec↔code traceability. No runtime source files modified, so no regression risk for existing tests.",
+  "checklist": {
+    "code_matches_spec": true,
+    "tests_in_diff": true,
+    "no_regressions": true
+  },
+  "checklist_results": [
+    {
+      "requirement": "R1 (P0) — core protocol: yield/next/StopIteration with StopIteration.value",
+      "status": "COVERED",
+      "details": "test_generators_basic.rs exercises yield semantics, next() advance, StopIteration raising on exhaustion, and StopIteration.value from generator return. 6 tests, all passing."
+    },
+    {
+      "requirement": "R2 (P0) — send(value) bidirectional communication",
+      "status": "COVERED",
+      "details": "test_generators_send_throw.rs covers g.send(value) happy path + first-send-must-be-None TypeError matching CPython message. Combined with R3 throw in same file (AC2, AC3). 6 tests, all passing."
+    },
+    {
+      "requirement": "R3 (P0) — throw(exc) exception injection with caught/uncaught paths",
+      "status": "COVERED",
+      "details": "test_generators_send_throw.rs covers g.throw(ValueError) for both caught (continues iteration) and uncaught (propagates) paths. AC3. All passing."
+    },
+    {
+      "requirement": "R4 (P0) — close()/GeneratorExit with RuntimeError-on-ignored-exit",
+      "status": "COVERED",
+      "details": "test_generators_close.rs covers g.close() happy path + RuntimeError when generator catches GeneratorExit and yields again. 5 tests (AC4), all passing."
+    },
+    {
+      "requirement": "R5 (P0) — yield from delegation with send/throw/close forwarding",
+      "status": "COVERED",
+      "details": "test_generators_yield_from.rs covers outer generator delegating to inner generator; send/throw/close propagate to the sub-iterator; StopIteration.value from sub-iterator becomes yield-from expression value. 6 tests (AC5), all passing."
+    },
+    {
+      "requirement": "R6 (P1) — iterator protocol __iter__/__next__ on user classes",
+      "status": "DEFERRED",
+      "details": "test_iterator_protocol.rs contains 6 tests, all #[ignore]. The change spec and post_clarifications explicitly document that R6 is covered in tests only — fixing the user-class iterator gap is out of scope for this conformance-gate change. Pre-existing gap with same root cause as existing generator_conformance_tests entries."
+    },
+    {
+      "requirement": "R7 (P1) — async generators (async for, asend, athrow, aclose)",
+      "status": "DEFERRED",
+      "details": "test_async_generators.rs contains 5 tests, all #[ignore]. The async generator driver has a pre-existing gap that's out of scope per post_clarifications. The tests are in place as a regression gate for when the async fix lands."
+    }
+  ],
+  "scenario_coverage": [
+    {"scenario": "AC1 — def g(): yield 1; yield 2; return 3", "status": "COVERED", "test": "test_generators_basic::test_generator_return_value_in_stopiteration"},
+    {"scenario": "AC2 — send happy path + first-send TypeError", "status": "COVERED", "test": "test_generators_send_throw::test_send_on_unstarted_generator_raises"},
+    {"scenario": "AC3 — throw caught + uncaught", "status": "COVERED", "test": "test_generators_send_throw::test_throw_caught_continues + test_throw_uncaught_propagates"},
+    {"scenario": "AC4 — close + RuntimeError on ignored exit", "status": "COVERED", "test": "test_generators_close::test_runtime_error_on_ignored_generator_exit"},
+    {"scenario": "AC5 — yield from delegation", "status": "COVERED", "test": "test_generators_yield_from::test_yield_from_forwards_send_throw_close"},
+    {"scenario": "AC6 — async for driving async generator", "status": "DEFERRED", "test": "test_async_generators::test_async_generator_basic (#[ignore])"},
+    {"scenario": "AC7 — CPython 3.12 commit hash header comment", "status": "COVERED", "test": "mod.rs header + each submodule header"},
+    {"scenario": "AC8 — suite must survive #1187 perf rewrite unmodified", "status": "STRUCTURAL", "test": "No runtime code modified; suite is the gate for the future rewrite."}
+  ],
+  "hard_issues": [],
+  "soft_issues": [
+    {
+      "severity": "low",
+      "category": "alignment",
+      "message": "15 alignment-checker violations on the spec file (12 missing_section_annotation + 3 format_priority_violation on Wireframe/Component/Design Token stubs). These are already tracked as bug-spec-generator-does-not-emit-section-type-annotati.md — they are NOT implementation issues and should not block APPROVED. The annotations ARE present on every requested heading, just one line lower than the regex expects (architectural bug in replace_section)."
+    },
+    {
+      "severity": "low",
+      "category": "documentation",
+      "message": "The change spec's ## Changes section mentions `crates/cclab-mamba/src/runtime/async_generator.rs` as potentially needing a new file. The implementation did not create it (nothing to modify yet; tests for R7 are all #[ignore]). This is correctly deferred per post_clarifications but could be noted more explicitly in implementation.md."
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+- spec_id: scope-hoisting
+  action: modify
+  main_spec_ref: crates/cclab-jet/logic/scope-hoisting.md
+  source: cclab/specs/crates/cclab-jet/scope-hoisting.md
+  sections:
+  - overview
+  - changes

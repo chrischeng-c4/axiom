@@ -1,0 +1,9 @@
+{
+  "group_id": "mcp-cleanup",
+  "answers": [
+    {
+      "question": "No clarifications needed",
+      "answer": "Straightforward bulk refactor — update file paths and terminology in spec files. No architectural decisions."
+    }
+  ]
+}

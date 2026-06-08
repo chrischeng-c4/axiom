@@ -1,0 +1,64 @@
+{
+  "group_id": "jet-aot-build-gaps",
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-jet/aot-build.md",
+      "relevance": "high",
+      "summary": "Main spec for production build pipeline. Defines R1-R7 covering tree shaking, code splitting, minification, source maps, CSS pipeline, asset pipeline, and define replacement. R2 mentions preload hints and manual chunks (not yet implemented). R4 mentions source map chaining. R6 covers asset pipeline including URL rewriting."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/tree-shaking.md",
+      "relevance": "medium",
+      "summary": "Detailed tree shaking spec with DCE, ESM/CJS analysis, side effects. Already fully implemented. Reference for JSON tree-shaking gap — current spec doesn't cover JSON imports specifically."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/postcss-tailwind.md",
+      "relevance": "medium",
+      "summary": "CSS pipeline with lightningcss, Tailwind JIT, @import resolution. Reference for CSS asset URL rewriting gap — current spec mentions url() handling but implementation is missing."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/scope-hoisting.md",
+      "relevance": "low",
+      "summary": "Scope hoisting and module flattening. Already done. Background context only."
+    }
+  ],
+  "codebase_explored": [
+    {
+      "path": "crates/cclab-jet/src/bundler/splitting.rs",
+      "summary": "Code splitting: dynamic import boundaries, shared chunks, multiple entries. Missing: preload hints generation, manual chunks config."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/minify.rs",
+      "summary": "JS and CSS minification. Missing: HTML minification."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/sourcemap.rs",
+      "summary": "Source map generation with VLQ, inline/external/hidden modes, sourcesContent. Missing: multi-pass source map chaining."
+    },
+    {
+      "path": "crates/cclab-jet/src/asset/image_processor.rs",
+      "summary": "Image processing stub — has TODO comment, only does file read + hash. Needs actual compression via image crate."
+    },
+    {
+      "path": "crates/cclab-jet/src/asset/mod.rs",
+      "summary": "Asset processor: font handling, SVG, WASM glue, generic asset hashing. Missing: JSON tree-shake, CSS URL rewriting."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/mod.rs",
+      "summary": "Main bundler orchestrator. Build pipeline: graph → transform → define → DCE → tree_shake → scope_hoist → generate_bundle. Integration point for preload hints and HTML output."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/types.rs",
+      "summary": "BundleConfig with OutputFormat (Esm/Cjs/Iife), externals, library mode. Missing: manual_chunks config field."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "aot-build-gaps",
+      "action": "modify",
+      "source": "cclab/specs/crates/cclab-jet/aot-build.md",
+      "main_spec_ref": "crates/cclab-jet/aot-build.md",
+      "sections": ["overview", "requirements", "scenarios", "changes", "test_plan"]
+    }
+  ]
+}

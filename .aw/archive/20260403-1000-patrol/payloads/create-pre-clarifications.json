@@ -1,0 +1,9 @@
+{
+  "group_id": "add-idlelib-stdlib",
+  "answers": [
+    {
+      "question": "Implementation level for idlelib?",
+      "answer": "Stub-only. Provide module namespace so `import idlelib` succeeds. All functional APIs should raise NotImplementedError. No Tkinter GUI functionality needed. This is p3 low priority."
+    }
+  ]
+}

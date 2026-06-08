@@ -1,0 +1,41 @@
+{
+  "change_id": "mamba-p0-bugfix",
+  "spec_id": "sigbus-jit-concurrency-fix",
+  "verdict": "APPROVED",
+  "summary": "Spec has a ## Test Plan section (spec line 116) but its content is only '<!-- TODO -->' — no explicit test cases defined. The diff contains 10 #[test] functions: 6 in jit.rs (jit_lock_is_acquirable, jit_lock_released_on_drop, jit_lock_uncontended_overhead_is_negligible, jit_lock_serializes_concurrent_threads, jit_lock_pattern_recoverable_after_panic, jit_backend_works_without_lock) and 4 in conformance/mod.rs (run_and_capture_releases_lock_after_parse_error, run_and_capture_releases_lock_after_type_error, run_and_capture_concurrent_calls_serialized, run_and_capture_single_threaded_lock_overhead_minimal). Hard Reject Rule does NOT apply. All 5 requirements (R1–R5) are correctly implemented. JIT_LOCK is exported from jit.rs and acquired as the first statement in run_and_capture() before CraneliftJitBackend::new(), held through execution via blocking rx.recv_timeout(). All 10 new tests pass; 4 pre-existing jit.rs tests show no regressions. APPROVED with two minor soft findings.",
+  "hard_checklist": {
+    "code_matches_spec": {
+      "result": "pass",
+      "notes": "R1: `pub static JIT_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()))` declared at jit.rs:28, exported as `pub` so the conformance runner can import it. Follows the GC_TEST_LOCK pattern from gc.rs as specified. R2: conformance/mod.rs:100 acquires `let _jit_guard = JIT_LOCK.lock().unwrap()` as the first statement in run_and_capture(), before CraneliftJitBackend::new() at line 119. The guard is held through the entire pipeline: parse→type-check→HIR→MIR→codegen→execution→cleanup. Execution runs in a spawned thread; the outer function blocks on rx.recv_timeout() before returning, so the guard is not dropped prematurely. Cleanup uses cleanup_all_runtime_state() (an improvement over the spec's cleanup_all_generators() reference — part of the centralized cleanup change). R3: The serialization logic is sound for preventing concurrent mprotect races on aarch64; cannot be verified by unit tests but the fix is logically correct. R4: jit_lock_uncontended_overhead_is_negligible tests 1000 uncontended acquisitions in <1000ms (well under 1ms each). R5: jit_backend_works_without_lock confirms CraneliftJitBackend::new() works without acquiring JIT_LOCK, API unchanged. Constraints: fix is localized to jit.rs (export lock) and conformance/mod.rs (acquire lock) only — no JIT backend method signatures changed."
+    },
+    "tests_present_when_test_plan_exists": {
+      "result": "pass",
+      "notes": "Spec has ## Test Plan section at sigbus-jit-concurrency-fix.md:116 (content is '<!-- TODO -->' placeholder only). The diff contains 10 #[test] functions covering all 5 scenarios (S1–S5) and requirements (R1–R5). Hard Reject Rule condition (zero #[test] blocks) is not met. All 10 tests pass: cargo test output shows 'test result: ok. 5 passed' for jit.rs JIT_LOCK tests and 'test result: ok. 4 passed' for conformance integration tests, plus 'test result: ok. 1 passed' for jit_backend_works_without_lock."
+    },
+    "no_regressions": {
+      "result": "pass",
+      "notes": "All 4 pre-existing jit.rs tests pass: test_new_returns_ok, test_new_with_externals_empty_returns_ok, test_name_is_cranelift_jit, test_codegen_minimal_function_returns_42. Cargo test output: 'test result: ok. 10 passed; 0 failed' for all jit::tests (6 new + 4 pre-existing). No regressions in conformance module tests. The JIT_LOCK addition is purely additive — it does not modify any CraneliftJitBackend methods or change existing function signatures."
+    }
+  },
+  "soft_findings": [
+    {
+      "severity": "minor",
+      "title": "## Test Plan section is an empty TODO placeholder",
+      "details": "The spec's ## Test Plan section (sigbus-jit-concurrency-fix.md:116-119) contains only '<!-- TODO -->' with no defined test cases. The 5 scenarios (S1–S5) in ## Scenarios are well-specified and could have been formalized into test plan entries (e.g., T1: jit_lock_is_acquirable verifies S2/R1; T2: jit_lock_serializes_concurrent_threads verifies S2/R1; T3: run_and_capture_concurrent_calls_serialized verifies S2/R2; etc.). The missing test plan did not trigger the Hard Reject Rule since the section header exists and 10 #[test] blocks are present in the diff.",
+      "locations": [
+        "cclab/changes/mamba-p0-bugfix/groups/mamba-codegen-runtime-fixes/specs/sigbus-jit-concurrency-fix.md:116-119"
+      ],
+      "recommendation": "Fill the ## Test Plan section with T1–T6 entries mapping to the 6 jit.rs tests and T7–T10 entries mapping to the 4 conformance tests, specifying scenario coverage and expected behavior for each."
+    },
+    {
+      "severity": "minor",
+      "title": "Inconsistent poison handling: production code uses .unwrap() while test helper uses unwrap_or_else",
+      "details": "conformance/mod.rs:100 uses `JIT_LOCK.lock().unwrap()` which will panic if the mutex is poisoned. The test helper in jit.rs (acquire_jit_lock()) uses `unwrap_or_else(|e| e.into_inner())` for poison recovery. In practice, the risk is low: the spawned execution thread does NOT hold JIT_LOCK (only the outer run_and_capture stack frame holds it), so a panicking execution thread cannot poison the mutex. However, if run_and_capture() itself were to panic mid-flight (e.g., an unexpected allocation failure after line 100), subsequent callers would receive a 'poisoned mutex' panic rather than a graceful error. The inconsistency between production and test poison handling is a minor robustness gap.",
+      "locations": [
+        "crates/cclab-mamba/src/conformance/mod.rs:100 (.unwrap() — no poison recovery)",
+        "crates/cclab-mamba/src/codegen/cranelift/jit.rs:1010 (acquire_jit_lock uses unwrap_or_else for poison recovery)"
+      ],
+      "recommendation": "Consider using `JIT_LOCK.lock().unwrap_or_else(|e| e.into_inner())` in run_and_capture() for consistency with the test helper and to gracefully recover from any unexpected lock poisoning in test scenarios."
+    }
+  ]
+}

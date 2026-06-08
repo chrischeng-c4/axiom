@@ -1,0 +1,7 @@
+{"spec_id":"install-perf-spec","section":"changes","content":"### Modified Files
+
+| File | Description |
+|------|-------------|
+| pkg_manager/registry.rs | load_disk_cache/write_disk_cache → tokio::fs async |
+| pkg_manager/resolver.rs | Replace strict BFS levels with eager task-based prefetch |
+| cli.rs | spawn_blocking for bundle timeout |"}

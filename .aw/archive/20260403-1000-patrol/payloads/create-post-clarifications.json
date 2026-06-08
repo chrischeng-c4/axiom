@@ -1,0 +1,13 @@
+{
+  "group_id": "add-idlelib-stdlib",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "Add idlelib stub module so `import idlelib` succeeds → requirements.md",
+    "success_criteria": "import idlelib works, all APIs raise NotImplementedError → pre_clarifications Q1",
+    "boundary": {
+      "in_scope": "Stub module registration following native-implementations.md pattern → spec_plan: idlelib-stub",
+      "out_of_scope": "Full Tkinter GUI, actual IDLE functionality → pre_clarifications Q1 (stub-only)",
+      "constraints": "Must follow register() + register_module() pattern per native-implementations.md"
+    }
+  }
+}

@@ -1,0 +1,206 @@
+change_id: mamab-p0-issues
+checksums: {}
+created_at: 2026-03-03 14:38:02.350651+00:00
+current_task_id: mamab-p0-issues
+dag:
+  complete: true
+  current_index: 30
+  issues:
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 510
+    processed: false
+    title: Add CPython 3.12 test_grammar.py as parse-only fixture
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 511
+    processed: false
+    title: Add CPython 3.12 operator & call expression fixtures (test_augassign, test_binop,
+      test_call, test_extcall)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 512
+    processed: false
+    title: Add CPython 3.12 test_named_expressions.py as parse-only fixture (walrus
+      operator)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 513
+    processed: false
+    title: Add CPython 3.12 test_patma.py as parse-only fixture (pattern matching)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 514
+    processed: false
+    title: Add CPython 3.12 unpacking fixtures (test_unpack, test_unpack_ex)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 515
+    processed: false
+    title: Add CPython 3.12 type system fixtures (test_type_aliases, test_type_annotations,
+      test_type_comments, test_type_params, test_pep646_syntax)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 516
+    processed: false
+    title: Add CPython 3.12 generator fixtures (test_generators, test_genexps, test_generator_stop,
+      test_yield_from)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 517
+    processed: false
+    title: Add CPython 3.12 async fixtures (test_coroutines, test_asyncgen, test_contextlib_async)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 518
+    processed: false
+    title: Add CPython 3.12 comprehension fixtures (test_listcomps, test_dictcomps,
+      test_setcomps)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 519
+    processed: false
+    title: Add CPython 3.12 exception fixtures (test_exceptions, test_baseexception,
+      test_exception_group, test_exception_hierarchy, test_exception_variations)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 550
+    processed: false
+    title: 'Add targeted fixture: walrus operator (:=) edge cases'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 551
+    processed: false
+    title: 'Add targeted fixture: complex f-string nesting edge cases'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 552
+    processed: false
+    title: 'Add targeted fixture: match statement advanced patterns'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 553
+    processed: false
+    title: 'Add targeted fixture: starred expressions & unpacking in all contexts'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 554
+    processed: false
+    title: 'Add targeted fixture: async syntax edge cases'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 559
+    processed: false
+    title: 'Add targeted fixture: type parameter syntax (PEP 695)'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 560
+    processed: false
+    title: 'Add targeted fixture: exception group syntax (PEP 654)'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 561
+    processed: false
+    title: 'Add targeted fixture: complex string literals & escape sequences'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 566
+    processed: false
+    title: 'Add negative parse test suite: syntax errors that MUST be rejected'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 567
+    processed: false
+    title: Add PEP 701 relaxed f-string grammar tests (Python 3.12 specific)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 568
+    processed: false
+    title: Add parenthesized context managers fixture (PEP 617)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 569
+    processed: false
+    title: Add soft keywords interaction tests (match, case, type)
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 570
+    processed: false
+    title: Add operator precedence comprehensive test fixture
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 571
+    processed: false
+    title: Add deeply nested expression stress test fixture
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 572
+    processed: false
+    title: Add complex import statement patterns fixture
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 573
+    processed: false
+    title: Add multi-line expression continuation patterns fixture
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 574
+    processed: false
+    title: Add complex class definition syntax fixture
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 575
+    processed: false
+    title: Add complex function signature syntax fixture
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 576
+    processed: false
+    title: Add try/except/else/finally combination tests
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 629
+    processed: false
+    title: 'Enhance fixture test harness: support EXPECT-ERROR for negative parse
+      tests'
+git_workflow: new_branch
+iteration: 1
+last_action: dag_clarify_next
+phase: change_archived
+revision_counts: {}
+schema_version: '2.0'
+session_id: null
+task_revisions: {}
+telemetry: null
+updated_at: 2026-03-03 15:09:45.903694+00:00
+validations: []

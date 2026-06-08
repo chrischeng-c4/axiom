@@ -1,0 +1,13 @@
+{
+  "group_id": "check-alignment-phase1",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "No automated spec format/content validation exists. Manual review found 13 content gaps + 7 format violations in #1136 specs. → requirements.md § R1-R6",
+    "success_criteria": "1. `cclab sdd check-alignment` CLI command validates spec files. 2. Format rules: missing annotations, duplicate sections, missing spec-lang blocks. 3. Logical rules: duplicate definitions, field name conflicts, schema conflicts. 4. Zero false positives. 5. Exit code 0 on clean, non-zero on violations. → pre_clarifications Q1-Q2",
+    "boundary": {
+      "in_scope": ["check-alignment CLI (new subcommand)", "SpecDocument parser", "format compliance rules", "logical duplicate/conflict rules", "commands.md update"],
+      "out_of_scope": ["code↔spec coverage (Phase 2 #1141)", "workflow integration (Phase 3 #1142)", "@spec annotations (Phase 2)", "codegen integration"],
+      "constraints": ["No regex — structured section parsing", "Follows validate-spec-structure pattern (Violation struct, --json flag, exit codes)", "Prose is allowed — check is for spec-lang block presence, not prose absence"]
+    }
+  }
+}

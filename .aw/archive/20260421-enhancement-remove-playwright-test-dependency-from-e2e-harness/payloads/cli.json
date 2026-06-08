@@ -1,0 +1,6 @@
+{
+  "change_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness",
+  "spec_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness-spec",
+  "section": "cli",
+  "content": "```yaml\nnew_commands: []\nmodified_commands: []\nnote: \"No new CLI surface. This change uses the existing 'jet test' command from Phase 4 parity. The jet.test.config.ts config file is discovered automatically by the existing config-loader logic — no new flags or subcommands are introduced.\"\n```"
+}

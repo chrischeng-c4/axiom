@@ -1,0 +1,22 @@
+{
+  "groups": [
+    {
+      "id": "try-except-dict-set-parse",
+      "issues": [1112],
+      "requirements": "Fix try/except block with dict/set literal triggering parse error. The parser likely confuses { as block start vs dict/set literal in except clause body. Fix parser to correctly handle dict/set literals inside try/except blocks.",
+      "questions": []
+    },
+    {
+      "id": "iter-two-arg",
+      "issues": [1113],
+      "requirements": "Implement iter(callable, sentinel) two-argument form. Currently only iter(iterable) single-arg is supported. Add: when iter() receives 2 args, call first arg repeatedly until return value equals sentinel, yield each non-sentinel value.",
+      "questions": []
+    },
+    {
+      "id": "lambda-limitations",
+      "issues": [1110],
+      "requirements": "Fix lambda limitations: (1) nested lambdas — lambda inside lambda should capture outer scope, (2) default argument capture — lambda x=val should evaluate val at definition time, (3) unary minus in lambda body — lambda: -x should parse correctly.",
+      "questions": []
+    }
+  ]
+}

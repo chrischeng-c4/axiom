@@ -1,0 +1,8 @@
+{
+  "spec_id": "cli-commands-check-alignment",
+  "section": "overview",
+  "group_id": "check-alignment-phase1",
+  "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "cli", "changes"],
+  "content": "Extends `cclab sdd` CLI command tree with `check-alignment [path]` subcommand.\n\n**What**: Adds CLI entry point for `spec_alignment::check()` — validates spec `.md` files for format compliance and logical consistency.\n\n**Why**: The library function (defined in `check-alignment` logic spec) needs a CLI surface. Follows the same pattern as `validate-spec-structure` — optional positional path, `--json` flag, hard error on violations.\n\n| Aspect | Value |\n|--------|-------|\n| Command | `cclab sdd check-alignment [path]` |\n| Handler crate | `cclab-sdd-cli` |\n| Logic delegation | `spec_alignment::check()` from `cclab-sdd` |\n| Output modes | text (default), JSON (`--json`) |\n| Exit codes | 0 = clean, 1 = violations |"
+}

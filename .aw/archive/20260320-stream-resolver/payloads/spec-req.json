@@ -1,0 +1,21 @@
+{"spec_id":"stream-resolver-spec","section":"requirements","content":"### R1: Stream-Based Resolution
+
+Replace the while-loop BFS with a task-per-package model:
+- Each package spawns a tokio task that fetches metadata and enqueues transitive deps
+- Use DashMap<String, ResolvedPackage> as shared resolved set
+- Use AtomicUsize pending counter to know when all tasks are done
+- Semaphore bounds concurrent HTTP requests (MAX_CONCURRENT_DOWNLOADS)
+- Preserve version conflict detection: first resolver wins, log warning on conflict
+
+### R2: Preserve Prefetch Channel
+
+Keep the prefetch_tx channel for overlapping download with resolution.
+Each task sends ResolvedPackage on the channel immediately after version selection.
+
+### R3: Override Support
+
+Preserve overrides map: check before resolving each package.
+
+### R4: Backward Compatibility
+
+Existing resolve() API unchanged. New stream_resolve() called internally."}

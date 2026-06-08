@@ -1,0 +1,29 @@
+change_id: 1134-mamba-dual-config
+schema_version: '2.0'
+created_at: 2026-04-10T03:25:03.545197Z
+updated_at: 2026-04-11T07:24:36.459970Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:unify-mamba-config: 1
+current_task_id: 1134-mamba-dual-config-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1134
+    title: 'mamba: dual MambaConfig structs — driver/config.rs vs config/schema.rs'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null

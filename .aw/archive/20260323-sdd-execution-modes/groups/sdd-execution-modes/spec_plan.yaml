@@ -1,0 +1,13 @@
+- spec_id: sdd-execution-modes
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/executor-resolution.md
+  sections:
+  - overview
+  - logic
+  - config
+  - state-machine
+  - dependency
+  - interaction
+  - cli
+  - test-plan
+  - changes

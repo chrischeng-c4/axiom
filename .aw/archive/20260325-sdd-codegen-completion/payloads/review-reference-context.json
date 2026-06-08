@@ -1,0 +1,39 @@
+{
+  "group_id": "frontend-codegen",
+  "verdict": "revise",
+  "summary": "The reference context covers the wireframe → React TSX path thoroughly (6 high-relevance specs) but misses 2 of 3 major deliverables: design-token (DTCG → CSS + Tailwind) and component (CEM → TypeScript) have zero spec references. Additionally, spec-validator.md is omitted despite requirements mandating validators for all three section types. One key requirement entry (spec-ir-schema.md) is inaccurate — claims 'Wireframe kind definition' but the actual spec's kind enum does not include Wireframe.",
+  "findings": [
+    "CRITICAL GAP: No reference spec for design-token generation. Requirements demand 'DTCG design tokens → CSS custom properties + Tailwind config output' (Q3 confirmed both from single pass). DesignToken is listed in codegen-system.md SpecIR enum but no generator-design-token.md or equivalent exists. This is 1 of 3 major deliverables with zero existing spec coverage.",
+    "CRITICAL GAP: No reference spec for CEM component generation. Requirements demand 'CEM component definition → TypeScript prop interface + component skeleton'. Component is listed in codegen-system.md SpecIR enum but no generator-component.md or equivalent exists. This is 1 of 3 major deliverables with zero existing spec coverage.",
+    "SIGNIFICANT GAP: No reference for cross-section composition. Requirements state 'wireframe + component + design-token → complete UI component with typed props and applied tokens'. No existing spec describes how these three section types compose into a unified output.",
+    "MODERATE GAP: No reference for rest-api cross-ref data fetching hooks. Requirements mention 'Cross-ref to rest-api section enables data fetching hook generation in the component skeleton'. code-generator-contract.md's inference rules (e.g., Flowchart db_query → inject session) is analogous but not referenced for this pattern.",
+    "MISSING SPEC: spec-validator.md (cclab-sdd/generate/spec-validator.md) is not included. Requirements state 'Validators for all three section types are required before any generator is wired'. This spec defines validation patterns (type validation, reference validation, completeness check) that wireframe/component/design-token validators should follow.",
+    "INACCURACY: spec-ir-schema.md key requirements claim 'Wireframe kind definition, WireframeSpec structure for component layout'. The actual spec's kind enum only lists: Api, FlowchartPlus, SequencePlus, ClassPlus, ErdPlus, RequirementPlus — does NOT include Wireframe, Component, or DesignToken. The Wireframe variant is defined in codegen-system.md and generator-react.md, not in spec-ir-schema.md.",
+    "OK: The 6 high-relevance specs (codegen-system, generator-react, spec-ir-schema, spec-ir-contract, code-generator-contract, template-engine) comprehensively cover the wireframe → React TSX generation path. Relevance scores are appropriate. No irrelevant specs included.",
+    "OK: Spec plan creating frontend-codegen-main with sections for component, wireframe, design-token is appropriate scope. But the reference context should explicitly flag which sections are entirely new (no existing spec) vs extensions of existing specs."
+  ],
+  "checklist": {
+    "all_areas_covered": {
+      "pass": false,
+      "reason": "Only wireframe/React is covered. Design-token (DTCG → CSS + Tailwind) and component (CEM → TypeScript) — 2 of 3 major deliverables — have zero spec references. Cross-section composition and rest-api cross-ref also uncovered. Validators (spec-validator.md) omitted."
+    },
+    "relevance_scores_reasonable": {
+      "pass": true,
+      "reason": "For the specs that ARE included, relevance scores are appropriate: high for direct codegen path, medium for architecture overview, low for SDD phase context."
+    },
+    "key_requirements_accurate": {
+      "pass": false,
+      "reason": "spec-ir-schema.md key requirements claim 'Wireframe kind definition' but the actual spec's kind enum does not include Wireframe (only Api, FlowchartPlus, SequencePlus, ClassPlus, ErdPlus, RequirementPlus)."
+    },
+    "no_irrelevant_specs": {
+      "pass": true,
+      "reason": "All 8 referenced specs are genuinely relevant to the frontend codegen domain. No noise."
+    }
+  },
+  "revision_instructions": [
+    "Add spec-validator.md (cclab-sdd/generate/spec-validator.md) at medium relevance with key requirements: 'R1 (type validation), R2 (reference validation), R3 (completeness check) — validation patterns for wireframe/component/design-token validators'.",
+    "Fix spec-ir-schema.md key requirements: replace 'Wireframe kind definition, WireframeSpec structure for component layout' with 'SpecIR YAML manifest envelope schema (apiVersion/kind/metadata/spec), strict serialization contract, kind registry pattern for extending with new kinds'.",
+    "Add explicit gap annotations noting that design-token generation and CEM component generation have NO existing spec — these will be defined from scratch in the change-spec phase.",
+    "Consider adding a note that code-generator-contract.md's inference rules pattern (spec signal → inferred code) should be extended for rest-api cross-ref → data fetching hook generation."
+  ]
+}

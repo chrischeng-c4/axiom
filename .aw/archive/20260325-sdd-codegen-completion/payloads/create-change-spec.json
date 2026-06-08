@@ -1,0 +1,32 @@
+{"change_id":"sdd-codegen-completion","spec_id":"frontend-codegen-main","section":"changes","content":"<!-- type: changes lang: yaml -->
+
+```yaml
+files:
+  - path: crates/cclab-sdd/templates/axum/schema.tera
+    action: CREATE
+    desc: Tera template for JSON Schema → Rust struct with serde derives
+  - path: crates/cclab-sdd/templates/axum/rest_api.tera
+    action: CREATE
+    desc: Tera template for OpenAPI → Axum route handler skeleton
+  - path: crates/cclab-sdd/templates/fastapi/schema.tera
+    action: CREATE
+    desc: Tera template for JSON Schema → Python dataclass
+  - path: crates/cclab-sdd/templates/fastapi/rest_api.tera
+    action: CREATE
+    desc: Tera template for OpenAPI → FastAPI route handler
+  - path: crates/cclab-sdd/src/generate/generators/test_scaffold.rs
+    action: CREATE
+    desc: RequirementPlus BDD test scaffold generator with coverage validation
+  - path: crates/cclab-sdd/src/generate/generators/design_token.rs
+    action: CREATE
+    desc: DTCG → CSS custom properties + Tailwind config generator
+  - path: crates/cclab-sdd/src/generate/generators/component.rs
+    action: CREATE
+    desc: CEM → TypeScript interface + React component skeleton generator
+  - path: crates/cclab-sdd/src/generate/generators/react.rs
+    action: MODIFY
+    desc: Enhance with design token integration and rest-api data fetching hooks
+  - path: crates/cclab-sdd/src/generate/section_rules.rs
+    action: MODIFY
+    desc: Register deploy section type keywords and matcher
+```"}

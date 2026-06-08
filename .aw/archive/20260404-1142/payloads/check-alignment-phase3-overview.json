@@ -1,0 +1,9 @@
+{
+  "spec_id": "check-alignment-phase3",
+  "group_id": "check-alignment-phase3",
+  "section": "overview",
+  "content": "Integrate `spec_alignment::check()` into 4 SDD workflow integration points with per-caller strictness. Phase 3 adds workflow-level validation to the existing Phase 1 (format/logical) and Phase 2 (coverage) rule engines.\n\n**Problem**: `check()` and `check_with_coverage()` exist as standalone CLI tools but are not called during the SDD workflow. Spec authors can write malformed specs through artifact tools, merge misaligned specs without warning, and review code without knowing the spec has violations. There is no feedback loop between spec authoring and spec validation.\n\n**Solution**: Same `check()` function, 4 integration points, different strictness per caller:\n\n| Caller | Format violations | Coverage gaps | Blocking? |\n|--------|-------------------|---------------|-----------|\n| Artifact tools (artifact-tools-phase3) | Error — block write, revert file | Warning — allow write | Yes (format only) |\n| Merge workflow (change-merge-phase3) | Warning — allow merge | Warning — allow merge | No |\n| Review agent prompt (this spec) | Info — injected into prompt | Info — injected into prompt | No |\n| Run-change response (this spec) | Info — returned in JSON | Info — returned in JSON | No |\n\n**Scope**: This spec covers the overarching integration architecture plus the two remaining integration points: (3) review agent prompt injection and (4) run-change response extension. Artifact tools and merge workflow are specified separately. Also includes deferred Phase 2 R20 (`@spec` annotation instruction in implementation prompt).",
+  "fill_sections": ["overview", "requirements", "scenarios", "logic", "changes", "test-plan"],
+  "main_spec_ref": "crates/cclab-sdd/logic/check-alignment.md",
+  "merge_strategy": "new"
+}

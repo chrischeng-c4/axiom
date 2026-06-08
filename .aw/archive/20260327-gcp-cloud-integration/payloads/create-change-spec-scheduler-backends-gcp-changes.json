@@ -1,0 +1,7 @@
+{
+  "spec_id": "scheduler-backends-gcp",
+  "group_id": "gcp-cloud-integration",
+  "section": "changes",
+  "main_spec_ref": "crates/cclab-fetch/scheduler/scheduler-backends.md",
+  "content": "```yaml\nchanges:\n  - file: crates/cclab-queue/src/scheduler/mod.rs\n    action: modify\n    description: |\n      Add conditional module declaration and re-export for cloud_scheduler_backend.\n      Follows existing pattern of #[cfg(feature = \"scheduler\")] pub mod ion_backend.\n    additions:\n      - '#[cfg(feature = \"cloud-scheduler\")] pub mod cloud_scheduler_backend;'\n      - '#[cfg(feature = \"cloud-scheduler\")] pub use cloud_scheduler_backend::{CloudSchedulerBackend, CloudSchedulerConfig};'\n    location: |\n      Module declaration after line 11 (after ion_backend declaration).\n      Re-export after line 18 (after IonSchedulerBackend re-export).\n\n  - file: crates/cclab-queue/Cargo.toml\n    action: modify\n    description: |\n      Add cloud-scheduler feature flag and ensure conditional dependencies are activated.\n    additions:\n      - 'cloud-scheduler feature: [\"dep:reqwest\", \"dep:base64\"]'\n    notes: |\n      reqwest and base64 may already be optional dependencies for the cloudtasks feature.\n      If so, cloud-scheduler should share these deps (both features activate the same optional deps).\n      Do NOT duplicate dependency entries — add cloud-scheduler to existing activation lists.\n```"
+}

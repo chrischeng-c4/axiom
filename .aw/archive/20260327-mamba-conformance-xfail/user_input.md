@@ -1,0 +1,1 @@
+Fix remaining xfail conformance tests — kwargs codegen verifier errors, output mismatches, parser gaps. 48 xfail tests remain: 30 mismatch, 6 other, 5 verifier (kwargs), 3 parse. Target: reduce xfail count by fixing low-hanging fruit across all categories.

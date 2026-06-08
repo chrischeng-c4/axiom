@@ -1,0 +1,9 @@
+{
+  "spec_id": "mamba-runtime-bugs-spec",
+  "section": "overview",
+  "content": "Fix 5 independent CPython 3.12 behavioral conformance bugs in cclab-mamba (#1037). Each bug is in a different compiler/runtime layer:\n\n| Bug | Layer | Root Cause | CPython Behavior |\n|-----|-------|-----------|------------------|\n| Semicolon separator | Parser (stmt.rs) | Semicolon token lexed but not consumed between statements | `;` is a valid statement separator |\n| ZeroDivisionError | Runtime (builtins.rs) | `mb_floordiv()` returns `none()` on zero divisor | Raises `ZeroDivisionError` |\n| Decorator return | Lowering (hir_to_mir.rs) | Decorated function result not propagated as call return | Decorated function returns wrapped result |\n| Nested f-string | Parser (expr.rs) | `parse_fstring_parts()` does not recursively handle inner f-strings | `f\"{f'{x}'}\"` evaluates inner f-string correctly |\n| json.dumps None | Stdlib (json_mod.rs) | `dispatch_dumps()` drops return value from `mb_json_dumps()` | Returns JSON string |",
+  "fill_sections": ["overview", "requirements", "scenarios", "test_plan", "changes"],
+  "main_spec_ref": null,
+  "merge_strategy": "new",
+  "group_id": "mamba-runtime-fixes"
+}

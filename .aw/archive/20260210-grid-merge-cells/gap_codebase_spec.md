@@ -1,0 +1,8 @@
+---
+change_id: grid-merge-cells
+type: gap_codebase_spec
+created_at: 2026-02-10T03:39:11.575095+00:00
+updated_at: 2026-02-10T03:39:11.575095+00:00
+---
+
+## Gap Analysis: Codebase vs Specs\n\n### Critical Gaps\n\n1. **Row/col insert/delete don't update merged_ranges** (sheet.rs)\n   - `insert_rows`, `delete_rows`, `insert_cols`, `delete_cols` don't adjust `merged_ranges` vector\n   - After inserting a row inside a merged region, the merge coordinates become stale\n   - No spec covers this behavior\n\n2. **No merge-aware selection navigation**\n   - Selection specs don't mention merged cells\n   - InputController arrow key navigation doesn't skip slave cells or expand to merge boundaries\n   - Clicking a slave cell should select the master cell's merge region\n\n3. **No unmerge in UI**\n   - Toolbar has merge button but no unmerge\n   - Context menu has no merge/unmerge items\n   - No spec for merge toggle behavior\n\n### Medium Gaps\n\n4. **Sort operations don't protect merged ranges**\n   - Sorting could corrupt merge regions by moving rows independently\n   - Should either block sort on merged ranges or handle specially\n\n5. **Merge button doesn't toggle**\n   - Google Sheets: if selection is already merged, clicking merge button unmerges\n   - Current: merge button only merges, no state detection\n\n### Addressed\n\n- Merge rendering in GridRenderer: complete\n- WASM API for merge/unmerge: complete\n- Event system: complete\n- Merge info types: complete"

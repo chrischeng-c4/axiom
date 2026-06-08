@@ -1,0 +1,260 @@
+{
+  "change_id": "sdd-codegen-and-fixes",
+  "group_id": "new-spec-types",
+  "specs": [
+    {
+      "spec_id": "cclab-sdd/logic/implement-task",
+      "main_spec_ref": "cclab-sdd/logic/implement-task.md",
+      "spec_group": "workflow-logic",
+      "relevance": "high",
+      "key_requirements": [
+        "Codegen routing mechanism: ImplementSpecWithCodegen sub-state for codegen path",
+        "Integration with prism_generate_from_spec",
+        "Spec execution order via Kahn's topological sort",
+        "Per-spec CRR cycle for implementation validation",
+        "Support for new section types: deploy, wireframe, component, design-token"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/logic/change-spec",
+      "main_spec_ref": "cclab-sdd/logic/change-spec.md",
+      "spec_group": "workflow-logic",
+      "relevance": "high",
+      "key_requirements": [
+        "Spec preparation and main_spec_ref assignment",
+        "Per-spec lifecycle: Prepared → Fill → Prune → Review",
+        "fill_sections from spec_plan.sections",
+        "Artifact writing enforcement via artifact CLI",
+        "SpecSubState enum for tracking progress",
+        "Section Type → Spec Lang Mapping must be extended with deploy type (lang: yaml, for k8s Deployment + Service manifests)",
+        "section_rules keyword pattern for deploy trigger",
+        "fill_order priority for deploy sections"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/codegen-system",
+      "main_spec_ref": "cclab-sdd/generate/codegen-system.md",
+      "spec_group": "codegen",
+      "relevance": "high",
+      "key_requirements": [
+        "Unified internal representation based on JSON Schema",
+        "Template-based generation engine (Tera/MiniJinja)",
+        "Pluggable generators for different frameworks/targets",
+        "Pre-generation spec validation",
+        "Test generation support",
+        "Support for new generators: Deploy (k8s), React (wireframe), Tailwind (design tokens), TypeScript (CEM)"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/code-generator-contract",
+      "main_spec_ref": "cclab-sdd/generate/code-generator-contract.md",
+      "spec_group": "codegen",
+      "relevance": "high",
+      "key_requirements": [
+        "Generator trait contract definition",
+        "Spec input → code output mapping table (core semantic mappings)",
+        "Inference rules for automatic code pattern detection",
+        "Spec input → code output mapping for new section types:",
+        "  - Deploy (k8s yaml) → Kubernetes Deployment + Service manifests",
+        "  - Wireframe → React component scaffold",
+        "  - Design Tokens (DTCG) → CSS/Tailwind tokens",
+        "  - Component + REST-API cross-ref → TypeScript interface + data fetching hooks"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/spec-validator",
+      "main_spec_ref": "cclab-sdd/generate/spec-validator.md",
+      "spec_group": "codegen",
+      "relevance": "high",
+      "key_requirements": [
+        "Existing: Type validation (R1), Reference validation (R2), Completeness checking (R3)",
+        "New capabilities needed: Shared validator registration mechanism (Q5)",
+        "New capabilities needed: Soft warning mode (not blocking) for deploy section cross-ref validation (Q2)",
+        "Deploy-specific validation rules: reference validation to db-model and rest-api deferred to later iteration"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/spec-ir-schema",
+      "main_spec_ref": "cclab-sdd/generate/spec-ir-schema.md",
+      "spec_group": "codegen",
+      "relevance": "medium",
+      "key_requirements": [
+        "Kubernetes-style resource envelope",
+        "Kind registry for different spec types",
+        "Strict YAML serialization",
+        "Language-agnostic interface",
+        "Support for new kinds: Deploy, Wireframe, Component, DesignToken"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/template-engine",
+      "main_spec_ref": "cclab-sdd/generate/template-engine.md",
+      "spec_group": "codegen",
+      "relevance": "medium",
+      "key_requirements": [
+        "TemplateEngine::render() contract",
+        "Template directory loading (Tera integration)",
+        "Filter registration for new case conversions (kebab-case for CSS custom properties)",
+        "Rendering context support for new generator types (React, Tailwind, TypeScript)"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/logic/reference-context",
+      "main_spec_ref": "cclab-sdd/logic/reference-context.md",
+      "spec_group": "artifact-tools",
+      "relevance": "medium",
+      "key_requirements": [
+        "spec_plan generation with spec entries, spec_id, relevance (high/medium/low) categorization",
+        "key_requirements extraction from specs",
+        "GroupSubState tracking",
+        "Artifact writing enforcement via artifact CLI",
+        "spec_group assignment for logical architecture grouping"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/tools/utils/write-artifact",
+      "main_spec_ref": "cclab-sdd/tools/utils/write-artifact.md",
+      "spec_group": "artifact-tools",
+      "relevance": "medium",
+      "key_requirements": [
+        "Unified artifact writer with payload-based routing",
+        "Schema validation for artifact-specific payloads",
+        "STATE.yaml phase transition management",
+        "Support for multiple artifact types",
+        "JSON output for machine-readable results",
+        "Support for revise-reference-context and revise-change-spec operations"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/interfaces/cli/commands",
+      "main_spec_ref": "cclab-sdd/interfaces/cli/commands.md",
+      "spec_group": "interfaces",
+      "relevance": "medium",
+      "key_requirements": [
+        "Core workflow subcommands under cclab sdd",
+        "artifact create-reference-context and related commands",
+        "artifact revise-reference-context command routing",
+        "State machine interoperability with STATE.yaml",
+        "JSON file input support via --json-file",
+        "CliModule trait and distributed_slice registration"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/interfaces/tools/workflow-tools",
+      "main_spec_ref": "cclab-sdd/interfaces/tools/workflow-tools.md",
+      "spec_group": "interfaces",
+      "relevance": "medium",
+      "key_requirements": [
+        "OpenRPC method definitions for workflow operations",
+        "Parameter and result schemas",
+        "sdd_workflow_create_reference_context definition",
+        "sdd_workflow_create_change_spec definition",
+        "sdd_workflow_create_change_implementation definition"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/README",
+      "main_spec_ref": "cclab-sdd/generate/README.md",
+      "spec_group": "codegen",
+      "relevance": "low",
+      "key_requirements": [
+        "Code generation and template library organization",
+        "Subsystem architecture and module organization",
+        "Integration points with change_spec and change_impl",
+        "Spec IR system design overview"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/README",
+      "main_spec_ref": "cclab-sdd/README.md",
+      "spec_group": "interfaces",
+      "relevance": "low",
+      "key_requirements": [
+        "Spec format priority and authoring rules",
+        "Phase flow from Init through Merge",
+        "Separation between interfaces and logic layers",
+        "Spec naming and organization conventions"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "change-spec-logic",
+      "main_spec_ref": "cclab-sdd/logic/change-spec",
+      "action": "modify",
+      "sections": [
+        {
+          "section_type": "changes",
+          "summary": "Add deploy section type to Section Type → Spec Lang Mapping table"
+        }
+      ]
+    },
+    {
+      "spec_id": "codegen-system-extend",
+      "main_spec_ref": "cclab-sdd/generate/codegen-system",
+      "action": "modify",
+      "sections": [
+        {
+          "section_type": "changes",
+          "summary": "Add Deploy, React, DTCG, and CEM generator types to codegen system"
+        }
+      ]
+    },
+    {
+      "spec_id": "spec-validator-extend",
+      "main_spec_ref": "cclab-sdd/generate/spec-validator",
+      "action": "modify",
+      "sections": [
+        {
+          "section_type": "changes",
+          "summary": "Add shared validator registration mechanism and soft warning mode for deploy section"
+        }
+      ]
+    },
+    {
+      "spec_id": "spec-ir-schema-extend",
+      "main_spec_ref": "cclab-sdd/generate/spec-ir-schema",
+      "action": "modify",
+      "sections": [
+        {
+          "section_type": "changes",
+          "summary": "Extend kind registry with Deploy, Wireframe, Component, DesignToken"
+        }
+      ]
+    },
+    {
+      "spec_id": "generator-deploy",
+      "main_spec_ref": "cclab-sdd/generate/generator-deploy",
+      "action": "create",
+      "sections": [
+        {
+          "section_type": "overview",
+          "summary": "Deploy generator for Kubernetes manifests (k8s Deployment + Service)"
+        },
+        {
+          "section_type": "logic",
+          "summary": "k8s Deployment specification inference from deploy section"
+        },
+        {
+          "section_type": "schema",
+          "summary": "YAML schema for generated Kubernetes manifests"
+        }
+      ]
+    },
+    {
+      "spec_id": "generator-react",
+      "main_spec_ref": "cclab-sdd/generate/generator-react",
+      "action": "create",
+      "sections": [
+        {
+          "section_type": "overview",
+          "summary": "React scaffold generator from wireframe sections"
+        },
+        {
+          "section_type": "logic",
+          "summary": "Component hierarchy and state management inference"
+        }
+      ]
+    }
+  ]
+}

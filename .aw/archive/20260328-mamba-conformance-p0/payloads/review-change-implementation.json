@@ -1,0 +1,57 @@
+{
+  "change_id": "mamba-conformance-p0",
+  "spec_id": "data-structure-conformance",
+  "verdict": "REVIEWED",
+  "summary": "Spec has Test Plan (T1-T9, 9 fixture groups). #[test] functions are present in the diff (p0_conformance_tests.rs, runtime_bugs_conformance_tests.rs). Hard Reject Rule does NOT apply. Fixture files for T1-T9 exist on disk and are well-formed. The conformance_tests.rs harness uses `harness!(run_conformance, \"tests/fixtures/conformance\", r\".*\\.py$\")` which auto-discovers all .py fixtures without explicit modification. Existing 10 data_structure fixtures are untouched and have no xfail markers. REVIEWED (not APPROVED) due to three fixable soft issues: (1) ALL 9 new fixture files carry # mamba-xfail markers — T1 through T9 are all expected-failures with 6 distinct root causes — so no spec acceptance criterion R1-R12 is currently verified as passing; (2) the implementation.md diff does not include the fixture file additions (files are untracked on disk but absent from the recorded diff, making the implementation artifact incomplete); (3) conformance_tests.rs was not explicitly modified as the spec's Changes section requires (though auto-discovery makes it unnecessary in practice).",
+  "hard_checklist": {
+    "code_matches_spec": {
+      "result": "pass",
+      "notes": "All 9 required fixture pairs (.py + .expected) exist on disk covering T1-T9 scenarios for R1-R12. The conformance_tests.rs auto-discovery harness (harness! macro with glob pattern) picks them up without explicit modification. Spec constraint 'test-only, no runtime changes' is satisfied for this spec's own additions. Runtime changes in the diff belong to other specs in the same change (py312-behavioral-conformance, mamba-runtime-bugs)."
+    },
+    "tests_present_when_test_plan_exists": {
+      "result": "pass",
+      "notes": "Spec has ## Test Plan (T1-T9). The implementation.md diff contains many #[test] functions in crates/cclab-mamba/tests/p0_conformance_tests.rs (+585 lines) and runtime_bugs_conformance_tests.rs (+468 lines). Hard Reject Rule condition (zero #[test] blocks) is not met."
+    },
+    "no_regressions": {
+      "result": "pass",
+      "notes": "The 10 pre-existing data_structures/ fixtures (dict_comprehension, dict_methods, list_compare, list_comprehension, list_methods, set_ops, string_methods, tuple_ops, bytes_ops, list_slicing) have no xfail markers added and are not modified. Regression constraint met."
+    }
+  },
+  "soft_findings": [
+    {
+      "severity": "major",
+      "title": "All 9 new fixture files are xfail — T1 through T9 produce zero passing tests",
+      "details": "Every new fixture added by this spec is marked # mamba-xfail with a distinct root cause: list_sort_key.py ('lambda with unary minus not supported in type checker'), dict_edge_cases.py ('try/except with dict literal parse error'), list_edge_cases.py ('try/except with inline expression parse error'), set_edge_cases.py ('try/except with set literal parse error'), list_constructor.py ('list(str) and list * int operators not supported'), bytes_edge_cases.py ('bytes edge cases trigger codegen verifier error'), string_edge_cases.py ('string reverse slicing [::-1] returns empty string'), string_format.py ('str.format() with keyword arguments not implemented'), tuple_edge_cases.py ('tuple concat and repeat operators not supported in type checker'). Acceptance criteria R1-R12 are therefore unverified by the new test suite. The spec intent of exposing gaps is achieved but zero new passing conformance tests are added.",
+      "locations": [
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/list_sort_key.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/dict_edge_cases.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/list_edge_cases.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/set_edge_cases.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/list_constructor.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/bytes_edge_cases.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/string_edge_cases.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/string_format.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/tuple_edge_cases.py:1"
+      ],
+      "recommendation": "For each xfail root cause, open a dedicated issue and track in the DAG. As each runtime bug is fixed, remove the corresponding xfail marker and confirm the fixture passes. At minimum T2 (list_constructor) partial cases (list(), list(range(5))) and T6 (tuple basic indexing) may be fixable without new runtime features."
+    },
+    {
+      "severity": "moderate",
+      "title": "Implementation.md diff does not include fixture file additions",
+      "details": "The 9 .py and 9 .expected files that constitute the data-structure-conformance spec deliverables are absent from the diff recorded in implementation.md. The summary line mentions '22 files: New .py + .expected golden files' but no diff hunks for data_structures/*.py or data_structures/*.expected appear in the file. The fixture files exist on disk as untracked git files (confirmed by git status). The recorded implementation artifact is incomplete.",
+      "locations": [
+        "cclab/changes/mamba-conformance-p0/implementation.md:38-42"
+      ],
+      "recommendation": "Regenerate or amend the implementation.md diff to include the fixture file additions so the artifact accurately reflects what was delivered."
+    },
+    {
+      "severity": "minor",
+      "title": "conformance_tests.rs not modified despite spec MODIFY action",
+      "details": "The spec's Changes section specifies: 'path: crates/cclab-mamba/tests/conformance_tests.rs, action: MODIFY, desc: Register new data_structures/ fixtures'. No modification appears in the diff. In practice this is acceptable because the existing harness uses harness!(run_conformance, \"tests/fixtures/conformance\", r\".*\\.py$\") which auto-discovers all .py files recursively, making explicit registration unnecessary. The spec requirement is functionally satisfied.",
+      "locations": [
+        "crates/cclab-mamba/tests/conformance_tests.rs (bottom: harness! macro)"
+      ],
+      "recommendation": "Update the spec Changes section to remove the conformance_tests.rs MODIFY entry and add a note that auto-discovery via the harness! macro covers new fixtures without explicit registration."
+    }
+  ]
+}

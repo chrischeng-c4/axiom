@@ -1,0 +1,13 @@
+{
+  "group_id": "test-coverage-gaps",
+  "answers": [
+    {
+      "question": "Focus area for test coverage?",
+      "answer": "Core modules first. Prioritize ffi/c_types.rs (0%), driver/mod.rs (33%), codegen/cranelift/mod.rs (45%) over stdlib stubs."
+    },
+    {
+      "question": "Scope for this single SDD change?",
+      "answer": "Top 5 worst files only: ffi/c_types.rs (0%), queue_mod.rs (4%), statistics_mod.rs (5%), shlex_mod.rs (7%), calendar_mod.rs (8%). Bring each to at least 50% line coverage."
+    }
+  ]
+}

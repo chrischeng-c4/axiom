@@ -1,0 +1,9 @@
+{
+  "project_path": "/Users/chrischeng/projects/cclab-sdd",
+  "change_id": "mamba-p1-bugfix",
+  "spec_id": "tokens-and-indent",
+  "section": "changes",
+  "content": "### R2 Clarification: Brace Token Processing Order\n\nThe existing R2 implementation handles `LBrace` at line start with a specific ordering guarantee that the parser depends on:\n\n```yaml\nbrace_at_line_start_invariant:\n  trigger: \"LBrace token when at_line_start=true AND paren_depth=0\"\n  steps:\n    1: \"Compute indent from preceding Newline\"\n    2: \"Emit INDENT or DEDENT(s) as needed\"\n    3: \"Set at_line_start = false\"\n    4: \"Increment paren_depth\"\n    5: \"Push LBrace to output\"\n  guarantee: |\n    Dict/set literals starting a line inside a block receive correct\n    INDENT/DEDENT tokens BEFORE entering implicit-line-continuation mode.\n```\n\n### File Changes\n\n```yaml\nfiles: []\n```\n\nNo lexer file modifications required. The IndentProcessor correctly produces INDENT/DEDENT tokens for all brace scenarios. The fix is entirely in the parser layer (see `statements` change-spec).\n\n### Acceptance Criteria (Verification)\n\n| ID | Input | Expected Token Stream (relevant tokens) |\n|----|-------|-----------------------------------------|\n| L-BRACE-1 | `try:\\n    d = {}['x']\\nexcept KeyError:\\n    pass` | `... Newline INDENT Ident Eq LBrace RBrace LBracket Str RBracket Newline DEDENT ...` |\n| L-BRACE-2 | `try:\\n    {}\\nexcept:\\n    pass` | `... Newline INDENT LBrace RBrace Newline DEDENT ...` |\n| L-BRACE-3 | `if True:\\n    d = {1: 2}\\n    print(d)` | `... Newline INDENT Ident Eq LBrace Int Colon Int RBrace Newline Ident LParen Ident RParen Newline DEDENT ...` |",
+  "main_spec_ref": "crates/cclab-mamba/lexer/tokens-and-indent.md",
+  "group_id": "try-except-dict-set-parse"
+}

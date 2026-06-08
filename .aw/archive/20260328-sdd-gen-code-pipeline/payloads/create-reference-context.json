@@ -1,0 +1,14 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-gen-code-pipeline",
+  "group_id": "gen-code-pipeline",
+  "specs": [
+    {"path": "crates/cclab-sdd/logic/spec-diff-codegen.md", "relevance": "high", "key_requirements": "Design spec for the entire pipeline — section type determinism, MVP strategy"},
+    {"path": "crates/cclab-sdd/interfaces/cli/commands.md", "relevance": "high", "key_requirements": "CLI surface — GenCommands enum, adding new subcommands"},
+    {"path": "crates/cclab-sdd/generate/spec-ir-schema.md", "relevance": "high", "key_requirements": "SpecIR definition — DataModel, RestApi, StateMachine variants"},
+    {"path": "crates/cclab-sdd/generate/code-generator-contract.md", "relevance": "medium", "key_requirements": "CodeGenerator trait and GenContext"}
+  ],
+  "spec_plan": [
+    {"spec_id": "gen-code-cli", "action": "modify", "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md", "source": "crates/cclab-sdd/interfaces/cli/commands.md", "sections": ["overview", "changes"]}
+  ]
+}

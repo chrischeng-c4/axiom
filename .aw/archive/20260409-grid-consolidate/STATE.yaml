@@ -1,0 +1,29 @@
+change_id: grid-consolidate
+schema_version: '2.0'
+created_at: 2026-04-08T10:12:27.534795Z
+updated_at: 2026-04-09T03:59:43.842815Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: null
+revision_counts:
+  ref_ctx:consolidate-grid-crates: 2
+current_task_id: grid-crate-structure
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+groups_progress:
+  post_clarifications:
+  - consolidate-grid-crates
+  change_implementation: []
+  reference_context:
+  - consolidate-grid-crates
+  pre_clarifications:
+  - consolidate-grid-crates
+  change_spec: []

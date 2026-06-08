@@ -1,0 +1,1 @@
+{"group_id":"mamba-runtime-fixes","answers":[{"topic":"approach","answer":"5 independent fixes: parser for semicolons, codegen for ZeroDivisionError check, HIR/MIR for decorator return, parser for nested f-strings, runtime for json module dispatch."}]}

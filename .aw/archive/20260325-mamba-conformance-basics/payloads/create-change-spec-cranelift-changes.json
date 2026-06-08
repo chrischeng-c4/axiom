@@ -1,0 +1,6 @@
+{
+  "spec_id": "cranelift",
+  "group_id": "runtime-basics",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: crates/cclab-mamba/src/codegen/cranelift/mod.rs\n    action: MODIFY\n    desc: \"Add `internal_return_tys: HashMap<u32, TypeId>` field to CraneliftBackend; initialize to HashMap::new() in new()\"\n  - path: crates/cclab-mamba/src/codegen/cranelift/mod.rs\n    action: MODIFY\n    desc: \"In declare_internal: after self.internal_funcs.insert(body.name.0, func_id), insert self.internal_return_tys.insert(body.name.0, body.return_ty) to track each callee's declared return TypeId\"\n  - path: crates/cclab-mamba/src/codegen/cranelift/mod.rs\n    action: MODIFY\n    desc: \"In emit_internal_call: after builder.inst_results(call)[0], look up callee_return_ty = self.internal_return_tys.get(&sym_id); if callee's Ty resolves to Int or Bool and call-site Ty is non-primitive (Dynamic/Any), emit CallExtern mb_box_int(result) before def_var; if callee returns Float and call-site is non-primitive, emit CallExtern mb_box_float(result)\"\n  - path: crates/cclab-mamba/tests/codegen_tests.rs\n    action: MODIFY\n    desc: \"Add test_aot_recursive_fib: compile recursive fib() without type annotations through the AOT backend, link and run, assert fib(10) == 55\"\n```"
+}

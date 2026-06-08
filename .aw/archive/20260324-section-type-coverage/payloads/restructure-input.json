@@ -1,0 +1,26 @@
+{
+  "groups": [
+    {
+      "id": "new-section-types",
+      "title": "Add missing section types for QA, Security, SRE, Backend, MLE, Agent",
+      "issues": [1051, 1053, 1054, 1055, 1056, 1057],
+      "requirements": "Extend the SDD section type system with new types for underserved roles. All changes are additive to the same spec/code area:\n\n1. **Section Type → Spec Lang Mapping** in change-spec.md — add 16 new types\n2. **Section rules** (keyword matching) — add match patterns for each new type\n3. **Fill order** — assign priority positions for each new type\n4. **CLI generator flags** (section_prompts) — define per-type flags for artifact CLI\n5. **Cross-reference system** — ensure new types follow existing id/ref conventions\n\nNew types by role:\n- QA: `e2e-scenario` (yaml, p1), `test-fixture` (json, p3), `perf-test` (yaml, p3)\n- Security: `threat-model` (yaml, p2), `auth-matrix` (yaml, p2), `security-test` (yaml, p2)\n- SRE: `container` (yaml, p3), `deploy` (yaml, p3), `cloud-resource` (yaml, p3), `pipeline` (yaml, p3), `observability` (yaml, p3)\n- Backend: `grpc` (protobuf, p3), `graphql` (graphql, p3)\n- MLE: `model` (yaml, p3)\n- Agent: `prompt` (markdown, p3)\n\nAll types follow the same pattern: type annotation `<!-- type: X lang: Y -->`, code fence, cross-ref via standard mechanisms.",
+      "questions": [
+        "Should all 16 types be added in this change, or only the higher-priority ones (e2e-scenario p1, security types p2)?",
+        "For SRE types (container, deploy, cloud-resource), should we define the YAML DSL schema now or leave it as placeholder format?",
+        "For `grpc` type — should lang be `protobuf` (native IDL) or `yaml` (abstracted DSL like other types)?",
+        "For `prompt` type — keep as `logic` (flowchart) or create a dedicated markdown-based format?"
+      ]
+    },
+    {
+      "id": "frontend-design-system",
+      "title": "Design system as tech-stack config + wireframe behavior",
+      "issues": [1052],
+      "requirements": "Add design system awareness to the SDD codegen pipeline. This is NOT about adding new section types — it's about how existing types (wireframe, component, design-token) behave based on tech_stack config.\n\n1. **tech_stack config schema** — add `design_system` field with `library` (mui/antd/etc) and `ux_patterns` (bool)\n2. **Wireframe behavior** — when `ux_patterns: true`, wireframe can use shorthand layout references (e.g., `layout: dashboard-with-drawer`); when false, must describe layout structure explicitly\n3. **Section optionality** — when design system covers tokens and components, `design-token` and `component` sections become optional in section selection\n4. **UX pattern library** — deferred, but spec should define the extension point\n\nThis modifies section selection logic (which sections are required) and wireframe spec format, not the section type table itself.",
+      "questions": [
+        "Where should tech_stack config live? Project-level config.toml or per-change?",
+        "Should the UX pattern library extension point be spec'd now even if implementation is deferred?"
+      ]
+    }
+  ]
+}

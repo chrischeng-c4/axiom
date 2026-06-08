@@ -1,0 +1,24 @@
+{%- for a in attributes %}
+{%- if a.doc %}
+/// {{ a.doc }}
+{%- else %}
+/// Attribute getter for `{{ struct_name }}.{{ a.name }}`. Auto-generated from
+/// `x-mamba-attributes`.
+{%- endif %}
+{%- if spec_path %}
+/// @spec {{ spec_path }}#x-mamba-attributes.{{ a.name }}
+{%- endif %}
+#[no_mangle]
+pub unsafe extern "C" fn {{ a.getter_fn }}(
+    args: *const cclab_mamba_registry::MbValue,
+    _nargs: usize,
+) -> cclab_mamba_registry::MbValue {
+    use cclab_mamba_registry::{MbValue, IntoMbValue, convert::mb_unwrap_native_ref};
+    let self_: &{{ struct_name }} = match unsafe { mb_unwrap_native_ref(*args) } {
+        Some(r) => r,
+        None => return MbValue::none(),
+    };
+    let value = { {{ a.rust_expr }} };
+    value.into_mb_value()
+}
+{% endfor -%}

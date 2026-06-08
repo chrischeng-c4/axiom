@@ -1,0 +1,74 @@
+{
+  "change_id": "sdd-frontend-doc-support",
+  "group_id": "sdd-frontend-doc-artifacts",
+  "specs": [
+    {
+      "spec_id": "cclab-sdd/logic/change-spec.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "high",
+      "key_requirements": [
+        "Section type system — 17 types including wireframe, component, design-token, overview",
+        "Section fill order and CLI-driven generation with per-type flags",
+        "Spec preparation from spec_plan (sections, main_spec_ref)",
+        "Cross-reference system with content-level id and $ref",
+        "Section selection rule engine (keyword matching)"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/logic/reference-context.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "high",
+      "key_requirements": [
+        "spec_plan array with sections field",
+        "Section selection via rule engine",
+        "Review checklist includes spec_plan validation"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/logic/implement-task.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "high",
+      "key_requirements": [
+        "Group-scoped spec paths: groups/{group_id}/specs/",
+        "Per-spec implementation loop — needs extension for doc_target writes",
+        "Codegen routing (has_json_schema or has_api_spec)"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/logic/change-merge.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "high",
+      "key_requirements": [
+        "Merge from groups/*/specs/ to cclab/specs/",
+        "Merge strategy: new | update — needs extension for doc append|replace",
+        "Frontmatter stripping (fill_sections, filled_sections, etc.)"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/spec-model.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "low",
+      "key_requirements": [
+        "Background: spec-to-code model for Mermaid Plus diagram types"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/interfaces/cli/commands.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "medium",
+      "key_requirements": [
+        "CLI command tree — artifact subcommand structure",
+        "CLI-to-logic mapping for artifact commands"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "sdd-spec-system-redesign",
+      "action": "modify",
+      "main_spec_ref": "cclab-sdd/logic/change-spec.md",
+      "source": "cclab-sdd/logic/change-spec.md",
+      "sections": ["overview", "logic", "state-machine", "schema", "changes"]
+    }
+  ]
+}

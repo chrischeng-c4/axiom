@@ -1,0 +1,8 @@
+- spec_id: string-reverse-slice-fix
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/string-ops.md
+  source: crates/cclab-mamba/runtime/string-ops.md
+  sections:
+  - overview
+  - requirements
+  - changes

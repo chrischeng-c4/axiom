@@ -1,0 +1,1 @@
+P1 OOP conformance fixes: @classmethod wrong param count, @property codegen crash, getattr/setattr/delattr IR verifier error, super().method() return value lost, multiple inheritance MRO wrong order #1037

@@ -1,0 +1,4 @@
+[wasm]
+entry = "src/CueWasmApp.tsx"
+root_component = "CueWasmApp"
+root_props = [0, 1, 0]

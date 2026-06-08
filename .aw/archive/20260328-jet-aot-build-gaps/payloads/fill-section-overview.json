@@ -1,0 +1,9 @@
+{
+  "spec_id": "jet-aot-build-gaps-spec",
+  "group_id": "jet-aot-build-gaps",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes", "test_plan"],
+  "main_spec_ref": "crates/cclab-jet/logic/aot-build.md",
+  "merge_strategy": "extend",
+  "content": "<!-- type: overview lang: markdown -->\nComplete remaining gaps in Jet's AOT production build pipeline. Core features (tree shaking, code splitting, minification, scope hoisting, DCE, source maps, CSS bundling, define replacement) are already implemented (R1–R7). This change adds 7 missing features:\n\n1. **Preload hints** — Generate `<link rel=\"modulepreload\">` tags for chunk dependencies in HTML output\n2. **Manual chunks** — Jet-native config for user-defined chunk boundaries (name → glob pattern mapping)\n3. **HTML minification** — Custom whitespace/comment removal for HTML output (no new dependency)\n4. **Source map chaining** — Compose maps across multi-pass transforms (TS → JS → minified → bundled)\n5. **Image optimization** — Implement actual compression using existing `image` crate (currently TODO stub)\n6. **JSON tree-shaking** — Dead code elimination for JSON imports (only include used keys)\n7. **CSS asset URL rewriting** — Rewrite `url()` references in CSS to point to hashed asset paths\n\n### Current State\n\n| File | Done | Missing |\n|------|------|---------|\n| `bundler/splitting.rs` | Dynamic import + shared chunks | Preload hints, manual chunks |\n| `bundler/minify.rs` | JS + CSS minification | HTML minification |\n| `bundler/sourcemap.rs` | VLQ + inline/external modes | Multi-pass chaining |\n| `asset/image_processor.rs` | File read + hash | Actual compression (TODO stub) |\n| `bundler/tree_shake.rs` | ESM used-export analysis | JSON module support |\n| `bundler/css_bundle.rs` | @import resolution + concatenation | url() asset rewriting |\n| `bundler/types.rs` | BuildConfig struct | manual_chunks field |"
+}

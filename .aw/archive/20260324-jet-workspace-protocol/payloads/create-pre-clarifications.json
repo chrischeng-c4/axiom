@@ -1,0 +1,25 @@
+{
+  "group_id": "jet-workspace-protocol",
+  "answers": [
+    {
+      "topic": "pnpm-workspace.yaml detection priority",
+      "answer": "jet-workspace.yaml > package.json.workspaces > pnpm-workspace.yaml. Jet's own format always takes precedence; pnpm-workspace.yaml is the lowest-priority fallback."
+    },
+    {
+      "topic": "pnpm-workspace.yaml catalog support",
+      "answer": "Parse both packages: glob array AND catalog:/catalogs: fields from pnpm-workspace.yaml. Wire catalog support in this change, not a follow-up."
+    },
+    {
+      "topic": "Symlink style: relative vs absolute",
+      "answer": "Relative symlinks (like pnpm). Compute relative path from node_modules/<pkg-name> to the workspace package directory."
+    },
+    {
+      "topic": "Recursive workspace install",
+      "answer": "Recursive install. When jet install runs at workspace root, iterate all discovered workspace packages and install each one's external (non-workspace) deps. One command installs everything."
+    },
+    {
+      "topic": "Lockfile representation for workspace packages",
+      "answer": "Record workspace packages in jet-lock.yaml with workspace: true flag + relative path + resolved semver version. Full traceability."
+    }
+  ]
+}

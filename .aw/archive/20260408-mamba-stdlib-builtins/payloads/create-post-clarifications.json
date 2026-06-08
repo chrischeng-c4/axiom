@@ -1,0 +1,13 @@
+{
+  "group_id": "stdlib-builtins-module",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "requirements.md: Need an importable `builtins` module that exposes all existing runtime builtins as module attributes.",
+    "success_criteria": "import builtins succeeds; builtins.print, builtins.len, etc. are callable; constants True, False, None are accessible; all listed functions map to existing mb_* runtime implementations.",
+    "boundary": {
+      "in_scope": "Create builtins_mod.rs following future_mod.rs/main_mod.rs pattern; register dispatch wrappers for all listed functions; register constants; wire into mod.rs and register_stdlib().",
+      "out_of_scope": "No new runtime function implementations needed; no changes to the type checker or lowering pipeline; no new dependencies.",
+      "constraints": "Must use NATIVE_FUNC_ADDRS for callable dispatch wrappers (functools_mod.rs pattern). Must not break existing tests."
+    }
+  }
+}

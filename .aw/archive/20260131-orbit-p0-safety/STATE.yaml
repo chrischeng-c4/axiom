@@ -1,0 +1,54 @@
+change_id: orbit-p0-safety
+schema_version: '2.0'
+created_at: 2026-01-31T10:50:00.303191Z
+updated_at: 2026-01-31T13:25:00.000000Z
+phase: archived
+iteration: 1
+last_action: merge-complete
+session_id: null
+checksums:
+  specs/structured-error-handling.md:
+    hash: sha256:4ad5c75eb874b54b6078ad1b5f7e39bbb7e2f418d4cdf98b4e17e20ff19292ca
+    validated_at: 2026-01-31T10:51:50.278441Z
+  specs/core-safety-standards.md:
+    hash: sha256:48fa6bec87b1a99b768c265d7b2f3685938775a4a34e10f4c0c16a6b03be478b
+    validated_at: 2026-01-31T10:51:50.278682Z
+  specs/shutdown-management.md:
+    hash: sha256:7c79efa66e122ecd4230eae8e89630e3387aeca5e29ea0ebe95bf01802c69428
+    validated_at: 2026-01-31T10:51:50.278915Z
+  tasks.md:
+    hash: sha256:a1be2d51200a88069e9a3c4b22b80e1cf4daa8b5a13e98c7aa3298db9ae63363
+    validated_at: 2026-01-31T10:51:50.278169Z
+  proposal.md:
+    hash: sha256:56ca43375a5e16267fb94bdb24165fdb0fc4a9350a15acf8681142e1969b2df3
+    validated_at: 2026-01-31T10:51:50.277976Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-31T10:50:20.272437Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T10:51:50.277798Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

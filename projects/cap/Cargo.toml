@@ -1,0 +1,37 @@
+[package]
+name = "cap"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "cap — local resource-protection daemon + CLI wrapper for heavy commands (cargo test, uv run, ...)"
+
+[lib]
+name = "cap"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cap"
+path = "src/main.rs"
+
+[dependencies]
+cap-core = { path = "../cap-core" }
+clap = { version = "4", features = ["derive", "color"] }
+tokio = { workspace = true, features = ["full"] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dirs = "5"
+libc = "0.2"
+toml = "0.8"
+chrono.workspace = true
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+
+[dev-dependencies]
+tempfile = "3"
+# `test-util` enables `tokio::time::pause`, `tokio::time::advance`, and
+# the `start_paused` attribute used by Slice 4 grace-period tests.
+tokio = { workspace = true, features = ["full", "test-util"] }

@@ -1,0 +1,6 @@
+{
+  "change_id": "sdd-artifact-guard",
+  "group_id": "artifact-guard",
+  "skipped": true,
+  "reason": "No contradictions. Single-issue fix with clear scope — add guard check to artifact CLI."
+}

@@ -1,0 +1,6 @@
+{"spec_id":"fix-monorepo-bundler-spec","section":"changes","content":"### Modified Files
+
+| File | Description |
+|------|-------------|
+| cli.rs | Read project.json projectType, build timeout, parallel builds |
+| pkg_manager/nx.rs | Expose projectType from NxProjectGraph |"}

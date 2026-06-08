@@ -1,0 +1,35 @@
+{
+  "groups": [
+    {
+      "id": "sdd-spec-scope-config",
+      "issues": [],
+      "requirements": "## What needs to be built\n\nReplace hardcoded `crates/` / `projects/` fallback logic for spec directory resolution with a config-driven approach via `[specs.scopes]` in `cclab/config.toml`.\n\nFour deliverables:\n\n1. **Config model** — Add `[specs.scopes]` table to `cclab/config.toml` (prefix string → subdir path mapping). Extend `SddConfig` struct and serialization to read/write this section.\n\n2. **`resolve_spec_dir()`** — New function replacing the hardcoded `try crates/ → try projects/ → try root` probe in two callers:\n   - `crates/cclab-sdd/src/workflow/scope.rs::pre_filter_specs()`\n   - `crates/cclab-sdd/src/services/file_service.rs::read_main_spec_scoped()`\n\n3. **`cclab sdd init` auto-detection** — During fresh install, detect project type from `Cargo.toml` workspace, `pyproject.toml`, or `package.json` and populate `[specs.scopes]` in the generated `config.toml` accordingly (e.g., Rust workspace → `crates` and `projects` entries).\n\n4. **`cclab-agent FileSystemSpecStore`** — New `crates/cclab-agent/src/spec_store.rs` that reads specs from disk using the same config-driven scope resolution. No such file exists today.\n\n## Key constraints\n\n- The `knowledge_service.rs` `write_main_spec()` uses `cclab/specs/` as a flat base path and does not perform prefix-based lookup; it likely needs no change unless the write path also becomes config-driven.\n- Existing projects without `[specs.scopes]` in their `config.toml` must continue to work — either via a backward-compat default or preserved fallback.\n- Path traversal protection in `file_service.rs::validate_path_component()` must remain intact after refactoring.\n- The `cclab-agent` crate currently has no spec store abstraction; `SpecProtocol` in `protocols/spec.rs` is the domain type that `FileSystemSpecStore` would produce/consume.\n\n## Integration points\n\n- `SddConfig` struct (`crates/cclab-sdd/src/models.rs` or equivalent config module) — needs new `specs` or `scopes` field.\n- `cclab/config.toml` schema — new `[specs.scopes]` section.\n- `cclab sdd init` (`crates/cclab-sdd/src/cli/init.rs`) — `run_fresh_install()` must detect workspace type and write scope config.\n- `cclab-agent` context types (`context.rs`) — `FileSystemSpecStore` may be injected into agent constructors.",
+      "questions": [
+        {
+          "id": "q1",
+          "question": "Config value semantics: Should `[specs.scopes]` values be paths relative to the project root (e.g., `crates = \"cclab/specs/crates\"`) or relative to `cclab/specs/` (e.g., `crates = \"crates\"`)? And when `[specs.scopes]` is absent entirely, should `resolve_spec_dir()` preserve backward-compat by falling back to the existing `crates/ → projects/ → root` probe, or error out and require explicit config?"
+        },
+        {
+          "id": "q2",
+          "question": "Code-sharing for `resolve_spec_dir()`: Both `cclab-sdd` and `cclab-agent` need this function. Should it live in a shared crate (e.g., a new `cclab-sdd-config` crate or an existing shared utility crate), or in `cclab-sdd` with `cclab-agent` taking a dependency on it, or should each crate have its own independent copy?"
+        },
+        {
+          "id": "q3",
+          "question": "`SddConfig` model: Should the `[specs.scopes]` section be deserialized as `HashMap<String, String>` (flexible, arbitrary prefixes), or as a typed struct with known fields (e.g., `crates: Option<String>`, `projects: Option<String>`)? And should `SddConfig::save()` (the init writer) roundtrip the `[specs.scopes]` entries without overwriting user-added custom prefixes on subsequent `cclab sdd init` updates?"
+        },
+        {
+          "id": "q4",
+          "question": "`cclab sdd init` auto-detection rules: For a Cargo.toml workspace, what exactly gets written to `[specs.scopes]`? (e.g., always `crates = \"cclab/specs/crates\"` and `projects = \"cclab/specs/projects\"` for any Rust workspace, regardless of actual crate count?) What about `pyproject.toml` (Python) and `package.json` (Node) — do those also produce `crates` / `projects` keys, or different prefix names? And is detection silent (auto-confirmed) or does it prompt the user?"
+        },
+        {
+          "id": "q5",
+          "question": "`FileSystemSpecStore` interface in `cclab-agent`: Should it (a) implement a `SpecStore` trait (if so, what methods: `list`, `read`, `write`, `delete`?), or (b) be a plain struct with ad-hoc methods? Does it accept a `(project_root: &Path, config: &SddConfig)` pair at construction time, or should it auto-discover `cclab/config.toml` from the working directory? Which agents in `cclab-agent` will consume it?"
+        },
+        {
+          "id": "q6",
+          "question": "Unknown prefix behavior: When `resolve_spec_dir(\"some-prefix\")` is called with a prefix that is not in `[specs.scopes]`, what is the expected behavior? (a) return an error / empty result, (b) fall back to `cclab/specs/{prefix}` directly as a last resort, or (c) fall back to the old hardcoded `crates/{prefix} → projects/{prefix} → {prefix}` probe order?"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "change_id": "mamba-test-coverage",
+  "group_id": "mamba-stdlib-coverage-lower",
+  "skipped": true,
+  "reason": "No contradictions found. This is a pure test coverage task — adding inline + integration tests to 10 existing stdlib modules. The requirements (100% branch coverage, real bindings, no exclusions) are unambiguous and don't conflict with any existing spec patterns. Existing test patterns in 82/83 stdlib files are consistent."
+}

@@ -1,0 +1,37 @@
+change_id: mermaid-plus
+schema_version: '2.0'
+created_at: 2026-01-29T15:02:38.345094Z
+updated_at: 2026-01-29T15:04:49.457037Z
+phase: planned
+iteration: 1
+last_action: plan-complete
+session_id: null
+checksums:
+  specs/mermaid-plus-conversion.md:
+    hash: sha256:6fbc5c9a1abd14b9f4d1a0381c49663f04e80d08251bb702821601f6414bb8ef
+    validated_at: 2026-01-29T15:04:32.868402Z
+  specs/mermaid-plus-format.md:
+    hash: sha256:a133578e861145b0d34cef3434cf77fb335fd6fa7243c8346b8a7fe71261031d
+    validated_at: 2026-01-29T15:04:32.868642Z
+  proposal.md:
+    hash: sha256:8fc5b0aebbe45b73bf316fdffd950d19ff4f7c3e2bef26eb0a20085053433615
+    validated_at: 2026-01-29T15:04:32.868034Z
+  tasks.md:
+    hash: sha256:4d9be2eda9b0295f6869e531caf516b9126f5dbc0cfc85b62b437d21dbe4aa4c
+    validated_at: 2026-01-29T15:04:32.868190Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-29T15:04:32.867871Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

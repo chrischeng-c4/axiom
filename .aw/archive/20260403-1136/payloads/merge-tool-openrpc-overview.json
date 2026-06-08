@@ -1,0 +1,9 @@
+{
+  "spec_id": "merge-tool-openrpc",
+  "group_id": "platform-config-and-merge-git",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "rpc-api", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+  "merge_strategy": "extend",
+  "content": "## Overview\n<!-- type: overview lang: markdown -->\n\nAdd `sdd_workflow_create_change_merge` OpenRPC definition to workflow-tools.md. This tool is fully programmatic (`x-executor: programmatic`, `x-crr: false`) — it merges change specs into main specs, archives the change directory, and optionally performs post-archive git operations (auto-commit, auto-PR).\n\nThe response schema extends the standard workflow response with merge-specific fields: `specs_merged[]`, `archive_path`, `audit_log[]` for merge tracking, plus `git_commit_sha`, `pr_url`, `git_warning` for post-archive git operation results.\n\nThree merge strategies are declared via `x-merge-strategies`: 3-way merge (when `.base.md` sibling exists and git available), overwrite (target exists, no base), and create (target does not exist). Errors use JSON-RPC codes: `-32001` (missing main_spec_ref), `-32002` (root-level path), `-32003` (3-way merge conflict).\n\nNo existing tool definitions are modified — this is a new tool addition to the workflow-tools interface spec."
+}

@@ -1,0 +1,7 @@
+{
+  "spec_id": "bug-init-change-phase-mapping-conflates-crrr-terminal-spec",
+  "verdict": "APPROVED",
+  "summary": "Spec is implementation-ready. Overview explains the CRRR-terminal vs change-lifecycle alias conflation clearly and documents the self-bootstrap precedent (commit 82d76ccc, Lifecycle-Stage: Reset). Requirements R1-R6 are testable, each priority-tagged, with a coherent trace graph. Scenarios S1-S6 cover happy path + backward-compat + bootstrap recovery. Logic flowchart captures the two-arm split precisely. Test-plan requirementDiagram binds every requirement to a concrete test element (T1-T6). Changes block lists the three affected targets (parse_phase match arm, tests module, issue-crrr-state-machine.md Lifecycle-Stage Trailers row) with do_not_touch guards for adjacent functions (phase_to_string, phase_order, validate_transition). Alias audit (R6) documented inline with negative findings for 'archived', 'rejected', 'impl_approved' — no other dual-meaning aliases exist. Scope is tight: no enum redesign, no frontmatter renaming.",
+  "issues": [],
+  "problem_sections": []
+}

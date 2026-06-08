@@ -1,0 +1,69 @@
+{
+  "spec_id": "scope-hoisting",
+  "verdict": "REVIEWED",
+  "summary": "R4 (cross-module constant inlining) and R5 (unified cross-module DCE) are fully implemented and wired into the production pipeline in mod.rs (lines 658-668) and simulate_prod_pipeline. New file scope_hoist_opt.rs (883 lines) cleanly implements all three optimization passes with proper byte-level scanning to handle strings/comments/property accesses. 38 new tests (24 unit + 13 integration + 1 E2E) and all 660+ existing tests pass with 0 failures. Critical gap: R6 (is_side_effect_free) is defined, tested, and re-exported from scope_hoist.rs but is NEVER called from the production pipeline — not in generate_flattened_bundle nor in mod.rs — contrary to the spec's Changes section which explicitly says to 'Wire into generate_flattened_bundle eligibility'. Additionally R7 (bundle size ≤ 195 KB) has no benchmark or E2E test validating the target.",
+  "checklist_results": [
+    {
+      "item": "[HARD] Code matches all spec requirements",
+      "passed": false,
+      "note": "R4 and R5 are fully wired: mod.rs lines 664-668 apply inline_cross_module_constants → eliminate_unused_exports after generate_flattened_bundle. R3 DeclKind extension is complete (scope_hoist.rs lines 192-285). However R6 is NOT wired: is_side_effect_free (scope_hoist_opt.rs line 424) is re-exported at scope_hoist.rs line 45 but is never called from generate_flattened_bundle or anywhere in the production path. The spec Changes section (lines 302-309) explicitly requires 'Wire into generate_flattened_bundle eligibility: modules with side effects retain their IIFE wrapper even when other modules are flattened.' The function exists only in dead code relative to production. Additionally the spec Changes section (lines 340-344) lists a test for 'test_side_effect_module_not_flattened' — this test exists in scope_hoist_opt.rs line 807 and tests the function directly, but there is no integration test verifying that generate_flattened_bundle or the mod.rs pipeline actually gates on sideEffects."
+    },
+    {
+      "item": "[HARD] If spec has Test Plan section: diff contains at least one #[test] function",
+      "passed": true,
+      "note": "Spec has ## Test Plan section at line 267 (content is <!-- TODO -->, defines 0 test cases). Implementation diff contains 38 #[test] functions: 24 unit tests in scope_hoist_opt.rs (R4: test_inline_cross_module_constants_string/number/boolean/null_undefined/no_inline_non_literal/single_ref_not_inlined/preserves_strings; R5: test_eliminate_unused_exports/keeps_read_refs/prefixed_vars/prefixed_vars_with_refs/comparison_not_counted_as_assignment; R6: test_side_effect_free_pure_module/const_only/cjs_exports_considered_effectful/module_global_assignment/module_not_flattened; helpers: test_count_identifier_refs_basic/skips_strings/skips_property_access/skips_comments; test_find_package_info_regular/scoped/not_in_node_modules), 13 integration tests in scope_hoist.rs, and 1 E2E test in mod.rs. Hard reject rule does not trigger."
+    },
+    {
+      "item": "[HARD] Existing tests still pass (no regressions introduced)",
+      "passed": true,
+      "note": "cargo test -p cclab-jet -- --test-threads=4: 660 lib tests passed + 4 bundler_monorepo + 16 nx_support + 11 workspace_protocol + 1 doc-test = 692 total, 0 failed. All 38 new scope_hoist/scope_hoist_opt tests also pass. No regressions detected."
+    },
+    {
+      "item": "[SOFT] Code quality and readability",
+      "passed": true,
+      "note": "Clean separation into scope_hoist_opt.rs (883 lines, within the 1000-line limit). Byte-level scanning in count_identifier_refs and replace_identifier correctly skips string literals (single/double/template), line comments, and block comments. Property access detection (not preceded by '.') implemented in both functions consistently. DeclKind enum with DeclInfo struct is a clean extension of the existing collect_top_level_decls pattern. Re-export pattern in scope_hoist.rs keeps the public API stable."
+    },
+    {
+      "item": "[SOFT] Error handling completeness",
+      "passed": true,
+      "note": "inline_cross_module_constants returns code unchanged when no constants found (early return). String::from_utf8 in replace_identifier falls back to original code on UTF-8 error. The Regex::new(...).unwrap() calls are acceptable since all patterns are compile-time constants. remove_export_assignment regex pattern (line 905: [^=][^;]*;) may be fragile for multiline export expressions (e.g. _m0e.fn = function() {\\n  ...\\n};) since the regex by default does not match newlines — could silently skip removal of multiline assignments."
+    },
+    {
+      "item": "[SOFT] Performance considerations",
+      "passed": true,
+      "note": "Regex objects are created inline on each call to eliminate_unused_exports and inline_cross_module_constants rather than being lazily compiled (e.g. via once_cell). For large bundles (react-bench at ~200 KB) this creates multiple Regex compilations per bundle build. Byte-level scanning in the counting/replacement helpers is O(n) which is appropriate. The overall pipeline adds two O(n) text passes before minification — acceptable overhead."
+    },
+    {
+      "item": "[SOFT] Documentation where needed",
+      "passed": true,
+      "note": "Module-level doc comment in scope_hoist_opt.rs clearly identifies R4/R5/R6 passes. Public functions have doc comments explaining inputs, outputs, and recognized literal types. DeclKind enum and DeclInfo struct have doc comments explaining their role in R4. The inline_module_body being marked #[cfg(test)] is noted in the implementation summary but lacks a comment in the source explaining why it was gated (could confuse future readers)."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "R6 (is_side_effect_free) is defined in scope_hoist_opt.rs (line 424), re-exported from scope_hoist.rs (line 45), and has 5 unit tests — but is NEVER called in the production pipeline. Neither generate_flattened_bundle in scope_hoist.rs nor the pipeline in mod.rs (lines 658-668) calls is_side_effect_free to gate module eligibility. The spec Changes section (lines 302-309) explicitly requires wiring it into generate_flattened_bundle so that 'modules with side effects retain their IIFE wrapper even when other modules are flattened'. Without this wiring, a module with DOM writes or global state assignments will be inlined into the flat scope, potentially executing in the wrong order or without the isolation its side effects depend on.",
+      "recommendation": "In generate_flattened_bundle (scope_hoist.rs line ~203), for each module in the loop, call is_side_effect_free(module) and fall back to inline_module_body (Phase 1 IIFE wrapper) for modules where it returns false. Add an integration test that verifies a module with global side effects keeps its IIFE boundary when generate_flattened_bundle is called."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "R7 bundle size target (≤ 195 KB) is listed as a high-priority spec requirement but has no validation. The test_phase2_pipeline_with_cross_module_dce test in mod.rs validates that optimized.len() < raw.len() for a synthetic 3-module fixture, but does not measure or assert the actual react-bench output size. The spec's Scenario S1 explicitly requires: 'Build examples/react-bench/ with cclab jet build --minify, measure output JS bundle size, Assert: size ≤ 195 KB'.",
+      "recommendation": "Add an E2E benchmark test or CI step that builds react-bench with --minify and asserts the output bundle is ≤ 195 KB. This can be a shell-level test or a Rust integration test that invokes the build pipeline on the react-bench example."
+    },
+    {
+      "severity": "LOW",
+      "description": "remove_export_assignment in scope_hoist_opt.rs (line 905) uses regex pattern [^=][^;]*; which does not match across newlines by default. A multiline export assignment like '_m0e.fn = function() {\\n  return 42;\\n};' will NOT be removed by R5. This causes silent DCE failures for multi-statement export values.",
+      "recommendation": "Use the regex (?s) flag (dot-all mode) or (?:[^;]|\\n)*; to match across newlines: Regex::new(r\"(?s){}\\.[{}]\\s*=[^=].*?;\").unwrap(). Add a test with a multiline function export to verify removal."
+    },
+    {
+      "severity": "LOW",
+      "description": "Regex objects in inline_cross_module_constants (line 546) and eliminate_unused_exports (lines 775, 802) are compiled on every function call. For production builds processing large bundles, this creates repeated Regex compilations. Prefer lazy_static! or once_cell::sync::Lazy for static patterns.",
+      "recommendation": "Extract the constant Regex patterns to module-level Lazy<Regex> statics. The dynamic patterns in remove_export_assignment and remove_var_declaration (which embed variable names) cannot be pre-compiled but can be cached if the same export names appear repeatedly."
+    },
+    {
+      "severity": "LOW",
+      "description": "R6 function signature mismatch: spec's Changes section specifies 'is_side_effect_free(module: &CompiledModule, graph: &ModuleGraph) -> bool' but the implementation has 'is_side_effect_free(module: &CompiledModule) -> bool' (no ModuleGraph param). This is a minor deviation — the implementation reads package.json directly via find_package_info rather than using the graph — but it diverges from the spec's intended API design.",
+      "recommendation": "Acceptable as-is if the graph parameter was determined to be unnecessary. Update the spec Changes section to reflect the simplified signature, or add the graph parameter for future extensibility (e.g., looking up transitive side-effect declarations)."
+    }
+  ]
+}

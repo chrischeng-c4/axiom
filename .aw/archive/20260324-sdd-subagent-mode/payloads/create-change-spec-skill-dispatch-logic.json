@@ -1,0 +1,6 @@
+{
+  "spec_id": "subagent-skill-dispatch",
+  "group_id": "subagent-dispatch",
+  "section": "logic",
+  "content": "```mermaid\nflowchart TD\n    A[Call sdd_run_change] --> B{action?}\n    B -->|complete| DONE[Done]\n    B -->|implementation_complete| STOP[STOP — prompt user]\n    B -->|other| WF[Call workflow tool from next.tool]\n    WF --> EX{executor[0]?}\n    EX -->|mainthread| MT[Read prompt_path → execute inline]\n    EX -->|subagent:*| PARSE[Parse subagent:type:model]\n    EX -->|other| INTERNAL[Workflow tool handled dispatch internally]\n    PARSE --> READ_PROMPT[Read file at prompt_path]\n    READ_PROMPT --> AGENT[Invoke Agent tool with subagent_type + model + prompt]\n    AGENT --> VERIFY{Verify STATE.yaml phase + artifact}\n    VERIFY -->|passed| NEXT_ITER[Call sdd_run_change again]\n    VERIFY -->|failed, phase unchanged| RETRY{retried?}\n    RETRY -->|no| AGENT_RETRY[Retry Agent tool once]\n    AGENT_RETRY --> VERIFY\n    RETRY -->|yes| FALLBACK[Fallback: execute prompt as mainthread]\n    FALLBACK --> NEXT_ITER\n    VERIFY -->|failed, phase advanced| NEXT_ITER\n    MT --> NEXT_ITER\n    INTERNAL --> NEXT_ITER\n    NEXT_ITER --> A\n```"
+}

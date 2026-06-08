@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd-mamba-conformance",
+  "change_id": "mamba-runtime-bugs",
+  "spec_id": "mamba-runtime-bugs-spec",
+  "verdict": "APPROVED",
+  "summary": "All 3 bugs fixed with correct implementations. mb_box_int TAG_FUNC passthrough fixes #1084 decorator return. Floor division uses proper Python floor semantics and routes through mb_floordiv for ZeroDivisionError (#1085). Nested f-string already working from prior commit (#1086). 26 tests pass, 80 conformance tests pass with 0 regressions. One test (stacked decorators) ignored due to pre-existing closure capture limitation — tracked separately.",
+  "issues": []
+}

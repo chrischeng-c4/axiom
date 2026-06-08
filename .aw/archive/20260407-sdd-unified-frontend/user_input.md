@@ -1,0 +1,1 @@
+Move @cclab/* packages to crates/sdd/packages/@score/*, rename, and create DataSource adapter. Epic: unified SDD frontend for Score + Conductor.

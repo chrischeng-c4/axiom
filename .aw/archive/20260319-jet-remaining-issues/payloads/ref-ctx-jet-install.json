@@ -1,0 +1,1 @@
+{"group_id":"jet-install","specs":[{"spec":"pkg-manager","group":"cclab-jet","relevance":"high","key_requirements":"Install flow, BFS resolver, two-layer cache, HTTP/2"},{"spec":"pkg-manager-pnpm-parity","group":"cclab-jet","relevance":"high","key_requirements":"Optional dep platform check, npm: alias, override resolution"}]}

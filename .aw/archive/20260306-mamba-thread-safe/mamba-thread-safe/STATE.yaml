@@ -1,0 +1,72 @@
+change_id: mamba-thread-safe
+schema_version: '2.0'
+created_at: 2026-03-06T16:44:34.189127Z
+updated_at: 2026-03-06T19:17:31.986310Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: new_branch
+branch: null
+revision_counts:
+  ref_ctx:mamba-thread-safe-refactor: 1
+current_task_id: mamba-thread-safe-spec
+task_revisions:
+  mamba-thread-safe-spec: 1
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.29
+    model: gemini-3-flash-preview
+    tokens_in: 701866
+    tokens_out: 1885
+    cost_usd: null
+    duration_ms: 88761
+    timestamp: 2026-03-06T16:46:20.924848Z
+  - step: create_reference_context
+    sdd_version: 0.3.29
+    model: gemini-3-flash-preview
+    tokens_in: 571665
+    tokens_out: 1240
+    cost_usd: null
+    duration_ms: 58585
+    timestamp: 2026-03-06T18:08:43.017950Z
+  - step: review_reference_context
+    sdd_version: 0.3.29
+    model: gpt-5.3-codex
+    tokens_in: 1383227
+    tokens_out: 9020
+    cost_usd: null
+    duration_ms: 209270
+    timestamp: 2026-03-06T18:13:00.132879Z
+  - step: create_change_spec
+    sdd_version: 0.3.29
+    model: gemini-3-pro-preview
+    tokens_in: 586966
+    tokens_out: 3366
+    cost_usd: null
+    duration_ms: 165027
+    timestamp: 2026-03-06T18:35:58.524010Z
+  - step: review_spec
+    sdd_version: 0.3.29
+    model: gpt-5.3-codex
+    tokens_in: 1656556
+    tokens_out: 8657
+    cost_usd: null
+    duration_ms: 200635
+    timestamp: 2026-03-06T18:52:21.464956Z
+  total_cost_usd: 0.0
+  total_tokens_in: 4900280
+  total_tokens_out: 24168
+dag: null
+groups_progress:
+  reference_context:
+  - mamba-thread-safe-refactor
+  pre_clarifications:
+  - mamba-thread-safe-refactor
+  post_clarifications:
+  - mamba-thread-safe-refactor
+  change_implementation: []
+  change_spec: []

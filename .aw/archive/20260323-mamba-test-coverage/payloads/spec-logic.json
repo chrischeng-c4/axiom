@@ -1,0 +1,7 @@
+{
+  "change_id": "mamba-test-coverage",
+  "spec_id": "mamba-test-coverage-spec",
+  "group_id": "mamba-stdlib-coverage-lower",
+  "section": "logic",
+  "content": "flowchart TD\n    A[measure coverage\\ncargo llvm-cov --branch] --> B{file coverage\\n< 15%?}\n    B -->|yes| C[enumerate public fns\\nand impl blocks]\n    B -->|no| Z[skip — out of scope]\n    C --> D[map each fn\\nto branch paths]\n    D --> E[write inline test\\nfor each branch path]\n    E --> F{concurrent\\nbranches?}\n    F -->|yes| G[write integration test\\nwith std::thread]\n    F -->|no| H[run cargo llvm-cov\\n--branch]\n    G --> H\n    H --> I{100% line\\n+ branch?}\n    I -->|no| J[identify uncovered\\nbranch from report]\n    J --> E\n    I -->|yes| K[commit: all 10 modules\\nat 100% coverage]"
+}

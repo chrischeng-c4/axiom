@@ -1,0 +1,270 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cclab.dev/cue/runtime-tenant/v0",
+  "title": "Cue Runtime Tenant v0",
+  "description": "Runtime data tenancy metadata for generated Cue apps. Managed target is AlloyDB; local development uses PostgreSQL.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "runtime_tenant_id",
+    "app_id",
+    "environment",
+    "app_version",
+    "app_spec_ref",
+    "release_ref",
+    "owner_namespace",
+    "storage",
+    "data_region",
+    "retention",
+    "migration",
+    "audit"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "cue.runtime-tenant.v0"
+    },
+    "runtime_tenant_id": {
+      "$ref": "#/$defs/non_empty_string"
+    },
+    "app_id": {
+      "$ref": "#/$defs/app_id"
+    },
+    "environment": {
+      "enum": ["sandbox", "production"]
+    },
+    "app_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "app_spec_ref": {
+      "$ref": "#/$defs/git_ref"
+    },
+    "release_ref": {
+      "$ref": "#/$defs/git_ref"
+    },
+    "owner_namespace": {
+      "enum": ["personal", "team", "cross_team", "platform"]
+    },
+    "owner_user": {
+      "$ref": "#/$defs/nullable_string"
+    },
+    "owner_team": {
+      "$ref": "#/$defs/nullable_string"
+    },
+    "storage": {
+      "$ref": "#/$defs/storage_binding"
+    },
+    "data_region": {
+      "$ref": "#/$defs/non_empty_string"
+    },
+    "retention": {
+      "$ref": "#/$defs/retention_policy"
+    },
+    "migration": {
+      "$ref": "#/$defs/migration_state"
+    },
+    "sandbox_policy": {
+      "$ref": "#/$defs/sandbox_policy"
+    },
+    "runtime_families": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "record",
+          "comment",
+          "attachment",
+          "workflow_state",
+          "dashboard_materialization",
+          "usage_metric",
+          "runtime_audit"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "audit": {
+      "$ref": "#/$defs/audit_metadata"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "environment": {
+            "const": "sandbox"
+          }
+        }
+      },
+      "then": {
+        "required": ["sandbox_policy"],
+        "properties": {
+          "storage": {
+            "properties": {
+              "backup_required": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "environment": {
+            "const": "production"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "storage": {
+            "properties": {
+              "backup_required": {
+                "const": true
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nullable_string": {
+      "type": ["string", "null"]
+    },
+    "app_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,62}$"
+    },
+    "git_ref": {
+      "type": "string",
+      "minLength": 7
+    },
+    "storage_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "backend",
+        "local_backend",
+        "cluster_id",
+        "cluster_mode",
+        "isolation_unit",
+        "database_name",
+        "schema_name",
+        "tenant_key_columns",
+        "backup_required"
+      ],
+      "properties": {
+        "backend": {
+          "enum": ["alloydb", "postgresql"]
+        },
+        "local_backend": {
+          "const": "postgresql"
+        },
+        "cluster_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "cluster_mode": {
+          "enum": ["shared", "dedicated"]
+        },
+        "isolation_unit": {
+          "enum": ["database", "schema"]
+        },
+        "database_name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "schema_name": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "tenant_key_columns": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          }
+        },
+        "backup_required": {
+          "type": "boolean"
+        }
+      }
+    },
+    "retention_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_id", "archive_after_days", "retire_after_days"],
+      "properties": {
+        "policy_id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "archive_after_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retire_after_days": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "export_required_before_retire": {
+          "type": "boolean"
+        },
+        "erase_supported": {
+          "type": "boolean"
+        }
+      }
+    },
+    "migration_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "last_checked_at"],
+      "properties": {
+        "state": {
+          "enum": ["current", "pending", "blocked", "failed"]
+        },
+        "last_checked_at": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "migration_plan_ref": {
+          "$ref": "#/$defs/nullable_string"
+        }
+      }
+    },
+    "sandbox_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default_expiry_days", "reset_allowed", "production_copy_allowed"],
+      "properties": {
+        "default_expiry_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reset_allowed": {
+          "const": true
+        },
+        "production_copy_allowed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "audit_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_by", "created_at", "updated_at"],
+      "properties": {
+        "created_by": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "created_at": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    }
+  }
+}

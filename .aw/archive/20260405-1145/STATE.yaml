@@ -1,0 +1,39 @@
+change_id: '1145'
+schema_version: '2.0'
+created_at: 2026-04-04T15:53:58.492891Z
+updated_at: 2026-04-05T06:36:24.878341Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:sdd-docs-phase: 1
+current_task_id: artifact-tools-docs-phase
+task_revisions: {}
+impl_spec_phase:
+  artifact-tools-docs-phase: code
+telemetry: null
+dag:
+  issues:
+  - number: 1145
+    title: 'feat(sdd): docs generation phase — spec-driven user manual updates'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - sdd-docs-phase
+  change_implementation: []
+  post_clarifications:
+  - sdd-docs-phase
+  change_spec: []
+  reference_context:
+  - sdd-docs-phase

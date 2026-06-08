@@ -1,0 +1,33 @@
+{
+  "groups": [
+    {
+      "id": "issues-cli-crud",
+      "requirements": "## Requirements\n\n### R1: `score issues create` \u2014 agent-driven issue authoring\n- Create local draft: write `.score/issues/{type}-{slug}.md` with `state: draft`, no `id` (not yet on GitHub)\n- Push to GitHub: optional `--push` flag calls `gh issue create` and backfills `id` + `url` in frontmatter\n- Input: `--title`, `--type`, `--body` (or `--body-file` for stdin/pipe from agent)\n- Output: `--json` returns the created Issue struct\n- No interactive prompts \u2014 all fields via args\n\n### R2: `score issues update` \u2014 modify metadata + body\n- Local: parse frontmatter, apply patch (add/remove labels, change state/title/body), rewrite file\n- GitHub: optional `--push` flag calls `gh issue edit` to sync changes upstream\n- Input: `<slug-or-id>`, `--title`, `--add-label`, `--remove-label`, `--state`, `--body-file`\n- Output: `--json` returns updated Issue\n\n### R3: `score issues close` \u2014 close with reason\n- Local: set `state: closed` in frontmatter\n- GitHub: `--push` flag calls `gh issue close` (with `--reason` if supported)\n- Input: `<slug-or-id>`, `--reason` (optional comment)\n- Output: `--json` returns closed Issue\n\n### R4: `score issues find <query>` \u2014 full-text search\n- Local backend: grep across all `.score/issues/*.md` content (frontmatter + body)\n- GitHub backend: `gh issue list --search <query>`\n- Returns matching issues sorted by relevance\n- Agent uses this to check for duplicates before creating\n- Output: `--json` returns array of matching Issues\n\n### R5: Cross-artifact references in frontmatter\n- New optional frontmatter fields: `related: [<slug-or-path>...]`, `implements: [<slug-or-path>...]`\n- `related` = soft link (\"see also\"): other issues, BRDs, PRDs\n- `implements` = hard link (\"this issue is realized by\"): changes, tech_designs\n- Validate: referenced slugs/paths exist on `score issues list` (warn if broken)\n- Type system: `Issue`, `IssueFrontmatter` gain these fields\n\n### R6: GitLab backend (real implementation)\n- Replace `todo!()` stub with `glab` CLI shell-out\n- `glab issue list --json`, `glab issue view`, `glab issue create`\n- Reuse pattern from `crates/sdd/src/tools/fetch_issues.rs::fetch_issue_glab`\n- Factory: `make_backend(\"gitlab\", ...)` returns working GitLabBackend\n\n### R7: Agent-first design constraints (all verbs)\n- Every verb has `--json` output\n- No `dialoguer` or interactive prompts anywhere\n- Structured error JSON on stderr: `{\"error\": \"message\", \"code\": \"NOT_FOUND\"}`\n- Exit codes: 0 = success, 1 = not found, 2 = validation error, 3 = backend error\n- Input large content via `--body-file -` (stdin pipe)\n\n### R8: `IssueBackend` trait extension\n- Add `create(&self, draft: &Issue) -> Result<Issue>` (returns issue with id assigned)\n- Add `update(&self, id: &str, patch: &IssuePatch) -> Result<Issue>`\n- Add `close(&self, id: &str, reason: Option<&str>) -> Result<()>`\n- Add `search(&self, query: &str) -> Result<Vec<Issue>>`\n- All backends implement all methods (LocalBackend, GitHubBackend, GitLabBackend)\n- Jira remains stub (not implemented in this change)",
+      "questions": [
+        {
+          "topic": "Create workflow",
+          "question": "Should `score issues create` always create a local draft first, then optionally push? Or should there be a direct-to-GitHub mode?",
+          "suggested_answer": "Always local-first. --push is optional second step. Draft \u2192 synced lifecycle."
+        },
+        {
+          "topic": "Update scope",
+          "question": "For `score issues update`, should body editing be in-place (rewrite full body from --body-file) or patch-based (append/replace sections)?",
+          "suggested_answer": "Full body replacement via --body-file. Patch-based is too complex for v0."
+        },
+        {
+          "topic": "Cross-reference validation",
+          "question": "Should `related:` / `implements:` references be validated at write-time (reject broken links) or just warn at list-time?",
+          "suggested_answer": "Warn at list-time only. Write-time validation blocks agents when the referenced artifact hasn't been created yet (ordering dependency)."
+        },
+        {
+          "topic": "GitLab testing",
+          "question": "Is there a GitLab repo available for integration testing, or should GitLab backend be spec'd and implemented with unit tests only?",
+          "suggested_answer": "Unit tests only \u2014 no GitLab repo available. Test the glab shell-out pattern against mocked CLI output."
+        }
+      ],
+      "issues": [
+        1179
+      ]
+    }
+  ]
+}

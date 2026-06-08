@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "resolver-compat",
+      "issues": [883, 957, 960],
+      "requirements": "Fix remaining npm resolver compatibility issues in `crates/cclab-jet/src/pkg_manager/resolver.rs` so that `cclab jet install` works correctly against real-world registries (including the tech-platform Nx monorepo).\n\n**#960 — Hyphen range syntax**\n- The semver range parser does not handle npm hyphen ranges: `2 - 4`, `1.0 - 2.0`, `1.0.0 - 2.0.0`.\n- Mapping rules (npm spec): `X - Y` → `>=X.0.0 <(Y+1).0.0` when Y is major-only; `>=X.0.0 <Y.m+1.0` when Y is major.minor; `>=X.0.0 <=Y.p.q` when Y is fully specified.\n- Fix: detect `^\\S+ - \\S+$` pattern before normal semver parsing and convert to comma-separated comparator form.\n\n**#957 — Bare package name as implicit npm alias**\n- When a package-lock.json version spec is a bare npm package name (e.g. `\"@storybook/expect\": \"storybook-jest\"`), the resolver fails with `Failed to parse version range`.\n- This is a valid npm pattern: bare name = implicit `npm:{name}@latest`.\n- Fix: after semver parse fails, check if the spec is a valid npm package name (regex `^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$`); if so, rewrite to `npm:{name}@latest` and route through existing alias resolution.\n\n**#883 — Tracking issue closure**\n- #883 documents 6 resolver bugs + 3 perf improvements already implemented and verified against react-bench.\n- This change should close #883 after confirming that hyphen range and bare alias fixes bring full compatibility with the tech-platform Nx monorepo.\n- No new code changes expected from #883 itself unless additional regressions surface during Nx monorepo testing.\n\n**Acceptance criteria**\n- `cclab jet install` completes without parse errors on the tech-platform frontend repo.\n- All 34 existing `pkg_manager` tests continue to pass.\n- New unit tests for hyphen range parsing and bare alias resolution added to `resolver.rs` test module.",
+      "questions": [
+        {
+          "topic": "hyphen range upper bound semantics",
+          "question": "For `1.0 - 2.0` (major.minor on both ends), should the upper bound be `<2.1.0` (exclusive next minor) or `<=2.0.x` (inclusive any patch)? The npm docs say the *right-hand side* determines inclusivity only when it is a full X.Y.Z; for partial versions it is exclusive of the next version. Please confirm the expected behavior for `1.0 - 2.0` vs `1.0.0 - 2.0.0`."
+        },
+        {
+          "topic": "bare alias — version pinning",
+          "question": "When a bare package name like `storybook-jest` is rewritten to `npm:storybook-jest@latest`, should the resolved concrete version be pinned in the jet lockfile (like a normal alias), or should `@latest` remain as-is and be re-resolved on each install?"
+        },
+        {
+          "topic": "bare alias — scoped package support",
+          "question": "Should bare alias detection also handle scoped packages? E.g., would `\"foo\": \"@scope/pkg\"` (no version) be valid input from real package-lock.json files and need the same treatment?"
+        },
+        {
+          "topic": "#883 remaining work",
+          "question": "The #883 issue body says 'All fixes implemented and verified' against react-bench, but the issue is still open. Is there any remaining work tracked under #883, or should this change simply close it after Nx monorepo verification succeeds?"
+        },
+        {
+          "topic": "Nx monorepo test fixture",
+          "question": "For the tech-platform Nx monorepo acceptance test — should a trimmed package.json + package-lock.json fixture be committed to the test suite (e.g. `crates/cclab-jet/tests/fixtures/nx-monorepo/`), or is manual reproduction (`cd ~/projects/tech-platform/main/frontend && cclab jet install`) sufficient as the acceptance gate?"
+        }
+      ]
+    }
+  ]
+}

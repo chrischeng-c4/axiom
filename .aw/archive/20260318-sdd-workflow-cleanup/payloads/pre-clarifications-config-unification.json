@@ -1,0 +1,14 @@
+{
+  "change_id": "sdd-workflow-cleanup",
+  "group_id": "config-unification",
+  "answers": [
+    {
+      "question": "If label_prefix is defined, can it be overridden per step with an absolute label?",
+      "answer": "Yes, per-step label overrides label_prefix. If label starts with a specific prefix it's absolute, otherwise label_prefix is prepended. But labels are not used by the workflow yet — this is future-proofing, keep it simple for now."
+    },
+    {
+      "question": "In migrate_config, should we automatically delete the old sections or move them to a backup/commented state?",
+      "answer": "Delete the old sections. We already have version tracking in config.toml, and git history preserves the old config."
+    }
+  ]
+}

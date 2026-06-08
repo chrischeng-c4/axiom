@@ -1,0 +1,13 @@
+- spec_id: check-alignment-phase2
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/check-alignment.md
+  source: crates/cclab-sdd/logic/check-alignment.md
+  sections:
+  - overview
+  - schema
+  - logic
+  - dependency
+  - interaction
+  - cli
+  - test-plan
+  - changes

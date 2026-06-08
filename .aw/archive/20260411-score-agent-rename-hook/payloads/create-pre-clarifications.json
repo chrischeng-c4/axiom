@@ -1,0 +1,6 @@
+{
+  "group_id": "rename-agents-and-add-hook",
+  "questions": [],
+  "answers": [],
+  "summary": "No clarification needed. Requirements are fully specified in the issue. All sdd-* agent files will be renamed to score-*, hook scripts renamed accordingly, references updated in CLAUDE.md and workflow code, and a new SubagentStop hook added as observation-only."
+}

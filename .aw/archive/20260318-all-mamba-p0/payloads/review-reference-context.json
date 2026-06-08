@@ -1,0 +1,54 @@
+{
+  "group_id": "module-system",
+  "verdict": "FAIL",
+  "summary": "The reference context covers the runtime module loading core (module.md), parser, sys.path config, and type-system background adequately for Q1's basic import machinery. However, Q2 (incremental compilation via .mambai interface files) has zero spec coverage — no spec in the context defines the file format, serialization, staleness detection, or dependency tracking that .mambai requires. Q1 also specifies three CPython features (namespace packages, finder/loader protocol, importlib hooks) that are absent from all listed specs and from module.md itself. All listed key requirements are accurate, and no irrelevant specs are included.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Q2 requires .mambai interface files persisting compiled type signatures to disk for incremental compilation. No spec in the context — nor anywhere in cclab-mamba specs — defines the .mambai format, serialization schema, staleness detection, or cache invalidation. This is a new subsystem with no spec at all. Additionally, Q1 requires full CPython finder/loader protocol (sys.meta_path, importlib.abc.Finder/Loader) and namespace packages (PEP 420 implicit namespace packages without __init__.mb): these are absent from module.md and from every other listed spec."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": true,
+      "note": "module (high) is the primary spec and deserves high. compiler-driver (medium) orchestrates the pipeline that will need .mambai checks inserted — medium is appropriate. config-schema (medium) directly defines search_paths used by module resolution — medium is correct. sys (medium) exposes sys.path and sys.modules to user code — medium is correct. type-representations (medium) defines the Ty enum that would be serialized into .mambai files — medium is borderline but acceptable as background. statements (medium) covers import/from-import parsing — medium is correct."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": true,
+      "note": "module R1-R5: all five requirements exist and are directly relevant. compiler-driver R1 (pipeline orchestration) and R2 (backend selection) both exist and are the right entries for driver-level context. config-schema R4 (search_paths) and R5 (TOML loading) both exist and are accurate. sys R2 (sys.path) exists and is the correct module-resolution entry. type-representations R1-R4 all exist; R1 (core type enum), R2 (container types), R3 (callable), R4 (union/optional) are all correct. statements R1 (simple statement parsing including import/from-import) exists and is accurate."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "All six specs have a traceable connection to the module-system change. No obviously unrelated specs (e.g., GC, closures, FFI, pattern-matching) are present."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "Q2 (.mambai interface files for incremental compilation) has no spec coverage whatsoever. The pre-clarification answer is explicit: 'persist compiled type signatures to disk for incremental compilation. Only recompile changed modules.' This requires: a .mambai file format spec (what fields are stored, how Ty is serialized), a staleness check (comparing source mtime/hash against .mambai), cross-module dependency graph, and cache invalidation logic. None of these exist in any spec in cclab-mamba/specs/. Including type-representations as a background reference does not substitute for an actual incremental-compilation spec.",
+      "recommendation": "Create a new spec cclab-mamba/compiler/incremental.md covering: .mambai file format, Ty serialization schema, module dependency graph, staleness detection algorithm, and cache invalidation. Add it to the reference context with HIGH relevance. Also add the incremental compilation integration point to compiler-driver (new R5 or modify R1) so the driver spec reflects that it must check .mambai before executing each phase."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Q1 requires the full CPython finder/loader protocol (sys.meta_path finders, path hooks, importlib.abc.Finder and Loader interfaces). module.md R1 implements a simplified direct-path search with no pluggable finder/loader mechanism. The CPython import system is extensible: users and packages register custom finders on sys.meta_path to intercept imports before the filesystem is checked. This is architecturally distinct from a fixed path-search loop and is completely absent from all specs.",
+      "recommendation": "Extend module.md with requirements covering the finder/loader protocol: meta path finder registration (sys.meta_path), path hook support (sys.path_hooks), and the find_spec/load_module interface. Alternatively, document an explicit v1 deferral with a placeholder requirement marked low-priority."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Q1 requires namespace packages (PEP 420 / PEP 402 / CPython's implicit namespace packages). These are directories without __init__.py that still act as packages, spanning multiple directories on sys.path. module.md R1 mentions 'a/b/c.mb or a/b/c/__init__.mb' but does not cover the namespace package fallback: if no __init__.mb is found, continue searching remaining sys.path entries and merge matching directories into a namespace package. This is a distinct code path from regular package resolution.",
+      "recommendation": "Add a requirement to module.md for namespace package support (e.g., R6: Namespace Package Resolution), specifying the three-phase CPython lookup: regular package (__init__.mb found) → module file (c.mb found) → namespace package (no __init__.mb, collect all matching directories across sys.path into a virtual package)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "type-representations lists R1-R4 as key requirements but omits R5 (Built-in Type Registry). If .mambai files persist type signatures, the built-in type registry is also relevant because built-in types would appear in cross-module signatures and need to be reconstructable on deserialization. R5 provides the lookup function and method signatures that the type checker uses — these are also part of what an incremental compilation system must handle when reading cached type info.",
+      "recommendation": "Add R5 to type-representations key requirements once the .mambai spec exists. Until then, flag as a low-priority gap."
+    },
+    {
+      "severity": "LOW",
+      "description": "importlib hooks (Q1: 'importlib hooks') are not covered. This includes importlib.util helper functions, import_module(), and the importlib.machinery layer that exposes SourceFileLoader, FileFinder, etc. While these may be lower priority than the finder/loader protocol itself, the pre-clarification explicitly listed them as in-scope for full CPython algorithm support.",
+      "recommendation": "Add a placeholder requirement in module.md or a new stdlib/importlib.md spec covering importlib.util.import_module, importlib.util.find_spec, and basic machinery stubs. Mark as medium priority."
+    }
+  ]
+}

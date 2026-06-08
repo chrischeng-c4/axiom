@@ -1,0 +1,12 @@
+{
+  "group_id": "drift-fixes",
+  "specs": [
+    {"spec_id": "change-spec", "spec_group": "logic", "relevance": "high", "key_requirements": ["fill_sections fallback"]},
+    {"spec_id": "change-merge", "spec_group": "logic", "relevance": "high", "key_requirements": ["merge_strategy"]},
+    {"spec_id": "reference-context", "spec_group": "logic", "relevance": "high", "key_requirements": ["knowledge ref"]}
+  ],
+  "spec_plan": [
+    {"spec_id": "fill-sections-fallback", "action": "modify", "main_spec_ref": "crates/cclab-sdd/logic/change-spec.md", "source": "crates/cclab-sdd/logic/change-spec.md", "sections": ["overview", "changes"]},
+    {"spec_id": "merge-strategy-doc", "action": "modify", "main_spec_ref": "crates/cclab-sdd/logic/change-merge.md", "source": "crates/cclab-sdd/logic/change-merge.md", "sections": ["overview", "changes"]}
+  ]
+}

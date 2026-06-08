@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cclab.dev/blueprint/spec/v1",
+  "title": "Spec",
+  "description": "Abstract data model for a specification. Two flavors: main_spec (source of truth) and change_spec (per-change instance).",
+  "type": "object",
+  "required": ["id", "title", "version", "flavor", "sections"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique spec identifier (e.g. 'auth-flow-spec')"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "flavor": {
+      "type": "string",
+      "enum": ["main_spec", "change_spec"]
+    },
+    "path": {
+      "type": ["string", "null"],
+      "description": "Repository-relative file path"
+    },
+    "format": {
+      "type": "string",
+      "enum": ["markdown", "open_rpc", "json_schema", "mermaid", "yaml"],
+      "default": "markdown"
+    },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Section" }
+    },
+    "refs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/SpecRef" },
+      "default": [],
+      "description": "Cross-references to other specs (topological dependencies)"
+    },
+    "files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Codebase file paths this spec governs"
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "external_refs": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/ExternalRef" },
+      "default": {},
+      "description": "Sync targets (confluence, gdocs, github_wiki)"
+    },
+    "change_spec_meta": {
+      "$ref": "#/$defs/ChangeSpecMeta"
+    },
+    "created_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  },
+  "if": { "properties": { "flavor": { "const": "change_spec" } } },
+  "then": { "required": ["change_spec_meta"] },
+  "$defs": {
+    "SectionType": {
+      "type": "string",
+      "enum": [
+        "overview", "requirements", "scenarios", "test-plan", "changes", "doc",
+        "db-model", "schema", "state-machine", "logic", "dependency", "interaction", "mindmap",
+        "rest-api", "rpc-api", "async-api", "cli", "config",
+        "wireframe", "component", "design-token",
+        "runtime-image", "deployment"
+      ]
+    },
+    "SectionLang": {
+      "type": "string",
+      "enum": ["markdown", "yaml", "json", "mermaid"]
+    },
+    "Section": {
+      "type": "object",
+      "required": ["heading", "section_type", "lang"],
+      "properties": {
+        "heading": { "type": "string" },
+        "section_type": { "$ref": "#/$defs/SectionType" },
+        "lang": { "$ref": "#/$defs/SectionLang" },
+        "content": { "type": "string", "default": "" },
+        "sdd_id": {
+          "type": ["string", "null"],
+          "description": "Cross-reference identity for this section"
+        },
+        "sdd_refs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/CrossRef" },
+          "default": []
+        },
+        "optional": { "type": "boolean", "default": false }
+      }
+    },
+    "CrossRef": {
+      "type": "object",
+      "required": ["ref"],
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^(#[\\w-]+|[\\w-]+#[\\w-]+)$",
+          "description": "#local-id or spec-id#section-id"
+        }
+      }
+    },
+    "SpecRef": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "type": ["string", "null"] }
+      }
+    },
+    "ChangeSpecMeta": {
+      "type": "object",
+      "required": ["main_spec_ref", "merge_strategy"],
+      "properties": {
+        "main_spec_ref": { "type": "string" },
+        "merge_strategy": {
+          "type": "string",
+          "enum": ["new", "extend", "replace", "patch"]
+        },
+        "fill_sections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SectionType" },
+          "default": []
+        },
+        "filled_sections": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/SectionType" },
+          "default": []
+        },
+        "create_complete": { "type": "boolean", "default": false },
+        "group_id": { "type": ["string", "null"] }
+      }
+    },
+    "ExternalRef": {
+      "type": "object",
+      "required": ["external_id"],
+      "properties": {
+        "external_id": { "type": "string" },
+        "url": { "type": ["string", "null"], "format": "uri" }
+      }
+    }
+  }
+}

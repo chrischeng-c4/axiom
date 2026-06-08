@@ -1,0 +1,8 @@
+{
+  "spec_id": "task-state-machine",
+  "group_id": "queue-unit-test-coverage",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-queue/logic/task-state-machine.md",
+  "fill_sections": ["overview", "state-machine", "logic", "test-plan", "changes"],
+  "content": "<!-- type: overview lang: markdown -->\n\nThe task state machine in `crates/cclab-queue/src/state.rs` defines `TaskState` — a 9-variant enum (Pending, Received, Started, Offloaded, Success, Failure, Retry, Revoked, Rejected) governing task lifecycle. It provides:\n\n- `is_terminal()` — classifies Success, Failure, Revoked, Rejected as terminal\n- `is_active()` — classifies Received, Started, Retry, Offloaded as active\n- `is_offloaded()` — checks Offloaded state\n- `can_transition_to()` — validates 16 legal state transitions across 5 source states\n\n`TaskResult` is a companion struct holding task execution metadata (task_id, state, result, error, traceback, timestamps, retries, worker_id) with factory constructors `pending()`, `success()`, `failure()`.\n\nThis spec defines the state machine schema, transition rules, and test plan for achieving full unit test coverage of `state.rs`."
+}

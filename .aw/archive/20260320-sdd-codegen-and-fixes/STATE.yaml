@@ -1,0 +1,283 @@
+change_id: sdd-codegen-and-fixes
+schema_version: '2.0'
+created_at: 2026-03-20T03:56:28.228087Z
+updated_at: 2026-03-20T08:02:49.725962Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:group-directory-fix: 1
+  ref_ctx:specir-and-test-codegen: 1
+  ref_ctx:new-spec-types: 1
+current_task_id: spec-validator-extend
+task_revisions:
+  change-spec-logic: 2
+  generator-react: 1
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 194897
+    timestamp: 2026-03-20T04:00:11.566774Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 46686
+    timestamp: 2026-03-20T04:22:26.649525Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 251775
+    timestamp: 2026-03-20T04:27:17.758654Z
+  - step: revise_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 80935
+    timestamp: 2026-03-20T04:30:11.610061Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 108472
+    timestamp: 2026-03-20T04:32:27.622436Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 279636
+    timestamp: 2026-03-20T04:37:44.518474Z
+  - step: revise_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 167450
+    timestamp: 2026-03-20T04:41:13.562187Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 118431
+    timestamp: 2026-03-20T04:43:37.484712Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 298779
+    timestamp: 2026-03-20T04:49:06.797343Z
+  - step: revise_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 168017
+    timestamp: 2026-03-20T04:52:35.029842Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 429383
+    timestamp: 2026-03-20T06:52:35.721143Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 953304
+    timestamp: 2026-03-20T06:53:14.244459Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1103001
+    timestamp: 2026-03-20T06:53:32.941475Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1433711
+    timestamp: 2026-03-20T06:53:47.256456Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1778519
+    timestamp: 2026-03-20T06:55:07.754278Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 2727752
+    timestamp: 2026-03-20T06:55:45.139068Z
+  - step: review_impl_change-spec-logic
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 341436
+    timestamp: 2026-03-20T07:02:01.527161Z
+  - step: review_impl_change-spec-logic
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 276797
+    timestamp: 2026-03-20T07:24:37.319355Z
+  - step: review_impl_codegen-system-extend
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 174175
+    timestamp: 2026-03-20T07:27:45.203250Z
+  - step: review_impl_generator-deploy
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 145110
+    timestamp: 2026-03-20T07:30:21.338312Z
+  - step: review_impl_generator-react
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 157322
+    timestamp: 2026-03-20T07:33:07.061939Z
+  - step: review_impl_generator-react
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 94729
+    timestamp: 2026-03-20T07:37:38.194595Z
+  - step: review_impl_spec-ir-schema-extend
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 131965
+    timestamp: 2026-03-20T07:40:01.021293Z
+  - step: review_impl_spec-validator-extend
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 224601
+    timestamp: 2026-03-20T07:43:53.786062Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 2513272
+    timestamp: 2026-03-20T07:44:10.152628Z
+  - step: begin_implementation
+    sdd_version: 0.3.42
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 6475539
+    timestamp: 2026-03-20T07:44:35.364013Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 932
+    title: 'feat(sdd): codegen last mile — consume SpecIR to generate code'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 933
+    title: 'feat(sdd): test generation from RequirementPlus specs'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 934
+    title: 'feat(sdd): deployment spec type — infra-as-code integration'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 937
+    title: 'feat(sdd): frontend codegen — wireframe + component + design-token → UI code'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 956
+    title: 'bug(sdd): payloads, prompts, and specs placed at change root instead of under groups/'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - group-directory-fix
+  - new-spec-types
+  - specir-and-test-codegen
+  post_clarifications:
+  - group-directory-fix
+  - new-spec-types
+  - specir-and-test-codegen
+  pre_clarifications:
+  - group-directory-fix
+  - new-spec-types
+  - specir-and-test-codegen
+  change_spec: []
+  change_implementation: []

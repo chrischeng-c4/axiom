@@ -1,0 +1,49 @@
+{
+  "group_id": "jet-test-gaps",
+  "specs": [
+    {
+      "spec_id": "jet-postcss-tailwind",
+      "spec_group": "cclab-jet",
+      "relevance": "high",
+      "key_requirements": ["R3", "R4", "R5", "R9", "R10"]
+    },
+    {
+      "spec_id": "jet-hmr",
+      "spec_group": "cclab-jet",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R4", "R5", "R6"]
+    },
+    {
+      "spec_id": "jet-aot-build",
+      "spec_group": "cclab-jet",
+      "relevance": "high",
+      "key_requirements": ["R2", "R5"]
+    },
+    {
+      "spec_id": "jet-dev-server",
+      "spec_group": "cclab-jet",
+      "relevance": "medium",
+      "key_requirements": ["R1", "R2"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "jet-postcss-tailwind",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-jet/postcss-tailwind.md",
+      "sections": ["test-plan", "e2e-scenario", "changes"]
+    },
+    {
+      "spec_id": "jet-hmr",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-jet/hmr.md",
+      "sections": ["test-plan", "changes"]
+    },
+    {
+      "spec_id": "jet-aot-build",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-jet/aot-build.md",
+      "sections": ["test-plan", "e2e-scenario", "changes"]
+    }
+  ]
+}

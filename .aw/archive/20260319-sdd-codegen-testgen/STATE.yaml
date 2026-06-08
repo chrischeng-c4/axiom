@@ -1,0 +1,155 @@
+change_id: sdd-codegen-testgen
+schema_version: '2.0'
+created_at: 2026-03-19T02:54:49.952395Z
+updated_at: 2026-03-19T10:57:12.413868Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:specir-codegen: 1
+  ref_ctx:testgen-requirementplus: 1
+current_task_id: sdd-codegen-testgen-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 217486
+    timestamp: 2026-03-19T02:58:46.321473Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: gemini-3-flash-preview
+    tokens_in: 3227014
+    tokens_out: 16445
+    cost_usd: null
+    duration_ms: 1083444
+    timestamp: 2026-03-19T09:29:19.531042Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 79590
+    timestamp: 2026-03-19T09:45:12.221132Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 213893
+    timestamp: 2026-03-19T09:49:32.349696Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 95363
+    timestamp: 2026-03-19T09:56:25.650822Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 258137
+    timestamp: 2026-03-19T10:01:38.437621Z
+  - step: revise_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 155528
+    timestamp: 2026-03-19T10:05:07.209115Z
+  - step: analyze_spec_sdd-codegen-testgen-spec
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 518701
+    tokens_out: 11240
+    cost_usd: null
+    duration_ms: 429690
+    timestamp: 2026-03-19T10:13:58.125109Z
+  - step: fill_spec_sdd-codegen-testgen-spec_overview
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 442470
+    tokens_out: 2645
+    cost_usd: null
+    duration_ms: 272094
+    timestamp: 2026-03-19T10:18:30.264337Z
+  - step: fill_spec_sdd-codegen-testgen-spec_requirements
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 680999
+    tokens_out: 3117
+    cost_usd: null
+    duration_ms: 266634
+    timestamp: 2026-03-19T10:22:56.918649Z
+  - step: fill_spec_sdd-codegen-testgen-spec_scenarios
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 270863
+    tokens_out: 1765
+    cost_usd: null
+    duration_ms: 177606
+    timestamp: 2026-03-19T10:25:54.533662Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 147583
+    timestamp: 2026-03-19T10:54:26.527894Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 872920
+    timestamp: 2026-03-19T10:54:56.086057Z
+  total_cost_usd: 0.0
+  total_tokens_in: 5140047
+  total_tokens_out: 35212
+dag:
+  issues:
+  - number: 932
+    title: 'feat(sdd): codegen last mile — consume SpecIR to generate code'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 933
+    title: 'feat(sdd): test generation from RequirementPlus specs'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - specir-codegen
+  - testgen-requirementplus
+  post_clarifications:
+  - specir-codegen
+  - testgen-requirementplus
+  pre_clarifications:
+  - specir-codegen
+  - testgen-requirementplus
+  change_implementation: []
+  change_spec: []

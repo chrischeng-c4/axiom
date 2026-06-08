@@ -1,0 +1,51 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-agent",
+  "change_id": "agent-crr-review",
+  "group_id": "agent-crr-core",
+  "verdict": "REVIEWED",
+  "summary": "The reference context is too generic for `agent-crr-core`. It cites broad `cclab-agent` framework docs, but none of the listed specs directly cover the required `ReviewAgent`/`ReviewType` design, the `agents/review` module and shared review types, or the generic `CRRCycle` builder/state machine/event-hook API. It also omits the existing `cclab-sdd` CRR specs even though the change is explicitly extracted from that pattern.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Coverage is missing for the standalone `ReviewAgent` with `ReviewType` config, the `agents/review/` module placement for `ReviewVerdict` and `ReviewIssue`, and the generic `CRRCycle` builder/state-machine/event-hook API. The current table also omits the `cclab-sdd` CRR specs that issue #926 cites as the source pattern."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "Only `agents.md`, `architecture.md`, and `error-handling.md` are clearly related. `llm-providers.md` is background at most, while `core-types.md`, `tools.md`, and `README.md` do not directly implement the clarified review-agent or CRR-core requirements."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "The cited `cclab-agent` specs do not expose requirement IDs, so entries like `Agent Execution Loop`, `Module Dependency`, and `NovaError JSON Schema` are section titles rather than traceable requirement IDs. The table therefore cannot satisfy an ID-based verification check."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "The `README` row is only an index of crate docs, not a requirement-bearing spec. `core-types.md` and `tools.md` are broad framework background and do not address review verdicts, revision routing, or the `agents/review` module layout called out by this group."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "The reference set does not cover the core agent-side design required by this group. `pre_clarifications.md` requires a standalone `ReviewAgent` with `ReviewType` config and places `ReviewVerdict`/`ReviewIssue` in `agents/review/` (`pre_clarifications.md:10-20`), while `requirements.md` adds a generic `CRRCycle` builder API, event hooks, and a Create→Review→Revise state machine reusable by `SpecAgent` and `CodeAgent` (`requirements.md:9-17`). None of the cited `cclab-agent` specs define those types or APIs.",
+      "recommendation": "Add specs that explicitly cover `ReviewAgent`, `ReviewType`, `ReviewVerdict`, `ReviewIssue`, the `agents/review/` module layout, and the `CRRCycle` API/state machine. If those specs do not exist yet, record them as missing coverage instead of implying the current set is complete."
+    },
+    {
+      "severity": "HIGH",
+      "description": "The artifact omits the existing `cclab-sdd` CRR specifications even though the change is extracted from that workflow. Issue #926 says the generic CRR cycle is extracted from `cclab-sdd` (`issue_926_feat-agent-add-crr-cycle-generic-create-review-rev.md:13-16`), and `cclab-sdd/logic/state-machine.md:154-165` plus `cclab-sdd/logic/reference-context.md:17-24,118-129` document the current CRR loop and `max_revisions` auto-approve behavior. Those specs are especially relevant because pre-clarifications deliberately choose `Error` instead of silent auto-approval for max-revision overflow.",
+      "recommendation": "Include the relevant `cclab-sdd` CRR/state-machine specs as source-pattern references and explicitly note where the new agent-side behavior intentionally diverges from current SDD auto-approve semantics."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "The `Key Requirements` column is not traceable to actual requirement IDs. The cited `cclab-agent` docs are organized as diagrams and schemas without requirement IDs, so rows such as `reference_context.md:12-18` can only point to headings like `Agent Execution Loop` (`agents.md:3`) or `Provider Class Hierarchy` (`llm-providers.md:3`), not verifiable requirement identifiers.",
+      "recommendation": "Rewrite the table to cite real requirement IDs if they exist elsewhere, or switch to precise section-based citations rather than presenting the entries as requirement mappings."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "The relevance scoring is inflated and at least one included spec is irrelevant. `README.md:5-21` is a crate index, not an implementation contract, and `core-types.md:3-77` plus `tools.md:3-91` cover generic message/tool infrastructure rather than review verdicts, CRR routing, or the review module/type layout that define this group.",
+      "recommendation": "Trim the reference set to the small number of directly relevant contracts, keep broad framework docs as background only when they materially constrain the design, and reserve `high` for specs that directly define the targeted behavior."
+    }
+  ]
+}

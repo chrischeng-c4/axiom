@@ -1,0 +1,1 @@
+feat(sdd): implement 3-way merge for spec files using git merge-file — snapshot base spec at change init, use git merge-file at merge time to support parallel changes on same crate #1128

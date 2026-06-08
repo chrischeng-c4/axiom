@@ -1,0 +1,9 @@
+---
+change: sdd-spec-format-unify
+group: sdd-spec-format-unify
+date: 2026-04-10
+---
+
+# Requirements
+
+Unify SDD spec format across 4 dimensions: (1) Reorder fill_order() to top-down: overview → requirements → scenarios → mindmap → state-machine → interaction → logic → dependency → db-model → schema → APIs → UI → config → test-plan → changes → doc. (2) Change default_lang() for schema, rpc-api, config, component, design-token from json to yaml. (3) Wire existing Mermaid Plus generators (requirement_plus, sequence_plus, state_plus, flowchart_plus, class_plus, erd_plus, mindmap_plus) into section type resolution. (4) Update UNIVERSAL_SKELETON template and format_rules.rs validation. Requirements section → Mermaid Plus requirementDiagram; scenarios → YAML GWT; test-plan → Mermaid Plus requirementDiagram with verifies; changes → add optional satisfies field.

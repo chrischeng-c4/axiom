@@ -1,0 +1,59 @@
+change_id: lens-beyond-ide
+schema_version: '2.0'
+created_at: 2026-03-13T03:15:38.626719Z
+updated_at: 2026-03-13T03:42:22.441991Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+branch: cclab-lens
+revision_counts: {}
+current_task_id: lens-beyond-ide-spec
+task_revisions: {}
+telemetry: null
+dag:
+  issues:
+  - number: 799
+    title: 'feat(lens): implement refactoring engine — Extract, Rename, Move, Inline'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 800
+    title: 'feat(lens): implement semantic search engine — type signatures, call hierarchy, usages'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 803
+    title: 'feat(lens): bundle JSON schemas for K8s and GitLab CI validation'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+groups_progress:
+  change_spec: []
+  post_clarifications:
+  - hcl-grammar-fix
+  - rpc-mcp-wiring
+  - schema-validation
+  - html-css-expansion
+  - new-language-support
+  pre_clarifications:
+  - hcl-grammar-fix
+  - rpc-mcp-wiring
+  - schema-validation
+  - html-css-expansion
+  - new-language-support
+  reference_context:
+  - hcl-grammar-fix
+  - rpc-mcp-wiring
+  - schema-validation
+  - html-css-expansion
+  - new-language-support
+  change_implementation: []

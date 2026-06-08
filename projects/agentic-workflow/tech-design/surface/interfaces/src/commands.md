@@ -1,0 +1,152 @@
+---
+id: projects-score-src-commands-rs
+fill_sections: [overview, changes]
+capability_refs:
+  - id: workflow-root-runner
+    role: primary
+    gap: cli-workflow-chain
+    claim: cli-workflow-chain
+    coverage: full
+    rationale: "CLI entrypoint and dispatch surfaces support root command parsing and workflow command routing."
+---
+
+# Standardized projects/agentic-workflow/src/cli/commands.rs
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/agentic-workflow/src/cli/commands.rs` generated from AST during Score force-regeneration standardization.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Commands` | projects/agentic-workflow/src/cli/commands.rs | enum | pub | 18 |  |
+| `run_command` | projects/agentic-workflow/src/cli/commands.rs | function | pub | 68 | run_command(cmd: Commands) -> Result<()> |
+## Source
+<!-- type: source lang: rust -->
+<!-- source-from-target: strip-handwrite -->
+
+<!-- source-snapshot: path=projects/agentic-workflow/src/cli/commands.rs -->
+```rust
+use crate::Result;
+use clap::Subcommand;
+
+use crate::cli::capability;
+use crate::cli::chat;
+use crate::cli::generator;
+use crate::cli::init;
+use crate::cli::issues;
+use crate::cli::project;
+use crate::cli::run as run_root;
+use crate::cli::standardize;
+
+/// Agentic Workflow CLI commands
+#[derive(Subcommand)]
+// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
+pub enum Commands {
+    // =====================================================================
+    // Project initialization
+    // =====================================================================
+
+    // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R1
+    /// Bootstrap .aw/ config and installed workflow skills/settings
+    Init {
+        /// Project name (deprecated, ignored)
+        #[arg(short, long)]
+        name: Option<String>,
+
+        /// Override version downgrade protection and force-replace all assets
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Aggregate project readiness, production gates, and blocker status.
+    Health(project::ProjectHealthArgs),
+
+    /// Product capability completion loop: report/next/run/check.
+    Capability(capability::CapabilityArgs),
+
+    /// Generator gap request surface after takeover readiness.
+    Generator(generator::GeneratorArgs),
+
+    /// Root-driven workflow runner for project, capability, epic, or change scopes.
+    Run(run_root::RunArgs),
+
+    /// Manage work-items — list/show/create/CRRR across local + GitHub backends.
+    // @spec projects/agentic-workflow/tech-design/surface/specs/score-wi-cli-redesign.md#cli
+    #[command(name = "wi")]
+    Issues(issues::IssuesArgs),
+
+    /// Cross-checkout agent messaging via shared plain-text channel
+    Chat(chat::ChatArgs),
+
+    /// Tech-design lifecycle (create/validate/review/revise/merge)
+    Td(crate::cli::td::TdArgs),
+
+    /// Code-artifact workflow verbs (generation, checks, HANDWRITE fill/review).
+    // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
+    Cb(crate::cli::cb::CbArgs),
+
+    /// Existing-project workflow guidance and bounded remediation.
+    Standardize(standardize::StandardizeArgs),
+
+}
+
+/// Run an Agentic Workflow CLI command
+// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/commands.md#source
+pub async fn run_command(cmd: Commands) -> Result<()> {
+    match cmd {
+        // =================================================================
+        // Project initialization
+        // =================================================================
+        // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R2
+        Commands::Init { name, force } => {
+            init::run(name.as_deref(), force, None).await?;
+        }
+
+        Commands::Health(args) => {
+            project::run_health(args).await?;
+        }
+        Commands::Capability(args) => {
+            capability::run(args).await?;
+        }
+        Commands::Generator(args) => {
+            generator::run(args).await?;
+        }
+        Commands::Run(args) => {
+            run_root::run(args).await?;
+        }
+        Commands::Issues(args) => {
+            issues::run(args).await?;
+        }
+        Commands::Chat(args) => {
+            chat::run_chat(args)?;
+        }
+        Commands::Td(args) => {
+            crate::cli::td::run(args).await?;
+        }
+        Commands::Cb(args) => {
+            crate::cli::cb::run(args).await?;
+        }
+        Commands::Standardize(args) => {
+            standardize::run(args).await?;
+        }
+    }
+
+    Ok(())
+}
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/agentic-workflow/src/cli/commands.rs
+    action: modify
+    impl_mode: codegen
+    section: source
+    description: |
+      Whole-file source template generated from the standardized target body.
+```

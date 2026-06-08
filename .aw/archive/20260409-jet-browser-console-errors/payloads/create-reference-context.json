@@ -1,0 +1,36 @@
+{
+  "group_id": "browser-console-error-relay",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-jet/logic/dev-server.md",
+      "spec_group": "dev-server",
+      "relevance": "high",
+      "key_requirements": [
+        "HMR WebSocket endpoint /__jet_hmr — currently server-to-client only; recv_task drops all non-Close frames",
+        "HMR Protocol JSON schema (oneOf) defines all existing message types: connected, update, css-update, full-reload, error, prune — new console-message type must be added",
+        "HMR State Machine: Idle->FileChanged->... — no browser log events in the existing FSM",
+        "HMR Client Runtime section documents injected JS (import.meta.hot, error overlay, WebSocket handler with switch on msg.type)",
+        "ServerConfig schema — no new fields needed (always-on, no flag)"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-jet/logic/hmr.md",
+      "spec_group": "hmr",
+      "relevance": "high",
+      "key_requirements": [
+        "HmrMessage enum with serde tag='type' kebab-case — new ConsoleMessage variant must follow this pattern",
+        "HmrManager broadcast channel — client-to-server path does NOT use broadcast; server reads directly from recv_task",
+        "HmrUpdateResult is server-side only — unaffected by this change"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "jet-browser-console-relay",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-jet/logic/dev-server.md",
+      "source": ".score/tech_design/crates/cclab-jet/logic/dev-server.md",
+      "sections": ["overview", "schema", "changes"]
+    }
+  ]
+}

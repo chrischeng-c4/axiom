@@ -1,0 +1,1 @@
+{"group_id":"monorepo-bundler-fixes","specs":[{"spec":"pkg-manager","group":"cclab-jet","relevance":"high","key_requirements":"resolver, node_modules walk"},{"spec":"scope-hoisting","group":"cclab-jet","relevance":"high","key_requirements":"Phase 1 IIFE, runtime fallback for cycles"}]}

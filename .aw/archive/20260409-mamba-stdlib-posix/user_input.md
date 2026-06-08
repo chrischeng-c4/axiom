@@ -1,0 +1,1 @@
+#995 Add native stdlib: posix — POSIX system calls. Implement os.getpid, os.getcwd, os.getenv, os.path.exists, os.path.join via libc bindings. Crate: cclab-mamba

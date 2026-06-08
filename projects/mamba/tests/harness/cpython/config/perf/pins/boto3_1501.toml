@@ -1,0 +1,9 @@
+# Perf-pin regression gate (#1501).
+# Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/boto3_1501.toml)
+issue = 1501
+lib = "boto3"
+fixture = "tests/cpython/fixtures/3rd-libs/boto3/bench/boto3_type_read_hot.py"
+floor = 1.0
+mem_floor = 1.0
+samples = 9
+prereq_imports = ["boto3"]

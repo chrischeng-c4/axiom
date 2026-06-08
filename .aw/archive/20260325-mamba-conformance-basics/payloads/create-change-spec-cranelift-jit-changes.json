@@ -1,0 +1,6 @@
+{
+  "spec_id": "cranelift-jit",
+  "group_id": "runtime-basics",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: crates/cclab-mamba/src/codegen/cranelift/jit.rs\n    action: MODIFY\n    desc: \"Add `internal_return_tys: HashMap<u32, TypeId>` field to CraneliftJitBackend; initialize to HashMap::new() in new() and new_with_externals()\"\n  - path: crates/cclab-mamba/src/codegen/cranelift/jit.rs\n    action: MODIFY\n    desc: \"In declare_internal: after self.internal_funcs.insert(body.name.0, func_id), insert self.internal_return_tys.insert(body.name.0, body.return_ty)\"\n  - path: crates/cclab-mamba/src/codegen/cranelift/jit.rs\n    action: MODIFY\n    desc: \"In emit_internal_call: after builder.inst_results(call)[0], look up callee_return_ty = self.internal_return_tys.get(&sym_id); if callee_return_ty resolves to Ty::Int or Ty::Bool and call-site type tcx.get(*ty) is not a primitive (i.e., not Int/Bool/Float), emit CallExtern mb_box_int(result) to NaN-box before def_var; if callee_return_ty is Ty::Float and call-site type is non-primitive, emit mb_box_float(result)\"\n  - path: crates/cclab-mamba/tests/jit_tests.rs\n    action: MODIFY\n    desc: \"Add test_jit_recursive_fib: compile and JIT-run recursive fib(n) without type annotations, assert jit_run result for fib(30) == 832040\"\n```"
+}

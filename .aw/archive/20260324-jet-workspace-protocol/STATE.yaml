@@ -1,0 +1,88 @@
+change_id: jet-workspace-protocol
+schema_version: '2.0'
+created_at: 2026-03-23T16:45:41.589863Z
+updated_at: 2026-03-24T02:42:21.452780Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: jet-workspace-protocol-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 109594
+    timestamp: 2026-03-23T16:47:35.651832Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 801037
+    tokens_out: 1303
+    cost_usd: null
+    duration_ms: 123913
+    timestamp: 2026-03-23T16:54:53.267660Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 134918
+    timestamp: 2026-03-23T16:59:02.084327Z
+  - step: analyze_spec_jet-workspace-protocol-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1125154
+    timestamp: 2026-03-23T17:53:22.959402Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 472851
+    timestamp: 2026-03-24T02:35:09.249739Z
+  - step: implement_tests_jet-workspace-protocol-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1481670
+    timestamp: 2026-03-24T02:35:18.298988Z
+  - step: review_impl_jet-workspace-protocol-spec
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 248350
+    timestamp: 2026-03-24T02:39:39.115402Z
+  total_cost_usd: 0.0
+  total_tokens_in: 801037
+  total_tokens_out: 1303
+dag: null
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  change_spec: []
+  pre_clarifications:
+  - jet-workspace-protocol
+  post_clarifications:
+  - jet-workspace-protocol
+  reference_context:
+  - jet-workspace-protocol

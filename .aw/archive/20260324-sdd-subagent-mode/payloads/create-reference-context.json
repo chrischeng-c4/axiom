@@ -1,0 +1,111 @@
+{
+  "group_id": "subagent-dispatch",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-sdd/logic/executor-resolution.md",
+      "spec_group": "execution-modes",
+      "relevance": "high",
+      "key_requirements": [
+        "Defines the claude_subagents mode returning subagent:X:model executor strings from preset table",
+        "Documents that Rust returns executor: ['subagent:Explore:sonnet'] and mainthread skill dispatches via Agent tool",
+        "Contains the full preset table for claude_subagents mapping phase actions to Subagent Type + Model",
+        "Defines the 4 ExecutionMode variants including ClaudeSubagents",
+        "Agent failure retry and fallback chain logic applies to subagent mode too"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/config/agents.md",
+      "spec_group": "configuration",
+      "relevance": "high",
+      "key_requirements": [
+        "Defines workflow.mode = claude_subagents config field",
+        "Contains claude_subagents preset: subagent_type + model per phase action",
+        "Dispatch pattern: Rust returns executor='subagent', subagent_type, model, prompt_path; mainthread invokes Agent tool",
+        "Lists all claude_subagents preset rows (Explore:sonnet for reference_context, general-purpose:opus for spec, etc.)"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/skills/run-change.md",
+      "spec_group": "skills",
+      "relevance": "high",
+      "key_requirements": [
+        "Current skill loop says 'Workflow tool internally handles agent delegation (no need to check executor)' — must update for subagent:* dispatch",
+        "When executor[0] starts with subagent:, skill must parse subagent_type and model, then invoke Agent tool",
+        "Must read prompt_path from workflow tool response and pass prompt content to Agent tool",
+        "Skill is the only place where Claude Code Agent tool can be invoked (LLM mainthread, not Rust CLI)"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/tools/utils/delegate-agent.md",
+      "spec_group": "tools",
+      "relevance": "high",
+      "key_requirements": [
+        "run_agent() currently handles gemini:, codex:, claude:, claude-agent: providers — does NOT handle subagent: prefix",
+        "build_workflow_response() currently routes non-mainthread executors to run_agent() — must add third branch for subagent:* (return to mainthread, not call run_agent())",
+        "Verification logic after agent completion applies to subagent mode (STATE.yaml phase + artifact check)",
+        "Sequence diagram and behavior flowchart need claude_subagents path added"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "spec_group": "interfaces",
+      "relevance": "medium",
+      "key_requirements": [
+        "executor field in workflow tool response schema currently typed as array with const=['mainthread']",
+        "Schema must be updated to allow subagent:X:model executor strings for claude_subagents mode",
+        "prompt_path is returned alongside executor for mainthread/subagent to read"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/state-machine.md",
+      "spec_group": "logic",
+      "relevance": "medium",
+      "key_requirements": [
+        "Phase verification after subagent dispatch: STATE.yaml phase + artifact existence check",
+        "The delegation_guard and phase tracking apply regardless of executor mode",
+        "DelegationGuard prevents concurrent agents on same change_id"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/reference-context.md",
+      "spec_group": "logic",
+      "relevance": "medium",
+      "key_requirements": [
+        "Reference context is the first phase where claude_subagents dispatches (Explore:sonnet subagent)",
+        "Agent retry mechanism and mainthread fallback apply to subagent mode",
+        "verify_artifact_cli_called() must work after subagent completes (same as other agent types)"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "spec_group": "interfaces",
+      "relevance": "low",
+      "key_requirements": [
+        "No new CLI commands for claude_subagents mode — mode is purely config-driven via workflow.mode"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "subagent-skill-dispatch",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/skills/run-change.md",
+      "source": "crates/cclab-sdd/skills/run-change.md",
+      "sections": ["overview", "logic", "interaction", "changes"]
+    },
+    {
+      "spec_id": "subagent-workflow-dispatch",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/tools/utils/delegate-agent.md",
+      "source": "crates/cclab-sdd/tools/utils/delegate-agent.md",
+      "sections": ["overview", "logic", "interaction", "changes"]
+    },
+    {
+      "spec_id": "subagent-executor-resolution",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/executor-resolution.md",
+      "source": "crates/cclab-sdd/logic/executor-resolution.md",
+      "sections": ["overview", "config", "changes"]
+    }
+  ]
+}

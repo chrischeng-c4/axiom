@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "lens-dissolution",
+  "spec_id": "agent-output-format",
+  "group_id": "lens-dissolution",
+  "section": "overview",
+  "content": "Symbol-centric JSON output format optimized for LLM agent consumption. Adds `--format agent` to `cclab sdd check` (post lens dissolution), replacing file-centric diagnostic lists with a compact representation of symbols, dependency edges, issues, and impact scope.\n\n| Attribute | Value |\n|-----------|-------|\n| Crate | cclab-sdd (post lens dissolution) |\n| Module | `output` (extended — new `Agent` variant in `OutputFormat` enum) |\n| Interface | CLI-only (`cclab sdd check --format agent`) — no MCP |\n| Issue | #949 |\n| Depends on | Reporter (output), SymbolTable (semantic/symbols), ImportGraph (graph/), FileResult/Diagnostic (lint pipeline), SearchIndex (search/) |"
+}

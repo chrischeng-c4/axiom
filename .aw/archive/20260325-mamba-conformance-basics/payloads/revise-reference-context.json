@@ -1,0 +1,79 @@
+{
+  "group_id": "runtime-basics",
+  "specs": [
+    {
+      "spec_id": "cranelift",
+      "spec_group": "codegen",
+      "relevance": "high",
+      "key_requirements": ["R2", "R4"]
+    },
+    {
+      "spec_id": "cranelift-jit",
+      "spec_group": "codegen",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R3"]
+    },
+    {
+      "spec_id": "string-ops",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": ["new"]
+    },
+    {
+      "spec_id": "builtins",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": ["new"]
+    },
+    {
+      "spec_id": "type-checker",
+      "spec_group": "types",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2"]
+    },
+    {
+      "spec_id": "repl",
+      "spec_group": "driver",
+      "relevance": "high",
+      "key_requirements": ["R5"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "cranelift",
+      "action": "modify",
+      "main_spec_ref": "codegen/cranelift",
+      "sections": ["Overview", "Changes"]
+    },
+    {
+      "spec_id": "cranelift-jit",
+      "action": "modify",
+      "main_spec_ref": "codegen/cranelift-jit",
+      "sections": ["Overview", "Changes"]
+    },
+    {
+      "spec_id": "string-ops",
+      "action": "modify",
+      "main_spec_ref": "runtime/string-ops",
+      "sections": ["Overview", "Changes"]
+    },
+    {
+      "spec_id": "builtins",
+      "action": "modify",
+      "main_spec_ref": "runtime/builtins",
+      "sections": ["Overview", "Changes"]
+    },
+    {
+      "spec_id": "type-checker",
+      "action": "modify",
+      "main_spec_ref": "types/type-checker",
+      "sections": ["Overview", "Changes"]
+    },
+    {
+      "spec_id": "repl",
+      "action": "modify",
+      "main_spec_ref": "driver/repl",
+      "sections": ["Overview", "Changes"]
+    }
+  ]
+}

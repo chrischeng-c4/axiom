@@ -1,0 +1,1 @@
+Fix mangler to rename module-scope vars inside IIFE wrappers — the 15KB gap between jet (206.8KB) and vite/webpack (192KB). workInProgress appears 267x, saving 3.5KB alone. #882 #903

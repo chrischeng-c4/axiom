@@ -1,0 +1,62 @@
+{
+  "spec_id": "k8s-cronjob-backend",
+  "verdict": "REVIEWED",
+  "summary": "Implementation satisfies all spec requirements (R1–R8) and passes the hard checklist. The overall diff has comprehensive tests for related modules, so the Hard Reject Rule does not fire. However, `k8s_cronjob_backend.rs` has zero unit tests while peer modules have thorough coverage, and several soft issues need attention before APPROVED.",
+  "hard_checklist": [
+    {
+      "item": "Code matches all spec requirements",
+      "result": "PASS",
+      "notes": "R1 (no-op leader), R2 (task state + record_task_run via default trait impl), R3 (CRUD: create/update/delete/get/list), R4 (container spec with trigger image, env vars, resource limits), R5 (HMAC secret injected via K8s Secret), R6 (feature-gated under k8s-scheduler), R7 (pause/resume patches spec.suspend and local state), R8 (error mapping 404/401/403/409/5xx/transport). All functionally met."
+    },
+    {
+      "item": "If spec has Test Plan section: diff contains at least one #[test] function",
+      "result": "PASS",
+      "notes": "The spec's Test Plan section (lines 146–149) is present but contains only <!-- TODO --> — zero test cases are defined. The overall implementation diff (implementation.md) contains hundreds of #[test] blocks across other modules (backend.rs, cloud_scheduler_backend_tests.rs, push_auth.rs, etc.), so the literal Hard Reject Rule condition ('diff contains zero #[test] blocks') does not fire. However, k8s_cronjob_backend.rs itself has zero unit tests — flagged as a soft issue."
+    },
+    {
+      "item": "Existing tests still pass (no regressions introduced)",
+      "result": "PASS",
+      "notes": "k8s_cronjob_backend.rs is a new file behind the k8s-scheduler feature gate. scheduler/mod.rs additions are purely additive and gated. No existing code paths are modified."
+    }
+  ],
+  "soft_issues": [
+    {
+      "severity": "medium",
+      "file": "crates/cclab-queue/src/scheduler/k8s_cronjob_backend.rs",
+      "issue": "Zero unit tests in the backend file",
+      "detail": "The k8s_cronjob_backend.rs file (525 lines) has no #[cfg(test)] block. Every other new backend in this changeset (cloud_scheduler_backend_tests.rs: 702 lines, backend.rs: 164 lines of tests, push_auth.rs has test coverage) has a test suite. Key areas without coverage: build_cronjob_spec (CronJob resource construction), cron expression conversion in register_external_schedule (6-field to 5-field stripping, interval-to-cron), map_kube_error (all error code branches), task state isolation between tasks."
+    },
+    {
+      "severity": "medium",
+      "file": "crates/cclab-queue/src/scheduler/k8s_cronjob_backend.rs",
+      "line": 6074,
+      "issue": "Payload serialization error silently swallowed",
+      "detail": "serde_json::to_string(task_message).unwrap_or_default() on line 6074 silently produces an empty string on serialization failure. An empty or malformed payload would be injected into the CronJob's SCHEDULER_TASK_PAYLOAD env var and cause a silent trigger failure. Should propagate the error: serde_json::to_string(task_message).map_err(|e| TaskError::Configuration(format!(\"Failed to serialize task message: {}\", e)))?;"
+    },
+    {
+      "severity": "low",
+      "file": "crates/cclab-queue/src/scheduler/k8s_cronjob_backend.rs",
+      "line": 5953,
+      "issue": "#[allow(dead_code)] on client field",
+      "detail": "The client field has #[allow(dead_code)] because cronjob_api is used for all operations. If the field is only stored to keep the client alive (prevent drop), a comment explaining this would clarify intent. Alternatively, if cronjob_api holds its own reference, client can be removed."
+    },
+    {
+      "severity": "low",
+      "file": "cclab/changes/scheduler-runtime-complete/groups/scheduler-runtime-complete/specs/k8s-cronjob-backend.md",
+      "issue": "Error variant names in spec Schema don't match implementation",
+      "detail": "The spec Schema (lines 354–361) lists TaskError::NotFound, TaskError::AuthenticationError, TaskError::BackendError, TaskError::ConnectionError, but the implementation uses the actual codebase variants: TaskError::TaskNotFound, TaskError::Authentication, TaskError::Backend, TaskError::Connection. The implementation is correct (uses real variant names). The spec Schema section should be updated to use the canonical variant names from error.rs."
+    },
+    {
+      "severity": "low",
+      "file": "crates/cclab-queue/src/scheduler/k8s_cronjob_backend.rs",
+      "issue": "No CronJob name validation against K8s constraints",
+      "detail": "The spec Constraints section states CronJob names must be lowercase alphanumeric + hyphens, max 52 chars. The implementation does not validate the input name before passing it to the K8s API. Invalid names will result in a K8s 422 error (unmapped, falls through to TaskError::Backend). Consider adding a name sanitization/validation step in create_cronjob or register_external_schedule."
+    },
+    {
+      "severity": "low",
+      "file": "cclab/changes/scheduler-runtime-complete/groups/scheduler-runtime-complete/specs/k8s-cronjob-backend.md",
+      "issue": "Test Plan section is a TODO placeholder",
+      "detail": "The ## Test Plan section (lines 146–149) contains only <!-- TODO -->. Given the non-trivial complexity of the backend (cron conversion, HMAC injection, error mapping), the spec should define concrete test cases to guide future test additions."
+    }
+  ]
+}

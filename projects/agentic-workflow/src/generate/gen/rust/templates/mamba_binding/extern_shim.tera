@@ -1,0 +1,49 @@
+/// Mamba FFI entry point. Generated from `x-mamba-binding.extern_fn`.
+{%- if spec_path %}
+/// @spec {{ spec_path }}#x-mamba-binding
+{%- endif %}
+#[no_mangle]
+pub unsafe extern "C" fn {{ extern_fn }}(args: *const cclab_mamba_registry::MbValue, nargs: usize) -> cclab_mamba_registry::MbValue {
+{%- if has_any_primitive_reader %}
+    use cclab_mamba_registry::{MbValue, FromMbValue, convert::mb_wrap_native_typed};
+
+    // Positional arg reader — returns `MbValue::none()` when index is out of range.
+    let read = |i: usize| -> MbValue {
+        if i < nargs { unsafe { *args.add(i) } } else { MbValue::none() }
+    };
+{%- else %}
+    use cclab_mamba_registry::{MbValue, convert::mb_wrap_native_typed};
+    // No primitive arg readers — every arg falls through to its literal
+    // default until a FromMbValue impl lands for its `mb_type`. Silencing
+    // nargs/args to avoid unused-variable lints.
+    let _ = args; let _ = nargs;
+{%- endif %}
+
+{%- for a in args %}
+{%- if a.has_primitive_reader and a.nullable %}
+    let {{ a.name }}: Option<{{ a.stripped_rust_type }}> = {{ a.reader_expr }};
+{%- elif a.has_primitive_reader %}
+    let {{ a.name }}: {{ a.rust_type }} = {{ a.reader_expr }}.unwrap_or_else(|| {{ a.default_fallback }});
+{%- elif a.nullable %}
+    // TODO: FromMbValue for mb_type={{ a.mb_type }} not wired — arg always None.
+    let {{ a.name }}: Option<{{ a.stripped_rust_type }}> = None;
+{%- else %}
+    // TODO: FromMbValue for mb_type={{ a.mb_type }} not wired — arg always {{ a.default_fallback }}.
+    let {{ a.name }}: {{ a.rust_type }} = {{ a.default_fallback }};
+{%- endif %}
+{%- endfor %}
+
+    match {{ struct_name }}::new({{ args | map(attribute="name") | join(sep=", ") }}) {
+        Ok(value) => mb_wrap_native_typed("{{ struct_name }}", value),
+        Err(msg) => {
+            // Raise ValueError via the mamba ops table when installed. The
+            // `OBJECT_OPS.get()` path is a graceful no-op in unit tests where
+            // no mamba runtime has called `set_object_ops` — callers of the
+            // FFI shim under test just observe `MbValue::none()`.
+            if let Some(o) = cclab_mamba_registry::ops::OBJECT_OPS.get() {
+                (o.raise)("ValueError", &msg);
+            }
+            MbValue::none()
+        }
+    }
+}

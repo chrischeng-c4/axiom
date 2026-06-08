@@ -1,0 +1,17 @@
+{
+  "change_id": "mamba-all-support",
+  "group_id": "all-support",
+  "verdict": "approve",
+  "summary": "Reference context covers all affected areas for __all__ support: runtime/module.md (mb_import_star + __all__ preservation), runtime/symbols.md (symbol registration), lower/hir-to-mir.md (star-import lowering), parser/statements.md (from-import parsing), resolve/name-resolution.md (star-import resolve pass). Spec plan correctly targets the existing module.md which already has the full change spec written.",
+  "findings": [
+    "runtime/module.md is the primary change spec — already contains full requirements R1-R5, scenarios, test plan, and changes section. High relevance is correct.",
+    "runtime/symbols.md covers the symbol registration requirement (R3). High relevance is correct.",
+    "lower/hir-to-mir.md covers MIR lowering of from-import-star (R4). High relevance is correct.",
+    "parser/statements.md covers from-import parsing context. Medium relevance is correct.",
+    "resolve/name-resolution.md covers the resolve pass change (R5). Medium relevance is correct.",
+    "All affected areas covered: runtime module, symbol table, HIR-to-MIR lowering, resolve pass.",
+    "Spec plan uses action:modify pointing to existing module.md — correct since spec already exists.",
+    "main_spec_ref includes named subfolder (crates/cclab-mamba/runtime/module.md) — valid."
+  ],
+  "issues": []
+}

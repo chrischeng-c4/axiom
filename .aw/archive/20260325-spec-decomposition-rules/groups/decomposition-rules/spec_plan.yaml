@@ -1,0 +1,14 @@
+- spec_id: ref-context-decomposition
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/reference-context.md
+  source: crates/cclab-sdd/logic/reference-context.md
+  sections:
+  - overview
+  - changes
+- spec_id: change-spec-review-rules
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-spec.md
+  source: crates/cclab-sdd/logic/change-spec.md
+  sections:
+  - overview
+  - changes

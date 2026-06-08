@@ -1,0 +1,17 @@
+{
+  "group_id": "mamba-type-3arg-core",
+  "verdict": "approve",
+  "summary": "Reference context is complete. All three affected areas are covered: runtime-class (mb_class_register, C3 MRO, __init_subclass__, __set_name__), runtime-builtins (mb_type and mb_type3), stdlib-builtins (dispatch_type wrapper). No gaps.",
+  "findings": [
+    "All three affected areas are covered: runtime/class.rs (class system, MRO, hooks), runtime/builtins.rs (type() 1-arg and 3-arg dispatch), stdlib/builtins_mod.rs (builtin module dispatch).",
+    "runtime-class (high) is correct — mb_class_register, C3 MRO computation, __init_subclass__ and __set_name__ hooks are all in class.rs.",
+    "runtime-builtins (high) is correct — mb_type() and mb_type3() are in builtins.rs; dispatch by argument count lives here.",
+    "stdlib-builtins (medium) is correct — dispatch_type wrapper in builtins_mod.rs routes to mb_type vs mb_type3.",
+    "Key requirements column is empty in the rendered table but the source payload has full context_notes.",
+    "No irrelevant specs included.",
+    "All spec entries have main_spec_ref set and include a named subfolder.",
+    "Modify entries reference existing spec files visible in the spec tree."
+  ],
+  "issues": [],
+  "notes": "Reference context is accurate and complete for the scope of #974. The implementation (mb_type3 in builtins.rs + shared mb_class_register in class.rs) is already merged on main. This review approves to proceed to change_spec phase."
+}

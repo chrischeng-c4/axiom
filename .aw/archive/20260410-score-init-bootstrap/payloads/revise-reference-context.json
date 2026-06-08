@@ -1,0 +1,43 @@
+{
+  "group_id": "default",
+  "specs": [
+    {
+      "path": "projects/score/CLAUDE.md",
+      "relevance": "high",
+      "summary": "Score project identity, install commands, skill template location, binary entry point"
+    },
+    {
+      "path": "projects/score/cli/src/commands.rs",
+      "relevance": "high",
+      "summary": "Commands enum definition and run_command dispatch — Init variant must be added here"
+    },
+    {
+      "path": "projects/score/cli/src/init.rs",
+      "relevance": "high",
+      "summary": "Complete install logic: run(), run_fresh_install(), run_update(), install_system_files(), install_claude_skills() — hooks/agents/settings install functions to be added"
+    },
+    {
+      "path": ".claude/agents/score-change-implementation.md",
+      "relevance": "high",
+      "summary": "Agent definition file that must be templated into projects/score/cli/templates/mainthread/agents/"
+    },
+    {
+      "path": ".claude/hooks/score-next-step.sh",
+      "relevance": "high",
+      "summary": "SubagentStop hook script that must be templated into projects/score/cli/templates/mainthread/hooks/"
+    },
+    {
+      "path": ".claude/settings.json",
+      "relevance": "high",
+      "summary": "Current settings format with SubagentStop hook registration — template needed with score-* pattern"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "score-init-command",
+      "action": "create",
+      "main_spec_ref": "projects/score/specs/init-command.md",
+      "sections": ["overview", "requirements", "cli", "changes"]
+    }
+  ]
+}

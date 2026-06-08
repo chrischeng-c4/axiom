@@ -1,0 +1,62 @@
+change_id: nova-streaming
+schema_version: '2.0'
+created_at: 2026-01-31T02:49:58.095118Z
+updated_at: 2026-01-31T03:31:00.999845Z
+phase: archived
+iteration: 1
+last_action: archive
+session_id: null
+checksums:
+  proposal.md:
+    hash: sha256:48b6d6378dc93819fa825367a8a3e3e936d7a742df423951927f36f5ed14bda9
+    validated_at: 2026-01-31T03:31:00.999440Z
+  specs/cclab-nova-llm-streaming.md:
+    hash: sha256:0f540c270f98efa589b7dfcd389032894ceeeaa58f7e81bb0a73f36480daf4c3
+    validated_at: 2026-01-31T03:31:00.999842Z
+  tasks.md:
+    hash: sha256:b8a9b4e92b013d31107702cbeedfb7f86b89098d34ab7317a373054a1d13b3a0
+    validated_at: 2026-01-31T03:31:00.999564Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-31T02:54:32.580148Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T02:54:55.904947Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T03:31:00.999275Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

@@ -1,0 +1,84 @@
+{
+  "change_id": "1000-patrol",
+  "group_id": "add-idlelib-stdlib",
+  "spec_id": "idlelib-stub",
+  "verdict": "APPROVED",
+  "summary": "Implementation fully satisfies all R1/R2/R3 spec requirements. The `idlelib_mod.rs` file correctly registers the module via `register_module()`, exposes all 13 required stub attributes with the proper symbol strings, sets package semantics (`__package__`, `__path__`), and raises Python-level `NotImplementedError` via `mb_raise()` (not panic!). The `mod.rs` changes correctly place `pub mod idlelib_mod;` under the `// P3 stdlib modules` block and call `idlelib_mod::register()` in `register_stdlib()`. A `#[cfg(test)]` module includes `test_register` and `test_stub_raises` tests. The spec's `## Test Plan` section is present but is a TODO placeholder — the implementation's tests exceed what the placeholder defines. All hard checklist items pass. Minor soft findings noted but none require changes.",
+  "findings": [
+    {
+      "item": "R1: Module Registration — PASS",
+      "status": "pass",
+      "detail": "idlelib_mod.rs:10-35: `register()` builds attrs HashMap and calls `super::register_module(\"idlelib\", attrs)`. mod.rs:38: `pub mod idlelib_mod;` placed under `// P3 stdlib modules` block. mod.rs:132: `idlelib_mod::register();` called in `register_stdlib()`. `__name__` set to `\"idlelib\"` at idlelib_mod.rs:14."
+    },
+    {
+      "item": "R2: Stub Attributes — PASS",
+      "status": "pass",
+      "detail": "idlelib_mod.rs:20-32: All 13 required attribute names present (idle, run, idle_test, PyShell, config, colorizer, autocomplete, calltip, debugger, editor, filelist, outwin, rpc), each mapped to a symbol string with `mb_idlelib_` prefix. idlelib_mod.rs:39-47: `raise_not_implemented()` helper calls `super::super::exception::mb_raise()` with message `\"idlelib.{name} is not implemented in Mamba\"` — proper Python-level exception, not panic!(). idlelib_mod.rs:51-101: 13 stub functions each delegate to `raise_not_implemented()`."
+    },
+    {
+      "item": "R3: Package Semantics — PASS",
+      "status": "pass",
+      "detail": "idlelib_mod.rs:16: `__package__` = `\"idlelib\"`. idlelib_mod.rs:17: `__path__` = empty list. `idle` attribute registered so `from idlelib import idle` succeeds."
+    },
+    {
+      "item": "Test Plan: #[test] functions present — PASS",
+      "status": "pass",
+      "detail": "idlelib_mod.rs:103-182: `#[cfg(test)]` mod tests includes `test_register` (#[test] at line 121) and `test_stub_raises` (#[test] at line 153). `test_register` verifies `__name__`, `__package__`, `idle` symbol, and `PyShell` symbol. `test_stub_raises` verifies that stubs set a pending exception, return MbValue::none(), and that the exception is catchable."
+    },
+    {
+      "item": "Soft: test_register does not verify __path__ attribute",
+      "status": "warn",
+      "detail": "idlelib_mod.rs:122-151 (test_register): The test checks __name__, __package__, idle, and PyShell but does not assert that __path__ is present/is an empty list. R3 acceptance criteria includes `idlelib.__path__` being present. The code registers it correctly at line 17, so this is only a coverage gap."
+    },
+    {
+      "item": "Soft: test_stub_raises does not verify exception message text",
+      "status": "warn",
+      "detail": "idlelib_mod.rs:153-208 (test_stub_raises): Only asserts that an exception was set and can be caught; does not verify the message contains `\"idlelib.idle is not implemented in Mamba\"`. Spec Scenario (line 68) requires the message to contain `\"idlelib.idle\"`. The production code at line 43 produces the correct message; the test just doesn't assert it."
+    },
+    {
+      "item": "Soft: only 2 of 13 stubs tested for exception behavior",
+      "status": "warn",
+      "detail": "test_stub_raises exercises mb_idlelib_idle() and mb_idlelib_pyshell() only. The remaining 11 stubs share the same raise_not_implemented() helper, so the risk is low, but thorough coverage would call each."
+    },
+    {
+      "item": "Spec Test Plan section is TODO placeholder",
+      "status": "warn",
+      "detail": "idlelib-stub.md:130-133: The `## Test Plan` section contains only `<!-- TODO -->`. The implementation's tests are correct and complete, but the spec itself lacks a formal test plan. This is a spec quality concern, not an implementation defect."
+    }
+  ],
+  "checklist": {
+    "code_matches_spec_requirements": "pass — R1, R2, R3 all satisfied; all 13 stubs present; proper mb_raise() exception mechanism; mod.rs placement correct",
+    "test_plan_section_has_tests": "pass — ## Test Plan section present (idlelib-stub.md:130); diff contains #[cfg(test)] block with two #[test] functions at idlelib_mod.rs:103-182",
+    "existing_tests_no_regression": "pass — mod.rs changes are additive (2 lines); no existing APIs removed or modified; pattern consistent with all other stdlib stub modules",
+    "code_quality_and_readability": "pass — clear structure, raise_not_implemented() helper avoids repetition, consistent attribute insertion style, meaningful comments",
+    "error_handling_completeness": "pass — mb_raise() used correctly for Python-level NotImplementedError; MbValue::none() returned after raise; no panics",
+    "performance_considerations": "pass — HashMap registration is O(n) at startup, standard pattern across all stdlib stubs",
+    "documentation_where_needed": "pass — module-level doc comment describes purpose, non-goals, and Tkinter caveat"
+  },
+  "issues": [
+    {
+      "severity": "soft",
+      "file": "crates/cclab-mamba/src/runtime/stdlib/idlelib_mod.rs",
+      "lines": "121-151",
+      "description": "test_register does not assert __path__ attribute (R3 gap)"
+    },
+    {
+      "severity": "soft",
+      "file": "crates/cclab-mamba/src/runtime/stdlib/idlelib_mod.rs",
+      "lines": "153-208",
+      "description": "test_stub_raises does not verify exception message content (scenario at spec:68)"
+    },
+    {
+      "severity": "soft",
+      "file": "crates/cclab-mamba/src/runtime/stdlib/idlelib_mod.rs",
+      "lines": "153-208",
+      "description": "Only 2 of 13 stub functions tested for exception-raise behavior"
+    },
+    {
+      "severity": "soft",
+      "file": "cclab/changes/1000-patrol/groups/add-idlelib-stdlib/specs/idlelib-stub.md",
+      "lines": "130-133",
+      "description": "## Test Plan section is a TODO placeholder — spec quality gap, not an implementation defect"
+    }
+  ]
+}

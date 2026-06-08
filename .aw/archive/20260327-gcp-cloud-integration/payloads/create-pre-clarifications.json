@@ -1,0 +1,21 @@
+{
+  "group_id": "gcp-cloud-integration",
+  "answers": [
+    {
+      "question": "Should the GCP integrations use REST API directly (via reqwest) or a Google Cloud Rust SDK crate?",
+      "answer": "Use reqwest + REST API directly. cclab-api is a server framework (Quasar/Axum) with no HTTP client component, so reqwest is the right choice. Minimal dependencies, full control, consistent with existing CloudTasksBroker stub pattern."
+    },
+    {
+      "question": "Should the Cloud Scheduler backend manage schedule CRUD (create/update/delete jobs in GCP), or only trigger/read existing schedules?",
+      "answer": "Full CRUD — create, update, delete, pause/resume Cloud Scheduler jobs. The SchedulerBackend manages the full lifecycle."
+    },
+    {
+      "question": "Should CloudTasksBroker also implement the DelayedBroker trait (native scheduled/delayed task support)?",
+      "answer": "Yes — Cloud Tasks natively supports scheduleTime. Implement DelayedBroker for publish_delayed() and publish_at()."
+    },
+    {
+      "question": "What feature flag names for the new GCP integrations?",
+      "answer": "Separate flags: `cloudtasks` (already exists) for the broker, `cloud-scheduler` for the scheduler backend."
+    }
+  ]
+}

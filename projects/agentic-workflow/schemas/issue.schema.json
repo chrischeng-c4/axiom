@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cclab.dev/blueprint/issue/v1",
+  "title": "Issue",
+  "description": "Abstract data model for an issue/ticket. Storage-agnostic, platform-agnostic.",
+  "type": "object",
+  "required": ["id", "project_id", "issue_number", "title", "status", "created_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "project_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "issue_number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Human-readable sequencer, unique per project"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": ["string", "null"],
+      "description": "Full body (markdown)"
+    },
+    "status": {
+      "$ref": "#/$defs/IssueStatus"
+    },
+    "priority": {
+      "$ref": "#/$defs/IssuePriority"
+    },
+    "labels": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "author": {
+      "type": ["string", "null"]
+    },
+    "assignees": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "comment_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0
+    },
+    "comments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/Comment" },
+      "default": []
+    },
+    "url": {
+      "type": ["string", "null"],
+      "format": "uri"
+    },
+    "external_refs": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/ExternalRef" },
+      "default": {},
+      "description": "Platform bindings keyed by platform name (gitlab, github, jira)"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "closed_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "IssueStatus": {
+      "type": "string",
+      "enum": ["open", "in_progress", "closed"]
+    },
+    "IssuePriority": {
+      "type": ["string", "null"],
+      "enum": ["critical", "high", "medium", "low", null]
+    },
+    "Comment": {
+      "type": "object",
+      "required": ["id", "author", "body", "created_at"],
+      "properties": {
+        "id": { "type": "string" },
+        "author": { "type": "string" },
+        "body": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "ExternalRef": {
+      "type": "object",
+      "required": ["external_id"],
+      "properties": {
+        "external_id": { "type": "string" },
+        "url": { "type": ["string", "null"], "format": "uri" },
+        "platform_meta": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Platform-specific opaque metadata (gitlab_issue_iid, jira_key, etc.)"
+        }
+      }
+    }
+  }
+}

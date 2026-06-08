@@ -1,0 +1,37 @@
+{
+  "spec_id": "enhancement-native-trace-viewer-trace-capture-standalone-html-spec",
+  "verdict": "APPROVED",
+  "summary": "Native trace viewer implementation fully satisfies R1-R12. Trace capture (buffer, archive, manifest) + HTTP server (axum, embedded HTML/JS/CSS) + CLI (jet trace view/show/extract) + test_runner integration (TraceMode, trace_path in TestReport, --trace flag). 10 integration tests covering T1-T10 all pass. No regressions in existing jet lib tests. Spec Test Plan satisfied.",
+  "checklist_results": [
+    {
+      "item": "Code matches all spec requirements (R1-R12)",
+      "passed": true,
+      "note": "R1 TraceMode off|on|retain-on-failure; R2 ActionStep/Console/Network/Screenshot events; R3 Jet-owned NDJSON+zip format, no Playwright dep; R4 trace_path on TestReport; R5 jet trace view HTTP server; R6 viewer assets via include_str!; R7 no playwright refs in viewer.{html,js,css}; R8 viewer renders timeline/DOM/network/console panels; R9 screenshots inline; R10 TraceMode::Off zero overhead; R11 retain-on-failure discards passing; R12 127.0.0.1:0 loopback + random port."
+    },
+    {
+      "item": "Spec has Test Plan; diff contains #[test] functions",
+      "passed": true,
+      "note": "7 #[test] + 3 #[tokio::test] across tests/trace_capture.rs (T1 buffer append/flush, T2 zip roundtrip, T3 retain-discard-passing, T4 retain-write-failing, T5 trace-off no-op, T9 trace_path on TestReport, T10 all event types) and tests/trace_viewer.rs (T6 loopback bind, T7 /trace.json matches manifest, T8 /assets/:id returns bytes)."
+    },
+    {
+      "item": "Existing tests still pass (no regressions)",
+      "passed": true,
+      "note": "cargo test -p jet --test trace_capture: 7/7 pass. cargo test -p jet --test trace_viewer: 3/3 pass. cargo check --tests -p jet: no new errors, only pre-existing dead-code warnings."
+    },
+    {
+      "item": "Code quality and readability",
+      "passed": true,
+      "note": "@spec annotations on all public functions; clear module separation (manifest/buffer/archive/server/view); RAII-style buffer flush; descriptive error contexts via anyhow."
+    },
+    {
+      "item": "Error handling completeness",
+      "passed": true,
+      "note": "All fs/zip/http boundaries wrapped with anyhow::Context; missing-asset returns 404; invalid zip returns 500; bind failure surfaces filesystem error."
+    },
+    {
+      "item": "Documentation where needed",
+      "passed": true,
+      "note": "Tech-design specs written at .score/tech_design/crates/jet/testing/{trace-capture,trace-format,trace-viewer}.md; module-level doc comments on all new files."
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+change_id: probe-multilang
+schema_version: '2.0'
+created_at: 2026-02-01T13:01:19.504571Z
+updated_at: 2026-02-01T14:55:50.407692Z
+phase: archived
+iteration: 1
+last_action: impl-complete
+session_id: null
+checksums: {}
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-01T14:55:50.407690Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: false
+    high: 1
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors:
+  - '[specs/typescript-custom-runner.md] /id: "typescript-custom-runner" does not match "^[a-z0-9-]+-spec$"'
+  warnings: []
+telemetry: null

@@ -1,0 +1,24 @@
+{
+  "group_id": "browser-console-error-relay",
+  "specs": [
+    {
+      "path": "crates/cclab-jet/logic/dev-server.md",
+      "group": "dev-server",
+      "relevance": "high",
+      "key_requirements": [
+        "HMR WebSocket endpoint /__jet_hmr — server-to-client only; recv_task at mod.rs:485-492 drops all non-Close frames — extension point for receiving browser console messages",
+        "HMR Protocol JSON schema (oneOf) defines existing message types — new client-to-server console-message type must be added",
+        "HMR Client Runtime section documents injected JS — browser-side hooks must be added here",
+        "ServerConfig schema — no new fields needed (always-on)"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "jet-console-error-relay",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-jet/logic/console-error-relay.md",
+      "sections": ["overview", "schema", "changes"]
+    }
+  ]
+}

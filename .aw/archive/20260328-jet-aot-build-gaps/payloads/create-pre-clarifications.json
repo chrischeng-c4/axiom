@@ -1,0 +1,20 @@
+{
+  "group_id": "jet-aot-build-gaps",
+  "answers": [
+    {
+      "id": "q1",
+      "question": "Image optimization approach",
+      "answer": "Use existing `image` crate, enhance it with actual compression (resize, quality reduction, format-specific optimizations). No new dependencies."
+    },
+    {
+      "id": "q2",
+      "question": "HTML minification approach",
+      "answer": "Custom minimal implementation — jet currently has no HTML minification at all (only dev server HTML serving). Build a simple whitespace/comment removal pass, no new dependency."
+    },
+    {
+      "id": "q3",
+      "question": "Manual chunks config API shape",
+      "answer": "Jet-native simple object format: name → glob patterns mapping. Not Vite-compatible."
+    }
+  ]
+}

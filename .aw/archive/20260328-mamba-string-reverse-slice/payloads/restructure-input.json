@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "id": "string-reverse-slice",
+      "issues": [1111],
+      "requirements": "Fix string reverse slice [::-1] returning empty string. The bug is in string_ops.rs slice handling with negative step. When step is -1 and start/stop are omitted, the default start should be len-1 and default stop should be before index 0 (i.e. iterate backwards through entire string). The fix was partially applied in commit bc5921e9 but conformance xfail test may still exist. Ensure: (1) s[::-1] returns reversed string, (2) s[4:1:-1] returns correct substring reversed, (3) convert xfail test to passing test.",
+      "questions": []
+    }
+  ]
+}

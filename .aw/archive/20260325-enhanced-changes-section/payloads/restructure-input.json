@@ -1,0 +1,14 @@
+{
+  "groups": [
+    {
+      "id": "changes-section-targets",
+      "title": "Enhanced changes section with function/type-level targets + lens-assisted implementation prompt",
+      "issues": [],
+      "requirements": "Two levels in one change:\n\nLevel 1 — Enhanced changes section schema:\n- Add targets array to changes YAML: {type: function|struct|enum|trait|impl|method, name, change, anchor (optional), position: before|after|replace|append}\n- Add do_not_touch list (function/type names agent must not modify)\n- Update changes section CLI flags and fill prompt\n- Update change_spec review checklist to verify targets are function/type-level\n\nLevel 2 — Lens-assisted implementation prompt:\n- Parse targets from changes section in common_change_impl.rs\n- For each MODIFY target, call lens to extract function/type source code + line range\n- Build enriched implementation prompt: current code with insertion point marked + change description + DO NOT MODIFY list with line ranges\n- Agent sees exactly what to modify, not the whole file",
+      "questions": [
+        "How does cclab-lens expose function/struct lookup? Is there a Rust API or only CLI?",
+        "Does the changes section currently have a dedicated CLI generator or is it prose-only?"
+      ]
+    }
+  ]
+}

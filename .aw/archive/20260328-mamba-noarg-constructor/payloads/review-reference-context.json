@@ -1,0 +1,114 @@
+{
+  "group_id": "noarg-constructor-codegen",
+  "verdict": "needs_revision",
+  "summary": "Reference context covers the affected areas and relevance scores are reasonable. Two significant issues block passing: (1) the mir spec key requirements incorrectly claim CallExtern is in mir.md R1 — it is not; CallExtern exists in source (mir/mod.rs:49) but is completely absent from the spec, making this a pre-existing spec gap presented as documented coverage; (2) the spec plan is incomplete — mir.md must also be modified to add CallExtern to R1, since CallExtern is the exact instruction that triggers the verifier error and the spec should not remain silent on it. Additionally, hir-to-mir key requirements reference source code line numbers, commit hashes, and test scenario labels rather than actual spec R-IDs, and the tuple-ops spec entry is missing despite tuple() being one of the four constructors being fixed.",
+  "checklist": {
+    "all_areas_covered": {
+      "pass": true,
+      "notes": "All four constructors (list/tuple/set/dict) are mentioned in at least one spec entry. hir-to-mir, cranelift, cranelift-jit, symbols, mir, list-ops, set-ops, builtins all cover the affected pipeline stages. tuple-ops has no dedicated spec (the tuple-ops.md file at specs path is a mamba-tuple-cmp-spec change artifact, not a proper main spec), but mb_tuple_new is referenced in hir-to-mir, cranelift, and symbols entries — borderline pass."
+    },
+    "relevance_scores_reasonable": {
+      "pass": true,
+      "notes": "hir-to-mir=high (contains the routing fix), cranelift=high (verifier error site) are correct. cranelift-jit=medium (JIT execution context), list-ops=medium, set-ops=medium, symbols=medium, mir=medium (CallExtern instruction), builtins=low (mb_set_from_iterable location note) are all justified."
+    },
+    "key_requirements_accurate": {
+      "pass": false,
+      "notes": "Two inaccuracies — see F1 and F3. F1: mir R1 claims CallExtern is documented; it is not. F3: hir-to-mir key requirements cite source line numbers and commit hashes rather than spec R-IDs; none of R1-R9 in hir-to-mir.md cover zero-arg constructor routing."
+    },
+    "no_irrelevant_specs": {
+      "pass": true,
+      "notes": "All 8 specs are directly relevant to the zero-arg constructor codegen bug."
+    },
+    "spec_plan_main_spec_ref_set": {
+      "pass": true,
+      "notes": "The single spec plan entry has main_spec_ref set to crates/cclab-mamba/lower/hir-to-mir.md (not null)."
+    },
+    "spec_plan_sections_reasonable": {
+      "pass": true,
+      "notes": "overview/requirements/scenarios/changes is appropriate for a bugfix spec entry."
+    },
+    "spec_plan_modify_entries_valid_source": {
+      "pass": true,
+      "notes": "cclab/specs/crates/cclab-mamba/lower/hir-to-mir.md exists on disk and is a valid modify target."
+    },
+    "spec_plan_main_spec_ref_has_subfolder": {
+      "pass": true,
+      "notes": "crates/cclab-mamba/lower/hir-to-mir.md includes the lower/ subfolder — passes."
+    },
+    "spec_plan_one_logical_unit_per_file": {
+      "pass": true,
+      "notes": "hir-to-mir.md covers exactly HIR-to-MIR lowering. No bundling of unrelated concerns detected."
+    },
+    "spec_plan_no_duplicate_section_types": {
+      "pass": true,
+      "notes": "The four section types (overview, requirements, scenarios, changes) are distinct — no duplication."
+    },
+    "spec_plan_paths_mirror_source_structure": {
+      "pass": false,
+      "notes": "hir-to-mir.md correctly mirrors lower/hir_to_mir.rs. However, mir.md (mir/mod.rs) is entirely absent from the spec plan despite being the spec that needs to add CallExtern to R1. See F2."
+    }
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "critical",
+      "spec": "mir",
+      "issue": "R1 claim for CallExtern is a pre-existing spec gap presented as documented coverage",
+      "detail": "The reference context states 'R1: CallExtern instruction — dest, name (extern symbol), args (register list), ty; args must match the extern's declared parameter count or Cranelift verifier will reject the IR'. However, mir.md R1 (MIR Instruction Set) lists: LoadConst, LoadVar, StoreVar, GetAttr, SetAttr, GetItem, SetItem, BinOp, UnaryOp, BuildList, BuildDict, BuildSet, BuildTuple, Call. CallExtern is completely absent from the spec. Verified in source: mir/mod.rs:49 defines `CallExtern { dest: Option<VReg>, name: String, args: Vec<VReg>, ty: TypeId }` — the instruction exists in the implementation but has never been added to the spec. The cranelift backend handles it at codegen/cranelift/mod.rs:396 via emit_extern_call(). By presenting R1 as covering CallExtern, the reference context implies this gap is already documented when it is not.",
+      "required_fix": "Replace the mir R1 key requirement with: 'CallExtern is NOT currently documented in mir.md R1 — it is a spec gap. CallExtern { dest, name, args, ty } exists in source (mir/mod.rs:49) and is the instruction at the root of this bug (calling mb_list_from_iterable with 0 args when CallExtern.args=[] but the extern signature expects [I64]). This spec gap must be filled by adding CallExtern to R1.' Add a spec_plan entry to modify mir.md."
+    },
+    {
+      "id": "F2",
+      "severity": "significant",
+      "spec": "spec_plan",
+      "issue": "spec_plan is incomplete — mir.md must be added as a second modify entry",
+      "detail": "The spec plan has only one entry (hir-to-mir.md). Since CallExtern is the instruction directly implicated in the Cranelift verifier error (CallExtern with 0 args calling an extern that expects 1 arg), and since CallExtern is entirely absent from mir.md R1, the spec plan should also include a modify entry for mir.md to add CallExtern to the instruction set. Without this, the root-cause instruction remains undocumented after the change completes. The new spec plan entry would be: spec_id=mir-callex-extern-doc, action=modify, main_spec_ref=crates/cclab-mamba/mir/mir.md, sections=[requirements] (add CallExtern to R1's instruction set).",
+      "required_fix": "Add a second spec_plan entry: { spec_id: 'mir-call-extern-doc', action: 'modify', main_spec_ref: 'crates/cclab-mamba/mir/mir.md', source: 'cclab/specs/crates/cclab-mamba/mir/mir.md', sections: ['requirements'] } to document CallExtern in R1."
+    },
+    {
+      "id": "F3",
+      "severity": "significant",
+      "spec": "hir-to-mir",
+      "issue": "Key requirements reference source code artifacts (line numbers, commit hash, test labels) instead of spec R-IDs",
+      "detail": "The hir-to-mir key requirements include: 'BUILTIN_EXTERNS table maps... at hir_to_mir.rs:3447-3468', 'Fix committed in bc5921e9', 'Tests added in no_arg_constructor_tests.rs: S1 list()→empty, S2 tuple()→empty...'. None of R1-R9 in hir-to-mir.md addresses zero-arg constructor routing — the spec covers comprehension lowering (R1), generator codegen (R2), pattern matching (R3), loop-else (R4), f-strings (R5), starred unpacking (R6), dict/list unpacking (R7/R8), f-string debug (R9). Source code is verified: lines 3448-3456 contain the zero-arg redirect guard (boxed_args.is_empty() → redirect to _new variant), and no_arg_constructor_tests.rs exists at crates/cclab-mamba/tests/ with S1-S7 scenarios confirmed. However, citing source line numbers and commit hashes as 'key requirements' misrepresents the spec state. The requirements listed do NOT yet exist in the spec — the modify action will add them.",
+      "required_fix": "Replace source-code-referencing key requirements with spec-aware ones. Note that R1 in hir-to-mir.md already mentions mb_list_new()/mb_set_new()/mb_dict_new() for comprehension lowering, establishing that the zero-param construction pattern is related to R1. Frame the new requirements as additions: 'New requirement RN needed — builtin call routing: when extern_name in {mb_list_from_iterable, mb_tuple_from_iterable, mb_set_from_iterable, mb_dict_from_pairs} and args=[], redirect to corresponding _new variant with empty args'. Scenarios S1-S7 are accurate but should reference spec scenario IDs, not test function labels."
+    },
+    {
+      "id": "F4",
+      "severity": "minor",
+      "spec": "tuple-ops",
+      "issue": "No tuple-ops spec entry despite tuple() being one of the four constructors being fixed",
+      "detail": "The fix covers list()/tuple()/set()/dict() zero-arg constructors. list-ops, set-ops, and dict-ops (via symbols) have spec entries, but tuple-ops does not. The file cclab/specs/crates/cclab-mamba/runtime/tuple-ops.md exists but contains a change spec (id: mamba-tuple-cmp-spec, for adding comparison operators) rather than a proper main spec. The actual mb_tuple_new() is in runtime/tuple_ops.rs:32 and mb_tuple_from_iterable is at tuple_ops.rs:37, registered in symbols.rs:204/209 — but no main spec documents these functions. The symbols, cranelift, and hir-to-mir entries do mention mb_tuple_new, providing indirect coverage, so this does not block the change. However, the missing tuple-ops spec entry is a pre-existing gap that leaves tuple construction undocumented.",
+      "required_fix": "Add a tuple-ops spec entry with relevance=medium, referencing that mb_tuple_new and mb_tuple_from_iterable are defined in tuple_ops.rs but currently have no main spec. Optionally add a spec_plan entry to create a proper tuple-ops.md main spec as part of this change."
+    },
+    {
+      "id": "F5",
+      "severity": "minor",
+      "spec": "cranelift-jit",
+      "issue": "JIT_LOCK test-serialization claim is not in the cranelift-jit spec",
+      "detail": "The reference context states 'JIT_LOCK mutex serializes JIT test execution — no_arg_constructor_tests.rs acquires JIT_LOCK at start of each test to prevent concurrent JIT compilation races'. This is accurate about the code (jit.rs:28 defines `pub static JIT_LOCK: LazyLock<Mutex<()>>`, and no_arg_constructor_tests.rs:32 acquires it). However, cranelift-jit.md has no requirement covering JIT_LOCK for test concurrency. R1-R5 cover: JIT module init (R1), symbol table population (R2), finalization/entry-point retrieval (R3), executable memory management (R4), REPL incremental compilation (R5). The JIT_LOCK is implementation infrastructure not reflected in any spec requirement.",
+      "required_fix": "Either (a) note that JIT_LOCK is a source-verified implementation detail not covered by any current spec requirement, or (b) add it as supporting detail to R2 or R3 rather than presenting it as a spec requirement."
+    }
+  ],
+  "missing_coverage": [
+    {
+      "area": "CallExtern instruction in mir.md R1",
+      "detail": "CallExtern { dest: Option<VReg>, name: String, args: Vec<VReg>, ty: TypeId } (mir/mod.rs:49) is the central MIR instruction that causes the Cranelift verifier error when args count mismatches the extern's ABI. It is not documented in mir.md R1's instruction set. This is the most important spec gap to fill as part of this change."
+    },
+    {
+      "area": "tuple-ops main spec",
+      "detail": "cclab/specs/crates/cclab-mamba/runtime/tuple-ops.md currently holds a change spec (mamba-tuple-cmp-spec) rather than a proper main spec. mb_tuple_new() and mb_tuple_from_iterable() have no spec home. A proper main spec should be created or the existing file should be converted."
+    }
+  ],
+  "positive_observations": [
+    "Relevance scoring is accurate: hir-to-mir and cranelift correctly identified as high; all medium/low assignments are justified.",
+    "cranelift R5/R2/R3 requirement ID mappings are correct and match actual spec content.",
+    "cranelift-jit R2/R3 requirement ID mappings are correct.",
+    "list-ops R5 (Construction) correctly identifies mb_list_new() with verified zero-param signature in symbols.rs:199-201.",
+    "set-ops R1 correctly identifies mb_set_new() and accurately notes mb_set_from_iterable is in builtins.rs (verified: builtins.rs:1915).",
+    "symbols R1/R2/R4 requirement IDs are all correctly mapped to actual spec content.",
+    "Source code cross-checks pass: BUILTIN_EXTERNS routing (hir_to_mir.rs:34-37), arity redirect guard (hir_to_mir.rs:3451-3456), JIT_LOCK (jit.rs:28), mb_set_from_iterable in builtins.rs (line 1915), mb_tuple_new/mb_tuple_from_iterable in symbols.rs (lines 204/209), no_arg_constructor_tests.rs scenarios S1-S7 all verified.",
+    "spec_plan main_spec_ref path crates/cclab-mamba/lower/hir-to-mir.md has correct subfolder and mirrors source structure.",
+    "Sections (overview/requirements/scenarios/changes) are appropriate for a bugfix spec entry."
+  ]
+}

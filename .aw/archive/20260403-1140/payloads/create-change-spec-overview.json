@@ -1,0 +1,8 @@
+{
+  "spec_id": "check-alignment",
+  "section": "overview",
+  "group_id": "check-alignment-phase1",
+  "main_spec_ref": "crates/cclab-sdd/logic/check-alignment.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "schema", "logic", "cli", "test-plan", "changes"],
+  "content": "Validates spec files for format compliance and logical consistency. Library function `spec_alignment::check()` callable from CLI (`cclab sdd check-alignment`), artifact tools (write-time), and merge workflow.\n\n**Problem**: No automated spec format/content validation exists. Manual review of #1136 specs found 13 content gaps + 7 format violations. Agents generate malformed specs that pass through unchecked.\n\n**Solution**: Two-layer validation:\n\n| Layer | Rules | Method |\n|-------|-------|--------|\n| Format compliance | `missing_section_annotation`, `duplicate_section`, `format_priority_violation` | Parse structured section format (heading + `<!-- type: X lang: Y -->` annotation) |\n| Logical consistency | `duplicate_definition`, `definition_conflict_required`, `definition_conflict_field_name`, `definition_conflict_schema`, `rpc_field_consistency` | Parse JSON/YAML blocks within sections, group by `name` field, compare across duplicates |\n\n**Architecture**: Single `spec_alignment::check()` entry point. No regex for section parsing — uses structured heading + annotation format. JSON blocks parsed with `serde_json`. Output matches `validate-spec-structure` pattern (text + JSON, exit code 0/1).\n\n**Scope boundary**: Phase 1 only — spec-internal validation. No code\u2194spec coverage (Phase 2 #1141), no workflow integration (Phase 3 #1142)."
+}

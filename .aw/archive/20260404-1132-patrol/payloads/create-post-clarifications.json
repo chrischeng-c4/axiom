@@ -1,0 +1,13 @@
+{
+  "group_id": "wire-mamba-modules",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "Compiler import resolver doesn't call find_module()/MAMBA_MODULES — native module imports resolve to 0.0",
+    "success_criteria": "`from cclab.log import get_logger` resolves to correct FFI function pointer. `get_logger('test')` invokes Rust implementation.",
+    "boundary": {
+      "in_scope": "Import resolver integration with MAMBA_MODULES, python_name→FFI mapping via registry, JIT codegen for FFI calls",
+      "out_of_scope": "New module registrations, mamba.toml changes, type checking for FFI functions",
+      "constraints": "Must use existing RuntimeSymbol.python_name field for lookup. Resolver phase (not codegen)."
+    }
+  }
+}

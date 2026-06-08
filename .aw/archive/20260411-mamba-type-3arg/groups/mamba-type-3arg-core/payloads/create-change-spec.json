@@ -1,0 +1,9 @@
+{
+  "spec_id": "mamba-type-3arg-spec",
+  "group_id": "mamba-type-3arg-core",
+  "main_spec_ref": "crates/cclab-mamba/runtime/builtins.md",
+  "merge_strategy": "modify",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "section": "overview",
+  "content": "<!-- type: overview lang: markdown -->\n\nImplements `type(name, bases, namespace)` — the 3-arg form of the `type` builtin — in cclab-mamba (#974). This is the runtime primitive that backs all dynamic class creation. Django ORM model metaclass, SQLAlchemy declarative base, Pydantic BaseModel, attrs, dataclasses, enum.Enum, and ABCMeta all depend on it.\n\nThe implementation adds `mb_type3(name, bases, dict)` to `runtime/builtins.rs`. It extracts the class name string, resolves base class names from the bases tuple, separates dict entries into methods (callables and dunders) and class attributes, then delegates to `mb_class_register` in `runtime/class.rs` which provides C3 MRO computation, `__init_subclass__` hook dispatch, and `__set_name__` protocol. The `class` statement and `type()` 3-arg form share this same `mb_class_register` infrastructure.\n\nThe `dispatch_type` wrapper in `stdlib/builtins_mod.rs` routes by argument count: 1-arg → `mb_type`, 3-arg → `mb_type3`."
+}

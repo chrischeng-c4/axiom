@@ -1,0 +1,6 @@
+{
+  "spec_id": "jet-workspace-protocol-spec",
+  "group_id": "jet-workspace-protocol",
+  "section": "state-machine",
+  "content": "<!-- type: state-machine lang: mermaid -->\n\n```mermaid\nstateDiagram-v2\n    [*] --> Detecting: jet install\n\n    Detecting --> SingleInstall: WorkspaceMode::Single\n    Detecting --> WorkspaceInstall: WorkspaceMode::Jet\n\n    state WorkspaceInstall {\n        [*] --> Ordering\n        Ordering --> ProcessingPackages: topological_order() complete\n\n        state ProcessingPackages {\n            [*] --> ClassifyingDep\n\n            ClassifyingDep --> Symlinking: workspace: protocol\n            ClassifyingDep --> Downloading: external dep\n\n            Symlinking --> RecordingWorkspace: relative symlink created\n            Downloading --> RecordingExternal: hardlink into node_modules\n\n            RecordingWorkspace --> ClassifyingDep: more deps\n            RecordingExternal --> ClassifyingDep: more deps\n\n            RecordingWorkspace --> [*]: package done\n            RecordingExternal --> [*]: package done\n        }\n\n        ProcessingPackages --> ProcessingPackages: next package in topological order\n        ProcessingPackages --> CommittingLockfile: all packages processed\n        CommittingLockfile --> [*]\n    }\n\n    SingleInstall --> [*]: jet-lock.yaml written\n```"
+}

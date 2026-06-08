@@ -1,0 +1,18 @@
+{
+  "group_id": "issue-centric-workflow",
+  "answers": [
+    {
+      "question": "How does phase tracking move from STATE.yaml to issue?",
+      "answer": "Add phase, branch, git_workflow fields to issue frontmatter. Phase updates write to issue file instead of STATE.yaml. STATE.yaml is deprecated but kept for backward compat."
+    },
+    {
+      "question": "What happens to existing changes with STATE.yaml?",
+      "answer": "Backward compat: if STATE.yaml exists and issue has no phase field, read from STATE.yaml. New changes write to issue frontmatter only."
+    },
+    {
+      "question": "How does run-change find the issue?",
+      "answer": "score run-change --issue <slug>. Loads from .score/issues/open/{slug}.md. Reads phase from frontmatter to determine resume point."
+    }
+  ],
+  "summary": "Phase tracking moves to issue frontmatter. STATE.yaml deprecated with backward compat. run-change accepts --issue only."
+}

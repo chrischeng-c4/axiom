@@ -1,0 +1,77 @@
+change_id: nova-analyst-agent
+schema_version: '2.0'
+created_at: 2026-01-31T09:53:23.304575Z
+updated_at: 2026-01-31T11:30:00.000000Z
+phase: archived
+iteration: 1
+last_action: archived
+session_id: null
+checksums:
+  specs/analyst-agent.md:
+    hash: sha256:88abf8f520ab72ea57c17c6cd20b59d6c3c289e3036d9ff4af5b4320ff097c4f
+    validated_at: 2026-01-31T09:58:34.115489Z
+  specs/analysis-tools.md:
+    hash: sha256:1c94c739ff60508d742d461d972464e1f4521840d799e30215617f0610700bea
+    validated_at: 2026-01-31T09:58:34.113874Z
+  specs/platform-integrations.md:
+    hash: sha256:0e15b5085a8755a7bbb4925fbf551242459f41214308fc5774f68468d7ea0bba
+    validated_at: 2026-01-31T09:58:34.116360Z
+  proposal.md:
+    hash: sha256:ef92a2ed7162abfffd7d7fb141e99e28a9ea03c84cc8974492bf03c182fdc43e
+    validated_at: 2026-01-31T09:58:34.112358Z
+  tasks.md:
+    hash: sha256:1f212ba6ee25b25d5de7737aecf2eb07d63a64269a46250ed740534396c24b33
+    validated_at: 2026-01-31T09:58:34.113109Z
+  specs/storage-backend.md:
+    hash: sha256:6965f66e39465eba5522552b821b1554163c000a955c8a3f499f9cd1e6913840
+    validated_at: 2026-01-31T09:58:34.114417Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-31T09:56:07.909905Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T09:58:34.111834Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+implementation:
+  started_at: 2026-01-31T10:00:00.000000Z
+  completed_at: 2026-01-31T11:30:00.000000Z
+  commit: a9f3dba
+  test_results:
+    total: 69
+    passed: 69
+    failed: 0
+  files_created:
+    - crates/cclab-nova/src/agents/mod.rs
+    - crates/cclab-nova/src/agents/analyst.rs
+    - crates/cclab-nova/src/agents/coding.rs
+    - crates/cclab-nova/src/storage/mod.rs
+    - crates/cclab-nova/src/storage/memory.rs
+    - crates/cclab-nova/src/storage/file.rs
+    - crates/cclab-nova/src/tools/analysis.rs
+    - crates/cclab-nova/src/integrations/mod.rs
+    - crates/cclab-nova/src/integrations/github.rs
+    - crates/cclab-nova/src/integrations/gitlab.rs
+    - crates/cclab-nova/src/integrations/jira.rs
+telemetry: null

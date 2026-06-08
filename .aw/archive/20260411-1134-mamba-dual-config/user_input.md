@@ -1,0 +1,1 @@
+Unify dual MambaConfig structs — merge config/schema.rs format into driver/config.rs #1134

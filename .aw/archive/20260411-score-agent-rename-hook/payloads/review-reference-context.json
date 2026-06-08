@@ -1,0 +1,7 @@
+{
+  "group_id": "rename-agents-and-add-hook",
+  "verdict": "APPROVED",
+  "issues": [],
+  "notes": "The spec plan correctly identifies dispatch-model.md as the key spec to update. The reference context covers the core change: renaming sdd-* agent names to score-* in code, agent files, hook scripts, and settings. The spec plan is minimal and appropriate - only dispatch-model.md needs updating in the tech_design tree. All other changes (agent file renames, hook script renames, settings.json update, workflow/mod.rs update) are implementation details that don't need new specs.",
+  "summary": "Reference context APPROVED. Spec plan correctly targets dispatch-model.md for update. Codebase notes are comprehensive covering all 6 files to modify/create."
+}

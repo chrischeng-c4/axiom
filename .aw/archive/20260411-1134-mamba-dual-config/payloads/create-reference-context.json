@@ -1,0 +1,24 @@
+{
+  "group_id": "unify-mamba-config",
+  "specs": [
+    {
+      "spec_id": "config-schema",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/config/config-schema.md",
+      "source": ".score/tech_design/crates/cclab-mamba/config/config-schema.md",
+      "sections": ["overview", "data-model", "changes"],
+      "relevance": "high",
+      "notes": "Primary spec for MambaConfig — must reflect unification of driver/config.rs duplicate into this canonical struct"
+    },
+    {
+      "spec_id": "compiler-driver",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/driver/compiler-driver.md",
+      "source": ".score/tech_design/crates/cclab-mamba/driver/compiler-driver.md",
+      "sections": ["overview", "changes"],
+      "relevance": "high",
+      "notes": "Driver spec — must note removal of duplicate MambaConfig from driver/config.rs, driver/config.rs now only holds CompilerConfig"
+    }
+  ],
+  "context_notes": "The unification of dual MambaConfig structs (#1134) merges the richer config/schema.rs format into the canonical single struct. driver/config.rs now only contains CompilerConfig (backend, emit, opt_level, project_config). MambaConfig is imported from crate::config::MambaConfig. The flat format (entry_point at root, crates as HashMap<String, String>) is preserved via CrateEntry::Version variant and top-level expose HashMap for backward compatibility."
+}

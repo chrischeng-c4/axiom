@@ -1,0 +1,77 @@
+{
+  "groups": [
+    {
+      "id": "specir-and-test-codegen",
+      "issues": [932, 933],
+      "requirements": "Implement two code generators for existing spec schemas in the generate subsystem. (1) SpecIR last-mile codegen (#932): the full pipeline exists (SpecIR 6 variants, SemanticType 12 ops, SpecBundle dependency graph, Tera template engine with filters) but no generator actually consumes SpecIR. Implement at least one target generator (Axum recommended) with real .j2/.tera template files. Priority spec types: schema (JSON Schema → Rust struct), rest-api (OpenAPI → route handler skeleton), state-machine (StatePlus → enum + match arms), db-model (ErdPlus → SQL DDL). Template test suite: known spec input → known correct output. Phase 2 (SpecBundle cross-section composition) optional for this change. (2) RequirementPlus test scaffold (#933): RequirementPlus already has BDD fields (given/when/then, test_type: unit/integration/e2e, verification) and requirement-element relationships (Satisfies/Verifies/Refines/Traces), but no generator produces test files. Implement a generator that maps ElementDef → test function skeleton with BDD structure (// Given / // When / // Then, assertion stubs derived from `then` field, traceability comment linking to requirement ID). Rust #[test] as the first target. Add coverage validation: parse RequirementPlus spec, check every Requirement has at least one Verifies → Element relationship, report uncovered requirements. Both generators share the same Tera-based template infrastructure and live in the generate subsystem of crate:sdd.",
+      "questions": [
+        {
+          "topic": "First codegen target for #932",
+          "question": "Should the first working generator target Axum (Rust) as suggested in the issue, or is there a preference for FastAPI (Python) or Express (TypeScript)? The choice affects which template language and test fixtures to write first."
+        },
+        {
+          "topic": "Template file location",
+          "question": "Where should .j2/.tera template files live? Options: (A) embedded in the crate via include_str! / Rust include macros (no runtime file dependency), (B) installed alongside the binary in a well-known path (e.g., ~/.cclab/templates/), (C) configurable path via config.toml. Which approach matches the existing Tera engine setup?"
+        },
+        {
+          "topic": "SpecBundle cross-section composition scope",
+          "question": "Is Phase 2 (SpecBundle traversal + cross-section composition, e.g., 'route handler = rest-api × schema × logic × interaction') in scope for this change, or should only Phase 1 (per-section-type, single-spec codegen) be targeted now?"
+        },
+        {
+          "topic": "Test coverage validation mode",
+          "question": "For the #933 coverage validation (requirements without Verifies relationships), should missing coverage default to: (A) warning — print to stderr and continue, (B) error — fail the generate step, (C) strict flag — only errors when --strict is passed? What is the default behavior?"
+        },
+        {
+          "topic": "cclab-probe integration scope for #933",
+          "question": "The draft test-generation.md spec references cclab-probe. Is integration with cclab-probe (e.g., running generated tests via probe) in scope for this change, or is the deliverable limited to file scaffold generation only?"
+        }
+      ]
+    },
+    {
+      "id": "new-spec-types",
+      "issues": [934, 937],
+      "requirements": "Extend the SDD section type system with two new additions. (1) Deploy section type (#934): add a `deploy` section type for infra-as-code concerns currently absent from SDD (containers, k8s manifests, migrations, env vars, rollback strategy, resource requirements). Define the YAML DSL (services: name/image/replicas/env/ports/health_check, migrations: type/path/run_before, rollback: strategy/auto_rollback_on). Add to section_rules matcher (deploy|container|k8s|docker|helm|terraform|infra|migration|rollback). Implement CLI flags for the deploy section. Add validation: referenced services/migrations are internally consistent, cross-ref to db-model for migration validation, cross-ref to rest-api for port/route validation. Implement at least one codegen target (docker-compose YAML or k8s manifest). (2) Frontend codegen for wireframe/component/design-token section types (#937): all three schema definitions exist (wireframe YAML DSL, CEM JSON for component, W3C DTCG 2025.10 JSON for design-token) but have no validators or code generators. Phase 1: wireframe YAML → React component tree scaffold (page layout, form fields, nav routes). Phase 2: DTCG design tokens → CSS custom properties and/or Tailwind config object. Phase 3: CEM attributes/events/slots/CSS parts → TypeScript prop interface + component skeleton. Cross-section composition: wireframe + component + design-token → complete UI component; cross-ref to rest-api for data fetching hook generation. Both items extend the crate:sdd section type system and can share the section registration and validation infrastructure.",
+      "questions": [
+        {
+          "topic": "Deploy codegen first target (#934)",
+          "question": "Which infra-as-code output format should be the first codegen target: (A) docker-compose YAML (simpler, widely used), (B) k8s Deployment + Service manifest (production-grade), or (C) Helm chart (parameterized, requires more template work)?"
+        },
+        {
+          "topic": "Deploy section validation blocking behavior",
+          "question": "Should deploy section validation (service/migration consistency, cross-refs to db-model and rest-api) be a hard blocker in the change-spec phase, or a soft warning that allows the spec to proceed? Is the cross-ref validation required for the initial implementation?"
+        },
+        {
+          "topic": "Frontend framework target for wireframe codegen (#937)",
+          "question": "Which frontend framework should be the first target for wireframe → component scaffold: React, Vue, or Svelte? Does the project have an existing preference (e.g., based on the wireframe YAML DSL design from #897)?"
+        },
+        {
+          "topic": "Scope of frontend cross-section composition",
+          "question": "Is cross-ref from wireframe to rest-api (for generating data fetching hooks) required for this change, or is Phase 1 (wireframe → component scaffold only) the deliverable? Phase 3 (CEM → TypeScript interface) in scope or deferred?"
+        },
+        {
+          "topic": "Shared validator infrastructure between #934 and #937",
+          "question": "Both deploy and frontend section types lack validators (deploy has no validator yet; wireframe, component, design-token all show validator: ❌ in the issue table). Should a unified validator registration mechanism be introduced in this change, or should each section type add its own ad-hoc validator?"
+        }
+      ]
+    },
+    {
+      "id": "group-directory-fix",
+      "issues": [956],
+      "requirements": "Fix the file placement bug in multi-group changes where payloads/, prompts/ (spec-fill + implementation), and specs/ are written to the change root instead of under groups/{group}/. Expected structure: cclab/changes/{id}/groups/{group-id}/payloads/, groups/{group-id}/prompts/, groups/{group-id}/specs/ — mirroring the existing correct placement of requirements.md, pre_clarifications.md, post_clarifications.md, reference_context.md. Affected phases: (1) create_change_spec — currently writes specs and fill prompts to root; must write to groups/{group-id}/specs/ and groups/{group-id}/prompts/. (2) create_change_implementation — currently writes impl prompts to root; must write to groups/{group-id}/prompts/. (3) Mainthread payload writes — currently write to root payloads/; must route to groups/{group-id}/payloads/. The merge phase reads from changes/{id}/specs/ — update the merge reader to look in groups/{group-id}/specs/ per group, or establish a symlink/aggregation strategy. Ensure backward compatibility with existing changes that already have root-level specs/ (detect and handle both layouts).",
+      "questions": [
+        {
+          "topic": "Merge phase reader strategy",
+          "question": "The merge phase currently reads from changes/{id}/specs/. After this fix, specs live under groups/{group-id}/specs/. Should the merge phase: (A) iterate all groups and collect specs from each groups/{group-id}/specs/, (B) maintain a root-level specs/ as a flat aggregation (symlinks or copies) for backward compatibility, or (C) update the merge phase to be group-aware with per-group ordering? Which preserves group traceability best?"
+        },
+        {
+          "topic": "Backward compatibility with existing changes",
+          "question": "Some in-flight changes (e.g., changes already at spec or implementation phase) have root-level specs/ and prompts/. Should the fix: (A) only apply to newly-created changes (check STATE.yaml version or created_at), (B) auto-migrate existing root-level files to the correct group paths, or (C) support both layouts via a layout-detection heuristic? Are there any in-flight changes that need protection?"
+        },
+        {
+          "topic": "Payload write routing in mainthread",
+          "question": "The mainthread writes payload files manually. Does the mainthread have access to the current group ID at payload-write time, or does group routing need to be inferred from context (e.g., current STATE.yaml active group)? Is there a group context always available during spec and implementation phases?"
+        }
+      ]
+    }
+  ]
+}

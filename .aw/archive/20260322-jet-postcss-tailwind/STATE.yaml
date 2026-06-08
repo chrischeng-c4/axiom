@@ -1,0 +1,130 @@
+change_id: jet-postcss-tailwind
+schema_version: '2.0'
+created_at: 2026-03-22T06:43:17.351527Z
+updated_at: 2026-03-22T08:14:11.196786Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: jet-postcss-tailwind-spec
+task_revisions:
+  jet-postcss-tailwind-spec: 1
+impl_spec_phase: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 94063
+    timestamp: 2026-03-22T06:44:57.626890Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 270421
+    timestamp: 2026-03-22T06:50:36.830642Z
+  - step: analyze_spec_jet-postcss-tailwind-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 152176
+    timestamp: 2026-03-22T07:04:35.828607Z
+  - step: analyze_spec_jet-postcss-tailwind-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1005256
+    timestamp: 2026-03-22T07:08:15.808963Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 202947
+    timestamp: 2026-03-22T07:40:27.960148Z
+  - step: implement_tests_jet-postcss-tailwind-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1197625
+    timestamp: 2026-03-22T07:42:11.379954Z
+  - step: review_impl_jet-postcss-tailwind-spec
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 247097
+    timestamp: 2026-03-22T07:46:26.822814Z
+  - step: review_impl_jet-postcss-tailwind-spec
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 150338
+    timestamp: 2026-03-22T08:11:40.859096Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 754103
+    timestamp: 2026-03-22T08:12:00.860881Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 966906
+    timestamp: 2026-03-22T08:12:28.193608Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 4088590
+    timestamp: 2026-03-22T08:13:02.820044Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 1029
+    title: 'feat(jet): PostCSS pipeline + Tailwind CSS JIT support'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - jet-postcss-tailwind
+  change_spec: []
+  pre_clarifications:
+  - jet-postcss-tailwind
+  change_implementation: []
+  post_clarifications:
+  - jet-postcss-tailwind

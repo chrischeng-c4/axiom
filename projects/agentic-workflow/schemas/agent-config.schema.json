@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cclab.dev/agkit/agent-config/v1",
+  "title": "AgentConfig",
+  "description": "Agent routing and execution configuration for SDD workflow phases.",
+  "type": "object",
+  "properties": {
+    "execution_mode": {
+      "$ref": "#/$defs/ExecutionMode"
+    },
+    "phase_agents": {
+      "type": "object",
+      "description": "Per-phase agent assignment. Key = phase name, value = ordered executor chain.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Ordered list of executors to try (e.g. ['gemini:flash', 'claude:sonnet', 'mainthread'])"
+      }
+    },
+    "providers": {
+      "type": "object",
+      "description": "LLM provider configurations.",
+      "properties": {
+        "gemini": { "$ref": "#/$defs/ProviderConfig" },
+        "claude": { "$ref": "#/$defs/ProviderConfig" },
+        "openai": { "$ref": "#/$defs/ProviderConfig" },
+        "codex": { "$ref": "#/$defs/ProviderConfig" }
+      }
+    },
+    "max_retries": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 3
+    },
+    "complexity_routing": {
+      "type": "boolean",
+      "default": true,
+      "description": "Route to different models based on task complexity"
+    }
+  },
+  "$defs": {
+    "ExecutionMode": {
+      "type": "string",
+      "enum": ["multi_agents", "multi_claude_agents", "claude_subagents", "mainthread"],
+      "description": "How agents are dispatched: multi_agents (gemini+codex+claude), multi_claude_agents (claude subprocesses), claude_subagents (claude with --subagent), mainthread (no external agents)"
+    },
+    "ProviderConfig": {
+      "type": "object",
+      "properties": {
+        "default_model": { "type": "string" },
+        "api_key_env": { "type": "string", "description": "Environment variable name for API key" },
+        "models": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ModelConfig" }
+        }
+      }
+    },
+    "ModelConfig": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "context_window": { "type": "integer" },
+        "max_output": { "type": "integer" },
+        "cost_per_1k_input": { "type": "number" },
+        "cost_per_1k_output": { "type": "number" },
+        "supports_tools": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}

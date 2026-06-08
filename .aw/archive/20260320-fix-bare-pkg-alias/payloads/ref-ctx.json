@@ -1,0 +1,1 @@
+{"group_id":"jet-resolver-bare-pkg-alias","specs":[{"spec":"pkg-manager","group":"cclab-jet","relevance":"high","key_requirements":"BFS resolver, version parsing"},{"spec":"pkg-manager-pnpm-parity","group":"cclab-jet","relevance":"medium","key_requirements":"npm: alias handling"}]}

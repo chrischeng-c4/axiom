@@ -1,0 +1,13 @@
+{
+  "group_id": "jit-refcount-audit",
+  "answers": [
+    {
+      "question": "Runtime ownership audit scope for mb_* functions?",
+      "answer": "Exhaustive audit of ALL mb_* runtime functions. Classify every return value as new reference (caller owns) or borrowed reference (caller must retain). This is safer and prevents future regressions."
+    },
+    {
+      "question": "Should re-enabling GC be part of this change or a separate issue?",
+      "answer": "Include GC re-enable in this change. After refcounting is working correctly with EMIT_REFCOUNT_CALLS=true, re-enable GC in gc.rs (set enabled: true)."
+    }
+  ]
+}

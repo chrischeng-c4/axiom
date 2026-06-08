@@ -1,0 +1,59 @@
+{
+  "group_id": "jet-install-optimizations",
+  "verdict": "FAIL",
+  "summary": "The reference context partially covers the group but has three problems: (1) jit-runner is unrelated to install/metadata optimizations and should be removed, (2) pkg-manager-pnpm-parity lists Store GC as the key requirement, but the relevant requirements for this group are optionalDependencies platform check and npm: alias resolution from that spec, (3) critical new work areas — disk metadata cache (~/.cache/jet/metadata/), HTTP/2 configuration, XDG migration, and --no-cache flag — have no spec coverage in any of the three cited specs.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Pre-clarifications define two concrete requirements: (Q1) eager level-by-level BFS metadata prefetch and (Q2) auto-migration from ~/.jet-store/.metadata/ to ~/.cache/jet/metadata/. The broader issues (#881, #883, #905) also require: disk metadata cache with TTL, HTTP/2 multiplexing in RegistryClient, XDG_CACHE_HOME respect, and a --no-cache CLI flag. None of the three cited specs covers disk-based metadata caching, HTTP/2 configuration, the XDG migration path, or the --no-cache flag. The pkg-manager spec's store layout only models ~/.jet-store/{name}@{version}/ (extracted packages) and DashMap in-memory caching — there is no .metadata/ subdirectory or ~/.cache/jet/ path in any spec."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "pkg-manager HIGH is correct. pkg-manager-pnpm-parity MEDIUM is defensible only if the optional deps and alias requirements are cited. jit-runner LOW is not justified: the spec covers JIT TypeScript execution and task runner pipeline — neither concept touches metadata fetch latency, disk caching, HTTP/2, or XDG path migration. It contributes no background relevant to this group."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "pkg-manager: 'BFS Dependency Resolution, RegistryClient::get_package_metadata, DashMap in-memory cache' are all verifiable in the spec and are accurate. pkg-manager-pnpm-parity: 'Store GC' is present in the spec (stateDiagram-v2 and /store/prune endpoint) but is not relevant to install optimizations — Store GC prunes orphaned extracted packages, not metadata cache. The actually relevant requirements from that spec are: optionalDependencies with os/cpu/libc platform check (directly needed for #883) and npm: alias resolution in transitive deps (directly needed for #883). jit-runner: no key requirements listed, which is consistent with it having no connection to the group."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "jit-runner is irrelevant. It covers jet run <script>, JIT TypeScript transformation via Tree-sitter, task runner with DAG scheduling and content-hash caching — none of these touches the package resolution or registry client code being changed. It should be removed."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "No spec covers the disk metadata cache. Issue #881 proposes caching registry JSON to ~/.jet-store/.metadata/{name}.json, and issue #905 migrates this to ~/.cache/jet/metadata/ (XDG spec) with XDG_CACHE_HOME support. The pkg-manager spec's store layout schema only models ~/.jet-store/{name}@{version}/ (extracted packages). The DashMap cache in the spec is per-session in-memory only. There is no spec for the disk cache data model, TTL logic, cache invalidation, or XDG_CACHE_HOME fallback.",
+      "recommendation": "Add disk metadata cache coverage to pkg-manager spec: schema for the cached JSON file, TTL field, XDG path resolution logic (~/.cache/jet/metadata/ or $XDG_CACHE_HOME/jet/metadata/), and the one-time migration from ~/.jet-store/.metadata/."
+    },
+    {
+      "severity": "HIGH",
+      "description": "No spec covers HTTP/2 multiplexing. Issue #881 identifies HTTP as the dominant bottleneck (~3.6s of 4.9s cold install) and proposes http2_prior_knowledge or http2_adaptive_window in reqwest. Issue #905 tasks validation of this. The RegistryClient::get_package_metadata spec entry shows no HTTP/2 configuration.",
+      "recommendation": "Add HTTP/2 configuration to the RegistryClient section of pkg-manager spec: reqwest builder options, http2_adaptive_window flag, and expected behavior (connection reuse across registry requests)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "No spec covers the --no-cache CLI flag. Issue #905 explicitly lists this as a task. The pkg-manager spec's /install and /add API definitions have no frozen_lockfile-style parameter for cache bypass, and the Changes table for pkg-manager does not include a cli.rs entry for this flag.",
+      "recommendation": "Add --no-cache to the pkg-manager spec's CLI section and the /registry/metadata API entry (x-caching field should note the bypass path)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "pkg-manager-pnpm-parity is cited with key requirement 'Store GC', but the requirements actually relevant to this group are in the same spec: optionalDependencies with os/cpu/libc platform check (needed for #883 optional dep bug fix) and npm: alias resolution in transitive deps (needed for #883 npm: alias bug fix). Store GC (jet store prune, orphan cleanup) is unrelated to install performance or resolver correctness.",
+      "recommendation": "Replace 'Store GC' with 'optionalDependencies platform check, npm: alias resolution' in the key requirements column for pkg-manager-pnpm-parity."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "jit-runner is included at low relevance with no key requirements. The spec covers JIT TypeScript execution via Tree-sitter, watch mode, and task runner with DAG/cache — none of which is touched by install optimization work. Its inclusion as background context adds no signal for implementers.",
+      "recommendation": "Remove jit-runner from the reference context."
+    },
+    {
+      "severity": "LOW",
+      "description": "The pkg-manager spec contains stale data that conflicts with already-landed changes from #883: (1) Parallel Download Pipeline diagram still shows Semaphore=16 (bumped to 50 in #883), (2) Store Operations stateDiagram shows Hardlink (changed to single directory symlink in #883), (3) Changes table shows hardlink in store.rs description. These are spec drift issues rather than reference context errors, but reviewers/implementers may be misled.",
+      "recommendation": "Note in pkg-manager spec that Semaphore=16 and hardlink approach are superseded by #883 changes (semaphore=50, symlink-based linking). This is a separate spec update task, not a blocker for this review."
+    }
+  ]
+}

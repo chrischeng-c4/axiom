@@ -1,0 +1,30 @@
+change_id: mamba-conformance-xfail
+schema_version: '2.0'
+created_at: 2026-03-26T10:28:30.947829Z
+updated_at: 2026-03-27T02:13:26.115798Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  impl:conformance-xfail-reduction-spec: 1
+current_task_id: conformance-xfail-reduction-spec
+task_revisions:
+  conformance-xfail-reduction-spec: 1
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - conformance-xfail-reduction
+  change_implementation: []
+  change_spec: []
+  pre_clarifications:
+  - conformance-xfail-reduction
+  post_clarifications:
+  - conformance-xfail-reduction

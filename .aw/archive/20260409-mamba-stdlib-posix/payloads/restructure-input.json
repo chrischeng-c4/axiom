@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "id": "stdlib-posix-module",
+      "issues": [],
+      "requirements": "Add native stdlib `posix` module to Mamba runtime.\n\n1. Create `crates/cclab-mamba/src/runtime/stdlib/posix_mod.rs` implementing the CPython `posix` module.\n2. In CPython, `posix` is the low-level POSIX system call interface that `os` wraps on Unix. The existing `os_mod.rs` already implements most high-level `os` functions. The `posix` module should:\n   - Re-export the same callable functions that `os` provides (getpid, getcwd, getenv, listdir, mkdir, remove, rename, makedirs, rmdir, walk, cpu_count)\n   - Add `posix.environ` as a live dict of environment variables (populated from `std::env::vars()`)\n   - Add `posix.uname_result` stub (returns a tuple of (sysname, nodename, release, version, machine))\n   - Add `posix.stat_result` stub\n3. Register the module as both `posix` (direct) in `mod.rs`.\n4. The `os` module already handles registration as `os` and `os.path`.\n5. Follow the `os_mod.rs` dispatch pattern (not the newer extern C ABI from builtins_mod.rs) for consistency with existing os code.\n6. Include unit tests for posix.getpid, posix.getcwd, posix.environ, posix.uname_result.\n7. Verify no regressions: `cargo test -p cclab-mamba --lib -- --test-threads=1 --skip test_long_reference_chain -q`",
+      "questions": []
+    }
+  ]
+}

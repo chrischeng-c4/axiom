@@ -1,0 +1,7 @@
+{
+  "change_id": "cclab-api-asgi-dispatch",
+  "spec_id": "asgi-dispatch-spec",
+  "group_id": "asgi-fix",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: python/cclab/api/app.py\n    action: MODIFY\n    desc: |\n      R1: In __init__, create self._fastapi_app = FastAPI(title=title, version=version, docs_url=docs_url, redoc_url=redoc_url, openapi_url=openapi_url, lifespan=lifespan_wrapper)\n      R2: In _register_route, add self._fastapi_app.add_api_route(path, handler, methods=[method], name=name, summary=summary, description=description, tags=tags, deprecated=deprecated, status_code=status_code, response_model=response_model)\n      R3: In include_router, add self._fastapi_app.include_router(router, prefix=prefix, tags=tags)\n      R4: Replace __call__ body with: await self._fastapi_app(scope, receive, send)\n      Remove ~200 lines of manual route matching, body parsing, dependency resolution, and response serialization from __call__\n```"
+}

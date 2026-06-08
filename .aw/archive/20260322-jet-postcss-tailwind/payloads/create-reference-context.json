@@ -1,0 +1,66 @@
+{
+  "change_id": "jet-postcss-tailwind",
+  "group_id": "jet-postcss-tailwind",
+  "crate_context": [
+    {
+      "crate": "cclab-jet",
+      "description": "Core Jet bundler/build tool — CSS pipeline, build pipeline, dev server integration"
+    }
+  ],
+  "sections": [
+    "overview",
+    "state-machine",
+    "logic",
+    "dependency",
+    "interaction",
+    "config",
+    "test-plan"
+  ],
+  "specs": [
+      {
+        "spec_path": "cclab-jet/aot-build.md",
+        "relevance": "high",
+        "rationale": "R5: CSS Pipeline requirement directly addresses PostCSS/Tailwind integration. Defines the CSS pipeline supporting concatenation, CSS Modules, PostCSS/Tailwind integration, and asset handling. Essential architectural reference for where Tailwind CSS fits in the production build pipeline."
+      },
+      {
+        "spec_path": "cclab-jet/jit-runner.md",
+        "relevance": "high",
+        "rationale": "Q6: dev-mode-watch-integration answer states 'Jet already has file-watch via the notify crate (dev_server module)'. This spec documents the watch infrastructure needed for CSS file monitoring and HMR reload in dev mode. Critical for watch integration requirement."
+      },
+      {
+        "spec_path": "cclab-jet/pkg-manager.md",
+        "relevance": "medium",
+        "rationale": "Package manager handles dependency resolution for lightningcss and Tailwind plugins. Referenced in pre-clarifications as the resolver that will identify and install plugin utilities. Context needed for integration points with package manager for version constraints."
+      },
+      {
+        "spec_path": "cclab-jet/nx-support.md",
+        "relevance": "medium",
+        "rationale": "Monorepo/workspace support. Tailwind CSS scanning must work across monorepo workspace packages. Understanding Jet's workspace detection helps scope CSS file scanning behavior in multi-package repos."
+      },
+      {
+        "spec_path": "cclab-jet/tree-shaking.md",
+        "relevance": "medium",
+        "rationale": "CSS pipeline output integrates with bundler's tree-shaking phase. Understanding DCE and side effects detection helps design how generated CSS rules interact with the overall pipeline minification strategy."
+      },
+      {
+        "spec_path": "cclab-jet/variable-mangling.md",
+        "relevance": "low",
+        "rationale": "JavaScript minification. CSS minification is handled by lightningcss (per Q5 answer), not the JS mangler. Provides context on overall minification strategy but not directly relevant to CSS implementation."
+      },
+      {
+        "spec_path": "cclab-jet/bundle-optimization-hoisting.md",
+        "relevance": "low",
+        "rationale": "Scope hoisting and module flattening for JavaScript. CSS pipeline is independent from JS hoisting optimization. Provides broader bundler context but minimal direct relevance to Tailwind CSS implementation."
+      },
+      {
+        "spec_path": "cclab-jet/pkg-manager-pnpm-parity.md",
+        "relevance": "low",
+        "rationale": "Advanced package manager features (audit, patch, publish, workspace protocols). While workspace support is noted, this spec focuses on pnpm compatibility features less directly related to CSS pipeline implementation."
+      },
+      {
+        "spec_path": "cclab-jet/scope-hoisting.md",
+        "relevance": "low",
+        "rationale": "Bundle optimization via scope hoisting. CSS pipeline operates independently from JS scope analysis. Background context only."
+      }
+    ]
+}

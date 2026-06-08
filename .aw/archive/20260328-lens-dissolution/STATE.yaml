@@ -1,0 +1,57 @@
+change_id: lens-dissolution
+schema_version: '2.0'
+created_at: 2026-03-25T07:39:02.748846Z
+updated_at: 2026-03-28T04:06:26.557152Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  impl:agent-output-format: 2
+current_task_id: lens-dissolution-restructure
+task_revisions:
+  agent-output-format: 1
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 944
+    title: 'feat(lens): wire cross-file type propagation — deep_inference is implemented but never called'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 946
+    title: 'feat(lens): agent context builder — smart file selection for AI task execution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 949
+    title: 'feat(lens): agent-optimized output — structured JSON for AI consumption'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1087
+    title: 'refactor: dissolve lens/ module into sdd top-level structure'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  post_clarifications:
+  - lens-dissolution
+  reference_context:
+  - lens-dissolution
+  pre_clarifications:
+  - lens-dissolution
+  change_spec: []
+  change_implementation: []

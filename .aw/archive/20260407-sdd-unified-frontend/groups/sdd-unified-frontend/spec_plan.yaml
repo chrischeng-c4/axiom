@@ -1,0 +1,9 @@
+- spec_id: sdd-unified-frontend-spec
+  action: create
+  main_spec_ref: crates/sdd/logic/unified-frontend.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - dependency
+  - changes

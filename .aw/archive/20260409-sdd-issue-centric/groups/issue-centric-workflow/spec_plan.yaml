@@ -1,0 +1,8 @@
+- spec_id: sdd-issue-centric
+  action: create
+  main_spec_ref: crates/sdd/logic/issue-centric-workflow.md
+  sections:
+  - overview
+  - schema
+  - state-machine
+  - changes

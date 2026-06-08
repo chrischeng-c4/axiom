@@ -1,0 +1,38 @@
+{
+  "change_id": "mamba-test-coverage-remaining",
+  "group_id": "mamba-test-coverage-remaining",
+  "answers": [
+    {
+      "question_id": "test placement strategy",
+      "answer": "Both: inline #[cfg(test)] unit tests at the bottom of each source file for per-function branch coverage, AND integration tests in crates/cclab-mamba/tests/ for cross-module scenarios. Same pattern as round 1."
+    },
+    {
+      "question_id": "socket_mod network isolation",
+      "answer": "Use real loopback socket (127.0.0.1) for socket tests. No mocks. Tests must be self-contained — bind to port 0 (OS-assigned) to avoid port conflicts."
+    },
+    {
+      "question_id": "threading_mod uncovered branches",
+      "answer": "Test all branches: thread lifecycle, synchronization primitives, and thread-local storage. For race-condition branches, use deterministic synchronization (barriers, channels) to force specific orderings. No branches excluded — test everything."
+    },
+    {
+      "question_id": "ffi/c_types.rs test prerequisites",
+      "answer": "Read the source to determine which case (a/b/c). All types are Rust-side definitions. Add inline tests for every type conversion, size assertion, and alignment check. No C library required for testing the type definitions themselves."
+    },
+    {
+      "question_id": "driver/mod.rs test isolation level",
+      "answer": "Use both: unit tests with string inputs (compile_str-style helpers if they exist, otherwise create minimal ones) for branch coverage, and integration tests with real .py source files for end-to-end paths."
+    },
+    {
+      "question_id": "codegen/cranelift tests — input level",
+      "answer": "Read existing codegen test patterns first. Use whatever fixtures exist (MIR graphs or synthetic IR). If existing tests use full MIR, follow that pattern. The goal is branch coverage of the Rust code, not Cranelift IR correctness."
+    },
+    {
+      "question_id": "lower/ast_to_hir and hir_to_mir fixtures",
+      "answer": "Read existing lowering test patterns. Use whichever approach is already established (manual AST construction or parse-from-string helpers). Follow the existing pattern for consistency."
+    },
+    {
+      "question_id": "parser/expr_compound.rs uncovered constructs",
+      "answer": "Read the source file and cross-reference with existing parser tests to identify exactly which constructs lack coverage. Then write targeted test inputs for each uncovered branch. The spec must enumerate every uncovered construct explicitly."
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "group_id": "mamba-type-3arg-core",
+  "specs": [
+    {
+      "path": "crates/cclab-mamba/runtime/builtins.md",
+      "relevance": "high",
+      "summary": "Contains mb_type() (1-arg) and mb_type3() (3-arg form, R1-R5). Dispatch by argument count lives in builtins.rs."
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/class.md",
+      "relevance": "high",
+      "summary": "mb_class_register, C3 MRO, __init_subclass__ (R5), __set_name__ (R5). Shared by class statement and type() 3-arg."
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/builtins.md",
+      "relevance": "medium",
+      "summary": "dispatch_type wrapper routes 1-arg to mb_type and 3-arg to mb_type3 in stdlib/builtins_mod.rs."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "mamba-type-3arg-spec",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/builtins.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/builtins.md",
+      "sections": ["overview", "requirements", "scenarios", "changes"]
+    }
+  ],
+  "codebase_notes": "Key files: (1) crates/cclab-mamba/src/runtime/builtins.rs — add mb_type3(); (2) crates/cclab-mamba/src/runtime/stdlib/builtins_mod.rs — update dispatch_type to route 3-arg to mb_type3; (3) crates/cclab-mamba/src/runtime/class.rs — mb_class_register already handles MRO/hooks, shared infrastructure confirmed; (4) crates/cclab-mamba/tests/fixtures/conformance/class_system/type_3arg.py — new conformance test."
+}

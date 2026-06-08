@@ -1,0 +1,4 @@
+{
+  "skipped": true,
+  "scope_summary": "Problem: mb_compile is a stub returning the source string unchanged (issue #976). Success Criteria: compile(source, filename, mode) returns a non-None code object for valid inputs; SyntaxError raised for invalid mode, parse failures, and mode-incompatible source (eval with statements, single with multi-statement). Boundary: In scope — ObjData::CodeObject variant, mb_compile implementation, parse entry points for exec/eval/single modes, SyntaxError with line/col info, flags/dont_inherit acceptance. Out of scope — exec/eval execution (#441), ast.parse(), bytecode serialization, co_varnames attribute access."
+}

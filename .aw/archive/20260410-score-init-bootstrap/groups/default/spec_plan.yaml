@@ -1,0 +1,8 @@
+- spec_id: score-init-command
+  action: create
+  main_spec_ref: projects/score/specs/init-command.md
+  sections:
+  - overview
+  - requirements
+  - cli
+  - changes

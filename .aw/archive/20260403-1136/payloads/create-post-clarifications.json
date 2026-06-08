@@ -1,0 +1,13 @@
+{
+  "group_id": "platform-config-and-merge-git",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "SDD merge workflow archives specs but performs no git operations. Config only has issue_platform — no separation for repo/spec/docs concerns. → requirements.md § R1-R5",
+    "success_criteria": "1. config.toml has [sdd.repo_platform] and [sdd.spec_platform] sections parsed by SddConfig. 2. After ChangeArchived, dirty paths under cclab/ are staged and committed when auto_commit=true. 3. PR created to default_branch when auto_pr=true, body written by agent. 4. repo_platform.repo is required (no fallback). → pre_clarifications Q1-Q3",
+    "boundary": {
+      "in_scope": ["platform-config-repo-spec (platform.md)", "sdd-config-repo-platform (agents.md)", "change-merge-git-integration (change-merge.md)", "merge-tool-openrpc (workflow-tools.md)"],
+      "out_of_scope": ["docs_platform implementation (future, commented placeholder only)", "spec_platform remote storage", "git push (only commit and PR creation)"],
+      "constraints": ["Follows existing config upsert pattern (strip_toml_sections + append)", "Merge flowchart is DAG (flowchart TD), not FSM", "Agent dispatch for PR body follows existing multi_claude_agents pattern"]
+    }
+  }
+}

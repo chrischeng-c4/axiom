@@ -1,0 +1,9 @@
+{
+  "spec_id": "schedule-monitor",
+  "group_id": "scheduler-runtime-complete",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "schema", "changes"],
+  "main_spec_ref": "crates/cclab-fetch/scheduler/schedule-monitor.md",
+  "merge_strategy": "new",
+  "content": "Tracks expected trigger times vs actual trigger times for periodic tasks. Computes `expected_at` from the task's cron expression or interval schedule, records `actual_at` when the push receiver or self-hosted tick loop delivers a trigger callback, and classifies each fire as `on_time`, `late`, or `missed` based on a configurable per-task leeway duration.\n\nEmits Prometheus metrics via existing cclab-queue metrics module: counter `scheduler_task_fire_total{task_name, status}` (status: `on_time`, `late`, `missed`), histogram `scheduler_task_latency_seconds{task_name}` (seconds between `expected_at` and `actual_at`). Supports configurable webhook URL per task for missed schedule alerts — sends POST with JSON payload containing task name, expected_at, and detection timestamp.\n\nHooks into both trigger paths uniformly: push receiver calls `monitor.record_trigger(task_name, actual_at)` on each callback (R8 in push-receiver spec); self-hosted tick loop calls the same method after enqueue. A background `check_missed` task runs on a configurable interval to detect tasks whose `expected_at` has passed beyond leeway without a corresponding `actual_at` recording, marking them as `missed` and invoking the webhook callback.\n\nOwned as `Arc<ScheduleMonitor>` — shared across push receiver, periodic scheduler, and the background missed-check task. `ScheduleMonitor` requires `Send + Sync`.\n\nSource: `crates/cclab-queue/src/scheduler/periodic.rs` (PeriodicScheduler, PeriodicTask, cron/interval schedules), push-receiver spec (R8, S11 — monitor integration point)"
+}

@@ -1,0 +1,9 @@
+{
+  "group_id": "xfail-zero",
+  "answers": [
+    {
+      "question": "Any scope questions?",
+      "answer": "No — all 34 xfails must pass. Fix runtime to match CPython 3.12 exactly. If a stdlib module is not implemented, simplify the test fixture to only test what Mamba supports, or implement the missing functionality."
+    }
+  ]
+}

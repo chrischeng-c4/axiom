@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "sdd-execution-modes",
+      "issues": [1046],
+      "requirements": "Replace the per-action `[workflow.agents]` config with a single `workflow.mode` field supporting 4 fixed execution-mode presets. Each preset defines a complete phase-to-executor mapping — no per-action overrides.\n\n**Config change** (`cclab/config.toml`):\n- Remove `[workflow.agents]` per-action arrays\n- Add `workflow.mode: \"multi_agents\" | \"multi_claude_agents\" | \"claude_subagents\" | \"mainthread\"`\n- Default: `\"mainthread\"`\n\n**4 Execution Modes**:\n\n| Mode | Dispatch mechanism |\n|------|-------------------|\n| `multi_agents` | External CLI subprocesses (gemini/codex/claude) — existing run_agent() path |\n| `multi_claude_agents` | `claude --agent sdd-X` subprocess with tool restrictions + Bash hooks + phase-specific CLAUDE.md |\n| `claude_subagents` | Claude Code Agent tool — mainthread invokes Agent tool with type + model |\n| `mainthread` | No delegation; all phases execute in current LLM context |\n\n**Preset tables**: Each mode embeds a fixed mapping of every phase action to its executor/agent/model. Executor resolution reads `workflow.mode` once, loads the corresponding preset, and dispatches accordingly. No config lookup per action.\n\n**Fallback for all modes**: agent failure → retry once → fall back to mainthread.\n\n**`multi_claude_agents` agent definitions** (new files in `.claude/agents/`):\n- `sdd-reference-context.md` — tools: Read/Glob/Grep/Bash; disallowed: Write/Edit/Agent; model: sonnet; maxTurns: 20; readonly Bash hook\n- `sdd-change-spec.md` — tools: Read/Write/Edit/Glob/Grep; disallowed: Bash/Agent; model: opus; maxTurns: 30\n- `sdd-review.md` — tools: Read/Glob/Grep/Bash; disallowed: Write/Edit/Agent; model: sonnet; maxTurns: 15; readonly+test Bash hook\n- `sdd-change-implementation.md` — tools: Read/Write/Edit/Glob/Grep/Bash; disallowed: Agent; model: opus; maxTurns: 50; safe Bash hook\n\n**Bash hook scripts** (per-agent, not global):\n- `.claude/hooks/sdd-readonly-bash.sh` — allows: git log/diff/status/show, ls, cat, find, cargo test/check\n- `.claude/hooks/sdd-safe-bash.sh` — blocks: rm -rf, git push/reset, chmod 777\n\n**Phase-specific CLAUDE.md generation**: Before spawning `claude --agent`, `run_agent()` generates a tailored CLAUDE.md for the phase (reference_context / change_spec / change_implementation / review).\n\n**Spec updates**:\n- `cclab/specs/crates/cclab-sdd/config/agents.md` — replace per-action tables with `workflow.mode` + 4 preset tables\n- `cclab/specs/crates/cclab-sdd/logic/executor-resolution.md` — update flowchart: mode → preset lookup → dispatch (per-mode branches)\n- `cclab/specs/crates/cclab-sdd/tools/utils/delegate-agent.md` — document multi_claude_agents and claude_subagents execution paths",
+      "questions": [
+        {
+          "topic": "per-action config removal",
+          "question": "Does this change completely remove the existing `[workflow.agents]` per-action arrays from config.toml, replacing them entirely with `workflow.mode`? Or does `mode` act as a preset baseline that individual `[workflow.agents]` entries can still override? The issue says 'no per-action overrides', but the existing spec and Rust code already parse per-action arrays — clarifying whether backward compatibility matters here determines how much of SddConfig needs to change."
+        },
+        {
+          "topic": "claude_subagents dispatch path in Rust",
+          "question": "The `claude_subagents` mode uses the Claude Code `Agent` tool, which is a mainthread-side SDK construct — it cannot be invoked from a Rust `run_agent()` subprocess call. How does executor resolution handle this mode in the Rust layer? Options: (a) Rust returns a structured 'use Agent tool' signal that the mainthread skill reads and acts on, (b) the Rust SDD MCP tool skips delegation and the skill itself is responsible for invoking the Agent tool, or (c) some other mechanism. This determines whether `run_agent()` needs a new return variant or if the dispatch is entirely outside the Rust crate."
+        },
+        {
+          "topic": "multi_claude_agents CLAUDE.md injection method",
+          "question": "When running `claude --agent sdd-X`, how is the phase-specific CLAUDE.md injected? The `claude --agent` command uses the agent's `.claude/agents/{name}.md` system prompt but reads CLAUDE.md from the project root. Options: (a) write a temporary CLAUDE.md to a temp directory and pass `--cwd` pointing there, (b) pass via `--system-prompt` flag (if supported alongside `--agent`), (c) temporarily overwrite the project's CLAUDE.md (risky, concurrent-unsafe), or (d) inline the phase instructions into the agent's `.claude/agents/` frontmatter as a fixed system prompt (no dynamic generation). Which mechanism is intended?"
+        },
+        {
+          "topic": "existing fallback chain vs. new preset fallback",
+          "question": "The current `delegate-agent.md` implements fallback via ordered executor arrays (e.g. `[\"gemini:flash\", \"codex:balanced\", \"mainthread\"]`). The new preset model has a single fixed executor per phase — the fallback to mainthread is implicit. Should the internal representation still encode the fallback as a 2-element array `[\"<agent>\", \"mainthread\"]` (reusing the existing chain logic), or is a new `on_failure: mainthread` field added to the preset entries, requiring a new code path?"
+        },
+        {
+          "topic": "claude agent definition frontmatter schema source",
+          "question": "The `.claude/agents/` agent definition files require `tools`, `disallowedTools`, `model`, `maxTurns`, and Bash hook references in their frontmatter. Is there already a canonical schema for these files in the codebase (e.g., from existing `.claude/agents/` files or Claude Code documentation), or does this change need to define and document the schema from scratch?"
+        }
+      ]
+    }
+  ]
+}

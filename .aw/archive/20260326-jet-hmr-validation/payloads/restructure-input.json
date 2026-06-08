@@ -1,0 +1,21 @@
+{
+  "groups": [
+    {
+      "id": "jet-hmr-validation",
+      "issues": [1118, 1119],
+      "requirements": "Add JavaScript module HMR to Jet dev server and validate with Conductor FE:\n\n1. JS Module HMR (#1118): Extend existing /__jet_hmr WebSocket with JS update messages. Track module import graph server-side. On file change, send update message with module URL. Inject HMR client runtime into index.html that re-imports changed modules. Integrate React Fast Refresh ($RefreshReg$/$RefreshSig$ injection in transform_tsx). Support import.meta.hot API. HMR boundary detection — propagate to parent or full-reload if no boundary. Error overlay for syntax errors.\n\n2. Conductor FE Validation (#1119): cclab jet install + cclab jet dev on projects/conductor/fe must work end-to-end. Dashboard renders, @cclab/ui components display, API proxy works, CSS/Tailwind renders, no console errors. Fix any remaining gaps found during validation.\n\nAcceptance: Edit a React component in Conductor FE → component updates without full page reload, state preserved. CSS HMR continues to work. No Unexpected token errors in browser.",
+      "questions": [
+        {
+          "id": "q1",
+          "question": "Should we implement full Vite-compatible import.meta.hot API (accept, dispose, prune, invalidate, data) or a minimal subset (accept only)?",
+          "why": "Full API is more work but enables third-party library HMR plugins. Minimal is faster to ship."
+        },
+        {
+          "id": "q2",
+          "question": "For React Fast Refresh: should we inject the $RefreshReg$/$RefreshSig$ calls in transform_tsx.rs (Rust AST), or as a post-transform JS string injection?",
+          "why": "AST-based is more correct but complex. String injection is simpler and how Vite does it (via @vitejs/plugin-react)."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "group_id": "mamba-py312-conformance",
+  "answers": [
+    {
+      "question": "Where should conformance tests live?",
+      "answer": "crates/cclab-mamba/tests/conformance/ — co-located with existing mamba tests. Each .py fixture runs on both CPython 3.12 and Mamba."
+    },
+    {
+      "question": "How deep should conformance coverage go for p0 scope?",
+      "answer": "Full CPython parity — all 33 list methods, all 47 str methods, all generator edge cases. Comprehensive coverage."
+    }
+  ]
+}

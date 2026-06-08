@@ -1,0 +1,1 @@
+feat(agent): build cclab-agent-pyo3 crate — PyO3 bindings exposing all layers (engine, integrations, agents) to Python. Module name _agent, Py{Name} wrapper convention, maturin build. #927

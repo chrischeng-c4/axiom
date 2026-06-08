@@ -1,0 +1,9 @@
+{
+  "spec_id": "change-merge-git-integration",
+  "group_id": "platform-config-and-merge-git",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "logic", "config", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/logic/change-merge.md",
+  "merge_strategy": "extend",
+  "content": "## Overview\n<!-- type: overview lang: markdown -->\n\nExtend the merge workflow (`sdd_workflow_create_change_merge`) with post-archive git operations. After `ChangeArchived` phase is set and the change directory is moved to archive, two optional steps execute in sequence:\n\n1. **Auto git commit** (`repo_platform.auto_commit = true`): detect all dirty paths under `cclab/`, stage them, and commit with conventional message format `chore(sdd): merge {change_id} — {description}`.\n2. **Auto PR** (`repo_platform.auto_pr = true`): dispatch an agent to generate a PR body from change context (user_input.md, spec summaries), then create a PR to `repo_platform.default_branch` via `gh` CLI.\n\nBoth steps are controlled by `[sdd.repo_platform]` config in `cclab/config.toml`. Git binary availability is detected at runtime — if git is unavailable, a warning is returned and git steps are skipped (non-fatal).\n\nThe existing merge logic (spec write, frontmatter stripping, validation, audit logging, archive) is unchanged. Git operations are appended as a post-archive extension point."
+}

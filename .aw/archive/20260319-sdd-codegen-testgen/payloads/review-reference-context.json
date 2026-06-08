@@ -1,0 +1,49 @@
+{
+  "group_id": "testgen-requirementplus",
+  "verdict": "REVIEWED",
+  "summary": "Critical defect: the reference context is an unfilled skeleton — all 11 spec entries are '?' placeholders. The create-reference-context step ran but produced no usable content. Artifact must be fully regenerated. The correct composition, derived from reading the actual specs against pre-clarifications: 4 HIGH specs anchored on code-generator-contract.md (contains the explicit Requirement Plus → Test Detailed Mapping) and spec-model.md (defines RequirementPlus layer with full test output example); 4 MEDIUM specs for codegen system context and input format; 3 LOW specs for background. cclab-probe integration is deferred (Q4), so the 13 probe spec candidates from the create prompt should be reduced to at most 1 LOW entry.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Artifact is entirely empty (all '?' placeholders). Zero specs are actually listed. Key areas uncovered: (1) RequirementPlus BDD schema (given/when/then, test_type, verifymethod) — requirement-plus-enhancement.md missing; (2) Generator contract for Requirement+ → Test mapping rules — code-generator-contract.md missing; (3) Test output structure spec (N requirements → N test classes, N scenarios → N test functions) — spec-model.md missing; (4) CLI command registration for 'cclab sdd gen test <spec-path>' — interfaces/cli/commands.md missing; (5) Coverage validation (Verifies relationship check, --strict flag) — not covered by any spec."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "Cannot evaluate — all entries are '?' placeholders. Artifact was never populated."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "Cannot evaluate — all entries are '?' placeholders."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "Cannot evaluate from the artifact. However, the create prompt listed 13 cclab-probe specs as candidates. Given Q4 explicitly defers cclab-probe integration, including more than 1 probe spec at LOW would over-represent out-of-scope material. Exact probe specs to exclude: 00-architecture, 10-components, 20-data-flows, 30-implementation-details, 40-state-machines, backend-metadata, expect-api-reference, fixture-di-integration, fixture-di-integration-alt, k8s-job-executor, plugin-system, state-machine."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "The reference context is an unfilled skeleton — all 11 spec entries are '?' placeholders. The artifact_cli ran (written_by: artifact_cli in frontmatter) but the agent that was supposed to fill the content produced no output. This is effectively a missing artifact and blocks all downstream spec phases.",
+      "recommendation": "Regenerate the reference context with: HIGH: (1) cclab-sdd/generate/code-generator-contract.md — 'Requirement Plus → Test: Detailed Mapping' section defines the exact N:M rules this group implements (N requirements → N test classes, N scenarios → N test functions, M modules → imports, derives → ordering, risk: High → critical); (2) cclab-sdd/generate/spec-model.md — Requirement+ layer mapped to test files/functions, full YAML test output example with given/when/then; (3) cclab-sdd/generate/requirement-plus-enhancement.md — BDD input schema (given, when, then, test_type, verification), risk levels, Satisfies/Verifies/Refines/Traces relationships; (4) cclab-sdd/interfaces/cli/commands.md — Q1 adds 'cclab sdd gen test <spec-path>', must be registered in command tree. MEDIUM: (5) cclab-sdd/generate/codegen-system.md — R5 test generation, TestGenerator component in data flow; (6) cclab-sdd/generate/mermaid-plus-format.md — RequirementPlus input format (frontmatter schema, parsing rules for requirements/elements fields); (7) cclab-sdd/generate/test-generation.md — adjacent test gen spec with probe integration context, background for Q4 deferred work; (8) cclab-sdd/generate/architecture.md — Generate pipeline with RequirementPlus as supported input type. LOW: (9) cclab-sdd/sdd-cli.md — Q1 mentions internal use during implement phase; (10) cclab-probe/README.md — Q4 deferred integration background only."
+    },
+    {
+      "severity": "HIGH",
+      "description": "code-generator-contract.md is the primary specification contract for this group and must be HIGH. It contains an explicit 'Requirement Plus → Test: Detailed Mapping' section with rules for: (a) N Requirements → N Test Classes; (b) N Scenarios → N Test Functions via -verifies-> relationship; (c) M Modules → import statements via -satisfies-> relationship; (d) derives → test execution ordering; (e) risk: High → critical test / CI fast path; (f) verifymethod: Test → automated test function (vs Inspection → TODO comment). Without this spec, the implementer lacks the primary test generation contract.",
+      "recommendation": "Include cclab-sdd/generate/code-generator-contract.md at HIGH with key requirements: [Requirement+ R -verifies-> Scenario maps to test function per scenario, Requirement+ Module -satisfies-> R maps to import statement, Requirement+ R2 -derives-> R1 maps to test ordering, Requirement+ risk: High marks critical test, verifymethod: Test generates automated test vs Inspection generates TODO comment]."
+    },
+    {
+      "severity": "HIGH",
+      "description": "requirement-plus-enhancement.md defines the RequirementPlus input schema the generator must consume. R2 specifies risk levels (Low/Medium/High) and verification methods (Analysis/Inspection/Test/Demonstration) — the 'Test' verifymethod is what triggers test scaffold generation. R3 specifies relationship types Satisfies/Verifies/Refines/Traces — Verifies is the coverage validation key (Q3: check every Requirement has at least one Verifies relationship). Without this spec, the implementer lacks the input schema.",
+      "recommendation": "Include cclab-sdd/generate/requirement-plus-enhancement.md at HIGH with key requirements: [R2 verifymethod: Test triggers scaffold generation vs other methods, R2 risk levels map to test priority, R3 Verifies relationship is CI coverage gate target, R3 Satisfies relationship maps to module under test import, R4 schema validation for all new types]."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "The create prompt listed 13 cclab-probe specs as in-scope candidates, but Q4 explicitly defers cclab-probe integration: 'Defer cclab-probe integration to a follow-up issue. This change focuses on test scaffold generation + coverage validation only.' Including more than 1-2 probe entries at LOW would inflate the reference context with deferred-scope material and create noise for the implementer.",
+      "recommendation": "Include only cclab-probe/README.md at LOW (background for Q4 deferred work). Exclude all other probe specs: 00-architecture, 10-components, 20-data-flows, 30-implementation-details, 40-state-machines, backend-metadata, expect-api-reference, fixture-di-integration, fixture-di-integration-alt, k8s-job-executor, plugin-system, state-machine."
+    }
+  ]
+}

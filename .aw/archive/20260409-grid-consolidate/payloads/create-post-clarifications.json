@@ -1,0 +1,13 @@
+{
+  "group_id": "consolidate-grid-crates",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "6 separate cclab-grid-* crates create unnecessary inter-crate dependency complexity. Cross-crate imports (cclab_grid_core::, cclab_grid_formula::, etc.) add boilerplate and prevent sharing private types between modules.",
+    "success_criteria": "Single cclab-grid crate compiles successfully. All internal imports converted to crate:: paths. cclab-grid-wasm builds against cclab-grid. Server binary preserved. All existing tests pass.",
+    "boundary": {
+      "in_scope": "Merge core, formula, history, db, server into cclab-grid modules. Update workspace Cargo.toml. Update wasm crate dependencies. Feature-gate server and db dependencies.",
+      "out_of_scope": "cclab-grid-wasm stays separate (cdylib target). No functional changes to any module. No API changes visible to external consumers.",
+      "constraints": "Must preserve cclab-wal dependency for db module. Must preserve cclab-kv dependency for server module. Server binary target must remain functional."
+    }
+  }
+}

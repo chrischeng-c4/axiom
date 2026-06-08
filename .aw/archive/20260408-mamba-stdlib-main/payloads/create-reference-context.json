@@ -1,0 +1,25 @@
+{
+  "group_id": "stdlib-main-module",
+  "specs": [
+    {
+      "spec_id": "module",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "high",
+      "key_requirements": ["R5", "R11"]
+    },
+    {
+      "spec_id": "stdlib-diagnostics-utils",
+      "spec_group": "crates/cclab-mamba/stdlib",
+      "relevance": "low",
+      "key_requirements": []
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "main-module",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/stdlib/main-module.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

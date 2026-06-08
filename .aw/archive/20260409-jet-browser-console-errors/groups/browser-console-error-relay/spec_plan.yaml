@@ -1,0 +1,7 @@
+- spec_id: jet-console-error-relay
+  action: create
+  main_spec_ref: crates/cclab-jet/logic/console-error-relay.md
+  sections:
+  - overview
+  - schema
+  - changes

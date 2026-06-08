@@ -1,0 +1,1 @@
+Add spec file decomposition rules to CRR phases. reference_context: enforce 1 file = 1 logical unit, no duplicate section types, spec path mirrors source path. change_spec: enforce fill_order, verify no duplicate types in review checklist. Both Create and Review prompts must enforce these rules.

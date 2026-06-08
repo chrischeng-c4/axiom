@@ -1,0 +1,6 @@
+{
+  "change_id": "sdd-codegen-and-fixes",
+  "group_id": "specir-and-test-codegen",
+  "skipped": true,
+  "reason": "No contradictions found. Reference context covers all required specs (codegen-system, template-engine, spec-ir-contract/schema, generator-axum, generator-fastapi, test-generation, requirement-plus-enhancement, code-generator-contract). Pre-clarification decisions (Axum+FastAPI targets, include_str! templates, Phase 1 only, warning mode, no probe) are fully consistent with spec patterns. CRR review already addressed 5/7 deficiencies with remaining BDD mapping deferred to Phase 7."
+}

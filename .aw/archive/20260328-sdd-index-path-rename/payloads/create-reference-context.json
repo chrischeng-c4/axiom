@@ -1,0 +1,72 @@
+{
+  "group_id": "index-path-and-cli-hints",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-sdd/logic/lens-index-storage.md",
+      "spec_group": "storage",
+      "relevance": "high",
+      "key_requirements": [
+        "Documents storage path resolution functions (resolve_lens_storage, resolve_pid_file, resolve_socket_path, resolve_cache_dir, resolve_module_index) in storage.rs",
+        "Current path pattern is {project_root}/.cclab/lens/ — must be renamed to {project_root}/cclab/.index/",
+        "All test assertions check for .cclab/lens suffix — must be updated to cclab/.index"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/implement-task.md",
+      "spec_group": "implementation-prompt",
+      "relevance": "high",
+      "key_requirements": [
+        "Documents build_implement_code_prompt() in create_change_impl.rs — the target function for CLI hints",
+        "Prompt templates section defines the CLI Commands block already present in prompt",
+        "New requirement: add code intelligence CLI hints (symbols, hover, references, impact, context) to this block",
+        "Hints should only be added when executor is mainthread (Claude has bash access)"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "spec_group": "cli-commands",
+      "relevance": "medium",
+      "key_requirements": [
+        "Documents the full cclab sdd CLI surface including daemon subcommands",
+        "Daemon subcommands include: symbols, hover, references, impact — the commands to hint",
+        "Context subcommand: cclab sdd context <targets...> [--depth N]"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/executor-resolution.md",
+      "spec_group": "executor",
+      "relevance": "medium",
+      "key_requirements": [
+        "Defines mainthread executor concept: executor == [mainthread] means prompt executes inline in Claude",
+        "Mainthread mode means Claude has Bash access and can run cclab CLI commands",
+        "subagent:* executors also have bash access when invoked by mainthread",
+        "Other executors (gemini, codex, claude-agent) spawn subprocesses without bash access"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/agent-context-builder.md",
+      "spec_group": "cli-commands",
+      "relevance": "low",
+      "key_requirements": [
+        "Background spec for cclab sdd context command (one of the CLI hints to add)",
+        "Describes file:symbol target format and --depth parameter"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "index-path-rename",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/lens-index-storage.md",
+      "source": "crates/cclab-sdd/logic/lens-index-storage.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "cli-hints-impl-prompt",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/implement-task.md",
+      "source": "crates/cclab-sdd/logic/implement-task.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

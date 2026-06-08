@@ -1,0 +1,9 @@
+{
+  "spec_id": "platform-config-repo-spec",
+  "group_id": "platform-config-and-merge-git",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "config", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/config/platform.md",
+  "merge_strategy": "extend",
+  "content": "## Overview\n<!-- type: overview lang: markdown -->\n\nExtend `cclab/config.toml` platform configuration from a single `[sdd.issue_platform]` section to a multi-platform architecture with four distinct sections:\n\n| Section | Purpose | Status |\n|---------|---------|--------|\n| `[sdd.issue_platform]` | Issue tracking (GitHub/GitLab/Jira) | Existing — unchanged |\n| `[sdd.repo_platform]` | Git repo, commits, PRs | New |\n| `[sdd.spec_platform]` | Spec storage location | New |\n| `[sdd.docs_platform]` | User-facing documentation | Future — commented out |\n\n`repo_platform` enables post-merge git operations (auto-commit, auto-PR) consumed by `change-merge-git-integration`. `spec_platform` declares spec storage (currently `type = \"local\"` only). `docs_platform` is reserved for future use.\n\nParsing changes:\n- `SddSection` in `config.rs` gains `repo_platform`, `spec_platform` fields\n- `SddConfig` in `models/change.rs` gains `repo_platform: Option<RepoPlatformConfig>`, `spec_platform: Option<SpecPlatformConfig>`\n- `platform show` CLI displays all configured platform sections\n- `repo_platform.repo` is required (no fallback to `issue_platform.repo`)"
+}

@@ -1,0 +1,106 @@
+# Lens daemon index and runtime files
+.aw/.index/
+.aw/issues/
+
+# qc per-run report cache (.qc/last-report.json) — written under the cwd a qc
+# verb runs in (often the repo root); process output, never source.
+.qc/
+
+# ctx_inf_db autonomous loop runtime state (transitional — not versioned)
+.ctx_inf_db.state
+.ctx_inf_db/
+
+# Benchmark results
+.benchmarks/
+.baselines/
+**/benchmarks/results/
+!**/benchmarks/results/.gitkeep
+**/benchmark_report*
+**/reports/*_benchmark_report*
+
+# Coverage reports
+*coverage_report*
+htmlcov/
+.coverage
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+!.env.example
+target/
+
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Frontend build artifacts
+dist/
+node_modules/
+.vite/
+projects/cue/fe/.jet/
+projects/cue/artifact-studio/.jet/
+projects/cue/be/static/*
+!projects/cue/be/static/.gitkeep
+projects/cue/backend/static/*
+!projects/cue/backend/static/.gitkeep
+pkg/
+crates/data-bridge-sheet-wasm/pkg/
+tests/fixtures/python-project/.venv/
+
+# MCP config (local-specific paths)
+.mcp.json
+
+# Playwright MCP artifacts
+.playwright-mcp/
+test-results/
+.aw/worktrees/
+.aw/payloads/
+.aw/codegen_markers.yaml
+.claude/worktrees/
+
+# tdc local state
+.tdc/state.toml
+
+# CPython conformance fixtures use test.support.os_helper, whose TESTFN
+# (= "@test_<pid>_tmp" + a non-ASCII suffix) and companion artifacts are
+# created RELATIVE TO THE CWD. When a fixture/harness runs with cwd = repo
+# root these leak here. The real fix is running fixtures in an isolated
+# tempdir (see run.py / regen_golden.py / tests/cpython/harness/*.rs), but
+# this is a belt-and-suspenders guard so a stray leak is never committed.
+@test_*_tmp*
+# os_helper sibling artifacts (anchored to repo root only). Remove if a
+# legitimate root-level base/ or file.txt is ever introduced.
+/base/
+/file.txt
+
+# mamba conformance perf-baseline cache (derived; regenerates from fixtures)
+projects/mamba/tests/cpython/.cache/

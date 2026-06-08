@@ -1,0 +1,112 @@
+{
+  "group_id": "mamba-codegen-runtime-fixes",
+  "verdict": "pass",
+  "summary": "Two critical spec content mismatches and one significant requirement ID mismapping. Spec plan paths and structure are correct, but key_requirements for string-ops and cclab-mamba-fix-xfail-spec cite content that does not exist in the actual specs.",
+  "checklist": {
+    "all_areas_covered": {
+      "pass": true,
+      "notes": "All four bug areas (no-arg constructor codegen, string[::-1] slice, SIGBUS runtime thread-locals, SIGBUS JIT concurrency) are covered by at least one spec entry."
+    },
+    "relevance_scores_reasonable": {
+      "pass": true,
+      "notes": "High scores for hir-to-mir, cranelift, string-ops, thread-safe-runtime, cranelift-jit are all justified. Medium scores for builtins, list-ops, symbols, gc, xfail-spec are reasonable background context."
+    },
+    "key_requirements_accurate": {
+      "pass": false,
+      "notes": "Three inaccuracies found — see findings F1, F2, F3."
+    },
+    "no_irrelevant_specs": {
+      "pass": true,
+      "notes": "All 10 specs are at least tangentially relevant to the bugs being fixed."
+    },
+    "spec_plan_main_spec_ref_set": {
+      "pass": true,
+      "notes": "All 4 spec_plan entries have main_spec_ref set to a non-null path."
+    },
+    "spec_plan_sections_reasonable": {
+      "pass": true,
+      "notes": "overview/requirements/scenarios/changes is appropriate for all 4 entries. state-machine is valid for sigbus-runtime-thread-safety-fix (thread-safe-runtime.md has a stateDiagram-v2)."
+    },
+    "spec_plan_modify_entries_valid_source": {
+      "pass": true,
+      "notes": "All 4 modify source paths verified to exist: lower/hir-to-mir.md, runtime/string-ops.md, runtime/thread-safe-runtime.md, codegen/cranelift-jit.md."
+    },
+    "spec_plan_main_spec_ref_has_subfolder": {
+      "pass": true,
+      "notes": "All paths include a subfolder: crates/cclab-mamba/lower/, crates/cclab-mamba/runtime/, crates/cclab-mamba/codegen/."
+    },
+    "spec_plan_one_logical_unit_per_file": {
+      "pass": true,
+      "notes": "Each spec file covers one logical unit — no bundling of unrelated concerns detected."
+    },
+    "spec_plan_no_duplicate_section_types": {
+      "pass": true,
+      "notes": "No file would require duplicate section types; each targets a single well-scoped spec."
+    },
+    "spec_plan_paths_mirror_source_structure": {
+      "pass": true,
+      "notes": "lower/ mirrors lower/, runtime/ mirrors runtime/, codegen/ mirrors codegen/. Correct layout."
+    }
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "critical",
+      "spec": "string-ops",
+      "issue": "R1 mismapping — `mb_str_slice_full` step semantics have no spec requirement",
+      "detail": "The reference context claims 'R1: slice methods must handle full Python slice semantics including step=-1 reversal'. However, string-ops.md R1 is 'Core String Methods' (split, join, strip, replace, etc.) — it says nothing about slicing with a step parameter. `mb_str_slice_full(s, start, stop, step)` exists in runtime/string_ops.rs:100-130 and implements step-based slicing, but there is NO requirement for it anywhere in string-ops.md. The spec_plan correctly adds a 'string-reverse-slice-fix' to modify string-ops.md, but the reference context's description of existing R1 coverage is fabricated.",
+      "required_fix": "Replace the R1 key requirement with: 'No current requirement covers mb_str_slice_full step semantics — a new requirement (e.g. R6) must be added to string-ops.md specifying correct Python slice semantics for all three parameters (start, stop, step) including negative-step reversal and absent-stop sentinel handling.'"
+    },
+    {
+      "id": "F2",
+      "severity": "critical",
+      "spec": "cclab-mamba-fix-xfail-spec",
+      "issue": "Spec content is entirely different from what the reference context claims",
+      "detail": "The reference context attributes to cclab-mamba-fix-xfail-spec: 'Conformance test runner: cargo test -p cclab-mamba --test conformance_tests (multi-threaded by default)', 'Single-threaded workaround --test-threads=1 passes for #1114', 'xfail fixtures for list()/tuple()/set() and string[::-1] will be unblocked'. None of this is in the actual spec. The conformance.md spec (id: cclab-mamba-fix-xfail-spec) is entirely about: minimal class system, generator state machine, ExceptionGroup/except*, and custom iterator protocol — features for #754, #755, #756. The xfail fixtures for list/tuple/set/string[::-1] are data_structures/*_xfail.py files, not covered by this spec.",
+      "required_fix": "Replace cclab-mamba-fix-xfail-spec entry with test-harness spec (id: test-harness, testing/test-harness.md) which covers the conformance test runner dispatch mechanism and fixture discovery — or add a new testing spec entry that correctly describes the xfail fixture mechanism for data_structures bugs."
+    },
+    {
+      "id": "F3",
+      "severity": "significant",
+      "spec": "mamba-thread-safe-spec",
+      "issue": "R5 is cited for closure.rs/generator.rs thread_local statics but R5 covers async state consolidation",
+      "detail": "The reference context says 'R5: thread_local! state in closure.rs (3 statics), generator.rs (5 statics), exception.rs (1), class.rs (3 statics), iter.rs (1) — when cargo test runs multiple conformance tests in parallel these thread-locals are shared/aliased across OS threads causing SIGBUS'. The actual R5 in thread-safe-runtime.md reads: 'All thread_local! state related to async execution (e.g., COROUTINES, TASKS, WAKERS, TIMERS) must be consolidated into a globally shared MambaRuntime struct using synchronized collections like DashMap or RwLock<HashMap>.' R5 is specifically about async runtime state, not about conformance-test-induced concurrency in closure.rs/generator.rs/class.rs. The conformance test SIGBUS is better mapped to R3 (no-GIL execution concurrency) or a new requirement. The thread_local counts in those files are source-code verified (generator.rs=5, exception.rs=1, class.rs=3, iter.rs=1, closure.rs=3), but the R5 label is wrong.",
+      "required_fix": "Change R5 reference to R3 (No-GIL Execution Concurrency) for the conformance test thread_local SIGBUS issue. R7 for AtomicU64 counter migration remains correct."
+    },
+    {
+      "id": "F4",
+      "severity": "minor",
+      "spec": "gc",
+      "issue": "Key requirements describe source code details not in gc.md, and misattribute safepoint STW to gc spec",
+      "detail": "gc.md covers mark-sweep cycle detection (R1-R5). The reference context cites 'GC state already uses LazyLock<Mutex<GcState>> and GC_TEST_LOCK' and 'thread_local! at gc.rs:70' as spec content — these are source implementation details confirmed in gc.rs:52,70,391 but absent from the spec. Additionally 'Safepoint-based STW design in spec provides model for coordinating concurrent thread pause' refers to thread-safe-runtime.md (which has the STW state machine), NOT gc.md.",
+      "required_fix": "Replace gc key requirements with spec-accurate content: reference R1 (container tracking) and R2 (mark-sweep) as the patterns that inform the concurrent test serialization approach, and note that the safepoint model is in thread-safe-runtime.md."
+    },
+    {
+      "id": "F5",
+      "severity": "minor",
+      "spec": "hir-to-mir",
+      "issue": "BUILTIN_MAP is a function name, not a constant",
+      "detail": "The reference context refers to 'BUILTIN_MAP' as a data structure. The actual code (hir_to_mir.rs:13-14) defines it as `fn builtin_extern_map() -> HashMap<&'static str, &'static str>` — a function returning a local hashmap. The described behavior (list->mb_list_from_iterable at line 34) is correct. Minor naming inaccuracy only.",
+      "required_fix": "Update 'BUILTIN_MAP' to 'builtin_extern_map() function' for precision."
+    }
+  ],
+  "missing_coverage": [
+    {
+      "area": "mb_str_slice_full step semantics",
+      "detail": "The function mb_str_slice_full (string_ops.rs:100) implements three-parameter slicing with step, but has no corresponding spec requirement in string-ops.md. This is a gap that must be filled by the string-reverse-slice-fix spec entry — which is correctly in the spec_plan."
+    },
+    {
+      "area": "Conformance test runner multi-threading contract",
+      "detail": "There is no spec that defines the expected thread-safety contract for the conformance test runner (cargo test -j N behavior). test-harness.md covers runner dispatch but not concurrency requirements. This gap means the SIGBUS fix lacks a formal spec anchor for the test infrastructure behavior."
+    }
+  ],
+  "positive_observations": [
+    "All 4 spec_plan modify entries have correct main_spec_ref paths with proper subfolders",
+    "All spec_plan source paths verified to exist on disk",
+    "hir-to-mir, cranelift, cranelift-jit, list-ops, symbols requirement ID mappings are accurate to actual spec content",
+    "list-ops R5 key requirement accurately describes mb_list_new() zero-param construction",
+    "symbols R1/R2/R4 requirement IDs are correctly mapped",
+    "mamba-thread-safe-spec R7 (Atomic Global Counters) is correctly attributed",
+    "Source code cross-checks pass: BUILTIN_MAP routing (hir_to_mir.rs:34-36), thread_local counts (generator=5, exception=1, class=3, iter=1, closure=3), JITModule struct layout (jit.rs:24-25), mb_str_slice_full existence (string_ops.rs:100), GC_TEST_LOCK pattern (gc.rs:391)"
+  ]
+}

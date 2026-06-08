@@ -1,0 +1,45 @@
+{
+  "group_id": "jet-workspace-protocol",
+  "verdict": "fail",
+  "summary": "Reference context artifact is empty (all '?' placeholders). The Gemini agent failed to populate the artifact despite receiving correct spec references in its input payload. Three specs should be referenced: pkg-manager-pnpm-parity.md (high — primary workspace spec), pkg-manager.md (medium — base install pipeline), nx-support.md (low — workspace detection overlap). Must regenerate.",
+  "findings": [
+    {
+      "criterion": "coverage",
+      "pass": false,
+      "detail": "Reference context artifact is empty — all entries are placeholder '?' with no actual specs listed. The creation payload had correct specs (pkg-manager-pnpm-parity.md as high, pkg-manager.md as medium) but the agent failed to populate the artifact."
+    },
+    {
+      "criterion": "relevance_scores",
+      "pass": false,
+      "detail": "No relevance scores to evaluate — artifact contains only '?' placeholders."
+    },
+    {
+      "criterion": "key_requirements",
+      "pass": false,
+      "detail": "No key requirements listed — artifact contains only '— ' placeholders."
+    },
+    {
+      "criterion": "no_irrelevant_specs",
+      "pass": true,
+      "detail": "No irrelevant specs included (vacuously true — nothing was included at all)."
+    }
+  ],
+  "missing_specs": [
+    {
+      "spec_path": "cclab/specs/crates/cclab-jet/pkg-manager-pnpm-parity.md",
+      "relevance": "high",
+      "rationale": "Primary spec. Defines WorkspaceConfig schema (packages globs, catalog), WorkspacePackage schema, workspace discovery sequence diagram, workspace:* protocol resolution flowchart, lockfile v2 extensions, workspace.rs file plan (~350L), resolver.rs workspace:* handling, and /workspace/discover + /install recursive API. Covers Q1 (detection sources), Q2 (catalog field in schema), Q3 (symlink in protocol diagram), Q4 (recursive install sequence + --recursive flag), Q5 (lockfile representation)."
+    },
+    {
+      "spec_path": "cclab/specs/crates/cclab-jet/pkg-manager.md",
+      "relevance": "medium",
+      "rationale": "Core install pipeline spec. Covers resolver behavior, platform filtering, and install flow that workspace install builds upon. Required context for understanding how jet install works before workspace support is added."
+    },
+    {
+      "spec_path": "cclab/specs/crates/cclab-jet/nx-support.md",
+      "relevance": "low",
+      "rationale": "Touches workspace detection flow. Detection flowchart shows fallback chain (nx.json → package.json workspaces → jet-workspace.yaml). Modifies workspace.rs — same file this change creates. Relevant for understanding the full workspace detection priority chain (Q1)."
+    }
+  ],
+  "notes": "The reference context creation payload (create-reference-context.json) contained correct spec references, but the Gemini agent (gemini-3.1-pro-preview) that generated the artifact produced only placeholder '?' entries. The artifact must be regenerated. Additionally, the pre-clarifications introduce two requirements not explicitly in existing specs: (1) relative symlinks (Q3), (2) workspace:true flag in lockfile entries (Q5) — these should be noted as new requirements in the change spec phase."
+}

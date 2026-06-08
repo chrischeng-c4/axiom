@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "id": "e2e-test-reorg",
+      "issues": [],
+      "requirements": "Reorganize the E2E test infrastructure into a unified e2e/ directory structure using Playwright projects:\n\n1. **Move grid tests**: e2e/app.spec.ts + cell-editing.spec.ts → e2e/grid/\n2. **Move jet test app**: examples/mini-react/ → e2e/jet/ (entire app with src/, package.json, configs)\n3. **Rename**: dom-snapshot.spec.ts → build.spec.ts\n4. **Expand Playwright projects config**: vite-build (port 4174, build.spec.ts), jet-build (port 4175, build.spec.ts), jet-dev (port 3000, dev-server/hmr/css specs)\n5. **Add new test files**:\n   - dev-server.spec.ts: TS stripping, import.meta.env, path alias, proxy, Node.js polyfills\n   - hmr.spec.ts: HMR module updates + React Fast Refresh state preservation\n   - css.spec.ts: PostCSS pipeline + Tailwind CSS JIT in dev mode\n\nConstraints:\n- examples/jet/ and examples/react-bench/ stay in examples/ (different purpose)\n- All jet E2E tests share the same mini-react TodoMVC app as fixture\n- Playwright projects isolate build vs dev test scenarios",
+      "questions": []
+    }
+  ]
+}

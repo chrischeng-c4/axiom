@@ -1,0 +1,13 @@
+{
+  "group_id": "scope-hoisting",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "Jet AOT build produces ~206.8 KB vs Vite's ~192 KB (~7.7% larger) due to per-module wrapper overhead. Scope hoisting inlines single-importer modules to reduce wrappers and enable cross-module DCE.",
+    "success_criteria": "Bundle size ≤195 KB on react-bench. Single-importer modules inlined. Circular deps excluded. All existing tests pass.",
+    "boundary": {
+      "in_scope": "Module concatenation in bundler/scope_hoist.rs, sideEffects detection, circular dependency exclusion, cross-module DCE",
+      "out_of_scope": "Dynamic import splitting (already works), CSS pipeline, dev server",
+      "constraints": "Must not break existing behavior. Draft spec and scaffold already exist."
+    }
+  }
+}

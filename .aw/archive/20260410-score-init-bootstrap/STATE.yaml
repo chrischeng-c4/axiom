@@ -1,0 +1,20 @@
+change_id: score-init-bootstrap
+schema_version: '2.0'
+created_at: 2026-04-10T06:29:49.049888Z
+updated_at: 2026-04-10T07:04:09.995142Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: worktree
+revision_counts:
+  ref_ctx:default: 1
+current_task_id: score-init-command
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: cclab/score-init-bootstrap

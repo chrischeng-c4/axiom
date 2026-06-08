@@ -1,0 +1,38 @@
+{
+  "group_id": "sdd-unified-frontend",
+  "specs": [
+    {
+      "path": "crates/sdd/src/ui/viewer/mod.rs",
+      "relevance": "high",
+      "reason": "Current axum viewer server — routes, asset embedding, API endpoints. Must be modified to serve React build output."
+    },
+    {
+      "path": "packages/@cclab/ui/package.json",
+      "relevance": "high",
+      "reason": "Source package to move — contains 20+ React components (spec-viewer, pipeline, editing, primitives)."
+    },
+    {
+      "path": "packages/@cclab/spec-viewer/package.json",
+      "relevance": "high",
+      "reason": "Standalone spec rendering package — MermaidDiagram, SpecViewer, CodeBlock."
+    },
+    {
+      "path": "projects/conductor/fe/src/App.tsx",
+      "relevance": "high",
+      "reason": "Conductor routing structure — must be refactored to mount @score/app as sub-routes."
+    },
+    {
+      "path": "projects/conductor/fe/vite.config.ts",
+      "relevance": "medium",
+      "reason": "Current Conductor build config — will need to import @score packages from new paths."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "sdd-unified-frontend-spec",
+      "action": "create",
+      "main_spec_ref": "crates/sdd/logic/unified-frontend.md",
+      "sections": ["overview", "requirements", "scenarios", "dependency", "changes"]
+    }
+  ]
+}

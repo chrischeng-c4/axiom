@@ -1,0 +1,75 @@
+{
+  "group_id": "jet-dev-server-v2",
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-jet/jit-runner.md",
+      "relevance": "high",
+      "summary": "Covers dev_server module, JIT execution, and TypeScript/JSX transformation pipeline via tree-sitter. Directly relevant to #1090 (TypeScript type stripping), #1089 (dev-mode module transforms), and #1091 (dev server serves modules to browser)."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/pkg-manager.md",
+      "relevance": "high",
+      "summary": "Covers StoreManager at ~/.jet-store/{name}@{version}/ with install_package and link_package. Directly relevant to #1092 — store entries currently have no nested node_modules."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/aot-build.md",
+      "relevance": "medium",
+      "summary": "Production build pipeline using the same Bundler. Relevant to #1089 — optimizeDeps reuses the bundler's transform infrastructure."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/pkg-manager-pnpm-parity.md",
+      "relevance": "medium",
+      "summary": "Store GC, hoisting, pnpm-style features. Context for #1092: pnpm's store design."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/workspace-protocol.md",
+      "relevance": "low",
+      "summary": "Workspace symlink creation. Background context for #1092 nested store symlinks."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/postcss-tailwind.md",
+      "relevance": "low",
+      "summary": "Dev mode watch integration. Background for dev_server/mod.rs HMR hooks."
+    }
+  ],
+  "codebase_explored": [
+    {
+      "path": "crates/cclab-jet/src/dev_server/mod.rs",
+      "summary": "Axum HTTP server with HMR, pre_bundle_cjs_deps() line-based flattening. Target for #1089 and #1091."
+    },
+    {
+      "path": "crates/cclab-jet/src/transform/typescript.rs",
+      "summary": "AST TypeScript stripping via tree-sitter. Missing: export type, import type, declare, satisfies. Target for #1090."
+    },
+    {
+      "path": "crates/cclab-jet/src/pkg_manager/store.rs",
+      "summary": "StoreManager: install_package, link_package. No nested node_modules. Target for #1092."
+    },
+    {
+      "path": "crates/cclab-jet/src/runner/jit.rs",
+      "summary": "JIT engine uses same Transformer. Context for consistent TS transform behavior."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "jet-dev-prebundle",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-jet/dev-server.md",
+      "sections": ["overview", "requirements", "changes"]
+    },
+    {
+      "spec_id": "jet-ts-transform",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-jet/ts-transform.md",
+      "sections": ["overview", "requirements", "changes"]
+    },
+    {
+      "spec_id": "jet-store-nested-deps",
+      "action": "modify",
+      "source": "cclab/specs/crates/cclab-jet/pkg-manager.md",
+      "main_spec_ref": "crates/cclab-jet/pkg-manager.md",
+      "sections": ["overview", "requirements", "changes"]
+    }
+  ],
+  "revision_notes": "Review accepted with no issues. Content unchanged — reaffirming same spec plan."
+}

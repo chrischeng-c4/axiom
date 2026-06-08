@@ -1,0 +1,1 @@
+Fix all 31 conformance xfails — codegen IR bugs (classmethod, descriptor, getattr, super), runtime bugs (stdlib functions return None, bytes methods, exception chaining), parser gaps (nested f-strings, metaclass keyword), compiler bugs (match int patterns, comprehension scope, walrus scope) #1037

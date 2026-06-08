@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "mamba-core-test-coverage",
+      "issues": [1035],
+      "requirements": "Bring `cclab-mamba` test coverage from 434 tests (7.1% ratio) toward 100% by adding comprehensive Rust unit/integration tests for four critically under-tested subsystems.\n\n### Scope (P0 — zero coverage, highest priority)\n\n1. **runtime/** (35,483 LOC, 49 existing integration tests → target 500+)\n   - `value.rs`: NaN-boxed MbValue round-trips for every tag (INT, BOOL, NONE, FUNC, PTR, Float, Str, List, Dict, Set, Tuple, Bytes, Native); BigInt overflow; edge cases (NaN, Infinity, -0, max/min int)\n   - `builtins.rs`: every builtin function (mb_print, mb_len, mb_int, mb_str, mb_float, mb_bool, mb_abs, mb_pow, mb_hash, mb_type, mb_isinstance, mb_getattr/setattr/delattr, mb_iter/next, mb_map/filter/zip/enumerate, mb_range, mb_sorted/reversed); type coercion matrix; error branches\n   - `class.rs`: MRO C3 linearization, __init__/__new__, super(), @property/@classmethod/@staticmethod descriptors, __init_subclass__, __slots__, diamond multiple inheritance, metaclass __call__\n   - `gc.rs`: cycle detection (self-ref, mutual-ref, long chain), weak refs, destructor ordering\n   - `module.rs`: mb_import, mb_import_from, module cache, circular import detection, relative imports\n   - `string_ops.rs`, `list_ops.rs`, `dict_ops.rs`, `set_ops.rs`, `tuple_ops.rs`: every method, empty/unicode/boundary edge cases\n\n2. **lower/** (5,668 LOC, 0 tests → target 100+)\n   - Every AST→HIR lowering rule: function def, class def, decorator application, async/await, generator/yield, all comprehension forms (list/dict/set/generator), match/case, try/except/finally, with statement, import/import-from, augmented assignment, walrus operator\n   - Verify HIR output structure (node type, field values) for each input AST pattern\n\n3. **resolve/** (744 LOC, 0 tests → target 50+)\n   - Scope chain: local, enclosing (closure), global, builtin\n   - `nonlocal` / `global` declarations\n   - Class scope quirks (name invisibility in nested functions without nonlocal)\n   - Closure variable capture semantics\n   - Comprehension scope (implicit function scope per PEP 709)\n   - Star import handling\n\n4. **stdlib top-10** (subset of 15,921 LOC stdlib, 0 direct unit tests → target 150+ for these 10)\n   - Priority modules: json, os, re, datetime, collections, pathlib, io, csv, hashlib, asyncio\n   - Per function: happy path + error/exception cases + edge cases + type coercion\n   - Tests must match Python 3.12 behavior (conformance with #750)\n\n### Constraints\n- All new tests must compile and pass with `cargo test`\n- Tests must be Py3.12 conformant — test expected output against CPython 3.12 behavior\n- Existing 8 XFAIL tests must remain (do not break them); conversion to passing is bonus\n- No source logic changes in this change — test-only additions\n- Use `cargo-llvm-cov` to measure line/branch coverage after additions",
+      "questions": [
+        {
+          "topic": "test-location-strategy",
+          "question": "Where should new tests live: (a) `#[cfg(test)]` modules inside each source file (e.g. inside `runtime/value.rs`, `lower/mod.rs`) for better per-module coverage tracking, or (b) new integration test files in `crates/cclab-mamba/tests/` (following the existing `runtime_tests.rs` pattern)? Or a mix — unit tests in-file for runtime/lower/resolve, fixture-based `.py` files for stdlib?"
+        },
+        {
+          "topic": "stdlib-test-mechanism",
+          "question": "For stdlib module tests (json, os, re, etc.), should we test by: (a) calling Rust functions in `runtime/stdlib/*_mod.rs` directly via Rust APIs, (b) running small `.py` fixture scripts through the full Mamba interpreter pipeline (like `cpython_compat.rs` does), or (c) both? The direct-Rust approach is faster but fixture scripts catch end-to-end regressions."
+        },
+        {
+          "topic": "scope-boundary",
+          "question": "The issue lists 10 modules total (P0 + P1). The user input focuses on 4: runtime, lower, resolve, stdlib top-10. Should this change be scoped to ONLY those 4 groups, leaving parser/types/codegen/lexer/hir/driver for a follow-up, or should P1 modules (parser +80, types +60, codegen +50, lexer +30, hir/driver +60) be included here too?"
+        },
+        {
+          "topic": "coverage-ci-gate",
+          "question": "Should this change also introduce the `cargo-llvm-cov` CI gate (block merges below X% line coverage)? If yes, what is the initial threshold — should it start at a passing baseline (e.g. 20-30% reflecting current state) and ramp, or immediately at 70%+ for the targeted modules only?"
+        },
+        {
+          "topic": "xfail-resolution",
+          "question": "There are currently 8 XFAIL tests. Should converting them to passing tests be in scope for this change? If any XFAIL is blocked by a runtime bug (not a test gap), should those bugs be fixed as part of this change or deferred to #1028?"
+        }
+      ]
+    }
+  ]
+}

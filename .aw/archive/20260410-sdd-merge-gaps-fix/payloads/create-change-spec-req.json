@@ -1,0 +1,5 @@
+{
+  "spec_id": "sdd-merge-gaps-fix-spec",
+  "section": "requirements",
+  "content": "```mermaid\n---\nid: requirements\n---\nrequirementDiagram\n\nrequirement R1 {\n  id: R1\n  text: \"After a successful worktree merge (step 3), git_commit_sha in the response must be the merge commit SHA on the default branch (git rev-parse HEAD on project_root)\"\n  risk: medium\n  verifymethod: test\n}\n\nrequirement R2 {\n  id: R2\n  text: \"auto_pr must default to false. When auto_pr=true and worktree is active, PR creation runs before local merge steps 3+4. In legacy in-place flow, auto_pr is skipped.\"\n  risk: medium\n  verifymethod: test\n}\n\nrequirement R3 {\n  id: R3\n  text: \"close_issue_if_exists must match open issues by: (1) slug == change_id, (2) frontmatter id UUID == change_id. Scan all open issues for UUID match.\"\n  risk: low\n  verifymethod: test\n}\n```"
+}

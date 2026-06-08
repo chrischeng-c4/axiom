@@ -1,0 +1,31 @@
+{
+  "group_id": "stdlib-posix-module",
+  "specs": [
+    {
+      "spec_id": "stdlib-os",
+      "spec_group": "crates/cclab-mamba/stdlib",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R3", "R4", "R5"]
+    },
+    {
+      "spec_id": "mamba-all-support-spec",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "medium",
+      "key_requirements": []
+    },
+    {
+      "spec_id": "stdlib-fs-utils",
+      "spec_group": "crates/cclab-mamba/stdlib",
+      "relevance": "low",
+      "key_requirements": []
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "mamba-stdlib-posix-spec",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/stdlib/posix.md",
+      "sections": ["overview", "requirements", "changes", "test-plan"]
+    }
+  ]
+}

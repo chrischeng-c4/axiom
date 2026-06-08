@@ -1,0 +1,44 @@
+{
+  "group_id": "jet-install-optimizations",
+  "verdict": "FAIL",
+  "summary": "The reference context is a placeholder — both spec entries are unfilled '?'. Two directly relevant specs exist (cclab-jet/pkg-manager.md at high, cclab-jet/pkg-manager-pnpm-parity.md at medium) but are not referenced. Additionally, the --no-install lock-only mode from Q2 has no spec coverage in either spec, and the existing pkg-manager.md specifies the metadata cache path as ~/.cache/jet/metadata/ (XDG) while the pre-clarification answer and requirements both specify ~/.jet-store/.metadata/ — a concrete spec inaccuracy that must be resolved before implementation.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Q2 requires a --no-install (lock-only) mode flag. Neither pkg-manager.md nor pkg-manager-pnpm-parity.md mentions this flag. pkg-manager.md covers the lockfile fast-path and frozen-lockfile (in parity spec) but not a mode that only writes the lockfile without downloading tarballs. This is a spec gap."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "Cannot evaluate — both entries are '?' placeholders. Based on actual spec content: pkg-manager.md deserves 'high' (directly implements metadata cache, HTTP/2, parallel downloads, BFS resolver — all core requirements for #881 and #883). pkg-manager-pnpm-parity.md deserves 'medium' (implements optionalDependencies platform filtering and npm: alias resolution, which are explicit resolver bug fixes in #883, but workspace/frozen-lockfile/audit features are out of scope)."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "Cannot evaluate — both entries have '— ' as key requirements. The actual specs use informal requirement descriptions rather than R-numbered IDs, so references should point to spec sections rather than requirement IDs."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "Both placeholder entries are '?' — no concrete irrelevant specs are named. No false positives to flag."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "Reference context is entirely placeholder. Both rows have '? | ? | high | —' — the artifact CLI generated the template but no actual spec lookup was performed. The reference context provides zero guidance for implementation.",
+      "recommendation": "Replace placeholders with: (1) cclab-jet/pkg-manager.md at 'high' with key sections: registry metadata two-layer cache (x-caching annotation), HTTP/2 adaptive window, parallel download pipeline (Semaphore), BFS resolver with level-by-level prefetch, store layout. (2) cclab-jet/pkg-manager-pnpm-parity.md at 'medium' with key sections: optionalDependencies os/cpu/libc platform check, npm: alias resolver."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Lock-only mode (--no-install flag from Q2) has no spec coverage. Pre-clarification Q2 explicitly requires a mode where jet resolves and writes jet-lock.yaml without downloading/extracting tarballs. Neither pkg-manager.md (which defines install paths) nor pkg-manager-pnpm-parity.md (which defines CLI flags) includes this flag or the corresponding install flow branch.",
+      "recommendation": "Before implementation, update pkg-manager.md to add: (1) --no-install flag in the /install OpenAPI path parameters; (2) a branch in the Install Flow diagram showing the resolution-only path that exits after writing jet-lock.yaml without executing the download/extract/hardlink phases."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Cache path discrepancy between spec and requirements. pkg-manager.md specifies the L2 metadata cache at ~/.cache/jet/metadata/ (XDG standard), but pre-clarification Q1 answer and the requirements.md both specify ~/.jet-store/.metadata/ as the canonical path per issue #881.",
+      "recommendation": "Update pkg-manager.md registry API x-caching annotation and store-layout schema to use ~/.jet-store/.metadata/ before implementation. The XDG path (~/.cache/jet/metadata/) should be removed or noted as the migration source path only."
+    }
+  ]
+}

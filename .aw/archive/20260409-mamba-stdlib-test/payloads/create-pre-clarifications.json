@@ -1,0 +1,6 @@
+{
+  "group_id": "mamba-stdlib-test",
+  "questions": [],
+  "answers": [],
+  "summary": "No clarifications needed. The scope is clear: create test_mod.rs registering as 'test' module with TestCase class (assertEqual, assertTrue, assertFalse, assertRaises) and main() runner, following the existing stdlib module pattern (e.g. unittest_mod.rs, warnings_mod.rs). The test module is distinct from the unittest module -- it provides CPython-style test.support utilities. Must include unit tests and pass all existing cclab-mamba tests."
+}

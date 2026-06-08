@@ -1,0 +1,119 @@
+{
+  "groups": [
+    {
+      "id": "slice-step",
+      "issues": [835],
+      "requirements": "Implement step parameter in slice operations across list, tuple, and string types in the mamba runtime.\n\n- Location: `runtime/list_ops.rs`, `runtime/tuple_ops.rs`, `runtime/string_ops.rs` — basic start:stop slicing works; step is currently TODO.\n- Algorithm: iterate from start to stop collecting every step-th element.\n- Negative step: must support reverse iteration (e.g., `a[::-1]` reverses the sequence); default start/stop must flip when step is negative (Python semantics: start defaults to len-1, stop defaults to before index 0).\n- Zero step: raise `ValueError` (CPython behavior).\n- Edge cases: negative start/stop indices with negative step must follow Python semantics (e.g., `a[-1::-1]`).\n- Codegen: ensure 3-argument slice expressions are lowered to step-aware runtime calls; confirm whether the AST/HIR already represents the third slice argument or if codegen changes are also needed.",
+      "questions": [
+        {
+          "topic": "runtime dispatch",
+          "question": "How are slice operations currently dispatched in the runtime — via a trait method, a direct function call in `list_ops.rs`, or a central dispatch/builtin table? The step implementation should follow the same pattern."
+        },
+        {
+          "topic": "codegen: 3-arg slice in AST",
+          "question": "Is the 3-argument slice (`a[start:stop:step]`) already represented in the AST and HIR, or does the parser/codegen also need changes to pass the step argument through to the runtime?"
+        },
+        {
+          "topic": "string slicing codepoints vs bytes",
+          "question": "Should step slicing on strings operate on Unicode codepoints (CPython behavior) or raw bytes? This determines whether string step-slicing can reuse the same index arithmetic as list slicing."
+        },
+        {
+          "topic": "zero step error handling",
+          "question": "Should `a[::0]` raise a Python `ValueError` at runtime (CPython behavior), or is a Rust `Err` / panic acceptable at this stage of mamba's error-handling maturity?"
+        }
+      ]
+    },
+    {
+      "id": "extended-unpacking",
+      "issues": [845],
+      "requirements": "Support PEP 3132 extended iterable unpacking and star spread in constructors.\n\n- Assignment unpacking: `first, *rest = [1, 2, 3, 4]`, `first, *mid, last = [1, 2, 3, 4]`, `*init, last = [1, 2, 3]`.\n- Star spread in list/tuple literals: `b = [*a, 3, 4]` expands `a` inline.\n- Parser: recognize star assignment targets (`*name`) in tuple/list unpacking on the left-hand side of assignments.\n- Type checker: infer `list[T]` for the starred variable based on RHS element type; enforce at most one star target per unpacking (Python `SyntaxError` otherwise).\n- Codegen: emit iterator split logic — consume first N elements, collect middle into a list, consume last M elements.",
+      "questions": [
+        {
+          "topic": "starred variable type when RHS length is dynamic",
+          "question": "When the RHS collection length is not known at compile time (e.g., return value of a function call), should the starred variable be typed as `list[T]` (T inferred from RHS element type) or `list[Any]`?"
+        },
+        {
+          "topic": "star in function calls",
+          "question": "The issue mentions `f(*args, **kwargs)` — is splat unpacking in function call arguments already supported in mamba, or should that also be addressed in this change?"
+        },
+        {
+          "topic": "nested unpacking with star",
+          "question": "Is nested destructuring involving stars (e.g., `a, (*b, c) = [1, [2, 3, 4]]`) in scope, or only flat single-level unpacking?"
+        },
+        {
+          "topic": "codegen runtime helper",
+          "question": "Should the iterator split logic be emitted inline (computed indices) or as a runtime helper function (e.g., `runtime::unpack_star(iter, n_before, n_after) -> (Vec, Vec<Value>, Vec)`)?"
+        }
+      ]
+    },
+    {
+      "id": "scope-modifiers",
+      "issues": [846],
+      "requirements": "Support `global` and `nonlocal` statements for explicit scope control in the mamba compiler.\n\n- `global x`: parsed inside function bodies; resolver marks `x` as resolved against the module-level global scope; codegen emits load/store to the global table rather than the local frame.\n- `nonlocal x`: parsed inside nested functions; resolver marks `x` as captured from the nearest enclosing non-global scope; codegen emits closure capture/upvalue operations.\n- Parser: `global NAME (, NAME)*` and `nonlocal NAME (, NAME)*` statement forms.\n- Resolver: propagate global/nonlocal annotations through the scope chain during name resolution; `nonlocal` in outermost function (no enclosing function scope) is a `SyntaxError`.\n- Codegen: emit correct load/store opcodes for global vs local vs closure-captured variables based on resolver annotations.",
+      "questions": [
+        {
+          "topic": "closure/upvalue representation",
+          "question": "What is the current codegen strategy for closures and captured variables? Is there an upvalue/capture table (Lua-style), a heap-allocated environment record, or another mechanism? The nonlocal implementation must integrate with whatever exists."
+        },
+        {
+          "topic": "undeclared global variable",
+          "question": "Should `global x` where `x` is not yet assigned in the module scope be a compile-time error, a warning, or silently allowed (CPython defers to a runtime `NameError` if accessed before assignment)?"
+        },
+        {
+          "topic": "type checker integration",
+          "question": "Does the type checker need to be updated to respect global/nonlocal annotations when inferring variable types across scopes, or does it operate after name resolution with the scope already resolved?"
+        },
+        {
+          "topic": "interaction with closures already captured",
+          "question": "If a variable is already implicitly captured (read-only closure) and a `nonlocal` declaration is added, how should the compiler reconcile these — is this a no-op, an upgrade to mutable capture, or an error?"
+        }
+      ]
+    },
+    {
+      "id": "decorator-full",
+      "issues": [847],
+      "requirements": "Ensure full decorator support in the mamba compiler: decorator expressions, argument passing, and stacking.\n\n- Attribute access decorators: `@app.route(\"/api\")` — decorator position allows arbitrary attribute chains.\n- Argument decorators: `@cache(maxsize=128)` — decorator expression is a call expression returning the actual decorator.\n- Stacked decorators: multiple `@` lines above a function are applied bottom-up (innermost first), matching CPython semantics.\n- Parser: decorator expression can be any expression per PEP 614 (not limited to simple names); handle multiple decorators per function/class definition.\n- Type checker: the decorated function's type is replaced by the return type of the decorator callable; for unrecognized or complex decorators, fall back gracefully (e.g., preserve `Any` or original type).\n- Codegen: collect decorators, emit function definition, then apply decorators in reverse order.",
+      "questions": [
+        {
+          "topic": "current parser decorator limitation",
+          "question": "Does the current parser already support stacked decorators with simple names? What is the precise limitation — only single decorators, no call expressions, or no attribute access in decorator position?"
+        },
+        {
+          "topic": "type checker decorator model",
+          "question": "Should decorator return-type inference be precise (requires higher-order function type modeling, e.g., `Callable[[Callable[P, R]], Callable[P2, R2]]`) or use `Any`/unknown as a fallback for this iteration?"
+        },
+        {
+          "topic": "special decorator handling",
+          "question": "Should `@property`, `@staticmethod`, and `@classmethod` be special-cased in the type checker with hardcoded semantics, or treated as regular decorators whose types are resolved through normal inference?"
+        },
+        {
+          "topic": "PEP 614 full compliance",
+          "question": "PEP 614 allows any expression in decorator position (e.g., `@buttons[0]`). Should this change implement full PEP 614 or a practical subset (names, attribute access, calls only)?"
+        }
+      ]
+    },
+    {
+      "id": "string-literals",
+      "issues": [848],
+      "requirements": "Complete string literal type coverage across the lexer, parser, type checker, and runtime.\n\n- Unicode escapes: `\\uXXXX`, `\\UXXXXXXXX` must be handled in the lexer; `\\N{name}` support is optional (see questions).\n- Raw strings: `r\"...\"`, `r'...'` — backslash is literal, no escape processing; combine with b/f prefixes as `rb`, `br`, `rf`, `fr`.\n- Byte strings: `b\"...\"`, `b'...'` with hex escapes (`\\xNN`) and octal escapes (`\\0NNN`); raw byte strings `rb\"...\"`.\n- Lexer: handle all valid prefix combinations (r, b, rb, br, f, fr, rf) and distinguish them in the token stream.\n- Parser: produce distinct AST nodes / type tags for `str` vs `bytes` literals.\n- Type checker: `b\"...\"` literals have type `bytes`, not `str`.\n- Runtime: implement `bytes` type with at minimum: construction, `len`, indexing (returns `int`), slicing, concatenation, comparison, and `repr`.",
+      "questions": [
+        {
+          "topic": "bytes runtime representation",
+          "question": "What is the planned runtime representation for `bytes` — a NaN-boxed heap object wrapping `Vec<u8>`, a dedicated struct in `runtime/bytes_ops.rs`, or something else? This determines where the implementation lives and how it interacts with the existing value model."
+        },
+        {
+          "topic": "f-string scope",
+          "question": "Are f-strings (`f\"...\"`, `f'...'`) in scope for this change? The lexer prefix handling overlaps, but f-string interpolation is a distinct feature. Should f-strings be stubbed, deferred, or fully implemented here?"
+        },
+        {
+          "topic": "\\N{name} Unicode named escapes",
+          "question": "Unicode named escapes (`\\N{LATIN SMALL LETTER A}`) require embedding or querying a Unicode name database. Should this be fully implemented, raise a `NotImplementedError` at runtime, or silently deferred to a future issue?"
+        },
+        {
+          "topic": "bytes operations scope",
+          "question": "The issue states 'proper bytes type operations' — is the required scope limited to basic ops (len, index, slice, concat, compare) or does it include the full CPython `bytes` API (find, replace, decode, startswith, etc.)?"
+        }
+      ]
+    }
+  ]
+}

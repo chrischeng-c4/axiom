@@ -1,0 +1,32 @@
+{
+  "group_id": "mamba-stdlib-test",
+  "specs": [
+    {
+      "spec_id": "stdlib-testing",
+      "spec_group": "crates/cclab-mamba/stdlib",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R3", "R4"]
+    },
+    {
+      "spec_id": "mamba-native-stdlib-spec",
+      "spec_group": "crates/cclab-mamba/stdlib",
+      "relevance": "medium",
+      "key_requirements": ["R2", "R3"]
+    },
+    {
+      "spec_id": "module",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "medium",
+      "key_requirements": ["R2", "R11"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "stdlib-test-module",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/stdlib/testing.md",
+      "source": "crates/cclab-mamba/stdlib/testing.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

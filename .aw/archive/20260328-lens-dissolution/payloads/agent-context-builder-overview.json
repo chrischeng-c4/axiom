@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "lens-dissolution",
+  "spec_id": "agent-context-builder",
+  "group_id": "lens-dissolution",
+  "section": "overview",
+  "content": "Smart file selection for AI task execution. Combines import graph forward traversal, call graph backward traversal, and test file detection to produce a minimal, ranked context set for an agent working on a given symbol or file.\n\n| Attribute | Value |\n|-----------|-------|\n| Crate | cclab-sdd (post lens dissolution) |\n| Module | `context_builder` (new top-level module) |\n| Interface | CLI-only (`cclab sdd context`) — no MCP |\n| Issue | #946 |\n| Depends on | ImportGraph (graph/), CallGraphIndex (search/query), DeepTypeInferencer (types/deep_inference), SymbolTable (semantic/) |"
+}

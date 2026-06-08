@@ -1,0 +1,162 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lumen
+  namespace: lumen
+  labels:
+    app: lumen
+    role: server
+spec:
+  # Symmetric, ephemeral "cattle". Each pod holds a full in-memory
+  # materialized index rebuilt by tailing the NATS write log (optionally
+  # bootstrapped from an RDB snapshot). No PVC: the index is derived state.
+  # The HPA owns the live replica count; this is the floor at apply time.
+  replicas: 3
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: lumen
+      role: server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Keep read capacity during rollouts; each new pod must reach /readyz
+      # (log tail caught up) before an old one is torn down.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: lumen
+        role: server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "7373"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: lumen
+      # SIGTERM -> /readyz flips to 503 -> drain in-flight reads -> exit.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # Spread serving pods across hosts (and zones when labelled) so a
+      # single node loss never takes out read capacity wholesale.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: lumen
+              role: server
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: lumen
+              role: server
+      containers:
+        - name: lumen
+          image: lumen:latest
+          imagePullPolicy: IfNotPresent
+          command: ["lumen", "serve"]
+          ports:
+            - name: http
+              containerPort: 7373
+              protocol: TCP
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Bind all interfaces inside the pod network namespace.
+            - name: LUMEN_HOST
+              value: "0.0.0.0"
+            # Write-log mode: tail mutations from NATS JetStream.
+            - name: LUMEN_WAL
+              value: "nats"
+            # Graceful-drain window; should track terminationGracePeriodSeconds.
+            - name: LUMEN_GRACE_SECS
+              value: "30"
+            - name: LUMEN_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: lumen-config
+                  key: LUMEN_PORT
+            - name: LUMEN_NATS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: lumen-config
+                  key: LUMEN_NATS_URL
+            - name: LUMEN_LOG_FORMAT
+              valueFrom:
+                configMapKeyRef:
+                  name: lumen-config
+                  key: LUMEN_LOG_FORMAT
+            - name: SHARD_COUNT
+              valueFrom:
+                configMapKeyRef:
+                  name: lumen-config
+                  key: SHARD_COUNT
+          # QoS Guaranteed: requests == limits.
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          readinessProbe:
+            # 503 until the log tail has caught up (and again while draining).
+            # Generous failureThreshold lets a cold pod rebuild its index
+            # from the NATS log before it is rolled or restarted.
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            # Covers the initial log-replay window; once healthy, the
+            # liveness probe takes over.
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 120
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Scratch only (readOnlyRootFilesystem=true needs writable /tmp).
+            # The index is in memory; nothing here is durable.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

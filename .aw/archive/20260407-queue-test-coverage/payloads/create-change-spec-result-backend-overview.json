@@ -1,0 +1,8 @@
+{
+  "spec_id": "result-backend",
+  "group_id": "queue-unit-test-coverage",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-queue/logic/result-backend.md",
+  "fill_sections": ["overview", "async-api", "test-plan", "changes"],
+  "content": "<!-- type: overview lang: markdown -->\n\n`ResultBackend` is the async trait defining task result storage for cclab-queue. It exposes 11 async methods in 3 groups:\n\n- **Task CRUD**: `set_state`, `get_state`, `set_result`, `get_result`, `delete`\n- **Query**: `wait_for_result` (blocking poll), `get_many` (batch), `health_check`\n- **Metadata**: `set_metadata`, `get_metadata`, `delete_metadata` (workflow tracking for chains/chords)\n\nTwo implementations exist:\n\n| Backend | Module | Feature Gate | Storage | Connection |\n|---------|--------|-------------|---------|------------|\n| `RedisBackend` | `backend/redis.rs` | `redis` | `deadpool-redis` pool | `Pool` (async, cloneable) |\n| `IonBackend` | `backend/ion.rs` | `ion` | `cclab-kv::KvClient` | `Mutex<KvClient>` (single conn) |\n\nBoth backends use `{prefix}:state:{task_id}`, `{prefix}:result:{task_id}`, `{prefix}:meta:{key}` key schemas with configurable TTL. Redis serializes via `serde_json::to_string`; Ion via `serde_json::to_vec`.\n\nExisting unit tests cover config defaults, key generation, and serialization. This spec adds integration tests for both backends covering the full CRUD lifecycle, metadata API, batch operations, timeout behavior, and edge cases."
+}

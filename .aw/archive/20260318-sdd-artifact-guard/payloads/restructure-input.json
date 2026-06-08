@@ -1,0 +1,11 @@
+{
+  "change_id": "sdd-artifact-guard",
+  "groups": [
+    {
+      "id": "artifact-guard",
+      "issues": [929],
+      "requirements": "Add delegation guard check to artifact CLI entry point. When delegation_guard is active in STATE.yaml, only allow artifact commands that match guard.action. Reject all other artifact commands with a clear error message. Map CLI kebab-case action names to guard snake_case names for comparison.",
+      "questions": []
+    }
+  ]
+}

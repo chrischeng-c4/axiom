@@ -1,0 +1,12 @@
+{
+  "skipped": true,
+  "scope_summary": {
+    "problem": "TD spec pseudocode ambiguous about change_dir base path",
+    "success_criteria": "issue-centric-workflow.md explicitly documents control plane (main) vs data plane (worktree) storage model",
+    "boundary": {
+      "in_scope": "issue-centric-workflow.md spec text only",
+      "out_of_scope": "No code changes, no StateManager refactor",
+      "constraints": "Pure spec clarification, current implementation is correct"
+    }
+  }
+}

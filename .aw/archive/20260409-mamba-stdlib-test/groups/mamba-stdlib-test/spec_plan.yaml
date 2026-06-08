@@ -1,0 +1,7 @@
+- spec_id: stdlib-test-module
+  action: modify
+  main_spec_ref: crates/cclab-mamba/stdlib/testing.md
+  source: crates/cclab-mamba/stdlib/testing.md
+  sections:
+  - overview
+  - changes

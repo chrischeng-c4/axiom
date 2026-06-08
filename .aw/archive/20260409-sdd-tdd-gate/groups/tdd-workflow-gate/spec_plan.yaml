@@ -1,0 +1,29 @@
+- spec_id: tdd-gate-state-machine
+  action: modify
+  main_spec_ref: crates/sdd/logic/state-machine.md
+  source: .score/tech_design/crates/sdd/logic/state-machine.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - state-machine
+  - changes
+- spec_id: tdd-gate-workflow
+  action: create
+  main_spec_ref: crates/sdd/logic/tdd-gate.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - logic
+  - interaction
+  - config
+  - prompt
+  - changes
+- spec_id: tdd-gate-agent-prompt
+  action: modify
+  main_spec_ref: crates/sdd/config/agents.md
+  source: .score/tech_design/crates/sdd/config/agents.md
+  sections:
+  - overview
+  - changes

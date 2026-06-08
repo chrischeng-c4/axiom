@@ -1,0 +1,7 @@
+{
+  "group_id": "default",
+  "spec_id": "bug-init-change-writes-score-changes-to-main-repo-inst-spec",
+  "section": "changes",
+  "content": "```yaml\n- path: .score/tech_design/crates/sdd/logic/issue-centric-workflow.md\n  action: modify\n  description: >\n    1. Add Storage Model section after Overview documenting control plane vs data plane split.\n    2. Update Changes pseudocode (line ~441-447) to explicitly annotate change_dir as project_root-relative.\n    3. Add comment documenting init_change execution order as correct by design.\n```",
+  "create_complete": true
+}

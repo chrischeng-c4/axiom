@@ -1,0 +1,9 @@
+- spec_id: name-builtin-init
+  action: modify
+  main_spec_ref: crates/cclab-mamba/lower/hir-to-mir.md
+  source: crates/cclab-mamba/lower/hir-to-mir.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes

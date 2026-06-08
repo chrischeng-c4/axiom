@@ -1,0 +1,1 @@
+jet dev server: collect browser console errors via WebSocket — hook window.onerror, unhandledrejection, and console.error in the HMR client, send upstream via existing WebSocket, print formatted errors in dev server terminal. Issue: enhancement-jet-dev-server-collect-browser-console-errors-via

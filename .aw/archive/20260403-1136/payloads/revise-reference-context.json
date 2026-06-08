@@ -1,0 +1,83 @@
+{
+  "group_id": "platform-config-and-merge-git",
+  "specs": [
+    {
+      "spec": "crates/cclab-sdd/config/platform.md",
+      "group": "config",
+      "relevance": "high",
+      "key_requirements": "Documents [sdd.issue_platform] schema — the new [sdd.repo_platform] and [sdd.spec_platform] sections follow the same structural pattern. Config upsert logic (strip_toml_sections) and interactive wizard in platform set must be extended to cover repo_platform and spec_platform. PlatformConfig::load() and SddSection in services/platform_sync/config.rs show the TOML deserialization pattern to mirror for RepoPlatformConfig and SpecPlatformConfig."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/change-merge.md",
+      "group": "merge-logic",
+      "relevance": "high",
+      "key_requirements": "Defines the merge flowchart (DAG) and archive step where auto_commit and auto_pr must be injected. Post-archive git operations (stage all dirty under cclab/, commit, create PR) extend the terminal MergeComplete step. Frontmatter stripping table and audit logging patterns inform how git results should be surfaced."
+    },
+    {
+      "spec": "crates/cclab-sdd/config/agents.md",
+      "group": "config",
+      "relevance": "high",
+      "key_requirements": "Defines SddConfig struct fields — repo_platform and spec_platform fields must be added to SddConfig so create_change_merge.rs can read them via SddConfig::load_validated(). Envfile resolution order (global → provider-specific) applies to repo_platform auth too."
+    },
+    {
+      "spec": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "group": "mcp-tools",
+      "relevance": "high",
+      "key_requirements": "sdd_workflow_create_change_merge must be added to workflow-tools.md with its OpenRPC definition (currently unspecced — the tool exists in code but has no interface spec). Response schema needs new fields: git_commit_sha, pr_url, git_status to surface post-merge git results."
+    },
+    {
+      "spec": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "group": "cli",
+      "relevance": "medium",
+      "key_requirements": "cclab sdd platform set wizard must be extended to configure [sdd.repo_platform] and [sdd.spec_platform] in addition to [sdd.issue_platform]. cclab sdd platform show must display all platform configs."
+    },
+    {
+      "spec": "crates/cclab-sdd/tools/utils/platform-sync.md",
+      "group": "config",
+      "relevance": "medium",
+      "key_requirements": "Authentication resolution order (env var → .env file → gh CLI fallback) is the same pattern used for repo_platform auth. GitHub API + gh CLI dual-transport pattern (reqwest or gh subprocess) applies to auto_pr PR creation."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/state-machine.md",
+      "group": "state-machine",
+      "relevance": "low",
+      "key_requirements": "ChangeMergeCreated → ChangeArchived transition context; git operations happen after ChangeArchived is set."
+    },
+    {
+      "spec": "crates/cclab-sdd/skills/merge.md",
+      "group": "skills",
+      "relevance": "low",
+      "key_requirements": "User-invoked merge skill that calls sdd_workflow_create_change_merge; auto_commit/auto_pr results should be included in skill output."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "platform-config-repo-spec",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/config/platform.md",
+      "source": "crates/cclab-sdd/config/platform.md",
+      "sections": ["overview", "config", "changes"]
+    },
+    {
+      "spec_id": "sdd-config-repo-platform",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/config/agents.md",
+      "source": "crates/cclab-sdd/config/agents.md",
+      "sections": ["overview", "config", "changes"]
+    },
+    {
+      "spec_id": "change-merge-git-integration",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/change-merge.md",
+      "source": "crates/cclab-sdd/logic/change-merge.md",
+      "sections": ["overview", "flowchart", "config", "changes"]
+    },
+    {
+      "spec_id": "merge-tool-openrpc",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "source": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "sections": ["overview", "openrpc", "changes"]
+    }
+  ]
+}

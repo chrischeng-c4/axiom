@@ -1,0 +1,25 @@
+{
+  "group_id": "mamba-py312-conformance",
+  "answers": [
+    {
+      "topic": "conformance-runner-architecture",
+      "answer": "(b) Golden files. Continue with existing infrastructure — tests/regen_golden.py generates .expected files from CPython 3.12. Python fixtures produce stdout, golden files capture CPython 3.12 expected output, Rust harness compares Mamba output against golden files. Deterministic, no CPython needed at test time."
+    },
+    {
+      "topic": "divergence-handling",
+      "answer": "(a) Fix immediately. All divergences must be fixed as part of this change. Behavioral consistency with CPython 3.12 is non-negotiable."
+    },
+    {
+      "topic": "test-fixture-location",
+      "answer": "(a) Continue in crates/cclab-mamba/tests/fixtures/conformance/ with conformance_tests.rs harness using datatest_stable and regen_golden.py."
+    },
+    {
+      "topic": "cpython-version-pinning",
+      "answer": "Use latest CPython 3.12.x available on the system. No specific patch pinning."
+    },
+    {
+      "topic": "stdlib-scope-for-remaining-66-modules",
+      "answer": "Cover all stdlib modules that Mamba currently implements, not just the top 16. Test conformance for every module that has a Mamba implementation."
+    }
+  ]
+}

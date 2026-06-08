@@ -1,0 +1,5 @@
+{
+  "group_id": "jet-install-optimizations",
+  "skipped": true,
+  "reason": "No contradictions — pkg-manager.md updated with two-layer cache and XDG path."
+}

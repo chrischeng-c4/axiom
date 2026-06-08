@@ -1,0 +1,1 @@
+feat(agent): add SyncAdapter trait and platform sync adapters — generic sync abstraction between protocol types and third-party platforms (GitLab, GitHub, Jira, Confluence, GDocs). Push/pull/bidirectional sync modes. #959

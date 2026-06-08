@@ -1,0 +1,4 @@
+[wasm]
+entry = "src/MultiHandler.tsx"
+root_component = "MultiHandler"
+root_props = [0]

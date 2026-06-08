@@ -1,0 +1,4 @@
+{
+  "skipped": true,
+  "scope_summary": "Problem: score init command not wired into CLI (orphaned init.rs), templates incomplete (missing agents, hooks, settings.json, 2 skills). Success Criteria: AC1-AC9 from issue — init appears in help, creates all assets, agents executable, settings.json has SubagentStop hook. Boundary: In-scope = commands.rs Init variant, init.rs install functions, template files for agents/hooks/settings/skills. Out-of-scope = MCP tools, new agents beyond 5, binary rename. Constraints: All assets embedded via include_str!, backward-compat for already-initialized projects, settings.json merge not replace."
+}

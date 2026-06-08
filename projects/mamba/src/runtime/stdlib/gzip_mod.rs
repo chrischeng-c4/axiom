@@ -1,0 +1,338 @@
+//! gzip module for Mamba (#1265 Task #18).
+//!
+//! Real gzip (DEFLATE + 10-byte header + 8-byte trailer with CRC32 +
+//! original-length) via `flate2::write::GzEncoder` / `flate2::read::GzDecoder`,
+//! replacing the prior identity stub that registered names as strings
+//! and never actually compressed/decompressed anything.
+//!
+//! Bulk-work tier:compute lib — one FFI crossing per MB-scale buffer,
+//! so this is one of the few stdlib libs that should clear the >=10x
+//! speed gate even with #2100 (per-element FFI dispatch overhead)
+//! unfixed. Sibling of zlib_mod.rs which lands the DEFLATE side; gzip
+//! adds the framing.
+//!
+//! ABI: flat-args (`extern "C" fn(args_ptr, nargs) -> MbValue`) — matches
+//! the convention established post-`ebba01e9a` for stdlib shims. The
+//! single-MbValue ABI variant identified in
+//! `project_mamba_runtime_correctness_gaps_2026_05_13` memory was the
+//! cause of silent-garbage returns; flat-args is the cure.
+//!
+//! Surface coverage (typeshed `gzip.pyi` __all__):
+//!   BadGzipFile, GzipFile, open, compress, decompress
+//! All five are wired here — compress/decompress as real callables,
+//! and BadGzipFile/GzipFile/open as sentinel-stub attributes so that
+//! `gzip.GzipFile` etc. surface-resolve (the streaming file class itself
+//! is not implemented; bulk callers should use compress/decompress).
+
+// HANDWRITE-BEGIN reason: stdlib shim layer for force-typed module dispatch.
+// Will be regenerated once score-standardize learns
+// `section_type = "stdlib-module"` with a typed signature DSL (one entry
+// per pyfn: name, arg types, return type, implementation expression in a
+// constrained vocabulary). Same gap that gates zlib_mod / base64_mod / etc.
+// HANDWRITE-END
+
+//! @codegen-skip: handwrite-pre-standardize
+
+use super::super::rc::{MbObject, ObjData};
+use super::super::value::MbValue;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use std::collections::HashMap;
+use std::io::{Read, Write};
+
+macro_rules! dispatch_unary {
+    ($name:ident, $fn:ident) => {
+        unsafe extern "C" fn $name(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            $fn(a.get(0).copied().unwrap_or_else(MbValue::none))
+        }
+    };
+}
+
+dispatch_unary!(dispatch_compress, mb_gzip_compress);
+dispatch_unary!(dispatch_decompress, mb_gzip_decompress);
+
+/// Register the gzip module with mamba's stdlib registry.
+pub fn register() {
+    let mut attrs = HashMap::new();
+
+    // Real callables.
+    let dispatchers: Vec<(&str, usize)> = vec![
+        ("compress", dispatch_compress as usize),
+        ("decompress", dispatch_decompress as usize),
+    ];
+    for (name, addr) in dispatchers {
+        attrs.insert(name.to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+
+    // Sentinel attributes for the class-name and open-fn surface so that
+    // `gzip.GzipFile`, `gzip.BadGzipFile`, `gzip.open` resolve. These are
+    // surface-only — calling them currently returns a sentinel string,
+    // matching the prior gzip_mod stub behaviour for those slots. The
+    // bulk-work bench path uses compress/decompress exclusively, so the
+    // sentinel form is sufficient until the streaming file-object plumbing
+    // lands behind it.
+    let gzip_file_sentinel = MbValue::from_ptr(MbObject::new_str("GzipFile".to_string()));
+    attrs.insert("GzipFile".to_string(), gzip_file_sentinel);
+    let bad_gzip_file_sentinel = MbValue::from_ptr(MbObject::new_str("BadGzipFile".to_string()));
+    attrs.insert("BadGzipFile".to_string(), bad_gzip_file_sentinel);
+    let open_sentinel = MbValue::from_ptr(MbObject::new_str("gzip.open".to_string()));
+    attrs.insert("open".to_string(), open_sentinel);
+
+    super::register_module("gzip", attrs);
+}
+
+/// Borrow the byte payload of `val` as `&[u8]` for the duration of `f`.
+/// Mirrors zlib_mod's `with_bytes` — see base64/bisect/struct for the
+/// established `use_bytes` borrow pattern.
+fn with_bytes<R>(val: MbValue, f: impl FnOnce(&[u8]) -> R) -> R {
+    match val.as_ptr() {
+        Some(ptr) => unsafe {
+            match &(*ptr).data {
+                ObjData::Bytes(b) => f(b.as_slice()),
+                ObjData::ByteArray(lock) => f(lock.read().unwrap().as_slice()),
+                ObjData::Str(s) => f(s.as_bytes()),
+                _ => f(&[]),
+            }
+        },
+        None => f(&[]),
+    }
+}
+
+/// gzip.compress(data, compresslevel=9) -> bytes (real gzip framing + DEFLATE).
+///
+/// `compresslevel` is currently ignored (always uses `Compression::default()`,
+/// flate2's level 6). The Python signature accepts it for API compat; a
+/// future revision can plumb the integer through once the variadic kwarg
+/// shape is generated by section_type = "stdlib-module".
+pub fn mb_gzip_compress(data: MbValue) -> MbValue {
+    let out = with_bytes(data, |b| {
+        let mut enc = GzEncoder::new(Vec::with_capacity(b.len() / 2 + 32), Compression::default());
+        // Best-effort: if flate2 ever returns an error here it means the
+        // input ptr is bad. Return empty bytes rather than panic — `gzip.error`
+        // is not yet plumbed through MbValue exception machinery.
+        if enc.write_all(b).is_err() {
+            return Vec::new();
+        }
+        enc.finish().unwrap_or_default()
+    });
+    MbValue::from_ptr(MbObject::new_bytes(out))
+}
+
+/// gzip.decompress(data) -> bytes (real gzip framing + DEFLATE).
+///
+/// Perf carve-out (#2107): the gzip trailer's last 4 bytes are ISIZE,
+/// the uncompressed size modulo 2^32. We read it to size the output
+/// buffer exactly when it fits in `usize` and is below a sanity ceiling.
+/// Falling back to `b.len() * 8` for the unknown / oversize cases is
+/// closer to the empirical 5–20× compression ratio than the prior
+/// `b.len() * 4` under-allocation that was causing repeat `realloc`+memcpy
+/// inside `Vec::read_to_end` for multi-MB streams (the dominant cost on
+/// the internal-time-ratio gap reported on the dual-time harness).
+pub fn mb_gzip_decompress(data: MbValue) -> MbValue {
+    let out = with_bytes(data, |b| {
+        let mut dec = GzDecoder::new(b);
+        let cap = decompress_capacity_hint(b);
+        let mut buf = Vec::with_capacity(cap);
+        if dec.read_to_end(&mut buf).is_err() {
+            return Vec::new();
+        }
+        buf
+    });
+    MbValue::from_ptr(MbObject::new_bytes(out))
+}
+
+/// Estimate the uncompressed size of a gzip stream.
+///
+/// The gzip trailer encodes ISIZE (uncompressed size mod 2^32) in the
+/// last 4 bytes, little-endian. We use it directly when the value is
+/// plausible (non-zero, under a 256 MiB cap, fits in `usize`). For
+/// anything that fails the sanity check we fall back to `b.len() * 8`
+/// — a better default than the previous `* 4` for typical text/JSON
+/// payloads, while remaining bounded for adversarial inputs.
+fn decompress_capacity_hint(b: &[u8]) -> usize {
+    const SANE_MAX: u64 = 256 * 1024 * 1024;
+    if b.len() >= 4 {
+        let tail = &b[b.len() - 4..];
+        let isize_mod = u32::from_le_bytes([tail[0], tail[1], tail[2], tail[3]]) as u64;
+        if isize_mod > 0 && isize_mod <= SANE_MAX {
+            if let Ok(n) = usize::try_from(isize_mod) {
+                return n;
+            }
+        }
+    }
+    b.len().saturating_mul(8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_bytes_val(val: MbValue) -> Option<Vec<u8>> {
+        val.as_ptr().and_then(|ptr| unsafe {
+            if let ObjData::Bytes(ref b) = (*ptr).data {
+                Some(b.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    #[test]
+    fn test_with_bytes_variants() {
+        let bytes_val = MbValue::from_ptr(MbObject::new_bytes(vec![1u8, 2, 3]));
+        assert_eq!(
+            super::with_bytes(bytes_val, |b| b.to_vec()),
+            vec![1u8, 2, 3]
+        );
+
+        let ba = MbValue::from_ptr(MbObject::new_bytearray(vec![4u8, 5, 6]));
+        assert_eq!(super::with_bytes(ba, |b| b.to_vec()), vec![4u8, 5, 6]);
+
+        let s = MbValue::from_ptr(MbObject::new_str("abc".to_string()));
+        assert_eq!(super::with_bytes(s, |b| b.to_vec()), vec![97u8, 98, 99]);
+
+        assert_eq!(
+            super::with_bytes(MbValue::none(), |b| b.to_vec()),
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn test_compress_produces_gzip_magic() {
+        // gzip stream header begins with 0x1F 0x8B (gzip magic).
+        let input = MbValue::from_ptr(MbObject::new_bytes(b"hello world".to_vec()));
+        let result = mb_gzip_compress(input);
+        let b = get_bytes_val(result).expect("compressed bytes");
+        assert!(
+            b.len() >= 10,
+            "gzip output too short to contain header: {} bytes",
+            b.len()
+        );
+        assert_eq!(
+            b[0], 0x1F,
+            "gzip magic byte 0 should be 0x1F, got {:#x}",
+            b[0]
+        );
+        assert_eq!(
+            b[1], 0x8B,
+            "gzip magic byte 1 should be 0x8B, got {:#x}",
+            b[1]
+        );
+        assert_eq!(
+            b[2], 0x08,
+            "gzip CM byte (compression method DEFLATE=8), got {:#x}",
+            b[2]
+        );
+    }
+
+    #[test]
+    fn test_roundtrip_small() {
+        let payload = b"the quick brown fox jumps over the lazy dog".to_vec();
+        let input = MbValue::from_ptr(MbObject::new_bytes(payload.clone()));
+        let compressed = mb_gzip_compress(input);
+        let cb = get_bytes_val(compressed).expect("compressed bytes");
+        let dec = mb_gzip_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
+        assert_eq!(get_bytes_val(dec), Some(payload));
+    }
+
+    #[test]
+    fn test_roundtrip_compressible() {
+        // Repeating-pattern data compresses well; verify both the size
+        // shrinks AND the round-trip is lossless.
+        let payload: Vec<u8> = (0u8..200).cycle().take(4096).collect();
+        let input = MbValue::from_ptr(MbObject::new_bytes(payload.clone()));
+        let compressed = mb_gzip_compress(input);
+        let cb = get_bytes_val(compressed).expect("compressed bytes");
+        assert!(
+            cb.len() < payload.len(),
+            "compressed >= payload: {} >= {}",
+            cb.len(),
+            payload.len()
+        );
+        let dec = mb_gzip_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
+        assert_eq!(get_bytes_val(dec), Some(payload));
+    }
+
+    #[test]
+    fn test_roundtrip_empty() {
+        let input = MbValue::from_ptr(MbObject::new_bytes(vec![]));
+        let compressed = mb_gzip_compress(input);
+        let cb = get_bytes_val(compressed).expect("compressed bytes");
+        // gzip-of-empty is non-empty (header + empty deflate block + trailer ~ 20 bytes).
+        assert!(!cb.is_empty());
+        assert_eq!(cb[0], 0x1F);
+        assert_eq!(cb[1], 0x8B);
+        let dec = mb_gzip_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
+        assert_eq!(get_bytes_val(dec), Some(Vec::<u8>::new()));
+    }
+
+    #[test]
+    fn test_roundtrip_bytearray_input() {
+        // bytearray input should round-trip to the same bytes payload.
+        let payload = b"bytearray input goes here".to_vec();
+        let input = MbValue::from_ptr(MbObject::new_bytearray(payload.clone()));
+        let compressed = mb_gzip_compress(input);
+        let cb = get_bytes_val(compressed).expect("compressed bytes");
+        let dec = mb_gzip_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
+        assert_eq!(get_bytes_val(dec), Some(payload));
+    }
+
+    #[test]
+    fn test_decompress_capacity_hint_uses_isize() {
+        // Build a real gzip stream whose ISIZE trailer is non-zero and
+        // well below the 256 MiB sanity cap. The capacity hint must
+        // round-trip that exact value.
+        let payload: Vec<u8> = (0u8..200).cycle().take(8192).collect();
+        let compressed_mb =
+            mb_gzip_compress(MbValue::from_ptr(MbObject::new_bytes(payload.clone())));
+        let compressed_bytes = get_bytes_val(compressed_mb).expect("compressed bytes");
+        let hint = super::decompress_capacity_hint(&compressed_bytes);
+        assert_eq!(
+            hint,
+            payload.len(),
+            "ISIZE-derived hint should equal uncompressed length, got {} expected {}",
+            hint,
+            payload.len()
+        );
+    }
+
+    #[test]
+    fn test_decompress_capacity_hint_short_input_falls_back() {
+        // Inputs shorter than the 4-byte trailer must fall back to the
+        // b.len() * 8 default rather than panic or under-read.
+        assert_eq!(super::decompress_capacity_hint(&[]), 0);
+        assert_eq!(super::decompress_capacity_hint(&[1, 2, 3]), 24);
+    }
+
+    #[test]
+    fn test_decompress_hot_path_regression_2107() {
+        // Regression guard for #2107: a multi-KB compressible payload
+        // must decompress correctly with the new capacity hint and not
+        // overshoot Vec capacity in a way that breaks the round-trip.
+        // We do not assert on timing here (CI is noisy); the correctness
+        // gate alone catches any over-/under-allocation that would
+        // truncate the output or trigger a Vec growth bug.
+        let payload: Vec<u8> = (0u8..255).cycle().take(64 * 1024).collect();
+        let compressed = mb_gzip_compress(MbValue::from_ptr(MbObject::new_bytes(payload.clone())));
+        let cb = get_bytes_val(compressed).expect("compressed bytes");
+        // ISIZE-derived hint should match payload size exactly for inputs
+        // below 2^32 bytes.
+        assert_eq!(super::decompress_capacity_hint(&cb), payload.len());
+        let decompressed = mb_gzip_decompress(MbValue::from_ptr(MbObject::new_bytes(cb)));
+        assert_eq!(get_bytes_val(decompressed), Some(payload));
+    }
+
+    #[test]
+    fn test_decompress_bad_input_returns_empty() {
+        // Non-gzip input should not panic; returns empty Vec until
+        // `gzip.BadGzipFile` exception plumbing lands.
+        let bad = MbValue::from_ptr(MbObject::new_bytes(vec![0, 1, 2, 3, 4]));
+        let dec = mb_gzip_decompress(bad);
+        assert_eq!(get_bytes_val(dec), Some(Vec::<u8>::new()));
+    }
+}

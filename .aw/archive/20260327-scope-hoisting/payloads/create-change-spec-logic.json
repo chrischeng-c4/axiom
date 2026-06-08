@@ -1,0 +1,6 @@
+{
+  "spec_id": "scope-hoisting",
+  "group_id": "scope-hoisting",
+  "section": "logic",
+  "content": "<!-- type: logic lang: mermaid -->\n\n```mermaid\nflowchart TD\n    A[generate_bundle] --> B{has_cycle?}\n    B -- yes --> C[generate_bundle_with_runtime]\n    B -- no --> D{is_scope_hoist_safe?}\n    D -- no: dynamic import present --> C\n    D -- yes --> E{minify && is_flatten_safe?}\n    E -- yes --> F[Phase 2: generate_flattened_bundle]\n    E -- no --> G[Phase 1: generate_scope_hoisted_bundle]\n    F --> H[inline_module_body_v2 per module]\n    H --> I[collect_top_level_decls]\n    I --> J[apply prefix renames _m_i_ + CJS subs]\n    J --> K[cross-module constant inlining R4]\n    K --> L[unified cross-module DCE R5]\n    L --> M[mangle_variables_with_root]\n    M --> N[fold_constants]\n    N --> O[output bundle]\n    G --> M\n    C --> O\n```"
+}

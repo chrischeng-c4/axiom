@@ -1,0 +1,31 @@
+{
+  "spec_id": "fix-conformance-xfails-spec",
+  "verdict": "REJECTED",
+  "hard_checklist": {
+    "code_matches_spec_requirements": {
+      "pass": false,
+      "details": "Spec targets 28 xfail eliminations across 10 requirement categories (R1-R10). Implementation resolves only 3 xfails (iteration R9.1, generators R9.2, pattern_matching R8.1). 28 active xfails remain vs the spec target of 3. Specific gaps:\n- R1 (Codegen IR): 0/5 fixtures fixed. codegen/cranelift/mod.rs NOT modified. functional.py, descriptors.py, object_protocol.py, super_call.py, decorator_full.py all still xfailed.\n- R2 (CallExtern return): 0/6 stdlib fixtures fixed. Module-scope variable mirroring and import binding were added, but itertools/io/pathlib/random/re/struct all still xfailed.\n- R3 (bytes methods): bytes_ops.py still xfailed. bytes_ops.rs diff only adds tests, no new method implementations.\n- R4 (exception chaining): exceptions.py still xfailed at conformance level. Unit tests for __cause__/__context__ pass, but compiler-level raise-from lowering incomplete.\n- R5 (nested f-strings): fstring_advanced.py still xfailed. lexer/mod.rs and parser/expr_compound.rs NOT modified.\n- R6 (metaclass keyword): inheritance.py still xfailed. Parser tests pass for simple cases, but AST/HIR propagation files NOT modified.\n- R7 (walrus scope): comprehension_scope.py still xfailed. resolve/pass.rs NOT modified.\n- R9.3 (stdlib type annotations): json xfail UPDATED (not removed; now SIGABRT), functools/csv still xfailed.\n- R10 (stdlib divergence): 0/6 fixtures fixed. datetime/hashlib/math/sys/os/collections runtime files NOT modified."
+    },
+    "test_plan_has_tests": {
+      "pass": true,
+      "details": "Spec has ## Test Plan section. Implementation diff contains 27 new #[test] functions across 5 files: bytes_ops.rs (10 tests), exception.rs (4 tests), parser_tests.rs (4 tests), pipeline_tests.rs (4 tests), type_check_tests.rs (5 tests). All tests pass."
+    },
+    "existing_tests_pass": {
+      "pass": true,
+      "details": "All existing tests pass. parser_tests (25 passed), pipeline_tests (28 passed), type_check_tests (53 passed), bytes_ops unit tests (all passed), exception unit tests (all passed). No regressions detected."
+    }
+  },
+  "soft_checklist": {
+    "code_quality": "Good. Changes are well-structured with clear comments explaining rationale. The peeked-value cache pattern in iter.rs is clean. Module-scope variable mirroring logic is well-documented.",
+    "error_handling": "Adequate for the scope addressed. StopIteration propagation in mb_next_raise is correct. Exception chaining unit tests cover cause/context/suppress_context.",
+    "performance": "No concerns. The peeked-value approach for has_next/next avoids redundant iterator advancement.",
+    "documentation": "Inline comments are thorough. Implementation summary accurately states '3 xfails resolved, 30 remain' which contradicts the spec's target of 28 eliminations."
+  },
+  "summary": "Implementation resolves 3 of 28 targeted conformance xfails (~11% of spec scope). The code changes are high-quality and the 3 resolved xfails (iteration, generators, pattern_matching) are correctly fixed with proper tests. However, 7 of 10 requirement categories (R1, R2, R3, R5, R7, R9.3, R10) have zero implementation, and R4/R6 are only partially addressed at the unit test level without removing their conformance xfails. The spec's primary acceptance criterion — 'cclab mamba test --conformance with all 31 targeted fixtures passing' — is not met. 28 active xfails remain plus 1 new xfail (__snippet_test.py) was added.",
+  "recommendations": [
+    "Consider rescoping the spec to match the 3 xfails actually addressed, or continue implementation to cover all 10 requirement categories.",
+    "R1 (codegen IR) is the highest-impact category with 5 fixtures blocked; prioritize codegen/cranelift/mod.rs changes.",
+    "R2 (CallExtern return propagation) blocks 6 stdlib fixtures and is described as a single fix in hir_to_mir.rs.",
+    "New __snippet_test.py xfail was added — this should be tracked as a known issue, not counted against the spec target."
+  ]
+}

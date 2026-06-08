@@ -1,0 +1,12 @@
+{
+  "group_id": "issue-centric-workflow",
+  "verdict": "approve",
+  "summary": "Reference context correctly identifies state-machine, structured-issue, and issues-backend specs. Spec plan creates one new logic spec with appropriate sections.",
+  "findings": ["All specs referenced exist under .score/tech_design/crates/sdd/logic/"],
+  "issues": [],
+  "checklist": {
+    "all_areas_covered": "pass",
+    "relevance_reasonable": "pass",
+    "spec_plan_valid": "pass"
+  }
+}

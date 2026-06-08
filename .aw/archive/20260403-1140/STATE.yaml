@@ -1,0 +1,41 @@
+change_id: '1140'
+schema_version: '2.0'
+created_at: 2026-04-03T15:37:51.424029Z
+updated_at: 2026-04-03T17:18:16.574442Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  impl:check-alignment: 2
+  ref_ctx:check-alignment-phase1: 1
+current_task_id: cli-commands-check-alignment
+task_revisions:
+  check-alignment: 1
+impl_spec_phase:
+  check-alignment: tests
+telemetry: null
+dag:
+  issues:
+  - number: 1140
+    title: 'feat(sdd): spec format validation — check-alignment Phase 1'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  pre_clarifications:
+  - check-alignment-phase1
+  change_spec: []
+  post_clarifications:
+  - check-alignment-phase1
+  reference_context:
+  - check-alignment-phase1

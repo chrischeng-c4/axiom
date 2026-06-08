@@ -1,0 +1,13 @@
+{
+  "group_id": "check-alignment-phase2",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "No automated code↔spec coverage analysis. Manual review needed to find unspecced functions and orphaned spec references. Phase 1 logical rules don't traverse nested OpenRPC schemas.",
+    "success_criteria": "1. @spec annotation parser scans all language comment syntaxes. 2. Bidirectional coverage report: covered, uncovered_requirements, unspecced_functions, stale_annotations. 3. Daemon pre-index via DaemonClient::symbols() for public function discovery. 4. Nested schema traversal for logical rules. 5. Implementation agent prompt produces @spec annotations.",
+    "boundary": {
+      "in_scope": ["spec_alignment/annotations.rs (@spec parser)", "spec_alignment/coverage.rs (coverage analysis)", "Lens/daemon integration for symbol extraction", "Nested schema fix in logical_rules.rs", "Implementation prompt template update", "CLI --coverage flag"],
+      "out_of_scope": ["Workflow integration (Phase 3 #1142)", "Write-time validation (Phase 3)", "Codegen integration (#1128)"],
+      "constraints": ["@spec token scan is language-agnostic — no per-language AST", "Lens symbols via pre-built daemon index (DaemonClient::symbols)", "Daemon must be ready (ensure_daemon_ready pattern)"]
+    }
+  }
+}

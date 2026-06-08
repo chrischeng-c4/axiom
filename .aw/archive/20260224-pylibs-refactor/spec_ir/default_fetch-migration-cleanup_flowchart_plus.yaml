@@ -1,0 +1,43 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: fetch-migration-cleanup
+  change_id: pylibs-refactor
+  source_file: pylibs-refactor/specs/fetch-migration-cleanup.md
+  spec_id: fetch-migration-cleanup
+spec:
+  title: Migration Strategy
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: legacy_crate
+      label: replaced by
+      to: new_crate
+    - from: cclab_agent
+      label: updates to
+      to: new_crate
+    - from: cclab_nucleus
+      label: updates to
+      to: new_crate
+    - from: cclab_qc
+      label: updates to
+      to: new_crate
+    - from: root_cargo
+      label: removes member
+      to: legacy_crate
+    id: fetch_migration_flow
+    nodes:
+    - id: legacy_crate
+      label: cclab-http (DEPRECATED)
+    - id: new_crate
+      label: cclab-fetch (ACTIVE)
+    - id: cclab_agent
+      label: cclab-agent (Consumer)
+    - id: cclab_nucleus
+      label: cclab-nucleus (Consumer)
+    - id: cclab_qc
+      label: cclab-qc (Consumer)
+    - id: root_cargo
+      label: Root Cargo.toml
+    title: Fetch Migration Cleanup Flow

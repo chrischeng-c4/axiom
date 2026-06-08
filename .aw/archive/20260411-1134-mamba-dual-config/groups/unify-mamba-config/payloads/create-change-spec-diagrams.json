@@ -1,0 +1,6 @@
+{
+  "spec_id": "1134-mamba-dual-config-spec",
+  "group_id": "unify-mamba-config",
+  "section": "diagrams",
+  "content": "### Data Model\n\n```mermaid\nclassDiagram\n    class MambaConfig {\n        +ProjectConfig project\n        +Option~String~ entry_point\n        +HashMap~String, CrateEntry~ crates\n        +HashMap~String, Vec~String~~ expose\n        +BuildConfig build\n        +PathsConfig paths\n        +discover(start_dir) Option\n        +from_file(path) Result\n        +from_str(content) Result\n        +entry_point() Option~str~\n        +is_symbol_exposed(crate_name, symbol) bool\n        +has_crate_expose(key) bool\n        +validate() Result\n    }\n    class CrateEntry {\n        <<enum>>\n        Version(String)\n        Config(CrateConfig)\n        +to_crate_config() CrateConfig\n        +expose_list() Vec~String~\n    }\n    class CrateConfig {\n        +Option~String~ crate_name\n        +Option~String~ version\n        +Option~PathBuf~ path\n        +Vec~String~ expose\n        +Option~String~ module\n    }\n    class CompilerConfig {\n        +Backend backend\n        +Option~EmitMode~ emit\n        +OptLevel opt_level\n        +Option~MambaConfig~ project_config\n    }\n    MambaConfig --> CrateEntry\n    CrateEntry --> CrateConfig\n    CompilerConfig --> MambaConfig\n```"
+}

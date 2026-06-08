@@ -1,0 +1,17 @@
+{
+  "artifact_kind": "frontend_page",
+  "intent_read": "Render a usable page from a design brief.",
+  "audience": "end users",
+  "constraints": ["responsive layout", "accessible controls"],
+  "quality_dials": [
+    { "key": "visual_fit", "value": "brief-matched", "rationale": "must match intent" }
+  ],
+  "source_policy": {
+    "mode": "screenshot_reference",
+    "evidence_ref": "design brief"
+  },
+  "preflight_gate_set": {
+    "id": "frontend-page-preflight",
+    "gates": ["layout smoke", "responsive smoke"]
+  }
+}

@@ -1,0 +1,19 @@
+stages:
+  - validate
+  - test
+  - release
+
+validate:
+  stage: validate
+  script:
+    - cue validate app-spec.json policy.json permissions.json connectors.json
+
+test:
+  stage: test
+  script:
+    - cue test tests/
+
+release:
+  stage: release
+  script:
+    - cue release releases/

@@ -1,0 +1,32 @@
+{
+  "change_id": "sdd-codegen-and-fixes",
+  "group_id": "specir-and-test-codegen",
+  "answers": [
+    {
+      "question_id": "Q1",
+      "question": "First codegen target for #932",
+      "answer": "Both Axum (Rust) and FastAPI (Python) as first targets."
+    },
+    {
+      "question_id": "Q2",
+      "question": "Template file location",
+      "answer": "Templates live in crates/cclab-sdd/templates/ directory (existing template location). Loaded via include_str! for embedding into binary. No runtime file dependency."
+    },
+    {
+      "question_id": "Q3",
+      "question": "SpecBundle cross-section composition scope",
+      "answer": "Phase 2 (SpecBundle cross-section composition) deferred. Only Phase 1 (per-section-type, single-spec codegen) in scope."
+    },
+    {
+      "question_id": "Q4",
+      "question": "Test coverage validation mode",
+      "answer": "Warning mode — missing coverage prints to stderr and continues. No --strict flag needed for initial implementation."
+    },
+    {
+      "question_id": "Q5",
+      "question": "cclab-probe integration scope",
+      "answer": "Deferred. Deliverable is file scaffold generation only, no probe integration."
+    }
+  ],
+  "follow_up_needed": false
+}

@@ -1,0 +1,16 @@
+{
+  "groups": [
+    {
+      "id": "check-alignment-phase3",
+      "title": "check-alignment workflow integration — Phase 3",
+      "issues": [1142],
+      "crates": ["cclab-sdd", "cclab-sdd-cli"],
+      "requirements": "Integrate spec_alignment::check() and check_with_coverage() into 4 SDD workflow integration points: (1) artifact tools — block on format violations, warn on coverage gaps; (2) merge workflow — run check-alignment post-archive, emit warnings; (3) review agent prompt — inject alignment report into reviewer context; (4) run-change response — add alignment_warnings field to response JSON. Same check function, different strictness levels per caller.",
+      "questions": [
+        "Should artifact tools validate ONLY the section being written, or the entire spec file?",
+        "For merge workflow: should alignment warnings be written to implementation.md or just printed to stdout?",
+        "Should the alignment_warnings in run-change response include the full violation list or just a count + summary?"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "spec_id": "artifact-tools-phase3",
+  "group_id": "check-alignment-phase3",
+  "section": "overview",
+  "content": "Extend artifact tools with post-write alignment validation. After `sdd_artifact_create_change_spec` (and `sdd_artifact_revise_change_spec`) writes a section to disk, call `spec_alignment::check()` on the entire spec file. Format violations (Phase 1 rules: missing section annotation, duplicate section, format priority violation) block the write — return error, revert the file. Coverage gaps (Phase 2 rules: orphan requirements, uncovered requirements) produce warnings in the response JSON but do not block.\n\n**Scope**: This spec covers only the artifact tool integration point. Same `check()` function, different strictness than CLI or merge callers.\n\n| Caller | Format violations | Coverage gaps |\n|--------|-------------------|---------------|\n| Artifact tools (this spec) | Error — block write | Warning — allow write |\n| CLI post-hoc | Report all | Report all |\n| Merge workflow | Warning | Warning |",
+  "fill_sections": ["overview", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+  "merge_strategy": "new"
+}

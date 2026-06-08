@@ -1,0 +1,36 @@
+{
+  "change_id": "sdd-impl-test-split",
+  "groups": [
+    {
+      "id": "sdd-impl-test-split",
+      "issues": [],
+      "requirements": "Three targeted fixes to the SDD implementation workflow:\n\n1. **create_change_impl.rs — Split dispatch into two phases**:\n   - Phase 1: implement code only → verify build passes (`cargo build`)\n   - Phase 2: implement tests only → verify test count in diff matches the test-plan count declared in the spec\n   - Currently, a single dispatch handles code + tests together with no build or test-count verification\n\n2. **review_change_impl.rs — Add hard checklist enforcement**:\n   - Extend the review prompt with a hard checklist: (a) code matches requirements, (b) tests match test-plan, (c) tests pass\n   - Hard REJECT rule: if spec defines a `## Test Plan` section but the diff contains no tests, the reviewer MUST return verdict `REJECTED` — no exceptions\n   - Currently the review prompt has soft verdict guidelines with no test-plan enforcement\n\n3. **create_change_spec.rs — Guard `create_complete` on failure**:\n   - Do NOT set `create_complete: true` in frontmatter when `failed_sections` is non-empty\n   - Instead, return an error response so mainthread can retry\n   - Currently (lines 519-524), `create_complete: true` is unconditionally written even after section fills fail",
+      "questions": [
+        {
+          "id": "q1",
+          "question": "For Phase 1 build verification in create_change_impl.rs: should the build check run `cargo build` on the whole workspace or only on the crate(s) modified by the spec? And is a build failure a hard gate (block Phase 2 and REJECT) or a soft warning?"
+        },
+        {
+          "id": "q2",
+          "question": "For Phase 2 test count verification: should the check require an exact match between the test-plan count and the number of tests added in the diff, or should it be 'at least N tests'? What happens if the spec's test-plan lists qualitative scenarios rather than a numeric count — is the check skipped or inferred?"
+        },
+        {
+          "id": "q3",
+          "question": "How should 'number of tests in the diff' be counted for Phase 2 verification: by counting `#[test]` annotations in the diff, `fn test_` function definitions, or something else? Should it count only newly added lines (`+` lines) or total?"
+        },
+        {
+          "id": "q4",
+          "question": "For review_change_impl.rs: does the reviewer agent already have the spec's test-plan available in its context, or does the review prompt need to explicitly instruct it to read `## Test Plan` from the spec file before evaluating?"
+        },
+        {
+          "id": "q5",
+          "question": "For create_change_spec.rs: when failed_sections is non-empty and we block `create_complete`, what should the returned error JSON look like? Should it list the failed sections and suggest a retry action (e.g. next_action pointing back to `sdd_workflow_create_change_spec`), or return a different error structure?"
+        },
+        {
+          "id": "q6",
+          "question": "Does splitting create_change_impl.rs into two phases require new `ImplSubState` variants in common_change_impl.rs (e.g. `ImplementSpecCode` and `ImplementSpecTests`), or should the split be handled differently (e.g. via a flag in STATE.yaml)?"
+        }
+      ]
+    }
+  ]
+}

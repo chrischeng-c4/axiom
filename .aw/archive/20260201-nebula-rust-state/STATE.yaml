@@ -1,0 +1,79 @@
+change_id: nebula-rust-state
+schema_version: '2.0'
+created_at: 2026-02-01T14:25:41.390491Z
+updated_at: 2026-02-01T14:49:38.853713Z
+phase: archived
+iteration: 1
+last_action: merge-complete
+session_id: null
+checksums:
+  specs/nebula-rust-state-pyo3-spec.md:
+    hash: sha256:70774c58fa511ca294a71bce9750ace9d4e0e91a9c8f1b5bafeeb16b29a252a8
+    validated_at: 2026-02-01T14:49:38.853709Z
+  tasks.md:
+    hash: sha256:c0554e0073a463433416b46b803a288bb64811b6cf69ed995e87518c480ba2d5
+    validated_at: 2026-02-01T14:49:38.853196Z
+  specs/nebula-rust-state-spec.md:
+    hash: sha256:d7424057c2256c1b93b3bdfcfa973c393ee8fdd4f070112ca4a2645eae403b20
+    validated_at: 2026-02-01T14:49:38.853489Z
+  proposal.md:
+    hash: sha256:11b1192ac585919e7e3cf70740e1ccb6655d65484370764f96dc894cff701b2b
+    validated_at: 2026-02-01T14:49:38.853033Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-01T14:28:49.482382Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-01T14:29:16.725321Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-01T14:30:01.402152Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-01T14:49:38.852868Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

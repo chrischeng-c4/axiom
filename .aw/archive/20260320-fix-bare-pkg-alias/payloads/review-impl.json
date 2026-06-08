@@ -1,0 +1,1 @@
+{"spec_id":"fix-bare-pkg-alias-spec","verdict":"APPROVED","summary":"Bare package name alias handling added to resolver. 376 tests pass.","issues":[]}

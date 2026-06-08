@@ -1,0 +1,6 @@
+{
+  "change_id": "restructure-agent",
+  "spec_id": "restructure-agent-spec",
+  "section": "overview",
+  "markdown": "## Overview\n\nRestructure Agent is a stateless, platform-agnostic LLM-based agent that transforms vague user intent into well-structured issues (meta-prompts for downstream agents). It explores existing specs via SpecStore, identifies information gaps, and either asks clarification questions or produces structured issues.\n\n### Core Concept\n\n**Issues are not project management tickets — they are structured prompts for downstream agents (Architect, Coder, Reviewer).**\n\nThe agent is intentionally thin: all intelligence lives in the LLM call + system prompt. Agent code only assembles the prompt, calls the LLM with structured output, and returns the result.\n\n### Key Properties\n\n| Property | Value |\n|----------|-------|\n| Stateless | Yes — adapter passes full context each call |\n| Platform-agnostic | Yes — standard I/O only, no GH/GL/Jira API calls |\n| Tools | SpecStore only (read/search specs) |\n| Multi-turn | Via external adapter (not internal state) |\n| Output | JSON Schema-enforced discriminated union |"
+}

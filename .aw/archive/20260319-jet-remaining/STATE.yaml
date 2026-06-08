@@ -1,0 +1,167 @@
+change_id: jet-remaining
+schema_version: '2.0'
+created_at: 2026-03-19T06:36:09.503776Z
+updated_at: 2026-03-19T07:55:12.582320Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:install-performance-reliability: 1
+  ref_ctx:production-build-pipeline: 1
+  ref_ctx:bundle-optimization-hoisting: 1
+current_task_id: jet-remaining-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 230906
+    tokens_out: 699
+    cost_usd: null
+    duration_ms: 300470
+    timestamp: 2026-03-19T06:43:56.126266Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 185251
+    timestamp: 2026-03-19T06:47:24.812304Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 976806
+    tokens_out: 1597
+    cost_usd: null
+    duration_ms: 119211
+    timestamp: 2026-03-19T06:49:52.458981Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 209596
+    tokens_out: 772
+    cost_usd: null
+    duration_ms: 34701
+    timestamp: 2026-03-19T06:50:32.587033Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 161096
+    timestamp: 2026-03-19T06:53:31.540915Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 438567
+    tokens_out: 1163
+    cost_usd: null
+    duration_ms: 62052
+    timestamp: 2026-03-19T06:54:42.914308Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 133238
+    timestamp: 2026-03-19T06:58:05.844186Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 386114
+    tokens_out: 909
+    cost_usd: null
+    duration_ms: 196527
+    timestamp: 2026-03-19T06:58:11.465674Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 544571
+    tokens_out: 1153
+    cost_usd: null
+    duration_ms: 72765
+    timestamp: 2026-03-19T06:59:33.328656Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 142132
+    timestamp: 2026-03-19T07:12:35.264622Z
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 10079577
+    tokens_out: 35805
+    cost_usd: null
+    duration_ms: 2570242
+    timestamp: 2026-03-19T07:19:05.930912Z
+  total_cost_usd: 0.0
+  total_tokens_in: 12866137
+  total_tokens_out: 42098
+dag:
+  issues:
+  - number: 765
+    title: 'feat(jet): AOT production build — tree shaking, code splitting, minification, source maps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 797
+    title: 'jet build: validate against real-world open-source React apps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 881
+    title: 'jet-install: cold install 4.9s vs pnpm 3.4s — optimize metadata resolution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 882
+    title: 'jet-build: bundle size 215KB vs webpack 192KB — implement scope hoisting'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 883
+    title: 'jet-install: resolver bugs fixed — version conflicts, ||, pre-release, optional deps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 903
+    title: 'jet-build: scope hoisting Phase 2 — true module flattening for cross-module optimization'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  change_spec: []
+  post_clarifications:
+  - bundle-optimization-hoisting
+  - production-build-pipeline
+  - install-performance-reliability
+  pre_clarifications:
+  - bundle-optimization-hoisting
+  - install-performance-reliability
+  - production-build-pipeline
+  reference_context:
+  - bundle-optimization-hoisting
+  - install-performance-reliability
+  - production-build-pipeline

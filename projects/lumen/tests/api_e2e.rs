@@ -1,0 +1,413 @@
+//! End-to-end HTTP integration tests.
+//!
+//! Drives the real axum router via `axum-test::TestServer`. These tests
+//! double as executable documentation for the wire shapes — if the
+//! README's API examples change, these tests will need to change too.
+
+use std::sync::Arc;
+
+use axum_test::TestServer;
+use serde_json::{json, Value};
+
+fn server() -> TestServer {
+    let engine = Arc::new(lumen::storage::Engine::new());
+    let app = lumen::api::router(lumen::api::AppState::open(engine));
+    TestServer::new(app).expect("test server")
+}
+
+#[tokio::test]
+async fn health_and_ready() {
+    let s = server();
+    s.get("/healthz").await.assert_status_ok();
+    s.get("/readyz").await.assert_status_ok();
+}
+
+#[tokio::test]
+async fn create_collection_and_index_keyword_then_search() {
+    let s = server();
+
+    s.put("/collections/users")
+        .json(&json!({
+            "fields": {
+                "email": { "type": "keyword" }
+            }
+        }))
+        .await
+        .assert_status_ok();
+
+    s.post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": "u1", "field": "email", "value": "a@x.com" },
+                { "external_id": "u2", "field": "email", "value": "b@y.com" },
+                { "external_id": "u3", "field": "email", "value": "a@x.com" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    let resp = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "a@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 2);
+    let eids: Vec<&str> = body["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["external_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(eids, vec!["u1", "u3"]);
+}
+
+#[tokio::test]
+async fn duplicates_finds_groups() {
+    let s = server();
+    s.put("/collections/users")
+        .json(&json!({ "fields": { "email": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+
+    let mut items = vec![];
+    for (i, email) in ["a@x.com", "a@x.com", "a@x.com", "b@y.com", "b@y.com"]
+        .iter()
+        .enumerate()
+    {
+        items.push(json!({
+            "external_id": format!("u{i}"),
+            "field": "email",
+            "value": email
+        }));
+    }
+    s.post("/collections/users/index")
+        .json(&json!({ "items": items }))
+        .await
+        .assert_status_ok();
+
+    let resp = s
+        .post("/collections/users/duplicates")
+        .json(&json!({ "field": "email", "min_group_size": 2 }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    let groups = body["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["external_ids"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn match_query_text_and_range() {
+    let s = server();
+    s.put("/collections/users")
+        .json(&json!({
+            "fields": {
+                "bio":   { "type": "text" },
+                "age":   { "type": "number" }
+            }
+        }))
+        .await
+        .assert_status_ok();
+
+    s.post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": "u1", "field": "bio", "value": "senior rust engineer" },
+                { "external_id": "u1", "field": "age", "value": 30 },
+                { "external_id": "u2", "field": "bio", "value": "junior rust engineer" },
+                { "external_id": "u2", "field": "age", "value": 22 },
+                { "external_id": "u3", "field": "bio", "value": "designer" },
+                { "external_id": "u3", "field": "age", "value": 28 }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    let resp = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "and": [
+                { "match": { "field": "bio", "text": "rust engineer", "op": "and" } },
+                { "range": { "field": "age", "gte": 25, "lt": 40 } }
+            ]},
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["hits"][0]["external_id"], "u1");
+}
+
+#[tokio::test]
+async fn keyword_multi_sugar_becomes_set() {
+    let s = server();
+    s.put("/collections/users")
+        .json(&json!({
+            "fields": {
+                "tags": { "type": "keyword", "multi": true }
+            }
+        }))
+        .await
+        .assert_status_ok();
+
+    s.post("/collections/users/index")
+        .json(&json!({
+            "items": [
+                { "external_id": "u1", "field": "tags", "value": ["rust", "db"] },
+                { "external_id": "u2", "field": "tags", "value": ["go"] }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+
+    let resp = s
+        .post("/collections/users/search")
+        .json(&json!({
+            "query": { "term": { "field": "tags", "value": "rust" } },
+            "limit": 10
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 1);
+    assert_eq!(body["hits"][0]["external_id"], "u1");
+}
+
+#[tokio::test]
+async fn unknown_collection_404() {
+    let s = server();
+    let resp = s
+        .post("/collections/missing/search")
+        .json(&json!({ "query": { "term": { "field": "x", "value": "y" } }, "limit": 1 }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn type_mismatch_422() {
+    let s = server();
+    s.put("/collections/x")
+        .json(&json!({ "fields": { "n": { "type": "number" } } }))
+        .await
+        .assert_status_ok();
+    let resp = s
+        .post("/collections/x/index")
+        .json(&json!({ "items": [
+            { "external_id": "a", "field": "n", "value": "not a number" }
+        ]}))
+        .await;
+    resp.assert_status(axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn idempotent_index_request_dedups() {
+    let s = server();
+    s.put("/collections/u")
+        .json(&json!({ "fields": { "e": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+    let body = json!({
+        "items": [{ "external_id": "u1", "field": "e", "value": "a@x.com" }],
+        "request_id": "req-42"
+    });
+    let r1 = s.post("/collections/u/index").json(&body).await;
+    let r2 = s.post("/collections/u/index").json(&body).await;
+    let b1: Value = r1.json();
+    let b2: Value = r2.json();
+    assert_eq!(b1["indexed"], 1);
+    assert_eq!(b2["indexed"], 0);
+}
+
+#[tokio::test]
+async fn delete_external_id_removes_all_fields() {
+    let s = server();
+    s.put("/collections/u")
+        .json(&json!({
+            "fields": {
+                "email": { "type": "keyword" },
+                "bio":   { "type": "text" }
+            }
+        }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/u/index")
+        .json(&json!({ "items": [
+            { "external_id": "u1", "field": "email", "value": "a@x.com" },
+            { "external_id": "u1", "field": "bio",   "value": "rust engineer" }
+        ]}))
+        .await
+        .assert_status_ok();
+
+    let del = s.delete("/collections/u/index/u1").await;
+    del.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+    let resp = s
+        .post("/collections/u/search")
+        .json(&json!({
+            "query": { "term": { "field": "email", "value": "a@x.com" } },
+            "limit": 10
+        }))
+        .await;
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 0);
+}
+
+#[tokio::test]
+async fn bm25_ranks_higher_tf_first() {
+    let s = server();
+    s.put("/collections/posts")
+        .json(&json!({ "fields": { "body": { "type": "text" } } }))
+        .await
+        .assert_status_ok();
+    // u1 mentions rust twice, u2 once, u3 not at all.
+    s.post("/collections/posts/index")
+        .json(&json!({
+            "items": [
+                { "external_id": "u1", "field": "body", "value": "rust rust is great" },
+                { "external_id": "u2", "field": "body", "value": "rust is okay" },
+                { "external_id": "u3", "field": "body", "value": "python is great" }
+            ]
+        }))
+        .await
+        .assert_status_ok();
+    let resp = s
+        .post("/collections/posts/search")
+        .json(&json!({
+            "query": { "match": { "field": "body", "text": "rust", "op": "and" } },
+            "limit": 10
+        }))
+        .await;
+    let body: Value = resp.json();
+    assert_eq!(body["total"], 2);
+    let hits = body["hits"].as_array().unwrap();
+    assert_eq!(hits[0]["external_id"], "u1");
+    assert_eq!(hits[1]["external_id"], "u2");
+    // Higher TF must produce a strictly higher score.
+    let s1 = hits[0]["score"].as_f64().unwrap();
+    let s2 = hits[1]["score"].as_f64().unwrap();
+    assert!(s1 > s2, "expected u1.score > u2.score, got {s1} <= {s2}");
+}
+
+#[tokio::test]
+async fn metrics_exposes_prometheus_text() {
+    let s = server();
+    s.put("/collections/u")
+        .json(&json!({ "fields": { "e": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+    s.post("/collections/u/index")
+        .json(&json!({ "items": [
+            { "external_id": "u1", "field": "e", "value": "a@x.com" }
+        ]}))
+        .await
+        .assert_status_ok();
+    let resp = s.get("/metrics").await;
+    resp.assert_status_ok();
+    let body = resp.text();
+    for name in [
+        "lumen_index_writes_total",
+        "lumen_collections_created_total",
+        "lumen_search_requests_total",
+        "lumen_storage_bytes",
+    ] {
+        assert!(body.contains(name), "missing {name} in:\n{body}");
+    }
+    // Verify the indexed count actually moved.
+    assert!(body.contains("lumen_index_writes_total 1"));
+}
+
+#[tokio::test]
+async fn upsert_adds_new_fields_online() {
+    let s = server();
+    s.put("/collections/u")
+        .json(&json!({ "fields": { "email": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+
+    // Reapply with one new field. Should upgrade in place (version bump).
+    let resp = s
+        .put("/collections/u")
+        .json(&json!({
+            "fields": {
+                "email": { "type": "keyword" },
+                "age":   { "type": "number" }
+            }
+        }))
+        .await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["fields_count"], 2);
+    assert_eq!(body["version"], 2);
+
+    // New field is queryable immediately.
+    s.post("/collections/u/index")
+        .json(&json!({ "items": [
+            { "external_id": "u1", "field": "age", "value": 30 }
+        ]}))
+        .await
+        .assert_status_ok();
+    let r = s
+        .post("/collections/u/search")
+        .json(&json!({
+            "query": { "range": { "field": "age", "gte": 18 } },
+            "limit": 10
+        }))
+        .await;
+    let body: Value = r.json();
+    assert_eq!(body["total"], 1);
+}
+
+#[tokio::test]
+async fn upsert_rejects_incompatible_redeclaration() {
+    let s = server();
+    s.put("/collections/u")
+        .json(&json!({ "fields": { "x": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+    let resp = s
+        .put("/collections/u")
+        .json(&json!({ "fields": { "x": { "type": "number" } } }))
+        .await;
+    resp.assert_status_failure();
+}
+
+#[tokio::test]
+async fn bulk_limit_rejected_413() {
+    let s = server();
+    s.put("/collections/u")
+        .json(&json!({ "fields": { "e": { "type": "keyword" } } }))
+        .await
+        .assert_status_ok();
+    let items: Vec<_> = (0..lumen::storage::MAX_INDEX_ITEMS + 1)
+        .map(|i| {
+            json!({
+                "external_id": format!("u{i}"),
+                "field": "e",
+                "value": format!("v{i}")
+            })
+        })
+        .collect();
+    let resp = s
+        .post("/collections/u/index")
+        .json(&json!({ "items": items }))
+        .await;
+    resp.assert_status(axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn openapi_spec_served() {
+    let s = server();
+    let resp = s.get("/openapi.json").await;
+    resp.assert_status_ok();
+    let body: Value = resp.json();
+    assert_eq!(body["info"]["title"], "lumen");
+    // Has the new collections-based paths.
+    assert!(body["paths"]["/collections/{collection_id}/index"].is_object());
+    assert!(body["paths"]["/collections/{collection_id}/search"].is_object());
+    assert!(body["paths"]["/collections/{collection_id}/duplicates"].is_object());
+}

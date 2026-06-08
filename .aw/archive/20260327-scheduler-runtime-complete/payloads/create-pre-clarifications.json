@@ -1,0 +1,21 @@
+{
+  "group_id": "scheduler-runtime-complete",
+  "answers": [
+    {
+      "question": "Should the push receiver HTTP server be standalone (separate port) or mount as routes on the existing cclab server?",
+      "answer": "Mount on existing server — add axum routes (e.g. /scheduler/push/{task}) to the existing cclab server. No extra port, reuses existing TLS/middleware."
+    },
+    {
+      "question": "For K8s CronJob, should the CronJob pod HTTP POST to the push receiver, or directly publish to broker?",
+      "answer": "HTTP POST to push receiver — CronJob pod runs a minimal binary that POSTs to the scheduler push endpoint. Consistent with Cloud Scheduler pattern. Monitor catches all triggers through the unified push path."
+    },
+    {
+      "question": "Should schedule monitor support alerting callbacks (webhook/slack) or metrics-only for now?",
+      "answer": "Metrics + webhook callback — emit Prometheus counter + histogram, AND support configurable webhook URL for missed schedule alerts. More self-contained alerting for critical missed schedules."
+    },
+    {
+      "question": "For K8s push receiver auth, which approach?",
+      "answer": "Shared HMAC secret — CronJob pod signs request with shared secret. Simple, no cluster RBAC needed. Secret injected via K8s Secret."
+    }
+  ]
+}

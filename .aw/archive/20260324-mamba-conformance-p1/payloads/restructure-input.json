@@ -1,0 +1,9 @@
+{
+  "groups": [
+    {
+      "id": "mamba-p1-oop",
+      "issues": [1037],
+      "requirements": "Fix 5 P1 OOP conformance gaps:\n\n1. **@classmethod** — Cranelift codegen emits wrong parameter count for classmethod. cls should be first param.\n\n2. **@property** — property decorator codegen crashes. Need to implement descriptor protocol dispatch.\n\n3. **getattr/setattr/delattr** — Cranelift IR verifier rejects generated instructions. Need valid IR for attribute reflection.\n\n4. **super().method() return** — super() method calls work for side effects but return values are lost. Need to propagate return from MRO-dispatched call.\n\n5. **Multiple inheritance MRO** — C3 linearization produces wrong order. Need to fix MRO computation in runtime/class.rs."
+    }
+  ]
+}

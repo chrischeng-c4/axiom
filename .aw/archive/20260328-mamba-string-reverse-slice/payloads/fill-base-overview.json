@@ -1,0 +1,6 @@
+{
+  "spec_id": "string-reverse-slice-fix.base",
+  "group_id": "string-reverse-slice",
+  "section": "overview",
+  "content": "<!-- type: overview lang: markdown -->\nImplements Python string method equivalents as extern \"C\" runtime functions in `runtime/string_ops.rs`. All functions take an `MbValue` receiver (expected to be `ObjData::Str`) and return `MbValue` results. Covers core string manipulation (split, join, strip, replace, find), string predicates (isdigit, isalpha, isalnum, isspace), alignment/padding (center, ljust, rjust, zfill), f-string runtime formatting via `mb_string_format`, string encoding via `mb_string_encode`, and full three-argument slicing via `mb_str_slice_full(s, start, stop, step)` which handles Python `str[start:stop:step]` semantics including negative step for reverse iteration. Unicode codepoint-based iteration is used throughout. Split from builtin-types-and-methods.md R1."
+}

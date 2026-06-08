@@ -1,0 +1,35 @@
+{
+  "groups": [
+    {
+      "id": "jet-postcss-tailwind",
+      "issues": [1029],
+      "requirements": "Add a PostCSS plugin pipeline and Tailwind CSS JIT integration to the Jet bundler (`crate:jet`) to unblock Conductor frontend CSS compilation.\n\nThree phases as described in the issue:\n\n**Phase 1 — PostCSS Plugin System**\n- Parse `postcss.config.js` (or a Jet-native config equivalent)\n- Execute a CSS → plugin₁ → plugin₂ → … → output transformation chain\n- `@import` resolution within the pipeline\n\n**Phase 2 — Tailwind JIT Integration**\n- Content path scanning via glob (`src/**/*.{ts,tsx}`)\n- Utility class extraction from scanned source files\n- JIT compilation: only emit CSS for classes actually used\n- Directive processing: `@tailwind base/components/utilities`, `@apply`, `@layer`\n- CSS variable theme extension (`hsl(var(--*))` pattern)\n- Dark mode `class` strategy\n\n**Phase 3 — Plugin & Tool Support**\n- `tailwindcss-animate` — keyframe/animation utilities\n- `@tailwindcss/typography` — prose styling\n- `autoprefixer` — vendor prefix generation\n\n**Dev & Production**\n- Dev mode: watch source files + CSS for changes → incremental rebuild\n- Production: minified CSS output\n\nAcceptance criteria from issue:\n- PostCSS plugin system architecture in place\n- Tailwind JIT compilation within Jet build pipeline\n- `@tailwind`, `@apply`, `@layer` directive processing\n- Content path scanning + tree-shaking unused utilities\n- Dark mode `class` strategy support\n- CSS variable theme extension\n- Autoprefixer for vendor prefixes\n- Dev mode watch + rebuild on CSS/source changes\n- Production minified CSS output",
+      "questions": [
+        {
+          "topic": "execution-model",
+          "question": "Should the PostCSS pipeline be implemented as **native Rust** (parsing CSS and executing plugin transforms in Rust), or should Jet **shell out** to the Node.js `postcss` CLI / `tailwindcss` binary as a subprocess? Native Rust gives zero Node.js dependency but is far more complex; subprocess delegation unblocks Conductor immediately with far less code. Which approach is preferred?"
+        },
+        {
+          "topic": "config-format",
+          "question": "Should Jet parse `postcss.config.js` and `tailwind.config.js` directly (requires a JS runtime or subprocess), or should users declare the equivalent config in a Rust-native format such as `jet.config.yaml`? If both are supported, which takes precedence?"
+        },
+        {
+          "topic": "js-plugin-execution",
+          "question": "Tailwind plugins (`tailwindcss-animate`, `@tailwindcss/typography`) are JS/Node.js packages. How should Jet handle their execution: (a) only via the official `tailwindcss` binary which loads them natively, (b) via an embedded JS engine (QuickJS/V8), or (c) out of scope for this change — only the plugin *output* CSS matters?"
+        },
+        {
+          "topic": "phased-delivery",
+          "question": "Should all three phases (PostCSS plugin system + Tailwind JIT + plugin support) be delivered in this single change, or should Phase 1 alone ship first to establish the pipeline architecture, with Tailwind and plugin support following in a separate change?"
+        },
+        {
+          "topic": "css-minifier",
+          "question": "For production minified CSS output, should Jet use a Rust-native crate (e.g., `lightningcss` by Parcel, or `minifier`) or delegate to a PostCSS plugin like `cssnano`? Is there an existing minifier already used elsewhere in Jet?"
+        },
+        {
+          "topic": "dev-mode-watch-integration",
+          "question": "Does Jet already have a file-watch infrastructure for JS/TS hot-reload? If so, should CSS watch be integrated into that same watcher (triggering a CSS-only rebuild pass), or run as a separate watch process alongside the JS watcher?"
+        }
+      ]
+    }
+  ]
+}

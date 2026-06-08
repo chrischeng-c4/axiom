@@ -1,0 +1,36 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-jet",
+  "change_id": "mangle-module-scope",
+  "group_id": "mangle-module-scope",
+  "verdict": "REVISE",
+  "summary": "Coverage is correct: both affected files (mangle.rs → variable-mangling, scope_hoist.rs → scope-hoisting) are captured. Relevance HIGH for both is accurate. One inaccuracy in key requirements: scope-hoisting entry cites 'Phase 1 IIFE wrappers' (R1, already done) when the change targets R2 (Phase 2 true module flattening, currently disabled) and R3 (Phase 3 cross-module scope-aware mangling, not started). No missing specs; tree-shaking.md is not needed as the cross-module DCE here is a post-flatten pass within mangle/scope_hoist, not the existing dce.rs.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": true,
+      "note": "mangle.rs → variable-mangling spec; scope_hoist.rs → scope-hoisting spec. No other crates or files are touched."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": true,
+      "note": "Both files are directly modified by this change. HIGH is correct for both."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "scope-hoisting entry says 'Phase 1 IIFE wrappers' but R1 (Phase 1) is already marked done in the spec. The change implements R2 (Phase 2 — true module flattening, currently disabled and produces 252.8KB) and potentially R3 (Phase 3 — cross-module scope-aware mangling). The phrase 'Phase 1 IIFE wrappers' describes the current problem state, not the target requirement."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "Both cited specs are directly relevant. No extraneous entries."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "MEDIUM",
+      "description": "scope-hoisting key_requirements cites 'Phase 1 IIFE wrappers' (R1), which is already complete per the spec (marked ✅). The change actually targets R2 (Phase 2 — true module flattening: merge per-module IIFEs into a single flat scope, currently implemented but disabled because it increases size to 252.8KB without cross-module mangling) and R3 (Phase 3 — cross-module scope-aware mangling: rename _m{n}.exports.foo to short identifiers). Citing R1 could mislead the change-spec author into designing only around the existing IIFE structure rather than enabling the flattening path.",
+      "recommendation": "Update scope-hoisting key_requirements to: 'R2 Phase 2 — true module flattening (currently disabled, increases size without cross-module mangling); R3 Phase 3 — cross-module scope-aware mangling (not started, required to make Phase 2 beneficial)'."
+    }
+  ]
+}

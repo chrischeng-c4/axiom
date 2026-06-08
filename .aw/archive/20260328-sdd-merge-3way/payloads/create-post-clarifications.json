@@ -1,0 +1,5 @@
+{
+  "group_id": "merge-3way",
+  "skipped": true,
+  "scope_summary": "**Problem**: Support parallel changes targeting the same main spec file → requirements.md § R1-R4.\n**Success Criteria**: (1) prepare_modify_spec saves .base.md snapshot → pre_clarifications Q1; (2) create_change_merge uses git merge-file for 3-way merge → Q2; (3) abort on conflict with details → Q3; (4) find_specs_to_merge skips .base.md → Q4.\n**Boundary**: In scope: spec_plan entries merge-3way (change-merge.md) and spec-prep-base-snapshot (change-spec.md). Out of scope: merge_strategy:extend implementation, section-level merge. Constraints: maintain all-or-nothing merge semantics."
+}

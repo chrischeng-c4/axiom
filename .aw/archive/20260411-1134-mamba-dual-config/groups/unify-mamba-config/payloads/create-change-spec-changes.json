@@ -1,0 +1,6 @@
+{
+  "spec_id": "1134-mamba-dual-config-spec",
+  "group_id": "unify-mamba-config",
+  "section": "changes",
+  "content": "- action: modify\n  file: crates/cclab-mamba/src/config/schema.rs\n  description: Unified MambaConfig struct with both rich and flat format support. CrateEntry enum (Version/Config variants), CrateConfig, ProjectConfig, BuildConfig, PathsConfig. Methods: discover(), from_file(), from_str(), entry_point(), is_symbol_exposed(), has_crate_expose(), validate().\n\n- action: modify\n  file: crates/cclab-mamba/src/config/mod.rs\n  description: Re-exports MambaConfig from schema module.\n\n- action: modify\n  file: crates/cclab-mamba/src/driver/config.rs\n  description: Removed duplicate MambaConfig. Now only contains CompilerConfig (backend, emit, opt_level, project_config: Option<MambaConfig>). Imports MambaConfig from crate::config.\n\n- action: modify\n  file: crates/cclab-mamba/src/driver/mod.rs\n  description: Re-exports MambaConfig from crate::config::MambaConfig for driver consumers."
+}

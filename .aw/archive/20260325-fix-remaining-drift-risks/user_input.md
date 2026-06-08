@@ -1,0 +1,1 @@
+Fix remaining agent drift risks from review: (1) fill_sections weak fallback — derive from section_rules when analyze step produces empty fill_sections, (2) dead cclab/knowledge/ reference in reference_context prompt, (3) document merge_strategy extend variant in change-merge spec

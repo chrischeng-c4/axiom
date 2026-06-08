@@ -1,0 +1,90 @@
+{
+  "group_id": "test-coverage-gaps",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-mamba/testing/stdlib-coverage-lower.md",
+      "spec_group": "testing",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: queue_mod.rs (4%) — mb_queue_Queue/LifoQueue/PriorityQueue construction, queue_items_ptr null/valid/non-dict paths, mb_queue_put/get (FIFO, empty, invalid), mb_queue_empty/qsize/full — all branches; concurrent put/get via std::thread",
+        "R2: statistics_mod.rs (5%) — extract_floats (int items, float items, empty, non-list); mean/median (odd/even/empty); mode/variance/stdev/geometric_mean/harmonic_mean — empty guard and data branches",
+        "R3: shlex_mod.rs (7%) — extract_str/extract_list (Str vs non-Str); mb_shlex_split (plain, quoted, mixed, empty); mb_shlex_quote (safe/unsafe/empty); mb_shlex_join (non-empty, empty list)",
+        "R4: calendar_mod.rs (8%) — mb_calendar_isleap (×400→true, ÷100¬400→false, ÷4¬100→true, other→false); leapdays (positive range, zero); monthrange (31/30/Feb-leap/Feb-nonleap/invalid); month_name (13 elements, index-0 empty); day_name (7 elements); weekday (known date, m<3 Zeller branch)",
+        "Test strategy: inline #[cfg(test)] blocks, no coverage-exclusion annotations, measure with cargo llvm-cov --branch, target ≥50% line coverage per file"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/testing/test-coverage-remaining.md",
+      "spec_group": "testing",
+      "relevance": "high",
+      "key_requirements": [
+        "Batch B — ffi/c_types.rs (0%): pure Rust type assertions, no C library needed",
+        "CType::display_name — all 17 match arms: Void, Int8..Int64, UInt8..UInt64, Float, Double, Bool, ConstChar, MutChar, Pointer (recursive), ConstPointer (recursive), Named",
+        "CType Clone/PartialEq: eq/neq assertions for primitive and compound variants",
+        "CFunction, CParam, CStruct, CField, CEnum, CEnumVariant, CHeader: construct + Clone + PartialEq; CHeader::default() + push",
+        "Tests are inline #[cfg(test)] mod tests — c_types.rs already has a test block; verify it compiles and is counted by llvm-cov"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/ffi/c-parser-and-types.md",
+      "spec_group": "ffi",
+      "relevance": "high",
+      "key_requirements": [
+        "R3: CType enum — exact 17 variants (Void, Int8/16/32/64, UInt8/16/32/64, Float, Double, Bool, ConstChar, MutChar, Pointer(Box<CType>), ConstPointer(Box<CType>), Named(String))",
+        "CFunction (name, params: Vec<CParam>, return_type: CType), CParam (name, ty), CStruct (name, fields: Vec<CField>), CField (name, ty), CEnum (name, variants), CEnumVariant (name, value: Option<i64>), CHeader (functions, structs, enums) — all derive Debug+Clone+PartialEq",
+        "CType::display_name() is the sole method — all 17 branches must reach ≥50% line coverage in this change",
+        "File is 272 LOC with inline test block; tests already present but coverage not being measured — investigate why 0% and ensure cargo test -p cclab-mamba counts them"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/testing/test-harness.md",
+      "spec_group": "testing",
+      "relevance": "medium",
+      "key_requirements": [
+        "Inline #[cfg(test)] mod tests strategy (not fixture-based conformance tests)",
+        "Integration test files: tests/stdlib_coverage_lower_tests.rs (already contains queue concurrent test), tests/ffi_tests.rs (already imports c_types::*)",
+        "cargo test -p cclab-mamba runs all inline tests; cargo llvm-cov --branch measures coverage"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/ffi/bindings-and-stubs.md",
+      "spec_group": "ffi",
+      "relevance": "low",
+      "key_requirements": [
+        "FFI pipeline (cbindgen.rs, stub_gen.rs) uses CType from c_types.rs — background context showing why c_types.rs types must be correct and well-tested"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/stdlib/text-processing.md",
+      "spec_group": "stdlib",
+      "relevance": "low",
+      "key_requirements": [
+        "shlex module expected semantics — background for shlex_split/quote/join behavior"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/stdlib/datetime.md",
+      "spec_group": "stdlib",
+      "relevance": "low",
+      "key_requirements": [
+        "calendar module expected semantics — background for isleap/leapdays/monthrange/weekday behavior"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "stdlib-coverage-lower-top4",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/testing/stdlib-coverage-lower.md",
+      "source": "crates/cclab-mamba/testing/stdlib-coverage-lower.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "ffi-c-types-coverage",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/ffi/c-parser-and-types.md",
+      "source": "crates/cclab-mamba/ffi/c-parser-and-types.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

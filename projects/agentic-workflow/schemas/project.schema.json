@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cclab.dev/blueprint/project/v1",
+  "title": "Project",
+  "description": "Abstract data model for a project — a codebase connected to Conductor.",
+  "type": "object",
+  "required": ["id", "name", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": ["string", "null"] },
+    "platform_type": { "type": ["string", "null"], "enum": ["gitlab", "github", null] },
+    "repo_url": { "type": ["string", "null"], "format": "uri" },
+    "repo_external_id": { "type": ["string", "null"] },
+    "default_branch": { "type": ["string", "null"] },
+    "language": { "type": ["string", "null"] },
+    "framework": { "type": ["string", "null"] },
+    "modules": { "type": ["array", "null"], "items": { "type": "object" }, "default": null },
+    "architecture": { "type": ["object", "null"], "default": null },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": ["string", "null"], "format": "date-time" }
+  }
+}

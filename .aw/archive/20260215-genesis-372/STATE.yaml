@@ -1,0 +1,118 @@
+change_id: genesis-372
+schema_version: '2.0'
+created_at: 2026-02-14T17:23:48.996332Z
+updated_at: 2026-02-14T18:15:10.126554Z
+phase: archived
+iteration: 1
+last_action: merge_review_approved_no_issues
+session_id: null
+checksums: {}
+validations: []
+revision_counts:
+  merge: 1
+  implementation: 9
+current_task_id: '3.2'
+task_revisions:
+  '2.2': 1
+  '3.1': 1
+telemetry:
+  calls:
+  - step: review_proposal
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 93063
+    tokens_out: 1267
+    cost_usd: null
+    duration_ms: 27483
+    timestamp: 2026-02-14T17:24:25.185099Z
+  - step: create_proposal
+    genesis_version: 0.3.8
+    model: gemini-3-pro-preview
+    tokens_in: 3026726
+    tokens_out: 17330
+    cost_usd: null
+    duration_ms: 856280
+    timestamp: 2026-02-14T17:27:47.254065Z
+  - step: review_implementation
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 723641
+    tokens_out: 3738
+    cost_usd: null
+    duration_ms: 75219
+    timestamp: 2026-02-14T17:37:02.709115Z
+  - step: review_implementation
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 463045
+    tokens_out: 3909
+    cost_usd: null
+    duration_ms: 68771
+    timestamp: 2026-02-14T17:43:50.353039Z
+  - step: review_implementation
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 595820
+    tokens_out: 4526
+    cost_usd: null
+    duration_ms: 82852
+    timestamp: 2026-02-14T17:46:43.931367Z
+  - step: review_implementation
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 557124
+    tokens_out: 4146
+    cost_usd: null
+    duration_ms: 88996
+    timestamp: 2026-02-14T17:49:38.201432Z
+  - step: review_implementation
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 359788
+    tokens_out: 3196
+    cost_usd: null
+    duration_ms: 66377
+    timestamp: 2026-02-14T17:52:00.988705Z
+  - step: review_implementation
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 901686
+    tokens_out: 5526
+    cost_usd: null
+    duration_ms: 112154
+    timestamp: 2026-02-14T17:56:48.592965Z
+  - step: review_implementation
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 832763
+    tokens_out: 5080
+    cost_usd: null
+    duration_ms: 120956
+    timestamp: 2026-02-14T18:00:45.307702Z
+  - step: review_implementation
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 914349
+    tokens_out: 4417
+    cost_usd: null
+    duration_ms: 103479
+    timestamp: 2026-02-14T18:05:19.794640Z
+  - step: review_merge
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 1000420
+    tokens_out: 5335
+    cost_usd: null
+    duration_ms: 99638
+    timestamp: 2026-02-14T18:11:52.629259Z
+  - step: review_merge
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 998647
+    tokens_out: 6576
+    cost_usd: null
+    duration_ms: 117429
+    timestamp: 2026-02-14T18:14:57.163131Z
+  total_cost_usd: 0.0
+  total_tokens_in: 10467072
+  total_tokens_out: 65046

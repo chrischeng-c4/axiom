@@ -1,0 +1,204 @@
+---
+name: aw:wi
+description: Work-item management — create, update, list, show. Mainthread-only CRRR; no subagent dispatch.
+user-invocable: true
+amended_by: aw-mainthread-phase-2-skill-rewrite-and-agent-delete.md
+amended_on: "2026-05-03"
+aliases: [aw:issue, aw:issues]
+---
+
+# /aw:wi
+
+Intent router for work-item management. Every CLI verb emits a JSON envelope — the **envelope protocol** in `CLAUDE.md § AW envelope (mainthread protocol)` owns the loop. This skill chooses the verb, relays stdout, and runs the **mainthread-only** orchestration spelled out below.
+
+> **Mainthread-only model (post Phase-2).** Every dispatch envelope now
+> carries `agent: null`. There is no `aw-issue-author` /
+> `aw-issue-reviewer` / `aw-issue-reviser` subagent to dispatch —
+> those agent definitions were removed atomically with this skill
+> rewrite. Mainthread takes over `--apply` directly: write the section
+> payload to `.aw/payloads/<slug>/<file>.md`, run
+> `aw wi fill-section --apply --section <X>`, then run
+> `aw wi validate <slug>`. Loop on the emitted dispatch envelope.
+
+## Usage
+
+The canonical verb is `aw wi`. `aw iss` and `aw issues` remain
+valid as transition aliases — same handler, identical envelopes.
+When an envelope's `invoke.command` still says `aw issues ...`, run
+that literal command; manual examples use `aw wi`.
+
+```
+/aw:wi create "<title>" --type <type> --project <name> [--priority <pN>] [--agent <name>]
+/aw:wi update <slug>
+/aw:wi list [--state open|closed] [--project <name>]
+/aw:wi show <slug>
+/aw:wi plan --project <name> [--cap-path <path>] [--title "<plan>"]
+/aw:wi epicize --project <name> [--title "<phase>"]
+/aw:wi atomize --project <name> [--title "<plan>"]
+/aw:wi estimate --project <name> [--title "<plan>"]
+/aw:wi prioritize --project <name> [--minutes 60]
+/aw:wi sprintize --project <name> [--minutes 60]
+```
+
+`--label` is rejected on create. Labels are derived from typed flags:
+
+* `--type` (required, closed enum): `bug | enhancement | refactor | test | epic`
+* `--project <name>` (repeatable): resolved against `[[projects]]` in
+  `.aw/config.toml`. `epic` accepts 0 or 1; other types require exactly 1.
+* `--priority <p0|p1|p2|p3>` (optional)
+* `--agent <name>` (optional): resolved against `[[agents]]` in
+  `.aw/config.toml`.
+
+Unknown `--project` / `--agent` names → error envelope on stdout, exit 2.
+
+## create — full CRRR loop (mainthread-only)
+
+1. Ask the user for title + type (+ project, optional priority/agent) if not supplied.
+2. Run:
+   ```bash
+   aw wi create --title "<t>" --type <kind> --project <name> [--priority <pN>] [--agent <name>]
+   ```
+3. Read the JSON envelope from stdout. The CLI returns a `dispatch`
+   envelope with `agent: null` and
+   `invoke.args.sections: ["all"]`. Mainthread fills the full structured
+   body directly, including capability alignment, acceptance criteria, and
+   agent estimate gates.
+4. **Run the mainthread loop below.** No Agent dispatch is needed; the
+   per-envelope handler always writes the payload and runs `--apply`
+   itself.
+
+### Mainthread loop (per envelope)
+
+The envelope shape and switch cases are defined in `CLAUDE.md § AW
+CLI envelope (mainthread protocol)`. Mainthread-only flow:
+
+```mermaid
+flowchart TD
+    C[aw wi create] --> A[mainthread: write payloads + fill-section --apply per section]
+    A --> V[mainthread: aw wi validate]
+    V --> R1[mainthread: write review.md + aw wi review --apply]
+    R1 --> V1{validate → Review}
+    V1 -- approved --> M[aw wi merge → done]
+    V1 -- needs-revision --> RV[mainthread: write payload for flagged section + aw wi revise --apply]
+    RV --> VRV[validate → Revise]
+    VRV --> R2[mainthread: write review.md round 2 + aw wi review --apply]
+    R2 --> V2{validate → Review}
+    V2 -- approved --> M
+    V2 -- needs-revision --> ARB[aw wi arbitrate → human]
+```
+
+**Mainthread runs every step.** No `Agent(subagent_type=...)` calls;
+no subagent dispatch. Per-section `Fill-*` trailers still commit
+individually so git history is unchanged.
+
+### Dispatch rules
+
+- For every `dispatch`, `agent` is `null` (or absent — the field is the
+  Phase-1 deprecated shim and is omitted via `skip_serializing_if`).
+  Mainthread runs `invoke.command` directly:
+  - if the command is `aw wi fill-section --apply` (or legacy envelope
+    `aw issues fill-section --apply`), write the
+    payload to `.aw/payloads/<slug>/body.md` first (or per-section
+    payload), then run the command from mainthread.
+  - if the command is `aw wi validate <slug>` (or legacy envelope
+    `aw issues validate <slug>`), run it; parse the next envelope; loop.
+  - if the command is `aw wi review --apply` / `aw wi revise --apply`
+    (or the matching legacy `aw issues ...` form),
+    write the corresponding `review.md` / payload first, then run.
+- `done` → print summary; end.
+- `error` → see retry-cap rules below.
+
+### Retry cap on fill failure (2-ceiling)
+
+When `aw wi validate` rejects mainthread's output, it emits an
+`error` envelope with a qualifier tag in the message:
+
+- `[retry=1]` → re-write the failing section's payload (with the error
+  text incorporated) and re-run `aw wi fill-section --apply --section <failing>`.
+- `[retry=2 takeover]` → mainthread already owns the loop — same
+  recovery as `retry=1`. The phrase "takeover" is a no-op under the
+  mainthread-only model and remains only as a backwards-compatible
+  envelope tag.
+- `[retry=N arbitrate]` (N >= 3) → terminal. Surface the error to the
+  user and stop. Don't auto-retry further.
+
+## update
+
+Currently non-envelope (legacy). Run `aw wi update <slug> --body-file -`
+directly from mainthread if needed, or wait until `update` joins the
+envelope protocol.
+
+## list / show
+
+Thin passthrough:
+```bash
+aw wi list [--state <state>] [--project <name>]
+aw wi show <slug>
+```
+
+Prefer `--project <name>` for project-scoped lists; it resolves the
+configured project label from `.aw/config.toml`. Use `--label` only as a
+raw low-level label filter.
+
+## Planning operators
+
+Planning commands read the configured issue backend and write local artifacts
+under `/tmp/aw/<project>/`. They do not publish or mutate tracker issues.
+
+Use this lane after `/aw:capability` confirms a capability or when the user gives a
+roadmap-sized request. Large work must stay as `type=epic` or a local planning
+artifact until atomized into bounded WI candidates.
+
+```bash
+aw wi plan --project <name> [--cap-path <path>] [--title "<plan>"] [--json]
+aw wi epicize --project <name> [--title "<phase>"] [--json]
+aw wi atomize --project <name> [--title "<plan>"] [--json]
+aw wi estimate --project <name> [--title "<plan>"] [--json]
+aw wi prioritize --project <name> [--minutes 60] [--json]
+aw wi sprintize --project <name> [--minutes 60] [--json]
+```
+
+- `plan` reads the confirmed capability table from `--cap-path`, `[[projects]].cap_path`,
+  or `[[projects]].path/README.md`, cross-checks it against open work-items,
+  and writes a local capability-to-WI planning draft under
+  `/tmp/aw/<project>/capability-plan/`.
+- `epicize` inventories every open issue for the project, groups
+  requirements into epic candidates, and writes the local classification
+  draft under `/tmp/aw/<project>/epics/`. The artifact explicitly requires
+  agent review before publishing tracker changes.
+- `atomize` inventories epic/roadmap-sized issues and writes atomic WI
+  candidates under `/tmp/aw/<project>/atomize/`. The artifact requires human
+  review before any candidate is published.
+- `estimate` writes `/tmp/aw/<project>/estimates/` with `agent_minutes`,
+  `confidence`, `risk`, and `human_attention`. `agent_minutes` is active agent
+  execution budget under current AW skills, CLI, repo context, and test/build
+  cost; it is not human engineering time.
+- `prioritize` inventories every open issue for the project and writes a
+  local priority review draft under `/tmp/aw/<project>/priorities/`,
+  covering existing epics, next-sprint candidates, and ordered backlog issues.
+  The artifact explicitly requires agent review before publishing priority
+  label or ordering changes.
+- `sprintize` inventories every open issue for the project, sorts by
+  priority/type, and cuts a next-sprint batch near the requested
+  `agent_minutes` budget under `/tmp/aw/<project>/sprints/`. This is a
+  deterministic priority/agent-estimate calculation and does not require agent
+  review.
+
+### Bounded WI gate
+
+Non-epic work-items must be atomic before they enter `/aw:td`:
+
+- `## Capability Alignment` with `Capability`, `Capability Gap`, and
+  `Progress Evidence`.
+- `## Acceptance Criteria` with at least one real list item.
+- `## Agent Estimate` with `agent_minutes`, `confidence`, `risk`, and
+  `human_attention`.
+- `agent_minutes` uses `3 | 10 | 30 | 60 | 120 | split_required`.
+- `agent_minutes=split_required`, `confidence=low`, or
+  `human_attention=decision` sends the work back to `atomize` or HITL review.
+
+## Recovery
+
+If a session ends mid-CRRR, inspect the work-item with `aw wi show <slug>`
+and continue from the phase recorded in frontmatter. There is no idle scanner
+or per-slug AW workspace recovery path.

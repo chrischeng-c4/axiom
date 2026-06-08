@@ -1,0 +1,30 @@
+change_id: mamba-stdlib-future
+schema_version: '2.0'
+created_at: 2026-04-08T18:51:50.530001Z
+updated_at: 2026-04-08T19:56:06.173405Z
+phase: change_implementation_reviewed
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: null
+revision_counts:
+  ref_ctx:future-stdlib-module: 1
+current_task_id: future-stdlib
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+agent: mamba-developer
+groups_progress:
+  change_implementation: []
+  reference_context:
+  - future-stdlib-module
+  pre_clarifications:
+  - future-stdlib-module
+  change_spec: []
+  post_clarifications:
+  - future-stdlib-module

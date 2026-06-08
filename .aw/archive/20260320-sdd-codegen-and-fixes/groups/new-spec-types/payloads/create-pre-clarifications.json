@@ -1,0 +1,32 @@
+{
+  "change_id": "sdd-codegen-and-fixes",
+  "group_id": "new-spec-types",
+  "answers": [
+    {
+      "question_id": "Q1",
+      "question": "Deploy codegen first target",
+      "answer": "k8s Deployment + Service manifest as the first codegen target. Production-grade output."
+    },
+    {
+      "question_id": "Q2",
+      "question": "Deploy section validation blocking behavior",
+      "answer": "Soft warning — warn on inconsistencies but don't block spec creation. Cross-ref validation to db-model and rest-api deferred to later iteration."
+    },
+    {
+      "question_id": "Q3",
+      "question": "Frontend framework target for wireframe codegen",
+      "answer": "React as the first target framework."
+    },
+    {
+      "question_id": "Q4",
+      "question": "Scope of frontend cross-section composition",
+      "answer": "Full scope — all 3 phases in this change: wireframe to React scaffold, DTCG design tokens to CSS/Tailwind, CEM to TypeScript interface + component skeleton. Cross-ref to rest-api for data fetching hooks included."
+    },
+    {
+      "question_id": "Q5",
+      "question": "Shared validator infrastructure",
+      "answer": "Introduce a unified validator registration mechanism shared by both deploy and frontend section types."
+    }
+  ],
+  "follow_up_needed": false
+}

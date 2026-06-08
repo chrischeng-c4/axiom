@@ -1,0 +1,34 @@
+change_id: prism-rust-symbols
+schema_version: '2.0'
+created_at: 2026-02-06T07:49:43.410841Z
+updated_at: 2026-02-06T09:40:23.011168Z
+phase: archived
+iteration: 1
+last_action: archive
+session_id: null
+checksums:
+  tasks.md:
+    hash: sha256:3deccb5d33ec427ef074bb6e4b5dacf6b405b9655ef8cbb3cdde41740f60811e
+    validated_at: 2026-02-06T07:51:39.569931Z
+  proposal.md:
+    hash: sha256:3bb5ed2ced8feea2aa8a828e1e6b5ab8099037b0e53330c4657eda8dc068c631
+    validated_at: 2026-02-06T07:51:39.569767Z
+  specs/cclab-prism/rust-symbol-analysis.md:
+    hash: sha256:2a697ba76a7e1933a6cab78d84d47749235c0de14fdc136dec656278435d59cd
+    validated_at: 2026-02-06T07:51:39.570244Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-06T07:51:39.568762Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 1
+    low: 1
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

@@ -1,0 +1,41 @@
+apiVersion: cclab.dev/v1
+kind: SequencePlus
+metadata:
+  name: manifest-handling
+  change_id: sdd-merge
+  source_file: sdd-merge/specs/sdd/manifest-handling.md
+  spec_group: sdd
+  spec_id: manifest-handling
+spec:
+  title: Archive Flow with Manifests
+  diagram_type: sequence
+  content:
+    messages:
+    - from: User
+      text: run archive
+      to: ArchiveCommand
+    - from: ArchiveCommand
+      text: collect_artifacts()
+      to: SpecService
+    - from: SpecService
+      text: include spec_ir/*.yaml
+      to: FileSystem
+    - from: ArchiveCommand
+      text: verify_manifests()
+      to: SpecService
+    - from: ArchiveCommand
+      text: complete archive
+      to: User
+    participants:
+    - id: User
+      label: User
+      type: participant
+    - id: ArchiveCommand
+      label: Archive Command
+      type: participant
+    - id: SpecService
+      label: Spec Service
+      type: participant
+    - id: FileSystem
+      label: File System
+      type: participant

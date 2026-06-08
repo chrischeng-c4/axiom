@@ -1,0 +1,35 @@
+apiVersion: cclab.dev/v1
+kind: ClassPlus
+metadata:
+  name: review-verdict-unification
+  change_id: sdd-merge
+  source_file: sdd-merge/specs/sdd/review-verdict-unification.md
+  spec_group: sdd
+  spec_id: review-verdict-unification
+spec:
+  title: Review Verdict Model
+  diagram_type: class
+  content:
+    classes:
+    - attributes:
+      - name: verdict
+        type: ReviewVerdict
+      - name: summary
+        type: String
+      methods: []
+      name: Review
+    - attributes:
+      - name: APPROVED
+        type: Variant
+      - name: REVIEWED
+        type: Variant
+      - name: REJECTED
+        type: Variant
+      methods: []
+      name: ReviewVerdict
+      stereotype: enumeration
+    relationships:
+    - from: Review
+      label: uses
+      to: ReviewVerdict
+      type: composition

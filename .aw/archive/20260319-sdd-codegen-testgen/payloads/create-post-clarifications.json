@@ -1,0 +1,6 @@
+{
+  "change_id": "sdd-codegen-testgen",
+  "group_id": "specir-codegen",
+  "skipped": true,
+  "reason": "No contradictions found. Requirements align with existing specs: FastAPI as first target (per pre-clarification Q1), Tera filesystem templates (Q2), Phase 2 cross-section composition in scope (Q3), one file per section (Q4). All consistent with generator-fastapi.md, template-engine.md, and code-generator-contract.md specs."
+}

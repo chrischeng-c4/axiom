@@ -1,0 +1,1 @@
+Optimize install performance: 1) async disk cache I/O (tokio::fs instead of std::fs blocking), 2) speculative deeper prefetch for common transitive deps, 3) large project build timeout via spawn_blocking. Target: true cold <20s for 1886 packages (currently 45.7s). #881

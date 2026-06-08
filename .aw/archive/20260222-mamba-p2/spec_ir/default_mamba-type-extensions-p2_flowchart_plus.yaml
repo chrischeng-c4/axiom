@@ -1,0 +1,40 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: mamba-type-extensions-p2
+  change_id: mamba-p2
+  source_file: mamba-p2/specs/mamba-type-extensions-p2.md
+  spec_id: mamba-type-extensions-p2
+spec:
+  title: Dataclass Decorator Flow
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: dec
+      to: inspect
+    - from: inspect
+      to: init
+    - from: inspect
+      to: repr
+    - from: inspect
+      to: eq
+    - from: init
+      to: reg
+    - from: repr
+      to: reg
+    - from: eq
+      to: reg
+    nodes:
+    - id: dec
+      label: '@dataclass applied to class'
+    - id: inspect
+      label: Inspect class fields and annotations
+    - id: init
+      label: Generate __init__ method
+    - id: repr
+      label: Generate __repr__ method
+    - id: eq
+      label: Generate __eq__ method
+    - id: reg
+      label: Register modified class

@@ -1,0 +1,9 @@
+{
+  "spec_id": "jet-workspace-protocol-spec",
+  "group_id": "jet-workspace-protocol",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "interaction", "state-machine", "logic", "schema", "changes"],
+  "main_spec_ref": "crates/cclab-jet/workspace-protocol.md",
+  "merge_strategy": "new",
+  "content": "Extend `cclab-jet`'s package manager with pnpm-style workspace support across three subsystems:\n\n**1. pnpm-workspace.yaml Discovery** — `WorkspaceManager::load_config()` gains a third config source. Detection priority (highest wins): `jet-workspace.yaml` → `package.json.workspaces` → `pnpm-workspace.yaml`. The pnpm file is parsed for `packages:` (glob patterns), `catalog:` (default catalog), and `catalogs:` (named catalogs). Catalog entries are merged into `WorkspaceConfig.catalog` so the existing catalog API is reused without changes.\n\n**2. Workspace Protocol Symlinks** — `PackageManager::install_with_options()` detects workspace mode via `WorkspaceMode::detect()`, classifies each direct dep as workspace-protocol or external via `WorkspaceManager::is_workspace_protocol()`, and for `workspace:*` / `workspace:^` / `workspace:~` deps skips registry resolution entirely — instead computing a **relative symlink** from `node_modules/<pkg-name>` to the workspace package's directory (relative, like pnpm). Recursive install iterates all workspace packages in topological order via `WorkspaceManager::topological_order()`, installing each package's external deps normally.\n\n**3. Lockfile Traceability** — `LockfileEntry` gains `workspace: bool` and `local_path: Option<String>` (serde renamed `localPath`) so workspace packages are fully traceable in `jet-lock.yaml`. `Lockfile::is_valid()` bypasses the store-presence check for entries where `workspace == true`.\n\nThe existing `WorkspaceManager::resolve_workspace_protocol()` and `is_workspace_protocol()` utilities are reused without modification."
+}

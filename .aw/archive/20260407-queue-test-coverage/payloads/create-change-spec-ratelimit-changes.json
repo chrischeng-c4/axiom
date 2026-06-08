@@ -1,0 +1,6 @@
+{
+  "spec_id": "ratelimit",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: ratelimit-changes\n  refs:\n    - $ref: \"#manager-check-chain\"\n    - $ref: \"#token-bucket-acquire\"\n    - $ref: \"#sliding-window-acquire\"\nchanges:\n  - path: crates/cclab-queue/src/ratelimit.rs\n    action: modify\n    description: >\n      Expand existing #[cfg(test)] mod tests from 6 to 54 tests.\n      Add coverage for: RateLimitConfig (Default, per_second, per_minute, per_hour, with_key, serde roundtrip, Debug, Clone),\n      RateLimitResult (allowed/denied constructors, Debug, Clone),\n      TokenBucket (new, per_minute, acquire_many, peek, key isolation, refill cap, reset),\n      SlidingWindow (new, per_second, per_minute, acquire_many, peek, key isolation, window expiry, retry_after, reset),\n      RateLimitManager (Default, no-limits path, global/queue/task priority, peek variants, builder chaining),\n      trait bounds (Send+Sync), and concurrent access safety.\n```"
+}

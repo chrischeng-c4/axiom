@@ -1,0 +1,12 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-phase-advance-timeout",
+  "groups": [
+    {
+      "id": "phase-advance-and-timeout",
+      "issues": [1124, 1126],
+      "requirements": "1. Fix reference_context phase advance bug (#1124):\n   - execute_artifact in create_reference_context.rs must call set_phase(ReferenceContextCreated) after writing artifact\n   - execute_artifact in review_reference_context.rs must call set_phase(ReferenceContextReviewed) after writing review\n   - Guard with matches!() to only advance from expected phases\n2. Add agent execution timeout (#1126):\n   - Wrap child.wait() with tokio::time::timeout() in script_runner.rs\n   - Add per-action default timeouts in agent.rs (explore 5m, spec 10m, impl 20m, default 15m)\n   - On timeout: kill child process, return error\n   - Thread timeout through workflow_common.rs to agent.rs to script_runner.rs",
+      "questions": []
+    }
+  ]
+}

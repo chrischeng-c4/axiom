@@ -1,0 +1,200 @@
+{
+  "change_id": "agent-pyo3",
+  "group_id": "agent-pyo3-bindings",
+  "specs": [
+    {
+      "spec_id": "cclab-agent/architecture.md",
+      "spec_group": "architecture",
+      "relevance": "high",
+      "key_requirements": [
+        "Module dependency graph: agents depend on llm, tools, security, stream, context, storage, integrations",
+        "Container diagram shows system interfaces with external APIs (Anthropic, OpenAI, Gemini, GitHub, GitLab, Jira)",
+        "Class hierarchy of core traits: Agent, LLMProvider, Tool, Storage, PlatformIntegration, StreamHandler, ApprovalHandler",
+        "Required for understanding what components to expose in PyO3 bindings"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/core-types.md",
+      "spec_group": "core-types",
+      "relevance": "high",
+      "key_requirements": [
+        "Core data types: Message, Role (system/user/assistant/tool), ToolCall, ToolResult, TokenUsage",
+        "All types are JSON Schema defined and will need Py* wrappers",
+        "Role enum, Message with tool_calls array, ToolResult with is_error flag",
+        "Critical for Python interoperability - these must be serializable to/from dicts"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/tools.md",
+      "spec_group": "tools",
+      "relevance": "high",
+      "key_requirements": [
+        "Tool trait: name(), description(), parameters(), execute(arguments), definition(), validate_arguments()",
+        "ToolRegistry class: register(), unregister(), get(), contains(), tool_names(), count()",
+        "ToolExecutor class: execute() with timeout and retry support",
+        "ToolParameter schema for parameter definition",
+        "Critical for register_python_tool() signature from pre-clarifications"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/agents.md",
+      "spec_group": "agents",
+      "relevance": "high",
+      "key_requirements": [
+        "Agent trait: run(input), run_with_handler(input, handler)",
+        "CodingAgent and AnalystAgent implementations (4 agents mentioned in pre-clarifications: RestructureIssueAgent, ReferenceContextAgent, ChangeSpecAgent, CodeAgent)",
+        "Agent execution loop sequence: CompletionRequest, tool calls, StreamHandler events, approval flow",
+        "Builder pattern: CodingAgentBuilder, AnalystAgentBuilder with fluent API",
+        "Default tools per agent type",
+        "Main entry points for Python API"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/llm-providers.md",
+      "spec_group": "llm-providers",
+      "relevance": "high",
+      "key_requirements": [
+        "LLMProvider trait: provider_name(), supported_models(), validate_model(), complete(), complete_stream()",
+        "Three implementations: ClaudeProvider, OpenAIProvider, GeminiProvider",
+        "CompletionRequest and CompletionResponse schemas",
+        "Supported models list per provider",
+        "Message conversion per provider (role mappings differ by provider)",
+        "Python needs to configure LLM providers"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/error-handling.md",
+      "spec_group": "error-handling",
+      "relevance": "high",
+      "key_requirements": [
+        "NovaError enum: 20+ variants (LLMError, ToolError, ToolNotFound, ApprovalDenied, SecurityViolation, ContextOverflow, etc.)",
+        "Error classification: retriable (HttpError, Timeout, StreamError, ApiError 429/5xx) vs non-retriable",
+        "User action required errors: ApprovalRequired, ApprovalDenied, SecurityViolation, PathNotAllowed, CommandNotAllowed, Config, ModelNotFound",
+        "Python exception hierarchy must map to this enum"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/storage.md",
+      "spec_group": "storage",
+      "relevance": "medium",
+      "key_requirements": [
+        "Storage trait: save_session(), load_session(), list_sessions(), delete_session(), session_exists()",
+        "SessionState schema: id, title, status (active/paused/completed/cancelled), messages, notes, findings",
+        "MemoryStorage and FileStorage implementations",
+        "Session lifecycle state machine for AnalystAgent",
+        "Python needs to persist and resume agent sessions"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/streaming.md",
+      "spec_group": "streaming",
+      "relevance": "medium",
+      "key_requirements": [
+        "StreamEvent schema: 13 event types (started, thinking, text_chunk, tool_call_requested, approval_requested, etc.)",
+        "StreamHandler trait: on_event(), should_cancel()",
+        "NoOpHandler, PrintHandler, CollectingHandler, CallbackHandler implementations",
+        "Event flow state machine showing valid transitions",
+        "Python may need streaming support for real-time agent feedback"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/context.md",
+      "spec_group": "context",
+      "relevance": "medium",
+      "key_requirements": [
+        "ContextManager class: add_message(), add_user_message(), add_assistant_message(), add_tool_result()",
+        "Methods: get_messages(), available_tokens(), message_count(), compress(), stats()",
+        "ContextStats schema with message_count, estimated_tokens, max_tokens, available_tokens",
+        "Preset configs: default_128k, default_32k",
+        "Python needs to manage conversation context for agents"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/security.md",
+      "spec_group": "security",
+      "relevance": "medium",
+      "key_requirements": [
+        "SecurityPolicy schema: blocked_paths, allowed_paths, blocked_commands, tools_requiring_approval",
+        "ApprovalRequest and ApprovalResponse schemas",
+        "Path validation logic: blocked_paths check → allowed_paths check",
+        "Tool approval flow with ApprovalHandler trait",
+        "Python needs to configure security policies for agent execution"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/integrations.md",
+      "spec_group": "integrations",
+      "relevance": "medium",
+      "key_requirements": [
+        "PlatformIntegration trait: name(), get_issue(), list_issues(), get_comments(), post_comment(), into_tools()",
+        "Three implementations: GitHubIntegration, GitLabIntegration, JiraIntegration",
+        "Issue schema: id, title, state (open/closed/in_progress/resolved/wontfix), author, labels, assignees",
+        "IssueFilter for querying issues",
+        "Generated tools per platform (github_get_issue, gitlab_list_issues, jira_search_issues)",
+        "AnalystAgent can be configured with platform integrations"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/tools-coding.md",
+      "spec_group": "tools",
+      "relevance": "medium",
+      "key_requirements": [
+        "Six coding tools: BashTool, ReadFileTool, WriteFileTool, EditFileTool, GlobTool, GrepTool",
+        "Each tool has Input/Output/Constraints schemas",
+        "BashTool default timeout: 120s, max_output_bytes: 100KB",
+        "ReadFileTool: offset (1-based line), limit (default 2000)",
+        "EditFileTool validation: requires replace_all=true for multiple matches",
+        "GlobTool and GrepTool: max_results defaults, file_type support",
+        "Python needs documentation of available tools"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/tools-analysis.md",
+      "spec_group": "tools",
+      "relevance": "medium",
+      "key_requirements": [
+        "Six analysis tools: AskUserTool, TakeNoteTool, RecordFindingTool, WebSearchTool, WebFetchTool, PostCommentTool",
+        "AskUserTool: pause/resume flow for AnalystAgent",
+        "TakeNoteTool: Note schema with category (requirement/risk/question/observation)",
+        "RecordFindingTool: Finding schema with severity (info/low/medium/high/critical)",
+        "WebSearchTool and WebFetchTool for research",
+        "PostCommentTool: posts clarification questions to GitHub/GitLab/Jira issues",
+        "Python users should understand these tools"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/reference-context-agent.md",
+      "spec_group": "agents",
+      "relevance": "medium",
+      "key_requirements": [
+        "ReferenceContextAgent: one of the 4 agents from pre-clarifications",
+        "Extends SpecStore trait with read(path) method for full text retrieval",
+        "Generates reference context with spec scoring (high/medium/low relevance)",
+        "Internal quality review via ReviewAgent (CRR cycle)",
+        "Output schema: specs array with spec_id, spec_group, relevance, key_requirements; contradictions array",
+        "Python needs to be able to create and run ReferenceContextAgent"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/restructure-agent.md",
+      "spec_group": "agents",
+      "relevance": "low",
+      "key_requirements": [
+        "RestructureIssueAgent: one of the 4 agents from pre-clarifications",
+        "Spec incomplete but represents part of the agent ecosystem",
+        "Python should be able to instantiate this agent type"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/review-agent.md",
+      "spec_group": "agents",
+      "relevance": "low",
+      "key_requirements": [
+        "ReviewAgent: used internally by other agents for quality review (CRR cycle)",
+        "Spec incomplete but mentioned in pre-clarifications as implemented",
+        "Python may need to configure or customize review behavior"
+      ]
+    }
+  ],
+  "contradictions": []
+}

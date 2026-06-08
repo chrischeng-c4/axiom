@@ -1,0 +1,166 @@
+{
+  "change_id": "merge-lens-into-sdd",
+  "group_id": "merge-lens-into-sdd",
+  "specs": [
+    {
+      "id": "cclab-lens-readme",
+      "path": "read_path:specs/cclab-lens/README.md",
+      "relevance": "high",
+      "category": "architecture",
+      "summary": "Core overview of cclab-lens features, tech stack, and architecture. Essential for understanding what is being merged.",
+      "key_requirements": ["module structure", "feature inventory"]
+    },
+    {
+      "id": "cclab-lens-class-diagram",
+      "path": "read_path:specs/cclab-lens/class-diagram.md",
+      "relevance": "high",
+      "category": "architecture",
+      "summary": "Lens analyzer class hierarchy, analysis pipeline, showing key components and their relationships for flat mirror layout.",
+      "key_requirements": ["class hierarchy", "module boundaries"]
+    },
+    {
+      "id": "cclab-lens-code-analysis-service-v2",
+      "path": "read_path:specs/cclab-lens/code-analysis-service-v2.md",
+      "relevance": "high",
+      "category": "core-service",
+      "summary": "Enhanced code analysis service with tree-sitter AST extraction, spec type recommendation, LLM enrichment.",
+      "key_requirements": ["analysis pipeline", "fast-path execution"]
+    },
+    {
+      "id": "cclab-lens-cli-subcommands",
+      "path": "read_path:specs/cclab-lens/lens-cli-subcommands.md",
+      "relevance": "high",
+      "category": "cli",
+      "summary": "CLI subcommands for daemon-backed analysis. Critical for backward-compatible CLI routing after crate removal.",
+      "key_requirements": ["ensure_daemon_ready", "8 analysis subcommands", "CliModule registration"]
+    },
+    {
+      "id": "cclab-lens-comprehensive",
+      "path": "read_path:specs/cclab-lens/lens-comprehensive.md",
+      "relevance": "high",
+      "category": "features",
+      "summary": "Comprehensive overview: lint rules, symbol tables, refactoring engine, semantic search, type inference.",
+      "key_requirements": ["feature completeness inventory"]
+    },
+    {
+      "id": "cclab-lens-codegen-unification",
+      "path": "read_path:specs/cclab-lens/lens-codegen-unification.md",
+      "relevance": "high",
+      "category": "integration",
+      "summary": "CodeGenerator trait consuming SpecIR. After merge, SpecIR becomes internal module interface.",
+      "key_requirements": ["CodeGenerator trait", "GeneratorRegistry", "SpecIR import path"]
+    },
+    {
+      "id": "cclab-lens-beyond-ide",
+      "path": "read_path:specs/cclab-lens/lens-beyond-ide.md",
+      "relevance": "medium",
+      "category": "rpc-mcp",
+      "summary": "Schema validation, tree-sitter upgrade, HTML/CSS/Go support. MCP wiring sections excluded per Q2.",
+      "key_requirements": ["JSON schema validation", "tree-sitter upgrade", "language expansion"]
+    },
+    {
+      "id": "cclab-lens-refactoring-api",
+      "path": "read_path:specs/cclab-lens/refactoring-api.md",
+      "relevance": "medium",
+      "category": "core-api",
+      "summary": "Refactoring operations API: rename, extract, inline, change signature, move definition.",
+      "key_requirements": ["refactoring operations"]
+    },
+    {
+      "id": "cclab-lens-semantic-search-api",
+      "path": "read_path:specs/cclab-lens/semantic-search-api.md",
+      "relevance": "medium",
+      "category": "core-api",
+      "summary": "Semantic search engine with 6 modes: by type, implementations, usages, similar code, docs, call hierarchy.",
+      "key_requirements": ["search modes"]
+    },
+    {
+      "id": "cclab-lens-pdg-mcp-tools",
+      "path": "read_path:specs/cclab-lens/lens-pdg-mcp-tools.md",
+      "relevance": "medium",
+      "category": "analysis",
+      "summary": "PDG-based tools for advanced analysis: lens_pdg, lens_slice, lens_impact, lens_taint.",
+      "key_requirements": ["PDG analysis tools"]
+    },
+    {
+      "id": "cclab-lens-python-pdg-core",
+      "path": "read_path:specs/cclab-lens/python-pdg-core.md",
+      "relevance": "medium",
+      "category": "analysis",
+      "summary": "Statement-level PDG construction for Python. Program slicing, impact analysis, taint tracking.",
+      "key_requirements": ["PDG construction"]
+    },
+    {
+      "id": "cclab-lens-lang-support",
+      "path": "read_path:specs/cclab-lens/lens-lang-support.md",
+      "relevance": "medium",
+      "category": "language-support",
+      "summary": "Extension to 7 new languages with tree-sitter and schema-based validation.",
+      "key_requirements": ["language analyzers"]
+    },
+    {
+      "id": "cclab-lens-markdown",
+      "path": "read_path:specs/cclab-lens/lens-markdown.md",
+      "relevance": "medium",
+      "category": "language-support",
+      "summary": "Markdown/MDX/Mermaid support with lint rules and API spec format detection.",
+      "key_requirements": ["markdown analysis"]
+    },
+    {
+      "id": "cclab-lens-index-storage",
+      "path": "read_path:specs/cclab-lens/lens-index-storage.md",
+      "relevance": "medium",
+      "category": "storage",
+      "summary": "Index storage strategy with persistent project structure. Path canonicalization.",
+      "key_requirements": ["index storage paths"]
+    },
+    {
+      "id": "cclab-lens-yaml-codegen",
+      "path": "read_path:specs/cclab-lens/lens-yaml-codegen.md",
+      "relevance": "medium",
+      "category": "integration",
+      "summary": "YAML-based code generation integration consuming SpecIR manifests.",
+      "key_requirements": ["SpecIR manifest consumption"]
+    },
+    {
+      "id": "cclab-lens-rust-symbol-analysis",
+      "path": "read_path:specs/cclab-lens/rust-symbol-analysis.md",
+      "relevance": "medium",
+      "category": "symbol-extraction",
+      "summary": "Rust symbol extraction for functions, structs, traits, impls, constants.",
+      "key_requirements": ["Rust symbol extraction"]
+    },
+    {
+      "id": "cclab-lens-usage-examples",
+      "path": "read_path:specs/cclab-lens/usage-examples.md",
+      "relevance": "low",
+      "category": "documentation",
+      "summary": "14 practical examples for refactoring, semantic search, integration workflows.",
+      "key_requirements": ["usage documentation"]
+    },
+    {
+      "id": "cclab-lens-analysis-tools",
+      "path": "read_path:specs/cclab-lens/analysis-tools.md",
+      "relevance": "low",
+      "category": "utilities",
+      "summary": "Analysis tool specifications for agent interaction. Background context.",
+      "key_requirements": []
+    },
+    {
+      "id": "cclab-sdd-readme",
+      "path": "read_path:specs/cclab-sdd/README.md",
+      "relevance": "low",
+      "category": "target-context",
+      "summary": "SDD specs structure overview. Background context for merge target.",
+      "key_requirements": []
+    },
+    {
+      "id": "cclab-sdd-cli-spec",
+      "path": "read_path:specs/cclab-sdd/sdd-cli.md",
+      "relevance": "low",
+      "category": "target-context",
+      "summary": "SDD CLI spec for workflow subcommands. Background for CliModule pattern.",
+      "key_requirements": ["CliModule registration pattern"]
+    }
+  ]
+}

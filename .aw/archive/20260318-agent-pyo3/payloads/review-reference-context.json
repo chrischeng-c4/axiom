@@ -1,0 +1,54 @@
+{
+  "group_id": "agent-pyo3-bindings",
+  "verdict": "NEEDS_REVISION",
+  "summary": "Two HIGH-severity spec gaps: (1) cclab-agent/agents/change-spec-agent.md is absent — ChangeSpecAgent is one of the 4 SDD agents explicitly confirmed in pre-clarifications (Q1) and its spec has a full builder API (generate_spec, revise_spec) that must be PyO3-exposed. (2) cclab-agent/agents/code-agent.md is absent — CodeAgent is the 4th SDD agent and its spec additionally extends PlatformIntegration with create_branch/create_commit/create_pull_request, meaning the included integrations.md key requirements are incomplete without it. Also missing: cclab-nova/cclab-nova-python.md, the existing Python bindings spec for the sibling cclab-nova crate, which establishes the async agent.run() / streaming / structured-output API pattern that agent-pyo3 must follow or deliberately diverge from. Minor inaccuracies in agents.md (conflates CodingAgent/AnalystAgent spec with the 4 SDD agents) and streaming.md (claims 13 event types; actual count is 12) are flagged but not blockers on their own.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Pre-clarification Q1 explicitly confirms all 4 SDD agents are implemented: RestructureIssueAgent, ReferenceContextAgent, ChangeSpecAgent, CodeAgent. Two of them have complete, non-stub specs that are entirely absent from the reference context: cclab-agent/agents/change-spec-agent.md (full builder pattern, CRR cycle integration) and cclab-agent/agents/code-agent.md (task decomposition, multi-file XML codegen, PlatformIntegration extension). restructure-agent.md and review-agent.md are correctly included as low (both are empty stubs). ReferenceContextAgent is covered by reference-context-agent.md at medium. The two missing specs represent 2 of the 4 core agent types that need PyO3 wrappers."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": true,
+      "note": "Most scores are appropriate. One underscoring: streaming.md is marked medium but should be high. Pre-clarification Q4 names providers.rs, agents.rs, and tools.rs as explicit pyo3_bindings domain splits; streaming underlies run_with_handler() which Python must hook into via CallbackHandler for real-time feedback. 'Python may need streaming support' in the key requirements undersells it — streaming is a first-class concern for any async Python wrapper. All other scores (high for core types/tools/providers/agents/error; medium for storage/context/security/integrations/tools-coding/tools-analysis; low for stub agents) are defensible."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "Two inaccuracies found. (1) agents.md key requirements say 'CodingAgent and AnalystAgent implementations (4 agents mentioned in pre-clarifications: RestructureIssueAgent, ReferenceContextAgent, ChangeSpecAgent, CodeAgent)' — this is misleading. agents.md defines CodingAgent and AnalystAgent builders only. The 4 SDD agents are NOT defined in agents.md; they have separate spec files. An implementer reading this may incorrectly assume agents.md is the source-of-truth for the SDD agents. (2) streaming.md key requirements claim '13 event types' — actual JSON Schema has 12 oneOf variants: started, thinking, text_chunk, tool_call_requested, tool_execution_started, tool_execution_completed, tool_execution_failed, approval_requested, approval_received, turn_completed, completed, error. Count is off by 1. All other key requirements were verified accurate against the actual spec content."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "All 16 included specs are relevant to the PyO3 bindings task. No extraneous specs found. tools-coding.md and tools-analysis.md at medium are borderline (Python users do not wrap individual built-in tools), but they document the available toolset that Python users configure, so inclusion is reasonable."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "cclab-agent/agents/change-spec-agent.md is missing from the reference context. Pre-clarification Q1 explicitly lists ChangeSpecAgent as one of the 4 implemented SDD agents with 173 tests passing. The spec at cclab-agent/agents/change-spec-agent.md is complete and defines: ChangeSpecAgent struct, generate_spec(issue: StructuredIssue, context: ReferenceContext) -> Spec and revise_spec(spec: Spec, review: ReviewVerdict) -> Spec methods, CRR cycle integration (NeedsRevision feedback loop with ReviewAgent), and the ReviewVerdict enum (Approved/NeedsRevision/Rejected). Without this spec in the reference context, the PyO3 layer has no guidance on how to expose ChangeSpecAgent — its builder API, method signatures, and the StructuredIssue/ReferenceContext input types needed to call it from Python.",
+      "recommendation": "Add cclab-agent/agents/change-spec-agent.md with relevance MEDIUM (same tier as reference-context-agent.md). Key requirements: ChangeSpecAgentBuilder with generate_spec(issue, context) and revise_spec(spec, review) methods; ReviewVerdict enum (Approved/NeedsRevision/Rejected); CRR cycle integration requiring max_revisions config; input types StructuredIssue and ReferenceContext must be accessible from Python."
+    },
+    {
+      "severity": "HIGH",
+      "description": "cclab-agent/agents/code-agent.md is missing from the reference context. Pre-clarification Q1 explicitly lists CodeAgent as one of the 4 implemented SDD agents. The spec at cclab-agent/agents/code-agent.md is complete and defines: CodeAgent with execute(spec) entry point; task decomposition with topological sorting (Data -> Logic -> Integration -> Test order); multi-file XML code generation format using <file path='...'> tags; CRRCycle integration with ReviewAgent; and critically — PlatformIntegration trait extensions: create_branch(), create_commit(files), and create_pull_request()/create_merge_request(). These three new PlatformIntegration methods are NOT mentioned in the included integrations.md key requirements, meaning the PyO3 layer for PlatformIntegration will be designed without awareness of these extensions, causing an incomplete or inconsistent Python API for platform operations.",
+      "recommendation": "Add cclab-agent/agents/code-agent.md with relevance MEDIUM. Key requirements: CodeAgent builder with execute(spec) method; PlatformIntegration extensions create_branch/create_commit/create_pull_request that must be exposed in Python bindings (integrations.md key requirements must be updated to mention these); NovaError extensions MaxRevisionsExceeded and MalformedLLMResponse (already covered by error-handling.md). Also update the integrations.md key requirements entry to note the PlatformIntegration extensions defined in the CodeAgent spec."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "cclab-nova/cclab-nova-python.md is missing from the reference context. This spec defines the existing Python bindings for the sibling cclab-nova crate and establishes the canonical async API pattern for Rust-based agent libraries in this codebase: PyAgent wrapper, await agent.run('input'), async for chunk in agent.run(stream=True) streaming pattern, and Pydantic-style structured output via response_model. Since agent-pyo3 is building Python bindings for a conceptually similar library (cclab-agent vs cclab-nova), the implementer needs to know this spec to either adopt the same API conventions (ensuring consistency across cclab Python packages) or explicitly document why they deviate. Without it, the Python API surface may be inconsistent with what Python users of cclab-nova already expect.",
+      "recommendation": "Add cclab-nova/cclab-nova-python.md with relevance MEDIUM. Key requirements: PyAgent wrapper pattern with await agent.run() async API; streaming via async for using async generator; structured output via response_model dict (consistent with pre-clarification Q3 which returns Python dict from complete_structured); async/await delegation to Rust executor via pyo3_async_runtimes::tokio."
+    },
+    {
+      "severity": "LOW",
+      "description": "streaming.md is scored medium but should be high. Pre-clarification Q4 names agents.rs as one of the domain splits in pyo3_bindings/ — the agent run_with_handler() method (which accepts a StreamHandler) is the primary entry point for Python callers who want real-time feedback. Python must be able to provide a callback-based StreamHandler (equivalent to the Rust CallbackHandler). This is not a background concern; it is a first-class binding requirement. The streaming.md key requirements phrase 'Python may need streaming support for real-time agent feedback' further undersells it.",
+      "recommendation": "Upgrade streaming.md relevance from medium to high. Update key requirements to: 'StreamEvent schema (12 event types); CallbackHandler wrapping Python callable as StreamHandler; run_with_handler(input, handler) is the primary Python entry point for streaming; Python handler must be invokable from Rust async context via pyo3_async_runtimes.'"
+    },
+    {
+      "severity": "LOW",
+      "description": "agents.md key requirements contain a misleading statement: 'CodingAgent and AnalystAgent implementations (4 agents mentioned in pre-clarifications: RestructureIssueAgent, ReferenceContextAgent, ChangeSpecAgent, CodeAgent)'. The agents.md spec covers only CodingAgent and AnalystAgent builders — the 4 SDD agents are NOT defined there and have their own separate spec files. This conflation could mislead the implementer into treating agents.md as sufficient coverage for all 6 agent types when it only covers 2. Additionally, streaming.md key requirements claim 13 event types but the actual JSON Schema oneOf has 12 variants.",
+      "recommendation": "Correct agents.md key requirements to: 'CodingAgent and AnalystAgent are the two agent implementations exposed in this spec; their builders (CodingAgentBuilder, AnalystAgentBuilder) with fluent API; agent execution loop sequence with StreamHandler events and approval flow. Note: the 4 SDD agents (Restructure, ReferenceContext, ChangeSpec, Code) are defined in separate specs under cclab-agent/agents/.' Correct streaming.md event count from 13 to 12."
+    }
+  ]
+}

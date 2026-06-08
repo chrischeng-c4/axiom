@@ -1,0 +1,56 @@
+change_id: jet-dev-server-v2
+schema_version: '2.0'
+created_at: 2026-03-25T04:33:48.172043Z
+updated_at: 2026-03-25T08:54:05.248593Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  impl:jet-dev-server-v2-spec: 3
+current_task_id: jet-dev-server-v2-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1089
+    title: 'jet dev: implement optimizeDeps — full CJS→ESM pre-bundling for node_modules'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1090
+    title: 'jet dev: AST-based TypeScript type stripping (replace line-based filter)'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1091
+    title: 'jet dev: browser-compatible Node.js builtin polyfills'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1092
+    title: 'jet install: .jet-store symlinks break Node.js module resolution for native deps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - jet-dev-server-v2
+  reference_context:
+  - jet-dev-server-v2
+  change_implementation:
+  - jet-dev-server-v2
+  change_spec:
+  - jet-dev-server-v2

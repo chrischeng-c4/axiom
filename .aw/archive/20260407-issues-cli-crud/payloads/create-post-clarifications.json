@@ -1,0 +1,10 @@
+{
+  "change_id": "issues-cli-crud",
+  "group_id": "issues-cli-crud",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "score issues CLI has list/show/sync (read path) but no write verbs (create/update/close) or search. → requirements.md § R1-R4",
+    "success": "All IssueBackend CRUD verbs uniform across Local + GitHub + GitLab. Cross-artifact references (related:/implements:) in frontmatter. Agent-first --json + structured errors. → requirements.md § R5-R8",
+    "boundary": "In scope: R1-R8 as specified. Out: Jira backend, bidirectional sync, authoring agent prompt."
+  }
+}

@@ -1,0 +1,56 @@
+change_id: mamba-p1-bugfix
+schema_version: '2.0'
+created_at: 2026-03-28T06:42:34.499747Z
+updated_at: 2026-03-28T08:58:22.907713Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: tokens-and-indent
+task_revisions: {}
+impl_spec_phase:
+  tokens-and-indent: tests
+telemetry: null
+dag:
+  issues:
+  - number: 1110
+    title: 'fix(mamba): lambda limitations — nested lambdas, default arg capture, unary minus'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1112
+    title: 'fix(mamba): try/except block with dict/set literal triggers parse error'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1113
+    title: 'fix(mamba): iter(callable, sentinel) two-argument form not implemented'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  post_clarifications:
+  - try-except-dict-set-parse
+  - iter-two-arg
+  - lambda-limitations
+  reference_context:
+  - iter-two-arg
+  - lambda-limitations
+  - try-except-dict-set-parse
+  pre_clarifications:
+  - try-except-dict-set-parse
+  - iter-two-arg
+  - lambda-limitations
+  change_spec: []
+  change_implementation: []

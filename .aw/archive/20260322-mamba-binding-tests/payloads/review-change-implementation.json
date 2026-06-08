@@ -1,0 +1,80 @@
+{
+  "group_id": "mamba-tests",
+  "spec_id": "mamba-binding-tests-spec",
+  "verdict": "APPROVED",
+  "summary": "Implementation matches spec requirements. All 8 test files created, 140 new integration tests (≥120 R9), all compile and pass. Every spec scenario is implemented. R3 audit has a minor inaccuracy: claims 3 ignored tests 'resolved' but they are `ignore`-annotated doc-test examples (not #[ignore] test functions) that remain unchanged — a documentation nuance, not a code defect.",
+  "checklist_results": [
+    {
+      "item": "R1: Each of the 7 binding crates has tests/methods_test.rs",
+      "passed": true,
+      "note": "All 7 files confirmed: cclab-pg-mamba, cclab-api-mamba, cclab-runtime-mamba, cclab-agent-mamba, cclab-fetch-mamba, cclab-log-mamba, cclab-mcp-mamba."
+    },
+    {
+      "item": "R2: Every mb_* function has ≥2 tests (happy + error/boundary)",
+      "passed": true,
+      "note": "Most functions have ≥2 tests. A few type constructors (type_text, type_json, type_uuid, type_datetime) and mb_pg_index have only 1 test — but this matches the spec's Scenarios table exactly. Spec's R2 text (≥2/function) conflicts with its own Scenarios table; implementation follows the more specific Scenarios table."
+    },
+    {
+      "item": "R3: cclab-mamba-registry ignored tests audit",
+      "passed": true,
+      "note": "No #[ignore] test functions exist (correct). 3 doc-test code blocks use ```ignore — these are intentionally-excluded doc examples, not real test failures. Implementation audit incorrectly claims they were 'resolved'; they were always intentionally ignored doc examples. Minor documentation inaccuracy, not a code defect."
+    },
+    {
+      "item": "R4: Tests do not require live PostgreSQL or external network services",
+      "passed": true,
+      "note": "Network-dependent functions (mb_pg_connect, mb_pg_execute, mb_fetch_client_*) tested in offline/error mode only. No live services needed."
+    },
+    {
+      "item": "R5: Tests compile and pass with cargo test -p cclab-{name}-mamba",
+      "passed": true,
+      "note": "All 8 crates pass: pg(34), api(28), runtime(10), agent(23), fetch(16), log(12), mcp(14), registry(3) = 140 total. Zero failures."
+    },
+    {
+      "item": "R6: Tests in tests/ directory; existing inline tests untouched",
+      "passed": true,
+      "note": "All new tests in tests/methods_test.rs (or tests/registry_test.rs). No changes to existing inline #[cfg(test)] blocks."
+    },
+    {
+      "item": "R7: No CI configuration changes",
+      "passed": true,
+      "note": "No CI files modified."
+    },
+    {
+      "item": "R8: No coverage tooling changes",
+      "passed": true,
+      "note": "No coverage tooling files modified."
+    },
+    {
+      "item": "R9: Total new integration tests ≥120",
+      "passed": true,
+      "note": "140 new integration tests across 8 files. 34+28+10+23+16+12+14+3 = 140 ≥ 120."
+    },
+    {
+      "item": "R10: mb_pg_connect and mb_pg_execute tested offline",
+      "passed": true,
+      "note": "connect_offline uses invalid URL → connected==false. execute_null_pool uses null ptr → none(). execute_empty_sql uses disconnected pool → none()."
+    },
+    {
+      "item": "Shared helper pattern (make_str_val/read_str_val) used consistently",
+      "passed": true,
+      "note": "All 7 binding test files use the same make_str_val/read_str_val helper pattern from the spec."
+    },
+    {
+      "item": "Test counts meet per-crate minimums from Test Plan",
+      "passed": true,
+      "note": "pg:34≥32, api:28≥27, runtime:10≥10, agent:23≥23, fetch:16≥16, log:12≥12, mcp:14≥14. All meet or exceed."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "LOW",
+      "description": "R3 audit in registry_test.rs comment claims '3 previously-reported ignored tests have been resolved (linkage is fully functional)' — but these are ```ignore doc-test code blocks in lib.rs doc comments (lines 8, 160, 233), not #[ignore] test functions. They remain ```ignore and fail when forced to run. The audit should say 'doc examples intentionally marked ignore; no #[ignore] test functions exist'.",
+      "recommendation": "Update the comment in registry_test.rs lines 2-8 to accurately describe the 3 ignored doc-tests as intentionally-excluded examples, not resolved tests."
+    },
+    {
+      "severity": "LOW",
+      "description": "Spec internal inconsistency: R2 says '≥2 tests per function' but Scenarios table specifies only 1 scenario for 6 pg functions (index, type_text/json/uuid/datetime, connect). Implementation correctly follows the Scenarios table. The Requirements table says ≥38 for pg but Test Plan says ≥32.",
+      "recommendation": "No code change needed. This is a spec inconsistency to note for future spec revisions."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "group_id": "jet-install-optimizations",
+  "answers": [
+    {"question_id": "Q1", "answer": "No threshold — prefetch all transitive deps eagerly level-by-level. The semaphore already bounds concurrency. Benchmark showed 12.6s true cold vs 1.3s with disk cache, so the bottleneck is metadata fetch latency not bandwidth"},
+    {"question_id": "Q2", "answer": "Yes, auto-migrate — on first access, if ~/.jet-store/.metadata/ exists and ~/.cache/jet/metadata/ doesn't, move the directory. One-time migration, no fallback needed"}
+  ],
+  "follow_up_questions": [],
+  "clarification_complete": true
+}

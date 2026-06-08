@@ -1,0 +1,6 @@
+{
+  "spec_id": "change-spec-review-rules",
+  "group_id": "decomposition-rules",
+  "section": "changes",
+  "content": "```yaml\n_sdd:\n  id: change-spec-decomposition-changes\n  refs:\n    - $ref: \"ref-context-decomposition#ref-context-decomposition-changes\"\nchanges:\n  - path: cclab/specs/crates/cclab-sdd/logic/change-spec.md\n    section: \"Review § Checklist\"\n    action: modify\n    description: \"Add item 12: verify fill_order was respected (data -> behavior -> interface -> test -> changes). Sections filled out of dependency order are flagged as MEDIUM severity.\"\n  - path: cclab/specs/crates/cclab-sdd/logic/change-spec.md\n    section: \"Review § Checklist\"\n    action: modify\n    description: \"Add item 13: verify no duplicate section types in any spec file. Two or more sections sharing the same type: value in one file are flagged as HIGH severity.\"\n  - path: cclab/specs/crates/cclab-sdd/logic/change-spec.md\n    section: \"Create Mode § Prompt Architecture\"\n    action: modify\n    description: \"Add decomposition constraint block to base prompt template reminding agents: 1 file = 1 logical unit, no duplicate section types, follow fill_order.\"\n```"
+}

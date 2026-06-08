@@ -1,0 +1,6 @@
+{
+  "change_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness",
+  "spec_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness-spec",
+  "verdict": "APPROVED",
+  "summary": "Spec is implementation-ready. All 9 issue requirements (R1-R9) are addressed with concrete file-level changes (C1-C18). Test Plan lists 10 concrete commands (cargo test, jet test, pnpm) — satisfies the hard-reject rule. Scenarios S1-S8 cover per-file migration and atomic dependency drop. Interaction sequence diagram shows native runner flow. Changes section enumerates all 7 spec file rewrites + playwright.config.ts deletion + jet.test.config.ts creation + package.json + lockfile + CI inspection + docs + new residue-grep integration test (e2e_playwright_residue). Spec correctly leaves the compat shim (playwright_shim.rs, --playwright flag) untouched per R4. Atomicity enforced by T1 residue-grep test tied to R8."
+}

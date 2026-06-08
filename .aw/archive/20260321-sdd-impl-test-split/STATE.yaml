@@ -1,0 +1,95 @@
+change_id: sdd-impl-test-split
+schema_version: '2.0'
+created_at: 2026-03-21T15:50:28.375123Z
+updated_at: 2026-03-21T16:47:26.563496Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: sdd-impl-test-split-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 83369
+    timestamp: 2026-03-21T15:51:57.404086Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 73753
+    timestamp: 2026-03-21T15:54:02.031145Z
+  - step: analyze_spec_sdd-impl-test-split-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 914783
+    timestamp: 2026-03-21T16:28:57.686835Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 691461
+    timestamp: 2026-03-21T16:41:34.508204Z
+  - step: analyze_spec_sdd-impl-test-split-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 808492
+    timestamp: 2026-03-21T16:42:00.464683Z
+  - step: analyze_spec_sdd-impl-test-split-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1542713
+    timestamp: 2026-03-21T16:42:07.321764Z
+  - step: analyze_spec_sdd-impl-test-split-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 2587971
+    timestamp: 2026-03-21T16:42:14.116300Z
+  - step: review_impl_sdd-impl-test-split-spec
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 255260
+    timestamp: 2026-03-21T16:47:15.138042Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag: null
+delegation_guard: null
+branch: null
+groups_progress:
+  post_clarifications:
+  - sdd-impl-test-split
+  pre_clarifications:
+  - sdd-impl-test-split
+  change_spec: []
+  reference_context:
+  - sdd-impl-test-split
+  change_implementation: []

@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "merge-lens-into-sdd",
+      "issues": [942],
+      "requirements": "Move all `cclab-lens` source code into `cclab-sdd` as a submodule under `crates/cclab-sdd/src/lens/`, eliminating the cross-crate SpecIR serialization boundary so SpecIR becomes a plain internal module interface. Make `cclab-lens` a thin re-export wrapper for backward compatibility during the transition period. Merge Lens MCP tools into the SDD MCP server handler (single unified namespace). Keep `cclab lens` CLI subcommands functional via re-exports or delegation from `cclab-sdd-cli`. All future `crate:lens` issues will be implemented within `cclab-sdd`.\n\nAcceptance criteria:\n- All Lens functionality (semantic search, symbol resolution, refactoring, codegen) accessible from `cclab-sdd` crate\n- SpecIR no longer requires cross-crate serialization\n- `cclab lens` CLI commands still work (backward compat)\n- MCP tools unified under one server handler (no duplicate registration)",
+      "questions": [
+        {
+          "topic": "Module layout within cclab-sdd",
+          "question": "Should lens code be placed flat under `crates/cclab-sdd/src/lens/` (mirroring the current `cclab-lens/src/` structure), or reorganized by sub-domain (e.g. `src/lens/semantic/`, `src/lens/refactor/`, `src/lens/codegen/`)? Flat preserves existing module paths; sub-domain grouping aligns with how SDD internally categorizes lens capabilities."
+        },
+        {
+          "topic": "MCP tool naming after merge",
+          "question": "Should Lens MCP tools keep their current `lens_*` method names under the unified SDD MCP server, or be renamed with a `sdd_` prefix? Keeping `lens_*` avoids breaking existing MCP clients; renaming to `sdd_*` achieves full namespace unification but is a breaking change."
+        },
+        {
+          "topic": "cclab-lens crate lifecycle",
+          "question": "Should `cclab-lens` remain as a permanent thin re-export wrapper, or be fully deprecated and removed after a defined transition window? If removal is planned, what is the target milestone or timeline for dropping the crate?"
+        },
+        {
+          "topic": "PyO3 bindings migration",
+          "question": "Does `cclab-lens` have PyO3 bindings that need to be migrated? If so, should they be moved into `cclab-sdd/src/pyo3_bindings/` following the project convention, or kept in a separate `cclab-lens-py` crate?"
+        },
+        {
+          "topic": "SpecIR placement",
+          "question": "After the merge, where should the SpecIR type live within `cclab-sdd`? Options: (a) keep it in `src/specir.rs` as a top-level module, (b) move it to `src/lens/specir.rs` alongside the lens code that consumes it, or (c) inline it directly into the specific SDD pipeline stage that produces it."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+- spec_id: bug-and-agent-spec
+  action: create
+  main_spec_ref: crates/sdd/logic/bug-fixes-agent.md
+  sections:
+  - overview
+  - requirements
+  - changes

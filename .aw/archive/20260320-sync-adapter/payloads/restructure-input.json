@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "sync-adapter",
+      "issues": [959],
+      "requirements": "Add a `SyncAdapter` trait in `crate:agent` that provides a generic async abstraction for syncing protocol types (IssueProtocol, SpecProtocol, ChangeProtocol, CodeIndexProtocol) to and from third-party platforms.\n\nThe trait interface:\n```rust\n#[async_trait]\npub trait SyncAdapter: Send + Sync {\n    async fn push_issue(&self, issue: &IssueProtocol) -> NovaResult<SyncResult>;\n    async fn pull_issue(&self, external_id: &str) -> NovaResult<IssueProtocol>;\n    async fn push_spec(&self, spec: &SpecProtocol) -> NovaResult<SyncResult>;\n    async fn push_change(&self, change: &ChangeProtocol) -> NovaResult<SyncResult>;\n    async fn pull_code_index(&self, path: &str) -> NovaResult<CodeIndexProtocol>;\n}\n```\n\nImplement platform adapters:\n- P1: `GitLabSyncAdapter` (Issue, Code, Change via MR) and `GitHubSyncAdapter` (Issue, Code, Change via PR)\n- P2: `JiraSyncAdapter` (Issue only), `ConfluenceSyncAdapter` (Spec only), `GDocsSyncAdapter` (Spec only)\n\nDepends on #958 — protocol types (`IssueProtocol`, `SpecProtocol`, `ChangeProtocol`, `CodeIndexProtocol`) must already exist.\n\nAcceptance criteria:\n- Trait is defined with all five async methods\n- P1 adapters compile and pass unit tests with mocked HTTP responses\n- Each adapter only implements the methods relevant to its domain (others return `Err(NotSupported)`)\n- Auth credentials are injected at construction time (not global state)",
+      "questions": [
+        {
+          "topic": "bidirectional-mode",
+          "question": "The user description mentions 'bidirectional sync modes' but the trait only defines push/pull methods. Is 'bidirectional' simply a composed operation (call push then pull) at the caller level, or does the trait need an explicit `sync_bidirectional` method?"
+        },
+        {
+          "topic": "sync-result-type",
+          "question": "`SyncResult` appears as the return type for push methods but is not defined in the issue. What fields should it contain — e.g., `external_id: String`, `url: Option<String>`, `status: SyncStatus`? Or is it already defined in #958?"
+        },
+        {
+          "topic": "p2-adapters-scope",
+          "question": "Are P2 adapters (JiraSyncAdapter, ConfluenceSyncAdapter, GDocsSyncAdapter) in scope for this change, or should they be stubbed out (trait impl with `unimplemented!`) and delivered in a follow-up?"
+        },
+        {
+          "topic": "auth-strategy",
+          "question": "How should adapter authentication be handled: constructor injection (pass token/config struct when building the adapter), environment variable lookup, or loaded from a config file at runtime?"
+        },
+        {
+          "topic": "unsupported-methods",
+          "question": "For adapters that only cover a subset of domains (e.g., JiraSyncAdapter has no code or spec support), should unimplemented methods return a typed `Err(NovaError::NotSupported)`, or should the trait be split into smaller domain-specific sub-traits?"
+        }
+      ]
+    }
+  ]
+}

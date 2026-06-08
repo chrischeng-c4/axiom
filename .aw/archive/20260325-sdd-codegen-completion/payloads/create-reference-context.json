@@ -1,0 +1,104 @@
+{
+  "group_id": "frontend-codegen",
+  "specs": [
+    {
+      "spec_id": "cclab-sdd/generate/codegen-system.md",
+      "spec_group": "code-generation",
+      "relevance": "high",
+      "key_requirements": [
+        "SpecIRGenerator trait definition and routing",
+        "ReactGenerator as pluggable generator for Wireframe section type",
+        "Code generation system architecture"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/generator-react.md",
+      "spec_group": "code-generation",
+      "relevance": "high",
+      "key_requirements": [
+        "WireframeSpec input schema (name, component_type, props, layout)",
+        "JSX rendering for node kinds (text, button, input, list, semantic HTML)",
+        "TypeScript props interface generation",
+        "Barrel export file generation",
+        "Template fallback mechanism"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/spec-ir-schema.md",
+      "spec_group": "code-generation",
+      "relevance": "high",
+      "key_requirements": [
+        "SpecIR YAML manifest schema",
+        "Wireframe kind definition",
+        "WireframeSpec structure for component layout"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/spec-ir-contract.md",
+      "spec_group": "code-generation",
+      "relevance": "high",
+      "key_requirements": [
+        "SpecIR enum type definition",
+        "SpecMetadata contract",
+        "Wireframe variant in SpecIR type system"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/code-generator-contract.md",
+      "spec_group": "code-generation",
+      "relevance": "high",
+      "key_requirements": [
+        "Code generator contract and responsibilities",
+        "Spec input to framework-specific output mapping",
+        "Inference rules for semantic interpretation"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/template-engine.md",
+      "spec_group": "code-generation",
+      "relevance": "high",
+      "key_requirements": [
+        "Tera template engine integration",
+        "Template directory structure (react/)",
+        "Fallback to inline string generation"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/architecture.md",
+      "spec_group": "code-generation",
+      "relevance": "medium",
+      "key_requirements": [
+        "Generate subsystem architecture",
+        "Generation pipeline and data flow",
+        "Code generation framework overview"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/README.md",
+      "spec_group": "sdd-framework",
+      "relevance": "low",
+      "key_requirements": [
+        "SDD phase flow context",
+        "Reference context phase placement in workflow"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "frontend-codegen-main",
+      "action": "create",
+      "main_spec_ref": "cclab-sdd/generate/frontend-codegen.md",
+      "sections": [
+        "overview",
+        "schema",
+        "logic",
+        "interaction",
+        "component",
+        "wireframe",
+        "design-token",
+        "template",
+        "test-plan"
+      ]
+    }
+  ]
+}

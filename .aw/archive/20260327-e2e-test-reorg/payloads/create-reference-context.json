@@ -1,0 +1,51 @@
+{
+  "group_id": "e2e-test-reorg",
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-jet/aot-build.md",
+      "relevance": "high",
+      "summary": "Production build pipeline spec (R1-R14): tree shaking, code splitting, minification, CSS pipeline, asset pipeline. The vite-build and jet-build Playwright projects run build.spec.ts which validates AOT build output equivalence between Vite and Jet."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/dev-server.md",
+      "relevance": "high",
+      "summary": "Dev server spec: CJS->ESM pre-bundling, TypeScript AST stripping, Node.js polyfills, nested node_modules. The jet-dev Playwright project runs dev-server.spec.ts validating TS stripping, import.meta.env, path aliases, proxy, and polyfills against the live dev server."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/hmr.md",
+      "relevance": "high",
+      "summary": "HMR spec: import.meta.hot API, server-side module graph, React Fast Refresh, error overlay. The jet-dev Playwright project runs hmr.spec.ts which validates HMR module updates and React Fast Refresh state preservation."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/postcss-tailwind.md",
+      "relevance": "high",
+      "summary": "PostCSS pipeline and Tailwind CSS JIT spec with lightningcss. The jet-dev Playwright project runs css.spec.ts which validates the PostCSS pipeline and Tailwind CSS JIT in dev mode."
+    }
+  ],
+  "codebase_explored": [
+    {
+      "path": "e2e/app.spec.ts",
+      "summary": "RuSheet/grid Playwright tests: load application, canvas visibility, formula input, responsive canvas, WASM init, grid lines. Moves to e2e/grid/app.spec.ts."
+    },
+    {
+      "path": "e2e/cell-editing.spec.ts",
+      "summary": "Cell editing Playwright tests: formula input interaction, canvas click handling. Moves to e2e/grid/cell-editing.spec.ts."
+    },
+    {
+      "path": "examples/mini-react/tests/dom-snapshot.spec.ts",
+      "summary": "TodoMVC DOM equivalence tests for Vite vs Jet build parity: JSX rendering, spread props, conditional JSX, dynamic imports, inline styles, enums, async handlers, template literals, DOM structure snapshots. Entire examples/mini-react/ app becomes e2e/jet/ fixture; this file becomes e2e/jet/tests/build.spec.ts."
+    },
+    {
+      "path": "examples/mini-react/playwright.config.ts",
+      "summary": "Current Playwright config with vite (port 4174) and jet (port 4175) projects, no testMatch filtering. Will be replaced/expanded by e2e/playwright.config.ts with vite-build (build.spec.ts only), jet-build (build.spec.ts only), and jet-dev (dev-server.spec.ts, hmr.spec.ts, css.spec.ts) projects."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "e2e-test-infrastructure",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-jet/e2e/e2e-test-infrastructure.md",
+      "sections": ["overview", "test-fixture", "test-plan", "e2e-scenario", "changes"]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+change_id: taipan-all
+schema_version: '2.0'
+created_at: 2026-02-12T10:58:39.077529Z
+updated_at: 2026-02-12T15:26:41.192571Z
+phase: merge_approved
+iteration: 1
+last_action: Merge approved. Ready to archive.
+session_id: null
+checksums: {}
+validations: []
+revision_counts:
+  merge: 1
+  implementation: 2
+telemetry:
+  calls:
+  - step: explore
+    genesis_version: 0.3.6
+    model: gemini-3-pro-preview
+    tokens_in: 209247
+    tokens_out: 2088
+    cost_usd: null
+    duration_ms: 121892
+    timestamp: 2026-02-12T10:58:57.527585Z
+  - step: review
+    genesis_version: 0.3.6
+    model: gpt-5.3-codex
+    tokens_in: 720535
+    tokens_out: 5003
+    cost_usd: null
+    duration_ms: 107446
+    timestamp: 2026-02-12T11:00:56.672015Z
+  total_cost_usd: 0.0
+  total_tokens_in: 929782
+  total_tokens_out: 7091

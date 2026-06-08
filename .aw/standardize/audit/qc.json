@@ -1,0 +1,44 @@
+{
+  "project": "qc",
+  "scope": "projects/qc/tests/async_fuzzing_test.rs",
+  "surfaces": [
+    {
+      "kind": "route",
+      "name": "routes",
+      "preserve": "preserve externally visible navigation and endpoint paths before quality changes"
+    },
+    {
+      "kind": "command",
+      "name": "commands",
+      "preserve": "preserve CLI command names, arguments, and output contracts before quality changes"
+    },
+    {
+      "kind": "generated_source",
+      "name": "source ownership",
+      "preserve": "preserve CODEGEN and HANDWRITE boundaries while retiring quality debt"
+    },
+    {
+      "kind": "api",
+      "name": "public API",
+      "preserve": "preserve public API and serialized envelope contracts before quality changes"
+    },
+    {
+      "kind": "doc",
+      "name": "documentation",
+      "preserve": "preserve documented capability, CLI, and workflow contracts before quality changes"
+    }
+  ],
+  "quality_debt": [
+    "record known quality debt before selecting modernization work"
+  ],
+  "safe_levers": [
+    {
+      "name": "documentation-only cleanup",
+      "risk": "low"
+    },
+    {
+      "name": "localized source ownership repair",
+      "risk": "medium"
+    }
+  ]
+}

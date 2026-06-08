@@ -1,0 +1,13 @@
+{
+  "group_id": "scope-hoisting",
+  "answers": [
+    {
+      "question": "Should scope hoisting build on the existing scaffold in bundler/scope_hoist.rs?",
+      "answer": "Yes. Draft spec at cclab/specs/crates/cclab-jet/scope-hoisting.md and implementation scaffold at bundler/scope_hoist.rs already exist. Build on top of them."
+    },
+    {
+      "question": "What is the benchmark target for measuring success?",
+      "answer": "Use the react-bench project in examples/react-bench/. Bundle size must be ≤195 KB (within 2% of Vite's ~192 KB). Current jet output is ~206.8 KB."
+    }
+  ]
+}

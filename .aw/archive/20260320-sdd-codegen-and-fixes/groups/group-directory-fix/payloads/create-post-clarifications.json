@@ -1,0 +1,6 @@
+{
+  "change_id": "sdd-codegen-and-fixes",
+  "group_id": "group-directory-fix",
+  "skipped": true,
+  "reason": "No contradictions found. Reference context specs align with requirements: group-scoped paths for specs/prompts/payloads, active_group in STATE.yaml, merge reader iterating groups. Pre-clarification answers (iterate groups, new changes only, active_group routing) are consistent with spec conventions."
+}

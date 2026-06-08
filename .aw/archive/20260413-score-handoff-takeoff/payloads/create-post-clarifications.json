@@ -1,0 +1,1 @@
+{"change_id":"score-handoff-takeoff","skipped":true,"scope_summary":"New CLI commands: score handoff create/list/show + score takeoff. Storage at ~/.score/handoffs/. Two skills. No conflicts with existing code.","contradictions":[],"resolved_questions":[]}

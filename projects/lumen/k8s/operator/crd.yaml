@@ -1,0 +1,210 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: lumens.lumen.dev
+spec:
+  group: lumen.dev
+  names:
+    categories: []
+    kind: Lumen
+    plural: lumens
+    shortNames:
+    - lum
+    singular: lumen
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.servingReadyReplicas
+      name: Ready
+      type: integer
+    - jsonPath: .status.shardCount
+      name: Shards
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Auto-generated derived type for LumenSpec via `CustomResource`
+        properties:
+          spec:
+            description: '`lumen.dev/v1alpha1` `Lumen`. Namespaced: every child object the operator renders lands in this object''s namespace, so multiple independent lumen deployments can coexist by name.'
+            properties:
+              auth:
+                default: disabled
+                description: 'Auth mode: `off` (dev) or `required` (tokens supplied via `tokensSecret`).'
+                enum:
+                - disabled
+                - required
+                type: string
+              image:
+                description: Serving + (managed) NATS-sidecar-free container image, e.g. `lumen:latest`. Required.
+                type: string
+              imagePullPolicy:
+                description: Image pull policy. Defaults to `IfNotPresent`.
+                nullable: true
+                type: string
+              logFormat:
+                default: pretty
+                description: 'Log output format: `json` (prod/staging) or `pretty` (dev).'
+                enum:
+                - json
+                - pretty
+                type: string
+              logLevel:
+                description: Log level (`trace|debug|info|warn|error`). Defaults to `info`.
+                nullable: true
+                type: string
+              nats:
+                default:
+                  externalUrl: null
+                  replicas: 1
+                  storage: 20Gi
+                  storageClass: null
+                  cpu: '1'
+                  memory: 1Gi
+                description: NATS write-log broker. Managed by default; set `externalUrl` to point at an existing broker and skip provisioning one.
+                properties:
+                  cpu:
+                    default: '1'
+                    description: Per-broker CPU, applied as request==limit.
+                    type: string
+                  externalUrl:
+                    description: Point serving pods at an existing broker. When set, the operator renders NO NATS objects (StatefulSet/Services/ConfigMap) and wires `LUMEN_NATS_URL` straight to this value.
+                    nullable: true
+                    type: string
+                  memory:
+                    default: 1Gi
+                    description: Per-broker memory, applied as request==limit.
+                    type: string
+                  replicas:
+                    default: 1
+                    description: Managed-broker replica count. `1` (dev/staging) or `3+` for an HA JetStream cluster — the operator wires `--routes` when `> 1`.
+                    format: int32
+                    type: integer
+                  storage:
+                    default: 20Gi
+                    description: Per-broker PVC size. e.g. `"20Gi"`, `"100Gi"`.
+                    type: string
+                  storageClass:
+                    description: PVC StorageClass. Unset → cluster default (portable; kind → local-path `standard`). Set to e.g. `"ssd"` in cloud.
+                    nullable: true
+                    type: string
+                type: object
+              observability:
+                default: false
+                description: Emit a ServiceMonitor + PrometheusRule. Requires the prometheus-operator CRDs (`monitoring.coreos.com/v1`) to be installed in the cluster.
+                type: boolean
+              serving:
+                default:
+                  autoscaling:
+                    minReplicas: 3
+                    maxReplicas: 12
+                    targetCpuUtilization: 70
+                  cpu: '2'
+                  memory: 4Gi
+                  graceSecs: 30
+                description: Stateless serving-fleet shape.
+                properties:
+                  autoscaling:
+                    default:
+                      minReplicas: 3
+                      maxReplicas: 12
+                      targetCpuUtilization: 70
+                    description: HPA bounds + CPU target.
+                    properties:
+                      maxReplicas:
+                        description: Ceiling.
+                        format: int32
+                        type: integer
+                      minReplicas:
+                        description: Floor (also the Deployment's apply-time replica count).
+                        format: int32
+                        type: integer
+                      targetCpuUtilization:
+                        description: Target average CPU utilization (%) — read QPS proxied by CPU.
+                        format: int32
+                        type: integer
+                    required:
+                    - maxReplicas
+                    - minReplicas
+                    - targetCpuUtilization
+                    type: object
+                  cpu:
+                    default: '2'
+                    description: Per-pod CPU, applied as request==limit (Guaranteed QoS). e.g. `"2"`.
+                    type: string
+                  graceSecs:
+                    default: 30
+                    description: Graceful drain window on SIGTERM (seconds); tracks `terminationGracePeriodSeconds`.
+                    format: uint64
+                    minimum: 0.0
+                    type: integer
+                  memory:
+                    default: 4Gi
+                    description: Per-pod memory, applied as request==limit. e.g. `"4Gi"`.
+                    type: string
+                type: object
+              shardCount:
+                default: 1
+                description: Install-time shard fan-out for client-side `crc32(collection) % N` routing. The operator surfaces it but never reshards a live cluster (clients own the routing); treat as immutable after first apply.
+                format: uint32
+                minimum: 0.0
+                type: integer
+              tokensSecret:
+                description: 'Name of a Secret (key `LUMEN_TOKENS`) wired into serving pods when `auth: required`. Ignored when `auth: off`.'
+                nullable: true
+                type: string
+            required:
+            - image
+            type: object
+          status:
+            description: Status subresource, written back by the reconcile loop.
+            nullable: true
+            properties:
+              desiredReplicas:
+                default: 0
+                description: Desired serving replicas (HPA floor at apply, or the live count).
+                format: int32
+                type: integer
+              message:
+                default: ''
+                description: Last human-readable reconcile message.
+                type: string
+              natsReady:
+                default: false
+                description: Whether the NATS broker is Ready (managed) or assumed up (external).
+                type: boolean
+              observedGeneration:
+                default: 0
+                description: The `.metadata.generation` this status reflects (drift detection).
+                format: int64
+                type: integer
+              phase:
+                default: ''
+                description: '`Pending | Reconciling | Ready | Degraded`.'
+                type: string
+              servingReadyReplicas:
+                default: 0
+                description: Ready serving replicas (from the Deployment status).
+                format: int32
+                type: integer
+              shardCount:
+                default: 0
+                description: Effective shard count.
+                format: uint32
+                minimum: 0.0
+                type: integer
+            type: object
+        required:
+        - spec
+        title: Lumen
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -1,0 +1,22 @@
+{
+  "change_id": "sdd-codegen-and-fixes",
+  "group_id": "group-directory-fix",
+  "answers": [
+    {
+      "question_id": "Q1",
+      "question": "Merge phase reader strategy",
+      "answer": "Iterate all groups and collect specs from each groups/{group-id}/specs/. Best group traceability."
+    },
+    {
+      "question_id": "Q2",
+      "question": "Backward compatibility with existing changes",
+      "answer": "Only apply new layout to newly-created changes. Existing changes keep root-level layout."
+    },
+    {
+      "question_id": "Q3",
+      "question": "Payload write routing in mainthread",
+      "answer": "STATE.yaml tracks the active group during spec/impl phases via active_group field — use that for routing payloads to groups/{group-id}/payloads/."
+    }
+  ],
+  "follow_up_needed": false
+}

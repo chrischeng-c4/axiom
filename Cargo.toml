@@ -1,0 +1,178 @@
+[workspace]
+members = [
+    "projects/mamba/mambalibs/mongokit",
+    "projects/mamba/mambalibs/mongokit/binding",
+    "projects/mamba/mambalibs/pgkit/pg",
+    "projects/meter",
+    "projects/meter/meter-cli",
+    "crates/cclab-core",
+    "crates/cclab-kv",
+    "projects/mamba/mambalibs/queuekit",
+    "crates/cclab-schema",
+    "crates/cclab-grid",
+    "crates/cclab-grid-render-webgpu",
+    "crates/cclab-grid-wasm",
+    "projects/mamba/mambalibs/agentkit/core",
+    "projects/mamba/mambalibs/agentkit/derive",
+    "projects/mamba/mambalibs/agentkit/graph",
+    "projects/mamba/mambalibs/agentkit/llm",
+    "projects/mamba/mambalibs/agentkit/tools",
+    "projects/mamba/mambalibs/agentkit/frontend",
+    "projects/mamba/mambalibs/agentkit/backend",
+    "projects/jet",
+    "projects/jet/wasm",
+    "projects/agentic-workflow",
+    "projects/compass",
+    "projects/cap",
+    "projects/cap-core",
+    "projects/vat",
+    "projects/mamba/mambalibs/httpkit",
+    "projects/mamba/mambalibs/httpkit/binding",
+    "projects/httpkit-demo",
+    "crates/cclab-server",
+    "projects/mamba/mambalibs/arraykit",
+    "projects/mamba/mambalibs/arraykit/binding",
+    "crates/cclab-frame",
+    "projects/mamba/mambalibs/scikit",
+    "projects/mamba/mambalibs/scikit/binding",
+    "crates/cclab-learn",
+    "projects/mamba/mambalibs/plotkit",
+    "projects/mamba/mambalibs/plotkit/binding",
+    "projects/mamba/mambalibs/mediakit",
+    "projects/mamba/mambalibs/mediakit/binding",
+    "crates/cclab-text",
+    "projects/mamba/mambalibs/cryptokit",
+    "projects/mamba/mambalibs/cryptokit/binding",
+    "crates/cclab-wal",
+    "projects/mamba",
+    "crates/cclab-mamba-registry",
+    "crates/cclab-schema-mamba",
+    "projects/mamba/mambalibs/pgkit/binding",
+    "crates/cclab-runtime-mamba",
+    "crates/cclab-log-mamba",
+    "projects/mamba/mambalibs/agentkit/binding",
+    "projects/mamba/mambalibs/dikit",
+    "projects/mamba/mambalibs/dikit/binding",
+    "crates/cclab-qc-mamba",
+    "projects/mamba/mambalibs/pgkit/pg-cli",
+    "projects/jet/tools/conformance",
+    "projects/jet/tools/manifest",
+    "projects/jet/parity/oracle",
+    "projects/jet/parity/corpus",
+    "projects/jet/parity/gate",
+    "crates/cclab-mcp-mamba",
+    "crates/cclab-util",
+    "crates/cclab-cli-registry",
+    "crates/cclab-tqdm",
+    "crates/cclab-log",
+    "crates/cclab-ctx-inf-db",
+    "projects/lumen",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.3.61"
+authors = ["Chris Cheng <chris.cheng.c4@gmail.com>"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/chrischeng-c4/cclab"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+futures = "0.3"
+once_cell = "1.20"  # For static initialization
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+serde_yaml = "0.9"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# MongoDB (for cclab-mongo crate)
+mongodb = { version = "3.1" }
+bson = { version = "2.13", features = ["chrono-0_4"] }
+
+# HTTP (for cclab-http crate)
+reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli", "multipart", "stream"] }
+http = "1.2"
+url = "2.5"
+bytes = "1.9"
+
+# HTTP Server
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.5", features = ["cors", "compression-gzip", "trace"] }
+tokio-tungstenite = "0.28"
+async-stream = "0.3"
+
+# API framework
+utoipa = "4"
+matchit = "0.7"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+regex = "1.11"
+rayon = "1.10"
+walkdir = "2.5"
+petgraph = "0.6"
+notify = "6.1"
+semver = "1.0"
+image = "0.25"
+jwalk = "0.8"
+node-resolve = "2.2"
+parking_lot = "0.12"
+rust_decimal = { version = "1.36", features = ["serde"] }
+base64 = "0.22"
+jsonwebtoken = "9"
+
+# CLI
+clap = { version = "4", features = ["derive", "string"] }
+linkme = "0.3"
+
+# Form data parsing
+multer = "3.1"
+urlencoding = "2"
+futures-util = "0.3"
+
+# Task queue (for cclab-queue crate)
+dashmap = "6.1"
+async-nats = "0.38"
+deadpool-redis = "0.18"
+cron = "0.12"
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# LLM providers (for agent crate)
+async-openai = "0.27"
+
+# Progress bar (for cclab-tqdm crate)
+indicatif = "0.17"
+
+# Logging (for cclab-log crate)
+tracing-appender = "0.2"
+
+# Mock HTTP server for unit tests
+wiremock = "0.6"
+
+# HTML parsing for PEP 503 Simple API
+scraper = "0.20"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+# Vendor patch: cranelift-jit memory allocator enforces a 256 MB minimum
+# chunk so all JIT'd functions stay within ±128 MB of each other on
+# aarch64 — fixes Reloc::Arm64Call BL immediate-range overflow
+# (compiled_blob.rs:90 assertion) on macOS Apple Silicon. The PIC/PLT
+# path is x86_64-only in upstream cranelift-jit 0.116.1.
+[patch.crates-io]
+cranelift-jit = { path = "vendor/cranelift-jit" }

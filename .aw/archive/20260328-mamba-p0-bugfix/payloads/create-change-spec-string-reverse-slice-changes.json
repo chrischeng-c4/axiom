@@ -1,0 +1,6 @@
+{
+  "spec_id": "string-reverse-slice-fix",
+  "group_id": "mamba-codegen-runtime-fixes",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: crates/cclab-mamba/src/runtime/string_ops.rs\n    action: MODIFY\n    desc: \"In `mb_str_slice_full`, replace the negative-step branch that unconditionally calls `clamp_rev_str` on both start and stop with None-aware logic: (1) `s_idx = match start.as_int() { Some(v) => clamp_rev_str(v, len), None => len - 1 }` — absent start defaults to last char index without clamping; (2) `e_idx = match stop.as_int() { Some(v) => clamp_rev_str(v, len), None => -1 }` — absent stop uses literal -1 so loop condition `while i > -1` iterates down to index 0 inclusive. The positive-step branch and `clamp_rev_str` function are unchanged.\"\n```"
+}

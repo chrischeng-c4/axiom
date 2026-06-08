@@ -1,0 +1,49 @@
+change_id: sdd-artifact-guard
+schema_version: '2.0'
+created_at: 2026-03-18T10:51:35.783417Z
+updated_at: 2026-03-18T10:59:43.110346Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:artifact-guard: 1
+current_task_id: null
+task_revisions: {}
+telemetry:
+  calls:
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 140980
+    timestamp: 2026-03-18T10:55:19.900280Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 929
+    title: 'bug(sdd): delegated agent exceeds prompt scope — calls artifact commands beyond assigned action'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec: []
+  pre_clarifications:
+  - artifact-guard
+  post_clarifications:
+  - artifact-guard
+  reference_context:
+  - artifact-guard
+  change_implementation: []

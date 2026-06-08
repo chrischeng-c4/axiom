@@ -1,0 +1,6 @@
+{"spec_id":"stream-resolver-spec","section":"changes","content":"### Modified Files
+
+| File | Description |
+|------|-------------|
+| pkg_manager/resolver.rs | Replace BFS while-loop with stream_resolve: task-per-package, DashMap, AtomicUsize pending counter |
+| pkg_manager/mod.rs | Call stream_resolve instead of resolve_with_prefetch |"}

@@ -1,0 +1,83 @@
+{
+  "change_id": "mamba-all-p1",
+  "group_id": "syntax-features",
+  "specs": [
+    {
+      "spec": "types/generics-and-protocols.md",
+      "group": "types",
+      "relevance": "HIGH",
+      "key_requirements": "R1 (PEP 695 Generics Support), R2 (Type Parameter Substitution), R4 (Generic Type Constraint Checking)",
+      "notes": "Core spec for #830 generic syntax. R1-R4 define PEP 695 type parameters (def f[T], class C[T], type Alias[T]). EXTENSION NEEDED: R5 (TypeVarTuple support), R6 (ParamSpec support) for PEP 646/612 as flagged in pre-clarifications Q1 MISSING."
+    },
+    {
+      "spec": "parser/statements.md",
+      "group": "parser",
+      "relevance": "HIGH",
+      "key_requirements": "R2 (Compound Statements, with-statement), R3 (Decorators), R4 (PEP 695 Generic Syntax Parsing)",
+      "notes": "Covers #830 R4 generic function/class def parsing, #847 R3 decorator parsing, #832 with-statement parsing. EXTENSION NEEDED: R2 must explicitly specify parenthesized with form (PEP 617: with (cm1 as a, cm2 as b,):) per pre-clarifications."
+    },
+    {
+      "spec": "parser/ast.md",
+      "group": "parser",
+      "relevance": "HIGH",
+      "key_requirements": "R2 (PEP 695 Type Parameter Nodes)",
+      "notes": "Defines type_params field on FnDef, AsyncFnDef, ClassDef, EnumDef, TypeAlias for #830 generic syntax."
+    },
+    {
+      "spec": "parser/expressions.md",
+      "group": "parser",
+      "relevance": "MEDIUM",
+      "key_requirements": "R1 (Pratt Parser), R2 (Compound Expression Parsing), R4 (Starred Expression Parsing)",
+      "notes": "R4 covers #845 starred unpacking in calls/assignments. R2 covers DictLit parsing. EXTENSION NEEDED: R5 to specify DictUnpack entry kind for {**expr} unpacking in #831 (pre-clarifications Q2 confirms parser-level extension required)."
+    },
+    {
+      "spec": "lower/hir-to-mir.md",
+      "group": "lower",
+      "relevance": "HIGH",
+      "key_requirements": "R5 (F-String Format Specifier Lowering), R6 (Starred Unpacking Codegen), R7 (draft: Dict unpacking codegen)",
+      "notes": "R6 handles #845 starred assignment lowering to indexed access (a, *b, c = iterable). R7 draft specifies dict unpacking lowering for #831 {**d1, **d2}."
+    },
+    {
+      "spec": "lower/ast-to-hir.md",
+      "group": "lower",
+      "relevance": "MEDIUM",
+      "key_requirements": "R1 (Decorator Desugaring), R3 (With-Statement Desugaring)",
+      "notes": "R1 desugars #847 decorators to function wrapping. R3 desugars #832 with-statement (including parenthesized form). EXTENSION NEEDED: R6 to explicitly specify starred assignment target lowering for #845 (pre-clarifications Q3 references ast_to_hir.rs:1098, but spec lacks explicit requirement)."
+    },
+    {
+      "spec": "runtime/closure.md",
+      "group": "runtime",
+      "relevance": "HIGH",
+      "key_requirements": "R1 (Free variable capture), R2 (Cell variable indirection for mutable shared state), R3 (Closure creation at function definition time)",
+      "notes": "Implements #846 closure mechanism for nonlocal variable capture. R2 provides cell indirection needed for mutable nonlocal bindings."
+    },
+    {
+      "spec": "resolve/name-resolution.md",
+      "group": "resolve",
+      "relevance": "HIGH",
+      "key_requirements": "R1 (Global Statement Processing), R2 (Nonlocal Statement Processing), R3 (Cell Variable Creation), R4 (Free Variable Capture for Nonlocal), R5 (MIR Instruction Extensions)",
+      "notes": "Complete spec for #846 global/nonlocal semantic analysis. R1-R5 define processing, cell creation, capture, and MIR lowering for global/nonlocal statements."
+    },
+    {
+      "spec": "lexer/tokens-and-indent.md",
+      "group": "lexer",
+      "relevance": "HIGH",
+      "key_requirements": "R4 (String Literal Lexing)",
+      "notes": "Covers #848 string literal forms. EXTENSION NEEDED: R4 table incomplete for #848 scope. Currently lists 5 forms (Regular, Triple, F-string, Raw, Byte). Must add: (a) rb/br raw-bytes prefix combo, (b) fr/rf raw-fstring combo, (c) Unicode escapes (\\uXXXX, \\UXXXXXXXX, \\N{name}), (d) hex \\xNN and octal \\NNN escapes per pre-clarifications Q5."
+    },
+    {
+      "spec": "runtime/bytes-ops.md",
+      "group": "runtime",
+      "relevance": "HIGH",
+      "key_requirements": "R1 (Immutable bytes type with sequence operations), R3 (Encoding and decoding)",
+      "notes": "Implements #848 bytes type. R1 covers b'' literal operations, R3 covers encode/decode for string literal handling."
+    },
+    {
+      "spec": "runtime/dict-ops.md",
+      "group": "runtime",
+      "relevance": "HIGH",
+      "key_requirements": "R5 (Dict Merge for Unpacking)",
+      "notes": "R5 mb_dict_merge implements #831 dict unpacking {**d1, **d2} at runtime."
+    }
+  ]
+}

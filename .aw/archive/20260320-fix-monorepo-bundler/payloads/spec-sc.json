@@ -1,0 +1,19 @@
+{"spec_id":"fix-monorepo-bundler-spec","section":"scenarios","content":"### S1: projectType Detection
+
+Given project with project.json containing projectType=library
+And project NOT under /libs/ path
+When jet build runs
+Then project is detected as lib and node_modules externalized
+
+### S2: Build Timeout
+
+Given a project that takes >30s to bundle
+When jet build runs
+Then build is cancelled after 30s with warning
+And remaining projects continue building
+
+### S3: All 21 Projects
+
+Given tech-platform Nx monorepo
+When jet build runs
+Then all 21 projects complete (built, skipped, or timed out) in <60s"}

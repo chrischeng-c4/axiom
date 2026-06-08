@@ -1,0 +1,7 @@
+- spec_id: gen-code-cli
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/cli/commands.md
+  source: crates/cclab-sdd/interfaces/cli/commands.md
+  sections:
+  - overview
+  - changes

@@ -1,0 +1,20 @@
+{"spec_id":"resolver-compat-spec","section":"requirements","content":"### R1: Hyphen Range Parsing (#960)
+
+Parse `X - Y` semver ranges per npm semantics:
+- `1.0.0 - 2.0.0` → `>=1.0.0 <=2.0.0` (full versions = inclusive)
+- `1.0 - 2.0` → `>=1.0.0 <2.1.0` (partial right = exclusive next)
+- `2 - 4` → `>=2.0.0 <5.0.0` (major only = exclusive next major)
+
+### R2: Scoped Bare Alias (#957)
+
+Extend bare alias detection to scoped packages:
+- `"foo": "@scope/pkg"` → resolve `@scope/pkg@latest`, install as `foo`
+- Detection: if spec doesn't parse as semver and starts with `@` or lowercase alpha
+
+### R3: Lockfile Pinning for Bare Aliases
+
+Pin resolved concrete version in jet-lock.yaml, same as normal npm: aliases.
+
+### R4: Test Fixture
+
+Commit trimmed tech-platform package.json + partial lockfile to `tests/fixtures/nx-monorepo/` for CI verification."}

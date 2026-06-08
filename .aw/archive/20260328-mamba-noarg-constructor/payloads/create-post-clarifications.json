@@ -1,0 +1,5 @@
+{
+  "group_id": "noarg-constructor-codegen",
+  "skipped": true,
+  "scope_summary": "**Problem**: list()/tuple()/set() zero-arg constructors cause codegen verifier error. **Success Criteria**: Fix cranelift IR emission for zero-arg builtins, verify empty collections returned. **Boundary**: In scope: codegen/cranelift, runtime/builtins. Out of scope: other constructor issues."
+}

@@ -1,0 +1,8 @@
+- spec_id: idlelib-stub
+  action: create
+  main_spec_ref: crates/cclab-mamba/stdlib/idlelib.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes

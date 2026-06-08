@@ -1,0 +1,6 @@
+{
+  "spec_id": "scheduler-memory-backend",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: scheduler-memory-backend-changes\n  refs:\n    - $ref: \"#memory-scheduler-backend-async-api\"\n    - $ref: \"error-types#task-error-schema\"\nchanges:\n  - path: crates/cclab-queue/src/scheduler/memory_backend.rs\n    action: modify\n    description: >-\n      Expand #[cfg(test)] mod tests from 2 to 20 tests.\n      New tests: leader election edge cases (renew before acquire returns false,\n      renew after release returns false, TTL ignored, full cycle), task state\n      upsert semantics, multi-task isolation, is_task_enabled direct calls\n      (default true, after pause false), record_task_run multi-increment +\n      timestamp validation + enabled preservation, Default impl equivalence,\n      Send+Sync bounds assertion.\n```"
+}

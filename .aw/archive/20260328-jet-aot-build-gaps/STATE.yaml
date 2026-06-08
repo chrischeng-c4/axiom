@@ -1,0 +1,42 @@
+change_id: jet-aot-build-gaps
+schema_version: '2.0'
+created_at: 2026-03-24T05:38:29.170803Z
+updated_at: 2026-03-24T05:55:49.741560Z
+phase: archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: jet-aot-build-gaps-spec
+task_revisions: {}
+impl_spec_phase:
+  jet-aot-build-gaps-spec: code
+telemetry: null
+dag:
+  issues:
+  - number: 765
+    title: 'feat(jet): AOT production build — tree shaking, code splitting, minification, source maps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard:
+  allowed_phases:
+  - change_implementation_created
+  phase_before: change_spec_created
+  action: begin_implementation
+  started_at: 2026-03-24T05:55:49.741559Z
+branch: null
+groups_progress:
+  change_implementation: []
+  pre_clarifications:
+  - jet-aot-build-gaps
+  reference_context:
+  - jet-aot-build-gaps
+  change_spec:
+  - jet-aot-build-gaps

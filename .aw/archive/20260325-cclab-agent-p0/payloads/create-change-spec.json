@@ -1,0 +1,8 @@
+{
+  "spec_id": "cclab-agent-p0-spec",
+  "section": "requirements",
+  "content": "already filled directly in spec file",
+  "fill_sections": ["overview", "requirements", "scenarios", "diagrams", "test_plan", "changes"],
+  "main_spec_ref": "cclab-agent/context.md",
+  "merge_strategy": "append"
+}

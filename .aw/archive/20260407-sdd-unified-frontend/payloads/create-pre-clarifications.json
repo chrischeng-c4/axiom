@@ -1,0 +1,19 @@
+{
+  "group_id": "sdd-unified-frontend",
+  "answers": [
+    {
+      "question": "Router choice for @score/app?",
+      "answer": "React Router — consistent with Conductor FE which already uses it."
+    },
+    {
+      "question": "Should axum API expand to full SddDataSource interface?",
+      "answer": "Yes, expand to match SddDataSource. Rename 'specs' to 'tech-design' in the API paths to match the .score/tech_design/ naming convention."
+    },
+    {
+      "question": "React build strategy?",
+      "answer": "Use cclab-jet to build @score/app. Jet already builds Conductor FE. Build pipeline: `cclab jet build -p @score/app` → dist/ → Rust include_str!() embeds into score binary. Pre-built + committed to avoid requiring Node.js at cargo build time."
+    }
+  ],
+  "status": "answered",
+  "follow_up_needed": false
+}

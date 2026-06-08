@@ -1,0 +1,51 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-frontend-doc-support",
+  "spec_id": "sdd-frontend-doc-support-spec",
+  "verdict": "REJECTED",
+  "summary": "The implementation does not yet satisfy the Phase 1 spec. The new section model is only partially wired: frontend/doc types are declared but cannot be created through the skeleton or artifact section list, the review/revise flow still hardcodes legacy `changes/{id}/specs/` paths instead of the new group-scoped layout, the promised generator CLI and YAML-backed prompt architecture are not exposed at runtime, and the crate test suite is not green.",
+  "checklist_results": [
+    {
+      "item": "Group-scoped spec directory migration works end to end",
+      "passed": false,
+      "note": "`resolve_next_spec`, `review_change_spec`, and `revise_change_spec` still read/write legacy `changes/{id}/specs/` paths, so grouped specs are not handled correctly through the full lifecycle."
+    },
+    {
+      "item": "Frontend/doc section support is reachable in generated specs",
+      "passed": false,
+      "note": "The universal skeleton and allowed section list still only expose the legacy section set, so `frontend` and `doc` cannot actually be generated or filled."
+    },
+    {
+      "item": "Wave 1 generator CLI and prompt architecture are wired",
+      "passed": false,
+      "note": "Generator modules were added, but the `spec` CLI still only exposes `list` and `create`, and the new `section_prompts.yaml` data is not consumed by the runtime."
+    },
+    {
+      "item": "Automated tests pass",
+      "passed": false,
+      "note": "`cargo test -p cclab-sdd --lib --quiet` is failing in this tree, including changed-area tests such as `tools::create_change_spec::tests::test_workflow_creates_skeleton` and `tools::review_change_spec::tests::test_review_workflow_returns_prompt`."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "The new group-scoped spec layout is not implemented consistently across the change-spec lifecycle.",
+      "recommendation": "Update spec resolution, review, revise, and prompt generation to use the shared group-aware path helpers instead of hardcoded `change_dir/specs` paths."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Frontend/doc support is not actually usable because the skeleton and artifact section routing still only support the old legacy section set.",
+      "recommendation": "Add the missing typed sections to the skeleton and artifact routing, or otherwise expose a real path for authoring `frontend`, `doc`, and the other new section types."
+    },
+    {
+      "severity": "HIGH",
+      "description": "The promised generator CLI and YAML-driven prompt architecture are not reachable at runtime.",
+      "recommendation": "Wire a real `spec gen` command or equivalent CLI entrypoint to `GeneratorArgs`/`generate_section`, and load the embedded section prompt data instead of keeping guidance hardcoded."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "The changed-area test suite is failing, so the implementation is not in a releasable state.",
+      "recommendation": "Fix the failing workflow tests and rerun the relevant crate test suite before re-review."
+    }
+  ]
+}

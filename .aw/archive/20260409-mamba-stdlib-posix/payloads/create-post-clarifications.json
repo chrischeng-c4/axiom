@@ -1,0 +1,13 @@
+{
+  "group_id": "stdlib-posix-module",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "requirements.md: add native posix module exposing POSIX system calls. The os module already exists and wraps these calls; posix is the lower-level interface.",
+    "success_criteria": "posix module registered and functional: getpid(), getcwd(), getenv(), environ dict, uname(), plus re-exports of os operations (listdir, mkdir, remove, etc.). Unit tests pass. No regressions.",
+    "boundary": {
+      "in_scope": "New posix_mod.rs file, registration in stdlib/mod.rs, unit tests",
+      "out_of_scope": "Modifying existing os_mod.rs, changing dispatch ABI pattern, platform-specific Windows support",
+      "constraints": "Must follow os_mod.rs dispatch pattern (from_func). Must re-use os_mod implementations where possible. libc crate already available in Cargo.toml."
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "lens-dissolution",
+  "spec_id": "sdd-cli-context-command",
+  "group_id": "lens-dissolution",
+  "section": "scenarios",
+  "content": "### S1: Context command — basic usage\n\n| Step | Action | Expected |\n|------|--------|----------|\n| 1 | `cclab sdd context src/services/user.py:get_user` | Parses target, uses default depth=2 |\n| 2 | Output | JSON with `must_read`, `may_affect`, `type_context`, `stats` keys to stdout |\n| 3 | Exit code | 0 on success |\n\n### S2: Context command — custom depth\n\n| Step | Action | Expected |\n|------|--------|----------|\n| 1 | `cclab sdd context src/a.py:foo --depth 1` | Parses depth=1 |\n| 2 | Output | Traversal limited to 1 hop |\n\n### S3: Context command — multiple targets\n\n| Step | Action | Expected |\n|------|--------|----------|\n| 1 | `cclab sdd context src/a.py:foo src/b.py:bar` | Parses two targets |\n| 2 | Output | Merged ContextResponse JSON |\n\n### S4: Context command — invalid target format\n\n| Step | Action | Expected |\n|------|--------|----------|\n| 1 | `cclab sdd context not_valid_format` | Missing `:symbol` separator |\n| 2 | Exit | Non-zero exit code, error message to stderr |\n\n### S5: Check with agent format\n\n| Step | Action | Expected |\n|------|--------|----------|\n| 1 | `cclab sdd check src/ --format agent` | Accepted by `--format` enum |\n| 2 | Output | AgentOutput JSON to stdout (symbols, imports, issues, impact, stats) |\n\n### S6: Check format — existing formats unaffected\n\n| Step | Action | Expected |\n|------|--------|----------|\n| 1 | `cclab sdd check src/ --format json` | Existing JSON format unchanged |\n| 2 | `cclab sdd check src/ --format text` | Existing text format unchanged |"
+}

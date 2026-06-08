@@ -1,0 +1,15 @@
+- spec_id: mamba-compile-builtin-runtime
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/builtins.md
+  source: .score/tech_design/crates/cclab-mamba/runtime/builtins.md
+  sections:
+  - overview
+  - requirements
+  - changes
+- spec_id: mamba-compile-builtin-value-rc
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/value-and-rc.md
+  source: .score/tech_design/crates/cclab-mamba/runtime/value-and-rc.md
+  sections:
+  - requirements
+  - changes

@@ -1,0 +1,9 @@
+{
+  "spec_id": "no-arg-constructor-codegen-fix",
+  "group_id": "noarg-constructor-codegen",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "main_spec_ref": "crates/cclab-mamba/lower/hir-to-mir",
+  "merge_strategy": "new",
+  "content": "`builtin_extern_map()` routes `list` → `mb_list_from_iterable`, `tuple` → `mb_tuple_from_iterable`, `set` → `mb_set_from_iterable`, `dict` → `mb_dict_from_pairs`. These runtime functions expect exactly 1 parameter (the iterable). When Python code calls `list()`, `tuple()`, or `set()` with zero arguments, the HIR-to-MIR lowering emits `CallExtern { name: \"mb_list_from_iterable\", args: [] }` — a zero-arg call against a one-param extern. Cranelift's verifier rejects the IR because the argument count mismatches the declared function signature.\n\nThe zero-param constructor variants `mb_list_new`, `mb_tuple_new`, `mb_set_new`, `mb_dict_new` already exist in the runtime (registered with `params=[], return=I64`) and are used directly by comprehension lowering (R1). Fix: add an arity guard in the builtin call lowering path — when `args.is_empty()` and the extern name is a `_from_iterable`/`_from_pairs` variant, redirect to the corresponding `_new` variant.\n\nIssue: #1109"
+}

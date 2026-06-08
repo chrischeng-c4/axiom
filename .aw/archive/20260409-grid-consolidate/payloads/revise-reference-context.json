@@ -1,0 +1,26 @@
+{
+  "group_id": "consolidate-grid-crates",
+  "specs": [
+    {
+      "path": "crates/cclab-grid/README.md",
+      "relevance": "high",
+      "reason": "Top-level architecture spec for the grid system, defines crate boundaries and relationships that will change during consolidation",
+      "key_requirements": []
+    },
+    {
+      "path": "crates/cclab-grid-db/grid-db-architecture.md",
+      "relevance": "medium",
+      "reason": "DB layer architecture spec — db module moves into consolidated crate, Morton encoding and WAL integration preserved",
+      "key_requirements": ["R1", "R2", "R3"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "grid-crate-structure",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-grid/logic/crate-structure.md",
+      "sections": ["overview", "changes"]
+    }
+  ],
+  "revision_notes": "Fixed main_spec_ref to be under a subdirectory (logic/) instead of root-level README.md"
+}

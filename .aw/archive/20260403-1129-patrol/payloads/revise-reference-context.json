@@ -1,0 +1,46 @@
+{
+  "group_id": "jit-refcount-audit",
+  "specs": [
+    {
+      "spec_path": "crates/cclab-mamba/codegen/jit-refcount.md",
+      "relevance": "high",
+      "key_requirements": "R1: JIT-callable retain/release wrappers, R2: emit release at reassignment, R3: emit release at function return, R4: immortal refcount, R5: track compile-time allocations, R6: re-enable GC, R7: emit retain for function arguments"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/runtime/value-and-rc.md",
+      "relevance": "high",
+      "key_requirements": "MbObject layout, ob_refcnt field, mb_retain/mb_release functions, IMMORTAL_REFCOUNT constant, NaN-box tag checking"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/codegen/cranelift-jit.md",
+      "relevance": "high",
+      "key_requirements": "JIT backend code generation, compile-time object tracking, KI-1 root cause (refcount not emitted)"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/runtime/gc.md",
+      "relevance": "high",
+      "key_requirements": "R1-R5 GC requirements, KI-1: auto-collection disabled, gc.rs enabled flag"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/runtime/symbols.md",
+      "relevance": "medium",
+      "key_requirements": "runtime_symbols() registration, mb_retain_value/mb_release_value symbol registration"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "jit-refcount-audit",
+      "action": "modify",
+      "source": "crates/cclab-mamba/codegen/jit-refcount.md",
+      "main_spec_ref": "crates/cclab-mamba/codegen/jit-refcount.md",
+      "sections": ["overview", "requirements", "scenarios", "changes"]
+    },
+    {
+      "spec_id": "gc-reenable",
+      "action": "modify",
+      "source": "crates/cclab-mamba/runtime/gc.md",
+      "main_spec_ref": "crates/cclab-mamba/runtime/gc.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

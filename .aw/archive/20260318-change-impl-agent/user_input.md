@@ -1,0 +1,1 @@
+feat(agent): add ChangeImplAgent — spec-to-code implementation with CRR cycle. Takes approved specs, decomposes into tasks, generates multi-file code, creates PR/MR via platform integration. Uses ReviewAgent for code review CRR. #925

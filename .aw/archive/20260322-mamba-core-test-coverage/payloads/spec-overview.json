@@ -1,0 +1,10 @@
+{
+  "change_id": "mamba-core-test-coverage",
+  "spec_id": "mamba-core-test-coverage-spec",
+  "group_id": "mamba-core-test-coverage",
+  "main_spec_ref": "cclab/specs/crates/cclab-mamba/testing/mamba-core-test-coverage-spec.md",
+  "merge_strategy": "new",
+  "fill_sections": ["overview", "requirements", "scenarios", "test-plan", "changes"],
+  "section": "overview",
+  "content": "<!-- type: overview lang: markdown -->\n\nAdd comprehensive Rust unit and integration tests for four critically under-tested subsystems in `cclab-mamba`. Baseline: 434 tests, 7.1% line ratio. After this change: 800+ new tests across runtime, lower, resolve, and stdlib.\n\n| Subsystem | LOC | Existing Tests | Target |\n|-----------|-----|----------------|--------|\n| `runtime/` | 35,483 | 49 integration | 500+ |\n| `lower/` | 5,668 | 0 | 100+ |\n| `resolve/` | 744 | 0 | 50+ |\n| `stdlib/` top-10 | ~15,921 | 0 | 150+ |\n\n**Test strategy**: Inline `#[cfg(test)]` modules co-located with source files. Cross-module scenarios go to `crates/cclab-mamba/tests/runtime_integration.rs`.\n\n**Constraint**: No changes to non-test source logic. All tests must match Python 3.12 behavior (`cargo test -p cclab-mamba` passes with zero failures).\n\n**In scope**: `runtime/value.rs`, `builtins.rs`, `class.rs`, `gc.rs`, `module.rs`, `string_ops.rs`, `list_ops.rs`, `dict_ops.rs`, `set_ops.rs`, `tuple_ops.rs`; `lower/ast_to_hir.rs`; `resolve/pass.rs`; `stdlib/` json, os, re, datetime, collections, pathlib, io, csv, hashlib, asyncio.\n\n**Out of scope**: parser, types, codegen, lexer (deferred to follow-up)."
+}

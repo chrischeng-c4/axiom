@@ -1,0 +1,21 @@
+[package]
+name = "httpkit-demo"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Demo consumer of `mambalibs-http` — shows the pydantic-like BaseModel pattern for user-defined request payload models, 100% codegen-produced from TD v2 specs"
+
+[lib]
+name = "httpkit_demo"
+crate-type = ["rlib"]
+
+[dependencies]
+# SPEC-MANAGED: .aw/tech-design/projects/httpkit-demo/create-user-request.md#manifest
+# CODEGEN-BEGIN
+mambalibs-http = { path = "../mamba/mambalibs/httpkit" }
+cclab-mamba-registry = { path = "../../crates/cclab-mamba-registry" }
+linkme.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+# CODEGEN-END

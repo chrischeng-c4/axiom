@@ -1,0 +1,9 @@
+# Perf-pin regression gate (#1490).
+# Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/aiofiles_1490.toml)
+issue = 1490
+lib = "aiofiles"
+fixture = "tests/cpython/fixtures/3rd-libs/aiofiles/bench/aiofiles_type_read_hot.py"
+floor = 1.0
+mem_floor = 1.0
+samples = 9
+prereq_imports = ["aiofiles"]

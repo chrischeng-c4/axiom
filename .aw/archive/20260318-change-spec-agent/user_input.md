@@ -1,0 +1,1 @@
+feat(agent): add ChangeSpecAgent — opinionated spec generation with CRR cycle, embeds cclab-sdd spec format rules (OpenRPC > JSON Schema > Mermaid), diagram selection, section structure, quality standards. Takes issues + reference context, produces formal specs. #923

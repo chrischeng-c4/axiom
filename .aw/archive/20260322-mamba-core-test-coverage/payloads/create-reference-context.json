@@ -1,0 +1,38 @@
+{
+  "group_id": "mamba-core-test-coverage",
+  "spec_plan": {
+    "sections": [
+      "overview",
+      "testing-strategy",
+      "scope-boundaries",
+      "target-subsystems"
+    ]
+  },
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-mamba/testing/test-harness.md",
+      "relevance": "high",
+      "reason": "Defines the Mamba test harness, which is essential for understanding how to structure and run the required cross-module integration tests in crates/cclab-mamba/tests/."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-mamba/README.md",
+      "relevance": "high",
+      "reason": "Provides a comprehensive map of the Mamba architecture. It is critical for identifying the exact files and module boundaries for the in-scope subsystems: runtime, lower, resolve, and stdlib."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-mamba/runtime/value-and-rc.md",
+      "relevance": "medium",
+      "reason": "Details the MbValue representation. The pre-clarifications mandate testing mb_* functions directly with MbValue inputs/outputs, making this spec highly relevant context."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-mamba/resolve/name-resolution.md",
+      "relevance": "medium",
+      "reason": "Provides context on the 'resolve' subsystem, which is explicitly identified as an in-scope area requiring new test coverage."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-mamba/lower/hir-to-mir.md",
+      "relevance": "medium",
+      "reason": "Provides context on the 'lower' subsystem, which is also explicitly in scope for new test coverage."
+    }
+  ]
+}

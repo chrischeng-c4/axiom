@@ -1,0 +1,1 @@
+Rewrite resolver from BFS level-based to stream-based architecture. Currently each BFS level waits for all metadata fetches to complete before starting next level (8-12 levels for 1886 packages = 47s). Stream-based: each package resolve triggers immediate fetch of its transitive deps without waiting. Target: true cold <15s matching pnpm 12.9s. #881

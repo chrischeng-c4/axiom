@@ -1,0 +1,7 @@
+{
+  "change_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness",
+  "spec_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness-spec",
+  "section": "overview",
+  "main_spec_ref": ".score/tech_design/crates/jet/e2e/e2e-test-infrastructure.md",
+  "content": "Final deliverable of the Replace-Playwright epic. All `e2e/**/*.spec.ts` files and `e2e/jet/tests/test-utils.ts` currently import `@playwright/test`; this change rewrites every import to `@jet/test` (the native runner runtime shim at `crates/jet/runtime/test/index.ts`), deletes `e2e/playwright.config.ts`, ports its project-level settings into `jet.test.config.ts`, and removes `@playwright/test` from `e2e/jet/package.json`. The compat shim (`--playwright` flag, `crates/jet/src/test_runner/playwright_shim.rs`) is left untouched — only in-tree usage is removed. After this change `jet test` with no flags executes the full e2e suite under the native runner; `npx playwright` and `playwright install` are no longer referenced anywhere in-tree. Spec files affected: `e2e/jet/tests/{build,hmr,css,dev-server}.spec.ts`, `e2e/jet/tests/test-utils.ts`, `e2e/grid/{app,cell-editing}.spec.ts` (7 files). Atomic single PR — no intermediate state where some specs are migrated and Playwright still appears in `package.json`."
+}

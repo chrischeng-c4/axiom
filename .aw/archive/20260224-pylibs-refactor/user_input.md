@@ -1,0 +1,1 @@
+One change covering all P0 + P1 pylibs issues: P0 - Split crud.rs 1190 lines #81, Split tasks.rs 1045 lines #82, pg test coverage for connection pool/constraints/cascade/upsert #135. P1 - Rename cclab-http to cclab-fetch #455, Expand api PyO3 exports for FastAPI parity #138, Shield performance gaps vs pydantic v2 #189, Split mongo document.rs 863 lines #85

@@ -1,0 +1,1 @@
+Complete remaining AOT production build gaps #765: preload hints for code splitting, manual chunks config, HTML minification, source map chaining (multi-pass), image optimization (currently TODO stub), JSON tree-shaking, CSS asset URL rewriting

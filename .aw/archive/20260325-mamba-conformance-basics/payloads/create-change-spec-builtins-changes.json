@@ -1,0 +1,6 @@
+{
+  "spec_id": "builtins",
+  "group_id": "runtime-basics",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: crates/cclab-mamba/src/runtime/builtins.rs\n    action: MODIFY\n    desc: \"Change mb_print signature from void to `-> MbValue`; return MbValue::none() at end of function body\"\n  - path: crates/cclab-mamba/src/runtime/builtins.rs\n    action: MODIFY\n    desc: \"Change mb_print_args signature to `-> MbValue`; replace implicit void return and early `return;` with `return MbValue::none();`; tail-call mb_print returns MbValue::none()\"\n  - path: crates/cclab-mamba/src/runtime/symbols.rs\n    action: MODIFY\n    desc: \"Update rt_sym! for mb_print: cast to `fn(super::MbValue) -> super::MbValue`, change return_type from Void to I64\"\n  - path: crates/cclab-mamba/src/runtime/symbols.rs\n    action: MODIFY\n    desc: \"Update rt_sym! for mb_print_args: cast to `fn(super::MbValue) -> super::MbValue`, change return_type from Void to I64\"\n```"
+}

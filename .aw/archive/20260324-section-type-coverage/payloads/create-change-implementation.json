@@ -1,0 +1,16 @@
+{
+  "summary": "Added tech stack inference service, UX pattern library extension point, section type expansion (16 new types), and fixed claude-agent provider bug.",
+  "files_changed": [
+    "crates/cclab-sdd/src/models/tech_stack.rs",
+    "crates/cclab-sdd/src/services/tech_stack_service.rs",
+    "crates/cclab-sdd/src/generate/patterns/mod.rs",
+    "crates/cclab-sdd/src/generate/patterns/registry.rs",
+    "crates/cclab-sdd/src/generate/patterns/resolver.rs",
+    "crates/cclab-sdd/src/generate/lib.rs",
+    "crates/cclab-sdd/src/models/spec_rules.rs",
+    "crates/cclab-sdd/src/tools/agent.rs",
+    "crates/cclab-sdd/src/orchestrator/cli_mapper.rs"
+  ],
+  "test_results": "11 tech_stack tests pass, 8 execution_mode tests pass, 6 parse_agent tests pass",
+  "diff": "See git diff HEAD for full diff (1597 lines). Key changes: new tech_stack_service.rs (infer_tech_stack from manifests), new patterns/ module (UxPattern types + resolver), ClaudeAgent provider variant in cli_mapper.rs + agent.rs, 16 new SectionType variants in spec_rules.rs"
+}

@@ -1,0 +1,77 @@
+# Example Lumen custom resources. Apply after `kubectl apply -k k8s/operator`.
+# The operator reconciles each into a full serving fleet + NATS write-log
+# broker. Inspect with: kubectl get lumen -A
+
+---
+# Dev / kind: one serving pod, a single embedded-durability NATS broker, no
+# auth, pretty logs, cluster-default storage. The smallest thing that runs.
+apiVersion: lumen.dev/v1alpha1
+kind: Lumen
+metadata:
+  name: search
+  namespace: default
+spec:
+  image: lumen:latest
+  shardCount: 1
+  logFormat: pretty
+  serving:
+    autoscaling:
+      minReplicas: 1
+      maxReplicas: 3
+      targetCpuUtilization: 70
+  nats:
+    replicas: 1
+    storage: 10Gi
+
+---
+# Production: 6 serving pods (HPA 6→12), a 3-node HA JetStream cluster on SSD,
+# bearer-token auth (tokens from a Secret), json logs, and Prometheus
+# ServiceMonitor + alerts.
+apiVersion: lumen.dev/v1alpha1
+kind: Lumen
+metadata:
+  name: lumen
+  namespace: lumen
+spec:
+  image: registry.example.com/lumen:1.2.3
+  imagePullPolicy: Always
+  shardCount: 6
+  logFormat: json
+  logLevel: warn
+  auth: required
+  tokensSecret: lumen-tokens
+  serving:
+    autoscaling:
+      minReplicas: 6
+      maxReplicas: 12
+      targetCpuUtilization: 65
+    cpu: "4"
+    memory: 16Gi
+    graceSecs: 45
+  nats:
+    replicas: 3
+    storage: 100Gi
+    storageClass: ssd
+    cpu: "2"
+    memory: 4Gi
+  observability: true
+
+---
+# Bring-your-own broker: point at an existing NATS/JetStream and the operator
+# manages only the stateless serving fleet (no StatefulSet).
+apiVersion: lumen.dev/v1alpha1
+kind: Lumen
+metadata:
+  name: search-byo-nats
+  namespace: default
+spec:
+  image: lumen:latest
+  shardCount: 3
+  logFormat: json
+  serving:
+    autoscaling:
+      minReplicas: 2
+      maxReplicas: 8
+      targetCpuUtilization: 70
+  nats:
+    externalUrl: nats://shared-jetstream.infra.svc:4222

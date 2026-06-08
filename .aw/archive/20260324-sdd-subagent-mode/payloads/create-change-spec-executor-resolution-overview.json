@@ -1,0 +1,9 @@
+{
+  "spec_id": "subagent-executor-resolution",
+  "group_id": "subagent-dispatch",
+  "section": "overview",
+  "fill_sections": ["overview", "config", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/logic/executor-resolution.md",
+  "merge_strategy": "extend",
+  "content": "Add `subagent:{type}:{model}` executor string format for `claude_subagents` mode. Unlike `multi_agents` and `multi_claude_agents` where `build_workflow_response()` calls `run_agent()` (Rust-side CLI dispatch), `subagent:*` executors are returned directly to the mainthread skill for Agent tool invocation.\n\n### Dispatch Branches in `build_workflow_response()`\n\n| Executor Pattern | Branch | Dispatch By |\n|---|---|---|\n| `[\"mainthread\"]` | Return `prompt_path` + `executor` | Mainthread reads prompt, executes inline |\n| `subagent:*` | Return `prompt_path` + `executor` | Mainthread parses `subagent:{type}:{model}`, invokes Agent tool |\n| Other (`gemini:*`, `codex:*`, `claude-agent:*`) | Call `run_agent()` internally | Rust CLI spawns external subprocess |\n\n### Executor String Format\n\n```\nsubagent:{subagent_type}:{model}\n```\n\n| Field | Values | Description |\n|---|---|---|\n| `subagent_type` | `Explore`, `general-purpose` | Maps to Claude Code Agent tool `subagent_type` param |\n| `model` | `sonnet`, `opus`, `haiku` | Maps to Agent tool `model` param |\n\nExamples: `subagent:Explore:sonnet`, `subagent:general-purpose:opus`\n\n### Key Constraint\n\n`subagent:*` executors bypass `run_agent()` entirely. Verification (STATE.yaml phase + artifact check) is performed by the mainthread skill after Agent tool returns, not by `sdd_delegate_agent`."
+}

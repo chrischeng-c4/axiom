@@ -1,0 +1,43 @@
+{
+  "groups": [
+    {
+      "id": "mamba-test-coverage-remaining",
+      "issues": [1035],
+      "requirements": "Add tests across 23 source files in `crates/cclab-mamba` to reach 100% line + 100% branch coverage. No exclusion annotations (`#[cfg(coverage_not)]`, `// coverage: off`) permitted. Measure with `cargo llvm-cov --branch` after each batch.\n\nWork is split into three batches by subsystem:\n\n**Batch A — stdlib modules (12 files, all < 50%):**\n`runtime/stdlib/argparse_mod.rs` (20%), `runtime/stdlib/platform_mod.rs` (25%), `runtime/stdlib/unittest_mod.rs` (31%), `runtime/stdlib/socket_mod.rs` (34%), `runtime/stdlib/array_mod.rs` (35%), `runtime/stdlib/errno_mod.rs` (37%), `runtime/stdlib/traceback_mod.rs` (37%), `runtime/stdlib/codecs_mod.rs` (46%), `runtime/stdlib/logging_mod.rs` (46%), `runtime/stdlib/pickle_mod.rs` (47%), `runtime/stdlib/threading_mod.rs` (49%), `runtime/stdlib/sqlite3_mod.rs` (49%).\n\n**Batch B — core modules (3 files, all < 50%):**\n`ffi/c_types.rs` (0%), `driver/mod.rs` (33%), `codegen/cranelift/mod.rs` (45%).\n\n**Batch C — compiler pipeline (8 files, 50–78%):**\n`types/check_expr.rs` (66%), `codegen/cranelift/aot.rs` (67%), `codegen/cranelift/jit.rs` (69%), `lexer/token.rs` (70%), `lower/ast_to_hir.rs` (75%), `driver/module_graph.rs` (76%), `lower/hir_to_mir.rs` (78%), `parser/expr_compound.rs` (78%).\n\nFor each file the change-spec must:\n1. Enumerate every function with its branch count.\n2. Identify all currently uncovered branches.\n3. Define one concrete test case per uncovered branch (source string input or IR node + expected output or panic message).\n\nTest placement: inline `#[cfg(test)]` blocks inside source files unless the file already has a dedicated integration test file. socket_mod tests must not make live network calls; threading_mod tests must be deterministic; sqlite3_mod tests use `:memory:` database.",
+      "questions": [
+        {
+          "topic": "test placement strategy",
+          "question": "Should stdlib module tests be added as inline `#[cfg(test)]` blocks inside each `*_mod.rs` source file, or as separate files under `crates/cclab-mamba/tests/stdlib/`? The inline approach keeps tests co-located with implementation but increases file size; separate files allow focused test runs but require more boilerplate."
+        },
+        {
+          "topic": "socket_mod network isolation",
+          "question": "For socket_mod.rs (34%), should tests use a real loopback socket (127.0.0.1) or a mock/stub abstraction? Is there an existing `MockSocket` or test-server fixture in the codebase, or should the spec define one?"
+        },
+        {
+          "topic": "threading_mod uncovered branches",
+          "question": "threading_mod.rs is at 49% — which branches remain uncovered: thread lifecycle (start/join/detach), synchronization primitives (Mutex/RwLock/Condvar), or thread-local storage? Are there race-condition branches that cannot be deterministically exercised, and if so should they be documented as known non-coverable or tested with timeout/retry logic?"
+        },
+        {
+          "topic": "ffi/c_types.rs test prerequisites",
+          "question": "ffi/c_types.rs is at 0% coverage. Is this because (a) it is conditionally compiled and excluded from test builds, (b) it has no safe Rust entry points, or (c) it was simply never tested? Does testing require a linked C library, or are all types defined purely in Rust?"
+        },
+        {
+          "topic": "driver/mod.rs test isolation level",
+          "question": "For driver/mod.rs, should tests be unit tests that mock file I/O (e.g., using string inputs or an in-memory VFS), or integration tests that compile real `.py` source files on disk? Is there an existing `compile_str()` or similar helper, or should the spec define one?"
+        },
+        {
+          "topic": "codegen/cranelift tests — input level",
+          "question": "Do tests for `codegen/cranelift/mod.rs`, `aot.rs`, and `jit.rs` require constructing a full MIR graph, or can they be exercised with synthetic Cranelift IR built via `cranelift-frontend` `FunctionBuilder`? Is there an existing minimal MIR fixture used in other codegen tests?"
+        },
+        {
+          "topic": "lower/ast_to_hir and hir_to_mir fixtures",
+          "question": "Do existing lowering-pass tests construct AST/HIR nodes manually (struct literals or builder API) or by parsing source strings end-to-end? Are there helpers like `parse_expr(src)` or `lower_expr(src)` that stop the pipeline at a specific stage, so branch-level tests don't require a full compilation pipeline?"
+        },
+        {
+          "topic": "parser/expr_compound.rs uncovered constructs",
+          "question": "parser/expr_compound.rs is at 78% — which compound expression constructs are not yet tested? Likely candidates: generator expressions, ternary/conditional expressions, starred assignments, walrus operator `:=`, or nested comprehensions. A list of uncovered constructs would allow the spec to define targeted minimal source inputs."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+mamba: compiler import resolution does not wire MAMBA_MODULES registry symbols #1132

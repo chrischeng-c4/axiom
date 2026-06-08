@@ -1,0 +1,72 @@
+change_id: agent-protocols
+schema_version: '2.0'
+created_at: 2026-03-20T02:40:45.680065Z
+updated_at: 2026-03-20T03:14:09.404504Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: agent-protocols-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 90004
+    timestamp: 2026-03-20T02:42:38.685203Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 303232
+    timestamp: 2026-03-20T02:48:27.962043Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 503314
+    timestamp: 2026-03-20T03:07:43.342669Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 945285
+    timestamp: 2026-03-20T03:08:11.597569Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 958
+    title: 'feat(agent): Add protocols module — domain contracts for Issue, Spec, Change, Project, CodeIndex'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  pre_clarifications:
+  - agent-protocols-module
+  post_clarifications:
+  - agent-protocols-module
+  reference_context:
+  - agent-protocols-module
+  change_spec: []

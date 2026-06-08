@@ -1,0 +1,8 @@
+- spec_id: conformance-xfail-reduction-spec
+  action: modify
+  main_spec_ref: crates/cclab-mamba/testing/conformance.md
+  source: crates/cclab-mamba/testing/conformance.md
+  sections:
+  - overview
+  - pipeline
+  - changes

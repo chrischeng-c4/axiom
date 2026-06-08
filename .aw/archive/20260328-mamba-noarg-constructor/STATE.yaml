@@ -1,0 +1,38 @@
+change_id: mamba-noarg-constructor
+schema_version: '2.0'
+created_at: 2026-03-28T02:09:12.429152Z
+updated_at: 2026-03-28T03:27:17.839086Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: no-arg-constructor-codegen-fix
+task_revisions: {}
+impl_spec_phase:
+  no-arg-constructor-codegen-fix: tests
+telemetry: null
+dag:
+  issues:
+  - number: 1109
+    title: 'fix(mamba): no-arg constructor codegen verifier error — list(), tuple(), set()'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec: []
+  pre_clarifications:
+  - noarg-constructor-codegen
+  post_clarifications:
+  - noarg-constructor-codegen
+  reference_context:
+  - noarg-constructor-codegen
+  change_implementation: []

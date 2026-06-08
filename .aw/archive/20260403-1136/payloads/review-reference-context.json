@@ -1,0 +1,33 @@
+{
+  "group_id": "platform-config-and-merge-git",
+  "group": "platform-config-and-merge-git",
+  "verdict": "needs_revision",
+  "issues": [
+    {
+      "severity": "high",
+      "title": "Spec plan missing agents.md — SddConfig.repo_platform has no spec target",
+      "description": "The reference context correctly identifies agents.md (medium relevance) with the key requirement: 'repo_platform field must be added to SddConfig so create_change_merge.rs can read it via SddConfig::load_validated()'. However, agents.md is absent from the spec plan entirely. SddConfig is defined in crates/cclab-sdd/src/models/change.rs and documented in cclab/specs/crates/cclab-sdd/config/agents.md. No repo_platform field exists in the codebase yet (grep confirms 0 matches). Without a spec plan entry for agents.md, the change spec for SddConfig.repo_platform has no spec target — the implementer will have no spec-driven contract for this field."
+    },
+    {
+      "severity": "high",
+      "title": "Spec plan missing workflow-tools.md — sdd_workflow_create_change_merge has no OpenRPC definition",
+      "description": "The reference context identifies workflow-tools.md (medium relevance) with the key requirement: 'Response schema may need new fields: git_commit_sha, pr_url, git_status to surface post-merge git results.' However, workflow-tools.md is absent from the spec plan. Confirmed by reading cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md: the file ends at sdd_workflow_revise_change_implementation (line 251) — sdd_workflow_create_change_merge has no OpenRPC definition in any spec file (grep on cclab/specs finds only prose references in change-merge.md and state-machine.md). The tool's interface contract is completely unspecced. Adding auto_commit/auto_pr response fields without a spec is a gap."
+    },
+    {
+      "severity": "medium",
+      "title": "Spec plan section name 'state-machine' is wrong for change-merge-git-integration",
+      "description": "The spec plan entry for change-merge-git-integration lists sections: [overview, state-machine, config, changes]. But cclab/specs/crates/cclab-sdd/logic/change-merge.md uses a flowchart TD (DAG) — not a stateDiagram-v2. Per the CLAUDE.md authoring rules: 'FSM → always stateDiagram-v2, never flowchart; DAG with conditions → always flowchart.' The change-merge logic is a DAG (conditional branches on specs found?, file exists?, etc.), not a finite state machine. The section should be named 'flowchart' or 'merge-logic', not 'state-machine'."
+    },
+    {
+      "severity": "minor",
+      "title": "workflow-tools.md key requirement implies tool is already defined there — it is not",
+      "description": "The key requirement for workflow-tools.md reads: 'sdd_workflow_create_change_merge is the tool extended with auto_commit and auto_pr post-archive steps.' This phrasing implies the tool definition already exists in workflow-tools.md. It does not — the spec file ends at sdd_workflow_revise_change_implementation. The tool is only referenced informationally in change-merge.md and state-machine.md. The requirement should say 'sdd_workflow_create_change_merge must be added to workflow-tools.md with its OpenRPC definition' to accurately reflect that this is a net-new spec addition."
+    },
+    {
+      "severity": "minor",
+      "title": "commands.md medium-relevance but not in spec plan — CLI command tree will need updating",
+      "description": "The reference context lists commands.md as medium relevance for 'cclab sdd platform set wizard must be extended' and 'platform show must display repo_platform'. The commands.md command tree currently shows 'platform: # subcommands: config, sync' (line 31) which already differs from the actual implementation (set, show). If repo_platform adds new platform subcommands or extends the existing ones, the high-level command tree in commands.md will be stale. Since platform.md is the authoritative spec and IS in the spec plan, this is low-risk — but worth flagging given the existing discrepancy."
+    }
+  ],
+  "summary": "The reference context specs are all accurate and relevant, with well-calibrated relevance scores. However, the spec plan is incomplete: two specs that the reference context itself flags as requiring changes (agents.md for SddConfig.repo_platform, workflow-tools.md for sdd_workflow_create_change_merge OpenRPC definition) are omitted from the plan. Additionally, the section name 'state-machine' in the change-merge-git-integration plan entry is incorrect — change-merge.md uses a flowchart, not a state diagram. Revise the spec plan to (1) add agents.md as a modify entry for SddConfig.repo_platform, (2) add workflow-tools.md as a modify entry for the sdd_workflow_create_change_merge OpenRPC definition with new response fields, and (3) rename 'state-machine' to 'flowchart' in the change-merge-git-integration sections."
+}

@@ -1,0 +1,1 @@
+{"change_id":"agent-pyo3","group_id":"agent-pyo3-bindings","skipped":true,"reason":"No contradictions. PyO3 bindings wrap existing types without changing logic."}

@@ -1,0 +1,1 @@
+#997 Add native stdlib: builtins — built-in objects module. Expose builtins namespace as importable module (True, False, None, print, len, etc already exist as runtime builtins). Crate: cclab-mamba

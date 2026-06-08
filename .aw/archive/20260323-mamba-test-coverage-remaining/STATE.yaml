@@ -1,0 +1,139 @@
+change_id: mamba-test-coverage-remaining
+schema_version: '2.0'
+created_at: 2026-03-23T05:46:32.922223Z
+updated_at: 2026-03-23T07:52:25.458069Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  impl:mamba-test-coverage-remaining-spec: 1
+current_task_id: mamba-test-coverage-remaining-spec
+task_revisions:
+  mamba-test-coverage-remaining-spec: 2
+impl_spec_phase: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 171234
+    timestamp: 2026-03-23T05:49:27.426469Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 181207
+    timestamp: 2026-03-23T05:55:32.988090Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 262748
+    timestamp: 2026-03-23T06:00:39.472224Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 698569
+    timestamp: 2026-03-23T06:02:10.925999Z
+  - step: analyze_spec_mamba-test-coverage-remaining-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 784642
+    timestamp: 2026-03-23T06:16:04.916186Z
+  - step: implement_tests_mamba-test-coverage-remaining-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 836464
+    timestamp: 2026-03-23T07:03:02.662068Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 203847
+    timestamp: 2026-03-23T07:06:45.159498Z
+  - step: review_impl_mamba-test-coverage-remaining-spec
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 277418
+    timestamp: 2026-03-23T07:09:21.284469Z
+  - step: review_impl_mamba-test-coverage-remaining-spec
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 262525
+    timestamp: 2026-03-23T07:19:49.201552Z
+  - step: review_impl_mamba-test-coverage-remaining-spec
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 238256
+    timestamp: 2026-03-23T07:28:43.530650Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1192338
+    timestamp: 2026-03-23T07:29:29.733446Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 4437674
+    timestamp: 2026-03-23T07:30:19.867993Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 1035
+    title: 'test(mamba): per-module test coverage gaps — lower, resolve, runtime severely undertested'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  reference_context:
+  - mamba-test-coverage-remaining
+  post_clarifications:
+  - mamba-test-coverage-remaining
+  pre_clarifications:
+  - mamba-test-coverage-remaining
+  change_spec: []

@@ -1,0 +1,43 @@
+{
+  "group_id": "consolidate-grid-crates",
+  "specs": [
+    {
+      "path": "crates/cclab-grid/README.md",
+      "relevance": "high",
+      "reason": "Top-level architecture spec for the grid system, defines crate boundaries and relationships that will change"
+    },
+    {
+      "path": "crates/cclab-grid-db/grid-db-architecture.md",
+      "relevance": "medium",
+      "reason": "DB layer architecture spec — the db module moves into the consolidated crate, Morton encoding and WAL integration preserved"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "grid-crate-structure",
+      "action": "modify",
+      "source": "crates/cclab-grid/README.md",
+      "main_spec_ref": "crates/cclab-grid/README.md",
+      "sections": ["overview", "changes"]
+    }
+  ],
+  "codebase_context": {
+    "files_examined": [
+      "crates/cclab-grid-core/Cargo.toml",
+      "crates/cclab-grid-core/src/lib.rs",
+      "crates/cclab-grid-formula/Cargo.toml",
+      "crates/cclab-grid-formula/src/lib.rs",
+      "crates/cclab-grid-history/Cargo.toml",
+      "crates/cclab-grid-history/src/lib.rs",
+      "crates/cclab-grid-db/Cargo.toml",
+      "crates/cclab-grid-db/src/lib.rs",
+      "crates/cclab-grid-server/Cargo.toml",
+      "crates/cclab-grid-server/src/lib.rs",
+      "crates/cclab-grid-server/src/main.rs",
+      "crates/cclab-grid-wasm/Cargo.toml",
+      "crates/cclab-grid-wasm/src/lib.rs",
+      "Cargo.toml"
+    ],
+    "summary": "6 grid crates in workspace. Cross-crate dependency graph: formula->core, history->core+formula, db->core+cclab-wal, server->core+db+cclab-kv, wasm->core+formula+history. Server has a binary target (main.rs). Internal imports use cclab_grid_core::, cclab_grid_formula::, etc. patterns across ~30 import sites. cclab-grid-db also uses explicit version numbers instead of workspace versions."
+  }
+}

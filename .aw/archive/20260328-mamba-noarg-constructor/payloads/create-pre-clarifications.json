@@ -1,0 +1,9 @@
+{
+  "group_id": "noarg-constructor-codegen",
+  "answers": [
+    {
+      "question": "Is the fix already applied?",
+      "answer": "Partially — commit bc5921e9 included some P0 runtime fixes. Need to verify if list()/tuple()/set() zero-arg constructors are fixed or still broken. The codegen verifier error is in cranelift IR emission for zero-argument builtin calls."
+    }
+  ]
+}

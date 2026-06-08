@@ -1,0 +1,8 @@
+{
+  "change_id": "codegen-td-to-code",
+  "group_id": "codegen-td-to-code-main",
+  "spec_id": "sdd-codegen-validation-harness",
+  "verdict": "APPROVED",
+  "summary": "All 5 CLI entry points implemented. score gen diff: run_diff() compares spec targets vs current files, returns DiffReport with DiffClass (Exact/MarkerOnly/Drift/Gap), drift%/marker%/coverage%. score gen apply: run_apply() writes CODEGEN blocks to target files, run_apply_worktree() for worktree mode, both writing codegen_markers.yaml. score gen render: run_render() re-renders Mermaid body per diagram type. score gen validate: calls run_diff() and checks for Gap files, exits non-zero if gaps found. score gen init-markers: calls insert_codegen_block() to scaffold empty CODEGEN markers. commands.rs and codegen.rs both updated. 6 new tests for diff/apply pass.",
+  "issues": []
+}

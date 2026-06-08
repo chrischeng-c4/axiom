@@ -1,0 +1,60 @@
+change_id: improve-titan-maturity
+schema_version: '2.0'
+created_at: 2026-01-28T08:03:43.048011Z
+updated_at: 2026-01-28T08:18:16.401757Z
+phase: implemented
+iteration: 1
+last_action: plan-complete
+session_id: null
+checksums:
+  specs/hook-system.md:
+    hash: sha256:2cc113250efceb79360bfe1cc6056c7a4b52b9585c204daa07e57afdf65a8d2e
+    validated_at: 2026-01-28T08:10:28.702260Z
+  specs/dialect-abstraction.md:
+    hash: sha256:b4e46fa815b05268136c4e2ddb90e3f6fc6830bfddd931389b93dcb345cbad4a
+    validated_at: 2026-01-28T08:10:28.701677Z
+  specs/hybrid-properties.md:
+    hash: sha256:3ea906c716b533071d8647b6157ab4fba7f5cf6ac3073c43abc0e2fc092d7604
+    validated_at: 2026-01-28T08:10:28.701874Z
+  specs/test-doc-gaps.md:
+    hash: sha256:7ae47521d6cb94cdb043300bc1d1545ebaa65daf1516f329c377480a43a64338
+    validated_at: 2026-01-28T08:10:28.702078Z
+  proposal.md:
+    hash: sha256:a51aaabf526c78517fcad0605782dc96d24de33580b9f6c263e7841ef5b0bc31
+    validated_at: 2026-01-28T08:10:28.700974Z
+  specs/session-unit-of-work.md:
+    hash: sha256:d2613c3772f4c1c60bf8673b236f989bc68a8e4ed9f7a122ba7e4826e8a722f7
+    validated_at: 2026-01-28T08:10:28.701464Z
+  tasks.md:
+    hash: sha256:7fc197fa849531d21348b1549a2bfaf848969d8cf5159af7df27a2aca81fa44c
+    validated_at: 2026-01-28T08:10:28.701244Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-28T08:04:21.302109Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T08:10:28.700786Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 1
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

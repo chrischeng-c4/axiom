@@ -1,0 +1,13 @@
+{
+  "group_id": "all-support",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "requirements.md: modules lack __all__ support for controlling star import exports (GitHub #975)",
+    "success_criteria": "from X import * respects __all__ when defined; falls back to all non-underscore names when __all__ is absent",
+    "boundary": {
+      "in_scope": ["runtime/module.rs: mb_import_star function", "resolve/pass.rs: skip star symbol definition", "lower/hir_to_mir.rs: star import codegen path", "codegen: register mb_import_star extern"],
+      "out_of_scope": ["__all__ type validation (not checking it is a list of strings)", "ImportWarning for invalid __all__ entries"],
+      "constraints": ["Must not break existing from X import Y, Z behavior", "Must work for both native and file-based modules"]
+    }
+  }
+}

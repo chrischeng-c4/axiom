@@ -1,0 +1,10 @@
+{
+  "group_id": "jet-install-enhancements",
+  "answers": [
+    {"question_id": "Q1", "answer": "Fully migrate to ~/.cache/jet following XDG Base Directory Specification, respects XDG_CACHE_HOME"},
+    {"question_id": "Q2", "answer": "Inline warnings — print warnings inline during install, continue with hoisted resolution"},
+    {"question_id": "Q3", "answer": "Host platform only — filter optional deps by current OS/arch, skip irrelevant platform packages"}
+  ],
+  "follow_up_questions": [],
+  "clarification_complete": true
+}

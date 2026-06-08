@@ -1,0 +1,8 @@
+{
+  "group_id": "all-support",
+  "verdict": "approve",
+  "summary": "Reference context covers the primary module spec. The change is small and well-scoped to runtime/module.rs, resolve/pass.rs, and lower/hir_to_mir.rs.",
+  "findings": [
+    "All affected areas are covered by the module.md spec which is directly referenced."
+  ]
+}

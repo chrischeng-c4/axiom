@@ -1,0 +1,5 @@
+{
+  "group_id": "mangle-module-scope",
+  "skipped": true,
+  "reason": "No contradictions — variable-mangling.md R3 says 'never mangle module-level variables', but this is exactly what needs to change. The IIFE wrapper makes them function-local."
+}

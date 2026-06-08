@@ -1,0 +1,13 @@
+{
+  "group_id": "e2e-test-reorg",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "E2E tests are scattered (e2e/ for grid, examples/mini-react/ for jet build) with no dev server coverage. Recent features (HMR, React Fast Refresh, TS stripping, PostCSS) have zero automated E2E tests.",
+    "success_criteria": "Unified e2e/ directory with Playwright projects isolating build vs dev scenarios. All major jet features have at least one E2E test.",
+    "boundary": {
+      "in_scope": "File moves (e2e/grid/, e2e/jet/), Playwright config expansion (vite-build, jet-build, jet-dev), new test files (dev-server, hmr, css)",
+      "out_of_scope": "examples/jet/ and examples/react-bench/ stay unchanged, no Rust unit test changes",
+      "constraints": "All tests share the existing mini-react TodoMVC app as fixture"
+    }
+  }
+}

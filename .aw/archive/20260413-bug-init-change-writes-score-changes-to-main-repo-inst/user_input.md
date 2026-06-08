@@ -1,0 +1,1 @@
+clarify(sdd): TD spec — .score/changes/ lives on main (control plane), code+TD changes in worktree (data plane) issue:bug-init-change-writes-score-changes-to-main-repo-inst

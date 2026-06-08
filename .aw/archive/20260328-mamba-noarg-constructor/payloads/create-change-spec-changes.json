@@ -1,0 +1,6 @@
+{
+  "spec_id": "no-arg-constructor-codegen-fix",
+  "group_id": "noarg-constructor-codegen",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: crates/cclab-mamba/src/lower/hir_to_mir.rs\n    action: MODIFY\n    desc: |\n      In the builtin call dispatch path (after `if let Some(extern_name) = self.builtin_syms.get(&func_sym.0).cloned()`),\n      add a zero-arg arity guard before the generic CallExtern: when `boxed_args.is_empty()` and\n      `extern_name` matches a constructor-from-iterable variant, redirect to the zero-param _new variant.\n      Mapping:\n        mb_list_from_iterable  → mb_list_new\n        mb_tuple_from_iterable → mb_tuple_new\n        mb_set_from_iterable   → mb_set_new\n        mb_dict_from_pairs     → mb_dict_new\n      Emit `CallExtern { dest: Some(dest), name: <new_variant>, args: vec![], ty: *ty }` and return dest early.\n      Add unit tests: test_zero_arg_{list,tuple,set,dict}_constructor_emits_mb_{type}_new\n      and test_one_arg_{list,tuple,set}_constructor_emits_mb_{type}_from_iterable.\n```"
+}

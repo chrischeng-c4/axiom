@@ -1,0 +1,26 @@
+{
+  "group_id": "mcp-cleanup",
+  "specs": [
+    {
+      "spec_id": "sdd-cli",
+      "spec_group": "interfaces",
+      "relevance": "high",
+      "key_requirements": ["R5 MCP parity wording needs update"]
+    },
+    {
+      "spec_id": "template-mcp-configs",
+      "spec_group": "generate",
+      "relevance": "high",
+      "key_requirements": ["Entire file may be obsolete"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "mcp-refs-cleanup",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/cli/sdd-cli.md",
+      "source": "crates/cclab-sdd/interfaces/cli/sdd-cli.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "group_id": "consolidate-codegen",
+  "specs": [
+    {"path": "crates/cclab-compass/src/generate/generators/common.rs", "relevance": "high", "reason": "Generator + SpecIRGenerator traits to move"},
+    {"path": "crates/cclab-compass/src/generate/spec_ir/types.rs", "relevance": "high", "reason": "SpecIR enum to merge with sdd SpecManifest"},
+    {"path": "crates/cclab-compass/src/generate/engine/tera_engine.rs", "relevance": "high", "reason": "Tera wrapper to move"},
+    {"path": "crates/sdd/src/spec_ir/codegen.rs", "relevance": "high", "reason": "ManifestGenerator trait to merge"},
+    {"path": "crates/sdd/src/spec_ir/types.rs", "relevance": "high", "reason": "SpecManifest to merge with compass SpecIR"}
+  ],
+  "spec_plan": [
+    {"spec_id": "consolidate-codegen-spec", "action": "create", "main_spec_ref": "crates/sdd/logic/codegen-consolidation.md", "sections": ["overview", "requirements", "changes"]}
+  ]
+}

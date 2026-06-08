@@ -1,0 +1,10 @@
+{
+  "change_id": "cclab-api-asgi-dispatch",
+  "spec_id": "asgi-dispatch-spec",
+  "group_id": "asgi-fix",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-api/logic/asgi-dispatch.md",
+  "merge_strategy": "new",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "content": "Fix `App.__call__` ASGI dispatch so that routes registered via `include_router` (FastAPI `APIRouter`) resolve correctly, including routes with path parameters.\n\n### Problem\n\n`App.__call__` has a broken route-matching pipeline:\n\n1. **Rust matcher path** (lines 1468-1484): calls `self._rust_app.match_route()` to extract `path_params`, then iterates `self._routes` with regex to find the handler — but `include_router` does NOT register routes with the Rust app (only `_register_route` does), so Rust matcher returns `None` for router-added routes.\n2. **Fallback path** (lines 1486-1492): exact string match `route.path == path` — fails for any route with `{param}` patterns (e.g., pattern `/tasks/{task_id}` never equals actual path `/tasks/abc123`).\n3. **Handler key inconsistency**: `_register_route` stores `METHOD:path`, `include_router` stores `METHOD path` — not the root cause but adds confusion.\n\nResult: `@app.get(\"/\")` works (exact match), but `include_router(router)` routes with path parameters return 404.\n\n### Solution\n\nBuild a `FastAPI` app internally and delegate `__call__` to it. This leverages Starlette's battle-tested ASGI routing (path parameter extraction, method matching, middleware) instead of reimplementing it.\n\n### Scope\n\n- Modify `App.__init__` to create an internal `FastAPI` instance\n- Modify `_register_route` and `include_router` to register routes on the internal FastAPI app\n- Replace `App.__call__` body with delegation to `self._fastapi_app(scope, receive, send)`\n- Preserve existing Rust server path (`app.run()`) — only ASGI path changes\n\n### Out of Scope\n\n- Rust HTTP server dispatch (already works via `_wrap_handler_for_rust`)\n- WebSocket routing\n- MCP/A2A mount points (handled separately)"
+}

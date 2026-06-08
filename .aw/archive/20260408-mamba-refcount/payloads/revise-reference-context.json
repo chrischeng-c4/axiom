@@ -1,0 +1,58 @@
+{
+  "group_id": "jit-refcount-enable",
+  "specs": [
+    {
+      "spec_path": "crates/cclab-mamba/codegen/jit-refcount.md",
+      "relevance": "high",
+      "reason": "Primary spec for this feature. Documents the ownership audit, EMIT_REFCOUNT_CALLS flag, re-enable checklist, all borrowed-reference functions, and the known closure ownership bug (KI-refcount-closure). This change completes the work described in this spec."
+    },
+    {
+      "spec_path": "crates/cclab-mamba/runtime/gc.md",
+      "relevance": "high",
+      "reason": "GC re-enable spec. Documents KI-1 (auto-collection disabled due to JIT not emitting refcount calls). Re-enable is gated on EMIT_REFCOUNT_CALLS=true. This change resolves KI-1."
+    },
+    {
+      "spec_path": "crates/cclab-mamba/runtime/closure.md",
+      "relevance": "high",
+      "reason": "Closure spec. The root cause of SIGBUS blocking refcount enable is in mb_closure_release — asymmetric ownership (removes from HashMap without releasing captured values). The fix modifies closure.rs."
+    },
+    {
+      "spec_path": "crates/cclab-mamba/runtime/value-and-rc.md",
+      "relevance": "medium",
+      "reason": "MbValue/MbObject/refcount infrastructure. Documents NaN-boxing tags, reference counting API (mb_retain/mb_release), retain_if_ptr/release_if_ptr helpers."
+    },
+    {
+      "spec_path": "crates/cclab-mamba/codegen/cranelift.md",
+      "relevance": "medium",
+      "reason": "Cranelift backend core. Documents MIR-to-IR translation and runtime symbol wiring. EMIT_REFCOUNT_CALLS gates conditional blocks in shared mod.rs."
+    },
+    {
+      "spec_path": "crates/cclab-mamba/runtime/symbols.md",
+      "relevance": "medium",
+      "reason": "Runtime symbol registry. mb_retain_value/mb_release_value/mb_closure_release are registered here."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "jit-refcount-enable",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/codegen/jit-refcount.md",
+      "source": "crates/cclab-mamba/codegen/jit-refcount.md",
+      "sections": ["overview", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "gc-reenable",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/gc.md",
+      "source": "crates/cclab-mamba/runtime/gc.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "closure-release-fix",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/closure.md",
+      "source": "crates/cclab-mamba/runtime/closure.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

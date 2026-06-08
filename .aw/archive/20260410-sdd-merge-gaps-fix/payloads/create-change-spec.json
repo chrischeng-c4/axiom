@@ -1,0 +1,7 @@
+{
+  "spec_id": "sdd-merge-gaps-fix-spec",
+  "section": "overview",
+  "main_spec_ref": "crates/sdd/logic/merge-gaps-fix.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "content": "Fix 3 bugs in the `create_change_merge` / `merge_git_ops` workflow:\n\n1. **`git_commit_sha` null after auto-commit**: After step 3 (worktree merge into main), capture the merge commit SHA via `git rev-parse HEAD` on `project_root`. Return this as the canonical commit SHA since it is the commit that landed on the default branch.\n\n2. **Auto-PR not running when expected**: The `create_pr` call currently runs after local merge+cleanup (steps 3+4), at which point the worktree branch may already be deleted. Fix: in the worktree flow, attempt PR creation BEFORE local merge when `auto_pr=true`. `auto_pr` remains opt-in (default: false) — downstream projects set it explicitly.\n\n3. **Issue close only matches slug**: `close_issue_if_exists` only checks for `{change_id}.md` in `open/`. Add a fallback: scan all open issues and match by frontmatter `id` field (UUID) so issues created with UUID-based names are also closed on merge."
+}

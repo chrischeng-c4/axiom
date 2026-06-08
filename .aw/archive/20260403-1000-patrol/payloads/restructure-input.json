@@ -1,0 +1,13 @@
+{
+  "groups": [
+    {
+      "id": "add-idlelib-stdlib",
+      "issues": [1000],
+      "requirements": "Add `idlelib` as a native stdlib module in Mamba. This is the IDLE GUI editor internals package, which is Tkinter-based. Since IDLE is rarely used in production, this should be a minimal stub implementation that provides the module namespace and key submodules so that `import idlelib` succeeds without error. No full Tkinter GUI functionality is expected.",
+      "questions": [
+        "Should this be a full implementation or a stub-only module (raising NotImplementedError for GUI operations)?",
+        "Which idlelib submodules are most commonly imported and should be prioritized (e.g., idlelib.config, idlelib.run)?"
+      ]
+    }
+  ]
+}

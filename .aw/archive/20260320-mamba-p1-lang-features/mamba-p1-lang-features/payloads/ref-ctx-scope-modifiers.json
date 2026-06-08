@@ -1,0 +1,14 @@
+{
+  "group_id": "scope-modifiers",
+  "spec_plan": {"sections": ["overview", "schema", "resolution", "codegen", "changes"]},
+  "specs": [
+    {"path": "cclab-mamba/resolve/name-resolution.md", "relevance": "high", "reason": "Variable classification, scope chains — global/nonlocal declarations"},
+    {"path": "cclab-mamba/parser/statements.md", "relevance": "high", "reason": "Parsing global/nonlocal statements"},
+    {"path": "cclab-mamba/parser/ast.md", "relevance": "high", "reason": "AST nodes for global/nonlocal"},
+    {"path": "cclab-mamba/lower/hir-to-mir.md", "relevance": "high", "reason": "MIR lowering with scope modifiers"},
+    {"path": "cclab-mamba/runtime/closure.md", "relevance": "high", "reason": "Closure capture mechanism for nonlocal"},
+    {"path": "cclab-mamba/hir/hir.md", "relevance": "medium", "reason": "HIR scope representation"},
+    {"path": "cclab-mamba/types/type-checker.md", "relevance": "medium", "reason": "Type inference across scopes"},
+    {"path": "cclab-mamba/codegen/cranelift-jit.md", "relevance": "medium", "reason": "JIT codegen for mutable captures"}
+  ]
+}

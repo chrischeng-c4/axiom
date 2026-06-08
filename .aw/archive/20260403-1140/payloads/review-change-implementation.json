@@ -1,0 +1,66 @@
+{
+  "spec_id": "cli-commands-check-alignment",
+  "change_id": "1140",
+  "verdict": "APPROVED",
+  "summary": "All hard checklist items pass. The spec `cli-commands-check-alignment.md` has no `## Test Plan` section, so the hard-reject rule does not apply. All 6 CLI requirements (CR1–CR6) are implemented correctly: CheckAlignment variant added to Commands enum, check_alignment.rs handler created with path defaulting to cclab/specs/, text and JSON output formatted as specified, exit code 1 on violations, and the match arm is wired in commands.rs. Build is clean with zero warnings. All 23 spec_alignment_tests pass (these tests cover the underlying logic and were required by the companion logic spec, not this CLI spec).",
+  "checklist_results": [
+    {
+      "item": "Code matches all spec requirements",
+      "passed": true,
+      "note": "CR1: CheckAlignment variant has path: Option<String> and #[arg(long)] json: bool. CR2: check_alignment.rs resolves path (default: cwd/cclab/specs) and calls spec_alignment::check(). CR3: Text output shows OK {path} / FAIL {path} with indented {kind}: {message} lines. CR4: JSON output via serde_json::to_string_pretty when --json set. CR5: std::process::exit(1) on violations, Ok(()) return on clean. CR6: match arm in commands.rs run_command dispatches to check_alignment::run()."
+    },
+    {
+      "item": "If spec has ## Test Plan section: diff contains at least one #[test] function",
+      "passed": true,
+      "note": "Spec `cli-commands-check-alignment.md` has no ## Test Plan section. Hard-reject rule does not apply. Diff nevertheless includes crates/cclab-sdd/tests/spec_alignment_tests.rs with 23 #[test] functions."
+    },
+    {
+      "item": "Existing tests still pass (no regressions introduced)",
+      "passed": true,
+      "note": "cargo test -p cclab-sdd --test spec_alignment_tests: 23 passed, 0 failed. cargo check -p cclab-sdd -p cclab-sdd-cli: Finished dev profile with zero warnings from new code."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "LOW",
+      "file": "crates/cclab-sdd-cli/src/check_alignment.rs",
+      "line": 15,
+      "description": "The spec output_format example uses `{relative_path}` notation (e.g. `crates/cclab-sdd/logic/foo.md`), but the implementation emits whatever path was passed to spec_alignment::check(), which for the default case is an absolute path (project_root.join(\"cclab/specs\")). Text output will show absolute paths like /Users/…/cclab/specs/foo.md instead of relative paths.",
+      "recommendation": "Strip the project_root prefix from file paths before printing, or pass a relative path to spec_alignment::check()."
+    },
+    {
+      "severity": "LOW",
+      "file": "crates/cclab-sdd/src/spec_alignment/parser.rs",
+      "line": 391,
+      "description": "The guard `!trimmed.starts_with(\"### \")` in parse_heading is redundant: starts_with(\"## \") already excludes ### headings because the third character would be '#' not ' '.",
+      "recommendation": "Remove the redundant guard to reduce confusion for future readers."
+    },
+    {
+      "severity": "LOW",
+      "file": "crates/cclab-sdd/src/spec_alignment/models.rs",
+      "line": 210,
+      "description": "ViolationKind::Display uses serde_json::to_string() + quote-trimming to produce snake_case names. Correct but involves a JSON round-trip for a simple string conversion.",
+      "recommendation": "Replace with a static match arm per variant returning the literal snake_case string."
+    },
+    {
+      "severity": "LOW",
+      "file": "crates/cclab-sdd/tests/spec_alignment_tests.rs",
+      "line": 1,
+      "description": "File is 877 lines, exceeding the 500-line 'consider split' threshold in CLAUDE.md. Not a hard limit (<1000), but navigability would improve with separate test modules.",
+      "recommendation": "Consider splitting into parser_tests.rs, format_rules_tests.rs, logical_rules_tests.rs, and integration_tests.rs in a follow-up."
+    }
+  ],
+  "files_reviewed": [
+    "crates/cclab-sdd-cli/src/check_alignment.rs",
+    "crates/cclab-sdd-cli/src/commands.rs",
+    "crates/cclab-sdd-cli/src/lib.rs",
+    "crates/cclab-sdd/src/spec_alignment/mod.rs",
+    "crates/cclab-sdd/src/spec_alignment/models.rs",
+    "crates/cclab-sdd/src/spec_alignment/parser.rs",
+    "crates/cclab-sdd/src/spec_alignment/format_rules.rs",
+    "crates/cclab-sdd/src/spec_alignment/logical_rules.rs",
+    "crates/cclab-sdd/src/spec_alignment/check.rs",
+    "crates/cclab-sdd/src/lib.rs",
+    "crates/cclab-sdd/tests/spec_alignment_tests.rs"
+  ]
+}

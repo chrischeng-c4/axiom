@@ -1,0 +1,49 @@
+{
+  "group_id": "jet-build-real-world-validation",
+  "verdict": "REVIEWED",
+  "summary": "Reference context has three correctness issues: (1) jit-runner is irrelevant to the validation workflow (cclab jet build, not JIT execution) and its 'R1' reference does not exist in that spec; (2) scope-hoisting lists R2 (disabled) and R3 (not started) as key requirements — only R1 is active; (3) aot-build is labeled 'high' but is the #796 synthetic example spec (prerequisite), not a real-world validation spec — medium is more appropriate. pkg-manager-pnpm-parity is overstated at medium for the primary target apps (TodoMVC, Realworld React+Redux are single-package apps with no monorepo/workspace needs). tree-shaking and variable-mangling entries are accurate and correctly relevant.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": true,
+      "note": "The validation workflow exercises: package manager (install step → pkg-manager covers it), bundler pipeline (tree-shaking, scope-hoisting R1, variable-mangling all cover active build-path components). The Q1 pre-clarification (document unsupported patterns as known limitations) does not require a new spec area — it defines how to handle gaps, not new implementation. No spec for the real-world Playwright test harness itself, but this is new test scaffolding that is a consequence of the validation task, not a missing spec area."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "aot-build is scored 'high' but its content (id: 796-spec) is the mini-react synthetic example expansion — a prerequisite, not direct implementation of real-world validation. 'medium' is correct. scope-hoisting is scored 'high' but Phase 1 (R1) is already done, Phase 2 (R2) is disabled, and Phase 3 (R3) is not started — real-world validation only exercises the active R1 path. 'medium' is correct. jit-runner is scored 'medium' but the validation workflow (cclab jet install → cclab jet build → Playwright) does not use JIT execution at all — should be removed."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "jit-runner lists 'R1' but the jit-runner spec has no R-numbered requirements (it uses Milestone sections). This reference ID is invalid. scope-hoisting lists R2 (Phase 2 flattening — implemented but disabled) and R3 (Phase 3 cross-module mangling — not started): neither will be activated during initial real-world validation; only R1 is relevant. aot-build R13 and R10 are valid IDs but they cover synthetic mini-react Playwright tests and CSS Modules in the mini-react example, not real-world app validation specifically."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "jit-runner is irrelevant. Issue #797 workflow is: clone project → cclab jet install → cclab jet build → serve → Playwright smoke tests. There is no TS/JSX JIT execution step. The jit-runner spec (JIT execution + task runner with caching) is entirely orthogonal to the build validation workflow."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "jit-runner entry is invalid on two grounds: (1) the spec is not exercised by the #797 workflow — the validation is cclab jet install + cclab jet build + Playwright, not JIT execution; (2) the key requirement 'R1' does not exist in the jit-runner spec, which uses Milestone-based structure (Milestone 1–4), not R-numbered requirements.",
+      "recommendation": "Remove jit-runner from the reference context entirely. It contributes no spec coverage for any area of the real-world validation task."
+    },
+    {
+      "severity": "HIGH",
+      "description": "scope-hoisting key requirements R2 and R3 are inaccurate. R2 (Phase 2 — true module flattening) is implemented but explicitly disabled (currently increases size to 252.8KB). R3 (Phase 3 — cross-module scope-aware mangling) is not started. Neither will be exercised during initial real-world validation. Only R1 (Phase 1 IIFE scope hoisting) is the active code path.",
+      "recommendation": "Correct key requirements to 'R1' only. Downgrade relevance from 'high' to 'medium' — R1 is already done; real-world validation will exercise it but not extend it."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "aot-build is scored 'high' but its actual content (id: 796-spec) is the mini-react synthetic example expansion (#796). It defines Playwright tests for the mini-react TodoMVC patterns, not for real-world open-source projects. The real-world validation (#797) adds NEW external project Playwright tests (TodoMVC React on GitHub, Realworld React+Redux) that are not covered by R13 in this spec.",
+      "recommendation": "Downgrade aot-build relevance from 'high' to 'medium' — it is a prerequisite/foundation (preceding issue #796), not direct implementation of #797. Add a note that new Playwright test scaffolding for external projects will need to be authored as part of this change."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "pkg-manager-pnpm-parity is listed at 'medium' relevance. The primary validation targets (TodoMVC React, Realworld React+Redux) are simple single-package apps. They do not use workspaces, .npmrc scoped registries, frozen lockfile CI enforcement, audit, publish, patch, or store GC. The pnpm parity features in this spec are not exercised by the target projects.",
+      "recommendation": "Downgrade pkg-manager-pnpm-parity from 'medium' to 'low' (background context for future cal.com monorepo validation). For the current validation scope (TodoMVC + Realworld), pkg-manager (core install) is sufficient."
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+- spec_id: error-types
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/error-types.md
+  sections:
+  - overview
+  - schema
+  - logic
+  - test-plan
+- spec_id: task-state-machine
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/task-state-machine.md
+  sections:
+  - overview
+  - state-machine
+  - logic
+  - test-plan
+- spec_id: ratelimit
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/ratelimit.md
+  sections:
+  - overview
+  - logic
+  - test-plan
+- spec_id: revocation
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/revocation.md
+  sections:
+  - overview
+  - logic
+  - test-plan
+- spec_id: metrics
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/metrics.md
+  sections:
+  - overview
+  - logic
+  - test-plan
+- spec_id: scheduler-delay
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/scheduler-delay.md
+  sections:
+  - overview
+  - logic
+  - test-plan
+- spec_id: scheduler-memory-backend
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/scheduler-memory-backend.md
+  sections:
+  - overview
+  - async-api
+  - test-plan
+- spec_id: scheduler-cloud-backend
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/scheduler-cloud-backend.md
+  sections:
+  - overview
+  - async-api
+  - test-plan
+- spec_id: result-backend
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/result-backend.md
+  sections:
+  - overview
+  - async-api
+  - test-plan
+- spec_id: worker
+  action: create
+  main_spec_ref: crates/cclab-queue/logic/worker.md
+  sections:
+  - overview
+  - state-machine
+  - async-api
+  - test-plan

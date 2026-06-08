@@ -1,0 +1,13 @@
+{
+  "group_id": "jet-test-gaps",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "Three largest test coverage gaps in jet: CSS output not validated, dev server module graph barely tested, code splitting multi-entry untested.",
+    "success_criteria": "New Rust #[test] functions covering CSS output validation, module graph invalidation/HMR boundaries, and multi-entry code splitting.",
+    "boundary": {
+      "in_scope": "Unit tests in css/, dev_server/, bundler/ modules",
+      "out_of_scope": "No production code changes, no E2E tests, no new features",
+      "constraints": "Tests only — all existing tests must continue passing"
+    }
+  }
+}

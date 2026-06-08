@@ -1,0 +1,74 @@
+{
+  "specs": [
+    {
+      "spec_id": "crates/cclab-sdd/logic/change-merge.md",
+      "spec_group": "merge-logic",
+      "relevance": "high",
+      "key_requirements": [
+        "3-way merge using git merge-file: ours=current main spec, base=.base.md snapshot, theirs=cleaned change spec",
+        "Conflict handling: abort entire merge if any spec has conflicts; report conflicted specs to user for manual resolution",
+        "Fallback to current overwrite behavior when no .base.md present (action:create or legacy changes)",
+        "find_specs_to_merge() must skip .base.md files \u2014 they are merge artifacts, not spec content",
+        "Audit log must distinguish 3way-merge, create, overwrite actions"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/change-spec.md",
+      "spec_group": "spec-preparation",
+      "relevance": "high",
+      "key_requirements": [
+        "prepare_modify_spec() in spec_plan.rs must save {spec_id}.base.md snapshot alongside the working spec in groups/{group}/specs/",
+        "Snapshot is a copy of cclab/specs/{main_spec_ref} taken at spec preparation time (action:modify only)",
+        "action:create specs do not need a base snapshot"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/state-machine.md",
+      "spec_group": "state-machine",
+      "relevance": "medium",
+      "key_requirements": [
+        "ChangeMergeCreated \u2192 ChangeArchived: the terminal merge phase where 3-way merge executes"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/change-spec-logic.md",
+      "spec_group": "spec-preparation",
+      "relevance": "medium",
+      "key_requirements": [
+        "find_specs_to_merge() already iterates groups/*/specs/ \u2014 .base.md files must be excluded from that iteration"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/skills/merge.md",
+      "spec_group": "skills",
+      "relevance": "low",
+      "key_requirements": [
+        "Merge skill invocation context \u2014 user triggers cclab sdd workflow create-change-merge"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "merge-3way",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/change-merge.md",
+      "source": "crates/cclab-sdd/logic/change-merge.md",
+      "sections": [
+        "overview",
+        "logic",
+        "changes"
+      ]
+    },
+    {
+      "spec_id": "spec-prep-base-snapshot",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/change-spec.md",
+      "source": "crates/cclab-sdd/logic/change-spec.md",
+      "sections": [
+        "overview",
+        "changes"
+      ]
+    }
+  ],
+  "group_id": "merge-3way"
+}

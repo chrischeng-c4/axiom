@@ -1,0 +1,33 @@
+{
+  "group_id": "future-stdlib-module",
+  "specs": [
+    {
+      "path": "crates/cclab-mamba/stdlib/native-implementations.md",
+      "relevance": "high",
+      "reason": "Defines the register() + register_module() pattern and symbol registration flow used by all stdlib modules"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/idlelib.md",
+      "relevance": "high",
+      "reason": "Closest analog — simple stub stdlib module spec with same structure (register, attrs, mod.rs wiring)"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/module.md",
+      "relevance": "medium",
+      "reason": "Module system: how register_module works, MODULES cache, import resolution"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/value-and-rc.md",
+      "relevance": "medium",
+      "reason": "MbValue and MbObject types used to represent module attributes"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "future-stdlib",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/stdlib/future.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

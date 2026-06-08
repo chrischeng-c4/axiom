@@ -1,0 +1,10 @@
+{
+  "group_id": "jet-install",
+  "answers": [
+    {"question_id": "Q1", "answer": "Keep 5min default. Add --no-cache flag (already implemented). No user-configurable TTL for now — keep it simple."},
+    {"question_id": "Q2", "answer": "ALPN negotiation (already using http2_adaptive_window on reqwest). Silent fallback to HTTP/1.1. No http2_prior_knowledge."},
+    {"question_id": "Q3", "answer": "Only nx.rs get_project_graph() calls nx CLI. Replace with direct project.json scanning: read nx.json for project patterns, glob for project.json files, parse root/targets. Handle plain npm workspaces (no project.json) via existing workspace.rs."}
+  ],
+  "follow_up_questions": [],
+  "clarification_complete": true
+}

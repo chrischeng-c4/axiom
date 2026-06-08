@@ -1,0 +1,5 @@
+# Known test failures for Mamba CPython 3.12 compatibility.
+# Tests listed here are expected to fail (xfail) and will not block CI.
+# Each entry should have a 'reason' explaining why it fails.
+# Format: [failures.TEST_NAME] where TEST_NAME matches the fixture path
+#         relative to tests/cpython/fixtures/core/grammar/ without .py extension.

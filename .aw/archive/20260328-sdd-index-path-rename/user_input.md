@@ -1,0 +1,1 @@
+Rename .cclab/lens/ to cclab/.index/ — update storage.rs path constants, daemon.rs references, .gitignore, and delete old .cclab/lens/ directory. Also add code intelligence CLI hints to implementation prompt in create_change_impl.rs.

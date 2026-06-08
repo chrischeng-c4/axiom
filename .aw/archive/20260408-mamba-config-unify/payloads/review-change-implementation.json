@@ -1,0 +1,48 @@
+{
+  "change_id": "mamba-config-unify",
+  "group_id": "unify-mamba-config",
+  "spec_id": "mamba-config-unify-spec",
+  "verdict": "APPROVED",
+  "checklist": {
+    "hard": [
+      {
+        "item": "Code matches all spec requirements",
+        "pass": true,
+        "note": "schema.rs has unified MambaConfig with discover(), entry_point(), is_symbol_exposed(), has_crate_expose(). ProjectConfig has entry_point field with Default derive. driver/config.rs duplicate struct removed. CLI updated to use entry_point() method."
+      },
+      {
+        "item": "Test Plan section check",
+        "pass": true,
+        "note": "Spec has no Test Plan section content (only TODO placeholder), so the hard reject rule does not apply."
+      },
+      {
+        "item": "Existing tests still pass",
+        "pass": true,
+        "note": "41 config tests and 58 driver tests all pass. cargo check passes for both cclab-mamba and cclab-cli with zero errors. The SIGABRT at ~2300 tests is the known JIT crash (#1187), unrelated to this change."
+      }
+    ],
+    "soft": [
+      {
+        "item": "Code quality and readability",
+        "pass": true,
+        "note": "Clean consolidation with proper doc comments on all new methods."
+      },
+      {
+        "item": "Error handling completeness",
+        "pass": true,
+        "note": "discover() returns Option, entry_point() returns Option<&str>, both handle missing data gracefully."
+      },
+      {
+        "item": "Performance considerations",
+        "pass": true,
+        "note": "No performance-sensitive changes; all operations are simple lookups."
+      },
+      {
+        "item": "Documentation where needed",
+        "pass": true,
+        "note": "All public methods have rustdoc comments with issue references."
+      }
+    ]
+  },
+  "summary": "Implementation correctly unifies the dual MambaConfig structs. All config and driver tests pass. No regressions."
+}

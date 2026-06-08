@@ -1,0 +1,45 @@
+{
+  "change_id": "mamba-all-support",
+  "group_id": "all-support",
+  "specs": [
+    {
+      "spec_id": "module",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R3", "R4", "R5"]
+    },
+    {
+      "spec_id": "symbols",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R3"]
+    },
+    {
+      "spec_id": "hir-to-mir",
+      "spec_group": "crates/cclab-mamba/lower",
+      "relevance": "high",
+      "key_requirements": ["R4"]
+    },
+    {
+      "spec_id": "statements",
+      "spec_group": "crates/cclab-mamba/parser",
+      "relevance": "medium",
+      "key_requirements": ["R1"]
+    },
+    {
+      "spec_id": "name-resolution",
+      "spec_group": "crates/cclab-mamba/resolve",
+      "relevance": "medium",
+      "key_requirements": ["R5"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "mamba-all-support-spec",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/module.md",
+      "source": "crates/cclab-mamba/runtime/module.md",
+      "sections": ["overview", "changes", "logic", "test-plan"]
+    }
+  ]
+}

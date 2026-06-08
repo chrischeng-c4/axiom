@@ -1,0 +1,6 @@
+{
+  "change_id": "merge-lens-into-sdd",
+  "group_id": "merge-lens-into-sdd",
+  "skipped": true,
+  "reason": "No blocking contradictions. MCP tool removal is expected per Q2 (CLI-only). Flat mirror layout compatible with existing structure. Immediate crate removal safe — no external reverse dependencies. SpecIR already at top-level in cclab-sdd. Import updates needed in 14 locations across cclab-cli and cclab-server. 6 new tree-sitter/LSP dependencies to add to cclab-sdd Cargo.toml."
+}

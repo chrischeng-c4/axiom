@@ -1,0 +1,9 @@
+{
+  "spec_id": "cranelift",
+  "group_id": "runtime-basics",
+  "section": "overview",
+  "fill_sections": ["overview", "changes"],
+  "main_spec_ref": "crates/cclab-mamba/codegen/cranelift",
+  "merge_strategy": "append",
+  "content": "The Cranelift AOT backend (`CraneliftBackend` in `codegen/cranelift/mod.rs`) has the same return-value propagation bug as the JIT backend when emitting calls to user-defined functions. `emit_internal_call` retrieves the call result via `builder.inst_results(call)[0]` and stores it directly into the destination VReg using the call-site TypeId — without checking whether the callee's actual return type matches the call-site's expected type.\n\nWhen a callee is compiled with a primitive return type (`Ty::Int` → raw i64, `Ty::Float` → f64) but the call-site TypeId resolves to a non-primitive (`Ty::Dynamic` or `Ty::Any`), the raw value is stored without NaN-boxing. Subsequent dynamic-dispatch operations — such as `BinOp` emission through `mb_dispatch_binop` — receive raw i64/f64 integers instead of tagged MbValues and produce incorrect results (e.g., `fib(30) == 0` instead of 832040).\n\nThis mirrors the root cause fixed in `CraneliftJitBackend` (see cranelift-jit spec). The AOT backend requires the same fix: track each callee's declared return TypeId and, in `emit_internal_call`, conditionally emit a `mb_box_int` / `mb_box_bool` / `mb_box_float` CallExtern to NaN-box the result before writing it to the destination VReg when the callee return type is primitive but the call-site expects a non-primitive value.\n\n`mb_box_int`, `mb_box_bool`, and `mb_box_float` are already declared in the runtime (`crates/cclab-mamba/src/runtime/builtins.rs`) and exposed as `MirExtern` entries via `runtime_externs()`. No new runtime functions are required — the AOT backend links these symbols at object-link time."
+}

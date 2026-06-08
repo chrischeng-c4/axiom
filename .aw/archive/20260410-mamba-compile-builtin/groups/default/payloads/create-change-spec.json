@@ -1,0 +1,7 @@
+{
+  "change_id": "mamba-compile-builtin",
+  "group_id": "default",
+  "spec_id": "mamba-compile-builtin-value-rc",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\nchanges:\n  - path: crates/cclab-mamba/src/runtime/rc.rs\n    action: MODIFY\n    targets:\n      - type: enum\n        name: ObjKind\n        change: add CodeObject = 13 variant\n      - type: enum\n        name: ObjData\n        change: add CodeObject { source: String, filename: String, mode: String, ast: Box<crate::parser::ast::Module> } variant\n      - type: impl\n        name: MbObject\n        change: add new_code_object(source, filename, mode, ast) constructor allocating a non-GC-tracked CodeObject heap object with rc=1\n    do_not_touch: [new_str, new_str_immortal, new_list, new_dict, new_dict_with_capacity, new_tuple, new_set, new_bytes, new_bytes_immortal, new_bytearray, new_frozenset, new_bigint, new_complex, new_instance, new_instance_with_capacity]"
+}

@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "id": "scope-hoisting",
+      "issues": [1120],
+      "requirements": "Implement scope hoisting (module concatenation) in jet AOT build to reduce bundle size from ~206.8 KB to ≤195 KB (within 2% of Vite's ~192 KB).\n\n1. Inline modules with single importer into their parent (no separate wrapper function)\n2. Use `sideEffects: false` from package.json to identify inlining candidates\n3. Exclude circular dependency groups from concatenation\n4. Exclude dynamic import() targets (already separate chunks)\n5. Exclude modules with side effects\n6. Enable cross-module dead code elimination after inlining\n7. Existing draft spec at cclab/specs/crates/cclab-jet/scope-hoisting.md and scaffold at bundler/scope_hoist.rs\n8. All existing tests must still pass — no behavior change",
+      "questions": []
+    }
+  ]
+}

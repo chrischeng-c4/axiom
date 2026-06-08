@@ -1,0 +1,64 @@
+{
+  "group_id": "module-system",
+  "verdict": "FAIL",
+  "summary": "Two critical problems: (1) Q2 answer (.mambai interface files, incremental compilation — persist type signatures to disk, only recompile changed modules) has zero spec coverage; no referenced spec mentions interface file persistence, timestamp-based invalidation, or the incremental pipeline. (2) pattern-matching and README appear again as irrelevant noise (same problem as bigint-fallback and builtins-conformance). Additional issues: name-resolution file is the global/nonlocal change spec (id: mamba-global-nonlocal-spec), making its cited R1 ('Global Statement Processing') inaccurate for module-system; compiler-driver R2 (Backend selection) is unrelated to module loading; and Q1's finder/loader protocol requirement has no spec entry.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Q2 requires .mambai interface files: persist compiled type signatures to disk and only recompile changed modules. No spec in the reference context covers this: module.md has no incremental compilation requirement, compiler-driver.md has no interface file or timestamp-check requirement, config-schema.md R4 covers search paths only. Additionally, Q1 requires finder/loader protocol and importlib hooks — module.md R1 covers sys.path directory scanning but makes no mention of MetaPathFinders, PathHooks, or the importlib.abc protocol that CPython's full import algorithm mandates."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "pattern-matching (cclab-mamba) is rated LOW but is entirely unrelated to the module import system — it covers PEP 634 match/case statement compilation (parser, HIR patterns, decision trees, Cranelift dispatch). README (cclab-mamba) is rated MEDIUM but is only a spec index; it maps spec names to file paths with no requirements and provides no implementation guidance. statements is rated HIGH but the spec is about parsing syntax — module semantics live elsewhere; MEDIUM is more accurate."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "name-resolution cites R1, but the file at cclab-mamba/resolve/name-resolution.md is the mamba-global-nonlocal-spec change spec (frontmatter: id: mamba-global-nonlocal-spec). R1 in that file is 'Global Statement Processing' (how global x works in function bodies) — not about how import foo binds names in the current scope. compiler-driver cites R2 (Backend selection — Cranelift JIT/AOT/LLVM choice) which has no connection to module loading, import resolution, or incremental compilation; only R1 (pipeline orchestration) is relevant."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "pattern-matching (cclab-mamba) covers PEP 634 structural pattern matching: literal/capture/wildcard/sequence/mapping/class/OR/AS patterns, type narrowing, HIR pattern nodes, decision trees, Cranelift IR for pattern dispatch. None of this intersects with module import resolution, .mambai file persistence, or namespace packages. README (cclab-mamba) is a pure index file with no requirements — including it provides no actionable guidance for implementing the module system."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "Q2 (.mambai incremental compilation) is completely uncovered. The pre-clarification answer explicitly requires: persist compiled type signatures to .mambai interface files on disk, and only recompile changed modules (check timestamps or hashes). No spec in the reference context defines requirements for: (a) the .mambai file format and what type information it contains, (b) when to invalidate and recompile vs. load cached signatures, (c) how compiler-driver or module loading integrates this check. types/type-representations.md and types/type-checker.md are the likeliest specs to extend (they define the type data that gets serialized), yet both are absent.",
+      "recommendation": "Add types/type-representations.md (cclab-mamba/types) and types/type-checker.md (cclab-mamba/types) to the reference context, then add new requirements to one of them (or to module.md) covering the .mambai file format, serialization of type signatures, and the incremental recompile decision. Until specs exist for this, the entire Q2 scope is untracked."
+    },
+    {
+      "severity": "HIGH",
+      "description": "pattern-matching (cclab-mamba) rated LOW relevance but is entirely irrelevant. The spec covers PEP 634 structural pattern matching across all compiler layers (parser pattern AST nodes, HirPattern enum variants, HIR-to-MIR decision tree generation, type narrowing in case branches, Cranelift IR for isinstance/length/key checks). None of this intersects with module import resolution, sys.path searching, .mambai files, or namespace packages. This is the third group in which pattern-matching appears as irrelevant noise (also bigint-fallback and builtins-conformance).",
+      "recommendation": "Remove pattern-matching from the reference context entirely."
+    },
+    {
+      "severity": "HIGH",
+      "description": "README (cclab-mamba) rated MEDIUM relevance but is a spec index, not a spec. It maps spec names to source file paths and one-line descriptions. It defines no requirements, no algorithms, no data models. A developer implementing the module system gains nothing from it. This is the same issue identified in the bigint-fallback review.",
+      "recommendation": "Remove README from the reference context entirely."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Q1 requires the full CPython import algorithm including finder/loader protocol and importlib hooks. module.md R1 covers only directory scanning (current dir + sys.path entries + dotted-name → directory structure). It does not mention MetaPathFinder, PathEntryFinder, sys.meta_path, sys.path_hooks, or the importlib.abc loader protocol that CPython dispatches through. Namespace packages (PEP 420 — directories without __init__ files) are also absent. These are non-trivial parts of the full CPython algorithm that have no spec coverage in the reference context.",
+      "recommendation": "Extend module.md with new requirements covering (a) finder/loader protocol (meta path finders, path hooks), (b) namespace package support (directory without __init__.mb). Then ensure the updated requirements appear in the reference context."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "name-resolution (cclab-mamba/resolve) cites R1, but the file at that path is the mamba-global-nonlocal-spec change spec (frontmatter id: mamba-global-nonlocal-spec, main_spec_ref: 'cclab-mamba/resolve/name-resolution.md'). R1 in this file is 'Global Statement Processing' — how global x declarations in function bodies redirect reads/writes to the module namespace. This is tangentially related (global variables are module-level) but it is not about how import foo or from foo import bar binds names in the current scope, which is what module-system actually needs from name resolution.",
+      "recommendation": "Verify whether a base name-resolution spec covering scope chains and import name binding still exists or has been superseded. If the current file content (global/nonlocal) is the only content at this path, either remove the entry or replace R1 with a note that import-binding scope logic is currently unspecced."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "compiler-driver cites R2 (Backend selection: Cranelift JIT vs Cranelift AOT vs LLVM AOT). Backend selection is about which codegen backend to invoke; it has no bearing on module discovery, loading, caching, or .mambai incremental compilation. Only R1 (Full pipeline orchestration) is relevant because the incremental compilation path (Q2) will hook into the pipeline to load cached .mambai signatures instead of re-running all phases.",
+      "recommendation": "Remove R2 from compiler-driver key requirements. Retain R1 only. Relevance should be downgraded from HIGH to MEDIUM since the driver is affected by Q2 but does not primarily implement the module system."
+    },
+    {
+      "severity": "LOW",
+      "description": "statements (cclab-mamba/parser) relevance is rated HIGH. The spec covers import statement syntax parsing (R1: import a.b.c, from a import b as c, relative imports). This is a necessary prerequisite but the spec is purely about recognizing and constructing AST nodes — not about module resolution, loading, or caching. The actual module system logic begins after parsing.",
+      "recommendation": "Downgrade statements relevance from HIGH to MEDIUM. The spec is relevant as context (parser output feeds the module system) but does not directly implement any module-system requirement."
+    }
+  ]
+}

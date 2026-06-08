@@ -1,0 +1,58 @@
+change_id: sdd-p1
+schema_version: '2.0'
+created_at: 2026-02-23T14:28:36.266183Z
+updated_at: 2026-02-23T15:33:51.402565Z
+phase: archived
+iteration: 1
+last_action: merge_review_approved
+session_id: null
+checksums: {}
+validations: []
+revision_counts:
+  implementation: 1
+current_task_id: '5.1'
+telemetry:
+  calls:
+  - step: create_proposal
+    sdd_version: 0.3.11
+    model: gemini-3-pro-preview
+    tokens_in: 423446
+    tokens_out: 1548
+    cost_usd: null
+    duration_ms: 116267
+    timestamp: 2026-02-23T14:28:44.055600Z
+  - step: review_implementation
+    sdd_version: 0.3.11
+    model: gpt-5.3-codex
+    tokens_in: 7964946
+    tokens_out: 15211
+    cost_usd: null
+    duration_ms: 541087
+    timestamp: 2026-02-23T15:09:16.819193Z
+  - step: review_implementation
+    sdd_version: 0.3.11
+    model: gpt-5.3-codex
+    tokens_in: 3265467
+    tokens_out: 11256
+    cost_usd: null
+    duration_ms: 244623
+    timestamp: 2026-02-23T15:17:13.268372Z
+  - step: begin_merge
+    sdd_version: 0.3.11
+    model: gemini-3-flash-preview
+    tokens_in: 1937996
+    tokens_out: 3491
+    cost_usd: null
+    duration_ms: 637173
+    timestamp: 2026-02-23T15:29:21.753334Z
+  - step: review_merge
+    sdd_version: 0.3.11
+    model: gpt-5.3-codex
+    tokens_in: 925072
+    tokens_out: 10738
+    cost_usd: null
+    duration_ms: 249885
+    timestamp: 2026-02-23T15:33:42.279726Z
+  total_cost_usd: 0.0
+  total_tokens_in: 14516927
+  total_tokens_out: 42244

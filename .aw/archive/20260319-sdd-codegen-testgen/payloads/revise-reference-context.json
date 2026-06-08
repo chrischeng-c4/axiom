@@ -1,0 +1,66 @@
+{
+  "group_id": "testgen-requirementplus",
+  "specs": [
+    {
+      "spec": "cclab-sdd/generate/code-generator-contract.md",
+      "group": "requirement-test-mapping",
+      "relevance": "high",
+      "key_requirements": "Requirement Plus → Test: Detailed Mapping section. N Requirements → N Test Classes, N Scenarios → N Test Functions via -verifies-> relationship, M Modules → import statements via -satisfies-> relationship, derives → test execution ordering, risk: High → critical test / CI fast path, verifymethod: Test → automated test function vs Inspection → TODO comment."
+    },
+    {
+      "spec": "cclab-sdd/generate/requirement-plus-enhancement.md",
+      "group": "requirement-plus-schema",
+      "relevance": "high",
+      "key_requirements": "R2: Risk levels (Low/Medium/High) and verification methods (Analysis/Inspection/Test/Demonstration). R2: verifymethod: Test triggers scaffold generation vs other methods. R3: Relationship types Satisfies/Verifies/Refines/Traces. R3: Verifies relationship is CI coverage gate target (Q3: check every Requirement has at least one Verifies). R3: Satisfies relationship maps to module under test import. R4: Schema validation for all new types."
+    },
+    {
+      "spec": "cclab-sdd/generate/spec-model.md",
+      "group": "test-output-structure",
+      "relevance": "high",
+      "key_requirements": "Requirement Plus layer mapped to test files and test functions. Full YAML test output example with given/when/then structure. System archetypes showing Requirement+ → test files, test functions mappings. Test generation integration patterns."
+    },
+    {
+      "spec": "cclab-sdd/interfaces/cli/commands.md",
+      "group": "cli-registration",
+      "relevance": "high",
+      "key_requirements": "Q1 subcommand: 'cclab sdd gen test <spec-path>'. CLI command registration via cclab-sdd-cli crate and CliModule trait. Command tree structure and CLI → logic mapping. Standalone CLI invocation and internal use during implement phase."
+    },
+    {
+      "spec": "cclab-sdd/generate/codegen-system.md",
+      "group": "codegen-architecture",
+      "relevance": "medium",
+      "key_requirements": "R5: Test generation component in code generation system. TestGenerator component in data flow. Unified internal representation for all spec types including RequirementPlus. Spec validation before generation. Template-based generation engine. Pluggable generators architecture."
+    },
+    {
+      "spec": "cclab-sdd/generate/mermaid-plus-format.md",
+      "group": "requirement-plus-input",
+      "relevance": "medium",
+      "key_requirements": "RequirementPlus input format specification. YAML frontmatter schema inside Mermaid code block (Mermaid official format). Frontmatter includes risk levels, verification methods, relationship types. Parsing rules for requirements/elements fields. Structured YAML frontmatter + Mermaid diagram combination."
+    },
+    {
+      "spec": "cclab-sdd/generate/test-generation.md",
+      "group": "test-integration",
+      "relevance": "medium",
+      "key_requirements": "Test generation integration with cclab-probe framework. Sequence diagram for test generation flow. RequirementPlus to test scaffold generation pipeline. Q4 deferred: cclab-probe fixture integration and advanced fixture DI patterns. Background context for Q4 follow-up work on probe integration."
+    },
+    {
+      "spec": "cclab-sdd/generate/architecture.md",
+      "group": "generate-pipeline",
+      "relevance": "medium",
+      "key_requirements": "Generate diagram generator architecture and generation pipeline overview. Input types: Semantic input, code analysis, spec definition. Generate engine: Parser, AST transformer, output generator. Output formats: Mermaid, OpenAPI 3.1, AsyncAPI 2.6, OpenRPC 1.3, Serverless Workflow. RequirementPlus as supported input type."
+    },
+    {
+      "spec": "cclab-sdd/sdd-cli.md",
+      "group": "sdd-workflow",
+      "relevance": "low",
+      "key_requirements": "Q1: CLI can be called internally during implement phase. SDD CLI subcommands and state machine interoperability. CLI tool registration via CliModule trait. Background on how SDD phases and CLI routing work for test generation invocation."
+    },
+    {
+      "spec": "cclab-probe/README.md",
+      "group": "test-framework",
+      "relevance": "low",
+      "key_requirements": "cclab-probe test framework overview. Rust CLI with pyo3 bindings for Python test execution. Q4 deferred: full probe integration with fixture DI and advanced testing patterns. Background context for deferred cclab-probe integration work. Test discovery and execution architecture for generated test suites."
+    }
+  ],
+  "spec_plan": []
+}

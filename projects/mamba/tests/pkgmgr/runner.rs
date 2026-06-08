@@ -1,0 +1,47 @@
+//! Consolidated umbrella binary for the 11 `mamba` package-manager CLI
+//! verbs (C4 of the four-capability MVP: uv-like package manager).
+//!
+//! Each former top-level `tests/cli_<verb>.rs` is registered below via
+//! `#[path]` and lives as `tests/pkgmgr/<verb>.rs`. cargo only treats
+//! `tests/*.rs` as integration binaries, so the verb files are no
+//! longer separate binaries — this umbrella is the sole binary that
+//! links them all.
+//!
+//! Each verb file spawns the in-repo `mamba` CLI via
+//! `env!("CARGO_BIN_EXE_mamba")` and pins the acceptance contract from
+//! the matching `tests/governance/gates/pkgmgr/<verb>/manifest.toml`.
+//!
+//! Selector: `cargo test -p mamba --test pkgmgr`.
+
+#[path = "add.rs"]
+mod add;
+
+#[path = "cache.rs"]
+mod cache;
+
+#[path = "hash.rs"]
+mod hash;
+
+#[path = "init.rs"]
+mod init;
+
+#[path = "install.rs"]
+mod install;
+
+#[path = "lock.rs"]
+mod lock;
+
+#[path = "remove.rs"]
+mod remove;
+
+#[path = "run_preflight.rs"]
+mod run_preflight;
+
+#[path = "run_stdin.rs"]
+mod run_stdin;
+
+#[path = "sync.rs"]
+mod sync;
+
+#[path = "validate.rs"]
+mod validate;

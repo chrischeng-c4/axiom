@@ -1,0 +1,15 @@
+{
+  "spec_id": "sdd-merge-gaps-fix-spec",
+  "verdict": "APPROVED",
+  "summary": "All 3 bugs fixed and tested. R1 (git_commit_sha): capture_head_sha() captures merge commit SHA from project_root after step 3. R2 (auto-PR): create_pr() runs before local merge when auto_pr=true+worktree, skipped in legacy flow. R3 (issue close): close_issue_if_exists matches by slug then frontmatter id, with guard for single-threaded runtimes. All 1394 tests pass including 6 new test functions.",
+  "hard_checklist": [
+    {"item": "Code matches all spec requirements", "pass": true},
+    {"item": "Implementation diff contains test functions", "pass": true},
+    {"item": "Existing tests still pass", "pass": true}
+  ],
+  "soft_checklist": [
+    {"item": "Code quality and readability", "pass": true, "note": "Well-structured with clear comments explaining each strategy"},
+    {"item": "Error handling completeness", "pass": true, "note": "block_in_place guard prevents panic on single-threaded runtimes"},
+    {"item": "Documentation", "pass": true, "note": "doc comments explain matching strategies"}
+  ]
+}

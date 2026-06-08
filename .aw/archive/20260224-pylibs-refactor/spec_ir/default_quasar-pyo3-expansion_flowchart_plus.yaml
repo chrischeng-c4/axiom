@@ -1,0 +1,43 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: quasar-pyo3-expansion
+  change_id: pylibs-refactor
+  source_file: pylibs-refactor/specs/quasar-pyo3-expansion.md
+  spec_id: quasar-pyo3-expansion
+spec:
+  title: Quasar Expansion Architecture
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: python_app
+      label: uses
+      to: py_api_app
+    - from: py_api_app
+      label: registers
+      to: middleware_chain
+    - from: py_api_app
+      label: registers
+      to: websocket_routes
+    - from: py_api_app
+      label: includes
+      to: sub_routers
+    - from: websocket_routes
+      label: manages
+      to: py_websocket
+    id: quasar_expansion_flow
+    nodes:
+    - id: python_app
+      label: Python Application
+    - id: py_api_app
+      label: ApiApp (PyO3)
+    - id: middleware_chain
+      label: Middleware Chain
+    - id: websocket_routes
+      label: WebSocket Routes
+    - id: sub_routers
+      label: Sub-Routers (Prefixes)
+    - id: py_websocket
+      label: PyWebSocket Wrapper
+    title: Quasar PyO3 Expansion Architecture

@@ -1,0 +1,50 @@
+- spec_id: sdd-codegen-graph-envelope
+  action: create
+  main_spec_ref: crates/sdd/logic/codegen-graph-envelope.md
+  sections:
+  - overview
+  - schema
+  - changes
+- spec_id: sdd-codegen-type-system
+  action: create
+  main_spec_ref: crates/sdd/logic/codegen-types.md
+  sections:
+  - overview
+  - schema
+  - changes
+- spec_id: sdd-codegen-marker-system
+  action: create
+  main_spec_ref: crates/sdd/logic/codegen-markers.md
+  sections:
+  - overview
+  - requirements
+  - changes
+- spec_id: sdd-codegen-structural-generators
+  action: create
+  main_spec_ref: crates/sdd/logic/codegen-structural.md
+  sections:
+  - overview
+  - requirements
+  - changes
+- spec_id: sdd-codegen-behavioral-generators
+  action: create
+  main_spec_ref: crates/sdd/logic/codegen-behavioral.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+- spec_id: sdd-codegen-documentation-generators
+  action: create
+  main_spec_ref: crates/sdd/logic/codegen-documentation.md
+  sections:
+  - overview
+  - requirements
+  - changes
+- spec_id: sdd-codegen-validation-harness
+  action: create
+  main_spec_ref: crates/sdd/logic/codegen-validation.md
+  sections:
+  - overview
+  - cli
+  - changes

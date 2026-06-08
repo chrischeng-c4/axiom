@@ -1,0 +1,74 @@
+{
+  "group_id": "mamba-conformance-xfails",
+  "specs": [
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/README.md",
+      "relevance": "low",
+      "reason": "Provides general background context and mapping of the directory structure to specs."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/all-mamba-p0.md",
+      "relevance": "medium",
+      "reason": "Provides context on Builtins Conformance (Python 3.12) which relates to the stdlib testing and xfail resolution goals."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/conductor-mamba-p0-remaining-spec.md",
+      "relevance": "medium",
+      "reason": "Mentions past xfail cleanup procedures (e.g. match/case XFAIL cleanup), which provides context on how xfails are managed."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/conductor-mamba-p0-spec.md",
+      "relevance": "low",
+      "reason": "Background context on native bindings and configuration; not directly tied to the conformance xfails."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/mamba-all-p1-spec.md",
+      "relevance": "low",
+      "reason": "Placeholder/empty spec."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/mamba-crate-wiring-and-schema-binding.md",
+      "relevance": "low",
+      "reason": "Related to crate wiring and schema binding; not relevant to the specific parser/codegen/resolution bugs in the xfails."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/mamba-p1-lang-features-spec.md",
+      "relevance": "low",
+      "reason": "Describes new features like string escapes, slicing, and global/nonlocal, but the specific bugs (f-strings, walrus, codegen IR) are better covered by the component-specific specs."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/pattern-matching.md",
+      "relevance": "low",
+      "reason": "Focused entirely on pattern matching; not one of the targeted conformance fixes."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/codegen/cranelift.md",
+      "relevance": "high",
+      "reason": "Directly relevant to Q2 (Codegen IR root cause). Covers Cranelift backend, function signature generation, and CallExtern which relate to the calling-convention mismatches."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/lower/hir-to-mir.md",
+      "relevance": "high",
+      "reason": "Directly relevant to Q3 (Stdlib non-iterable returns). Covers HIR to MIR lowering where module function calls and CallExtern are handled."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/parser/expressions.md",
+      "relevance": "high",
+      "reason": "Directly relevant to Q4 (Parser nested f-string approach). Covers expression parsing and f-string interpolation."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/lexer/tokens-and-indent.md",
+      "relevance": "high",
+      "reason": "Directly relevant to Q4. Covers the lexer-level changes needed for nested f-strings."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/resolve/name-resolution.md",
+      "relevance": "high",
+      "reason": "Directly relevant to Q5 (Walrus scope fix layer). Covers the symbol-table construction pass (resolve/pass.rs) where the walrus operator scope issue needs fixing."
+    }
+  ],
+  "sections": [
+    "overview",
+    "changes"
+  ]
+}

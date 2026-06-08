@@ -1,0 +1,7 @@
+{
+  "group_id": "rename-agents-and-add-hook",
+  "spec_id": "score-agent-rename-hook-dispatch",
+  "verdict": "APPROVED",
+  "issues": [],
+  "summary": "All 8 requirements met. R1: 5 score-*.md agent files created with correct names, tools, models. R2: sdd-*.sh replaced with deprecated delegates, score-*.sh created. R3: Agent files reference score-*.sh hook paths. R4: workflow/mod.rs default_agent strings updated to score-*. R5: dispatch-model.md updated with score-* names in R1 table, overview, and scenarios. R6: CLAUDE.md updated. R7: settings.json SubagentStop hook added for score-* pattern. R8: score-next-step.sh created, runs score run-change, emits additionalContext, exits 0 always. Tests updated in execution_modes_test.rs to reference score-* files. No test plan section in spec, so hard reject rule does not apply."
+}

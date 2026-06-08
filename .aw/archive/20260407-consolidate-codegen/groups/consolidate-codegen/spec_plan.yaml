@@ -1,0 +1,7 @@
+- spec_id: consolidate-codegen-spec
+  action: create
+  main_spec_ref: crates/sdd/logic/codegen-consolidation.md
+  sections:
+  - overview
+  - requirements
+  - changes

@@ -1,0 +1,5 @@
+{
+  "group_id": "jet-install-optimizations",
+  "skipped": true,
+  "reason": "No contradictions — install optimizations (#881 #883 #905) align with existing pkg-manager specs. Cache migration to XDG is additive."
+}

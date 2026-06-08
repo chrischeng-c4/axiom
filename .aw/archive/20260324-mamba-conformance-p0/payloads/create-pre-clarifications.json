@@ -1,0 +1,9 @@
+{
+  "group_id": "mamba-p0-fixes",
+  "answers": [
+    {
+      "topic": "fix-approach",
+      "answer": "All 6 fixes target the Cranelift JIT codegen and scope resolution. Lambda/with/decorator SIGBUS are all calling convention issues in codegen/cranelift/mod.rs. Stdlib None returns is a module Dict dispatch issue in runtime/class.rs. Comprehension scope and walrus are in resolve/pass.rs. Each fix is independent — no ordering dependency."
+    }
+  ]
+}

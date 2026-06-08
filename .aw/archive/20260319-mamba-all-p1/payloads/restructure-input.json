@@ -1,0 +1,257 @@
+{
+  "groups": [
+    {
+      "id": "syntax-features",
+      "issues": [
+        830,
+        831,
+        832,
+        845,
+        846,
+        847,
+        848
+      ],
+      "requirements": "Implement 7 missing Python syntax features across the parser/lexer/type-checker/codegen pipeline:\n- #830 PEP 695 type parameter syntax: type bounds, ParamSpec, TypeVarTuple, generic class keywords, `type` alias statement\n- #831 Dict literal unpacking: `{**d1, **d2, key: val}` (PEP 448) \u2014 parser + type inference + codegen dict-merge\n- #832 Parenthesized with statements (PEP 617): `with (cm1 as a, cm2 as b,):` \u2014 parser-only change, rest of pipeline reuses existing with-handling\n- #845 Star expressions / extended unpacking (PEP 3132): `first, *rest = [...]`, `[*a, 3]` \u2014 parser + type inference + codegen iterator-split\n- #846 Global and nonlocal statements: `global x` / `nonlocal x` \u2014 parser + resolver scope-chain marking + codegen outer-scope load/store\n- #847 Decorator expressions: `@app.route(\"/api\")`, `@cache(maxsize=128)`, stacked decorators \u2014 parser (arbitrary expr) + type checker (replace type) + codegen (reverse-order application)\n- #848 String literal completeness: all prefix combos (r, b, rb, f, fr), `\\uXXXX`/`\\UXXXXXXXX`/`\\N{name}`, hex/octal escapes \u2014 lexer + parser + type checker (bytes vs str) + runtime bytes ops\nAcceptance: each feature passes its corresponding CPython conformance test cases; no regressions in existing parser tests.",
+      "questions": [
+        {
+          "topic": "PEP 695 scope",
+          "question": "Issue #830 says PEP 695 is 'partially implemented'. Which pieces (bounds, ParamSpec, TypeVarTuple, generic class keywords, type alias) are already working and which are missing? Should we address all of them in this change or only specific ones?"
+        },
+        {
+          "topic": "Dict unpacking type inference",
+          "question": "For `{**d1, **d2}` where d1 and d2 have different value types, what should the inferred dict type be \u2014 union of value types, or `Any`? Should type errors be raised if the types are incompatible?"
+        },
+        {
+          "topic": "Star expressions in function calls",
+          "question": "Issue #845 mentions `f(*args, **kwargs)` may already work. Should this change focus only on assignment unpacking (`first, *rest = ...`) and list/tuple spread (`[*a, 3]`), or also fix/test function-call spread if broken?"
+        },
+        {
+          "topic": "Global/nonlocal and closures",
+          "question": "Does the current codegen use a flat variable model or already has a closure/upvalue mechanism? This affects how nonlocal variables are stored \u2014 should we implement full upvalue cells or a simpler heap-allocated shared slot?"
+        },
+        {
+          "topic": "String bytes runtime",
+          "question": "For byte string support (#848), does Mamba's runtime already have a `bytes` type distinct from `str`, or does it need to be introduced? What operations on `bytes` are in scope for this change (e.g., slicing, decode, hex)?"
+        }
+      ]
+    },
+    {
+      "id": "exception-handling",
+      "issues": [
+        755,
+        834
+      ],
+      "requirements": "Implement complete Python exception handling semantics matching CPython 3.12:\n- #834 Exception chaining (PEP 3134): `raise X from Y` sets `__cause__`; raising during `except` sets `__context__`; `suppress_context` flag; chained traceback rendering (\"The above exception was the direct cause...\" / \"During handling of the above exception...\")\n- #755 Exception hierarchy conformance: all built-in BaseException subclasses present; `except` tuple matching and subclass catching; `__traceback__` attribute; `ExceptionGroup` and `except*` (PEP 654); `args` attribute; custom exception subclassing\nAcceptance: all CPython 3.12 exception conformance tests pass; chained exceptions display correctly in tracebacks.",
+      "questions": [
+        {
+          "topic": "ExceptionGroup / except* scope",
+          "question": "PEP 654 ExceptionGroup and `except*` are Python 3.11+ features. Should both be implemented in this change, or deferred? Is there existing parser support for `except*` syntax?"
+        },
+        {
+          "topic": "Exception object storage",
+          "question": "How are exception objects currently represented at runtime (e.g., a Rust struct, a heap object with dunder fields)? Does adding `__cause__`/`__context__`/`suppress_context` require schema changes to the runtime exception type?"
+        },
+        {
+          "topic": "Traceback rendering",
+          "question": "Is there a dedicated diagnostic/traceback rendering module? Should chained exception display be integrated with the existing diagnostic system or implemented as a separate formatter?"
+        }
+      ]
+    },
+    {
+      "id": "async-generators",
+      "issues": [
+        756,
+        850
+      ],
+      "requirements": "Implement complete generator/iterator and async-iteration semantics:\n- #850 Async features: `async for` (`__aiter__`/`__anext__` protocol), `async with` (`__aenter__`/`__aexit__` protocol), async generators (`yield` inside `async def`), async comprehensions; integrate with existing tokio_exec.rs runtime\n- #756 Generator & iterator conformance (CPython 3.12): `yield`/`yield from` semantics, `generator.send(value)`, `generator.throw(exc)`, `generator.close()` + GeneratorExit, `StopIteration.value`, async generators, iterator protocol (`__iter__`/`__next__`/StopIteration), itertools-compatible behavior\nAcceptance: CPython 3.12 generator conformance tests pass; async for/with/generators run correctly against the tokio runtime.",
+      "questions": [
+        {
+          "topic": "generator.send / throw / close status",
+          "question": "Issue #756 says basic yield works but send/throw/close need conformance testing. Are these methods already implemented but untested, or not yet implemented? What is the current state of generator state-machine lowering in codegen?"
+        },
+        {
+          "topic": "async generator integration",
+          "question": "Async generators (`yield` inside `async def`) require special handling in the async runtime. Does the current tokio_exec.rs runtime support suspending and resuming async generators, or does the async state machine need to be extended?"
+        },
+        {
+          "topic": "async for / async with codegen",
+          "question": "Are `__aiter__`/`__anext__` and `__aenter__`/`__aexit__` dunder dispatch already in place for regular protocols? What codegen changes are needed to lower `async for` and `async with` statements?"
+        }
+      ]
+    },
+    {
+      "id": "data-structures",
+      "issues": [
+        759,
+        835
+      ],
+      "requirements": "Implement complete data structure operations matching CPython 3.12:\n- #835 Slicing with step: `a[::2]`, `a[::-1]`, `a[1:4:2]` for list, tuple, and string \u2014 implement step logic in list_ops.rs, tuple_ops.rs, string_ops.rs; ensure 3-argument slice is lowered correctly in codegen; negative step (reverse iteration) is highest priority\n- #759 Data structure conformance: list (all methods, slicing, comprehension edge cases, comparisons), dict (all methods, PEP 584 merge `d1|d2`, comprehension, insertion-order, `__missing__`), set (all methods, set comprehension, frozenset), tuple (immutability, unpacking, hashing, comparison), str (47+ methods, f-string edge cases, format spec mini-language, Unicode normalization), bytes/bytearray (decode, hex, fromhex, slice, bytearray mutability)\nAcceptance: all CPython 3.12 data structure conformance test cases pass; step slicing matches CPython behavior including edge cases (step=0 raises ValueError, negative indices).",
+      "questions": [
+        {
+          "topic": "Step slicing implementation scope",
+          "question": "Issue #835 notes step slicing is marked TODO in list_ops.rs. Is the Slice AST node already parsed with 3 arguments (start, stop, step), or does codegen also need updating to pass the step value through?"
+        },
+        {
+          "topic": "Dict merge operator |",
+          "question": "PEP 584 `dict | dict` merge is Python 3.9+. Is the `|` operator dispatch for dict types already handled by the type checker/codegen, or does it need to be added alongside the other dict operations?"
+        },
+        {
+          "topic": "String method completeness",
+          "question": "Issue #759 lists 47+ str methods. Which are currently implemented vs. missing? Should this change implement all missing ones, or only those that cause conformance test failures?"
+        }
+      ]
+    },
+    {
+      "id": "class-features",
+      "issues": [
+        849
+      ],
+      "requirements": "Implement complete Python OOP class features:\n- Must-have: `@property` / `@x.setter` / `@x.deleter` (descriptor protocol), `@classmethod` / `@staticmethod`, `__slots__`, common dunder methods (`__repr__`, `__str__`, `__eq__`, `__hash__`), `super()` (both zero-arg and two-arg forms)\n- Should-have: `__init_subclass__`, `__class_getitem__` (generic syntax `MyClass[T]`), `__set_name__`, abstract base classes (`abc.ABC`, `@abstractmethod`)\nScope spans: runtime class.rs dunder dispatch, type checker decorator-effect recognition, codegen descriptor protocol call sequence.\nAcceptance: standard Python class patterns (dataclass-like, ABC, property-based APIs) work correctly; `super()` resolves method through MRO.",
+      "questions": [
+        {
+          "topic": "Descriptor protocol implementation",
+          "question": "Does Mamba's runtime already have a descriptor lookup mechanism (checking `__get__`/`__set__`/`__delete__` on the type before the instance dict), or does the attribute access path need to be restructured to support descriptors?"
+        },
+        {
+          "topic": "super() MRO",
+          "question": "Is C3 MRO already implemented for class inheritance? Zero-argument `super()` requires compiler-injected `__class__` cell \u2014 is closure-based cell injection already in place, or does this need to be added?"
+        },
+        {
+          "topic": "abc.ABC scope",
+          "question": "Should `abc.ABC` and `@abstractmethod` be implemented as a native stdlib module (crate:mamba stdlib), or as a pure-Mamba library? The former requires runtime enforcement of abstract method checks."
+        },
+        {
+          "topic": "__slots__ storage model",
+          "question": "Does Mamba's current object model use a dynamic dict for attributes? How should `__slots__` interact with the runtime object representation \u2014 fixed-offset fields, or a separate slot array?"
+        }
+      ]
+    },
+    {
+      "id": "stdlib-system",
+      "issues": [
+        652,
+        653,
+        654,
+        655,
+        656,
+        657,
+        666
+      ],
+      "requirements": "Implement 7 native stdlib modules that interface with the Mamba runtime and OS:\n- #652 atexit: `register()` / `unregister()` backed by Rust process exit hooks\n- #653 gc: `collect()`, `disable()`, `enable()`, `get_count()`, `get_threshold()` \u2014 integrate with Mamba allocator/GC\n- #654 types: `SimpleNamespace`, `FunctionType`, `MethodType`, `ModuleType`, `NoneType`, `GeneratorType`, etc.\n- #655 importlib: `import_module()`, `reload()`, `abc.Loader`, `resources` submodule\n- #656 codecs: `encode()`, `decode()`, `lookup()`, `register()`, UTF-8/ASCII/Latin-1 codecs\n- #657 errno: expose platform errno constants (ENOENT, EACCES, EEXIST, \u2026) via `libc` crate\n- #666 tracemalloc: `start()`, `stop()`, `get_traced_memory()`, `take_snapshot()` \u2014 integrate with Mamba allocator\nAll modules must be importable as native Mamba stdlib and expose the CPython-compatible API surface.",
+      "questions": [
+        {
+          "topic": "gc integration",
+          "question": "Does Mamba use reference counting, a tracing GC, or rely on Rust's ownership model? The gc module's behavior depends heavily on the memory model \u2014 what semantics should `gc.collect()` have if Mamba's GC is not generational?"
+        },
+        {
+          "topic": "importlib and module reloading",
+          "question": "Does Mamba have a module registry/cache that `importlib.import_module()` and `reload()` can interact with? What is the current module loading path \u2014 is there a concept of module objects at runtime?"
+        },
+        {
+          "topic": "tracemalloc allocator hooks",
+          "question": "Does Mamba's allocator expose hooks for tracking allocations (similar to CPython's `PyMemAllocatorEx`)? If not, what level of tracemalloc fidelity is acceptable \u2014 exact per-object tracking or coarse memory stats?"
+        },
+        {
+          "topic": "types module runtime types",
+          "question": "For the `types` module, do type objects like `FunctionType` and `GeneratorType` already exist as runtime values that can be returned, or do they need to be synthesized as Mamba class objects?"
+        }
+      ]
+    },
+    {
+      "id": "stdlib-introspection",
+      "issues": [
+        667,
+        668,
+        669
+      ],
+      "requirements": "Implement 3 native stdlib modules that expose Mamba's compiler internals to userspace:\n- #667 dis: `dis()`, `disassemble()`, `Instruction`, `get_instructions()` \u2014 wrap Mamba's MIR/bytecode IR as Python-accessible objects\n- #668 ast: `parse()`, `dump()`, `literal_eval()`, `NodeVisitor`, `NodeTransformer` \u2014 wrap Mamba's parser output as a Python AST tree\n- #669 tokenize: `generate_tokens()`, `TokenInfo`, token type constants \u2014 wrap Mamba's lexer output as Python token stream\nAll three require public Rust API surface from the parser/lexer/IR layers to be accessible from the stdlib native module boundary.",
+      "questions": [
+        {
+          "topic": "Parser/IR public API",
+          "question": "Are the parser AST types and MIR/bytecode structures already exposed via a stable Rust API, or do they need to be stabilized/documented as part of this change to support these stdlib modules?"
+        },
+        {
+          "topic": "AST node compatibility",
+          "question": "Should the `ast` module expose Mamba's internal AST node types as-is, or should it present a CPython-compatible AST (same field names and node types as CPython's `ast` module)? The latter enables tools like `ast.NodeVisitor` subclasses written for CPython to work with Mamba."
+        },
+        {
+          "topic": "dis instruction set",
+          "question": "Mamba uses MIR + Cranelift. Should `dis` expose MIR-level instructions, Cranelift IR, or a virtual 'bytecode' layer invented for compatibility? What is the intended use case \u2014 debugging, or CPython tool compatibility?"
+        }
+      ]
+    },
+    {
+      "id": "stdlib-io-networking",
+      "issues": [
+        658,
+        661,
+        662,
+        663,
+        664,
+        665
+      ],
+      "requirements": "Implement 6 native stdlib modules for I/O, networking, and concurrency:\n- #658 selectors: `DefaultSelector`, `SelectSelector`, `register()`, `unregister()`, `select()` \u2014 backed by mio or tokio\n- #661 ssl: `SSLContext`, `wrap_socket()`, `create_default_context()` \u2014 backed by rustls or native-tls\n- #662 urllib: `urllib.parse` (urlparse, urlencode, quote, unquote), `urllib.request` (urlopen, Request), `urllib.error` (URLError, HTTPError)\n- #663 email: `message_from_string()`, `EmailMessage`, `MIMEText`, `MIMEMultipart`, header parsing\n- #664 multiprocessing: `Process`, `Pool`, `Queue`, `Pipe`, `Value`, `Array` \u2014 backed by std::process\n- #665 concurrent.futures: `ThreadPoolExecutor`, `ProcessPoolExecutor`, `Future`, `as_completed()`, `wait()` \u2014 backed by tokio/rayon\nAll modules must integrate with Mamba's async runtime (tokio) where appropriate and expose CPython-compatible APIs.",
+      "questions": [
+        {
+          "topic": "selectors and tokio integration",
+          "question": "Mamba's async runtime uses tokio. Should `selectors` run on top of tokio's I/O driver (blocking the tokio thread), or should it integrate with tokio's async I/O as a native event loop? How does this interact with existing async code?"
+        },
+        {
+          "topic": "ssl backend choice",
+          "question": "Should ssl use rustls (pure Rust, no system dependency) or native-tls (uses system TLS)? Are there platform targets or certificate handling requirements that influence this choice?"
+        },
+        {
+          "topic": "multiprocessing and concurrent.futures scope",
+          "question": "multiprocessing (#664) and concurrent.futures (#665) both provide parallelism. Should they share an underlying process/thread pool backend, or be implemented independently? What subset of the API is needed for P1 \u2014 full API or the most commonly used classes?"
+        },
+        {
+          "topic": "urllib blocking vs async",
+          "question": "`urllib.request.urlopen` is synchronous in CPython. Should Mamba's implementation be truly blocking (spawn OS thread) or should it expose an async variant? How should it integrate with the tokio runtime?"
+        }
+      ]
+    },
+    {
+      "id": "compiler-infrastructure",
+      "issues": [
+        837,
+        840
+      ],
+      "requirements": "Improve Mamba compiler infrastructure in two areas:\n- #837 Incremental compilation and module caching: cache directory (`~/.mamba/cache/` or `__mamba_cache__/`), cache key = hash(source + compiler version + config), cached artifact = serialized MIR or Cranelift object code, invalidation on source change / dependency change / compiler version bump, module dependency graph from imports, `--no-cache` CLI flag; requires driver changes, MIR/object-code (de)serialization, and dependency tracking\n- #840 Error diagnostics quality: ANSI colored output (error=red, warning=yellow), wavy underlines, fix suggestions (\"did you mean X?\"), related information (type inference origins, variable definitions), error codes with `--explain` flag, multi-span errors; consider ariadne or miette crate; requires enhancing the existing `diagnostic` module\nAcceptance: incremental builds skip unchanged files; error output matches quality bar comparable to rustc messages.",
+      "questions": [
+        {
+          "topic": "Incremental cache artifact format",
+          "question": "Should the cache store serialized MIR (language-level IR, portable across optimization settings) or compiled Cranelift object code (faster startup, less portable)? Is there an existing serialization format for MIR, or does one need to be designed?"
+        },
+        {
+          "topic": "Module dependency tracking",
+          "question": "Does the compiler currently build a full module dependency graph, or only process files individually? Incremental compilation requires knowing which modules depend on changed modules \u2014 what is the current import resolution architecture?"
+        },
+        {
+          "topic": "Diagnostics library choice",
+          "question": "Issue #840 suggests ariadne or miette. Is there an existing diagnostic rendering layer that needs to be replaced, or just enhanced? Are there constraints (e.g., LSP integration, structured JSON output) that affect the library choice?"
+        }
+      ]
+    },
+    {
+      "id": "repl",
+      "issues": [
+        838
+      ],
+      "requirements": "Implement an interactive REPL (Read-Eval-Print Loop) for Mamba:\n- Entry point: `mamba` with no arguments launches REPL shell\n- Prompt: `>>>` for new statements, `...` for continuation lines\n- State persistence: variable/function bindings accumulate across inputs\n- Multi-line input detection: detect incomplete statements by indent/open brackets\n- JIT execution: reuse existing JIT backend to execute expressions and statements\n- Pretty printing: display expression return values (with optional syntax highlighting)\n- Optional: tab completion (rustyline), command history (up/down navigation)\nAcceptance: basic REPL session (variable assignment, expression evaluation, function definition and call) works; multi-line input (function bodies) is correctly handled.",
+      "questions": [
+        {
+          "topic": "JIT state accumulation",
+          "question": "The JIT backend executes modules. For the REPL, each input must be appended to an accumulated module state. Does the JIT support incremental compilation of a growing module, or will each REPL input require re-compiling all previous bindings?"
+        },
+        {
+          "topic": "Incomplete statement detection",
+          "question": "How should the REPL detect that a statement is incomplete (e.g., after `def foo():` with no body)? Should it attempt to parse and check for syntax errors, or use indentation heuristics?"
+        },
+        {
+          "topic": "rustyline dependency",
+          "question": "Should rustyline (for readline-like editing and history) be a mandatory dependency or optional feature flag? Are there any platform constraints (e.g., Windows support) that affect this choice?"
+        }
+      ]
+    }
+  ]
+}

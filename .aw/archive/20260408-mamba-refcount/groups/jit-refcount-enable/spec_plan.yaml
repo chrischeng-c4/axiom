@@ -1,0 +1,22 @@
+- spec_id: jit-refcount-enable
+  action: modify
+  main_spec_ref: crates/cclab-mamba/codegen/jit-refcount.md
+  source: crates/cclab-mamba/codegen/jit-refcount.md
+  sections:
+  - overview
+  - changes
+  - test-plan
+- spec_id: gc-reenable
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/gc.md
+  source: crates/cclab-mamba/runtime/gc.md
+  sections:
+  - overview
+  - changes
+- spec_id: closure-release-fix
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/closure.md
+  source: crates/cclab-mamba/runtime/closure.md
+  sections:
+  - overview
+  - changes

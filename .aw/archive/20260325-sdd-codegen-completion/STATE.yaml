@@ -1,0 +1,188 @@
+branch: null
+change_id: sdd-codegen-completion
+checksums: {}
+created_at: 2026-03-20 08:10:04.538912+00:00
+current_task_id: null
+dag:
+  complete: false
+  current_index: 0
+  issues:
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 932
+    processed: false
+    title: 'feat(sdd): codegen last mile — consume SpecIR to generate code'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 933
+    processed: false
+    title: 'feat(sdd): test generation from RequirementPlus specs'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 934
+    processed: false
+    title: 'feat(sdd): deployment spec type — infra-as-code integration'
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 937
+    processed: false
+    title: 'feat(sdd): frontend codegen — wireframe + component + design-token → UI
+      code'
+delegation_guard: null
+git_workflow: in_place
+groups_progress:
+  change_implementation: []
+  change_spec: []
+  post_clarifications:
+  - core-codegen
+  - deploy-section-type
+  - frontend-codegen
+  pre_clarifications:
+  - core-codegen
+  - deploy-section-type
+  - frontend-codegen
+  reference_context:
+  - core-codegen
+  - deploy-section-type
+  - frontend-codegen
+iteration: 1
+last_action: null
+phase: change_rejected
+revision_counts:
+  ref_ctx:core-codegen: 1
+  ref_ctx:deploy-section-type: 1
+  ref_ctx:frontend-codegen: 1
+schema_version: '2.0'
+session_id: null
+task_revisions: {}
+telemetry:
+  calls:
+  - cost_usd: null
+    duration_ms: 1506081
+    model: gemini-3-flash-preview
+    sdd_version: 0.3.43
+    step: restructure_input
+    timestamp: 2026-03-20 08:35:14.853689+00:00
+    tokens_in: 1447473
+    tokens_out: 6057
+  - cost_usd: null
+    duration_ms: 1175349
+    model: gemini-3-flash-preview
+    sdd_version: 0.3.43
+    step: restructure_input
+    timestamp: 2026-03-20 08:55:09.309301+00:00
+    tokens_in: 3205626
+    tokens_out: 25676
+  - cost_usd: null
+    duration_ms: 18283
+    model: gemini-3-flash-preview
+    sdd_version: 0.3.43
+    step: restructure_input
+    timestamp: 2026-03-20 09:18:28.285469+00:00
+    tokens_in: 112792
+    tokens_out: 307
+  - cost_usd: null
+    duration_ms: 335475
+    model: gemini-3.1-pro-preview
+    sdd_version: 0.3.43
+    step: restructure_input
+    timestamp: 2026-03-20 09:36:51.967970+00:00
+    tokens_in: 304954
+    tokens_out: 3665
+  - cost_usd: null
+    duration_ms: 175669
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: restructure_input
+    timestamp: 2026-03-20 09:40:12.491918+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 197482
+    model: gemini-3.1-pro-preview
+    sdd_version: 0.3.43
+    step: create_reference_context
+    timestamp: 2026-03-20 09:45:32.734531+00:00
+    tokens_in: 296018
+    tokens_out: 4341
+  - cost_usd: null
+    duration_ms: 55355
+    model: claude-haiku-4-5
+    sdd_version: 0.3.43
+    step: create_reference_context
+    timestamp: 2026-03-20 09:46:54.929478+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 166062
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_reference_context
+    timestamp: 2026-03-20 09:49:41.966083+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 106592
+    model: claude-haiku-4-5
+    sdd_version: 0.3.43
+    step: create_reference_context
+    timestamp: 2026-03-20 10:18:41.249367+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 586233
+    model: claude-haiku-4-5
+    sdd_version: 0.3.43
+    step: revise_reference_context
+    timestamp: 2026-03-20 10:22:42.985637+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 205474
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_reference_context
+    timestamp: 2026-03-20 10:26:51.792111+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 186921
+    model: claude-haiku-4-5
+    sdd_version: 0.3.43
+    step: revise_reference_context
+    timestamp: 2026-03-20 10:30:56.152059+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 131678
+    model: claude-haiku-4-5
+    sdd_version: 0.3.43
+    step: create_reference_context
+    timestamp: 2026-03-20 10:33:35.218388+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 199985
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_reference_context
+    timestamp: 2026-03-20 10:37:20.749728+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 180788
+    model: claude-haiku-4-5
+    sdd_version: 0.3.43
+    step: revise_reference_context
+    timestamp: 2026-03-20 10:40:49.660695+00:00
+    tokens_in: null
+    tokens_out: null
+  total_cost_usd: 0.0
+  total_tokens_in: 5366863
+  total_tokens_out: 40046
+updated_at: 2026-03-20 10:41:24.007315+00:00
+validations: []

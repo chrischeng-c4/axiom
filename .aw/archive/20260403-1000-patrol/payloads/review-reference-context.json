@@ -1,0 +1,63 @@
+{
+  "change_id": "1000-patrol",
+  "group_id": "add-idlelib-stdlib",
+  "verdict": "revise",
+  "summary": "module.md (high, R2/R4/R5) is correct. native-implementations.md is over-rated 'high' and its key requirements don't map to formal R# IDs — its purpose (native Rust rewrites) is orthogonal to adding a stub. ffi/bindings-and-stubs.md is irrelevant (FFI .pyi generation ≠ Python module stub semantics). exception.md incorrectly attributes NotImplementedError to R1, which does not list it. spec_plan: ui-tools.md filename violates single-logical-unit rule and should be idlelib.md; sections 'overview, changes' are insufficient — needs 'requirements' and 'scenarios'.",
+  "findings": [
+    {
+      "item": "native-implementations.md (high, module registration pattern)",
+      "status": "fail",
+      "detail": "Relevance 'high' is inaccurate. This spec's formal requirements (R1=Dependency Integration, R2=Module Rewrite using serde_json/regex/chrono/rusqlite, R3=Symbol Registration refactor, R4=Error Mapping, R5=Builtins Stubs) are all about replacing existing stubs with native Rust implementations — the opposite intent of adding a new stub. The key requirements listed in the artifact ('pub fn register() calls register_module(name, attrs)', 'mod.rs P3 placement', etc.) do NOT correspond to any formal R# in this spec; they are inferred from the Diagrams/Changes sections. Should be rated 'medium' at most, and key requirements should be labeled as non-normative (or this spec should be replaced with runtime/symbols.md which formally specifies the registration mechanism)."
+    },
+    {
+      "item": "runtime/module.md (high, R2/R4/R5)",
+      "status": "pass",
+      "detail": "Correct. R2 (sys.modules caching ensures import idlelib is cached), R4 (import and from-import both work), R5 (module object attributes __name__/__file__/__dict__) are all accurately cited and directly relevant to the stub-only goal of making 'import idlelib' succeed."
+    },
+    {
+      "item": "runtime/exception.md (medium) — NotImplementedError attributed to R1",
+      "status": "fail",
+      "detail": "The artifact states 'NotImplementedError is in the exception hierarchy (R1)'. However, exception.md R1 explicitly lists only: BaseException, Exception, ValueError, TypeError, KeyError, IndexError, AttributeError, FileNotFoundError, StopIteration, RuntimeError, ZeroDivisionError, NameError — NotImplementedError is absent from R1. (The implementation in exception.rs line 801 does include it, but the spec's R1 does not.) The key requirement is factually inaccurate as stated. Should say: 'NotImplementedError exists in the runtime implementation but is not covered by R1 — spec R1 may need updating' or reference a different requirement."
+    },
+    {
+      "item": "ffi/bindings-and-stubs.md (low) — 'stub pattern philosophy'",
+      "status": "fail",
+      "detail": "Irrelevant. This spec covers C FFI binding generation: cbindgen.rs generates Mamba-callable wrappers for C functions, stub_gen.rs generates .pyi type stubs from C declarations (R1-R5 all FFI-specific). Its concept of 'stub' is a C interop artifact, not a Python module namespace stub raising NotImplementedError. There is zero conceptual overlap with adding idlelib as a stdlib stub module. Must be removed."
+    },
+    {
+      "item": "spec_plan: main_spec_ref 'crates/cclab-mamba/stdlib/ui-tools.md'",
+      "status": "fail",
+      "detail": "The name 'ui-tools.md' implies a spec covering multiple UI-related tools (tkinter, curses, idlelib, etc.), violating the AUTHORING rule 'each spec file covers exactly one logical unit'. All other stdlib specs follow a per-module naming convention (re.md, json.md, os.md, etc.). The path should be 'crates/cclab-mamba/stdlib/idlelib.md' to match conventions and the single-logical-unit principle."
+    },
+    {
+      "item": "spec_plan: sections ['overview', 'changes'] only",
+      "status": "fail",
+      "detail": "For a spec defining a stub module's contract, 'overview' and 'changes' are necessary but not sufficient. A 'requirements' section is needed to capture: (1) what sub-namespaces/functions are registered in the module attrs, (2) that all functions raise NotImplementedError. A 'scenarios' section should document the acceptance criteria (import idlelib succeeds, from idlelib import X succeeds, calling any API raises NotImplementedError). Without these, the spec provides no machine-readable behavioral contract."
+    },
+    {
+      "item": "Coverage: all pre-clarification areas addressed?",
+      "status": "pass",
+      "detail": "Pre-clarification specifies stub-only module with 'import idlelib' succeeding and APIs raising NotImplementedError. The three valid specs (module.md, exception.md, native-implementations.md) collectively cover module registration, import caching, and exception raising. The coverage gap from removing ffi/bindings-and-stubs.md is zero — that spec contributed nothing actionable."
+    }
+  ],
+  "checklist": {
+    "all_areas_covered": "pass",
+    "relevance_scores_reasonable": "fail — native-implementations.md over-rated 'high'; its focus is native Rust rewrites, not stubs",
+    "key_requirements_accurate": "fail — exception.md NotImplementedError not in R1; native-implementations.md key requirements are not formal R# entries",
+    "no_irrelevant_specs": "fail — ffi/bindings-and-stubs.md (C FFI binding generation) has no connection to Python stdlib stub modules",
+    "spec_plan_main_spec_ref_not_null": "pass",
+    "spec_plan_sections_reasonable": "fail — 'overview, changes' insufficient; needs 'requirements' and 'scenarios'",
+    "spec_plan_modify_entries_have_source_paths": "pass — no modify entries",
+    "spec_plan_main_spec_ref_has_subfolder": "pass — 'stdlib/' subfolder present",
+    "spec_plan_single_logical_unit": "fail — 'ui-tools.md' name implies multi-tool scope; should be 'idlelib.md'",
+    "spec_plan_no_duplicate_section_types": "pass",
+    "spec_plan_paths_mirror_source_structure": "pass — stdlib/ mirrors src/runtime/stdlib/"
+  },
+  "revisions_required": [
+    "Remove ffi/bindings-and-stubs.md — zero relevance to Python stdlib stub module pattern",
+    "Downgrade native-implementations.md to 'medium'; rewrite key requirements to note they are inferred from Diagrams/Changes (not formal R# IDs), e.g. 'Registration flow shown in Diagrams: register() → register_module(name, attrs) → mb_module_register'",
+    "Fix exception.md key requirement: 'NotImplementedError is in the exception hierarchy (R1)' is inaccurate — R1 does not list NotImplementedError. Use R4 (mb_raise thread-local state) as the primary ref for the raising mechanism; note that NotImplementedError exists in the implementation but spec R1 is incomplete",
+    "Rename spec_plan main_spec_ref from 'crates/cclab-mamba/stdlib/ui-tools.md' to 'crates/cclab-mamba/stdlib/idlelib.md'",
+    "Expand spec_plan sections to ['overview', 'requirements', 'scenarios', 'changes'] to capture the stub behavioral contract"
+  ]
+}

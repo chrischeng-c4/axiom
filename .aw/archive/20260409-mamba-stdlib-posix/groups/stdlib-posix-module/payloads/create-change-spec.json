@@ -1,0 +1,6 @@
+{
+  "spec_id": "mamba-stdlib-posix-spec",
+  "group_id": "stdlib-posix-module",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: crates/cclab-mamba/src/runtime/stdlib/posix_mod.rs\n    action: create\n    description: |\n      New posix module implementing POSIX system call wrappers.\n      - Dispatch wrappers delegating to os_mod functions\n      - posix.environ dict from std::env::vars()\n      - posix.uname() via libc::uname\n      - posix.getuid()/getgid() via libc\n      - Unit tests in #[cfg(test)] mod tests\n  - path: crates/cclab-mamba/src/runtime/stdlib/mod.rs\n    action: modify\n    description: |\n      Add `pub mod posix_mod;` declaration and\n      `posix_mod::register();` call in register_stdlib().\n```"
+}

@@ -1,0 +1,15 @@
+- spec_id: merge-3way
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-merge.md
+  source: crates/cclab-sdd/logic/change-merge.md
+  sections:
+  - overview
+  - logic
+  - changes
+- spec_id: spec-prep-base-snapshot
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-spec.md
+  source: crates/cclab-sdd/logic/change-spec.md
+  sections:
+  - overview
+  - changes

@@ -1,0 +1,29 @@
+{"spec_id":"resolver-compat-spec","section":"scenarios","content":"### S1: Hyphen Range Major Only
+
+**Given** dep range `2 - 4` and available versions [2.0.0, 3.5.0, 4.9.0, 5.0.0]
+**When** resolver evaluates
+**Then** 4.9.0 selected (>=2.0.0 <5.0.0)
+
+### S2: Hyphen Range Partial
+
+**Given** dep range `1.0 - 2.0` and available [1.0.0, 1.5.0, 2.0.0, 2.0.5, 2.1.0]
+**When** resolver evaluates
+**Then** 2.0.5 selected (>=1.0.0 <2.1.0)
+
+### S3: Hyphen Range Full
+
+**Given** dep range `1.0.0 - 2.0.0` and available [1.0.0, 1.5.0, 2.0.0, 2.0.1]
+**When** resolver evaluates
+**Then** 2.0.0 selected (>=1.0.0 <=2.0.0)
+
+### S4: Scoped Bare Alias
+
+**Given** dep `"foo": "@scope/pkg"`
+**When** resolver processes
+**Then** resolves @scope/pkg@latest, installs as foo
+
+### S5: Tech-Platform Install
+
+**Given** tech-platform Nx monorepo package.json
+**When** `cclab jet install` runs
+**Then** install completes without errors"}

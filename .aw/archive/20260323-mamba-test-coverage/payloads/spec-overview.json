@@ -1,0 +1,10 @@
+{
+  "change_id": "mamba-test-coverage",
+  "spec_id": "mamba-test-coverage-spec",
+  "group_id": "mamba-stdlib-coverage-lower",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-mamba/testing/stdlib-coverage-lower.md",
+  "merge_strategy": "new",
+  "fill_sections": ["overview", "requirements", "scenarios", "test-plan", "changes", "logic", "dependency"],
+  "content": "Add inline `#[cfg(test)]` test modules and integration tests to the 10 lowest-coverage stdlib modules in `crates/cclab-mamba/src/runtime/stdlib/`, raising each from 4%–14% to 100% line + branch coverage measured by `cargo llvm-cov --branch`.\n\n**Target modules by spec group:**\n\n| File | Coverage | Spec Group |\n|------|----------|------------|\n| `queue_mod.rs` | 4% | concurrency |\n| `statistics_mod.rs` | 5% | numeric |\n| `shlex_mod.rs` | 7% | text-processing |\n| `calendar_mod.rs` | 8% | datetime |\n| `locale_mod.rs` | 10% | text-processing |\n| `lzma_mod.rs` | 11% | archive-and-compression |\n| `zlib_mod.rs` | 11% | archive-and-compression |\n| `secrets_mod.rs` | 12% | random |\n| `bisect_mod.rs` | 14% | numeric |\n| `abc_mod.rs` | 14% | typing-and-inspect |\n\n**Test strategy:**\n\n- Replace stub `fn test_stub() { assert!(true); }` with full inline `#[cfg(test)] mod tests {}` blocks in each `*_mod.rs`\n- Add `crates/cclab-mamba/tests/stdlib_coverage_lower_tests.rs` for integration tests\n- Self-contained: no network, no filesystem writes outside temp dirs\n- `lzma_mod` / `zlib_mod`: fixed in-memory byte arrays; no external files\n- `queue_mod`: concurrent put/get exercised via `std::thread`\n- No coverage exclusion annotations (`#[cfg(not(tarpaulin))]`, etc.); remove dead branches instead\n\n**Coverage target:** 100% line + 100% branch (`cargo llvm-cov --branch`), all 10 files in one atomic PR."
+}

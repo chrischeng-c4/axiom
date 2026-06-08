@@ -1,0 +1,41 @@
+apiVersion: cclab.dev/v1
+kind: SequencePlus
+metadata:
+  name: generator-decoupling
+  change_id: sdd-merge
+  source_file: sdd-merge/specs/sdd/generator-decoupling.md
+  spec_group: sdd
+  spec_id: generator-decoupling
+spec:
+  title: Decoupled Generation Flow
+  diagram_type: sequence
+  content:
+    messages:
+    - from: Orchestrator
+      text: generate(ir_path)
+      to: Generator
+    - from: Generator
+      text: parse(ir_path)
+      to: Parser
+    - from: Parser
+      text: return SpecIR
+      to: Generator
+    - from: Generator
+      text: write_files()
+      to: FileSystem
+    - from: Generator
+      text: return success
+      to: Orchestrator
+    participants:
+    - id: Orchestrator
+      label: Orchestrator
+      type: participant
+    - id: Generator
+      label: Code Generator
+      type: participant
+    - id: Parser
+      label: YAML Parser
+      type: participant
+    - id: FileSystem
+      label: File System
+      type: participant

@@ -1,0 +1,57 @@
+change_id: improve-ion-cache-backend
+schema_version: '2.0'
+created_at: 2026-01-30T06:13:23.500703Z
+updated_at: 2026-01-30T06:15:08.998088Z
+phase: implemented
+iteration: 1
+last_action: impl-complete
+session_id: null
+checksums:
+  tasks.md:
+    hash: sha256:0a2517fcdedab2348d0104ef9ad68bf5dbeabadb8d974cb0e7d466245c027082
+    validated_at: 2026-01-30T06:14:51.811728Z
+  specs/ttl-management.md:
+    hash: sha256:9490303893879dc1607639a599567fbcb6a066addd709d1de29eb99dd184ecf8
+    validated_at: 2026-01-30T06:14:51.812300Z
+  specs/list-ops.md:
+    hash: sha256:880fe0276378d6905188900091cfc350fb5fb259afda673155a4289ededc2877
+    validated_at: 2026-01-30T06:14:51.812121Z
+  proposal.md:
+    hash: sha256:675b853e2ec408e5b26e23a2d9bbb0db9303c3a8aeb5017b175d5190e84ebfbc
+    validated_at: 2026-01-30T06:14:51.811510Z
+  specs/hash-ops.md:
+    hash: sha256:cd9eb21b6ac0a1eb23eb54c4a892c5885ae97fe21d25aeb552d5de913a5be133
+    validated_at: 2026-01-30T06:14:51.812482Z
+  specs/memory-eviction.md:
+    hash: sha256:5913f5600316092144e6e70e271583caecbd5ba05c5e8f3ebff357b077e33fff
+    validated_at: 2026-01-30T06:14:51.811941Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-30T06:14:30.342442Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-30T06:14:51.811348Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

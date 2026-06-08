@@ -1,0 +1,7 @@
+{
+  "spec_id": "cli-commands-check-alignment",
+  "section": "requirements",
+  "group_id": "check-alignment-phase1",
+  "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md",
+  "content": "| ID | Requirement | Priority |\n|----|-------------|----------|\n| CR1 | Add `CheckAlignment` variant to `SddCommand` enum in `commands.rs` with optional positional `path: Option<String>` and `--json: bool` flag. | high |\n| CR2 | Create `check_alignment.rs` CLI handler: resolve path (default `cclab/specs/`), call `spec_alignment::check(path)`, format output, set exit code. | high |\n| CR3 | Text output format: `FAIL  {path}` with indented `  {kind}: {message}` lines per violation, `OK    {path}` for clean files. Matches `validate-spec-structure` output pattern. | high |\n| CR4 | JSON output format: emit `CheckResult` struct as JSON when `--json` flag is set. | high |\n| CR5 | Exit code: `std::process::exit(0)` if `CheckResult.passed == true`, `std::process::exit(1)` otherwise. | high |\n| CR6 | Wire `CheckAlignment` variant in command dispatch match arm to `check_alignment::run()`. | high |"
+}

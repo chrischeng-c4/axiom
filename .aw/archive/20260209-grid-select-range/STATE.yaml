@@ -1,0 +1,13 @@
+change_id: grid-select-range
+schema_version: '2.0'
+created_at: 2026-02-09T06:25:51.041473Z
+updated_at: 2026-02-10T02:17:03.281859Z
+phase: merge_approved
+iteration: 1
+last_action: merge_review_approved
+session_id: null
+checksums: {}
+validations: []
+revision_counts:
+  implementation: 1
+telemetry: null

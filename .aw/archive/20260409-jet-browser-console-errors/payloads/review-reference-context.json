@@ -1,0 +1,34 @@
+{
+  "group_id": "browser-console-error-relay",
+  "summary": "Reference context cites wrong specs and misses critical gaps. The hmr.md cited is a validation/test spec, not the HMR protocol spec. More importantly, the requirements for client-to-server console message protocol and server-side receiver logic are not covered by any spec. The spec_plan needs to either add a new spec file for the client-to-server protocol, or split dev-server.md modifications across two logical areas (server-to-client HMR messages vs. client-to-server console messages).",
+  "verdict": "revise",
+  "findings": [
+    "Reference context cites 'crates/cclab-jet/logic/hmr.md' as covering HmrMessage enum and HmrManager, but the actual hmr.md file is a validation/test spec (jet-hmr-validation-spec), not a logic spec for HMR protocol. The real HmrMessage definitions are in crates/cclab-jet/logic/dev-server.md lines 174-239.",
+    "Reference context claims hmr.md covers 'HmrMessage enum with serde tag=kebab-case — new ConsoleMessage variant must follow this pattern', but hmr.md contains test requirements, not the actual enum definition.",
+    "The reference context accurately identifies dev-server.md's HMR WebSocket endpoint and HMR Client Runtime sections, but misses a critical gap: dev-server.md does NOT cover client-to-server message handling (recv_task). The reference context mentions 'recv_task drops all non-Close frames' but this is NOT documented in dev-server.md.",
+    "No spec exists for the client-to-server console-error message protocol. Requirements specify a new message type for console errors (level, message, stack, url, line, column) separate from HmrMessage, but this protocol is not documented anywhere in tech_design.",
+    "No spec exists for server-side message parsing/receiver logic. The requirement specifies parsing incoming console-error messages in recv_task and printing to terminal with colored formatting, but recv_task behavior is not specified.",
+    "The spec_plan only lists one file to modify (dev-server.md with sections: overview, schema, changes), but based on requirements, at least two areas need specification: (1) client-to-server protocol definition, (2) server-side receiver logic and terminal output formatting.",
+    "The main_spec_ref points to crates/cclab-jet/logic/dev-server.md, which should only cover server-to-client HMR messages and the HMR client runtime. A separate spec file or section is needed for the client-to-server console message protocol."
+  ],
+  "issues": [
+    "Wrong spec cited: hmr.md is a validation spec, not the HMR protocol logic spec. The HMR message definitions are in dev-server.md, not a separate hmr.md logic file.",
+    "Missing spec for client-to-server protocol: define the console-error message type (fields, schema, serde serialization format)",
+    "Missing spec for server-side receiver: document how recv_task will parse incoming messages and route console-error messages to terminal output",
+    "Incomplete spec_plan: only modifying dev-server.md but no clear guidance on what sections need to be added vs. existing sections that need updating",
+    "The reference context Key Requirements for hmr.md are inaccurate—they describe test coverage gaps, not protocol requirements"
+  ],
+  "checklist": {
+    "All affected crates/areas are covered": "fail - missing spec for client-to-server protocol and recv_task behavior",
+    "Relevance scores are reasonable": "pass - dev-server.md is highly relevant, but hmr.md citation is misleading",
+    "Key requirements listed per spec are accurate": "fail - hmr.md requirements listed in reference context are about test coverage, not message protocol",
+    "No irrelevant specs included": "pass",
+    "spec_plan: every entry has main_spec_ref set": "pass - main_spec_ref is set to crates/cclab-jet/logic/dev-server.md",
+    "spec_plan: sections are reasonable": "fail - only 'overview, schema, changes' but no guidance on what schema will be added (server-to-client vs. client-to-server)",
+    "spec_plan: modify entries have valid source paths": "pass - source path crates/cclab-jet/logic/dev-server.md exists",
+    "spec_plan: main_spec_ref paths include subfolder": "pass - includes 'logic/' subfolder",
+    "spec_plan: each spec file covers one logical unit": "fail - trying to cover both server-to-client and client-to-server in one file will violate single-unit principle",
+    "spec_plan: no duplicate section types": "pass",
+    "spec_plan: spec paths mirror source structure": "pass"
+  }
+}

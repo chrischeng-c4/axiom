@@ -1,0 +1,173 @@
+{
+  "change_id": "sync-adapter",
+  "group_id": "sync-adapter",
+  "group": "sync-adapter",
+  "specs": [
+    {
+      "path": "read_path:specs/cclab-agent/README.md",
+      "relevance": "high",
+      "section": "overview"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/architecture.md",
+      "relevance": "high",
+      "section": "overview"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/integrations.md",
+      "relevance": "high",
+      "section": "platform-integration"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/error-handling.md",
+      "relevance": "high",
+      "section": "error-handling"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/llm-providers.md",
+      "relevance": "high",
+      "section": "authentication-pattern"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/agents.md",
+      "relevance": "medium",
+      "section": "agent-execution"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/tools.md",
+      "relevance": "medium",
+      "section": "tool-system"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/core-types.md",
+      "relevance": "medium",
+      "section": "core-types"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/security.md",
+      "relevance": "medium",
+      "section": "security"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/context.md",
+      "relevance": "low",
+      "section": "context-management"
+    },
+    {
+      "path": "read_path:specs/cclab-agent/storage.md",
+      "relevance": "low",
+      "section": "storage"
+    }
+  ],
+  "spec_plan": {
+    "title": "Reference Context for SyncAdapter Trait Implementation",
+    "summary": "SyncAdapter is a new trait for syncing data across platforms (GitHub, GitLab, Jira, Confluence, GDocs). This reference context documents the existing platform integration architecture, error handling, authentication patterns, agent infrastructure, and tool systems that will support the SyncAdapter trait implementation.",
+    "scope": {
+      "in_scope": [
+        "SyncAdapter trait definition",
+        "Platform-specific sub-traits (IssueSyncAdapter, SpecSyncAdapter, CodeSyncAdapter, ChangeSyncAdapter)",
+        "SyncResult type and SyncStatus enum",
+        "Authentication pattern (constructor injection)",
+        "Bidirectional sync composition",
+        "GitHub and GitLab full implementations",
+        "P2 adapters stub (Jira/Confluence/GDocs)",
+        "Error handling and retry logic",
+        "Integration with existing platform modules"
+      ],
+      "out_of_scope": [
+        "Context compression algorithms",
+        "Session storage implementations",
+        "Streaming protocol details"
+      ]
+    },
+    "sections": [
+      {
+        "name": "overview",
+        "relevance": "high",
+        "candidate_specs": [
+          "cclab-agent/README.md",
+          "cclab-agent/architecture.md"
+        ],
+        "reasoning": "README provides overview of cclab-agent structure. Architecture shows module dependencies and C4 context with existing platform integrations (GitHub, GitLab, Jira) that will be extended with SyncAdapter."
+      },
+      {
+        "name": "platform-integration",
+        "relevance": "high",
+        "candidate_specs": [
+          "cclab-agent/integrations.md"
+        ],
+        "reasoning": "Critical for understanding the existing PlatformIntegration trait, platform-specific implementations (GitHubIntegration, GitLabIntegration, JiraIntegration), Issue/Comment schemas, and API mappings. SyncAdapter will extend or parallel this architecture with sync-specific methods."
+      },
+      {
+        "name": "error-handling",
+        "relevance": "high",
+        "candidate_specs": [
+          "cclab-agent/error-handling.md"
+        ],
+        "reasoning": "NovaError enum defines all error types including HttpError, ApiError, Timeout, NotSupported. SyncAdapter error handling must align with this error classification, especially for platform-specific failures, retry logic, and NotSupported errors for P2 adapters."
+      },
+      {
+        "name": "authentication-pattern",
+        "relevance": "high",
+        "candidate_specs": [
+          "cclab-agent/llm-providers.md"
+        ],
+        "reasoning": "LLMProvider shows the constructor injection pattern for auth (api_key, base_url support in new() and with_base_url() methods). Pre-clarifications specify SyncAdapter must follow same auth pattern. LLMProvider also shows builder pattern for optional config."
+      },
+      {
+        "name": "agent-execution",
+        "relevance": "medium",
+        "candidate_specs": [
+          "cclab-agent/agents.md"
+        ],
+        "reasoning": "Shows how agents execute tools with approval flows and security checks. SyncAdapter will likely be invoked by agents or tools created from adapters. Understanding agent execution loop is important for sync context and error handling."
+      },
+      {
+        "name": "tool-system",
+        "relevance": "medium",
+        "candidate_specs": [
+          "cclab-agent/tools.md"
+        ],
+        "reasoning": "Tool trait, ToolRegistry, and ToolExecutor define how tools are registered and executed. SyncAdapter methods may be exposed as tools, or tools may be created from adapters using into_tools() pattern similar to PlatformIntegration."
+      },
+      {
+        "name": "core-types",
+        "relevance": "medium",
+        "candidate_specs": [
+          "cclab-agent/core-types.md"
+        ],
+        "reasoning": "Defines Message, Role, ToolCall, ToolResult, TokenUsage types. SyncAdapter will work with these types when integrated into agent workflows and messaging systems."
+      },
+      {
+        "name": "security",
+        "relevance": "medium",
+        "candidate_specs": [
+          "cclab-agent/security.md"
+        ],
+        "reasoning": "SecurityPolicy and approval flows for tools. SyncAdapter will handle sensitive auth credentials and platform API calls that may require security checks and approval workflows."
+      },
+      {
+        "name": "context-management",
+        "relevance": "low",
+        "candidate_specs": [
+          "cclab-agent/context.md"
+        ],
+        "reasoning": "ContextManager handles message windows and token budgets. Provides background on how agent context is managed during sync operations, but not critical for SyncAdapter trait design."
+      },
+      {
+        "name": "storage",
+        "relevance": "low",
+        "candidate_specs": [
+          "cclab-agent/storage.md"
+        ],
+        "reasoning": "Storage trait and SessionState define session persistence. Provides background on how sync state might be persisted, but storage of sync metadata is likely out of scope for this phase."
+      }
+    ]
+  },
+  "metadata": {
+    "created_by": "Claude",
+    "created_at": "2026-03-20T00:00:00Z",
+    "phase": "reference-context",
+    "status": "ready"
+  }
+}

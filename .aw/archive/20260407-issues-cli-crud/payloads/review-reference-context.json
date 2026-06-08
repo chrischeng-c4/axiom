@@ -1,0 +1,19 @@
+{
+  "change_id": "issues-cli-crud",
+  "group_id": "issues-cli-crud",
+  "verdict": "approve",
+  "checklist": {
+    "all_areas_covered": true,
+    "relevance_reasonable": true,
+    "requirements_accurate": true,
+    "no_irrelevant_specs": true,
+    "spec_plan_complete": true,
+    "spec_plan_paths_valid": true,
+    "spec_plan_sections_reasonable": true,
+    "single_logical_unit_per_file": true,
+    "no_duplicate_sections": true,
+    "paths_mirror_source": true
+  },
+  "issues": [],
+  "summary": "Reference context covers all 8 requirements (R1-R8) with 6 spec entries. Spec plan has: issues-backend-trait (R8 trait extension), issues-cli-write-subcommands (R1-R3 create/update/close + R4 find CLI), issues-cross-artifact-refs (R5 related:/implements:), issues-gitlab-backend (R6 glab), issues-structured-errors (R7 exit codes + JSON errors). Existing specs referenced include artifact-tools.md, commands.md, fetch-issues.md (glab pattern), platform.md. All spec_plan entries have subfolder paths under crates/sdd/{logic,interfaces/cli}. No issues found."
+}

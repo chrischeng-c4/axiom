@@ -1,0 +1,12 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-gen-code-pipeline",
+  "groups": [
+    {
+      "id": "gen-code-pipeline",
+      "issues": [1128],
+      "requirements": "1. `cclab sdd gen parse <spec-path>` — Parse spec file, extract sections, convert to SpecIR, output as JSON to stdout\n2. `cclab sdd gen code <spec-path> --lang <rust|python|ts>` — Parse spec → SpecIR → run CodeGenerator registry → output generated code\n3. Both commands reuse existing infrastructure: spec/mermaid/parser, spec/openapi/parser, gen/registry, gen/rust/*, gen/python/*\n4. Wire through CLI: add Code and Parse variants to GenCommands enum in commands.rs\n5. Phase 1 only — gen diff deferred to later iteration",
+      "questions": []
+    }
+  ]
+}

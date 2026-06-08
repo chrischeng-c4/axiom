@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jet-wasm-text-shaping",
+  "title": "TextShapingPublicTypes",
+  "description": "Public types for the rustybuzz-backed text shaping engine. Companion machine-readable contract for `text-shaping.md`. Cross-references: paint-runtime.md (DrawGlyph op slot consumed by emit_draw_glyphs), layout-runtime.md (taffy::Size<f32> measurement callback).",
+  "$defs": {
+    "FontFace": {
+      "$id": "font-face",
+      "title": "FontFace",
+      "type": "object",
+      "required": ["font_id"],
+      "properties": {
+        "font_id": {
+          "type": "integer",
+          "format": "uint64",
+          "description": "Stable identifier derived from xxhash_rust::xxh3::xxh3_64 over the raw font bytes. Pinned hasher per the spec's cache-stability rationale (R6)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "FontError": {
+      "$id": "font-error",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["variant"],
+          "properties": {
+            "variant": { "type": "string", "const": "InvalidData" },
+            "message": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["variant"],
+          "properties": {
+            "variant": { "type": "string", "const": "UnsupportedFormat" },
+            "message": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["variant", "codepoint"],
+          "properties": {
+            "variant": { "type": "string", "const": "GlyphMissing" },
+            "codepoint": { "type": "integer", "format": "uint32" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ShapedGlyph": {
+      "$id": "shaped-glyph",
+      "type": "object",
+      "required": ["glyph_id", "x_offset", "y_offset", "x_advance", "cluster"],
+      "properties": {
+        "glyph_id": { "type": "integer", "format": "uint32" },
+        "x_offset": { "type": "number", "format": "float32" },
+        "y_offset": { "type": "number", "format": "float32" },
+        "x_advance": { "type": "number", "format": "float32", "minimum": 0 },
+        "cluster": { "type": "integer", "format": "uint32" }
+      },
+      "additionalProperties": false
+    },
+    "ShapedRun": {
+      "$id": "shaped-run",
+      "type": "object",
+      "required": ["glyphs", "ascent", "descent", "advance_width"],
+      "properties": {
+        "glyphs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ShapedGlyph" }
+        },
+        "ascent": { "type": "number", "format": "float32", "minimum": 0 },
+        "descent": { "type": "number", "format": "float32", "minimum": 0 },
+        "advance_width": { "type": "number", "format": "float32", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "ShapeCacheKey": {
+      "$id": "shape-cache-key",
+      "type": "object",
+      "required": ["font_id", "text", "size_bits"],
+      "description": "Externally-owned cache key. size_bits is f32::to_bits() — integer bit-pattern equality, NaN-safe.",
+      "properties": {
+        "font_id": { "type": "integer", "format": "uint64" },
+        "text": { "type": "string" },
+        "size_bits": { "type": "integer", "format": "uint32" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

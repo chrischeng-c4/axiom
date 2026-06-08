@@ -1,0 +1,22 @@
+apiVersion: cclab.dev/v1
+kind: ClassPlus
+metadata:
+  name: crate-unification
+  change_id: sdd-merge
+  source_file: sdd-merge/specs/sdd/crate-unification.md
+  spec_group: sdd
+  spec_id: crate-unification
+spec:
+  title: Crate Unification
+  diagram_type: class
+  content:
+    classes:
+    - name: cclab-sdd
+      stereotype: service
+    - name: cclab-aurora
+      stereotype: service
+    relationships:
+    - from: cclab-aurora
+      label: merges into
+      to: cclab-sdd
+      type: dependency

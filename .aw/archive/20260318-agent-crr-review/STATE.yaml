@@ -1,0 +1,87 @@
+change_id: agent-crr-review
+schema_version: '2.0'
+created_at: 2026-03-18T07:32:00.244618Z
+updated_at: 2026-03-18T08:18:09.036664Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:agent-crr-core: 1
+current_task_id: agent-crr-review-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 280580
+    tokens_out: 990
+    cost_usd: null
+    duration_ms: 32157
+    timestamp: 2026-03-18T07:32:41.539883Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 250037
+    tokens_out: 1235
+    cost_usd: null
+    duration_ms: 26441
+    timestamp: 2026-03-18T07:36:14.744462Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: gpt-5.4
+    tokens_in: 1540385
+    tokens_out: 12302
+    cost_usd: null
+    duration_ms: 248548
+    timestamp: 2026-03-18T07:40:40.672620Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 141342
+    timestamp: 2026-03-18T07:53:33.793251Z
+  - step: begin_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 651518
+    timestamp: 2026-03-18T07:53:57.729935Z
+  total_cost_usd: 0.0
+  total_tokens_in: 2071002
+  total_tokens_out: 14527
+dag:
+  issues:
+  - number: 924
+    title: 'feat(agent): Add ReviewAgent — CRR review for specs and code'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 926
+    title: 'feat(agent): Add CRR cycle — generic Create-Review-Revise pattern'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  pre_clarifications:
+  - agent-crr-core
+  post_clarifications:
+  - agent-crr-core
+  reference_context:
+  - agent-crr-core
+  change_spec: []

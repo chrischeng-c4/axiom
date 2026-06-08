@@ -1,0 +1,1 @@
+Fix reference_context phase advance bug — artifact tools never call set_phase(), causing infinite workflow loop. Add agent execution timeout — wrap child.wait() with tokio::time::timeout(), per-action defaults. #1124 #1126

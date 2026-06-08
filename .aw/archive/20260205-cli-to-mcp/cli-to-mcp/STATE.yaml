@@ -1,0 +1,37 @@
+change_id: cli-to-mcp
+schema_version: '2.0'
+created_at: 2026-02-05T09:01:39.385102Z
+updated_at: 2026-02-05T10:07:07.364492Z
+phase: archived
+iteration: 1
+last_action: archive
+session_id: null
+checksums:
+  proposal.md:
+    hash: sha256:d09e02251ac81624a795734ca051557e5ee2e446b53034ba21e8d88c956957a9
+    validated_at: 2026-02-05T10:01:33.326881Z
+  specs/plan-change.md:
+    hash: sha256:839eedf7d944d5c00cb1d492c883a6c36b1f63cfeb46c47cc52e22bd44d726d8
+    validated_at: 2026-02-05T10:01:33.327925Z
+  tasks.md:
+    hash: sha256:02a789087a8fb3118e65b9c92de3d7346c3b167be34990c47cf64e5a4df9d699
+    validated_at: 2026-02-05T10:01:33.327381Z
+  specs/cclab-genesis/plan-change.md:
+    hash: sha256:64c7d5ad5a20e723233e083590946a226cb210e55e56e0cb94fac503ce0e4457
+    validated_at: 2026-02-05T10:01:33.328527Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-05T10:01:33.325168Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

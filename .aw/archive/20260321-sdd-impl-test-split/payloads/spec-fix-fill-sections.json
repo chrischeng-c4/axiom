@@ -1,0 +1,7 @@
+{
+  "spec_id": "sdd-impl-test-split-spec",
+  "group_id": "sdd-impl-test-split",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "logic", "state-machine", "interaction", "test-plan", "changes"],
+  "content": "Three targeted quality-gate improvements to the SDD implementation workflow:\n\n| # | File | Fix |\n|---|------|-----|\n| 1 | `create_change_impl.rs` | Split single dispatch into **Phase 1** (code + `cargo build` verification) and **Phase 2** (tests + test-count verification) |\n| 2 | `review_change_impl.rs` | Add **hard checklist enforcement**: REJECT if spec has `## Test Plan` but diff contains no `#[test]` functions |\n| 3 | `create_change_spec.rs` | **Guard `create_complete`**: do not write `create_complete: true` when `failed_sections` is non-empty — return error for retry instead |\n\n**Motivation**: The current implementation dispatch has no build or test-count gates, allowing agents to produce non-compiling code or skip tests entirely without detection. The review prompt's soft verdict guidelines do not enforce the spec's test-plan. The spec creation flow unconditionally marks a spec complete even when required sections failed to fill."
+}

@@ -1,0 +1,6 @@
+{
+  "spec_id": "sdd-impl-test-split-spec",
+  "group_id": "sdd-impl-test-split",
+  "section": "logic",
+  "content": "```mermaid\nflowchart TD\n    A([ImplementSpec dispatched]) --> B[Agent: implement code only]\n    B --> C{cargo build --workspace}\n    C -->|exit 0| D[ImplementSpecTests dispatched]\n    C -->|exit non-0| E[return error + build_output]\n    D --> F[Agent: implement tests only]\n    F --> G{spec has Test Plan?}\n    G -->|no| I[advance to WriteDiff]\n    G -->|yes, numeric count| H{diff #test count >= required?}\n    H -->|yes| I\n    H -->|no| J[return warning, advance anyway]\n    J --> I\n    I --> K([WriteDiff])\n```"
+}

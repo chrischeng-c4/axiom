@@ -1,0 +1,52 @@
+{
+  "group_id": "scope-hoisting",
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-jet/scope-hoisting.md",
+      "relevance": "high",
+      "summary": "Primary spec for this change. Defines R1–R7: module concatenation (R1), true module flattening (R2), prefix-based renaming _mN_name (R3), cross-module constant inlining (R4), unified cross-module DCE (R5), mangler visibility update (R6), and bundle size target ≤196 KB (R7). Phase 1 (generate_scope_hoisted_bundle) and Phase 2 (generate_flattened_bundle) scaffolds already exist in bundler/scope_hoist.rs. R4 and R5 remain in draft status and are the primary implementation targets."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/aot-build.md",
+      "relevance": "medium",
+      "summary": "Defines the AOT build pipeline that invokes scope_hoist.rs. Lists bundler/scope_hoist.rs as a key implementation file. Contains BundleConfig schema (minify flag gates Phase 2 path). Pipeline order: build_graph → transform_modules → define → DCE → tree_shake → scope_hoist → generate_bundle. Integration point for any changes to the conditional Phase 1/Phase 2 dispatch in bundler/mod.rs."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/variable-mangling.md",
+      "relevance": "medium",
+      "summary": "R6 of scope-hoisting requires the variable mangler to have visibility of module-prefixed variables (_mN_name) for optimal compression. mangle_variables_with_root already exists in mangle.rs and is used for IIFE-wrapped scope-hoisted bundles. May need extension to handle the _mN prefix renaming pattern produced by inline_module_body_v2 in Phase 2."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/tree-shaking.md",
+      "relevance": "medium",
+      "summary": "Documents the DCE and tree-shaking pipeline that runs immediately before scope hoisting. R5 of scope-hoisting (unified cross-module DCE) must compose correctly with the existing per-module dce.rs pass. Current state: react-bench at 206.8 KB after tree shaking; scope hoisting needs to bring it to ≤195 KB. Pipeline interaction: tree_shake removes unused exports → scope_hoist flattens → mangler compresses."
+    }
+  ],
+  "codebase_explored": [
+    {
+      "path": "crates/cclab-jet/src/bundler/scope_hoist.rs",
+      "summary": "Phase 1 (generate_scope_hoisted_bundle): wraps each module in !function(module,exports,require){}(_mN,_mN.exports,_r). Phase 2 (generate_flattened_bundle): inlines module bodies into single IIFE block scope with inline_module_body_v2 prefix renaming. is_scope_hoist_safe checks for dynamic import(); is_flatten_safe checks for eval/with/arguments[]. R4 cross-module constant inlining and R5 unified DCE are not yet implemented in this file."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/mod.rs",
+      "summary": "Main bundler orchestrator. Conditional dispatch: has_cycle → runtime; is_scope_hoist_safe → Phase 1 or Phase 2 (when minify=true and is_flatten_safe). mangle_variables_with_root applied as post-bundle pass. simulate_prod_pipeline test helper shows the full chain: generate_flattened_bundle → minify_js → mangle_variables_with_root."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/mangle.rs",
+      "summary": "mangle_variables_with_root(source) mangles root/IIFE scope variables in addition to function-local scopes. Already used in production pipeline for scope-hoisted output. Existing test confirms IIFE var renaming works. May need awareness of _mN-prefixed identifiers produced by Phase 2 inlining."
+    },
+    {
+      "path": "examples/react-bench",
+      "summary": "Benchmark project: React 18 (CJS) + TypeScript app (Counter, TodoList). Build target: output ≤195 KB (within 2% of Vite's ~192 KB). Current jet output: ~206.8 KB. Used as the primary acceptance benchmark for this change."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "scope-hoisting",
+      "action": "modify",
+      "source": "cclab/specs/crates/cclab-jet/scope-hoisting.md",
+      "main_spec_ref": "crates/cclab-jet/scope-hoisting.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

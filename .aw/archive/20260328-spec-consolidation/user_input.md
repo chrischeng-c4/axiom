@@ -1,0 +1,1 @@
+fix(sdd): enforce spec consolidation — prevent scattered specs after SDD lifecycle. #1039

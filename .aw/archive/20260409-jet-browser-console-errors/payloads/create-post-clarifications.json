@@ -1,0 +1,13 @@
+{
+  "group_id": "browser-console-error-relay",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "→ requirements.md — browser runtime errors (uncaught exceptions, unhandled rejections, console.error/warn) are invisible in the dev server terminal",
+    "success_criteria": "→ requirements.md — console.error, console.warn, window.onerror, onunhandledrejection captured and printed in terminal with color formatting. → pre_clarifications — always-on, no toggle flag",
+    "boundary": {
+      "in_scope": "→ spec_plan: jet-console-error-relay (new spec). Three components: browser-side capture hooks in hmr_client.rs, client-to-server message type in hmr.rs, server-side reception + terminal output in mod.rs",
+      "out_of_scope": "→ pre_clarifications — console.log/info/debug excluded (too noisy). No re-broadcast to other clients. No error overlay for runtime errors (existing overlay is for transform errors only)",
+      "constraints": "Must follow existing HmrMessage serde pattern (tag=type, rename_all=kebab-case). Must preserve original console.error/warn behavior (call originals after capture)"
+    }
+  }
+}

@@ -1,0 +1,67 @@
+change_id: sdd-workflow-cleanup
+schema_version: '2.0'
+created_at: 2026-03-17T06:39:37.102730Z
+updated_at: 2026-03-17T10:11:53.055326Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: null
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.42
+    model: gemini-3-flash-preview
+    tokens_in: 2085026
+    tokens_out: 2962
+    cost_usd: null
+    duration_ms: 426528
+    timestamp: 2026-03-17T06:46:54.283664Z
+  - step: create_reference_context
+    sdd_version: 0.3.42
+    model: gemini-3-flash-preview
+    tokens_in: 930956
+    tokens_out: 1560
+    cost_usd: null
+    duration_ms: 242097
+    timestamp: 2026-03-17T06:53:47.892650Z
+  total_cost_usd: 0.0
+  total_tokens_in: 3015982
+  total_tokens_out: 4522
+dag:
+  issues:
+  - number: 644
+    title: 'refactor(sdd): remove sdd_read_artifact and sdd_write_artifact generic tools'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 884
+    title: 'Unify workflow config: merge agent + label settings per workflow step'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 886
+    title: 'Spec Plan in reference_context: auto-determine main_spec_ref for change-spec'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  reference_context: []
+  change_spec: []
+  pre_clarifications:
+  - config-unification
+  - spec-plan
+  - tools-cleanup

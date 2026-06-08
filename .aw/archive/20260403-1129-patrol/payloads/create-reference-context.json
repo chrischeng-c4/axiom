@@ -1,0 +1,21 @@
+{
+  "change_id": "1129-patrol",
+  "group_id": "jit-refcount-audit",
+  "reference_context": "| Spec | Relevance | Key Requirements |\n|------|-----------|------------------|\n| crates/cclab-mamba/codegen/jit-refcount.md | high | Primary spec for JIT refcount work. Phases 1-5 already committed (IMMORTAL_REFCOUNT, mb_retain_value/mb_release_value wrappers, release-before-overwrite, copy retain, return cleanup, compile_time_objects tracking). This change audits all mb_* return values, adds mb_retain for borrowed-reference returns, enables EMIT_REFCOUNT_CALLS=true, and re-enables GC (Phase 6). R7 audit classification table is the new deliverable. |\n| crates/cclab-mamba/runtime/value-and-rc.md | high | Defines MbValue NaN-boxing (TAG_PTR=0, is_ptr()), MbObject header with AtomicU32 rc, mb_retain/mb_release semantics, IMMORTAL_REFCOUNT guard. The audit must use is_ptr() semantics to classify which mb_* functions return new heap references (owned) vs existing heap references (borrowed, caller must mb_retain). |\n| crates/cclab-mamba/runtime/gc.md | high | KI-1: auto-collection disabled (enabled:false) because JIT emits no roots. GC re-enable is a direct deliverable of this group (per pre-clarifications Q2). Must set GcState::new() enabled=true after EMIT_REFCOUNT_CALLS=true is validated. KI-1 status changes from mitigated to resolved. |\n| crates/cclab-mamba/codegen/cranelift-jit.md | high | jit.rs declares EMIT_REFCOUNT_CALLS (imported from mod.rs). The emit_inst guards on EMIT_REFCOUNT_CALLS cover: release before overwrite (StoreVar, StoreGlobal, StoreCell), retain on copy, return-time local release. Enabling the flag is the core activation step for this group. |\n| crates/cclab-mamba/codegen/cranelift.md | high | mod.rs declares const EMIT_REFCOUNT_CALLS: bool = false (line 11). Also contains emit_inst and emit_terminator with the same EMIT_REFCOUNT_CALLS guards for AOT path. Both mod.rs and jit.rs flags must be set to true. |\n| crates/cclab-mamba/runtime/symbols.md | medium | mb_retain_value/mb_release_value already registered in runtime_symbols(). If the audit identifies mb_* functions that return borrowed references, the call sites in jit.rs/mod.rs emit an extra mb_retain_value call — no new symbols registration needed unless new wrapper variants are added. |\n| crates/cclab-mamba/mir/mir.md | low | MirInst::Call and Terminator::Return are the emit sites where borrowed-reference returns need mb_retain injected. MirFunction.locals provides the VReg set for return-time cleanup. Understanding Copy/StoreGlobal/StoreCell instruction variants helps identify all reassignment sites. |",
+  "specs": [
+    {
+      "spec_id": "jit-refcount",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/codegen/jit-refcount.md",
+      "source": "crates/cclab-mamba/codegen/jit-refcount.md",
+      "sections": ["overview", "requirements", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "gc",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/gc.md",
+      "source": "crates/cclab-mamba/runtime/gc.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

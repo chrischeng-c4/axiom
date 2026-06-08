@@ -1,0 +1,40 @@
+change_id: mamba-p3
+schema_version: '2.0'
+created_at: 2026-02-23T13:20:55.323173Z
+updated_at: 2026-02-23T13:28:28.511158Z
+phase: clarifications_reviewed
+iteration: 1
+last_action: clarifications_review_rejected
+session_id: null
+checksums: {}
+validations: []
+revision_counts: {}
+telemetry:
+  calls:
+  - step: review_clarifications
+    sdd_version: 0.3.11
+    model: gpt-5.3-codex
+    tokens_in: 117033
+    tokens_out: 1262
+    cost_usd: null
+    duration_ms: 41060
+    timestamp: 2026-02-23T13:21:04.289719Z
+  - step: revise_clarifications
+    sdd_version: 0.3.11
+    model: gemini-3-flash-preview
+    tokens_in: 839632
+    tokens_out: 3763
+    cost_usd: null
+    duration_ms: 119353
+    timestamp: 2026-02-23T13:27:11.235718Z
+  - step: review_clarifications
+    sdd_version: 0.3.11
+    model: gpt-5.3-codex
+    tokens_in: 96546
+    tokens_out: 1886
+    cost_usd: null
+    duration_ms: 36480
+    timestamp: 2026-02-23T13:28:28.511154Z
+  total_cost_usd: 0.0
+  total_tokens_in: 1053211
+  total_tokens_out: 6911

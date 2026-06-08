@@ -1,0 +1,9 @@
+{
+  "group_id": "jet-test-gaps",
+  "answers": [
+    {
+      "question": "Which modules need new tests?",
+      "answer": "css/ (Tailwind output, PostCSS chain, CSS modules), dev_server/ (module_graph invalidation, HMR boundary), bundler/ (code splitting multi-entry, shared chunks, circular dynamic imports)"
+    }
+  ]
+}

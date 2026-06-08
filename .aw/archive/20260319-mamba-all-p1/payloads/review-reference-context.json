@@ -1,0 +1,61 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-mamba",
+  "change_id": "mamba-all-p1",
+  "group_id": "repl",
+  "verdict": "FAIL",
+  "summary": "The reference context artifact was never filled in — all three rows are `? | ? | high | —` placeholders. No actual spec is listed. The primary spec for this group (cclab-mamba/driver/repl.md) is absent, as is the codegen/cranelift-jit.md spec which directly governs the JIT execution path cited in Q1 (CraneliftJitBackend::new() at repl.rs:178). Three additional specs — driver/compiler-driver.md and runtime/symbols.md — provide medium/low coverage and are also absent. Furthermore, repl.md contains an architectural inconsistency against the pre-clarification: R2 states 'The JIT module must remain alive across iterations' but Q1 explicitly answers that each iteration creates a fresh CraneliftJitBackend::new() with state persisting via the lowering layer (repl.rs:153-193), not via JIT module continuity. An implementer reading this reference context would find zero spec guidance for any part of the REPL implementation.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "No specs are listed — all entries are `?` placeholders. Q1 cites driver/repl.rs (383 lines, full REPL loop, lowering state at lines 153-193, magic commands, error recovery) and codegen/cranelift/jit.rs (CraneliftJitBackend::new() at repl.rs:178). Q2 cites repl.rs:229-272 for needs_continuation(). Q3 cites repl.rs:62 for stdin reading and recommends rustyline as optional feature flag. The corresponding specs — driver/repl.md (covers driver/repl.rs entirely) and codegen/cranelift-jit.md (covers jit.rs with R5 explicitly addressing REPL incremental compilation) — are entirely absent."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "All relevance entries are `?`. The correct scoring would be: driver/repl.md = HIGH (it IS the REPL spec, 1:1 mapping to driver/repl.rs), codegen/cranelift-jit.md = HIGH (JIT execution is the core execution mechanism, R5 is 'REPL Incremental Compilation'), driver/compiler-driver.md = MEDIUM (entry point detection and backend selection — R2 mentions CraneliftJit as default for REPL use), runtime/symbols.md = LOW (mb_* symbol wiring required for any JIT execution, background context)."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "All key requirement entries are `—`. Verified against actual specs: driver/repl.md has R1 (CLI prompts, Ctrl-C/D), R2 (incremental JIT compilation), R3 (ReplState persistent state), R4 (multi-line via needs_continuation), R5 (expression auto-print via __repr__). codegen/cranelift-jit.md has R1 (JIT module init), R2 (runtime symbol wiring), R5 (REPL incremental compilation — explicit match). driver/compiler-driver.md has R2 (backend selection, CraneliftJit as default), R4 (CompilerConfig struct). runtime/symbols.md has R1 (name-to-address mapping), R2 (MirExtern declarations)."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "The artifact includes no real specs at all (only placeholders), so no irrelevant specs are present. This checklist item trivially passes, but only because the artifact is empty — not because of correct curation."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "driver/repl.md is absent. This is the primary spec for the group — it directly covers driver/repl.rs, which is the implementation file cited across all three pre-clarification questions (Q1: lowering state at lines 153-193 and magic commands, Q2: needs_continuation at lines 229-272, Q3: stdin reading at line 62). The spec has five requirements: R1 (interactive CLI with >>> and ... prompts, Ctrl-C cancel, Ctrl-D exit), R2 (incremental JIT per iteration: lex → parse → compile → execute), R3 (ReplState struct: symbol table, global variable storage, class/function registry), R4 (multi-line detection: unclosed brackets, trailing colons, indentation), R5 (expression auto-print via __repr__, suppress None). The spec covers the full REPL execution loop flowchart. It exists at cclab/specs/cclab-mamba/driver/repl.md.",
+      "recommendation": "Add driver/repl.md at HIGH relevance. Key requirements: R1 (CLI prompts/Ctrl handling), R2 (JIT compilation pipeline per iteration), R3 (ReplState persistent state across iterations), R4 (multi-line input via needs_continuation), R5 (expression result auto-print)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "codegen/cranelift-jit.md is absent. Pre-clarification Q1 explicitly cites CraneliftJitBackend::new() at repl.rs:178 — the JIT backend instantiated on every REPL iteration. The spec's R5 is titled 'REPL Incremental Compilation' and states: 'Support incremental JIT compilation across REPL iterations. Each new REPL input compiles and links against previously compiled functions, preserving state between iterations.' This is a 1:1 match for the core execution mechanism. The spec also includes a sequenceDiagram showing REPL multi-iteration symbol resolution. Additionally, R2 (runtime symbol wiring for mb_* functions) is required because the JIT must wire all runtime symbols on every fresh backend initialization. The spec exists at cclab/specs/cclab-mamba/codegen/cranelift-jit.md.",
+      "recommendation": "Add codegen/cranelift-jit.md at HIGH relevance. Key requirements: R1 (JIT module init per REPL iteration), R2 (mb_* runtime symbol wiring), R5 (REPL incremental compilation — explicit REPL support requirement)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "driver/compiler-driver.md is absent. The compiler driver is responsible for detecting when `mamba` is invoked with no arguments and launching the REPL mode (vs. compiling a file). R2 states 'Default backend is Cranelift JIT for interactive/REPL use.' R4 defines the CompilerConfig struct fields including input/output mode selection. Without this spec, the entry-point and backend-selection contract for REPL launch is unspecified. The spec exists at cclab/specs/cclab-mamba/driver/compiler-driver.md.",
+      "recommendation": "Add driver/compiler-driver.md at MEDIUM relevance. Key requirements: R2 (backend selection — CraneliftJit as default for REPL), R4 (CompilerConfig struct — input source and mode fields that distinguish REPL from file-compile mode)."
+    },
+    {
+      "severity": "LOW",
+      "description": "runtime/symbols.md is absent. Q1 states each REPL iteration creates a fresh CraneliftJitBackend::new(), meaning runtime symbols (mb_*) must be re-registered on every iteration. The symbols spec's R1 (symbol name-to-address mapping) and R2 (MirExtern declarations for all mb_* functions) define the symbol registration contract consumed by cranelift-jit.md R2. This is background context for understanding why the JIT initialization cost per REPL iteration includes full symbol wiring. The spec exists at cclab/specs/cclab-mamba/runtime/symbols.md.",
+      "recommendation": "Add runtime/symbols.md at LOW relevance. Key requirements: R1 (name-to-address mapping for mb_* symbols), R2 (MirExtern declarations used by JIT symbol population)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Architectural inconsistency between repl.md R2 and pre-clarification Q1: repl.md R2 states 'The JIT module must remain alive across iterations to support forward references to previously defined symbols,' but Q1 explicitly answers that each iteration creates fresh CraneliftJitBackend::new() with state persisting via the lowering layer (repl.rs:153-193), not via JIT module continuity. This means the spec's stated architectural approach (long-lived JIT module) diverges from the actual implementation (fresh JIT per iteration, MIR re-compiled from accumulated lowering state). The reference context must include both specs so the implementer can reconcile this gap rather than rely on a spec that may be inaccurate about the core architecture.",
+      "recommendation": "Flag this inconsistency in the change spec. The implementer must decide whether to: (a) update repl.md R2 to reflect the fresh-JIT-per-iteration model, or (b) refactor the implementation to match the spec's long-lived JIT model. Either choice must be recorded before implementation proceeds."
+    },
+    {
+      "severity": "LOW",
+      "description": "No spec covers rustyline integration. Pre-clarification Q3 explicitly recommends adding rustyline as an optional feature flag for readline editing, history, and tab completion. The requirements.md lists these as 'optional' features. Neither driver/repl.md nor any other spec mentions rustyline, feature flags, or the readline integration design. If rustyline is in scope for this change, the repl.md spec needs a new requirement (e.g., R6 — Optional Readline Integration) before implementation.",
+      "recommendation": "If rustyline integration is in scope, add R6 to driver/repl.md covering: optional Cargo feature flag, rustyline Editor<Helper> wrapping stdin, tab-completion via Completer trait, history persistence to ~/.mamba_history. If out of scope for this change, note explicitly in the change spec."
+    }
+  ]
+}

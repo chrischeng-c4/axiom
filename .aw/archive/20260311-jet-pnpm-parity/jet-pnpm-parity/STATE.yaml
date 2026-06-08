@@ -1,0 +1,35 @@
+change_id: jet-pnpm-parity
+schema_version: '2.0'
+created_at: 2026-03-11T09:59:53.705276Z
+updated_at: 2026-03-11T10:27:44.440969Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+branch: cclab-jet
+revision_counts: {}
+current_task_id: jet-pnpm-parity-spec
+task_revisions: {}
+telemetry: null
+dag:
+  issues:
+  - number: 763
+    title: 'feat(jet): pnpm feature parity — workspace, hoisting, overrides, .npmrc, audit'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+groups_progress:
+  change_spec: []
+  post_clarifications:
+  - pnpm-parity
+  pre_clarifications:
+  - pnpm-parity
+  reference_context:
+  - pnpm-parity
+  change_implementation: []

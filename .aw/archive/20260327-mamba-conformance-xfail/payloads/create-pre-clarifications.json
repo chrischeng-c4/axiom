@@ -1,0 +1,13 @@
+{
+  "group_id": "conformance-xfail-reduction",
+  "answers": [
+    {
+      "question": "Should we prioritize breadth or depth?",
+      "answer": "Depth — kwargs first. Fix the 5 kwargs verifier errors first, then move to output mismatches."
+    },
+    {
+      "question": "For output mismatches — fix runtime or update golden files?",
+      "answer": "Fix runtime to match CPython 3.12 output exactly. Conformance means matching CPython."
+    }
+  ]
+}

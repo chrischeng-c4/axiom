@@ -1,0 +1,1 @@
+{"group_id":"fix-name-builtin","spec_id":"name-builtin-init","verdict":"APPROVED","summary":"__name__ fix implemented in hir_to_mir.rs. Manually approved after agent timeout.","checklist_results":[],"issues":[]}

@@ -1,0 +1,1 @@
+mamba: __name__ resolves to 0.0 instead of __main__ for entry point #1133

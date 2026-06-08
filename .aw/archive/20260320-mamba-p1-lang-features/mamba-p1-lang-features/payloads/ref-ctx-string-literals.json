@@ -1,0 +1,14 @@
+{
+  "group_id": "string-literals",
+  "spec_plan": {"sections": ["overview", "schema", "lexer", "runtime", "changes"]},
+  "specs": [
+    {"path": "cclab-mamba/lexer/tokens-and-indent.md", "relevance": "high", "reason": "String prefix lexing (r, b, rb), escape sequence processing"},
+    {"path": "cclab-mamba/runtime/string-ops.md", "relevance": "high", "reason": "String escape handling in runtime"},
+    {"path": "cclab-mamba/runtime/bytes-ops.md", "relevance": "high", "reason": "Bytes type operations"},
+    {"path": "cclab-mamba/runtime/value-and-rc.md", "relevance": "high", "reason": "NaN-boxed value model — adding ObjKind::Bytes"},
+    {"path": "cclab-mamba/parser/expressions.md", "relevance": "medium", "reason": "String literal expression parsing"},
+    {"path": "cclab-mamba/parser/ast.md", "relevance": "medium", "reason": "AST nodes for string/bytes literals"},
+    {"path": "cclab-mamba/runtime/builtins.md", "relevance": "medium", "reason": "bytes() builtin constructor"},
+    {"path": "cclab-mamba/codegen/cranelift-jit.md", "relevance": "medium", "reason": "JIT codegen for bytes literals"}
+  ]
+}

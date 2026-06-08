@@ -1,0 +1,9 @@
+{
+  "spec_id": "broker-traits",
+  "group_id": "gcp-cloud-integration",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "schema"],
+  "main_spec_ref": "crates/cclab-fetch/broker/broker-traits.md",
+  "merge_strategy": "new",
+  "content": "Defines the trait hierarchy for message brokers in cclab-queue. The `Broker` trait provides the core interface (connect, disconnect, publish, health_check, delivery_model, capabilities). Three extension traits specialize delivery patterns: `PullBroker` (worker-fetched subscriptions with ack/nack), `PushBroker` (HTTP push with request parsing and status codes), and `DelayedBroker` (native delayed/scheduled task publishing). `BrokerCapabilities` advertises feature support (delayed_tasks, dead_letter, priority, batching, max_delay). `DeliveryModel` enum distinguishes Pull vs Push brokers. `BrokerMessage` carries decoded payloads with delivery metadata. Implementations are feature-gated per backend: `nats`, `pubsub`, `pubsub-push`, `cloudtasks`.\n\nSource: `crates/cclab-queue/src/broker/mod.rs`"
+}

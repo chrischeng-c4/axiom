@@ -1,0 +1,13 @@
+{
+  "group_id": "structured-issue-format",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "SDD phases 2-3, 7 duplicate structured issue content — 6 extra mainthread round-trips",
+    "success": "Structured issues skip directly to Tech Design phase. init_change auto-generates artifacts. Unstructured issues still work.",
+    "boundary": {
+      "in_scope": "init_change parser, issue section format, score issues enrich CLI, SKILL.md skip logic",
+      "out_of_scope": "Tech Design CRR changes, Codebase CRR changes, Merge changes, new state machine states",
+      "constraints": "Backward compat required — unstructured issues fall back to current flow"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "group_id": "jet-install-enhancements",
+  "skipped": true,
+  "reason": "No contradictions between requirements and existing specs (pkg-manager.md, pkg-manager-pnpm-parity.md). Metadata cache (~/.cache/jet) is separate from package store (~/.jet-store/). Platform filtering and resolver patterns align with existing spec diagrams."
+}

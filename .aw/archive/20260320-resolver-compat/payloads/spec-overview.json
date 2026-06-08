@@ -1,0 +1,13 @@
+{"spec_id":"resolver-compat-spec","section":"overview","content":"Fix resolver to handle all real-world npm version spec patterns encountered in tech-platform Nx monorepo (~1500 packages).
+
+### Current State
+
+- Bare package name alias (storybook-jest): fixed in 65c5f159
+- Hyphen range (2 - 4): not yet supported
+- tech-platform install fails at hyphen range parsing
+
+### Target State
+
+- All npm semver patterns supported: hyphen ranges, bare aliases (including scoped), OR ranges, pre-release
+- tech-platform Nx monorepo installs successfully
+- Trimmed test fixture committed for CI"}

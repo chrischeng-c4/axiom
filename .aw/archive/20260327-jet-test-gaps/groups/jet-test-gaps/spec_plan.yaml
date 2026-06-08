@@ -1,0 +1,21 @@
+- spec_id: jet-postcss-tailwind
+  action: modify
+  main_spec_ref: crates/cclab-jet/logic/postcss-tailwind.md
+  source: cclab/specs/crates/cclab-jet/postcss-tailwind.md
+  sections:
+  - test-plan
+  - changes
+- spec_id: jet-hmr
+  action: modify
+  main_spec_ref: crates/cclab-jet/logic/hmr.md
+  source: cclab/specs/crates/cclab-jet/hmr.md
+  sections:
+  - test-plan
+  - changes
+- spec_id: jet-aot-build
+  action: modify
+  main_spec_ref: crates/cclab-jet/logic/aot-build.md
+  source: cclab/specs/crates/cclab-jet/aot-build.md
+  sections:
+  - test-plan
+  - changes

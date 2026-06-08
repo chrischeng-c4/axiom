@@ -1,0 +1,120 @@
+[package]
+name = "jet"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Jet - Rust-native build tool and package manager for JavaScript/TypeScript"
+
+[lib]
+name = "jet"
+path = "src/lib.rs"
+
+[[bin]]
+name = "jet"
+path = "src/main.rs"
+
+[dependencies]
+# CLI dependencies
+clap.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+toml = "0.8"
+
+# JSON Schema export (#1233 Slice 5 — `jet config schema`)
+schemars = "0.8"
+
+# Module resolution
+node-resolve = { workspace = true }
+
+# Tree-sitter for parsing
+tree-sitter = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+
+# Regex for simple transformations
+regex = { workspace = true }
+
+# Image processing
+image = { workspace = true }
+
+# Hashing
+sha2 = "0.10"
+
+# Graph dependencies
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+rayon = { workspace = true }
+petgraph = { workspace = true }
+
+# HTTP server (dev server)
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+
+# WebSocket
+tokio-tungstenite = { workspace = true }
+
+# File watching
+notify = { workspace = true }
+
+# Utilities
+futures-util = { workspace = true }
+
+# HTTP client for registry (pkg manager)
+reqwest = { workspace = true }
+
+# Version handling
+semver = { workspace = true }
+
+# Directory traversal
+walkdir = { workspace = true }
+
+# Tarball extraction
+flate2 = "1.0"
+tar = "0.4"
+
+# Async utilities
+futures = "0.3"
+
+# Glob patterns (workspace discovery)
+glob = "0.3"
+
+# CSS pipeline
+lightningcss = "1.0.0-alpha.57"
+globset = "0.4"
+
+# Base64 encoding (JIT source maps)
+base64 = "0.22"
+
+# Temp files (JIT runner, dlx)
+tempfile = "3.15"
+
+# Trace archive support (jet trace) + browser install zip extraction
+# @spec enhancement-native-trace-viewer-trace-capture-standalone-html-spec#R3
+zip = "2"
+
+# Browser auto-open (jet trace view)
+# @spec enhancement-native-trace-viewer-trace-capture-standalone-html-spec#R5
+open = "5"
+
+# Browser install: home dir resolution
+dirs = "5"
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+which = "7"
+# @spec parity-dom-reference-runner.md#Changes (jet/Cargo.toml modify)
+jet-parity-oracle = { path = "parity/oracle" }
+
+[[test]]
+name = "e2e_playwright_residue"
+path = "tests/e2e_playwright_residue.rs"

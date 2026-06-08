@@ -1,0 +1,54 @@
+{
+  "group_id": "match-case",
+  "verdict": "FAIL",
+  "summary": "Two requirement IDs are wrong: type-checker cites R4 (scope management) but the narrowing requirement is R3; cranelift cites R8 which does not exist in that spec (only R1-R5) — the correct entry is R2 (MIR Instruction Translation). Two directly-modified specs are absent: hir/hir.md must gain HirMatch/HirPattern variants (pattern-matching.md Change #2) and lower/ast-to-hir.md must gain match/case desugaring (Change #3), yet neither appears in the reference context. Finally, Q1 answer requires exhaustiveness checking in this iteration, but no spec in the context carries a requirement for non-exhaustive match warnings.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Q1 requires exhaustiveness checking (warn on non-exhaustive match) in this iteration. No spec in the reference context covers this: pattern-matching.md does not define an exhaustiveness requirement, and type-checker.md R3 only mentions isinstance-based narrowing, not exhaustiveness analysis. Additionally, hir/hir.md and lower/ast-to-hir.md are directly modified by this change (add HirMatch/HirPattern and match/case desugaring respectively) but are absent from the reference context."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": true,
+      "note": "pattern-matching.md (high), patterns.md (high), hir-to-mir.md (high) are correctly rated. type-checker.md (medium) and cranelift.md (medium) are reasonable — they are affected by but do not primarily implement the change. No score is grossly inflated or deflated."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "type-checker.md cites R4 (Type Environment and Scope Management — scope push/pop stack). The requirement relevant to case-branch type narrowing is R3 (Statement Type Checking with Flow-Sensitive Narrowing), which explicitly covers if/elif/else narrowing based on isinstance checks that extend to match/case. cranelift.md cites R8, but the spec only defines R1-R5. The correct requirement is R2 (MIR Instruction Translation), which covers control-flow instructions — branches and jumps — that pattern dispatch emits."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "All five listed specs are genuinely relevant to match/case pattern matching. No off-topic spec is present."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "hir/hir.md (cclab-mamba/hir) is missing. pattern-matching.md Change #2 explicitly targets crates/cclab-mamba/src/hir/ and requires adding HirMatch statements and HirPattern enum variants (Mapping, Sequence, Class, Or, As, Literal, Capture, Wildcard). The current hir.md R1 HirStmt variant list contains no Match node and HirPattern does not exist at all. This spec must be extended and must appear in the reference context.",
+      "recommendation": "Add hir/hir.md (cclab-mamba/hir) with HIGH relevance, key requirement R1 (HIR Node Definitions — to be extended with HirMatch and HirPattern)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "lower/ast-to-hir.md (cclab-mamba/lower) is missing. pattern-matching.md Change #3 explicitly targets lower/ast_to_hir.rs and requires adding traversal for match/case AST constructs, desugaring them into HirMatch and HirPattern nodes. The current ast-to-hir.md covers only decorators, comprehensions, with-statements, for-else, and augmented assignment — no match/case path exists. This spec needs a new requirement and must appear in the reference context.",
+      "recommendation": "Add lower/ast-to-hir.md (cclab-mamba/lower) with HIGH relevance. A new requirement (e.g., R6: Match/Case Lowering to HirMatch) will need to be added to the spec before implementation."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Exhaustiveness checking (Q1 answer: 'Include exhaustiveness checking in this iteration') is uncovered by any spec. None of the five specs defines a requirement for detecting non-exhaustive match arms and emitting a warning. This behavior — checking that all values of the subject type are handled by at least one case arm — is a distinct compiler analysis (separate from type narrowing) with no spec entry.",
+      "recommendation": "Add an exhaustiveness checking requirement to pattern-matching.md (e.g., R9: Exhaustiveness Analysis — warn when no case arm can match all values of the subject's type). Then ensure the spec appears or is already present in the reference context with that requirement cited."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "type-checker.md cites R4 (Type Environment and Scope Management), but R4 is about the scope stack (push/pop environments on function/class entry). Case-branch type narrowing is covered by R3 (Statement Type Checking with Flow-Sensitive Narrowing), which explicitly lists isinstance-based narrowing in if/elif/else branches — the same mechanism extended to match/case class patterns.",
+      "recommendation": "Replace R4 with R3 in the type-checker.md key requirements column."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "cranelift.md cites R8, which does not exist in that spec (cranelift.md defines R1-R5 only). R8 is a requirement ID from pattern-matching.md (the change spec), not from cranelift.md. The relevant cranelift.md requirement is R2 (MIR Instruction Translation), which covers control-flow instructions including branch and jump that are the building blocks for pattern dispatch decision trees.",
+      "recommendation": "Replace R8 with R2 in the cranelift.md key requirements column."
+    }
+  ]
+}

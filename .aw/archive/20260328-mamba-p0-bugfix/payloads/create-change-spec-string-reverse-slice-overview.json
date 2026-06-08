@@ -1,0 +1,9 @@
+{
+  "spec_id": "string-reverse-slice-fix",
+  "group_id": "mamba-codegen-runtime-fixes",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "main_spec_ref": "crates/cclab-mamba/runtime/string-ops",
+  "merge_strategy": "new",
+  "content": "`mb_str_slice_full(s, start, stop, step)` handles Python `str[start:stop:step]` slicing. When `step < 0` and `stop` is absent (Python `None`), the code passes the sentinel value `-1` to `clamp_rev_str(-1, len)`. `clamp_rev_str` normalizes negative indices by adding `len`, so `-1` becomes `len - 1` (the last character index). For `'abcdef'[::-1]` (len=6): `s_idx = clamp_rev_str(5, 6) = 5`, `e_idx = clamp_rev_str(-1, 6) = 5`. The loop condition `while i > e_idx` becomes `while 5 > 5` — immediately false, producing an empty string.\n\nFix: when `stop` is `None` (i.e., `stop.as_int()` returns `None`) and `step < 0`, bypass `clamp_rev_str` and use `-1` directly as `e_idx`. The loop `while i > -1` then iterates from index `len-1` down to `0` inclusive, producing the correct reversed string. Same treatment for `start` when absent: use `len - 1` directly without clamping.\n\nIssue: #1111"
+}

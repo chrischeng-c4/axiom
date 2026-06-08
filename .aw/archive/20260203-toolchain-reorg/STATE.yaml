@@ -1,0 +1,11 @@
+change_id: toolchain-reorg
+schema_version: '2.0'
+created_at: 2026-01-28T08:21:36.321692Z
+updated_at: 2026-01-28T08:41:10.000000Z
+phase: implemented
+iteration: 1
+last_action: impl-complete
+session_id: null
+checksums: {}
+validations: []
+telemetry: null

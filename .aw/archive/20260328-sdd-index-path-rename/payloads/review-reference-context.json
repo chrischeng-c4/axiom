@@ -1,0 +1,12 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-index-path-rename",
+  "group_id": "index-path-and-cli-hints",
+  "verdict": "approved",
+  "summary": "Reference context correctly identifies lens-index-storage.md and implement-task.md as primary specs. Spec plan covers both logical units with appropriate sections.",
+  "findings": [
+    "lens-index-storage.md correctly documents all storage.rs path constants that need renaming",
+    "implement-task.md accurately describes build_implement_code_prompt() where CLI hints will be added",
+    "Spec plan covers both logical units: storage path rename and implementation prompt enhancement"
+  ]
+}

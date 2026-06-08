@@ -1,0 +1,7 @@
+{
+  "group_id": "default",
+  "spec_id": "score-init-command",
+  "verdict": "APPROVED",
+  "issues": [],
+  "summary": "Implementation matches all spec requirements. R1: Init variant added to Commands enum. R2: Dispatch to init::run() added. R3: help text via doc comments. R4: All 5 agent templates embedded via include_str!. R5: install_agents() writes to .claude/agents/. R6: Legacy sdd-*.md files removed. R7: 3 hook scripts embedded. R8: install_hooks() writes with chmod +x. R9: settings.json template with SubagentStop score-* hook. R10: install_settings_json() merges JSON. R11: Skip if score-* matcher already present. R12/R13: score-issue and score-issue-patrol skills added. R14: install_system_files() called from both fresh and update paths. R15: Version check unchanged. 7 unit tests pass covering all key behaviors. Code quality is good — follows existing patterns, proper error handling."
+}

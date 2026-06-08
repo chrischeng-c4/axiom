@@ -1,0 +1,6 @@
+{
+  "spec_id": "all-issues-spec",
+  "section": "overview",
+  "content": "",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"]
+}

@@ -1,0 +1,9 @@
+{
+  "spec_id": "1134-mamba-dual-config-spec",
+  "group_id": "unify-mamba-config",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "diagrams", "test_plan", "changes"],
+  "main_spec_ref": "crates/cclab-mamba/config/config-schema.md",
+  "merge_strategy": "modify",
+  "content": "Unify the two conflicting `MambaConfig` structs that existed before this change:\n\n| Location | Used by | Format |\n|----------|---------|--------|\n| `driver/config.rs` | CLI (`cclab mamba run/build`) | `entry_point` at root, `crates: HashMap<String, String>`, `expose: HashMap<String, Vec<String>>` |\n| `config/schema.rs` | Nothing (dead code) | `[project]` table with name/version, `crates: HashMap<String, CrateConfig>` (structured with path/version/expose/module) |\n\nThe resolution merges both formats into a single `MambaConfig` in `config/schema.rs`. The richer format becomes canonical while the flat format is preserved for backward compatibility via the `CrateEntry` enum (`Version` or `Config` variants). The duplicate struct in `driver/config.rs` is removed; `driver/config.rs` now only contains `CompilerConfig` and imports `MambaConfig` from `crate::config::MambaConfig`.\n\nThis fixes the TOML parse error that occurred when Conductor's `mamba.toml` (written for the richer format with `[crates.cclab-schema-mamba]` sub-tables) was parsed by the CLI which expected flat `crates = version_string` format.\n\nIssue: #1134."
+}

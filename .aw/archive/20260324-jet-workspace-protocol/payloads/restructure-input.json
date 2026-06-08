@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "jet-workspace-protocol",
+      "issues": [],
+      "requirements": "Extend `cclab-jet`'s package manager to support pnpm-style workspace monorepos. Two pieces of work: (1) Workspace discovery — extend `WorkspaceManager::load_config()` in `src/pkg_manager/workspace.rs` to detect and parse `pnpm-workspace.yaml` (pnpm's native format, containing a `packages:` glob array) alongside the existing `jet-workspace.yaml` and `package.json.workspaces` sources. (2) Workspace install — integrate `WorkspaceManager` into `PackageManager::install_with_options()` in `src/pkg_manager/mod.rs`: detect workspace mode at install time, identify which direct deps carry a `workspace:*` (or `workspace:^`, `workspace:~`) protocol spec, skip registry resolution and tarball download for those packages, and instead create a symlink from `node_modules/<pkg-name>` pointing to the workspace package's local directory. The existing `WorkspaceManager::resolve_workspace_protocol()` and `is_workspace_protocol()` utilities are already present and can be reused. Acceptance criteria: a project with `pnpm-workspace.yaml` and a package using `workspace:*` in its deps causes `jet install` to create a symlink in `node_modules/` rather than fetching from the npm registry.",
+      "questions": [
+        {
+          "topic": "pnpm-workspace.yaml detection priority",
+          "question": "In `WorkspaceManager::load_config()` the current order is: `jet-workspace.yaml` → `package.json.workspaces` → nothing. Where should `pnpm-workspace.yaml` be inserted in this chain? Putting it before `jet-workspace.yaml` means pnpm repos work out of the box but a project that ships both files would use pnpm's config; putting it after means `jet-workspace.yaml` takes precedence when both exist."
+        },
+        {
+          "topic": "pnpm-workspace.yaml catalog support",
+          "question": "pnpm v9 added a `catalog:` (and `catalogs:`) field to `pnpm-workspace.yaml` for shared version pinning. The existing `WorkspaceConfig` struct already has a `catalog` field. Should this change wire up pnpm `catalog:` parsing as well, or only handle the `packages:` glob array and leave catalog support for a follow-up?"
+        },
+        {
+          "topic": "Symlink style: relative vs absolute",
+          "question": "When symlinking a workspace package into `node_modules/<pkg-name>`, should the symlink target be an absolute path (e.g. `/repo/packages/ui`) or a relative path from the symlink location (e.g. `../../packages/ui`)? pnpm uses relative symlinks; npm uses absolute. Relative symlinks survive directory moves but are slightly more complex to compute."
+        },
+        {
+          "topic": "Recursive workspace install",
+          "question": "When `jet install` is run at the workspace root, should it also recursively install each workspace package's own external (non-workspace) dependencies (i.e. iterate all discovered packages and call install for each), or only install the root `package.json`'s deps and symlink workspace packages?"
+        },
+        {
+          "topic": "Lockfile representation for workspace packages",
+          "question": "Should workspace-protocol packages be recorded in `jet-lock.yaml`? Currently `Lockfile` stores tarball URL and shasum per package. For symlinked workspace packages there is no tarball. Options: (a) omit workspace packages from the lockfile entirely, (b) add a `workspace: true` flag and record the local relative path instead of a URL, or (c) record the resolved semver version (from `resolve_workspace_protocol`) so the lockfile still captures what version was used."
+        }
+      ]
+    }
+  ]
+}

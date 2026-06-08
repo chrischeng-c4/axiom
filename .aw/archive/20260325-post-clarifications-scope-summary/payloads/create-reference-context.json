@@ -1,0 +1,10 @@
+{
+  "group_id": "scope-summary",
+  "specs": [
+    {"spec_id": "post-clarifications", "spec_group": "logic", "relevance": "high", "key_requirements": ["prompt template", "artifact schema", "output format"]},
+    {"spec_id": "change-spec", "spec_group": "logic", "relevance": "medium", "key_requirements": ["change_spec reads post_clarifications as input"]}
+  ],
+  "spec_plan": [
+    {"spec_id": "post-clarifications-scope", "action": "modify", "main_spec_ref": "crates/cclab-sdd/logic/post-clarifications.md", "source": "crates/cclab-sdd/logic/post-clarifications.md", "sections": ["overview", "changes"]}
+  ]
+}

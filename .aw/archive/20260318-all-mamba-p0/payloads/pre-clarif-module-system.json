@@ -1,0 +1,15 @@
+{
+  "group_id": "module-system",
+  "answers": [
+    {
+      "topic": "Module resolution",
+      "question": "Should module resolution follow CPython's exact algorithm (sys.path, __init__.py, namespace packages) or a simplified subset for v1?",
+      "answer": "Full CPython algorithm — support sys.path, __init__.py, namespace packages, finder/loader protocol, importlib hooks."
+    },
+    {
+      "topic": "Compilation model",
+      "question": "Should cross-module type info be persisted as .mambai interface files or kept in-memory only during compilation?",
+      "answer": ".mambai interface files — persist compiled type signatures to disk for incremental compilation. Only recompile changed modules."
+    }
+  ]
+}

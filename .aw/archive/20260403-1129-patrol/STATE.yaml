@@ -1,0 +1,40 @@
+change_id: 1129-patrol
+schema_version: '2.0'
+created_at: 2026-04-03T13:11:06.144838Z
+updated_at: 2026-04-03T21:20:58.512199Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:jit-refcount-audit: 1
+current_task_id: jit-refcount-audit
+task_revisions:
+  jit-refcount-audit: 1
+impl_spec_phase:
+  jit-refcount-audit: tests
+telemetry: null
+dag:
+  issues:
+  - number: 1129
+    title: 'refactor(mamba): implement CPython 3.12 reference counting in JIT codegen'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - jit-refcount-audit
+  post_clarifications:
+  - jit-refcount-audit
+  reference_context:
+  - jit-refcount-audit
+  change_spec: []
+  change_implementation: []

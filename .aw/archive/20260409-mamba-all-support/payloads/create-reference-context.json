@@ -1,0 +1,29 @@
+{
+  "group_id": "all-support",
+  "specs": [
+    {
+      "spec_id": "mamba-all-support-spec",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/module.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/module.md",
+      "sections": ["overview", "requirements", "changes"]
+    }
+  ],
+  "references": [
+    {
+      "path": ".score/tech_design/crates/cclab-mamba/runtime/module.md",
+      "relevance": "high",
+      "reason": "Primary spec for the module import system. R4 already mentions from foo import * support. The __all__ filtering logic extends this requirement."
+    },
+    {
+      "path": ".score/tech_design/crates/cclab-mamba/resolve/name-resolution.md",
+      "relevance": "medium",
+      "reason": "Name resolution pass must skip defining star as a variable for star imports."
+    },
+    {
+      "path": ".score/tech_design/crates/cclab-mamba/lower/hir-to-mir.md",
+      "relevance": "medium",
+      "reason": "HIR-to-MIR lowering handles Import statements and emits CallExtern. Star import needs a different codegen path."
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "change_id": "sdd-impl-test-split",
+  "spec_id": "sdd-impl-test-split-spec",
+  "verdict": "APPROVED",
+  "summary": "All three fixes correctly implemented per spec. Two-phase dispatch (ImplementSpecCode→BuildCheck→ImplementSpecTests→TestCountCheck) works as specified with proper STATE.yaml phase tracking. Review prompt includes hard checklist and REJECT rule. create_complete guard blocks incomplete specs. All 10 test plan items (T1-T10) covered. 1864 tests pass, zero failures.",
+  "sections": {
+    "Fix 1 — Two-Phase Dispatch (create_change_impl.rs + common_change_impl.rs)": {
+      "verdict": "PASS",
+      "notes": "R1.1-R1.4 fully satisfied. ImplSubState enum extended with ImplementSpecCode, BuildCheck, ImplementSpecTests, TestCountCheck. Phase tracking via impl_spec_phase HashMap in STATE.yaml. BuildCheck runs `cargo build --workspace` as hard gate. TestCountCheck parses spec Test Plan table rows and compares against #[test] count in diff added lines. count_tests_in_diff() and parse_test_plan_count() helper functions are correct."
+    },
+    "Fix 2 — Hard Checklist Enforcement (review_change_impl.rs)": {
+      "verdict": "PASS",
+      "notes": "R2.1-R2.3 fully satisfied. build_review_prompt() now includes mandatory pre-review step to read spec Test Plan, three [HARD] checklist items, and explicit HARD REJECT RULE section. Group-aware spec path used. Prompt text clearly instructs reviewer that Test Plan present + zero tests = REJECTED, no exceptions."
+    },
+    "Fix 3 — Guard create_complete (create_change_spec.rs)": {
+      "verdict": "PASS",
+      "notes": "R3.1-R3.2 fully satisfied. Early return with error JSON when failed_sections is non-empty. Only writes create_complete: true when all sections filled. Error response matches specified schema with status, spec_id, message, failed_sections, and next_actions."
+    },
+    "State Model (models/state.rs)": {
+      "verdict": "PASS",
+      "notes": "impl_spec_phase: HashMap<String, String> added with #[serde(default)] for backward compatibility. Properly initialized in Default impl."
+    },
+    "Tests": {
+      "verdict": "PASS",
+      "notes": "All 10 test plan items covered: T1 (test_build_gate_blocks_phase2_on_failure), T2 (test_build_gate_passes_on_success), T3 (test_test_count_warning_on_mismatch), T4 (test_test_count_skipped_no_test_plan), T5 (test_test_count_skipped_qualitative_plan), T6 (test_review_hard_reject_no_tests_in_diff), T7 (test_review_checklist_includes_test_plan_item), T8 (test_create_complete_blocked_on_failed_sections), T9 (test_create_complete_written_on_all_filled), T10 (test_impl_spec_phase_tracking_in_state). All pass."
+    },
+    "Minor Observations (Non-blocking)": {
+      "verdict": "PASS",
+      "notes": "1) Spec R1.1 mentions 'skip to TerminalFailure' on build failure but scenario S2 says 'next_actions is empty (mainthread must decide)' — impl follows S2 (correct). 2) T1/T2 test state routing rather than actual cargo build execution, which is pragmatic for unit tests. 3) T8/T9 simulate guard logic directly rather than going through async agent loop — adequate coverage of the if/else guard."
+    }
+  }
+}

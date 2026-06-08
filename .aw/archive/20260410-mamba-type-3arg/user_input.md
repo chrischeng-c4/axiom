@@ -1,0 +1,1 @@
+Implement type(name, bases, dict) 3-arg dynamic class creation #enhancement-type-3-arg-dynamic-class-creation-type-name-bases

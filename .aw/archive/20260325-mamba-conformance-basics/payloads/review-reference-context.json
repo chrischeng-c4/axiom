@@ -1,0 +1,33 @@
+{
+  "group_id": "runtime-basics",
+  "verdict": "revise",
+  "summary": "Missing cranelift core codegen spec (the most relevant spec for the recursion bug). Inaccurate key requirement mappings for builtins (R4/R5 do not cover print) and string-ops (R1 does not cover mb_str_concat). builtins missing from Spec Plan.",
+  "findings": [
+    {
+      "type": "missing_spec",
+      "severity": "critical",
+      "detail": "Missing cranelift core spec (codegen/cranelift.md). R2 (MIR Instruction Translation — function calls, NaN-boxing) and R4 (Value Marshaling — return value conversion) are directly relevant to the recursion bug (Q2) and binary op dispatch (Q3). cranelift-jit only covers JIT module lifecycle, not code generation."
+    },
+    {
+      "type": "inaccurate_requirements",
+      "severity": "major",
+      "detail": "builtins key requirements listed as R4 (Conversion Builtins) and R5 (Enhanced P1 Builtins), but neither covers print(). mb_print exists in builtins.rs but has no corresponding requirement in the spec. The R4/R5 mapping is factually incorrect."
+    },
+    {
+      "type": "inaccurate_requirements",
+      "severity": "minor",
+      "detail": "string-ops key requirement listed as R1 (Core String Methods), but R1 covers methods like split/join/strip — not the + operator concatenation. mb_str_concat is in string_ops.rs but is not part of R1."
+    },
+    {
+      "type": "spec_plan_inconsistency",
+      "severity": "minor",
+      "detail": "builtins appears in the reference table (medium relevance) but is missing from the Spec Plan section. If mb_print needs fixing to return TAG_NONE, builtins should be in the plan."
+    }
+  ],
+  "required_changes": [
+    "Add cranelift (codegen/cranelift.md) as high relevance with key requirements R2, R4",
+    "Fix builtins key requirements — R4/R5 do not cover print(); note that print() has no existing requirement (spec gap)",
+    "Fix string-ops key requirement — R1 does not cover mb_str_concat (spec gap for concatenation operator)",
+    "Add builtins to Spec Plan if mb_print return value needs modification"
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "groups": [
+    {
+      "id": "subagent-dispatch",
+      "title": "Fix claude_subagents execution mode — Agent tool dispatch for subagent:X:model executors",
+      "issues": [1046],
+      "requirements": "The claude_subagents execution mode uses executor strings like subagent:Explore:sonnet, subagent:general-purpose:opus. These are dispatched via the Claude Code Agent tool (not CLI subprocess). The workflow tools need to recognize subagent:* executors and dispatch them using the Agent tool with the appropriate subagent_type and model parameters.\n\n1. Workflow tools must detect subagent:* executor prefix and invoke the Agent tool\n2. Agent tool dispatch: subagent_type from executor string part 2, model from part 3\n3. Prompt is read from prompt_path and passed to the Agent tool\n4. Agent result is captured and returned to the workflow loop\n5. Fallback: if Agent tool fails, retry once, then fallback to mainthread",
+      "questions": [
+        "Where in the codebase does the workflow tool dispatch to executors? Is it in the workflow_common.rs build_workflow_response?",
+        "How does the existing multi_claude_agents dispatch work — does it go through the same code path as subagent dispatch would?"
+      ]
+    }
+  ]
+}

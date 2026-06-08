@@ -1,0 +1,319 @@
+# React-compat subset — verified features manifest
+#
+# Schema: ./conformance.yaml.schema.json
+# Generated from: the former §Verified Features prose table in subset.md
+# (debugging-experience milestone, 2026-04).
+#
+# Validation:
+#   cclab check-conformance-manifest
+#
+# Update policy: every PR adding a new inclusion rule (S11+) must add
+# a corresponding entry here with status: pending (or status: verified
+# if the integration test ships in the same PR). See subset.md §Growth
+# Policy.
+#
+# AST node kinds: SWC node kinds per swc_ecma_ast / @swc/types.
+
+entries:
+  # ── S1: Function components ────────────────────────────────────────
+  - id: S1_function_component_pure
+    subset_rule: S1
+    feature: Function component (pure render, no hooks)
+    ast_node_kinds:
+      - FunctionDeclaration
+      - ArrowFunctionExpression
+    disambiguation_predicate: >-
+      Top-level export whose body returns JSX; not a class.
+    demo_dir: no-state-demo
+    test_file: no_state_debug.rs
+    status: verified
+
+  # ── S2: Hooks ──────────────────────────────────────────────────────
+  - id: S2_use_state_i64
+    subset_rule: S2
+    feature: useState<i64>
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee is an Identifier resolving to one of
+      the hook names in the S2 allowlist (useState here).
+    demo_dir: counter-demo
+    test_file: wasm_build_end_to_end.rs,browser_cli_smoke.rs
+    status: verified
+
+  - id: S2_use_state_bool
+    subset_rule: S2
+    feature: useState<bool>
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee resolves to useState; T inferred as bool.
+    demo_dir: toggle-demo
+    test_file: toggle_debug.rs
+    status: verified
+
+  - id: S2_use_state_string
+    subset_rule: S2
+    feature: useState<String>
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee resolves to useState; T inferred as String.
+    demo_dir: string-state-demo
+    test_file: string_state_debug.rs
+    status: verified
+
+  - id: S2_use_state_multi
+    subset_rule: S2
+    feature: Multiple useState in one component
+    sub_item: >-
+      Two or more positional useState calls within the same fiber.
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      ≥ 2 CallExpressions to useState within one component body.
+    demo_dir: multi-handler-demo
+    test_file: multi_handler_debug.rs
+    status: verified
+
+  - id: S2_use_memo
+    subset_rule: S2
+    feature: useMemo(() => expr, [deps])
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee resolves to useMemo from the S2 allowlist.
+    demo_dir: usememo-demo
+    test_file: usememo_debug.rs
+    status: verified
+
+  # ── B1–B3: Boundary cases ──────────────────────────────────────────
+  - id: B1_large_int
+    subset_rule: B1
+    feature: Boundary — large i64 (4.5e15)
+    demo_dir: large-int-demo
+    test_file: large_int_debug.rs
+    status: verified
+
+  - id: B2_unicode_state
+    subset_rule: B2
+    feature: Boundary — UTF-8 string state (CJK + emoji + Cyrillic)
+    demo_dir: unicode-demo
+    test_file: unicode_debug.rs
+    status: verified
+
+  - id: B3_big_list
+    subset_rule: B3
+    feature: Boundary — 100-item list render
+    demo_dir: big-list-demo
+    test_file: big_list_debug.rs
+    status: verified
+
+  # ── S3: JSX ────────────────────────────────────────────────────────
+  - id: S3_jsx_text_interp
+    subset_rule: S3
+    feature: JSX text + {expr} interpolation
+    sub_item: Cross-cutting — exercised by every demo
+    ast_node_kinds:
+      - JSXElement
+      - JSXExpressionContainer
+      - JSXText
+    disambiguation_predicate: >-
+      JSXExpressionContainer wrapping a non-empty Expression child of a
+      JSXElement.
+    demo_dir: counter-demo
+    test_file: wasm_build_end_to_end.rs
+    status: verified
+
+  - id: S3_jsx_conditional
+    subset_rule: S3
+    feature: Conditional render — {cond && <X/>}
+    ast_node_kinds:
+      - LogicalExpression
+      - JSXExpressionContainer
+    disambiguation_predicate: >-
+      LogicalExpression with operator "&&" inside a JSXExpressionContainer
+      where the right operand is a JSXElement.
+    demo_dir: toggle-demo
+    test_file: toggle_debug.rs
+    status: verified
+
+  - id: S3_jsx_list_range
+    subset_rule: S3
+    feature: List render — [...Array(n)].map((_, i) => <X/>)
+    ast_node_kinds:
+      - CallExpression
+      - ArrayExpression
+      - SpreadElement
+    disambiguation_predicate: >-
+      CallExpression to .map() on a spread of Array(n); shape recognised
+      by transpiler emit T-list-range.
+    demo_dir: list-render-demo
+    test_file: list_render_debug.rs
+    status: verified
+
+  - id: S3_jsx_list_iter
+    subset_rule: S3
+    feature: List render — items.map((x) => <X/>) over a Vec<T> prop
+    ast_node_kinds:
+      - CallExpression
+      - MemberExpression
+    disambiguation_predicate: >-
+      CallExpression where callee is a MemberExpression with property
+      name "map" and the object resolves to a TS array prop.
+    demo_dir: items-list-demo
+    test_file: items_list_debug.rs
+    status: verified
+
+  - id: S3_jsx_deep_nesting
+    subset_rule: S3
+    feature: Deep nesting (≥4 levels)
+    ast_node_kinds:
+      - JSXElement
+    disambiguation_predicate: >-
+      JSXElement whose children include further JSXElements transitively
+      to depth ≥ 4.
+    demo_dir: nested-demo
+    test_file: nested_debug.rs
+    status: verified
+
+  - id: S3_jsx_self_closing
+    subset_rule: S3
+    feature: Self-closing intrinsics — <img />
+    ast_node_kinds:
+      - JSXOpeningElement
+    disambiguation_predicate: >-
+      JSXOpeningElement with selfClosing: true and a lower-case
+      JSXIdentifier name (intrinsic element).
+    demo_dir: self-closing-demo
+    test_file: self_closing_debug.rs
+    status: verified
+
+  # ── S4: TypeScript types ───────────────────────────────────────────
+  - id: S4_ts_array_prop
+    subset_rule: S4
+    feature: TS array prop type T[] → Rust Vec<T>
+    ast_node_kinds:
+      - TsArrayType
+    demo_dir: items-list-demo
+    test_file: items_list_debug.rs
+    status: verified
+
+  - id: S4_ts_primitive_props
+    subset_rule: S4
+    feature: TS primitive prop types — number / boolean / string → i64 / bool / String
+    sub_item: Lowering rules T-primitive in transpiler.md
+    ast_node_kinds:
+      - TsKeywordType
+    demo_dir: counter-demo
+    test_file: tsx_to_rust_primitives.rs
+    status: unit_only
+
+  # ── S3 / JSX attributes ────────────────────────────────────────────
+  - id: S3_attr_basic
+    subset_rule: S3
+    feature: JSX attrs — id, className (string literal), onClick zero-arg arrow
+    ast_node_kinds:
+      - JSXAttribute
+    disambiguation_predicate: >-
+      JSXAttribute with name in {id, className, onClick} and value
+      shape per JSX-attr table in transpiler.md.
+    demo_dir: classname-demo
+    test_file: classname_debug.rs
+    status: verified
+
+  - id: S3_attr_synthetic_event
+    subset_rule: S3
+    feature: JSX onClick one-arg arrow — (e) => with e.clientX/Y, e.preventDefault, e.stopPropagation
+    sub_item: see event-pipeline.md § Transpiler lowering
+    ast_node_kinds:
+      - JSXAttribute
+      - ArrowFunctionExpression
+    disambiguation_predicate: >-
+      JSXAttribute named "onClick" whose value is an ArrowFunctionExpression
+      with exactly one parameter and a body referencing e.clientX/clientY/
+      preventDefault/stopPropagation.
+    demo_dir: synthetic-event-demo
+    test_file: synthetic_click_event.rs
+    status: pending
+
+  # ── S2 hooks pending runtime tests ─────────────────────────────────
+  # Runtime surface exists in jet_wasm::react; transpiler does not yet
+  # emit calls for these hooks. Each entry will graduate to status:
+  # verified once a Level-1 integration test ships under
+  # crates/jet/tests/<name>_debug.rs with an examples/<name>-demo/.
+
+  - id: S2_use_effect
+    subset_rule: S2
+    feature: useEffect(setup, deps?)
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee is Identifier "useEffect" from the S2
+      hook allowlist; first argument is an ArrowFunctionExpression
+      (setup), optional second argument is an ArrayExpression (deps).
+    demo_dir: useeffect-demo
+    test_file: useeffect_debug.rs
+    status: pending
+
+  - id: S2_use_callback
+    subset_rule: S2
+    feature: useCallback(fn, deps)
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee is Identifier "useCallback"; first
+      argument is an ArrowFunctionExpression, second is an
+      ArrayExpression (deps).
+    demo_dir: usecallback-demo
+    test_file: usecallback_debug.rs
+    status: pending
+
+  - id: S2_use_ref
+    subset_rule: S2
+    feature: useRef(initial)
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee is Identifier "useRef"; one argument
+      (initial value, may be undefined / null).
+    demo_dir: useref-demo
+    test_file: useref_debug.rs
+    status: pending
+
+  - id: S2_use_context
+    subset_rule: S2
+    feature: useContext(Context)
+    sub_item: paired with createContext (S7)
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee is Identifier "useContext"; one
+      argument is a context Identifier produced by createContext.
+    demo_dir: usecontext-demo
+    test_file: usecontext_debug.rs
+    status: pending
+
+  - id: S2_use_reducer
+    subset_rule: S2
+    feature: useReducer(reducer, initialState)
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee is Identifier "useReducer"; first
+      argument is a reducer fn, second is the initial state.
+    demo_dir: usereducer-demo
+    test_file: usereducer_debug.rs
+    status: pending
+
+  - id: S2_use_id
+    subset_rule: S2
+    feature: useId()
+    ast_node_kinds:
+      - CallExpression
+    disambiguation_predicate: >-
+      CallExpression where callee is Identifier "useId"; zero arguments.
+      Returns a stable opaque string per call site.
+    demo_dir: useid-demo
+    test_file: useid_debug.rs
+    status: pending

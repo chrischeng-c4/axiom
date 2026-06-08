@@ -1,0 +1,198 @@
+change_id: all-mamba-p0
+schema_version: '2.0'
+created_at: 2026-03-18T08:17:59.819863Z
+updated_at: 2026-03-18T09:36:00.043360Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:bigint-fallback: 1
+  ref_ctx:match-case: 1
+  ref_ctx:module-system: 1
+  ref_ctx:benchmark-suite: 1
+  ref_ctx:builtins-conformance: 1
+current_task_id: all-mamba-p0-spec
+task_revisions:
+  all-mamba-p0-spec: 1
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 158396
+    tokens_out: 517
+    cost_usd: null
+    duration_ms: 24501
+    timestamp: 2026-03-18T08:18:27.873173Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 229061
+    timestamp: 2026-03-18T08:41:02.429513Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 509121
+    tokens_out: 1474
+    cost_usd: null
+    duration_ms: 95589
+    timestamp: 2026-03-18T08:43:04.089273Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 187434
+    timestamp: 2026-03-18T08:46:32.013083Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 503569
+    tokens_out: 2265
+    cost_usd: null
+    duration_ms: 41979
+    timestamp: 2026-03-18T08:47:31.198402Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 223532
+    timestamp: 2026-03-18T08:51:26.063414Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 158267
+    timestamp: 2026-03-18T08:55:18.102130Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 1070680
+    tokens_out: 1824
+    cost_usd: null
+    duration_ms: 97274
+    timestamp: 2026-03-18T08:58:49.133811Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 198681
+    timestamp: 2026-03-18T09:02:19.278314Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 271106
+    timestamp: 2026-03-18T09:02:41.046684Z
+  - step: analyze_spec_all-mamba-p0-spec
+    sdd_version: 0.3.41
+    model: gemini-3.1-pro-preview
+    tokens_in: 585708
+    tokens_out: 3323
+    cost_usd: null
+    duration_ms: 289030
+    timestamp: 2026-03-18T09:09:04.179380Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 233581
+    timestamp: 2026-03-18T09:18:31.417814Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 11861587
+    tokens_out: 22784
+    cost_usd: null
+    duration_ms: 3569294
+    timestamp: 2026-03-18T09:36:00.043041Z
+  total_cost_usd: 0.0
+  total_tokens_in: 14689061
+  total_tokens_out: 32187
+dag:
+  issues:
+  - number: 758
+    title: 'Py3.12 conformance: Builtins (108 tests → full verification)'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 827
+    title: Match/case statements (PEP 634) — full structural pattern matching
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 828
+    title: Import aliases — import X as Y, from X import Y as Z
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 829
+    title: Relative imports — from . import, from ..module import name
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 833
+    title: BigInt fallback for NaN-boxing 48-bit integer overflow
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 836
+    title: Benchmark suite — Mamba vs CPython 3.12 vs PyPy performance comparison
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 841
+    title: Multi-file compilation — module graph and project compilation
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec: []
+  post_clarifications:
+  - benchmark-suite
+  - bigint-fallback
+  - builtins-conformance
+  - match-case
+  - module-system
+  change_implementation: []
+  reference_context:
+  - benchmark-suite
+  - bigint-fallback
+  - builtins-conformance
+  - match-case
+  - module-system
+  pre_clarifications:
+  - module-system
+  - match-case
+  - bigint-fallback
+  - benchmark-suite
+  - builtins-conformance

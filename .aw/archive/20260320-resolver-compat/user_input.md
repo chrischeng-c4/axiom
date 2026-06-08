@@ -1,0 +1,1 @@
+Fix all remaining resolver compatibility issues for real-world npm registries: hyphen ranges (#960), close bare alias (#957), remaining resolver bugs (#883). Test against tech-platform Nx monorepo.

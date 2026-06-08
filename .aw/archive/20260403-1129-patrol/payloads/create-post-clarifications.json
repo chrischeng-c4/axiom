@@ -1,0 +1,13 @@
+{
+  "group_id": "jit-refcount-audit",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "mb_* runtime functions have mixed return ownership semantics (new vs borrowed refs). JIT releases all locals at return, causing use-after-free for borrowed refs → requirements.md, issue #1129 'Blocked: Ownership Audit'",
+    "success_criteria": "All mb_* functions return owned references (new ref or retained borrowed ref). EMIT_REFCOUNT_CALLS=true with no ASan violations. GC re-enabled → pre_clarifications Q1 (exhaustive audit), Q2 (include GC)",
+    "boundary": {
+      "in_scope": "Runtime ownership audit (all mb_* functions), enable EMIT_REFCOUNT_CALLS, re-enable GC → spec_plan: jit-refcount-audit, gc-reenable",
+      "out_of_scope": "New JIT codegen features, container optimizations, cycle collector improvements",
+      "constraints": "Must maintain CPython 3.12 semantics (new ref = caller owns, borrowed ref = must retain). Immortal objects must never be freed."
+    }
+  }
+}

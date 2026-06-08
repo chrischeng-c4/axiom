@@ -1,0 +1,13 @@
+{
+  "group_id": "sdd-unified-frontend",
+  "verdict": "APPROVED",
+  "summary": "Reference context covers the key files: axum viewer, @cclab packages, Conductor FE routing. Spec plan creates a single unified-frontend spec with appropriate sections.",
+  "checklist_results": [
+    {"item": "All affected areas covered", "passed": true},
+    {"item": "Relevance scores reasonable", "passed": true},
+    {"item": "spec_plan has main_spec_ref", "passed": true},
+    {"item": "spec_plan sections reasonable", "passed": true},
+    {"item": "Each spec covers one logical unit", "passed": true}
+  ],
+  "issues": []
+}

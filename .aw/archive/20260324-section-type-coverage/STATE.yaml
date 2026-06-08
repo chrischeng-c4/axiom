@@ -1,0 +1,76 @@
+change_id: section-type-coverage
+schema_version: '2.0'
+created_at: 2026-03-24T05:28:58.712231Z
+updated_at: 2026-03-24T07:16:35.251624Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: ux-pattern-library
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1051
+    title: 'epic: SDD section type coverage — all roles (FE/BE/SRE/MLE/Agent/QA/Security)'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1052
+    title: 'sdd: design system as tech-stack config + UX pattern library'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1053
+    title: 'sdd: add e2e-scenario section type for QA'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1054
+    title: 'sdd: add security section types — threat-model, auth-matrix, security-test'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1055
+    title: 'sdd: add QA section types — test-fixture, perf-test'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1056
+    title: 'sdd: add SRE section types — container, deploy, cloud-resource, pipeline, observability'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1057
+    title: 'sdd: add Backend/MLE/Agent section types — grpc, graphql, model, prompt'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - frontend-design-system
+  - new-section-types
+  change_spec: []
+  pre_clarifications:
+  - frontend-design-system
+  - new-section-types
+  post_clarifications:
+  - frontend-design-system
+  - new-section-types
+  change_implementation: []

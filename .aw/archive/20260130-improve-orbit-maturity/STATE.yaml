@@ -1,0 +1,99 @@
+change_id: improve-orbit-maturity
+schema_version: '2.0'
+created_at: 2026-01-28T07:21:14.780667Z
+updated_at: 2026-01-29T14:42:23.201399Z
+phase: implemented
+iteration: 1
+last_action: validate-proposal
+session_id: null
+checksums:
+  specs/orbit-zero-copy-apis.md:
+    hash: sha256:1c28c8e29497e0472f3a7c355c68c7a3c315571b2aedadb28606880681707bdf
+    validated_at: 2026-01-29T14:42:23.201397Z
+  specs/orbit-named-pipes.md:
+    hash: sha256:4c3aff7437518f55d33606d424566a209a900c6813a5946cc88de1a4d62e2820
+    validated_at: 2026-01-29T14:42:23.201038Z
+  specs/orbit-udp-support.md:
+    hash: sha256:9df3f7faf29cab534d1e844b0052135821394141da013f3b4091ff7dcb61590a
+    validated_at: 2026-01-29T14:42:23.201219Z
+  proposal.md:
+    hash: sha256:9d0e97c93dd79073c7a48468cac202bdbe8be2f474769f30b06a4313cecb29c1
+    validated_at: 2026-01-29T14:42:23.200475Z
+  tasks.md:
+    hash: sha256:692bbb1a6ea087502bf518f1ad3bc166806b355bdc57593201661962847a4c08
+    validated_at: 2026-01-29T14:42:23.200707Z
+  specs/orbit-documentation.md:
+    hash: sha256:bb097bfdd95c8dab77d93e9aec873ba14e18626b7665659d328776a231e915c6
+    validated_at: 2026-01-29T14:42:23.200866Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-28T07:21:19.856087Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T07:23:12.465274Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T07:24:06.588799Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T16:31:05.431395Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-29T14:42:23.200193Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

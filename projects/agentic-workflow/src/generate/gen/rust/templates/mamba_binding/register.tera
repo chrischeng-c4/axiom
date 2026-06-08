@@ -1,0 +1,25 @@
+/// Register the `{{ symbol }}` symbol into a [`cclab_mamba_registry::ModuleRegistrar`].
+///
+/// Named `register_{{ struct_snake }}` so multiple types emitted from a single
+/// spec (via JSON Schema `definitions`) do not collide. An aggregate
+/// `pub fn register(r)` — emitted at the end of the file — calls each of
+/// these per-type registrars, and is what the `auto_wire_mamba_lib`
+/// post-pass looks for when wiring `lib.rs`.
+{%- if spec_path %}
+/// @spec {{ spec_path }}#x-mamba-binding.register
+{%- endif %}
+pub fn register_{{ struct_snake }}(r: &mut cclab_mamba_registry::ModuleRegistrar) {
+    use cclab_mamba_registry::rt_sym;
+    r.add_symbol(rt_sym!("{{ symbol }}", {{ extern_fn }}, "{{ signature }}"));
+{%- if attributes %}
+
+    // Per-attribute getters — stored in the ops table today, dispatched by
+    // `getattr` after mamba PR-5 lands. Registering here is harmless until
+    // then (the callbacks are just held in `ATTRIBUTE_GETTERS`).
+    if let Some(o) = cclab_mamba_registry::ops::OBJECT_OPS.get() {
+{%- for a in attributes %}
+        (o.register_getter)("{{ struct_name }}", "{{ a.name }}", {{ a.getter_fn }});
+{%- endfor %}
+    }
+{%- endif %}
+}

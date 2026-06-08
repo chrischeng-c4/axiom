@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "lens-dissolution",
+  "spec_id": "lens-dissolution-restructure",
+  "group_id": "lens-dissolution",
+  "section": "overview",
+  "content": "Dissolve the `lens/` sub-module (90+ files, 17 sub-modules) from `crates/cclab-sdd/src/lens/` into SDD top-level modules. Migrate specs from `cclab/specs/crates/cclab-lens/` to `cclab/specs/crates/cclab-sdd/`. Remove all MCP tool interfaces formerly exposed by lens. Foundation step that must complete before #944, #946, #949.\n\n| Attribute | Value |\n|-----------|-------|\n| Crate | cclab-sdd |\n| Scope | Module restructure + spec migration + MCP removal |\n| Issue | #1087 |\n| Blocking | #944 (type propagation), #946 (context builder), #949 (agent output) |\n| Modules promoted | core, format, gen, graph, lint, lsp, refactoring, schemas, search, semantic, server, spec, syntax, types (renamed type_inference), diagnostic, error, handlers, output, storage, watch |"
+}

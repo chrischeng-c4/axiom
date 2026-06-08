@@ -1,0 +1,53 @@
+change_id: mamba-py312-p0
+schema_version: '2.0'
+created_at: 2026-03-10T07:02:38.215080Z
+updated_at: 2026-03-10T08:43:37.266402Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: new_branch
+branch: cclab/mamba-py312-p0
+revision_counts: {}
+current_task_id: mamba-py312-p0-spec
+task_revisions: {}
+telemetry: null
+dag:
+  issues:
+  - number: 752
+    title: Py3.12 conformance test harness — CPython vs mamba comparison framework
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 753
+    title: 'Py3.12 conformance: MbValue arithmetic, comparison & truthiness'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 754
+    title: 'Py3.12 conformance: Object model — class, MRO, descriptors, metaclass'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 758
+    title: 'Py3.12 conformance: Builtins (108 tests → full verification)'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+groups_progress:
+  reference_context:
+  - py312-conformance
+  change_spec: []
+  pre_clarifications:
+  - py312-conformance
+  change_implementation: []
+  post_clarifications:
+  - py312-conformance

@@ -1,0 +1,98 @@
+{
+  "group_id": "noarg-constructor-codegen",
+  "specs": [
+    {
+      "spec_id": "hir-to-mir",
+      "spec_group": "lower",
+      "relevance": "high",
+      "key_requirements": [
+        "BUILTIN_EXTERNS table maps 'list' → mb_list_from_iterable, 'tuple' → mb_tuple_from_iterable, 'set' → mb_set_from_iterable, 'dict' → mb_dict_from_pairs — all take 1 argument (the iterable)",
+        "Zero-arg arity guard at hir_to_mir.rs:3447-3468: when boxed_args.is_empty() and extern_name matches an iterable variant, redirect to _new variant (mb_list_new, mb_tuple_new, mb_set_new, mb_dict_new) with args=[]",
+        "Fix committed in bc5921e9: CallExtern with args=[] is emitted for _new variants; the Cranelift signature has 0 AbiParams, matching the call site — verifier error eliminated",
+        "R1 comprehension lowering already calls mb_list_new()/mb_set_new()/mb_dict_new() directly — the zero-param construction pattern exists and works",
+        "Tests added in no_arg_constructor_tests.rs: S1 list()→empty, S2 tuple()→empty, S3 set()→empty, S7 dict()→empty, plus one-arg paths (S4/S5/S6) still route to _from_iterable correctly"
+      ]
+    },
+    {
+      "spec_id": "cranelift",
+      "spec_group": "codegen",
+      "relevance": "high",
+      "key_requirements": [
+        "R5: Function Signature Generation — Signature built from MirExtern param_count; zero-param externs produce a Signature with no AbiParams (no i64 arguments)",
+        "R2: MIR Instruction Translation — emit_extern_call builds arg_vals from the args slice; when args=[] the call instruction has zero operands; calling a 1-param extern with 0 args makes IR malformed and the Cranelift verifier rejects it",
+        "R3: Runtime Symbol Wiring — mb_list_new/mb_tuple_new/mb_set_new/mb_dict_new are registered with [], I64 signature; calling them with zero args is valid once routing is fixed in lowering",
+        "declare_extern iterates ext.params to push AbiParam — if wrong extern (mb_list_from_iterable with 1 param) is called with 0 args the generated Cranelift IR is malformed"
+      ]
+    },
+    {
+      "spec_id": "cranelift-jit",
+      "spec_group": "codegen",
+      "relevance": "medium",
+      "key_requirements": [
+        "R2: Runtime Symbol Table Population — mb_list_new, mb_tuple_new, mb_set_new, mb_dict_new are all registered with their physical addresses before any user code is compiled",
+        "R3: Function Finalization — Cranelift verifier runs during finalization; a call with wrong arity triggers VerifierError, aborting JIT compilation",
+        "JIT_LOCK mutex serializes JIT test execution — no_arg_constructor_tests.rs acquires JIT_LOCK at start of each test to prevent concurrent JIT compilation races"
+      ]
+    },
+    {
+      "spec_id": "list-ops",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R5: Construction — mb_list_new() creates empty list (0 params, I64 return); registered as rt_sym!(\"mb_list_new\", ..., [], I64) — zero-param signature is correct",
+        "mb_list_from_iterable(val: MbValue) takes 1 MbValue and iterates it to build a list — this 1-arg function cannot be called with 0 args without triggering a Cranelift verifier error"
+      ]
+    },
+    {
+      "spec_id": "set-ops",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R1: Set Creation — mb_set_new() creates empty set (0 params, I64 return); registered as rt_sym!(\"mb_set_new\", ..., [], I64)",
+        "mb_set_from_iterable(args: MbValue) is in builtins.rs (not set_ops.rs) and takes 1 MbValue argument — must not be called with 0 args"
+      ]
+    },
+    {
+      "spec_id": "symbols",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R2: MirExtern Declarations — mb_list_new: params=[], return=I64; mb_tuple_new: params=[], return=I64; mb_set_new: params=[], return=I64; mb_dict_new: params=[], return=I64 — all zero-param constructors correctly registered",
+        "R1: Symbol Name-to-Address Mapping — mb_list_from_iterable registered with [I64], I64; mb_tuple_from_iterable with [I64], I64; mb_dict_from_pairs with [I64], I64 — the bug was in routing (lowering), not in symbol registration",
+        "R4: Naming convention — mb_<category>_new for zero-arg constructor, mb_<category>_from_iterable for one-arg conversion constructor"
+      ]
+    },
+    {
+      "spec_id": "mir",
+      "spec_group": "mir",
+      "relevance": "medium",
+      "key_requirements": [
+        "R1: CallExtern instruction — dest, name (extern symbol), args (register list), ty; args must match the extern's declared parameter count or Cranelift verifier will reject the IR",
+        "R5: Extern Declarations — each MirExtern specifies symbol name; param count must match the args slice length at the CallExtern call site"
+      ]
+    },
+    {
+      "spec_id": "builtins",
+      "spec_group": "runtime",
+      "relevance": "low",
+      "key_requirements": [
+        "mb_set_from_iterable(args: MbValue) defined in builtins.rs (not set_ops.rs); takes exactly 1 argument — calling with 0 args causes arity mismatch",
+        "R6: Symbol Registration — all mb_builtin_* and constructor variants registered in symbols.rs with correct param counts"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "no-arg-constructor-codegen-fix",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/lower/hir-to-mir.md",
+      "source": "cclab/specs/crates/cclab-mamba/lower/hir-to-mir.md",
+      "sections": [
+        "overview",
+        "requirements",
+        "scenarios",
+        "changes"
+      ]
+    }
+  ]
+}

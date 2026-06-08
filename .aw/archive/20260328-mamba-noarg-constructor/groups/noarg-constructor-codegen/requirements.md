@@ -1,0 +1,9 @@
+---
+change: mamba-noarg-constructor
+group: noarg-constructor-codegen
+date: 2026-03-28
+---
+
+# Requirements
+
+Fix no-arg constructor codegen verifier error for list(), tuple(), set(). The Cranelift codegen for zero-argument builtin calls does not emit the correct function signature. Fix: (1) ensure zero-arg call emission in cranelift codegen produces valid IR, (2) verify list(), tuple(), set() return empty collections, (3) convert xfail conformance tests to passing tests.

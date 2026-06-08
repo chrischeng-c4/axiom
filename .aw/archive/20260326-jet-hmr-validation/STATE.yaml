@@ -1,0 +1,44 @@
+change_id: jet-hmr-validation
+schema_version: '2.0'
+created_at: 2026-03-26T06:32:20.298753Z
+updated_at: 2026-03-26T08:04:45.693981Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  impl:jet-hmr-validation-spec: 1
+current_task_id: null
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1118
+    title: 'jet dev: JavaScript module HMR (hot module replacement)'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1119
+    title: 'jet dev: validate with Conductor FE (real-world React/TS project)'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec:
+  - jet-hmr-validation
+  reference_context:
+  - jet-hmr-validation
+  change_implementation:
+  - jet-hmr-validation
+  pre_clarifications:
+  - jet-hmr-validation

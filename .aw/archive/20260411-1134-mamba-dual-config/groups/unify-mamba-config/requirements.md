@@ -1,0 +1,9 @@
+---
+change: 1134-mamba-dual-config
+group: unify-mamba-config
+date: 2026-04-10
+---
+
+# Requirements
+
+Unify dual MambaConfig structs by merging the rich config/schema.rs format into the driver and deleting the old driver-local struct. The richer format (with [project], CrateConfig with path/version/expose/module fields, and CrateEntry enum supporting both plain version strings and full config tables) becomes the single canonical MambaConfig. The driver's config.rs now only contains CompilerConfig (backend, emit, opt_level, project_config fields) and imports MambaConfig from crate::config::MambaConfig. Backward compatibility with flat format (entry_point at root, crates as HashMap<String, String>) is preserved via the CrateEntry::Version variant and top-level expose HashMap.

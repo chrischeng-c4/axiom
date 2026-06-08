@@ -1,0 +1,12 @@
+{
+  "group_id": "resolver-compat",
+  "answers": [
+    {"question_id": "Q1", "answer": "Follow npm semantics exactly: 1.0 - 2.0 → >=1.0.0 <2.1.0 (partial right-hand = exclusive next). 1.0.0 - 2.0.0 → >=1.0.0 <=2.0.0 (full right-hand = inclusive)."},
+    {"question_id": "Q2", "answer": "Pin concrete version in lockfile, same as normal alias. Re-resolve only when lockfile is absent or --no-lockfile."},
+    {"question_id": "Q3", "answer": "Yes, handle scoped packages too. If spec doesn't parse as semver and looks like a package name (starts with @ or lowercase alpha), treat as bare alias."},
+    {"question_id": "Q4", "answer": "Close #883 after tech-platform Nx monorepo install succeeds. No other remaining work — all original bugs were addressed."},
+    {"question_id": "Q5", "answer": "Commit a trimmed fixture to tests/fixtures/. Manual reproduction is not reliable for CI."}
+  ],
+  "follow_up_questions": [],
+  "clarification_complete": true
+}

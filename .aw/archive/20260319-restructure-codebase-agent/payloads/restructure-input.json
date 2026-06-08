@@ -1,0 +1,35 @@
+{
+  "groups": [
+    {
+      "id": "restructure-codebase-agent",
+      "issues": [953],
+      "requirements": "Implement `RestructureCodebaseAgent` in `crates/cclab-agent` — a workspace-aware agentic loop that decomposes a large codebase into manageable groups for fillback spec generation.\n\nThe agent follows this flow:\n1. Read root manifest (Cargo.toml / package.json / pyproject.toml) via `read_manifest` → workspace members list\n2. For each workspace member: call `list_folder_summary(depth=2)` + `estimate_tokens` → per-member token estimate\n3. LLM decides grouping under a token budget constraint (single LLM call per iteration)\n4. If any group exceeds budget → drill down on that group recursively (repeat steps 2–3 at deeper path)\n5. When all groups fit within budget → call `set_grouping(groups=[...])` as terminal action\n\nTools exposed to the LLM:\n- `read_manifest`: parse workspace members from manifest files (Cargo.toml/package.json/pyproject.toml)\n- `list_folder_summary`: folder tree + file count + line count at given depth\n- `estimate_tokens`: folder path → estimated token count (lines × 3)\n- `set_grouping`: write final groups artifact (mandatory terminal call — agent loop ends here)\n\nKey design constraints:\n- Workspace-first: `read_manifest` must be called before `list_folder_summary`\n- Token budget driven: LLM receives budget as a constraint in the system prompt\n- Agentic loop: multiple LLM + tool-call iterations, not one-shot\n- Recursive drill-down: oversized groups are decomposed by re-running the loop on sub-paths\n- Output consumed by: `ReferenceCodebaseContextAgent` (issue #950) and `CodebaseToSpecAgent` (issue #951)\n- Agent is stateless (no internal mutable state), uses existing `LLMProvider` trait\n\nAcceptance criteria:\n1. Agent reads workspace manifest and enumerates members correctly\n2. Token estimation drives grouping decisions\n3. Groups exceeding budget trigger recursive drill-down\n4. `set_grouping` produces a valid groups artifact matching the schema expected by `ReferenceCodebaseContextAgent`\n5. Unit tests with mock LLM + mock tools covering: single-group workspace, multi-group split, recursive drill-down\n6. Agent registered in agent registry alongside existing agents",
+      "questions": [
+        {
+          "topic": "Token budget default and configurability",
+          "question": "What is the default token budget per group (e.g., 50K, 100K tokens)? Is this value hardcoded, read from agent config (config.toml), or passed as a runtime argument? Should it be configurable per invocation?"
+        },
+        {
+          "topic": "set_grouping output schema",
+          "question": "What fields does each group entry in the `set_grouping` output contain? Specifically: is it `{ id: String, paths: Vec<String>, description: String }` or a different shape? This must match what `ReferenceCodebaseContextAgent` (#950) expects as input."
+        },
+        {
+          "topic": "Manifest format scope",
+          "question": "Which manifest formats must be supported in the initial implementation? Cargo.toml workspace only, or also package.json (workspaces field) and pyproject.toml (tool.poetry.packages / members)? A phased approach (Cargo-only first) is acceptable if specified."
+        },
+        {
+          "topic": "Recursive drill-down termination",
+          "question": "What are the termination conditions for the recursive drill-down? Is there a maximum recursion depth? A minimum path granularity (e.g., stop at individual crate/package level)? Or does the agent stop only when all groups fit within budget regardless of depth?"
+        },
+        {
+          "topic": "Dependency availability of #950 and #951",
+          "question": "Issues #950 (ReferenceCodebaseContextAgent) and #951 (CodebaseToSpecAgent) are listed as consumers. Are they already implemented (so the groups artifact schema is fixed), or are they to be implemented after this agent? If not yet implemented, should this change define the groups artifact schema, or is it pre-defined in a spec?"
+        },
+        {
+          "topic": "Agent registration and CLI entry point",
+          "question": "Should `RestructureCodebaseAgent` be invocable as a standalone CLI command (e.g., `cclab agent restructure-codebase --repo <path>`)? Or is it only invoked programmatically by the fillback workflow orchestrator with no direct CLI exposure?"
+        }
+      ]
+    }
+  ]
+}

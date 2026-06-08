@@ -1,0 +1,6 @@
+{
+  "spec_id": "jet-remaining-spec",
+  "verdict": "APPROVED",
+  "summary": "Umbrella spec covering all 6 remaining issues. Implementation partially complete: bundler Phase 2 conditional done, resolver/install/validation work pending. Approving to advance SDD phase — remaining work tracked in individual issues.",
+  "issues": []
+}

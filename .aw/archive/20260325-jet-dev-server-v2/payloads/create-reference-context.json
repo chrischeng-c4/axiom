@@ -1,0 +1,77 @@
+{
+  "group_id": "jet-dev-server-v2",
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-jet/jit-runner.md",
+      "relevance": "high",
+      "summary": "Covers dev_server module, JIT execution, and TypeScript/JSX transformation pipeline via tree-sitter. Directly relevant to #1090 (TypeScript type stripping), #1089 (dev-mode module transforms), and #1091 (dev server serves modules to browser)."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/pkg-manager.md",
+      "relevance": "high",
+      "summary": "Covers StoreManager at ~/.jet-store/{name}@{version}/ with install_package and link_package. Directly relevant to #1092 — store entries currently have no nested node_modules, breaking Node.js module resolution."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/aot-build.md",
+      "relevance": "medium",
+      "summary": "Production build pipeline using the same Bundler. Relevant to #1089 (CJS-to-ESM pre-bundling) — optimizeDeps reuses the bundler's transform infrastructure."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/pkg-manager-pnpm-parity.md",
+      "relevance": "medium",
+      "summary": "Store GC, hoisting, pnpm-style features. Context for #1092: pnpm's store design puts nested node_modules inside each store entry."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/workspace-protocol.md",
+      "relevance": "low",
+      "summary": "Workspace symlink creation. Background context — pattern reused in #1092 nested store node_modules symlinks."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/postcss-tailwind.md",
+      "relevance": "low",
+      "summary": "Dev mode watch integration. Background: postcss-tailwind already extended dev_server/mod.rs with CSS rebuild hooks."
+    }
+  ],
+  "codebase_explored": [
+    {
+      "path": "crates/cclab-jet/src/dev_server/mod.rs",
+      "summary": "Axum-based HTTP server: routes for HMR, bundle.js, static files. Current pre_bundle_cjs_deps() uses line-based flattening. No optimizeDeps pre-bundling, no polyfill injection, no importmap injection."
+    },
+    {
+      "path": "crates/cclab-jet/src/transform/typescript.rs",
+      "summary": "AST-based TypeScript type stripping via tree-sitter. should_skip_node() handles type_annotation, type_arguments, type_parameters, interface_declaration, type_alias_declaration. Missing: export type, import type, inline type, declare, satisfies."
+    },
+    {
+      "path": "crates/cclab-jet/src/pkg_manager/store.rs",
+      "summary": "StoreManager: install_package extracts .tgz to ~/.jet-store/{name}@{version}/. link_package creates symlink to project node_modules. No nested node_modules for transitive deps."
+    },
+    {
+      "path": "crates/cclab-jet/src/runner/jit.rs",
+      "summary": "JIT engine uses Transformer (tree-sitter typescript.rs) to strip types and transform JSX. Both JIT and dev server need consistent TS transform behavior."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "jet-dev-prebundle",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-jet/dev-server.md",
+      "sections": ["overview", "requirements", "changes"],
+      "covers": "#1089 (CJS→ESM pre-bundling) and #1091 (Node.js builtin polyfills). Both modify dev_server/mod.rs pre-bundle pipeline."
+    },
+    {
+      "spec_id": "jet-ts-transform",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-jet/ts-transform.md",
+      "sections": ["overview", "requirements", "changes"],
+      "covers": "#1090 (AST-based TypeScript type stripping). Modifies transform/typescript.rs — separate logical unit from dev server."
+    },
+    {
+      "spec_id": "jet-store-nested-deps",
+      "action": "modify",
+      "source": "cclab/specs/crates/cclab-jet/pkg-manager.md",
+      "main_spec_ref": "crates/cclab-jet/pkg-manager.md",
+      "sections": ["overview", "requirements", "changes"],
+      "covers": "#1092 (.jet-store nested node_modules for dependency resolution)."
+    }
+  ]
+}

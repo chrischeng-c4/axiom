@@ -1,0 +1,21 @@
+{
+  "change_id": "mamba-all-p1",
+  "group_id": "syntax-features",
+  "specs": [
+    {
+      "spec_path": "specs/cclab-mamba/README.md",
+      "relevance": "high",
+      "reason": "Spec index mapping all cclab-mamba source files to their specifications and subsystems. Essential for syntax-features group as it documents: parser/expressions.md and parser/statements.md (lines 22-23) for implementing dict unpacking, star expressions, decorators, with statements; lexer/tokens-and-indent.md (line 15) for string escape sequences; types/generics-and-protocols.md (line 38) for PEP 695 type parameters; runtime/closure.md (line 86) for global/nonlocal statements. Provides structural overview of all affected subsystems."
+    },
+    {
+      "spec_path": "specs/cclab-mamba/all-mamba-p0.md",
+      "relevance": "medium",
+      "reason": "P0 specification defining compiler architecture and parser/AST strategy for implementing new language features. Relevant for syntax-features as it covers parser layer changes (R2.1 mentions AST nodes and complete syntax support) and demonstrates the five-layer compiler design (parser → type checker → HIR → MIR → codegen) that applies to implementing all seven syntax-features issues. Shows how to structure parser changes and AST node definitions."
+    },
+    {
+      "spec_path": "specs/cclab-mamba/pattern-matching.md",
+      "relevance": "medium",
+      "reason": "Detailed specification for implementing complex syntax features through the full compiler pipeline (parser → HIR → MIR → type checking → codegen). Relevant as it demonstrates the established pattern for: parser enhancements (R1, handling all AST constructs), AST node design (R5 HirPattern variants), lowering strategies (R6-R8). These patterns directly apply to implementing syntax-features including star expressions (sequence patterns), decorators (as complex constructs), and other extended syntax."
+    }
+  ]
+}

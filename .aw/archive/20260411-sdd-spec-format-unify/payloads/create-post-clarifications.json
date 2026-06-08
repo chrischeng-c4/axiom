@@ -1,0 +1,5 @@
+{
+  "group_id": "sdd-spec-format-unify",
+  "skipped": true,
+  "scope_summary": "Problem: SDD spec format has 4 quality issues — bottom-up fill order, JSON for structured data, unstructured requirements/scenarios/test-plan, and plain Mermaid (ignoring existing Plus generators). Success Criteria: fill_order() returns top-down order (overview→requirements→scenarios→mindmap→...→test-plan→changes→doc); default_lang() returns yaml for schema/rpc-api/config/component/design-token; Mermaid Plus generators wired into section type resolution; UNIVERSAL_SKELETON and format_rules.rs updated. Boundary: In-scope = crates/sdd/src/models/spec_rules.rs, tools/common_change_spec.rs, spec_alignment/format_rules.rs, generate/diagrams/*_plus/ wiring. Out-of-scope = new section types, TOON format, codegen from new formats. No contradictions found with existing specs — changes are all mechanical updates to existing functions."
+}

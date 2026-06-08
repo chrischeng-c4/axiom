@@ -1,0 +1,11 @@
+{"spec_id":"install-perf-spec","section":"requirements","content":"### R1: Async Disk Cache
+
+Replace sync std::fs in load_disk_cache/write_disk_cache with tokio::fs::read_to_string/write. Prevents blocking the tokio runtime during parallel metadata fetches.
+
+### R2: Eager Transitive Prefetch
+
+During BFS level N resolution, start fetching metadata for deps discovered in level N results immediately (dont wait for all level N to complete before starting level N+1 fetches). Use a shared task set instead of strict level-by-level.
+
+### R3: spawn_blocking Build Timeout
+
+Wrap CPU-bound bundler work in tokio::task::spawn_blocking so tokio::time::timeout can actually cancel it."}

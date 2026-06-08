@@ -1,0 +1,40 @@
+change_id: '1136'
+schema_version: '2.0'
+created_at: 2026-04-03T11:01:32.166540Z
+updated_at: 2026-04-03T12:48:33.945877Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:platform-config-and-merge-git: 1
+  impl:change-merge-git-integration: 2
+current_task_id: merge-tool-openrpc
+task_revisions:
+  change-merge-git-integration: 1
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1136
+    title: 'feat(sdd): platform config restructure + merge auto-commit/PR'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - platform-config-and-merge-git
+  reference_context:
+  - platform-config-and-merge-git
+  post_clarifications:
+  - platform-config-and-merge-git
+  change_spec: []
+  change_implementation: []

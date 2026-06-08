@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "id": "mamba-stdlib-test",
+      "issues": [],
+      "requirements": "Add a native stdlib `test` module to crates/cclab-mamba. Create `crates/cclab-mamba/src/runtime/stdlib/test_mod.rs` following the pattern of existing stdlib modules (e.g. builtins_mod.rs). The module registers as `test` and exports: TestCase class with assertEqual, assertTrue, assertFalse, assertRaises methods; main() function as test runner. This is a simplified version of CPython's unittest/test support, sufficient for basic test scripts. Must pass all existing cclab-mamba tests with no regressions.",
+      "questions": []
+    }
+  ]
+}

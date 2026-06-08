@@ -1,0 +1,31 @@
+{
+  "group_id": "compiler-infrastructure",
+  "specs": [
+    {
+      "path": "cclab-mamba/all-mamba-p0.md",
+      "relevance": "high",
+      "reason": "R1 Module System & Imports (multi-file compilation, module graph building via module_graph.rs with search_roots, BFS ordering, ImportDep with absolute/relative/star imports, resolve_absolute/resolve_relative, Kahn's topo_sort for compilation ordering with cycle detection). R1.1-R1.3 specify import aliases, relative imports, topological compilation order, cross-module type checking. Directly covers Q2 (module graph, FULLY IMPLEMENTED)."
+    },
+    {
+      "path": "cclab-mamba/source/source-and-diagnostics.md",
+      "relevance": "high",
+      "reason": "R1 SourceMap/FileId/line_starts for binary-search line/col resolution, R2 Span byte-range with merge/dummy/Spanned<T>, R3 Severity enum/Diagnostic struct/render_error() with file:line:col format, R4 MambaError enum variants (Syntax/Type/Name/Codegen/Io/Other via thiserror). Directly covers Q3 (diagnostics, MINIMAL): current diagnostic/mod.rs (36 lines) lacks ANSI colors, ariadne/miette, underlines, fix hints, LSP compatibility. This spec provides the foundation for extending diagnostic rendering with rich formatting via ariadne."
+    },
+    {
+      "path": "cclab-mamba/driver/compiler-driver.md",
+      "relevance": "medium",
+      "reason": "R1 full pipeline orchestration (source loading → lexing → parsing → name resolution → type checking → AST-to-HIR → HIR-to-MIR → codegen), R3 error reporting aggregation from all phases with unified format (file, line, column, phase, severity). Q1 pre-clarification notes 'CompilerSession recompiles on every build() call' — R1 defines the pipeline phases where MIR caching would insert (between HIR-to-MIR and codegen, with early exit if MIR cached). R3 aggregation is integration point for richer diagnostic rendering in Q3."
+    },
+    {
+      "path": "cclab-mamba/mir/mir.md",
+      "relevance": "medium",
+      "reason": "R1 MIR instruction set (LoadConst/LoadVar/StoreVar/BinOp/Call/BuildList/BuildDict/etc.), R2 basic block structure with explicit control flow (Jump/Branch/Return), R3 MirFunction with name/params/locals/blocks, R4 exception handling blocks, R5 extern declarations for runtime symbols. Q1 pre-clarification states 'MIR structs (mir/mod.rs) are plain Rust without serde' and recommends 'serialized MIR with serde + bincode'. This spec defines the complete MirModule/MirFunction/MirBlock/MirInst structure that needs #[derive(Serialize, Deserialize)] and bincode serialization format design."
+    },
+    {
+      "path": "cclab-mamba/README.md",
+      "relevance": "low",
+      "reason": "Authoritative spec index mapping all cclab-mamba source files to specifications. Value is spec discovery only — provides navigation to relevant specs but contains no implementable requirements. Listed for completeness in understanding architecture reference layers, but not a direct reference for implementation work."
+    }
+  ],
+  "notes": "REVISION SUMMARY: Addressed all five reviewer issues from initial reference context FAIL verdict. (1) Added source/source-and-diagnostics.md (HIGH) — primary spec for Q3 diagnostic infrastructure with R3-R4 defining current Diagnostic/MambaError structure and extension points for ariadne/rich rendering. (2) Removed pattern-matching.md — irrelevant PEP 634 feature spec with no connection to Q1/Q2/Q3 compiler infrastructure concerns. (3) Added driver/compiler-driver.md (MEDIUM) — pipeline orchestration context for Q1 caching insertion point (between phases 7 and 8); R3 error aggregation integration for Q3. (4) Added mir/mir.md (MEDIUM) — structural foundation for Q1 MIR serialization; R1-R5 define instruction set, blocks, functions needing serde/bincode. (5) Downgraded README.md to LOW — spec discovery only; no implementable requirements; consistent with other group reviews. (6) Fixed all-mamba-p0.md coverage mapping — corrected from Q1/Q3 misattribution to Q2 only (module graph, FULLY IMPLEMENTED). FINAL COVERAGE: Q1 (MIR serialization/caching, NOT IMPLEMENTED) covered by mir/mir.md + driver/compiler-driver.md + source/source-and-diagnostics.md. Q2 (module graph, FULLY IMPLEMENTED) covered by all-mamba-p0.md. Q3 (diagnostics, MINIMAL) covered by source/source-and-diagnostics.md + driver/compiler-driver.md."
+}

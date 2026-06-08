@@ -1,0 +1,6 @@
+{
+  "spec_id": "merge-tool-openrpc",
+  "group_id": "platform-config-and-merge-git",
+  "section": "changes",
+  "content": "## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\nfiles:\n  - path: cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md\n    action: MODIFY\n    desc: |\n      Append new section after ## sdd_workflow_revise_change_implementation:\n\n      ## sdd_workflow_create_change_merge\n      OpenRPC method definition with:\n        - params: project_path (required), change_id (required, pattern ^[a-z0-9-]+$)\n        - result.required: [status, specs_merged, archive_path, audit_log, next_actions]\n        - result.properties: status, prompt_path, executor, specs_merged[], archive_path,\n          audit_log[], git_commit_sha, pr_url, git_warning, next_actions[]\n        - errors: -32001 (missing main_spec_ref), -32002 (root-level path), -32003 (3way conflict)\n        - x-phase: ChangeImplementationReviewed → ChangeArchived\n        - x-executor: programmatic\n        - x-crr: false\n        - x-merge-strategies: {3way, overwrite, create}\n        - x-post-archive-git.sequence: 9-step git operations pipeline\n\n      No modifications to any existing tool definitions.\n```"
+}

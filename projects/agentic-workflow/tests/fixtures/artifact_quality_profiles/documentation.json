@@ -1,0 +1,17 @@
+{
+  "artifact_kind": "documentation",
+  "intent_read": "Explain the workflow contract for implementation agents.",
+  "audience": "operators and reviewers",
+  "constraints": ["align with canonical specs"],
+  "quality_dials": [
+    { "key": "contract_precision", "value": "high", "rationale": "docs drive implementation" }
+  ],
+  "source_policy": {
+    "mode": "spec",
+    "evidence_ref": "canonical spec"
+  },
+  "preflight_gate_set": {
+    "id": "documentation-preflight",
+    "gates": ["spec alignment check"]
+  }
+}

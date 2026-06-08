@@ -1,0 +1,15 @@
+{
+  "group_id": "benchmark-suite",
+  "answers": [
+    {
+      "topic": "Benchmark harness",
+      "question": "Use an existing benchmark framework (e.g., hyperfine for CLI timing, criterion for Rust internals) or build a custom harness that runs all three runtimes?",
+      "answer": "hyperfine + Python scripts — use hyperfine for end-to-end timing, Python scripts to orchestrate CPython/PyPy runs."
+    },
+    {
+      "topic": "CI integration",
+      "question": "Should benchmarks run in CI on every commit (regression detection) or only on-demand?",
+      "answer": "On-demand only — not necessary for CI. Run manually when needed."
+    }
+  ]
+}

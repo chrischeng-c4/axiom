@@ -1,0 +1,44 @@
+{
+  "change_id": "mamba-p0-bugfix",
+  "spec_id": "sigbus-runtime-thread-safety-fix",
+  "verdict": "APPROVED",
+  "summary": "Spec has a ## Test Plan section (spec lines 123-127) with a '<!-- TODO -->' placeholder — no explicit test cases defined. The diff contains 37+ #[test] functions covering this spec: 6 in closure.rs, 5 in class.rs, 3 in exception.rs, 3 in file_io.rs, 4 in iter.rs, 4 in module.rs, and 12 in runtime/mod.rs cleanup_tests. Hard Reject Rule does NOT apply. All 5 requirements (R1–R5) are correctly implemented: 6 per-module cleanup functions added, centralized cleanup_all_runtime_state() in runtime/mod.rs calls them in the correct dependency order (generators→iterators→closures→classes→exceptions→files→modules), conformance runner replaces cleanup_all_generators() with cleanup_all_runtime_state(), all cleanup functions use try_borrow_mut() for panic safety. Implementation exceeds spec scope by resetting additional state variables (CALLABLE_REGISTRY, SLOTS_REGISTRY, GLOBAL_ID_NAMESPACE, NEXT_*_ID counters, SEARCH_PATHS) beyond what the spec documents. APPROVED with two minor soft findings.",
+  "hard_checklist": {
+    "code_matches_spec": {
+      "result": "pass",
+      "notes": "R1: All 6 per-module cleanup functions are present and pub(crate) as required. closure.rs:606 adds cleanup_all_closures() clearing CLOSURES, CELLS, GLOBAL_NAMESPACE (plus NEXT_CLOSURE_ID, NEXT_CELL_ID, GLOBAL_ID_NAMESPACE). class.rs:503 adds cleanup_all_classes() clearing CLASS_REGISTRY, LAST_RAISED_INSTANCE, ABSTRACT_METHODS (plus CALLABLE_REGISTRY, SLOTS_REGISTRY). iter.rs:855 adds cleanup_all_iterators() clearing ITERATORS. exception.rs:712 adds cleanup_all_exceptions() resetting CURRENT_EXCEPTION to None and clearing EXCEPTION_HANDLERS. file_io.rs:776 adds cleanup_all_files() draining FILES HashMap (dropping MbFile handles per spec constraint) and resetting NEXT_FILE_ID. module.rs:1180 adds cleanup_all_modules() clearing MODULES (plus resetting SEARCH_PATHS to default '.'). R2: cleanup_all_runtime_state() is in runtime/mod.rs (not a separate cleanup.rs — spec allows 'or runtime/mod.rs'), calls all cleanup functions in exact dependency order specified: generators→iterators→closures→classes→exceptions→files→modules. R3: conformance/mod.rs diff removes 'cleanup_all_generators()' and adds 'cleanup_all_runtime_state()' at the exact same call site (after main_fn() returns, before end_capture(prev)) — not duplicated. Import updated from runtime::generator::cleanup_all_generators to runtime::cleanup_all_runtime_state. R4: Every per-module cleanup function uses 'try_borrow_mut()' pattern — failure to borrow returns an error that is discarded with 'let _ = ...', ensuring subsequent modules are not blocked. R5: Dependency order generators→iterators→closures→classes→exceptions→files→modules is strictly followed in runtime/mod.rs:939-946."
+    },
+    "tests_present_when_test_plan_exists": {
+      "result": "pass",
+      "notes": "Spec has ## Test Plan section at sigbus-runtime-thread-safety-fix.md:123 (content is '<!-- TODO -->' placeholder only — 0 defined test cases). The diff contains 37+ #[test] functions for this spec across 7 files. Hard Reject Rule condition (zero #[test] blocks) is not met. Per-module tests: closure.rs has 6 tests (test_cleanup_all_closures_clears_closures/_cells/_globals/_global_id_namespace/_resets_id_counters/_on_empty_state). class.rs has 5 tests (test_cleanup_all_classes_clears_registry/_slots_registry/_abstract_methods/_on_empty/_then_reregister). exception.rs has 3 tests (_clears_current/_clears_handlers/_on_empty). file_io.rs has 3 tests (_closes_handles/_resets_id_counter/_on_empty). iter.rs has 4 tests (_clears_state/_resets_id_counter/_on_empty/_multiple_iterators). module.rs has 4 tests (_clears_registry/_resets_search_paths/_on_empty/_then_reregister). Centralized: runtime/mod.rs has 12 tests in cleanup_tests module covering S1 (resets closures, iterators, classes, exceptions, modules), S2 (ordering test), S4 (panic safety), S5 (callable/idempotent), S6 (per-thread isolation)."
+    },
+    "no_regressions": {
+      "result": "pass",
+      "notes": "All cleanup functions are purely additive new exports — they do not modify any existing function signatures or behavior. The change to conformance/mod.rs replaces one cleanup call with another (cleanup_all_generators → cleanup_all_runtime_state), which is a strict superset: cleanup_all_runtime_state() calls cleanup_all_generators() first, so generator cleanup still occurs. No pre-existing tests are modified. The try_borrow_mut pattern is safe — if a borrow is somehow active, the cleanup skips that state rather than panicking. All pre-existing runtime module tests continue to pass as no production code paths were modified other than replacing the conformance runner's single cleanup call."
+    }
+  },
+  "soft_findings": [
+    {
+      "severity": "minor",
+      "title": "## Test Plan section is an empty TODO placeholder",
+      "details": "The spec's ## Test Plan section (sigbus-runtime-thread-safety-fix.md:123-127) contains only '<!-- TODO -->' with no defined test cases. The 6 scenarios (S1-S6) in ## Scenarios are well-specified and could have been formalized into test plan entries. For example: T1 (S1/R2/R3): test_cleanup_all_runtime_state_resets_closures + _iterators + _classes + _exceptions + _modules; T2 (S2/R5): test_cleanup_ordering_generators_before_iterators_before_closures; T3 (S3/R1): test_cleanup_all_files_closes_handles; T4 (S4/R4): test_cleanup_is_panic_safe_independent_modules; T5 (S5/R3): structural — verified by conformance/mod.rs diff; T6 (S6/R2/R3): test_cleanup_per_thread_isolation. The missing test plan did not trigger the Hard Reject Rule since 37+ #[test] blocks are present.",
+      "locations": [
+        "cclab/changes/mamba-p0-bugfix/groups/mamba-codegen-runtime-fixes/specs/sigbus-runtime-thread-safety-fix.md:123-127"
+      ],
+      "recommendation": "Fill the ## Test Plan section with T1-T6 entries mapping to S1-S6, specifying the test function names, modules, and expected cleanup behavior for each."
+    },
+    {
+      "severity": "minor",
+      "title": "Implementation clears additional state beyond spec documentation — spec drift",
+      "details": "Several cleanup functions clear state variables not mentioned in the spec's ## Changes section, creating a gap between spec and implementation: (1) cleanup_all_classes() clears CALLABLE_REGISTRY and SLOTS_REGISTRY (spec only documents CLASS_REGISTRY, LAST_RAISED_INSTANCE, ABSTRACT_METHODS — class.rs:504-506). (2) cleanup_all_closures() resets NEXT_CLOSURE_ID to 1 and NEXT_CELL_ID to 1, and clears GLOBAL_ID_NAMESPACE (spec only documents CLOSURES, CELLS, GLOBAL_NAMESPACE — closure.rs:608-612). (3) cleanup_all_files() resets NEXT_FILE_ID to 1 (spec only documents FILES HashMap drain — file_io.rs:778). (4) cleanup_all_modules() resets SEARCH_PATHS to ['.'] default (spec only documents MODULES HashMap clear — module.rs:1182-1185). These are all correct and beneficial improvements (preventing state leakage), but the spec's Changes section does not document them. Additionally, the centralized cleanup tests (runtime/mod.rs) cover closures, iterators, classes, exceptions, and modules, but lack a dedicated test_cleanup_all_runtime_state_resets_files() verifying FILES is cleared by the centralized call.",
+      "locations": [
+        "crates/cclab-mamba/src/runtime/class.rs:504-506 (CALLABLE_REGISTRY, SLOTS_REGISTRY — undocumented in spec)",
+        "crates/cclab-mamba/src/runtime/closure.rs:608-612 (NEXT_CLOSURE_ID, NEXT_CELL_ID, GLOBAL_ID_NAMESPACE — undocumented in spec)",
+        "crates/cclab-mamba/src/runtime/file_io.rs:778 (NEXT_FILE_ID — undocumented in spec)",
+        "crates/cclab-mamba/src/runtime/module.rs:1182-1185 (SEARCH_PATHS reset — undocumented in spec)",
+        "crates/cclab-mamba/src/runtime/mod.rs:cleanup_tests (no test_cleanup_all_runtime_state_resets_files)"
+      ],
+      "recommendation": "Update the spec's ## Changes section for each affected file to document the additional state variables being cleared. Add test_cleanup_all_runtime_state_resets_files() to runtime/mod.rs cleanup_tests to bring the centralized test coverage in line with per-module coverage."
+    }
+  ]
+}

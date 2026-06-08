@@ -1,0 +1,10 @@
+{
+  "group_id": "mamba-core-test-coverage",
+  "answers": [
+    {"topic":"test-location-strategy","answer":"Inline #[cfg(test)] modules co-located with source. For cross-module tests, use crates/cclab-mamba/tests/ integration tests. Both are needed."},
+    {"topic":"stdlib-test-mechanism","answer":"Rust #[test] in crates/cclab-mamba/src/runtime/stdlib/{module}_mod.rs as inline #[cfg(test)] modules. Test each mb_* function directly with MbValue inputs/outputs."},
+    {"topic":"scope-boundary","answer":"This change covers runtime, lower, resolve, and stdlib top-10. Parser/types/codegen/lexer are lower priority — defer to follow-up. Focus on zero-coverage modules first."},
+    {"topic":"coverage-ci-gate","answer":"Out of scope. Coverage tooling (cargo-llvm-cov) setup is separate. This change just adds test files."},
+    {"topic":"xfail-resolution","answer":"All XFAIL already resolved in previous changes (0 remaining). No action needed here."}
+  ]
+}

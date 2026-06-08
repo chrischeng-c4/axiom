@@ -1,0 +1,9 @@
+# Perf-pin regression gate (#1421).
+# Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/urllib_error_1421.toml)
+issue = 1421
+lib = "urllib_error"
+fixture = "tests/cpython/fixtures/std-libs/urllib_error/bench/urlerror_construct_hot.py"
+floor = 1.0
+mem_floor = 1.0
+samples = 1
+prereq_imports = []

@@ -1,0 +1,85 @@
+{
+  "group_id": "check-alignment-phase2",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-sdd/logic/check-alignment.md",
+      "spec_group": "spec-alignment",
+      "relevance": "high",
+      "key_requirements": [
+        "Phase 1 implementation that Phase 2 directly extends — defines spec_alignment module structure, violation model, CheckResult, CLI pattern",
+        "Explicit scope boundary: 'Phase 1 only — no code↔spec coverage (Phase 2 #1141)'",
+        "Data models SpecDocument, SpecSection, CodeBlock, Violation, ViolationKind, FileResult, CheckResult are the base types Phase 2 extends",
+        "Architecture: single spec_alignment::check() entry point, files under crates/cclab-sdd/src/spec_alignment/",
+        "CLI: cclab sdd check-alignment [path] --json, exit 0/1"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "spec_group": "cli",
+      "relevance": "high",
+      "key_requirements": [
+        "CLI command tree — Phase 2 extends check-alignment with --coverage flag",
+        "CLI handler pattern: cclab-sdd-cli/src/check_alignment.rs delegates to spec_alignment::check()",
+        "CLI → logic mapping table needs new row for coverage sub-mode"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/rust-symbol-analysis.md",
+      "spec_group": "symbol-analysis",
+      "relevance": "medium",
+      "key_requirements": [
+        "Defines symbol kinds (fn_item, struct_item, trait_item, impl_item) extracted by daemon's symbol index",
+        "Phase 2 queries the daemon's pre-built symbol index for these symbol types to perform coverage mapping",
+        "Understanding of symbol scoping (function body, struct fields, impl methods) needed for annotation matching"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/code-analysis-service-v2.md",
+      "spec_group": "symbol-analysis",
+      "relevance": "medium",
+      "key_requirements": [
+        "Multi-language AST analysis pipeline (Python, TypeScript, Rust) using tree-sitter — same infrastructure as daemon",
+        "Phase 2 scans source files for @spec annotations across all three languages",
+        "Fast-path (AST-only) pattern: Phase 2 uses direct parsing for annotation extraction without LLM enrichment"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/lens-index-storage.md",
+      "spec_group": "daemon",
+      "relevance": "medium",
+      "key_requirements": [
+        "Daemon index stored at {project_root}/cclab/.index/ — socket at {root}/cclab/.index/daemon.sock",
+        "DaemonClient::for_workspace(root) constructs client from storage::resolve_socket_path()",
+        "Phase 2 calls DaemonClient::symbols(file) over the Unix socket to get symbol names/kinds/lines for coverage mapping",
+        "IndexStatus.is_ready check needed before coverage analysis runs"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/state-machine.md",
+      "spec_group": "workflow",
+      "relevance": "low",
+      "key_requirements": [
+        "Workflow context: Phase 2 is a standalone library/CLI feature — workflow integration is Phase 3 (#1142)",
+        "SDD phase states reference for where check-alignment will eventually be called"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/scope-resolution.md",
+      "spec_group": "config",
+      "relevance": "low",
+      "key_requirements": [
+        "resolve_spec_dir() used to canonicalize spec paths from @spec annotations against cclab/specs/ root",
+        "SddConfig.specs.scopes map helps validate that @spec annotation paths reference real spec directories"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "check-alignment-phase2",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/check-alignment.md",
+      "source": "crates/cclab-sdd/logic/check-alignment.md",
+      "sections": ["overview", "schema", "logic", "dependency", "interaction", "cli", "test-plan", "changes"]
+    }
+  ]
+}

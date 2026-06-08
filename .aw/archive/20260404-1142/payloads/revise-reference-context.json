@@ -1,0 +1,83 @@
+{
+  "group_id": "check-alignment-phase3",
+  "specs": [
+    {
+      "path": "crates/cclab-sdd/logic/check-alignment.md",
+      "group": "spec-validation",
+      "relevance": "high",
+      "key_requirements": "Existing Phase 1+2 entry points: spec_alignment::check(path) for format+logical rules, spec_alignment::check_with_coverage(spec_dir, source_dirs) for full coverage analysis. CheckResult schema: { files, total_violations, passed, coverage: Option<CoverageReport> }. Phase 3 consumers call check() for format validation and check_with_coverage() for coverage warnings. ViolationKind enum covers all violation types surfaced in workflow responses."
+    },
+    {
+      "path": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "group": "mcp-tools",
+      "relevance": "high",
+      "key_requirements": "sdd_run_change result schema currently has: change_id, action, current_phase, executor, message, next_actions — needs alignment_warnings field added carrying full violation list as complete JSON. sdd_workflow_create_change_merge response schema: currently has specs_merged, archive_path, audit_log — alignment_warnings added here too."
+    },
+    {
+      "path": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+      "group": "mcp-tools",
+      "relevance": "high",
+      "key_requirements": "sdd_artifact_create_change_spec must run spec_alignment::check() on the ENTIRE spec file after writing any section. Implementation note: tool returns filled_sections, status, next_actions in practice (from Rust source); spec will need to add formal result schema with alignment_violations array. Format violations (Phase 1) block the write; coverage gaps (Phase 2) are warnings only."
+    },
+    {
+      "path": "crates/cclab-sdd/logic/change-merge.md",
+      "group": "workflow-logic",
+      "relevance": "high",
+      "key_requirements": "After specs are merged to cclab/specs/, run check() on each merged spec and append alignment warnings to implementation.md review section as ## Alignment Warnings subsection. Insert between Write and Archive steps. Non-fatal: alignment violations should NOT block the merge — they are warnings only. implementation.md format: inline ## Review: {spec_id} sections — alignment warnings appended there."
+    },
+    {
+      "path": "crates/cclab-sdd/logic/state-machine.md",
+      "group": "workflow-logic",
+      "relevance": "medium",
+      "key_requirements": "Phase routing table: ChangeSpec* phases → sdd_workflow_create_change_spec; ChangeMerge* → sdd_workflow_create_change_merge. sdd_run_change is the outer bridge — alignment_warnings added to its response. State transitions do not change for Phase 3 — alignment check is a non-blocking side effect."
+    },
+    {
+      "path": "crates/cclab-sdd/logic/change-spec.md",
+      "group": "workflow-logic",
+      "relevance": "medium",
+      "key_requirements": "Section fill lifecycle: skeleton → fill sections via sdd_artifact_create_change_spec → prune → review — check runs after each fill call on the full spec file. Artifact writing enforcement: agents must use CLI artifact tools — the post-write check runs inside the tool."
+    },
+    {
+      "path": "crates/cclab-sdd/logic/implement-task.md",
+      "group": "workflow-logic",
+      "relevance": "medium",
+      "key_requirements": "implementation.md inline review format: ## Review: {spec_id} sections with Verdict, Summary, Checklist. Alignment warnings appended to the review section of implementation.md during merge."
+    },
+    {
+      "path": "crates/cclab-sdd/skills/run-change.md",
+      "group": "skills",
+      "relevance": "medium",
+      "key_requirements": "Skill loop calls sdd_run_change repeatedly — alignment_warnings in response will be visible to mainthread. Skill template update to display alignment_warnings to user is out-of-scope for Phase 3 (passive field only; display behavior is a future skill enhancement)."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "check-alignment-phase3",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/check-alignment.md",
+      "source": "cclab/specs/crates/cclab-sdd/logic/check-alignment.md",
+      "sections": ["overview", "requirements", "scenarios", "logic", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "workflow-tools-phase3",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "source": "cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "artifact-tools-phase3",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+      "source": "cclab/specs/crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "change-merge-phase3",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/change-merge.md",
+      "source": "cclab/specs/crates/cclab-sdd/logic/change-merge.md",
+      "sections": ["overview", "logic", "changes"]
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "group_id": "test-config",
+  "specs": [
+    {
+      "path": ".score/tech_design/crates/sdd/config/platform.md",
+      "relevance": "high",
+      "reason": "Config platform pattern — [sdd.test] follows the same nested TOML section pattern as [sdd.repo_platform] and [sdd.docs]"
+    },
+    {
+      "path": ".score/tech_design/crates/sdd/config/agents.md",
+      "relevance": "medium",
+      "reason": "Agent config — documents DocsConfig/DocsTarget struct pattern that TestConfig/TestScope will mirror"
+    },
+    {
+      "path": ".score/tech_design/crates/sdd/logic/state-machine.md",
+      "relevance": "low",
+      "reason": "State machine context — test config is consumed by the TDD gate phase (PR2)"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "test-config-spec",
+      "action": "modify",
+      "main_spec_ref": "crates/sdd/config/platform.md",
+      "source": ".score/tech_design/crates/sdd/config/platform.md",
+      "sections": ["overview", "requirements", "scenarios", "config", "schema", "changes"]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "change_id": "mamba-p1-lang-features",
+  "group_id": "decorator-full",
+  "spec_plan": {
+    "sections": [
+      "overview",
+      "schema",
+      "parser",
+      "type-checking",
+      "changes"
+    ]
+  },
+  "specs": [
+    {
+      "path": "cclab-mamba/parser/ast.md",
+      "relevance": "high",
+      "reason": "R1 - Defines AST node structure for decorators and decorated functions/classes. Critical for representing full PEP 614 expressions in decorator position."
+    },
+    {
+      "path": "cclab-mamba/parser/expressions.md",
+      "relevance": "high",
+      "reason": "R1 - Expression parsing is core to supporting full decorator expressions (calls, subscripts, attribute access like @f(), @obj.attr, @list[0])"
+    },
+    {
+      "path": "cclab-mamba/parser/statements.md",
+      "relevance": "high",
+      "reason": "R3 - Function and class statement parsing handles decorator parsing and application. Must support arbitrary expressions in decorator position."
+    },
+    {
+      "path": "cclab-mamba/lower/ast-to-hir.md",
+      "relevance": "high",
+      "reason": "R1 - Decorator Desugaring: covers transformation of @deco(arg) def f: ... to f = deco(arg)(f). Essential for full decorator expression support."
+    },
+    {
+      "path": "cclab-mamba/types/type-checker.md",
+      "relevance": "high",
+      "reason": "Type inference and special-case handling for decorators. Must support decorator return-type inference beyond Any/unknown fallback. Special-case @property, @staticmethod, @classmethod."
+    }
+  ],
+  "scope_summary": "Gather specifications for implementing full PEP 614 decorator support: enabling any expression as a decorator (calls, subscripts, attribute access), improving type inference from Any/unknown to precise types, while preserving hardcoded semantics for @property, @staticmethod, @classmethod."
+}

@@ -1,0 +1,97 @@
+change_id: mamba-thread-safe-and-no-gil
+schema_version: '2.0'
+created_at: 2026-03-06T14:39:31.348820Z
+updated_at: 2026-03-06T16:15:53.216734Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: new_branch
+branch: cclab/mamba-thread-safe-and-no-gil
+revision_counts:
+  ref_ctx:mamba-thread-safe-no-gil-runtime: 1
+  implementation: 1
+current_task_id: mamba-thread-safe-and-no-gil-spec
+task_revisions:
+  mamba-thread-safe-and-no-gil-spec: 1
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.28
+    model: gemini-3-flash-preview
+    tokens_in: 929245
+    tokens_out: 2085
+    cost_usd: null
+    duration_ms: 99592
+    timestamp: 2026-03-06T14:41:31.123086Z
+  - step: create_reference_context
+    sdd_version: 0.3.28
+    model: gemini-3-flash-preview
+    tokens_in: 594875
+    tokens_out: 1264
+    cost_usd: null
+    duration_ms: 68370
+    timestamp: 2026-03-06T14:45:44.083218Z
+  - step: review_reference_context
+    sdd_version: 0.3.28
+    model: gpt-5.3-codex
+    tokens_in: 1417482
+    tokens_out: 10544
+    cost_usd: null
+    duration_ms: 1169139
+    timestamp: 2026-03-06T15:06:15.451125Z
+  - step: create_change_spec
+    sdd_version: 0.3.28
+    model: gemini-3-pro-preview
+    tokens_in: 386567
+    tokens_out: 3006
+    cost_usd: null
+    duration_ms: 117964
+    timestamp: 2026-03-06T15:16:11.996027Z
+  - step: begin_implementation
+    sdd_version: 0.3.28
+    model: sonnet
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 411369
+    timestamp: 2026-03-06T15:23:46.435303Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.28
+    model: sonnet
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 239341
+    timestamp: 2026-03-06T15:27:57.868318Z
+  - step: review_spec
+    sdd_version: 0.3.28
+    model: gpt-5.3-codex
+    tokens_in: 798949
+    tokens_out: 5961
+    cost_usd: null
+    duration_ms: 144751
+    timestamp: 2026-03-06T15:30:35.268030Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.28
+    model: sonnet
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1199635
+    timestamp: 2026-03-06T15:54:07.987563Z
+  total_cost_usd: 0.0
+  total_tokens_in: 4127118
+  total_tokens_out: 22860
+dag: null
+groups_progress:
+  change_spec: []
+  change_implementation: []
+  post_clarifications:
+  - mamba-thread-safe-no-gil-runtime
+  reference_context:
+  - mamba-thread-safe-no-gil-runtime
+  pre_clarifications:
+  - mamba-thread-safe-no-gil-runtime

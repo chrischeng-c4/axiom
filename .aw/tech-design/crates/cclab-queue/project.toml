@@ -1,0 +1,51 @@
+# cclab-nova Project Specification
+# High-performance LLM agent framework with deep Rust integration
+
+[tech-stack]
+language = "rust"
+edition = "2021"
+msrv = "1.75"
+async_runtime = "tokio"
+frameworks = [
+    "serde",           # Serialization
+    "async-trait",     # Async traits
+    "futures",         # Async utilities
+    "thiserror",       # Error handling
+    "chrono",          # DateTime
+    "parking_lot",     # Synchronization
+    "tracing",         # Logging
+]
+
+[crates]
+core = "crates/cclab-nova-core"
+llm = "crates/cclab-nova-llm"
+tools = "crates/cclab-nova-tools"
+
+[structure.modules]
+# cclab-nova-core
+agent = "src/agent.rs"
+context = "src/context.rs"
+executor = "src/executor.rs"
+state = "src/state.rs"
+types = "src/types.rs"
+error = "src/error.rs"
+
+# cclab-nova-llm
+provider = "src/provider.rs"
+openai = "src/openai.rs"
+claude = "src/claude.rs"
+gemini = "src/gemini.rs"
+
+# cclab-nova-tools
+tool = "src/tool.rs"
+registry = "src/registry.rs"
+tool_executor = "src/executor.rs"
+builtin = "src/builtin.rs"
+
+[shared]
+path = "shared/"
+schemas = "shared/schemas/"
+diagrams = "shared/diagrams/"
+
+[specs]
+items = ["core", "llm", "tools", "gemini", "analyst-agent", "analysis-tools", "storage-backend", "platform-integrations"]

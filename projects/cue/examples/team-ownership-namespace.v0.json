@@ -1,0 +1,57 @@
+{
+  "schema_version": "cue.ownership-namespace.v0",
+  "app_id": "t-operations-team-request-tracker",
+  "namespace": "team",
+  "display_name": "Team Request Tracker",
+  "owner": {
+    "owner_user": "ops-lead@example.com",
+    "owner_team": "Operations",
+    "data_owner": null
+  },
+  "platform_owner": "cue-platform@example.com",
+  "emergency_contact": "cue-oncall@example.com",
+  "quota_policy": "team_default",
+  "transfer_policy": "manager_required",
+  "visibility": "team_visible",
+  "orphan_state": "healthy",
+  "role_assignments": [
+    {
+      "role": "creator",
+      "principal_type": "user",
+      "principal": "ops-lead@example.com",
+      "source": "direct",
+      "expires_at": null
+    },
+    {
+      "role": "app_owner",
+      "principal_type": "user",
+      "principal": "ops-lead@example.com",
+      "source": "direct",
+      "expires_at": null
+    },
+    {
+      "role": "viewer",
+      "principal_type": "team",
+      "principal": "Operations",
+      "source": "iam",
+      "expires_at": null
+    }
+  ],
+  "quota_state": {
+    "sandbox_apps_count": 3,
+    "production_apps_count": 1,
+    "active_exceptions": []
+  },
+  "gitlab_mapping": {
+    "root_group": "cue-generated-apps",
+    "group_path": "teams/operations",
+    "project_path": "t-operations-team-request-tracker",
+    "full_path": "cue-generated-apps/teams/operations/t-operations-team-request-tracker",
+    "user_visible": false
+  },
+  "audit": {
+    "created_by": "ops-lead@example.com",
+    "created_at": "2026-05-08T00:00:00Z",
+    "updated_at": "2026-05-08T00:00:00Z"
+  }
+}

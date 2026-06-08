@@ -1,0 +1,40 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: mcp-session-binding
+  change_id: '484'
+  source_file: 484/specs/mcp-session-binding.md
+  spec_id: mcp-session-binding
+spec:
+  title: Project Path Resolution
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: start
+      to: check_session
+    - from: check_session
+      label: yes
+      to: use_session
+    - from: check_session
+      label: no
+      to: check_args
+    - from: check_args
+      label: yes
+      to: use_args
+    - from: check_args
+      label: no
+      to: error
+    nodes:
+    - id: start
+      label: Tool Call Received
+    - id: check_session
+      label: Session has project_path?
+    - id: use_session
+      label: Use session.project_path
+    - id: check_args
+      label: Args has project_path?
+    - id: use_args
+      label: Use args.project_path
+    - id: error
+      label: 'Error: no project_path'

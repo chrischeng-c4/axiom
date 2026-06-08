@@ -1,0 +1,39 @@
+change_id: 1035-patrol
+schema_version: '2.0'
+created_at: 2026-04-04T02:46:36.295399Z
+updated_at: 2026-04-04T03:44:49.994021Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:test-coverage-gaps: 1
+current_task_id: stdlib-coverage-top5
+task_revisions:
+  stdlib-coverage-top5: 1
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1035
+    title: 'test(mamba): per-module test coverage gaps — lower, resolve, runtime severely undertested'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec: []
+  reference_context:
+  - test-coverage-gaps
+  pre_clarifications:
+  - test-coverage-gaps
+  change_implementation: []
+  post_clarifications:
+  - test-coverage-gaps

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lumen-nats-config
+  namespace: lumen
+  labels:
+    app: lumen
+    role: nats
+data:
+  # Settings with no nats-server CLI flag. JetStream / store-dir / monitoring
+  # stay as flags on the StatefulSet; this file is merged in via `-c`.
+  nats.conf: |
+    # A write (incl. a bulk index batch) is published as one JetStream
+    # message; lift NATS's 1MB default so realistic batches fit. The
+    # async-nats client learns this ceiling from the server INFO frame.
+    # Batches larger than this must be split client-side.
+    max_payload: 8MB

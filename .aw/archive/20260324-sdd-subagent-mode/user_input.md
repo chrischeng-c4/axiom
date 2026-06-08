@@ -1,0 +1,1 @@
+Fix claude_subagents execution mode — validate subagent:Explore:sonnet and subagent:general-purpose:opus executor strings work with Claude Code Agent tool dispatch. The multi_claude_agents mode was fixed (claude-agent provider), now fix claude_subagents mode which uses subagent:X:model format for Agent tool invocation. #1046

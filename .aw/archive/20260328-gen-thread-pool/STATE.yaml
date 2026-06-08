@@ -1,0 +1,38 @@
+change_id: gen-thread-pool
+schema_version: '2.0'
+created_at: 2026-03-26T05:28:44.415058Z
+updated_at: 2026-03-26T06:40:07.086892Z
+phase: archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: generator-thread-pool-design
+task_revisions: {}
+impl_spec_phase:
+  generator-thread-pool-design: tests
+telemetry: null
+dag:
+  issues:
+  - number: 1114
+    title: 'fix(mamba): SIGBUS crash in multi-threaded conformance test execution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec: []
+  pre_clarifications:
+  - gen-thread-pool
+  change_implementation: []
+  reference_context:
+  - gen-thread-pool
+  post_clarifications:
+  - gen-thread-pool

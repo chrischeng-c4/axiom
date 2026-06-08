@@ -1,0 +1,63 @@
+{
+  "change_id": "mamba-conformance-p0",
+  "spec_id": "generator-iterator-conformance",
+  "verdict": "REVIEWED",
+  "summary": "Spec has ## Test Plan (T1-T12, 12 fixture groups for R1-R12). #[test] functions are present in the diff (P1 OOP tests in codegen/cranelift/mod.rs). Hard Reject Rule does NOT apply. All 24 required fixture files (12 .py + 12 .expected) exist on disk covering every test group. The conformance_tests.rs harness uses harness!(run_conformance, \"tests/fixtures/conformance\", r\".*\\.py$\") which auto-discovers new fixtures without explicit registration. Verdict is REVIEWED (not APPROVED) due to three soft issues: (1) ALL 12 new fixture files carry # mamba-xfail markers — zero acceptance criteria R1-R12 are verified as passing; (2) fixture files are untracked in git and absent from implementation.md diff, making the implementation artifact incomplete; (3) spec's Changes section specifies MODIFY on conformance_tests.rs but only a doc-comment was added since auto-discovery makes explicit registration unnecessary.",
+  "hard_checklist": {
+    "code_matches_spec": {
+      "result": "pass",
+      "notes": "All 24 required files exist on disk (12 .py + 12 .expected) covering T1-T12 for R1-R12: generators/genexpr.py, generators/send_edge_cases.py, generators/throw_edge_cases.py, generators/close_edge_cases.py, generators/yield_from_passthrough.py, generators/state_attributes.py, generators/context_manager_pattern.py, generators/lifecycle.py, iterators/custom_iterator.py, iterators/composition.py, iterators/callable_sentinel.py, iterators/unpacking.py — each with a matching .expected golden file. Auto-discovery harness picks all up. Spec constraint 'No changes to runtime implementation in this spec — test-only' is satisfied: no runtime files were modified by this spec's deliverables. Files are untracked (not committed) — noted as moderate soft issue."
+    },
+    "tests_present_when_test_plan_exists": {
+      "result": "pass",
+      "notes": "Spec has ## Test Plan (T1-T12). The implementation.md diff contains many #[test] functions in crates/cclab-mamba/src/codegen/cranelift/mod.rs (P1 OOP conformance unit tests: test_p1_t3_getattr_collects_mb_getattr_extern, test_p1_t4_call_extern_with_dest_vreg, test_p1_t1_classmethod_new_extern_collected, test_p1_t2_property_new_extern_collected, test_p1_t5_class_define_multi_extern_collected, etc.). Hard Reject Rule condition (zero #[test] blocks in diff) is not met."
+    },
+    "no_regressions": {
+      "result": "pass",
+      "notes": "All 12 new fixture files carry # mamba-xfail markers so they are skipped by the harness (return Ok(()) without execution). Existing 4 generator fixtures (basic_yield, send_throw, stopiteration, yield_from) and existing 1 iterator fixture (protocol) have no xfail markers and are not modified. Regression constraint is met."
+    }
+  },
+  "soft_findings": [
+    {
+      "severity": "major",
+      "title": "All 12 new fixture files are xfail — zero acceptance criteria R1-R12 verified as passing",
+      "details": "Every fixture added by this spec is marked # mamba-xfail with a distinct root cause: genexpr.py ('generator expressions not fully supported'), send_edge_cases.py ('TypeError on non-None send to just-started generator not implemented'), throw_edge_cases.py ('throw on exhausted generator not fully conformant'), close_edge_cases.py ('RuntimeError on ignored GeneratorExit not implemented'), yield_from_passthrough.py ('yield-from send/throw passthrough edge cases not fully supported'), state_attributes.py ('gi_frame attribute not implemented'), context_manager_pattern.py ('generator-based context manager pattern requires try/yield/finally'), lifecycle.py ('generator del/gc lifecycle not implemented'), custom_iterator.py ('custom iterator class __next__ with StopIteration not fully supported'), composition.py ('iterator composition with generators — lambda in map/filter not fully supported'), callable_sentinel.py ('iter(callable, sentinel) two-argument form not implemented'), unpacking.py ('starred unpacking (*rest) from generators not implemented'). All R1-R12 acceptance criteria are deferred to future implementation. The spec's goal of gap-documentation is achieved, but no conformance regression protection is active.",
+      "locations": [
+        "crates/cclab-mamba/tests/fixtures/conformance/generators/genexpr.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/generators/send_edge_cases.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/generators/throw_edge_cases.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/generators/close_edge_cases.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/generators/yield_from_passthrough.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/generators/state_attributes.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/generators/context_manager_pattern.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/generators/lifecycle.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/iterators/custom_iterator.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/iterators/composition.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/iterators/callable_sentinel.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/iterators/unpacking.py:1"
+      ],
+      "recommendation": "For each xfail root cause, open a dedicated implementation issue. As each feature is implemented, remove the corresponding xfail marker and verify the fixture passes. Highest-leverage targets: send_edge_cases (send(None) prime already likely works — T2.1), throw_edge_cases (partial: T3.1 throw propagation may already work)."
+    },
+    {
+      "severity": "moderate",
+      "title": "Fixture files are untracked — absent from implementation.md diff and not committed to git",
+      "details": "All 24 fixture files (12 .py + 12 .expected) exist on the filesystem as untracked files (git status shows '??' for all of them). None appear in the implementation.md diff. The diff covers P0 comprehension scope, walrus operator, P1 OOP, P2 descriptors/metaclass, and runtime bug fixes — but none of the generator-iterator fixture additions. `git log --all -- crates/cclab-mamba/tests/fixtures/conformance/generators/genexpr.py` returns empty. The implementation artifact is therefore incomplete: anyone cloning the repo or running git checkout will not have these fixture files. The conformance test harness will not run T1-T12 for other contributors.",
+      "locations": [
+        "cclab/changes/mamba-conformance-p0/implementation.md (missing fixture diffs)",
+        "crates/cclab-mamba/tests/fixtures/conformance/generators/ (12 untracked files)",
+        "crates/cclab-mamba/tests/fixtures/conformance/iterators/ (12 untracked files)"
+      ],
+      "recommendation": "Stage and commit the 24 fixture files. Then regenerate/amend implementation.md to include their diffs so the artifact accurately reflects all deliverables."
+    },
+    {
+      "severity": "minor",
+      "title": "conformance_tests.rs: spec lists MODIFY but only a doc-comment was added; explicit registration not needed",
+      "details": "The spec's Changes section specifies: 'path: crates/cclab-mamba/tests/conformance_tests.rs, action: MODIFY, desc: Register new generators/ and iterators/ fixtures in the conformance test harness so they are discovered and run automatically'. The actual modification in the working tree is only a doc-comment block listing fixture areas (lines 7-14). No explicit fixture registration was added — but none is needed because the existing harness macro `harness!(run_conformance, \"tests/fixtures/conformance\", r\".*\\.py$\")` at line 205 auto-discovers all .py files recursively, including in generators/ and iterators/ subdirs.",
+      "locations": [
+        "crates/cclab-mamba/tests/conformance_tests.rs:7-14 (doc comment only change)",
+        "crates/cclab-mamba/tests/conformance_tests.rs:205 (harness! auto-discovery)"
+      ],
+      "recommendation": "Update the spec's Changes section to replace the conformance_tests.rs MODIFY entry with a note that auto-discovery via the harness! macro covers new subdirectories without explicit registration."
+    }
+  ]
+}

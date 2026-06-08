@@ -1,0 +1,9 @@
+---
+change: mamba-type-3arg
+group: mamba-type-3arg-core
+date: 2026-04-10
+---
+
+# Requirements
+
+Implement type(name, bases, namespace) 3-arg form in cclab-mamba. The builtin type() must dispatch between 1-arg (return type of value) and 3-arg (create new class) based on argument count. The 3-arg form creates a new class object with: __name__ set to name, __bases__ set to bases tuple, namespace entries bound as class attributes and methods. MRO is computed via C3 linearization at class-creation time. The new class must support instantiation, method calls, isinstance/issubclass checks. The class statement desugar path and the 3-arg type() path must share a single internal build_class primitive. __init_subclass__ and __set_name__ hooks must fire during construction. MRO inconsistency must raise TypeError. Custom metaclass __new__/__init__ overrides are out of scope.

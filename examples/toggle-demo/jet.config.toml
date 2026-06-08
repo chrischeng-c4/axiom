@@ -1,0 +1,4 @@
+[wasm]
+entry = "src/Toggle.tsx"
+root_component = "Toggle"
+root_props = [false]

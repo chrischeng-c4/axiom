@@ -1,0 +1,29 @@
+change_id: enhanced-changes-section
+schema_version: '2.0'
+created_at: 2026-03-25T06:11:49.355345Z
+updated_at: 2026-03-25T06:53:08.943018Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: changes-section-schema
+task_revisions: {}
+impl_spec_phase:
+  changes-section-schema: code
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - changes-section-targets
+  change_spec: []
+  change_implementation: []
+  post_clarifications:
+  - changes-section-targets
+  reference_context:
+  - changes-section-targets

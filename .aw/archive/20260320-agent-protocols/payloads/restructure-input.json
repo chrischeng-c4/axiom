@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "agent-protocols-module",
+      "issues": [958],
+      "requirements": "Add a `src/protocols/` module to `crates/cclab-agent` that defines 5 domain contract types used across all SDD agents. Agents operate on these protocol types; consumers map their ORM models to/from protocols.\n\nProtocol types to define:\n- `ProjectProtocol` — id, name, repo_url, platform; used by RestructureCodebaseAgent\n- `IssueProtocol` — id, title, description, status, priority, labels, acceptance_criteria; used by RestructureIssueAgent\n- `SpecProtocol` — id, path, content, format, version, sync_target; used by ChangeSpecAgent and CodebaseToSpecAgent\n- `ChangeProtocol` — id, project_id, issue_ids, spec_ids, branch, status; used by CodeAgent\n- `CodeIndexProtocol` — module_path, endpoints, models, dependencies; used by ReferenceCodebaseContextAgent\n\nConsolidation of existing scattered types:\n- `Issue`, `IssueState`, `IssueSummary` in `src/integrations/mod.rs` → map to/from `IssueProtocol`\n- `SpecExcerpt` in `src/agents/restructure.rs` → superseded by `SpecProtocol`\n- `SessionState` in `src/storage/mod.rs` → fields `id`, `issue_ids`, `branch`, `status` partially map to `ChangeProtocol`\n\nDirectory structure:\n```\nsrc/protocols/\n├── mod.rs\n├── issue.rs\n├── spec.rs\n├── change.rs\n├── project.rs\n└── code_index.rs\n```\n\nKey constraint: protocols are pure domain contracts — no ORM, no persistence logic. Plain structs with derive traits (at minimum `Clone`, `Debug`, `Serialize`, `Deserialize`).",
+      "questions": [
+        {
+          "topic": "existing type replacement strategy",
+          "question": "Should the existing types (`Issue`, `IssueState`, `IssueSummary` in integrations/mod.rs; `SpecExcerpt` in agents/restructure.rs) be removed and replaced by the new protocol types, or kept alongside with `From`/`Into` conversions added? Replacing reduces duplication but requires updating all call sites now; keeping them alongside defers that migration."
+        },
+        {
+          "topic": "id field types",
+          "question": "What Rust type should be used for `id` fields on each protocol? `IssueProtocol.id` is currently a number (`u64` in `IssueSummary`), while others may be strings or UUIDs. Should all protocols use a unified `id: String`, or should `IssueProtocol.id` remain `u64` to match the existing `IssueSummary.number`?"
+        },
+        {
+          "topic": "ChangeProtocol vs SessionState overlap",
+          "question": "`SessionState` (storage/mod.rs) already tracks `id`, `issue_ids`, `branch`, and `SessionStatus`. Should `ChangeProtocol` be a strict subset (pure contract, no methods), with `SessionState` implementing `From<&SessionState> for ChangeProtocol`? Or should `SessionState` eventually be replaced by `ChangeProtocol` + a separate persistence wrapper?"
+        },
+        {
+          "topic": "CodeIndexProtocol field types",
+          "question": "For `CodeIndexProtocol`, should `endpoints`, `models`, and `dependencies` be `Vec<String>` (free-form names), or more structured types (e.g., `Vec<EndpointDescriptor>`)? Are these fields already partially represented in an existing type like `SpecExcerpt` or in the tools layer?"
+        },
+        {
+          "topic": "SpecProtocol.sync_target",
+          "question": "What is the type and semantics of `SpecProtocol.sync_target`? Is it a file path (local), a remote URL (Confluence/Google Docs), or an enum of sync destinations? Should it be `Option<String>` or a dedicated enum?"
+        }
+      ]
+    }
+  ]
+}

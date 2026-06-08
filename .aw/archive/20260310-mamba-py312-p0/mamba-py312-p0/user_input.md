@@ -1,0 +1,1 @@
+Implement all P0 items for Mamba Py3.12 conformance: #752 conformance test harness, #753 MbValue arithmetic/comparison/truthiness, #754 object model (class, MRO, descriptors, metaclass), #758 builtins conformance verification

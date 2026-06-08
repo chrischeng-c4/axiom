@@ -1,0 +1,58 @@
+change_id: orbit-pipes-zerocopy
+schema_version: '2.0'
+created_at: 2026-02-05T08:52:01.235678Z
+updated_at: 2026-02-05T09:49:50.144094Z
+phase: archived
+iteration: 1
+last_action: archive
+session_id: null
+checksums:
+  specs/protocol-lifecycle.md:
+    hash: sha256:fe54481fd4c4846521a539df1849d9594979907d968d72d706abc8afc34764b7
+    validated_at: 2026-02-05T08:54:37.857234Z
+  specs/unix-pipes.md:
+    hash: sha256:29d25dc695a666b8b4c04437481b619b12dc6725bc45e749d93b44d2a6bdd8ea
+    validated_at: 2026-02-05T08:54:37.856530Z
+  proposal.md:
+    hash: sha256:270f223a80931a3378a22a203fc5661232600b1a9ebc1c6a18895bd51daf345c
+    validated_at: 2026-02-05T08:54:37.853859Z
+  tasks.md:
+    hash: sha256:012e55f7872ad4eb949919aa59ab5a2118503eee85dd5c449ffc396b6ae2026e
+    validated_at: 2026-02-05T08:54:37.854388Z
+  specs/benchmarks.md:
+    hash: sha256:ef64212c7acd5b020b6ba8a0e75950a82a93db9227db8548396161c5250cc420
+    validated_at: 2026-02-05T08:54:37.854673Z
+  specs/pipe-abstraction.md:
+    hash: sha256:fa95e21182ad7104a3dcae81ef1f2df09cd4c9d227aa3927a56afc24917cfb24
+    validated_at: 2026-02-05T08:54:37.856995Z
+  specs/stress-tests.md:
+    hash: sha256:4793090cbb4ce209e809689475eb02ca90feacfb4a44eaf703925cf918640d7c
+    validated_at: 2026-02-05T08:54:37.855991Z
+  specs/windows-pipes.md:
+    hash: sha256:b417836e44bbdd6c819087673d45c3bbb0e0c0bee0228e72903e82e97814d1a3
+    validated_at: 2026-02-05T08:54:37.855721Z
+  specs/buffer-pool.md:
+    hash: sha256:203348a3a66e1b5839745573351e6753a8a4d9de7ebea3d27228c12eb438e075
+    validated_at: 2026-02-05T08:54:37.856764Z
+  specs/zero-copy-io.md:
+    hash: sha256:2274b8c1ae9c77fc0372fe7a07b8d0051e53e9b3c0e875c43ef8f0aff9a392a3
+    validated_at: 2026-02-05T08:54:37.854926Z
+  specs/integration-tests.md:
+    hash: sha256:904aa7637bc1956cf286c6bf79d2de47f3f8570c2f84f552cf0b5e11aaeeb425
+    validated_at: 2026-02-05T08:54:37.856285Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-05T08:54:37.853396Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

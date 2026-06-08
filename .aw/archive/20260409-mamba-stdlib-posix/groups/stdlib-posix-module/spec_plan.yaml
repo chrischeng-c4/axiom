@@ -1,0 +1,8 @@
+- spec_id: mamba-stdlib-posix-spec
+  action: create
+  main_spec_ref: crates/cclab-mamba/stdlib/posix.md
+  sections:
+  - overview
+  - requirements
+  - changes
+  - test-plan

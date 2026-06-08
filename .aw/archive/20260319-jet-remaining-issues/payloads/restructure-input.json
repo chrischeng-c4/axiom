@@ -1,0 +1,61 @@
+{
+  "groups": [
+    {
+      "id": "jet-install",
+      "issues": [883, 881],
+      "requirements": "Complete and verify the resolver bug fixes from #883 (version conflict resolution, || OR range syntax, pre-release version matching, space-separated ranges, npm: alias in transitive deps, optional dependencies — 34 pkg_manager tests pass). Then implement cold install performance optimizations from #881: (1) disk metadata cache at ~/.jet-store/.metadata/{name}.json with configurable TTL (default 5 min) so repeated installs skip HTTP, (2) HTTP/2 connection reuse via reqwest adaptive window for registry connections, (3) speculative prefetch of common transitive deps during BFS level resolution, (4) pipeline tarball downloads for already-resolved packages while remaining deps are still resolving. Target: cold install ≤ 3.0s. Additionally, remove the nx CLI dependency: jet must parse project.json directly in workspace discovery without spawning the nx binary. Affected subsystems: crates/cclab-jet/src/pkg_manager/{resolver,registry,store,lockfile,mod}.rs and any workspace-config reading code.",
+      "questions": [
+        {
+          "topic": "Metadata cache TTL and invalidation",
+          "question": "The issue suggests 5 minutes for disk metadata cache TTL. Should this be user-configurable (e.g., via jet.config or a CLI flag like --cache-ttl=Xs)? Should there be a --force / --no-cache flag to bypass the cache entirely, similar to pnpm's --force?"
+        },
+        {
+          "topic": "HTTP/2 negotiation strategy",
+          "question": "Should HTTP/2 be enabled unconditionally via http2_prior_knowledge (assumes registry supports it), or via ALPN negotiation (safer but adds latency on first connection)? Should jet fall back silently to HTTP/1.1 if the registry rejects HTTP/2?"
+        },
+        {
+          "topic": "nx removal scope",
+          "question": "Which parts of the codebase currently invoke the nx CLI or depend on nx's project graph? Is project.json parsing limited to workspace discovery (listing project roots), or does jet also rely on nx for task dependency ordering? Should this change also handle the case where a repo has no project.json at all (plain npm workspaces)?"
+        }
+      ]
+    },
+    {
+      "id": "jet-build-scope-hoisting",
+      "issues": [882, 903],
+      "requirements": "Implement scope hoisting in two phases to close the bundle size gap (215KB jet vs 192KB webpack on react-bench). Phase 1 (#882): module concatenation — for non-circular modules with a single import site, inline the module body directly at the import site and remove the __jet__.define/__jet__.require wrapper; preserve wrapped form for circular deps and dynamic imports. Phase 2 (#903 — true module flattening): merge all flattenable module bodies into a single function scope with module-prefixed variable renaming (_m0_foo, _m1_bar); replace require(N) calls with direct variable references; skip modules containing eval(), with-statements, or arguments references. Follow with Phase 2b (cross-module constant inlining: identify never-reassigned const bindings, inline at import sites across module boundaries, re-run DCE) and Phase 2c (cross-module DCE: used-export analysis on unified scope, remove functions/classes only referenced by dead code, preserve side-effectful code). Update scope_hoist.rs (currently 209L) and mangle.rs for unified-scope variable mangling. Success criteria: react-bench bundle ≤ 196KB, all 126 bundler tests pass, mini-react Playwright tests pass on both Vite and Jet builds.",
+      "questions": [
+        {
+          "topic": "Circular dependency fallback strategy",
+          "question": "For modules that form a circular dependency cycle (SCC), what is the hoisting strategy? Option A: exclude all members of the SCC from flattening, keep them as wrapped modules. Option B: break the cycle by hoisting everything except the back-edge module. Which do you prefer, and should cycles emit a warning?"
+        },
+        {
+          "topic": "eval / arguments detection conservatism",
+          "question": "Should eval() / with / arguments detection for skipping flattening be conservative (any usage anywhere in the module including nested closures) or only at the top level of the module body? Conservative detection is safer but may exclude more modules from hoisting — how much hoisting coverage loss is acceptable?"
+        },
+        {
+          "topic": "Phase 1 vs Phase 2 implementation order",
+          "question": "Should Phase 1 (wrapper removal / module concatenation) and Phase 2 (true scope flattening) be implemented as separate, independently-shippable passes with their own test coverage — or as a single combined transformation? Separate passes are easier to review and debug, but combined may be more architecturally clean."
+        }
+      ]
+    },
+    {
+      "id": "jet-build-aot-pipeline",
+      "issues": [765, 797],
+      "requirements": "Implement the full AOT production build pipeline (#765) across 7 milestones: (1) Tree shaking — ESM static import/export graph analysis, package.json sideEffects field support, DCE for unreachable code paths, scope-level variable reference tracking, barrel file re-export flattening. (2) Code splitting — dynamic import() creates separate async chunks, shared-chunk extraction for modules used by 2+ importers, multi-entry-point support, [name].[hash].js output naming, modulepreload hint generation, manual chunk config. (3) Minification — identifier mangling, whitespace removal, constant folding, CSS minification, HTML minification, console.log/debugger removal in production, scope-aware name mangling. (4) Source maps — VLQ-encoded per-transformation mappings, composition chain (TS→JS→minified→bundled), inline (data: URL) and external (.map file) modes, sourcesContent embedding. (5) CSS pipeline — @import resolution, CSS Modules (.module.css) with scoped class names + JS object export, PostCSS plugin pipeline, Tailwind JIT, asset URL rewriting with hashed output. (6) Asset pipeline — image optimization, font copy+hash with @font-face generation, SVG inline-as-component or copy, JSON tree-shaking, WASM bundling, public/ directory with hashing. (7) Build config — process.env.NODE_ENV replacement, define (compile-time constants), ES target level, module format output (ESM/CJS/UMD/IIFE), library mode preserving exports, externals for SSR/library use, tsconfig.json path alias resolution. Output: dist/ with index.html, assets/main.[hash].js, assets/main.[hash].css, .map files. Validate (#797) by building TodoMVC React and Realworld React+Redux with jet, running Playwright smoke tests comparing against Vite/webpack output, and documenting any unsupported patterns as known limitations. Acceptance: ≥2 real-world projects build and run with no JS runtime errors.",
+      "questions": [
+        {
+          "topic": "Minifier selection for Milestone 3",
+          "question": "The issue lists three options for JS minification: (A) custom minifier using Tree-sitter AST (full control, reuses existing infra, high effort), (B) swc_ecma_minifier (battle-tested, adds SWC dependency), (C) oxc_minifier (Rust-native, modern, lower maturity). Which approach do you prefer, and is keeping the dependency count low a hard constraint?"
+        },
+        {
+          "topic": "Milestone scope for this change",
+          "question": "All 7 milestones are listed in #765. Are all 7 in scope for this change, or should some be deferred? If prioritizing, which milestones are must-have (e.g., tree shaking + minification) vs nice-to-have (e.g., CSS pipeline, asset pipeline) for the initial AOT implementation?"
+        },
+        {
+          "topic": "Real-world validation automation (#797)",
+          "question": "Should the Playwright validation in #797 be integrated as automated CI tests (cloning repos as fixtures, running jet build, asserting page loads) or as a one-time manual validation run that documents results? If automated, should failures be blocking (CI hard fail) or non-blocking (warnings with known-limitation docs)?"
+        }
+      ]
+    }
+  ]
+}

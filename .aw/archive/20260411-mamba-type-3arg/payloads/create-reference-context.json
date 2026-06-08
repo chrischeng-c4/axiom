@@ -1,0 +1,33 @@
+{
+  "group_id": "mamba-type-3arg-core",
+  "specs": [
+    {
+      "spec_id": "runtime-class",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/class.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/class.md",
+      "sections": ["overview", "requirements", "changes", "scenarios"],
+      "relevance": "high",
+      "notes": "Primary spec for class system — mb_class_register, C3 MRO computation, __init_subclass__, __set_name__ hooks. The 3-arg type() path shares this infrastructure."
+    },
+    {
+      "spec_id": "runtime-builtins",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/builtins.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/builtins.md",
+      "sections": ["overview", "requirements", "changes"],
+      "relevance": "high",
+      "notes": "Contains mb_type() and mb_type3() implementations. The dispatch between 1-arg and 3-arg type() lives in builtins.rs."
+    },
+    {
+      "spec_id": "stdlib-builtins",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/stdlib/builtins.md",
+      "source": ".score/tech_design/crates/cclab-mamba/stdlib/builtins.md",
+      "sections": ["overview", "changes"],
+      "relevance": "medium",
+      "notes": "Stdlib builtins module that exposes type() as dispatch_type -> mb_type / mb_type3. The dispatch_type wrapper must route 1-arg to mb_type and 3-arg to mb_type3."
+    }
+  ],
+  "context_notes": "The 3-arg type(name, bases, namespace) implementation (#974) adds mb_type3() in runtime/builtins.rs. This calls mb_class_register() in runtime/class.rs which performs C3 MRO computation, __init_subclass__ hooks, and __set_name__ dispatch. The class statement desugars to mb_class_register via hir_to_mir lowering, sharing the same infrastructure. The returned type object is an Instance{class_name='type', fields={__name__: name_str, __bases__: bases_tuple}}. MRO failures raise TypeError. The builtin dispatch (in stdlib/builtins_mod.rs) routes type(x) to mb_type for 1-arg and type(name, bases, dict) to mb_type3 for 3-arg."
+}

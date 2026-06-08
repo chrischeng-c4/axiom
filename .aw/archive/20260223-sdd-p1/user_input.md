@@ -1,0 +1,1 @@
+Fix and enhance SDD workflow: #463 sdd_run_change skips spec creation phase after proposal_approved, #464 cclab init platform selection with auth method options, #465 fetch_issues add glab GitLab CLI support

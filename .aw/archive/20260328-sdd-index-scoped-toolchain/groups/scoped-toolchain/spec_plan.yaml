@@ -1,0 +1,20 @@
+- spec_id: index-config-model
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/index-config.md
+  sections:
+  - overview
+  - data-model
+  - changes
+- spec_id: auto-discover
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/auto-discover.md
+  sections:
+  - overview
+  - changes
+- spec_id: multi-handler-daemon
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/code-analysis-service-v2.md
+  source: crates/cclab-sdd/logic/code-analysis-service-v2.md
+  sections:
+  - overview
+  - changes

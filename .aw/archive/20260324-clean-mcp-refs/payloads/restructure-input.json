@@ -1,0 +1,11 @@
+{
+  "groups": [
+    {
+      "id": "mcp-cleanup",
+      "title": "Clean up stale MCP references from SDD specs",
+      "issues": [1047],
+      "requirements": "Bulk refactor of 28 spec files under cclab/specs/crates/cclab-sdd/. Three categories of changes:\n\n1. **files: frontmatter** — update mcp/tools/*.rs paths to actual source paths (tools/*.rs, services/*.rs)\n2. **MCP terminology** — replace 'MCP tool' with 'CLI command' or 'tool', remove 'MCP server' references\n3. **Obsolete spec** — evaluate generate/template-mcp-configs.md for archival\n\nNo code changes. Spec-only refactor.",
+      "questions": []
+    }
+  ]
+}

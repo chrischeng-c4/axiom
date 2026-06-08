@@ -1,0 +1,55 @@
+# Stable ClusterIP the serving nodes use to reach the write log.
+# LUMEN_NATS_URL=nats://lumen-nats:4222 resolves here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lumen-nats
+  namespace: lumen
+  labels:
+    app: lumen
+    role: nats
+spec:
+  type: ClusterIP
+  selector:
+    app: lumen
+    role: nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: client
+      protocol: TCP
+    - name: monitor
+      port: 8222
+      targetPort: monitor
+      protocol: TCP
+---
+# Headless service: stable per-pod DNS for JetStream clustering (route
+# port :6222). Only meaningful when replicas > 1 (prod overlay), but
+# harmless at 1 replica and required as the StatefulSet's serviceName.
+apiVersion: v1
+kind: Service
+metadata:
+  name: lumen-nats-headless
+  namespace: lumen
+  labels:
+    app: lumen
+    role: nats
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: lumen
+    role: nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: client
+      protocol: TCP
+    - name: cluster
+      port: 6222
+      targetPort: cluster
+      protocol: TCP
+    - name: monitor
+      port: 8222
+      targetPort: monitor
+      protocol: TCP

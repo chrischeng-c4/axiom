@@ -1,0 +1,12 @@
+change_id: cclab-taipan
+schema_version: '2.0'
+created_at: 2026-02-12T07:40:53.405201Z
+updated_at: 2026-02-12T07:49:54.765741Z
+phase: archived
+iteration: 1
+last_action: superseded_by_mamba
+session_id: null
+checksums: {}
+validations: []
+revision_counts: {}
+telemetry: null

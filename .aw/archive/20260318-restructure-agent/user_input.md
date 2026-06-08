@@ -1,0 +1,1 @@
+feat(agent): implement Restructure Agent — LLM-based prompt refinement that takes vague user intent, explores specs via SpecStore, clarifies ambiguities through multi-round Q&A, and produces well-structured issues (meta-prompts) with standard I/O schema. Agent is stateless and platform-agnostic. #900

@@ -1,0 +1,58 @@
+[package]
+name = "cclab-kv"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "High-performance, multi-core key-value store with tiered storage for cclab"
+
+[lib]
+name = "cclab_kv"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "kv-server"
+path = "src/server/main.rs"
+
+[dependencies]
+# Core dependencies (use workspace references)
+tokio.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+parking_lot.workspace = true
+tracing.workspace = true
+futures.workspace = true
+
+# High-precision numeric
+rust_decimal = { version = "1.36", features = ["serde"] }
+
+# Persistence
+bincode = "1.3"
+crc32fast = "1.4"
+crossbeam-channel = "0.5"
+sha2 = "0.10"
+
+# Shared utilities
+cclab-core = { path = "../../../crates/cclab-core" }
+
+# Server dependencies
+tracing-subscriber.workspace = true
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = "0.5"
+qc = { package = "meter", path = "../../meter" }
+num_cpus = "1.16"
+hostname = "0.4"
+tempfile = "3.12"
+
+[[bench]]
+name = "kv_bench"
+harness = false
+
+[[bench]]
+name = "kv_benchmark"
+harness = false

@@ -1,0 +1,50 @@
+{
+  "group_id": "wire-mamba-modules",
+  "verdict": "reject",
+  "issues": [
+    {
+      "severity": "blocking",
+      "location": "reference_context.md lines 11-16 (spec table)",
+      "description": "Spec table is entirely unrendered — all 5 rows show '?' for Spec, Group, Relevance, and Key Requirements. The artifact generation failed. No background specs are listed in the rendered output.",
+      "suggestion": "Re-run artifact generation. The create-reference-context.json payload has the correct data; the rendered MD did not pick it up."
+    },
+    {
+      "severity": "blocking",
+      "location": "spec_plan.yaml line 3 / create-reference-context.json spec_plan[0].main_spec_ref",
+      "description": "Entry 'mamba-crate-wiring-r2-resolver' has main_spec_ref: 'crates/cclab-mamba/mamba-crate-wiring-and-schema-binding.md'. This file is at the root of cclab-mamba/ with no subfolder prefix (confirmed: ls cclab/specs/crates/cclab-mamba/ shows it at root). Fails checklist item: 'spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)'.",
+      "suggestion": "Move or rename the spec to a subfolder, e.g. 'crates/cclab-mamba/config/crate-wiring.md' or 'crates/cclab-mamba/driver/crate-wiring.md', and update main_spec_ref accordingly."
+    },
+    {
+      "severity": "blocking",
+      "location": "spec_plan entry 'runtime-symbols-python-name' (spec_plan.yaml lines 15-21)",
+      "description": "The entry targets 'cclab/specs/crates/cclab-mamba/runtime/symbols.md', which describes the INTERNAL cclab-mamba RuntimeSymbol struct (fields: name, addr, params, return_type in runtime/symbols.rs — no python_name field exists there). The python_name concern from pre-clarification Q2 refers to cclab_mamba_registry::RuntimeSymbol.name (Python-visible name, in cclab-mamba-registry/src/lib.rs). These are two different structs in two different crates. The usage note in the payload incorrectly says this spec 'describes the RuntimeSymbol struct in cclab-mamba-registry' — that is factually wrong. Fails: 'spec_plan: modify entries have valid source paths'.",
+      "suggestion": "Remove this entry. The correct target is the cclab-mamba-registry crate spec (which doesn't exist yet — see next issue). Create a new spec for cclab-mamba-registry instead."
+    },
+    {
+      "severity": "blocking",
+      "location": "spec_plan (all entries) — cclab-mamba-registry crate has zero spec coverage",
+      "description": "Issue #1132 explicitly identifies cclab-mamba-registry as the primary registry side (provides MAMBA_MODULES, RuntimeSymbol, ModuleRegistrar, find_module). The change integrates find_module() lookup and RuntimeSymbol.name resolution from this crate. No spec file exists anywhere under cclab/specs/ for cclab-mamba-registry, and the spec plan has no 'create' entry for one. Fails: 'All affected crates/areas from pre-clarifications are covered by at least one spec'.",
+      "suggestion": "Add a spec_plan entry: action=create, spec_id='mamba-registry-module-trait', main_spec_ref='crates/cclab-mamba-registry/registry.md' (new file), covering MAMBA_MODULES distributed slice, RuntimeSymbol struct (name/func_ptr/signature fields), MambaModule trait, find_module() function, and ModuleRegistrar. This is the primary spec that needs to be written for this change."
+    },
+    {
+      "severity": "blocking",
+      "location": "spec_plan entry 'name-resolution-native-imports' targeting resolve/name-resolution.md",
+      "description": "resolve/name-resolution.md (id: mamba-global-nonlocal-spec) is dedicated entirely to global and nonlocal statement semantics — variable classification, cell variables, free variable capture, MIR instruction extensions. Adding native module import resolution (find_module() lookup, MAMBA_MODULES iteration, Python-name→FFI mapping) to this file mixes two unrelated logical units. Fails: 'spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)'.",
+      "suggestion": "Create a separate spec file, e.g. 'crates/cclab-mamba/resolve/native-import-resolution.md', as a new spec dedicated to the import resolver's MAMBA_MODULES integration. Do not add this concern to the global/nonlocal spec."
+    }
+  ],
+  "checklist": {
+    "all_affected_crates_covered": "fail — cclab-mamba-registry has no spec and no spec_plan entry",
+    "relevance_scores_reasonable": "pass — where data is present (payload), scores are appropriate",
+    "key_requirements_accurate": "fail — runtime/symbols.md usage note incorrectly attributes registry RuntimeSymbol to the wrong spec",
+    "no_irrelevant_specs": "pass",
+    "spec_plan_main_spec_ref_not_null": "pass — all entries have main_spec_ref set",
+    "spec_plan_sections_reasonable": "pass — overview+changes is appropriate for modify entries",
+    "spec_plan_modify_valid_source_paths": "fail — runtime-symbols-python-name targets the wrong crate's spec file",
+    "spec_plan_main_spec_ref_has_subfolder": "fail — mamba-crate-wiring-and-schema-binding.md is at root level of cclab-mamba/",
+    "spec_plan_one_logical_unit_per_file": "fail — name-resolution.md already covers global/nonlocal; adding import resolution mixes concerns",
+    "spec_plan_no_duplicate_section_types": "pass",
+    "spec_plan_paths_mirror_source_structure": "pass for entries 2-3; fail for entry 1 (root-level file)"
+  },
+  "summary": "REJECT. Five blocking issues: (1) Artifact spec table rendered as all '?' placeholders — generation failed. (2) Entry 1 main_spec_ref violates the subfolder rule (root-level file). (3) 'runtime-symbols-python-name' entry targets the wrong spec — it points to the internal cclab-mamba RuntimeSymbol, not the registry's RuntimeSymbol. (4) cclab-mamba-registry — the primary crate for this change — has zero spec coverage and no create entry in the spec plan. (5) Adding native import resolution to name-resolution.md (which covers global/nonlocal) violates the one-logical-unit-per-file rule. The spec plan needs a new spec for cclab-mamba-registry and a separate new spec for native import resolution instead of modifying the global/nonlocal spec."
+}

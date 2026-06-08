@@ -1,0 +1,8 @@
+{
+  "spec_id": "change-spec-review-rules",
+  "group_id": "decomposition-rules",
+  "section": "overview",
+  "fill_sections": ["overview", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/logic/change-spec.md",
+  "content": "Add file decomposition enforcement rules to the change_spec Review checklist and Create prompt.\n\n| Aspect | Detail |\n|--------|--------|\n| Target | Review § Checklist, Create Mode § Prompt Architecture |\n| Rules added | fill_order enforcement, section type uniqueness per file |\n| Scope | Spec-only — no Rust code changes |\n\n### Current behavior\n\nThe Review checklist (items 1-11) validates section annotations, cross-references, content correctness, and test coverage. It does not verify:\n- Whether sections were filled in the canonical `fill_order` (data → behavior → interface → test → changes)\n- Whether any spec file contains duplicate section types\n\n### New behavior\n\nTwo new checklist items are added:\n\n| # | Rule | Fail condition |\n|---|------|----------------|\n| 12 | fill_order respected | Sections filled out of dependency order (e.g. `changes` before `schema`) |\n| 13 | No duplicate section types | Two or more sections in the same file share a `type:` value |\n\nAdditionally, the Create prompt base template gains a constraint block reminding agents of these rules during section fill.\n\n### Constraint\n\n- fill_order check is advisory during Create (agent follows fill_order by default via fill loop sorting) but mandatory during Review\n- Duplicate section type check is strict — Review MUST flag any file with two sections of the same type as HIGH severity\n- 1 spec file = 1 logical unit rule is enforced at reference_context level (see sibling spec `ref-context-decomposition`), not here"
+}

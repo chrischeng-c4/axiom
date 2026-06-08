@@ -1,0 +1,48 @@
+{
+  "group_id": "deploy-section-type",
+  "specs": [
+    {
+      "spec": "generator-deploy",
+      "group": "deploy-codegen",
+      "relevance": "high",
+      "key_requirements": "R1-R5: DeployGenerator implements SpecIRGenerator trait. can_generate() returns true only for SpecIR::Deploy. generate_from_ir() produces exactly two files: deployment.yaml (apps/v1 Deployment) and service.yaml (v1 ClusterIP Service). Deployment includes: metadata.name from spec, spec.replicas, container image and port from DeploySpec, env vars (literal and valueFrom), optional resource limits (CPU/memory). Service includes: type ClusterIP, selector.app matching deployment, port mapping. Template fallback and overwrite policy enforcement."
+    },
+    {
+      "spec": "codegen-system",
+      "group": "deploy-codegen",
+      "relevance": "high",
+      "key_requirements": "R1-R7: Code generation system architecture with unified internal representation. R6-R7 specifically define SpecIRGenerator trait for section-type generators (Deploy, React, Component, DesignToken variants) and DeployGenerator as R7 example. Routing flow: SpecIR → SpecValidator → TemplateEngine → SpecIRGenerators (Deploy/React). Critical gap: SectionType enum needs Deploy variant added to router and section_rules registration with keywords (deploy|container|k8s|docker|helm|terraform|infra|migration|rollback)."
+    },
+    {
+      "spec": "spec-ir-contract",
+      "group": "spec-ir-system",
+      "relevance": "high",
+      "key_requirements": "R1-R5: SpecIR enum type that represents all spec types including Deploy variant. SpecMetadata struct with source file, spec group, spec ID, tags. From<T> implementations for constructing SpecIR from domain types. SpecBundle for multi-spec composition. Serializability for MCP transport. Deploy variant introduced here and propagated through codegen system."
+    },
+    {
+      "spec": "template-engine",
+      "group": "template-system",
+      "relevance": "high",
+      "key_requirements": "R1-R4: Tera template engine integration for code generation. TemplateEngine class with render() method. Template context building. Rendering flow: parse template → populate context → generate output. Embedded templates via include_str! macro. Used by DeployGenerator R4 for template fallback when deploy/deployment.yaml.j2 and deploy/service.yaml.j2 are present. Template loading, variable interpolation, filter functions."
+    },
+    {
+      "spec": "spec-ir-schema",
+      "group": "spec-ir-system",
+      "relevance": "high",
+      "key_requirements": "R1-R3: SpecIR YAML manifest schema (Kubernetes-style: apiVersion, kind, metadata, spec). Standard envelope for all SpecIR types. Deploy kind serialization format. JSON Schema envelope with strict validation. Language-agnostic interface between SDD producer and Lens consumer. Roundtrip serialization/deserialization support for Deploy specs."
+    },
+    {
+      "spec": "code-generator-contract",
+      "group": "generator-contract",
+      "relevance": "medium",
+      "key_requirements": "Contract between specs (input) and generators (output). Generator responsibilities: spec signal → code output mapping (e.g. DeploySpec.replicas → Deployment replicas field, DeploySpec.env → container env block). Inference rules for auto-injecting dependencies from spec semantics. Pluggable generator trait implementation pattern."
+    },
+    {
+      "spec": "spec-validator",
+      "group": "validation-system",
+      "relevance": "medium",
+      "key_requirements": "R1-R2: Type validation (required fields, type checking) and reference validation (cross-spec links). Context for k8s validation rules: namespace, metadata.name format, image reference validation, port range validation. Soft warning mode for cross-ref validation per pre-clarification Q3 (deferred, best-effort output acceptable)."
+    }
+  ],
+  "spec_plan": []
+}

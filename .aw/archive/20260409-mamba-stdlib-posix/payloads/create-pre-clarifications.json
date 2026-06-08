@@ -1,0 +1,21 @@
+{
+  "group_id": "stdlib-posix-module",
+  "answers": [
+    {
+      "topic": "Function re-use strategy",
+      "answer": "Re-use os_mod.rs dispatch functions. The posix module should delegate to os_mod implementations since CPython os wraps posix. No duplicated logic."
+    },
+    {
+      "topic": "environ implementation",
+      "answer": "Populate posix.environ as a dict from std::env::vars() at registration time, matching CPython behavior."
+    },
+    {
+      "topic": "Dispatch ABI pattern",
+      "answer": "Follow the os_mod pattern (from_func dispatch with MbValue args) for consistency, not the newer extern C ABI from builtins_mod."
+    },
+    {
+      "topic": "uname implementation",
+      "answer": "Use libc::uname on Unix targets with cfg gate. Return a 5-element tuple of strings matching CPython uname_result(sysname, nodename, release, version, machine)."
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "spec_id": "result-backend",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: result-backend-changes\n  refs:\n    - $ref: \"#result-backend-async-api\"\nchanges:\n  - path: crates/cclab-queue/src/backend/redis.rs\n    action: modify\n    description: |\n      Add 12 tests to existing #[cfg(test)] mod tests:\n      - 5 unit tests (R1-R5): config construction, serde roundtrip, TTL computation, Clone\n      - 7 integration tests (R6-R12): metadata CRUD, empty batch, custom TTL, state overwrite, delete nonexistent\n      Extend existing integration tests with 5 more (R13-R17): get_state/result not found, wait_for_result terminal-no-result edge, set_result state side effect, complex JSON metadata\n\n  - path: crates/cclab-queue/src/backend/ion.rs\n    action: modify\n    description: |\n      Add 18 tests to existing #[cfg(test)] mod tests:\n      - 5 unit tests (I1-I5): config construction, default TTL, value_to_bytes for Bytes/String/unexpected variants\n      - 13 integration tests (I6-I18): full CRUD lifecycle, batch ops, wait_for_result success/timeout, health check, metadata CRUD, state side effect, not-found edges\n```"
+}

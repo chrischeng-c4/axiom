@@ -1,0 +1,15 @@
+{
+  "group_id": "extended-unpacking",
+  "spec_plan": {"sections": ["overview", "schema", "parser", "codegen", "changes"]},
+  "specs": [
+    {"path": "cclab-mamba/parser/ast.md", "relevance": "high", "reason": "AST nodes for starred assignment targets"},
+    {"path": "cclab-mamba/parser/statements.md", "relevance": "high", "reason": "Assignment statement parsing with star targets"},
+    {"path": "cclab-mamba/parser/expressions.md", "relevance": "high", "reason": "Star expression parsing in various contexts"},
+    {"path": "cclab-mamba/lower/ast-to-hir.md", "relevance": "high", "reason": "Desugaring starred assignments to HIR"},
+    {"path": "cclab-mamba/lower/hir-to-mir.md", "relevance": "high", "reason": "MIR lowering for unpacking with star"},
+    {"path": "cclab-mamba/mir/mir.md", "relevance": "high", "reason": "MIR instructions for iterator splitting"},
+    {"path": "cclab-mamba/runtime/builtins.md", "relevance": "medium", "reason": "Runtime unpack helper function"},
+    {"path": "cclab-mamba/codegen/cranelift-jit.md", "relevance": "medium", "reason": "JIT codegen for unpack instructions"},
+    {"path": "cclab-mamba/types/type-checker.md", "relevance": "medium", "reason": "Type inference for starred variables"}
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "spec_id": "enhancement-parallel-test-execution-sharding-for-native-test-r-spec",
+  "section": "cli",
+  "content": "<!-- type: cli lang: yaml -->\n\n```yaml\n_sdd:\n  id: jet-test-cli\n  refs:\n    - $ref: \"#requirements\"\ncommand: jet test\nflags:\n  - name: workers\n    short: null\n    long: --workers\n    value: \"<N>\"\n    type: integer\n    minimum: 1\n    default: \"std::thread::available_parallelism()\"\n    description: \"Number of concurrent spec worker processes. 1 = serial (debug mode).\"\n    help_text: \"--workers=<N>  Number of concurrent workers [default: logical CPU count]\"\n  - name: shard\n    short: null\n    long: --shard\n    value: \"<i/N>\"\n    type: string\n    pattern: \"^[1-9][0-9]*/[1-9][0-9]*$\"\n    default: null\n    description: \"Select shard i of N (1-indexed). Run CI with i=1..N to distribute specs.\"\n    help_text: \"--shard=<i/N>  Run only the i-th of N shards [e.g. --shard=2/4]\"\n    validation:\n      - \"i >= 1\"\n      - \"N >= 1\"\n      - \"i <= N\"\n```"
+}

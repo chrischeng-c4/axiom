@@ -1,0 +1,6 @@
+{"spec_id":"fix-monorepo-bundler-spec","section":"overview","content":"Fix remaining Nx monorepo build failures. 4/21 projects fail because large libs are not detected as libs (path heuristic misses them) and bundle all node_modules, running forever.
+
+### Problems
+1. Lib detection only checks /libs/ path — misses projects with projectType=library in project.json
+2. No build timeout — huge bundles run forever
+3. Sequential builds — slow for 21 projects","fill_sections":["overview","requirements","scenarios","changes"]}

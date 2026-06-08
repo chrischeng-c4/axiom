@@ -1,0 +1,47 @@
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/semantic/agentic-workflow-packages-sdd.md#manifest
+// CODEGEN-BEGIN
+{
+  "name": "@sdd/ui",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./spec-viewer": "./src/spec-viewer/index.ts",
+    "./pipeline": "./src/pipeline/index.ts",
+    "./changes": "./src/changes/index.ts",
+    "./file-browser": "./src/file-browser/index.ts",
+    "./editing": "./src/editing/index.ts",
+    "./feedback": "./src/feedback/index.ts",
+    "./layout": "./src/layout/index.ts",
+    "./primitives": "./src/primitives/index.ts",
+    "./lib/utils": "./src/lib/utils.ts"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "dependencies": {
+    "clsx": "^2.1.0",
+    "date-fns": "^3.2.0",
+    "html2canvas": "^1.4.1",
+    "js-yaml": "^4.1.1",
+    "lucide-react": "^0.312.0",
+    "mermaid": "^11.12.3",
+    "papaparse": "^5.5.3",
+    "react-markdown": "^10.1.0",
+    "react-syntax-highlighter": "^16.1.1",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^2.2.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/papaparse": "^5.3.14",
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^19.2.3",
+    "@types/react-syntax-highlighter": "^15.5.11",
+    "typescript": "^5.3.3"
+  }
+}
+// CODEGEN-END

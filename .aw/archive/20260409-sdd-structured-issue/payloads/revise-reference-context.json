@@ -1,0 +1,67 @@
+{
+  "group_id": "structured-issue-format",
+  "specs": [
+    {
+      "path": "crates/sdd/logic/state-machine.md",
+      "group": "state-machine",
+      "relevance": "high",
+      "key_requirements": [
+        "init_change routes to restructure_input after creation — skip target is post_clarifications_created",
+        "Phase transitions: ChangeInited → InputRestructured → PreClarificationsCreated → ReferenceContext*",
+        "Structured issues skip directly from ChangeInited to post_clarifications_created phase"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/restructure-input.md",
+      "group": "phases",
+      "relevance": "high",
+      "key_requirements": [
+        "Output: groups/{id}/requirements.md + pre_clarifications.md stub",
+        "init_change must replicate group creation when skipping this phase"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/pre-clarifications.md",
+      "group": "phases",
+      "relevance": "high",
+      "key_requirements": [
+        "Output: pre_clarifications.md with status: answered",
+        "init_change writes this with Key Decisions from structured issue"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/reference-context.md",
+      "group": "phases",
+      "relevance": "high",
+      "key_requirements": [
+        "Output: reference_context.md with spec table + spec_plan",
+        "Structured issue's Reference Context section provides this directly"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/post-clarifications.md",
+      "group": "phases",
+      "relevance": "medium",
+      "key_requirements": [
+        "Output: post_clarifications.md with scope_summary",
+        "Structured issue's Scope + Acceptance Criteria sections replace this"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/issues-backend.md",
+      "group": "issues",
+      "relevance": "medium",
+      "key_requirements": [
+        "Issue format, CLI commands — enrich subcommand extends this"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "sdd-structured-issue",
+      "action": "create",
+      "main_spec_ref": "crates/sdd/logic/structured-issue.md",
+      "sections": ["overview", "schema", "cli", "changes"]
+    }
+  ]
+}

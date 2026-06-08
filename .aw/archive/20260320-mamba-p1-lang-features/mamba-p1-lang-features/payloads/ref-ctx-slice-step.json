@@ -1,0 +1,14 @@
+{
+  "group_id": "slice-step",
+  "spec_plan": {"sections": ["overview", "schema", "runtime", "changes"]},
+  "specs": [
+    {"path": "cclab-mamba/runtime/list-ops.md", "relevance": "high", "reason": "List slicing with step parameter"},
+    {"path": "cclab-mamba/runtime/tuple-ops.md", "relevance": "high", "reason": "Tuple slicing with step"},
+    {"path": "cclab-mamba/runtime/string-ops.md", "relevance": "high", "reason": "String slicing with step on codepoints"},
+    {"path": "cclab-mamba/runtime/builtins.md", "relevance": "high", "reason": "Slice dispatch for subscript operations"},
+    {"path": "cclab-mamba/parser/expressions.md", "relevance": "high", "reason": "3-arg slice expression parsing"},
+    {"path": "cclab-mamba/parser/ast.md", "relevance": "high", "reason": "AST Slice node with step field"},
+    {"path": "cclab-mamba/lower/hir-to-mir.md", "relevance": "medium", "reason": "MIR lowering for 3-arg slice"},
+    {"path": "cclab-mamba/codegen/cranelift-jit.md", "relevance": "medium", "reason": "JIT codegen for slice with step"}
+  ]
+}

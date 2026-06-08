@@ -1,0 +1,1 @@
+#956 bug: payloads/prompts/specs placed at change root instead of under groups/ #933 feat: test generation from RequirementPlus specs #932 feat: codegen last mile — consume SpecIR to generate code #937 feat: frontend codegen — wireframe + component + design-token → UI code #934 feat: deployment spec type — infra-as-code integration

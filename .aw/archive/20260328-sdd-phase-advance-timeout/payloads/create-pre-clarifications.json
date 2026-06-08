@@ -1,0 +1,7 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-phase-advance-timeout",
+  "group_id": "phase-advance-and-timeout",
+  "answers": [],
+  "summary": "No clarifications needed. Root causes identified: artifact tools missing set_phase() calls (#1124), and no tokio::time::timeout wrapper on child.wait() (#1126). Plan is detailed and ready for implementation."
+}

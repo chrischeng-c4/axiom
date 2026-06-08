@@ -1,0 +1,1 @@
+Rename sdd-* agents to score-* and add SubagentStop hook #enhancement-score-agent-rename-and-subagentstop-hook

@@ -1,0 +1,54 @@
+change_id: nova-async-clarification
+schema_version: '2.0'
+created_at: 2026-02-01T10:21:21.861037Z
+updated_at: 2026-02-01T10:26:36.317470Z
+phase: archived
+iteration: 1
+last_action: archive-complete
+session_id: null
+checksums:
+  specs/platform-commenting.md:
+    hash: sha256:aef657d7f8e2a36933a652e5a57324dc37039e10121a19ceb2f1253d825049ae
+    validated_at: 2026-02-01T10:24:54.997317Z
+  proposal.md:
+    hash: sha256:e78b4d493fa3e260dd8a4070e5991fa3045675a07143a5af8782ba9a0bcb24fb
+    validated_at: 2026-02-01T10:24:54.996623Z
+  tasks.md:
+    hash: sha256:a281f0330bddcece559ee3f9fa426af84539271dbc29737294f3ff02e68ef014
+    validated_at: 2026-02-01T10:24:54.996886Z
+  specs/analyst-agent-async.md:
+    hash: sha256:743bbc1215c31d5947bd470a2ab4f3deb13148660ec4b989da0eafb964a2dce3
+    validated_at: 2026-02-01T10:24:54.997543Z
+  specs/clarification-tools.md:
+    hash: sha256:487405dbfafd21587fa037b8c5880a87d4a671a2993111d7064d33608bf107ed
+    validated_at: 2026-02-01T10:24:54.997141Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-01T10:21:30.265889Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-01T10:24:54.996391Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

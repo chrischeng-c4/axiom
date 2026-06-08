@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "lens-dissolution",
+  "spec_id": "sdd-cli-context-command",
+  "group_id": "lens-dissolution",
+  "section": "changes",
+  "content": "```yaml\nchanges:\n  - action: modify\n    path: cclab/specs/crates/cclab-sdd/interfaces/cli/commands.md\n    description: >\n      Add `context` subcommand to Command Tree YAML block:\n      ```\n      context <targets...>:\n        # targets: one or more file:symbol positional args\n        --depth: integer (default 2)\n      ```\n      Add `agent` to check subcommand's --format accepted values.\n      Add two rows to CLI → Logic Mapping table:\n      - `sdd context <targets...>` → `context_builder::ContextBuilder::build_context()` → —\n      - `sdd check --format agent` → `output::agent::AgentOutputBuilder::build()` → —\n    requirements: [R1, R2, R3, R4, R5, R6, R7, R8]\n\n  - action: modify\n    path: crates/cclab-sdd-cli/src/commands.rs\n    description: >\n      Add `Context` variant to SDD CLI subcommand enum.\n      Define context subcommand args: targets (Vec<String> positional), depth (Option<u32> default 2).\n      Parse file:symbol format from each target string.\n      Call ContextBuilder::build_context(request) and print JSON to stdout.\n    requirements: [R1, R2, R3, R4, R7, NF2]\n\n  - action: modify\n    path: crates/cclab-sdd-cli/src/commands.rs\n    description: >\n      Extend existing check subcommand's --format clap value_parser to accept \"agent\" string.\n      When format=\"agent\", build SymbolTable + ImportGraph for checked files,\n      pass to AgentOutputBuilder::build(), print AgentOutput JSON to stdout.\n    requirements: [R5, R6, R8, NF2]\n```"
+}

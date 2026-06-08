@@ -1,0 +1,110 @@
+{
+  "change_id": "mamba-p1-bugfix",
+  "group_id": "lambda-limitations",
+  "verdict": "REJECT",
+  "summary": "Critical spec missing: cranelift codegen spec (covers codegen/cranelift/mod.rs, one of the two directly-affected files in issue #1110) is absent from both the table and spec_plan. All relevance scores are flat 'medium' with no differentiation — closure and hir-to-mir should be 'high' as they directly implement the fix targets. All key requirements fields are '—' (empty). spec_plan is entirely absent from the artifact. The 'conformance' entry is misidentified — the spec at testing/conformance.md has id 'xfail-zero', and ast-to-hir has no lambda-relevant requirements, making its inclusion questionable.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Issue #1110 lists crates/cclab-mamba/src/codegen/cranelift/ as an affected area. The cranelift spec (codegen/cranelift/mod.rs) is completely absent from the reference context. The conformance/xfail-zero spec R2 changes section also explicitly calls out codegen/cranelift/mod.rs for lambda function pointer codegen fixes."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "All six entries are scored 'medium' with no differentiation. closure should be 'high' (R4 nested closure, R5 lambda as closure, acceptance criteria directly match all three lambda bugs). hir-to-mir should be 'high' (source file hir_to_mir.rs is directly listed in issue #1110 Affected Files for lambda lowering). The conformance/xfail-zero spec should be 'high' (R2 is specifically 'Lambda closure capture and codegen', S5 and S6 match the exact bugs). type-checker and ast-to-hir are marginal and should be 'low'."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "All six entries show '—' (empty). closure: R4 (nested closure), R5 (lambda as anonymous closure). hir-to-mir: no explicit lambda requirement exists in the spec — this gap itself is meaningful. conformance/xfail-zero: R2 (Lambda closure capture and codegen). hir: R3 (variable binding info — Free/Cell markers). type-checker: R2 (unary op type inference). ast-to-hir: no applicable requirement."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "ast-to-hir spec (R1-R5: decorator desugaring, comprehension lowering, with-statements, for-else, augmented assignments) has zero requirements relevant to lambda limitations. Lambda default args are not desugared by ast-to-hir. Including it adds noise without value. The 'conformance' label is also a misidentification — the spec at testing/conformance.md carries id 'xfail-zero', not 'conformance'."
+    },
+    {
+      "item": "spec_plan: every entry has main_spec_ref set (not null)",
+      "passed": false,
+      "note": "No spec_plan section is present in the reference context artifact at all."
+    },
+    {
+      "item": "spec_plan: sections are reasonable for the requirements",
+      "passed": false,
+      "note": "No spec_plan section is present."
+    },
+    {
+      "item": "spec_plan: modify entries have valid source paths",
+      "passed": false,
+      "note": "No spec_plan section is present."
+    },
+    {
+      "item": "spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)",
+      "passed": false,
+      "note": "No spec_plan section is present."
+    },
+    {
+      "item": "spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)",
+      "passed": false,
+      "note": "No spec_plan section is present to evaluate."
+    },
+    {
+      "item": "spec_plan: no spec file would require duplicate section types (split into separate files if needed)",
+      "passed": false,
+      "note": "No spec_plan section is present to evaluate."
+    },
+    {
+      "item": "spec_plan: spec paths mirror source structure (interfaces/, logic/, generate/)",
+      "passed": false,
+      "note": "No spec_plan section is present. Note: for this change, spec paths should follow codegen/, lower/, runtime/ subfolder structure mirroring source layout."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "Missing cranelift codegen spec — issue #1110 Affected Files explicitly lists crates/cclab-mamba/src/codegen/cranelift/ as a fix target ('closure codegen'). The xfail-zero spec R2 Changes section explicitly modifies codegen/cranelift/mod.rs: 'Fix lambda function pointer codegen: Lambda passed to map/filter/iter must emit valid function reference (not SIGABRT). Ensure closure environment pointer is passed correctly when lambda used as callable argument. Handle lambda with default args — closure struct includes default values.' The cranelift.md spec covers this file directly. It is absent from both the table and spec_plan.",
+      "recommendation": "Add cranelift entry: relevance 'high', key requirements R2 (MIR instruction translation — lambda/closure call sites), R4 (value marshaling — closure environment pointer). Add to spec_plan: action modify, source crates/cclab-mamba/codegen/cranelift.md, sections [overview, requirements, acceptance-criteria]."
+    },
+    {
+      "severity": "HIGH",
+      "description": "closure spec relevance mis-scored as 'medium'. runtime/closure.rs implements the entire closure/lambda capture model. R4 (Nested closure support) and R5 (Lambda as anonymous closure) directly map to two of the three lambda limitation bugs. Acceptance criteria 'Closure in loop: funcs = [lambda i=i: i for i in range(3)]' is exactly the default-arg-capture bug. Should be 'high'.",
+      "recommendation": "Change closure relevance from 'medium' to 'high'. Populate key requirements: R4 (nested closure — chains cell variable references through nesting levels), R5 (lambda as anonymous closure — supports default argument values)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "hir-to-mir spec relevance mis-scored as 'medium'. lower/hir_to_mir.rs is directly listed in issue #1110 Affected Files as 'lambda lowering'. xfail-zero R2 Changes says hir_to_mir.rs must: emit default param values as captured bindings at definition time, and ensure inner lambda closure captures enclosing lambda's params. This is a primary fix target. Should be 'high'.",
+      "recommendation": "Change hir-to-mir relevance from 'medium' to 'high'. Key requirements: note that the spec has no existing lambda-lowering requirement (R1-R9 cover comprehensions, generators, pattern matching, etc.) — a new requirement for lambda default arg and nested lambda lowering needs to be ADDED to this spec."
+    },
+    {
+      "severity": "HIGH",
+      "description": "spec_plan section is entirely absent from the reference context artifact. All 7 spec_plan checklist items therefore fail. This means the planner has no guidance on which specs to create or modify.",
+      "recommendation": "Add spec_plan section with at minimum: closure (action: modify, source: crates/cclab-mamba/runtime/closure.md, sections: [requirements, acceptance-criteria]), hir-to-mir (action: modify, source: crates/cclab-mamba/lower/hir-to-mir.md, sections: [requirements, acceptance-criteria]), cranelift (action: modify, source: crates/cclab-mamba/codegen/cranelift.md, sections: [requirements, acceptance-criteria])."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "conformance entry is misidentified. The spec at crates/cclab-mamba/testing/conformance.md has frontmatter id 'xfail-zero', not 'conformance'. Using 'conformance' as the spec name is incorrect. Additionally, this spec is very broad (R1-R11 covering 11 separate bug categories) — for lambda-limitations only R2 is applicable.",
+      "recommendation": "Rename reference entry identifier from 'conformance' to 'xfail-zero'. Change relevance to 'high' (R2 Lambda closure capture and codegen directly covers all three lambda bugs). Populate key requirements: R2 (Lambda closure capture and codegen — S5 default arg capture, S6 nested lambda scenarios)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "ast-to-hir spec inclusion is not justified. Its five requirements (R1 decorator desugaring, R2 comprehension lowering, R3 with-statement desugaring, R4 for-else desugaring, R5 augmented assignment) are all orthogonal to lambda limitations. Lambda default arguments are handled downstream in HIR-to-MIR, not in AST-to-HIR desugaring.",
+      "recommendation": "Remove ast-to-hir from the reference context. If the unary-minus issue touches parsing, add the expressions spec (crates/cclab-mamba/parser/expressions.md, R2: compound expression parsing including lambda params) instead."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "All key requirements fields are '—' (empty) for all six entries. This renders the reference context useless as a navigation aid and shows the agent did not read the spec files.",
+      "recommendation": "Populate all key requirements: closure → R4, R5; hir-to-mir → note missing lambda requirement; xfail-zero → R2; hir → R3 (variable binding resolution info Free/Cell); type-checker → R2 (unary op type inference)."
+    },
+    {
+      "severity": "LOW",
+      "description": "Group column shows '?' for all entries, indicating group resolution was skipped.",
+      "recommendation": "Set group to 'lambda-limitations' for all entries."
+    },
+    {
+      "severity": "LOW",
+      "description": "Missing expressions spec (crates/cclab-mamba/parser/expressions.md). One of the three lambda bugs is 'unary minus in lambda body — lambda: -x should parse correctly'. The expressions spec R2 explicitly covers lambda parameter parsing including defaults and compound expression forms. This is medium-relevance background for diagnosing the parse-level aspect of the unary minus bug.",
+      "recommendation": "Consider adding expressions entry: relevance 'medium', key requirements R2 (compound expression parsing — lambda params with defaults, unary operators at precedence 21)."
+    }
+  ]
+}

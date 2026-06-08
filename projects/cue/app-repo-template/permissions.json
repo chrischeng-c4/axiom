@@ -1,0 +1,8 @@
+{
+  "schema_version": "cue.permissions.v0",
+  "roles": {
+    "owner": ["read", "write", "request_production"],
+    "editor": ["read", "write"],
+    "viewer": ["read"]
+  }
+}

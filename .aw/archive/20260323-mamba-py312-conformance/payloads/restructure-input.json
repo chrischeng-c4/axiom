@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "mamba-py312-conformance",
+      "issues": [1037],
+      "requirements": "Build a behavioral conformance test suite for `crates/cclab-mamba` that verifies every Python builtin, data structure method, top-16 stdlib module, and core language feature produces identical output to CPython 3.12.\n\nTwo distinct deliverables:\n\n**1. Conformance test fixtures**\nPort CPython `Lib/test/` cases as Mamba fixtures. Each fixture tests a function or language feature with the same inputs as CPython and asserts identical outputs, exceptions, and edge-case behavior.\n\nCoverage areas:\n- Builtins (108 functions): abs, all, any, bin, bool, chr, dict, dir, enumerate, filter, float, format, getattr, hasattr, hash, hex, id, int, isinstance, issubclass, iter, len, list, map, max, min, next, oct, open, ord, pow, print, range, repr, reversed, round, set, setattr, sorted, str, sum, tuple, type, zip, ...\n- Data structures: list (33 methods, slicing, unpacking, comparison), dict (17 methods, view objects, merge operators), set (17 methods, operators), str (47 methods, encoding, f-strings), tuple (immutability, unpacking, comparison), bytes/bytearray (all methods)\n- Stdlib top-16: json, os, re, datetime, collections, pathlib, math, sys, io, csv, hashlib, itertools, functools, struct, random, asyncio\n- Language features: class system (MRO, descriptors, metaclass, super(), __init_subclass__), generators (send/throw/close, async generators), exception hierarchy (chaining, groups, except*), pattern matching (all PEP 634 pattern types), comprehensions (PEP 709 scope rules), decorators (stacked, parameterized, class decorators)\n\n**2. Automated conformance runner**\n`cclab mamba test --conformance` CLI subcommand that runs all conformance fixtures against both CPython 3.12 and Mamba, diffs the outputs, and reports divergences.\n\nAcceptance criteria:\n- All builtins produce same results as CPython 3.12\n- All data structure methods produce same results\n- Top-16 stdlib modules fully conformant\n- All language features match CPython behavior\n- `cclab mamba test --conformance` runs the full suite and reports pass/fail per fixture",
+      "questions": [
+        {
+          "topic": "conformance-runner-architecture",
+          "question": "How should the conformance runner compare Mamba output against CPython? Three options: (a) run the same Python source with CPython 3.12 subprocess + Mamba and diff stdout/stderr at runtime, (b) pre-generate golden files from a CPython run and check them into the repo, then compare Mamba output against them, (c) hardcode expected values inline in tests. Option (b) avoids requiring CPython at test time but needs a golden-file regeneration workflow. Which approach is preferred?"
+        },
+        {
+          "topic": "divergence-handling",
+          "question": "When a conformance fixture reveals that Mamba currently diverges from CPython, should this change: (a) fix the Mamba implementation immediately as part of this change, (b) mark the failing test as `#[ignore]` and track it in a `known_failures.txt`, or (c) mix — fix trivial divergences inline, track complex ones? The answer significantly affects scope: fixing all divergences could expand this well beyond a test-only change."
+        },
+        {
+          "topic": "test-fixture-location",
+          "question": "Where should conformance test fixtures live? Options: (a) `crates/cclab-mamba/tests/conformance/` as Rust integration tests, (b) a new dedicated crate `crates/cclab-mamba-conformance/`, (c) Python scripts under `cclab/tests/conformance/` that run against both runtimes. Option (c) enables direct CPython comparison without a Rust wrapper but requires a Python test harness."
+        },
+        {
+          "topic": "cpython-version-pinning",
+          "question": "CPython 3.12 has multiple patch releases (3.12.0–3.12.9+). Should conformance be pinned to a specific patch (e.g., 3.12.8), or any 3.12.x? How is CPython 3.12 expected to be available in the test environment — system install, mise, or a specific download managed by the conformance runner?"
+        },
+        {
+          "topic": "stdlib-scope-for-remaining-66-modules",
+          "question": "The issue lists 82 stdlib modules but scopes full conformance to the top 16. Should the remaining 66 modules have any coverage in this change (even partial smoke tests), or is the top-16 set a strict boundary? If strict, should the runner surface a clear 'not yet covered' status for untested modules rather than silently omitting them?"
+        }
+      ]
+    }
+  ]
+}

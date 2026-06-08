@@ -1,0 +1,5 @@
+{
+  "spec_id": "sdd-merge-gaps-fix-spec",
+  "section": "changes",
+  "content": "```yaml\nfiles_affected:\n  - path: crates/sdd/src/tools/merge_git_ops.rs\n    action: modify\n    description: |\n      Fix 1: After step 3 merge succeeds, capture merge commit SHA via git rev-parse HEAD\n      on project_root and use it as git_commit_sha in GitOpsResult.\n      Fix 2: When auto_pr=true and worktree exists, call create_pr BEFORE\n      merge_worktree_branch (steps 3+4). In legacy flow (no worktree), skip auto_pr.\n\n  - path: crates/sdd/src/tools/create_change_merge.rs\n    action: modify\n    description: |\n      Fix 3: close_issue_if_exists — add fallback scan of all open issues.\n      Match by frontmatter id field (UUID) in addition to slug match.\n      Use local_backend load_all() to scan, then find by id field.\n```"
+}

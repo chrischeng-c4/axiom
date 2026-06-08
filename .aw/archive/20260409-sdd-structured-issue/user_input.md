@@ -1,0 +1,1 @@
+sdd: structured issue format — absorb restructure_input, clarifications, reference_context into issue authoring. Refs: refactor-structured-issue-format-absorb-restructure-input-c

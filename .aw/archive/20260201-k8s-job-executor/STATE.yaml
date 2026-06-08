@@ -1,0 +1,172 @@
+change_id: k8s-job-executor
+schema_version: '2.0'
+created_at: 2026-01-31T11:14:23.471066Z
+updated_at: 2026-01-31T11:40:16.849811Z
+phase: archived
+iteration: 1
+last_action: archive-complete
+session_id: null
+checksums:
+  specs/k8s-job-executor.md:
+    hash: sha256:60856b59998cef7ece972ff57d82e43765b6ffc172658156bac191b14a5947ee
+    validated_at: 2026-01-31T11:39:56.327941Z
+  specs/workflow-continuation.md:
+    hash: sha256:36672ce9c753b834b75d5674b156ed885b86d9ccdd5c3907b3f5f81fcfd66665
+    validated_at: 2026-01-31T11:39:56.327551Z
+  proposal.md:
+    hash: sha256:44e74c44b3a3d037c4ade20a6a4767cc991142128d05b6488567e6d36180b777
+    validated_at: 2026-01-31T11:39:56.325734Z
+  specs/workflow-state-machine.md:
+    hash: sha256:9e86d292e074778aaba6950001857d43d06e2ae7b3a6b65fca520d47d492aaea
+    validated_at: 2026-01-31T11:39:56.327059Z
+  tasks.md:
+    hash: sha256:c2ceb26841fbee9f279a682bbac3e0e294f04239a2576b2d117a1fbf8969a2b7
+    validated_at: 2026-01-31T11:39:56.326023Z
+  specs/workflows.md:
+    hash: sha256:b4a9f901f72ecba57911a05184e80372b2e79f620828115d2eb64b123004cb38
+    validated_at: 2026-01-31T11:39:56.326477Z
+  specs/backend-metadata.md:
+    hash: sha256:efff49ce25fe7bfbba4677790b27150949d98ceee8a9f793baa014aafe4161dc
+    validated_at: 2026-01-31T11:39:56.327259Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-31T11:17:43.210170Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 2
+    low: 3
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T11:18:27.565648Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 2
+    low: 3
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T11:19:56.749244Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T11:21:12.648125Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T11:27:31.490244Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T11:30:36.451336Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T11:32:39.835476Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T11:33:33.462650Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T11:36:48.070676Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T11:39:56.325558Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

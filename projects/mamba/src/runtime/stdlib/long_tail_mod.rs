@@ -1,0 +1,486 @@
+use super::super::rc::MbObject;
+use super::super::value::MbValue;
+/// Long-tail stdlib stub modules for Mamba (#1261).
+///
+/// Surface-only shims for stdlib modules legacy library probes import but
+/// Mamba doesn't host any real machinery for. Each registered module is a
+/// dict with callable class shells / no-op dispatchers so `import X` and
+/// the usual attribute-existence checks don't crash.
+///
+/// Covered (alphabetical):
+///   cgi, cgitb, filecmp, ftplib, imaplib, mailbox, marshal,
+///   netrc, nntplib, ntpath, optparse, pickletools, plistlib, poplib,
+///   posixpath, genericpath, pydoc, quopri, rlcompleter,
+///   shelve, smtplib, stringprep, telnetlib, _thread, webbrowser,
+///   xdrlib.
+use std::collections::HashMap;
+
+unsafe extern "C" fn dispatch_class_shell(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_dict())
+}
+unsafe extern "C" fn dispatch_noop(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::none()
+}
+unsafe extern "C" fn dispatch_empty_str(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(String::new()))
+}
+unsafe extern "C" fn dispatch_empty_list(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_list(Vec::new()))
+}
+unsafe extern "C" fn dispatch_empty_dict(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::from_ptr(MbObject::new_dict())
+}
+unsafe extern "C" fn dispatch_int_zero(_a: *const MbValue, _n: usize) -> MbValue {
+    MbValue::from_int(0)
+}
+
+fn register_addrs(addrs: &[usize]) {
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        let mut set = s.borrow_mut();
+        for a in addrs {
+            set.insert(*a as u64);
+        }
+    });
+}
+
+fn build_attrs(
+    classes: &[&str],
+    dispatchers: &[(&str, usize)],
+    consts_int: &[(&str, i64)],
+    consts_str: &[(&str, &str)],
+) -> HashMap<String, MbValue> {
+    let mut attrs = HashMap::new();
+    let shell = dispatch_class_shell as *const () as usize;
+    let mut addrs: Vec<usize> = Vec::new();
+    addrs.push(shell);
+    for name in classes {
+        attrs.insert((*name).into(), MbValue::from_func(shell));
+    }
+    for (name, addr) in dispatchers {
+        attrs.insert((*name).into(), MbValue::from_func(*addr));
+        addrs.push(*addr);
+    }
+    for (name, v) in consts_int {
+        attrs.insert((*name).into(), MbValue::from_int(*v));
+    }
+    for (name, v) in consts_str {
+        attrs.insert(
+            (*name).into(),
+            MbValue::from_ptr(MbObject::new_str((*v).to_string())),
+        );
+    }
+    register_addrs(&addrs);
+    attrs
+}
+
+pub fn register() {
+    register_smtplib();
+    register_ftplib();
+    register_poplib();
+    register_imaplib();
+    register_telnetlib();
+    register_nntplib();
+    register_mailbox();
+    // cgi is registered as a real module (cgi_mod) elsewhere; the
+    // long_tail stub returned empty dicts/lists for every parse_*
+    // function and empty strings for escape, breaking any old CGI
+    // code path. Class shells stay (FieldStorage etc.) but the
+    // pure-function subset now does real work.
+    register_cgitb();
+    // webbrowser is registered as a real module (webbrowser_mod) elsewhere;
+    // the long_tail stub returned False from every open* call, breaking
+    // scripts that try to launch the system URL handler.
+    // quopri is registered as a real module (quopri_mod) elsewhere.
+    // uu is registered as a real module (uu_mod) elsewhere; the long_tail
+    // stub returned None from every encode/decode call, so any caller got
+    // empty output instead of the uuencoded form.
+    // stringprep is registered as a real module (stringprep_mod) elsewhere;
+    // the long_tail stub returned False for every in_table_xxx check and
+    // "" for the map_table_b2/b3 case-folding tables.
+    // filecmp is registered as a real module (filecmp_mod) elsewhere; the
+    // long_tail stub returned False for every `cmp()` call, breaking
+    // anyone diffing files.
+    // netrc is registered as a real module (netrc_mod) elsewhere; the
+    // long_tail stub returned bare class shells, so `netrc.netrc(path)`
+    // gave `{}` instead of parsed credentials.
+    register_plistlib();
+    register_shelve();
+    register_pickletools();
+    register_xdrlib();
+    register_marshal();
+    register_optparse();
+    // ntpath is registered as a real module (ntpath_mod) elsewhere; the
+    // long_tail stub returned empty strings for every path-string op,
+    // breaking any Windows path consumer.
+    // posixpath and genericpath are registered as real modules (posixpath_mod)
+    // elsewhere; the long_tail stub versions returned empty strings for
+    // join/basename/dirname which broke every consumer.
+    register_pydoc();
+    // readline is registered as a real module (readline_mod) elsewhere; the
+    // long_tail stub was no-op/empty-string for every history op, so any
+    // CPython program reading or writing readline state got nothing back.
+    register_rlcompleter();
+    register_thread();
+    // encodings (top-level package + .aliases + .utf_8 + .idna) is registered
+    // as a real module (encodings_mod) elsewhere; the long_tail stub returned
+    // "" from normalize_encoding and left aliases.aliases as an empty dict,
+    // breaking any codec-name normalization path.
+}
+
+fn register_smtplib() {
+    let attrs = build_attrs(
+        &[
+            "SMTP",
+            "SMTP_SSL",
+            "LMTP",
+            "SMTPException",
+            "SMTPServerDisconnected",
+            "SMTPResponseException",
+            "SMTPSenderRefused",
+            "SMTPRecipientsRefused",
+            "SMTPDataError",
+            "SMTPConnectError",
+            "SMTPHeloError",
+            "SMTPNotSupportedError",
+            "SMTPAuthenticationError",
+            "quoteaddr",
+            "quotedata",
+        ],
+        &[
+            ("SMTP_PORT", dispatch_int_zero as *const () as usize),
+            ("SMTP_SSL_PORT", dispatch_int_zero as *const () as usize),
+        ],
+        &[
+            ("SMTP_PORT", 25),
+            ("SMTP_SSL_PORT", 465),
+            ("LMTP_PORT", 2003),
+        ],
+        &[("CRLF", "\r\n"), ("bCRLF", "\r\n")],
+    );
+    super::register_module("smtplib", attrs);
+}
+
+fn register_ftplib() {
+    let attrs = build_attrs(
+        &[
+            "FTP",
+            "FTP_TLS",
+            "Netrc",
+            "error_reply",
+            "error_temp",
+            "error_perm",
+            "error_proto",
+            "all_errors",
+        ],
+        &[],
+        &[("FTP_PORT", 21), ("MSG_OOB", 1), ("MAXLINE", 8192)],
+        &[("CRLF", "\r\n"), ("B_CRLF", "\r\n")],
+    );
+    super::register_module("ftplib", attrs);
+}
+
+fn register_poplib() {
+    let attrs = build_attrs(
+        &["POP3", "POP3_SSL", "error_proto"],
+        &[],
+        &[
+            ("POP3_PORT", 110),
+            ("POP3_SSL_PORT", 995),
+            ("CR", 13),
+            ("LF", 10),
+        ],
+        &[("CRLF", "\r\n")],
+    );
+    super::register_module("poplib", attrs);
+}
+
+fn register_imaplib() {
+    let attrs = build_attrs(
+        &[
+            "IMAP4",
+            "IMAP4_SSL",
+            "IMAP4_stream",
+            "Internaldate2tuple",
+            "Int2AP",
+            "ParseFlags",
+            "Time2Internaldate",
+        ],
+        &[],
+        &[
+            ("IMAP4_PORT", 143),
+            ("IMAP4_SSL_PORT", 993),
+            ("AllowedVersions", 1),
+        ],
+        &[("CRLF", "\r\n"), ("Debug", "")],
+    );
+    super::register_module("imaplib", attrs);
+}
+
+fn register_telnetlib() {
+    let attrs = build_attrs(
+        &["Telnet"],
+        &[],
+        &[
+            ("DEBUGLEVEL", 0),
+            ("TELNET_PORT", 23),
+            ("IAC", 255),
+            ("DONT", 254),
+            ("DO", 253),
+            ("WONT", 252),
+            ("WILL", 251),
+            ("SE", 240),
+            ("NOP", 241),
+            ("DM", 242),
+            ("BRK", 243),
+            ("IP", 244),
+            ("AO", 245),
+            ("AYT", 246),
+            ("EC", 247),
+            ("EL", 248),
+            ("GA", 249),
+            ("SB", 250),
+        ],
+        &[],
+    );
+    super::register_module("telnetlib", attrs);
+}
+
+fn register_nntplib() {
+    let attrs = build_attrs(
+        &[
+            "NNTP",
+            "NNTP_SSL",
+            "NNTPError",
+            "NNTPReplyError",
+            "NNTPTemporaryError",
+            "NNTPPermanentError",
+            "NNTPProtocolError",
+            "NNTPDataError",
+            "decode_header",
+        ],
+        &[],
+        &[("NNTP_PORT", 119), ("NNTP_SSL_PORT", 563)],
+        &[],
+    );
+    super::register_module("nntplib", attrs);
+}
+
+fn register_mailbox() {
+    let attrs = build_attrs(
+        &[
+            "Mailbox",
+            "Maildir",
+            "mbox",
+            "MH",
+            "Babyl",
+            "MMDF",
+            "Message",
+            "MaildirMessage",
+            "mboxMessage",
+            "MHMessage",
+            "BabylMessage",
+            "MMDFMessage",
+            "Error",
+            "NoSuchMailboxError",
+            "NotEmptyError",
+            "ExternalClashError",
+            "FormatError",
+        ],
+        &[],
+        &[],
+        &[],
+    );
+    super::register_module("mailbox", attrs);
+}
+
+fn register_cgitb() {
+    let attrs = build_attrs(
+        &["Hook"],
+        &[
+            ("enable", dispatch_noop as *const () as usize),
+            ("reset", dispatch_empty_str as *const () as usize),
+            ("html", dispatch_empty_str as *const () as usize),
+            ("text", dispatch_empty_str as *const () as usize),
+            ("handler", dispatch_noop as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    super::register_module("cgitb", attrs);
+}
+
+fn register_plistlib() {
+    let attrs = build_attrs(
+        &[
+            "Data",
+            "UID",
+            "Dict",
+            "Plist",
+            "InvalidFileException",
+            "PlistFormat",
+            "FMT_XML",
+            "FMT_BINARY",
+        ],
+        &[
+            ("dump", dispatch_noop as *const () as usize),
+            ("dumps", dispatch_empty_str as *const () as usize),
+            ("load", dispatch_empty_dict as *const () as usize),
+            ("loads", dispatch_empty_dict as *const () as usize),
+            ("readPlist", dispatch_empty_dict as *const () as usize),
+            ("writePlist", dispatch_noop as *const () as usize),
+            (
+                "readPlistFromBytes",
+                dispatch_empty_dict as *const () as usize,
+            ),
+            (
+                "writePlistToBytes",
+                dispatch_empty_str as *const () as usize,
+            ),
+        ],
+        &[("FMT_XML", 1), ("FMT_BINARY", 2)],
+        &[],
+    );
+    super::register_module("plistlib", attrs);
+}
+
+fn register_shelve() {
+    let attrs = build_attrs(
+        &["Shelf", "BsdDbShelf", "DbfilenameShelf"],
+        &[("open", dispatch_empty_dict as *const () as usize)],
+        &[],
+        &[],
+    );
+    super::register_module("shelve", attrs);
+}
+
+fn register_pickletools() {
+    let attrs = build_attrs(
+        &["OpcodeInfo", "StackObject", "ArgumentDescriptor"],
+        &[
+            ("dis", dispatch_noop as *const () as usize),
+            ("genops", dispatch_empty_list as *const () as usize),
+            ("optimize", dispatch_empty_str as *const () as usize),
+            ("read_uint1", dispatch_int_zero as *const () as usize),
+            ("read_uint2", dispatch_int_zero as *const () as usize),
+            ("read_int4", dispatch_int_zero as *const () as usize),
+            ("read_string1", dispatch_empty_str as *const () as usize),
+            ("read_string4", dispatch_empty_str as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    super::register_module("pickletools", attrs);
+}
+
+fn register_xdrlib() {
+    let attrs = build_attrs(
+        &["Packer", "Unpacker", "Error", "ConversionError"],
+        &[],
+        &[],
+        &[],
+    );
+    super::register_module("xdrlib", attrs);
+}
+
+fn register_marshal() {
+    let attrs = build_attrs(
+        &[],
+        &[
+            ("dump", dispatch_noop as *const () as usize),
+            ("dumps", dispatch_empty_str as *const () as usize),
+            ("load", dispatch_noop as *const () as usize),
+            ("loads", dispatch_noop as *const () as usize),
+        ],
+        &[("version", 4)],
+        &[],
+    );
+    super::register_module("marshal", attrs);
+}
+
+fn register_optparse() {
+    let attrs = build_attrs(
+        &[
+            "OptionParser",
+            "Option",
+            "OptionGroup",
+            "OptionContainer",
+            "OptionError",
+            "OptionConflictError",
+            "OptionValueError",
+            "BadOptionError",
+            "AmbiguousOptionError",
+            "Values",
+            "HelpFormatter",
+            "IndentedHelpFormatter",
+            "TitledHelpFormatter",
+            "OptParseError",
+            "check_choice",
+            "check_builtin",
+        ],
+        &[],
+        &[
+            ("SUPPRESS_HELP", 0),
+            ("SUPPRESS_USAGE", 0),
+            ("NO_DEFAULT", 0),
+        ],
+        &[],
+    );
+    super::register_module("optparse", attrs);
+}
+
+fn register_pydoc() {
+    let attrs = build_attrs(
+        &["Helper", "ModuleScanner", "TextDoc", "HTMLDoc", "Doc"],
+        &[
+            ("help", dispatch_noop as *const () as usize),
+            ("doc", dispatch_noop as *const () as usize),
+            ("render_doc", dispatch_empty_str as *const () as usize),
+            ("describe", dispatch_empty_str as *const () as usize),
+            ("locate", dispatch_noop as *const () as usize),
+            ("getdoc", dispatch_empty_str as *const () as usize),
+            ("splitdoc", dispatch_empty_list as *const () as usize),
+            ("classname", dispatch_empty_str as *const () as usize),
+            ("plain", dispatch_empty_str as *const () as usize),
+            ("pager", dispatch_noop as *const () as usize),
+            ("plainpager", dispatch_noop as *const () as usize),
+            ("getpager", dispatch_noop as *const () as usize),
+        ],
+        &[],
+        &[],
+    );
+    super::register_module("pydoc", attrs);
+}
+
+fn register_rlcompleter() {
+    let attrs = build_attrs(
+        &["Completer"],
+        &[(
+            "readline_complete",
+            dispatch_empty_str as *const () as usize,
+        )],
+        &[],
+        &[],
+    );
+    super::register_module("rlcompleter", attrs);
+}
+
+fn register_thread() {
+    let attrs = build_attrs(
+        &["LockType", "RLock", "_local", "error"],
+        &[
+            ("allocate_lock", dispatch_class_shell as *const () as usize),
+            ("get_ident", dispatch_int_zero as *const () as usize),
+            ("get_native_id", dispatch_int_zero as *const () as usize),
+            ("start_new_thread", dispatch_int_zero as *const () as usize),
+            ("start_new", dispatch_int_zero as *const () as usize),
+            ("exit", dispatch_noop as *const () as usize),
+            ("exit_thread", dispatch_noop as *const () as usize),
+            ("interrupt_main", dispatch_noop as *const () as usize),
+            ("stack_size", dispatch_int_zero as *const () as usize),
+            ("_count", dispatch_int_zero as *const () as usize),
+        ],
+        &[("TIMEOUT_MAX", 9223372036), ("_is_main_interpreter", 1)],
+        &[],
+    );
+    super::register_module("_thread", attrs);
+}

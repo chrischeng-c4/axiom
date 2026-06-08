@@ -1,0 +1,49 @@
+{
+  "change_id": "mamba-conformance-p0",
+  "group_id": "mamba-py312-conformance",
+  "verdict": "pass",
+  "checklist": {
+    "all_areas_covered": "pass",
+    "relevance_scores_reasonable": "pass",
+    "key_requirements_accurate": "pass",
+    "no_irrelevant_specs": "pass",
+    "spec_plan_main_spec_refs_set": "pass",
+    "spec_plan_sections_reasonable": "pass",
+    "spec_plan_modify_source_paths_valid": "pass",
+    "spec_plan_main_spec_ref_has_subfolder": "pass",
+    "spec_plan_one_logical_unit_per_file": "pass",
+    "spec_plan_no_duplicate_section_types": "pass",
+    "spec_plan_paths_mirror_source_structure": "pass"
+  },
+  "findings": [],
+  "spec_plan_review": {
+    "generator_iterator_conformance": {
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/testing/generator-iterator-conformance.md",
+      "source_exists": false,
+      "subfolder_present": true,
+      "one_logical_unit": true,
+      "would_create_duplicate_sections": false,
+      "verdict": "pass"
+    },
+    "data_structure_conformance": {
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/testing/data-structure-conformance.md",
+      "source_exists": false,
+      "subfolder_present": true,
+      "one_logical_unit": true,
+      "would_create_duplicate_sections": false,
+      "verdict": "pass"
+    },
+    "py312_behavioral_conformance": {
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/testing/py312-behavioral-conformance.md",
+      "source_exists": false,
+      "subfolder_present": true,
+      "one_logical_unit": true,
+      "would_create_duplicate_sections": false,
+      "verdict": "pass"
+    }
+  },
+  "summary": "Revised reference context passes all checks. Spec plan now creates 3 new files (generator-iterator-conformance.md, data-structure-conformance.md, py312-behavioral-conformance.md) under testing/ — each covers one logical unit with no section duplication. mamba-conformance-p2-spec correctly downgraded to medium relevance. Class spec R-numbers corrected (R5=Magic Method Dispatch, R8=Context Manager Protocol). All data structure, generator/iterator, and builtin areas covered by high-relevance specs."
+}

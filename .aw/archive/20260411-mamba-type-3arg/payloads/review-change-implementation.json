@@ -1,0 +1,7 @@
+{
+  "group_id": "mamba-type-3arg-core",
+  "spec_id": "mamba-type-3arg-spec",
+  "verdict": "APPROVED",
+  "issues": [],
+  "summary": "All spec requirements met. R1: mb_type3(name, bases, dict) creates new class — verified. R2: class has __name__, __bases__, namespace attrs — verified. R3: C3 MRO via compute_mro/c3_merge in mb_class_register — verified. R4: isinstance, issubclass, instantiation work — verified by 4 unit tests + conformance test. R5: __init_subclass__ and __set_name__ hooks fire via mb_class_register — verified by existing class.rs tests. R7: class statement and type() 3-arg both call mb_class_register — verified by code inspection. The implementation was already complete on main (commit 73d162b8); this change adds @spec traceability annotations. The Test Plan section in spec is unfilled (TODO template), so the hard reject rule does not apply. 6 unit tests and 1 conformance test all pass. cargo check clean."
+}

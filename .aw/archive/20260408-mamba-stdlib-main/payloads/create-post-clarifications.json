@@ -1,0 +1,5 @@
+{
+  "group_id": "stdlib-main-module",
+  "skipped": true,
+  "scope_summary": "**Problem**: Add __main__ module for top-level script execution context (requirements.md). **Success Criteria**: Module registers with __name__='__main__', __doc__=None, __loader__=None, __spec__=None. Tests pass. **Boundary**: In scope: main_mod.rs + mod.rs wiring (spec_plan main-module). Out of scope: runtime behavior changes to module system. No constraints or conflicts with existing patterns."
+}

@@ -1,0 +1,1 @@
+sdd: issue-centric workflow — issue is the unit of work, absorbs STATE.yaml. Issue: refactor-issue-centric-workflow-issue-is-the-unit-of-work-a

@@ -1,0 +1,9 @@
+# Perf-pin regression gate (#1500).
+# Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/orjson_1500.toml)
+issue = 1500
+lib = "orjson"
+fixture = "tests/cpython/fixtures/3rd-libs/orjson/bench/orjson_type_read_hot.py"
+floor = 1.0
+mem_floor = 1.0
+samples = 9
+prereq_imports = ["orjson"]

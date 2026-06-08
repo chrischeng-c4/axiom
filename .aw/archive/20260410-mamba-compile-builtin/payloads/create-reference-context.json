@@ -1,0 +1,52 @@
+{
+  "change_id": "mamba-compile-builtin",
+  "group_id": "default",
+  "specs": [
+    {
+      "spec_id": "builtins",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "high",
+      "key_requirements": ["R5", "R6"]
+    },
+    {
+      "spec_id": "value-and-rc",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "high",
+      "key_requirements": ["R3", "R4"]
+    },
+    {
+      "spec_id": "source-and-diagnostics",
+      "spec_group": "crates/cclab-mamba/source",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R3", "R4"]
+    },
+    {
+      "spec_id": "exception-chaining-spec",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "high",
+      "key_requirements": ["R2", "R4"]
+    },
+    {
+      "spec_id": "symbols",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "medium",
+      "key_requirements": []
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "mamba-compile-builtin-runtime",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/builtins.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/builtins.md",
+      "sections": ["overview", "requirements", "changes"]
+    },
+    {
+      "spec_id": "mamba-compile-builtin-value-rc",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/value-and-rc.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/value-and-rc.md",
+      "sections": ["requirements", "changes"]
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "spec_id": "builtins",
+  "group_id": "runtime-basics",
+  "section": "overview",
+  "fill_sections": ["overview", "changes"],
+  "main_spec_ref": "crates/cclab-mamba/runtime/builtins",
+  "merge_strategy": "append",
+  "content": "`mb_print` and `mb_print_args` are declared `void`-returning in both Rust and the JIT symbol table (`[I64], Void`). When Cranelift JIT calls a `Void`-returning extern, the result register is undefined — on x86-64 this decodes as 0, which NaN-boxing interprets as `TAG_INT(0)`. The top-level expression evaluator then outputs this spurious `0` after every `print()` call.\n\nFix: change `mb_print` and `mb_print_args` to return `MbValue::none()` (TAG_NONE), and update their `RuntimeSymbol` entries in `symbols.rs` from `MirType::Void` to `MirType::I64`. Statement-level callers in `lower/hir_to_mir.rs` discard the return value, so the change is backward compatible."
+}

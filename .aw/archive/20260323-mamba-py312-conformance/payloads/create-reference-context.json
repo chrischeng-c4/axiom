@@ -1,0 +1,106 @@
+{
+  "change_id": "mamba-py312-conformance",
+  "group_id": "mamba-py312-conformance",
+  "sections": [
+    "overview",
+    "testing-infrastructure",
+    "stdlib-modules",
+    "data-structures",
+    "exception-handling",
+    "generators-iterators",
+    "builtins",
+    "cpython-compliance"
+  ],
+  "specs": [
+    {
+      "spec_path": "cclab-mamba/README.md",
+      "relevance": "high",
+      "rationale": "Provides comprehensive index of all Mamba specs organized by component; essential for understanding which stdlib modules need conformance coverage"
+    },
+    {
+      "spec_path": "cclab-mamba/testing/mamba-py312-conformance.md",
+      "relevance": "high",
+      "rationale": "Core spec for this change - directly defines P0/P1 conformance test requirements, golden file approach, CPython 3.12 reference, and test categories for data structures, exceptions, generators"
+    },
+    {
+      "spec_path": "cclab-mamba/testing/conformance.md",
+      "relevance": "high",
+      "rationale": "General conformance testing framework spec - defines xfail handling, fixture structure, golden file format, and conformance test harness architecture"
+    },
+    {
+      "spec_path": "cclab-mamba/testing/test-harness.md",
+      "relevance": "high",
+      "rationale": "Test infrastructure spec - defines fixture discovery, RUN directives, CPython fixture integration, and test execution flow used by conformance suite"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/exception.md",
+      "relevance": "high",
+      "rationale": "Exception hierarchy implementation - directly relevant to exception conformance tests; defines exception classes, matching, chaining, ExceptionGroup (PEP 654)"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/generator.md",
+      "relevance": "high",
+      "rationale": "Generator state machine implementation - directly relevant to generator/iterator conformance tests; defines yield, send(), throw(), close() semantics"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/class.md",
+      "relevance": "high",
+      "rationale": "Class system and method dispatch - needed for custom exception subclassing and custom iterator protocol; defines MRO, super(), magic method dispatch"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/builtins.md",
+      "relevance": "high",
+      "rationale": "Built-in functions conformance - defines iterator builtins (enumerate, zip, reversed), aggregation builtins (min, max, sum, sorted), type checking (isinstance)"
+    },
+    {
+      "spec_path": "cclab-mamba/all-mamba-p0.md",
+      "relevance": "medium",
+      "rationale": "Overview of P0 features including builtins conformance verification strategy; provides context for which builtins are in scope for testing"
+    },
+    {
+      "spec_path": "cclab-mamba/conductor-mamba-p0-spec.md",
+      "relevance": "medium",
+      "rationale": "Conductor integration context - shows how Mamba modules are wired; provides context for project structure and test execution environment"
+    },
+    {
+      "spec_path": "cclab-mamba/pattern-matching.md",
+      "relevance": "medium",
+      "rationale": "Pattern matching support - relevant for match/case statements in conformance test fixtures; provides context for Python 3.12 language features"
+    },
+    {
+      "spec_path": "cclab-mamba/mamba-crate-wiring-and-schema-binding.md",
+      "relevance": "medium",
+      "rationale": "Crate wiring and module registration - provides context for project-mode builds and native module integration used in test execution"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/iter.md",
+      "relevance": "medium",
+      "rationale": "Iterator protocol - relevant to generator/iterator conformance tests; defines __iter__ and __next__ dispatch for custom iterators"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/list-ops.md",
+      "relevance": "medium",
+      "rationale": "List operations - relevant to data structure conformance tests; defines list methods (append, extend, sort, slice, etc.)"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/dict-ops.md",
+      "relevance": "medium",
+      "rationale": "Dict operations - relevant to data structure conformance tests; defines dict methods (get, update, keys, values, items, merge)"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/set-ops.md",
+      "relevance": "medium",
+      "rationale": "Set operations - relevant to data structure conformance tests; defines set algebra (union, intersection, difference)"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/tuple-ops.md",
+      "relevance": "medium",
+      "rationale": "Tuple operations - relevant to data structure conformance tests; defines tuple unpacking and comparison"
+    },
+    {
+      "spec_path": "cclab-mamba/runtime/string-ops.md",
+      "relevance": "medium",
+      "rationale": "String operations - relevant to data structure conformance tests; defines string methods (split, join, strip, replace, format)"
+    }
+  ]
+}

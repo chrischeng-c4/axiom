@@ -1,0 +1,24 @@
+- spec_id: tech-stack-inference
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/tech-stack-inference.md
+  sections:
+  - overview
+  - logic
+  - config
+  - test-plan
+  - changes
+- spec_id: change-spec-section-optionality
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-spec.md
+  sections:
+  - overview
+  - logic
+  - changes
+- spec_id: ux-pattern-library
+  action: create
+  main_spec_ref: crates/cclab-sdd/generate/ux-pattern-library.md
+  sections:
+  - overview
+  - schema
+  - logic
+  - changes

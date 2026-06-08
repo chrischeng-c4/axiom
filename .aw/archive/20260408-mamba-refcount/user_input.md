@@ -1,0 +1,1 @@
+#1129 refactor(mamba): implement CPython 3.12 reference counting in JIT codegen. EMIT_REFCOUNT_CALLS is currently false in codegen/cranelift/mod.rs. Need ownership audit and enable refcounting in cclab-mamba JIT. Crate: cclab-mamba

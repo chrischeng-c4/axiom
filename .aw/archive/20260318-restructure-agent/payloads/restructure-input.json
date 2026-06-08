@@ -1,0 +1,27 @@
+{
+  "groups": [
+    {
+      "id": "restructure-agent-core",
+      "issues": [900],
+      "requirements": "Implement `RestructureAgent` in `crates/cclab-agent` alongside existing `AnalystAgent` and `CodingAgent`. The agent takes a typed `RestructureInput { intent, project_id, clarifications }`, assembles a prompt enriched with SpecStore context, calls the LLM via existing `complete_structured()` (in `structured.rs`) with a JSON Schema-enforced output, and returns a discriminated union `RestructureOutput` of either `NeedClarification { questions: Vec<Question> }` or `CreateIssues { issues: Vec<StructuredIssue>, summary: String }`. The agent is stateless (no internal mutable state), platform-agnostic (works with Claude, OpenAI, Gemini via the existing `LLMProvider` trait), and depends on a `SpecStore` trait (defined in issue #901, not yet implemented). Key acceptance criteria: (1) typed I/O schema with serde derives; (2) prompt assembles intent + clarification history + spec excerpts; (3) structured output validated against JSON Schema; (4) unit tests with mock LLM covering both output variants; (5) integration test with real LLM.",
+      "questions": [
+        {
+          "topic": "SpecStore dependency ordering",
+          "question": "Issue #901 (SpecStore interface) is not yet implemented — no `SpecStore` trait exists in the codebase. Should this change (a) define a minimal `SpecStore` trait stub inline and implement it later when #901 lands, (b) make spec context optional so the agent compiles and runs without SpecStore (degraded mode), or (c) block implementation until #901 is merged first?"
+        },
+        {
+          "topic": "Agent trait compatibility",
+          "question": "The existing `Agent` trait has `run(&self, input: &str) -> NovaResult<String>` (plain string I/O). `RestructureAgent` has typed `RestructureInput`/`RestructureOutput`. Should it (a) implement the existing `Agent` trait by serializing/deserializing JSON strings for compatibility, (b) define a new `TypedAgent<I, O>` generic trait, or (c) skip the `Agent` trait entirely and only expose a typed `run(input: RestructureInput) -> RestructureOutput` method?"
+        },
+        {
+          "topic": "Prompt template location",
+          "question": "Where should the system prompt template for `RestructureAgent` live? Options: (a) hardcoded as a Rust `const` string in the agent source file, (b) embedded at compile time via `include_str!` from a file in `crates/cclab-agent/prompts/`, or (c) injected at construction time via `RestructureAgentConfig` (same pattern as `AnalystAgentConfig`/`CodingAgentConfig`)?"
+        },
+        {
+          "topic": "Output type location",
+          "question": "Should `RestructureInput`, `RestructureOutput`, `Question`, and `StructuredIssue` types be defined (a) in `crates/cclab-agent/src/agents/restructure.rs` (co-located with the agent), (b) in `crates/cclab-agent/src/types.rs` alongside existing shared types, or (c) in a new `crates/cclab-agent/src/agents/restructure/` module directory?"
+        }
+      ]
+    }
+  ]
+}

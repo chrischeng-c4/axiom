@@ -1,0 +1,1 @@
+{"group_id":"resolver-compat","specs":[{"spec":"pkg-manager","group":"cclab-jet","relevance":"high","key_requirements":"BFS resolver, version parsing, bare alias"},{"spec":"pkg-manager-pnpm-parity","group":"cclab-jet","relevance":"medium","key_requirements":"npm: alias, optional deps"}]}

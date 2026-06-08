@@ -1,0 +1,14 @@
+{
+  "group_id": "scheduler-runtime-complete",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "→ requirements.md § R1-R7: Scheduler lacks push receiver endpoint, K8s CronJob backend, schedule monitoring, and mode selection logic.",
+    "success_criteria": "→ requirements.md § R1: Push receiver HTTP endpoint mounted on existing server. → pre_clarifications Q1: axum Router mounted on cclab server. → pre_clarifications Q2: K8s CronJob pods POST to push receiver. → pre_clarifications Q3: Metrics + webhook alerting for missed schedules. → pre_clarifications Q4: HMAC shared secret for K8s auth.",
+    "boundary": {
+      "in_scope": "→ spec_plan: push-receiver (HTTP endpoint + auth), k8s-cronjob-backend (SchedulerBackend impl), schedule-monitor (expected vs actual tracking + metrics + webhook), scheduler-mode-selection (tick loop vs push receiver start logic).",
+      "out_of_scope": "Existing Ion/Memory/CloudScheduler backends (no changes). Broker implementations (no changes). Worker/executor logic (no changes). cclab-server framework changes (push receiver is a mountable Router, not a server change).",
+      "constraints": "cclab-queue is a library — push receiver must be an axum Router that consuming apps mount. No standalone HTTP server. Metrics follow existing TaskMetrics pattern in metrics.rs (Prometheus counters/histograms via prometheus crate)."
+    }
+  },
+  "answers": []
+}

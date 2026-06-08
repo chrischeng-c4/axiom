@@ -1,0 +1,20 @@
+{
+  "answers": [
+    {
+      "question": "Should score-issue and score-issue-patrol skills be added to the deprecated list in install_claude_skills?",
+      "answer": "No. They are new skills being added, not deprecated. The deprecated list removes old skills; these are new additions."
+    },
+    {
+      "question": "For settings.json merge strategy: should we overwrite an existing settings.json or merge hooks only?",
+      "answer": "Merge strategy: preserve existing hooks array entries, add SubagentStop hook only if no score-* matcher exists already. Use JSON merge — do not replace the entire file."
+    },
+    {
+      "question": "Should legacy sdd-* agent files be cleaned up during init?",
+      "answer": "Yes. Remove sdd-*.md files from .claude/agents/ during init if they exist (they are deprecated stubs)."
+    },
+    {
+      "question": "Is score-agent skill included in templates?",
+      "answer": "No. score-agent is in the deprecated list and does not have a template. Only the 9 current skills are included: score-run-change, score-merge, score-fillback-main-specs, score-codex-review, score-gemini-explore-specs, score-gemini-explore-codebase, score-revise-artifact, score-issue, score-issue-patrol."
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "change_id": "codegen-td-to-code",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "After TD specs are updated, agents write code from scratch (token-expensive, drift-prone). Goal: TD is the single source of truth, code mechanically derived. See user_input.md and issue enhancement-spec-diff-codegen-td-to-code-pipeline.",
+    "success_criteria": [
+      "score gen diff shows 0% drift for all structural specs (Category A)",
+      "score gen diff shows <= 30% marker lines for behavioral specs (Category B)",
+      "score gen apply regenerates code without breaking cargo check + cargo test",
+      "CODEGEN-BEGIN/END markers survive re-generation (content inside updated, wrapper preserved)"
+    ],
+    "boundary": {
+      "in_scope": [
+        "crate:sdd — crates/sdd/src/generate/ (extend existing)",
+        "score CLI — projects/score/cli/src/commands.rs (new GenCommands::Diff/Apply/Render/Validate)",
+        "Per-diagram Content types for all Mermaid Plus section types",
+        "Abstract type system for Rust codegen (integer, string, list<T>)",
+        "CODEGEN-BEGIN/END marker parser and block replacer",
+        "Config layering: global (.score/config.toml) -> per-spec -> per-file",
+        "Replace XState schemas with new Graph-based schemas"
+      ],
+      "out_of_scope": [
+        "Python / TypeScript / SQL codegen generators",
+        "Complete FSM runtime codegen (entry/exit actions, context, side effects)",
+        "Cross-file refactoring",
+        "Code removal",
+        "GUI / visual diagram editor"
+      ],
+      "constraints": [
+        "Rust-only MVP (D2)",
+        "Per-diagram Content types not universal Graph<N,E> (D3)",
+        "Abstract type system for future multi-language expansion (D6)"
+      ]
+    }
+  },
+  "contradictions": []
+}

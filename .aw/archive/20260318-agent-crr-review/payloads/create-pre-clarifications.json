@@ -1,0 +1,22 @@
+{
+  "change_id": "agent-crr-review",
+  "group_id": "agent-crr-core",
+  "answers": [
+    {
+      "question_id": "Q1",
+      "question": "Should ReviewAgent be standalone struct or trait?",
+      "answer": "Standalone struct. One ReviewAgent struct with ReviewType config (Spec, Code) to switch behavior. No trait needed — keeps it simple. Different review types use different system prompts and checklists, not different implementations."
+    },
+    {
+      "question_id": "Q2",
+      "question": "Max_revisions exceeded default behavior?",
+      "answer": "Error. Return NovaError so the caller decides what to do. Safer than silently auto-approving."
+    },
+    {
+      "question_id": "Q3",
+      "question": "Where to put ReviewVerdict/ReviewIssue?",
+      "answer": "In agents/review/ module (mod.rs + types.rs). Other agents import these types when they need to work with CRR."
+    }
+  ],
+  "status": "answered"
+}

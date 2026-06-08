@@ -1,0 +1,48 @@
+change_id: vortex-p1-batch
+schema_version: '2.0'
+created_at: 2026-02-14T10:28:12.958875Z
+updated_at: 2026-02-14T11:34:22.022963Z
+phase: merge_approved
+iteration: 1
+last_action: no_specs_to_merge_approved
+session_id: null
+checksums: {}
+validations: []
+revision_counts: {}
+telemetry:
+  calls:
+  - step: create_proposal
+    genesis_version: 0.3.8
+    model: gemini-3-pro-preview
+    tokens_in: 201473
+    tokens_out: 906
+    cost_usd: null
+    duration_ms: 85726
+    timestamp: 2026-02-14T10:28:41.349104Z
+  - step: review_proposal
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 255804
+    tokens_out: 2465
+    cost_usd: null
+    duration_ms: 53269
+    timestamp: 2026-02-14T10:29:43.085158Z
+  - step: review_implementation
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 495803
+    tokens_out: 3082
+    cost_usd: null
+    duration_ms: 63479
+    timestamp: 2026-02-14T11:33:02.021104Z
+  - step: review_merge
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 220336
+    tokens_out: 1675
+    cost_usd: null
+    duration_ms: 43263
+    timestamp: 2026-02-14T11:34:14.940594Z
+  total_cost_usd: 0.0
+  total_tokens_in: 1173416
+  total_tokens_out: 8128

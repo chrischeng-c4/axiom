@@ -1,0 +1,61 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-mamba",
+  "change_id": "mamba-all-p1",
+  "group_id": "stdlib-introspection",
+  "verdict": "FAIL",
+  "summary": "The reference context artifact was never populated — all three rows contain `? | ? | medium/low | —` placeholders with no actual spec entries. Four highly relevant existing specs are absent: parser/ast.md (the internal AST that #668 wraps), lexer/tokens-and-indent.md (the lexer output that #669 wraps), mir/mir.md (the MIR that #667 wraps), and stdlib/native-implementations.md (the registration pattern all three modules must follow). Additionally, no stdlib specs for ast, dis, or tokenize modules exist yet — these are new specs that must be created before implementation. An implementer reading this reference context has zero architectural guidance for any of the three issues.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "All three areas from pre-clarifications have zero spec coverage in the artifact. Q1 and Q2 cite parser/ast.rs (pub Module, Stmt ~20+ variants, Expr ~30+ variants) requiring a CPython-compatible Python-facing wrapper — parser/ast.md covers this internal AST but is absent. Q3 cites mir/mod.rs (MirBody, BasicBlock, MirInst, Terminator) as the dis module substrate — mir/mir.md covers this but is absent. The lexer (lexer/tokens-and-indent.md) covers the TokenKind/Token structures required for tokenize module — also absent. Furthermore, no stdlib specs for ast.md, dis.md, or tokenize.md exist at all — these new specs must be created as part of this change."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "All relevance entries are `?`. Correct scoring based on pre-clarifications: parser/ast.md = HIGH (the ast module #668 is a direct Python-facing wrapper over the internal AST — Q1/Q2 cite parser/ast.rs by name), lexer/tokens-and-indent.md = HIGH (the tokenize module #669 is a direct wrapper over TokenKind/Token structs from lexer/mod.rs), mir/mir.md = HIGH (the dis module #667 wraps MirInst/MirBlock/Terminator — Q3 cites mir/mod.rs explicitly), stdlib/native-implementations.md = MEDIUM (defines the module registration and error-mapping pattern all three new modules must follow), stdlib/typing-and-inspect.md = LOW (related domain — Python introspection API patterns — but operates at runtime object level, not compiler-internal level)."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "All key requirement entries are `—`. Verified against actual specs: parser/ast.md has R1 (Complete AST Representation — Module/Stmt/Expr full variant tables), R2 (PEP 695 Type Parameter Nodes — type_params field on FnDef/ClassDef), R3 (Type Expression AST — TypeExpr enum with Named/Generic/Optional/Union/Fn/Tuple), R4 (Span Attachment — Spanned<T> on all nodes, required for CPython-compatible ast.Node.lineno/col_offset). lexer/tokens-and-indent.md has R1 (Tokenization — full TokenKind categories including keyword, literal, operator, delimiter, synthetic), R2 (INDENT/DEDENT Generation — IndentProcessor state machine), R3 (PEP 701 f-string lexing), R4 (String literal forms — Str/TripleStr/FStr/RawStr/ByteStr). mir/mir.md has R1 (MIR Instruction Set — LoadConst/LoadVar/StoreVar/GetAttr/BinOp/Call/Raise full table), R2 (Basic Block Structure — Jump/Branch/Return terminators), R3 (Function Representation — MirFunction with params/locals/blocks). stdlib/native-implementations.md has R2 (Module Rewrite pattern), R3 (Symbol Registration), R4 (Error Mapping to MbException)."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "The artifact contains no real specs (only placeholders), so no irrelevant specs are present. This item trivially passes only because the artifact is entirely empty, not due to correct curation."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "parser/ast.md is absent. This is the primary backing spec for the ast module (#668). Pre-clarifications Q1 and Q2 explicitly cite parser/ast.rs: Q1 confirms pub Module/Stmt/Expr are exposed in Rust but not to Python runtime; Q2 specifies that the Python-facing wrapper must present CPython-compatible AST with matching field names and node types (e.g., ast.FunctionDef, ast.If, ast.BinOp) mapped from the internal representation. The spec defines Module, the full Stmt enum (~24 variants including VarDecl/Assign/FnDef/ClassDef/If/While/For/Match/Try/With/TypeAlias), the full Expr enum (~30 variants), and TypeExpr. R4 (Span Attachment via Spanned<T>) is especially critical: CPython's AST nodes carry lineno/col_offset which maps directly to Mamba's Span byte offsets. The spec exists at cclab/specs/cclab-mamba/parser/ast.md.",
+      "recommendation": "Add parser/ast.md at HIGH relevance. Key requirements: R1 (Complete Stmt/Expr variant tables — maps to CPython ast.stmt/ast.expr node hierarchy), R2 (PEP 695 type_params field — maps to CPython TypeVar/ParamSpec nodes), R3 (TypeExpr — maps to CPython annotation nodes), R4 (Spanned<T> — maps to ast.Node lineno/col_offset fields)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "lexer/tokens-and-indent.md is absent. This is the primary backing spec for the tokenize module (#669). Pre-clarification Q3 discusses MIR for dis but the lexer is the direct substrate for tokenize: generate_tokens() must yield TokenInfo objects wrapping Mamba's Token struct (kind, start, end byte offsets from token.rs). The spec's R1 defines the complete TokenKind enum with all keyword/literal/operator/delimiter/synthetic categories — these map 1:1 to Python's tokenize module constants (NAME, NUMBER, STRING, OP, NEWLINE, INDENT, DEDENT, ENDMARKER). R2 (IndentProcessor) is critical because tokenize must expose INDENT/DEDENT tokens matching Python's tokenize.INDENT/DEDENT constants. The spec exists at cclab/specs/cclab-mamba/lexer/tokens-and-indent.md.",
+      "recommendation": "Add lexer/tokens-and-indent.md at HIGH relevance. Key requirements: R1 (TokenKind categories — maps to Python tokenize token type constants), R2 (INDENT/DEDENT Generation — must be exposed as INDENT/DEDENT token types in generate_tokens()), R3 (f-string lexing — FStr token maps to Python's FSTRING_START/FSTRING_END or STRING), R4 (String literal forms — Str/TripleStr/RawStr/ByteStr all map to Python's STRING token type)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "mir/mir.md is absent. This is the primary backing spec for the dis module (#667). Pre-clarification Q3 explicitly cites mir/mod.rs with MirBody, BasicBlock, MirInst, Terminator as the substrate for dis module exposure — dis.Instruction objects must wrap MirInst variants, get_instructions() must iterate MirBlock sequences, and dis() must format these for human-readable output. The spec's R1 defines the full MirInst instruction set (LoadConst, LoadVar, StoreVar, GetAttr, SetAttr, GetItem, SetItem, BinOp, UnaryOp, BuildList, BuildDict, BuildSet, BuildTuple, Call, Raise, ExceptSetup). R2 defines the terminator structure (Jump/Branch/Return) which maps to Python dis's JUMP_FORWARD/JUMP_IF/RETURN_VALUE opcodes conceptually. The spec exists at cclab/specs/cclab-mamba/mir/mir.md.",
+      "recommendation": "Add mir/mir.md at HIGH relevance. Key requirements: R1 (MIR Instruction Set — each variant becomes a dis.Instruction with opname, argval), R2 (Basic Block Structure — blocks are the unit of iteration for get_instructions()), R3 (Function Representation — MirFunction maps to the dis.code object analogue)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "stdlib/native-implementations.md is absent. All three new modules (ast, dis, tokenize) must follow the native stdlib module registration pattern defined here: R2 (module file rewrite in runtime/stdlib/*.rs), R3 (symbol registration via register_symbols()), R4 (error mapping from Rust errors to MbException). Pre-clarification Q1 states that a 'new Python-facing wrapper layer' must be created — this exactly matches the pattern described in native-implementations.md. The spec defines the registration flow sequenceDiagram (stdlib_mod → module_registry → symbols_rs → JIT module) and error mapping flowchart that apply directly to adding ast_mod.rs, dis_mod.rs, tokenize_mod.rs. The spec exists at cclab/specs/cclab-mamba/stdlib/native-implementations.md.",
+      "recommendation": "Add stdlib/native-implementations.md at MEDIUM relevance. Key requirements: R2 (Module Rewrite — new ast_mod.rs/dis_mod.rs/tokenize_mod.rs follow this pattern), R3 (Symbol Registration — new modules register via register_symbols()), R4 (Error Mapping — parse errors and MIR errors must map to MbException)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "No stdlib specs for ast, dis, or tokenize modules exist. The reference context can only list existing specs — but this absence means three HIGH-priority specs must be CREATED before implementation. The change spec must explicitly note that cclab/specs/cclab-mamba/stdlib/ast.md, dis.md, and tokenize.md are new deliverables. ast.md must specify: parse() API, the CPython-compatible node class hierarchy (Module/FunctionDef/ClassDef/If/...), NodeVisitor walk protocol, NodeTransformer copy-on-write protocol, dump() formatting, literal_eval() safe evaluation. dis.md must specify: Instruction data class (opname, opcode, argval, offset, starts_line), get_instructions() iterator, dis() formatter. tokenize.md must specify: TokenInfo namedtuple (type, string, start, end, line), generate_tokens() generator, the 5 token type groups, exact token type constant values matching CPython.",
+      "recommendation": "Create cclab/specs/cclab-mamba/stdlib/ast.md, dis.md, and tokenize.md as part of the change spec phase. These are mandatory before implementation — the implementer cannot build CPython-compatible APIs without a spec defining the Python-level interface."
+    },
+    {
+      "severity": "LOW",
+      "description": "stdlib/typing-and-inspect.md has peripheral relevance for Python introspection API patterns. inspect.signature() and inspect.getmembers() operate on live runtime objects (similar domain to ast.NodeVisitor traversal), and typing.get_type_hints() relates to the annotation handling exposed by ast module. However, this spec covers a different layer (runtime object inspection) than the three new modules (compiler-internal exposure), so the value is background context only.",
+      "recommendation": "Add stdlib/typing-and-inspect.md at LOW relevance if the reference context needs to be comprehensive. Key requirements for background: R3 (inspect.isfunction/isclass — classification predicates that new modules may reuse), R5 (inspect.signature — Signature/Parameter model that ast's FnDef parameter representation should align with). Omit if the artifact should focus only on directly prescriptive specs."
+    }
+  ]
+}

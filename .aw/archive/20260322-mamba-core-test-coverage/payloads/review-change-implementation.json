@@ -1,0 +1,9 @@
+{
+  "spec_id": "mamba-core-test-coverage-spec",
+  "verdict": "REVIEWED",
+  "summary": "Implementation adds 307 new tests across 9 files (class.rs: 32, gc.rs: 35, module.rs: 22, ast_to_hir.rs: 109, pass.rs: 44, asyncio_mod.rs: 12, csv_mod.rs: 13, hashlib_mod.rs: 12, runtime_integration.rs: 28). All 2718 tests pass with zero failures. No non-test source logic modified (C2 satisfied). Prior commits already covered R2 (builtins.rs: 108), R6 (ops: 382 total), and 7/10 stdlib modules. Combined on-disk state meets R2-R8 targets. Two shortfalls remain: R1 (value.rs: 30/50, needs 20 more) and R9 (stdlib total: 148/150, needs 2 more — datetime_mod.rs has only 5 tests). Code quality is good: tests use helper functions, match! macros for pattern verification, and cover edge cases. Fix the two gaps to reach APPROVED.",
+  "issues": [
+    "R1 UNDER-TARGET: runtime/value.rs has 30 tests on disk, spec requires 50+. Needs 20 more tests covering BigInt promotion, NaN/Inf/-0.0 edge cases per spec scenarios.",
+    "R9 UNDER-TARGET: stdlib top-10 total is 148 tests on disk, spec requires 150+. Shortfall is in datetime_mod.rs (only 5 tests — needs datetime/date/time/timedelta construction, arithmetic, strftime/strptime per spec)."
+  ]
+}

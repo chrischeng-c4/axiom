@@ -1,0 +1,23 @@
+{
+  "group_id": "sdd-docs-phase",
+  "contradictions": [
+    {
+      "area": "DocsCheck vs existing phase routing",
+      "finding": "Current state machine has no 'check' intermediary states — phases route directly. DocsCheck would be the first 'decision gate' state that conditionally skips a phase.",
+      "resolution": "Implement DocsCheck as a transient state that auto-resolves in the same route() call — no agent dispatch, just config lookup + crate match. If skip, advance directly to ChangeMergeCreated. Pattern: same as how alignment_warnings is computed inline."
+    },
+    {
+      "area": "Doc-reviewer CLI verification vs sandbox",
+      "finding": "Doc-reviewer needs Bash to run CLI commands for accuracy verification. But agents with Bash can potentially modify files. The doc-reviewer should be read-only.",
+      "resolution": "Doc-reviewer agent has Bash (read-only intent enforced by prompt) + Read + Glob + Grep. No Write tool. Verdict recorded via artifact CLI command. Same pattern as sdd-review agent."
+    }
+  ],
+  "assumptions_verified": [
+    "CRR cycle for docs follows same pattern as implementation CRR (max revisions, auto-approve)",
+    "Docs written directly to output_dir, not to change archive",
+    "Dedicated sdd-doc-writer agent with Write access, sdd-doc-reviewer without",
+    "All 4 execution mode presets need docs phase entries in agents config",
+    "No merge logic changes — docs files committed naturally by git auto_commit"
+  ],
+  "questions": []
+}

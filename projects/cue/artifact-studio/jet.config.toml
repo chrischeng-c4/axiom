@@ -1,0 +1,10 @@
+[dev]
+port = 3212
+
+[dev.proxy]
+"/api" = "http://127.0.0.1:43219"
+
+[wasm]
+entry = "src/main.tsx"
+root_component = "App"
+renderer = "dom"

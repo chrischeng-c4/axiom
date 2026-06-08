@@ -1,0 +1,36 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: dynamic-tool-schema
+  change_id: '484'
+  source_file: 484/specs/dynamic-tool-schema.md
+  spec_id: dynamic-tool-schema
+spec:
+  title: tools/list Schema Decision
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: start
+      to: check
+    - from: check
+      label: yes
+      to: modify
+    - from: check
+      label: no
+      to: original
+    - from: modify
+      to: respond
+    - from: original
+      to: respond
+    nodes:
+    - id: start
+      label: tools/list Request
+    - id: check
+      label: Session has project_path?
+    - id: modify
+      label: Remove project_path from required
+    - id: original
+      label: Return original schemas
+    - id: respond
+      label: Return Response

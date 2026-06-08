@@ -1,0 +1,35 @@
+change_id: jet-aot-build
+schema_version: '2.0'
+created_at: 2026-03-12T02:42:49.599561Z
+updated_at: 2026-03-12T03:35:33.282144Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+branch: cclab-jet
+revision_counts: {}
+current_task_id: jet-aot-build-spec
+task_revisions: {}
+telemetry: null
+dag:
+  issues:
+  - number: 765
+    title: 'feat(jet): AOT production build — tree shaking, code splitting, minification, source maps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+groups_progress:
+  reference_context:
+  - aot-build
+  post_clarifications:
+  - aot-build
+  change_implementation: []
+  change_spec: []
+  pre_clarifications:
+  - aot-build

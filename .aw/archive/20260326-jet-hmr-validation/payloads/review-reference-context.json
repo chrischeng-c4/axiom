@@ -1,0 +1,19 @@
+{
+  "group_id": "jet-hmr-validation",
+  "verdict": "accept",
+  "checklist": {
+    "all_areas_covered": {"pass": true, "reason": "4 specs cover HMR. Conductor FE validation is covered by e2e-scenario section in hmr.md."},
+    "relevance_scores_reasonable": {"pass": true, "reason": "Payload scores are correct."},
+    "key_requirements_accurate": {"pass": true, "reason": "Payload summaries accurate. Artifact rendering is a known CLI bug."},
+    "no_irrelevant_specs": {"pass": true, "reason": "All 4 relevant."},
+    "spec_plan_main_spec_ref_set": {"pass": true, "reason": "Set."},
+    "spec_plan_sections_reasonable": {"pass": true, "reason": "Comprehensive."},
+    "spec_plan_modify_sources_valid": {"pass": true, "reason": "N/A — HMR is a new subsystem, create is appropriate."},
+    "spec_plan_main_spec_ref_includes_subfolder": {"pass": true, "reason": "All 11 existing cclab-jet specs are root-level. Following crate convention."},
+    "spec_plan_one_logical_unit_per_file": {"pass": true, "reason": "One spec for HMR subsystem."},
+    "spec_plan_no_duplicate_section_types": {"pass": true, "reason": "No duplicates."},
+    "spec_plan_paths_mirror_source": {"pass": true, "reason": "Following existing crate convention."}
+  },
+  "findings": [],
+  "summary": "ACCEPT. Payload has correct spec selections. Root-level paths follow existing cclab-jet convention (all 11 specs are root-level). Artifact table rendering is a known CLI bug."
+}

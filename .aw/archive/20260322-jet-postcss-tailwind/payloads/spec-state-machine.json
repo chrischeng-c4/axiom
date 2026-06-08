@@ -1,0 +1,6 @@
+{
+  "spec_id": "jet-postcss-tailwind-spec",
+  "group_id": "jet-postcss-tailwind",
+  "section": "state-machine",
+  "content": "```mermaid\nstateDiagram-v2\n    [*] --> Idle : CssPipeline created\n    Idle --> Parsing : process(entry)\n\n    Parsing --> ImportResolution : AST ready\n    Parsing --> Error : parse failure\n\n    ImportResolution --> DirectiveDetection : imports inlined\n    ImportResolution --> Error : circular import detected\n\n    DirectiveDetection --> ContentScanning : @tailwind found\n    DirectiveDetection --> ApplyProcessing : no @tailwind directives\n\n    ContentScanning --> Emitting : glob scan complete\n    ContentScanning --> Error : glob pattern error\n\n    Emitting --> ApplyProcessing : layers generated\n\n    ApplyProcessing --> LayerRouting : @apply expanded\n\n    LayerRouting --> Transforming : @layer custom rules routed\n\n    Transforming --> Minifying : transform complete, production build\n    Transforming --> Done : transform complete, dev build\n\n    Minifying --> Done : minify complete\n\n    Done --> Idle : watch mode (await next change)\n    Done --> [*] : one-shot build\n    Error --> [*]\n```"
+}

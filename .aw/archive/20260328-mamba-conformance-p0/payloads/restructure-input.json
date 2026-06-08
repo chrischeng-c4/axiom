@@ -1,0 +1,33 @@
+{
+  "groups": [
+    {
+      "id": "mamba-runtime-bugs",
+      "issues": [1084, 1085],
+      "summary": "Fix two runtime bugs in cclab-mamba: (1) decorated function calls return None due to JIT/mb_call0 calling convention mismatch — align NaN-boxed return values between JIT and dynamic dispatch; (2) floor division by zero silently returns 0 instead of raising ZeroDivisionError — add zero-check in both mb_floordiv() and Cranelift codegen FloorDiv path.",
+      "requirements": "Decorated function calls must return the actual return value, not None. 1 // 0 must raise ZeroDivisionError with message 'integer division or modulo by zero'. JIT return convention must be consistent with mb_call0 dynamic dispatch. Cranelift FloorDiv codegen must emit zero-check branch before sdiv.",
+      "affected_files": [
+        "crates/cclab-mamba/src/runtime/class.rs",
+        "crates/cclab-mamba/src/lower/hir_to_mir.rs",
+        "crates/cclab-mamba/src/codegen/cranelift/jit.rs",
+        "crates/cclab-mamba/src/runtime/builtins.rs",
+        "crates/cclab-mamba/src/codegen/cranelift/mod.rs"
+      ],
+      "questions": []
+    },
+    {
+      "id": "mamba-py312-conformance",
+      "issues": [1037, 759, 756],
+      "summary": "Build Py3.12 behavioral conformance test framework and verify data structure ops and generator/iterator protocol match CPython 3.12. The test framework runs fixtures with both CPython 3.12 and Mamba, diffs outputs, and flags any divergence as a conformance bug. Data structure scope: list (33 methods + slicing), dict (17 methods + merge ops), set (17 methods + operators), tuple (comparison + unpacking), str (47+ methods + f-strings), bytes/bytearray. Generator scope: yield/yield from, send/throw/close, StopIteration.value, async generators, iterator protocol (__iter__/__next__).",
+      "requirements": "Automated conformance test runner: cclab mamba test --conformance. Test fixtures that run identically on CPython 3.12 and Mamba. Output diff comparison — any difference is a conformance bug. All list, dict, set, tuple, str, bytes methods produce same results as CPython 3.12. Generator send/throw/close match CPython behavior. StopIteration.value propagation matches CPython. Iterator protocol __iter__/__next__ matches CPython.",
+      "affected_files": [
+        "crates/cclab-mamba/tests/"
+      ],
+      "questions": [
+        {
+          "question": "Should conformance tests live as .py fixtures under crates/cclab-mamba/tests/conformance/ or under a top-level test directory?",
+          "context": "#1037 mentions porting CPython Lib/test/ cases as Mamba fixtures"
+        }
+      ]
+    }
+  ]
+}

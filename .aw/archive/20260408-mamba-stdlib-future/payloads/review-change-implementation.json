@@ -1,0 +1,21 @@
+{
+  "group_id": "future-stdlib-module",
+  "spec_id": "future-stdlib",
+  "verdict": "APPROVED",
+  "summary": "Implementation matches spec: __future__ module exports all 8 CO_* constants and 6 feature flags as integers matching CPython 3.12. 10 unit tests pass. No regressions.",
+  "checklist": {
+    "hard": {
+      "code_matches_spec": true,
+      "test_plan_has_tests": true,
+      "no_regressions": true
+    },
+    "soft": {
+      "code_quality": "Good — follows existing errno_mod pattern, clear naming, proper documentation",
+      "error_handling": "N/A — constants-only module, no runtime error paths",
+      "performance": "Negligible — one-time registration of 14 integer constants",
+      "documentation": "Module doc comment and inline comments are sufficient"
+    }
+  },
+  "comments": "Implementation matches spec Changes section exactly. All 8 CO_* constants and 6 feature flag names exported with correct CPython 3.12 values. Module registered as '__future__'. 10 unit tests cover value correctness and roundtripping. No regressions (pre-existing SIGABRT in test suite confirmed on clean main branch).",
+  "issues": []
+}

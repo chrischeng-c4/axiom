@@ -1,0 +1,13 @@
+{
+  "group_id": "e2e-test-reorg",
+  "answers": [
+    {
+      "question": "Directory structure: e2e/grid/ for RuSheet tests, e2e/jet/ for jet tests?",
+      "answer": "Yes. Move existing e2e/*.spec.ts into e2e/grid/, move examples/mini-react/ into e2e/jet/. examples/jet/ and examples/react-bench/ stay."
+    },
+    {
+      "question": "Playwright projects: vite-build, jet-build, jet-dev with testMatch filters?",
+      "answer": "Yes. vite-build and jet-build run build.spec.ts only. jet-dev runs dev-server.spec.ts, hmr.spec.ts, css.spec.ts."
+    }
+  ]
+}

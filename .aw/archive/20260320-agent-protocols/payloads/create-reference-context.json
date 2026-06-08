@@ -1,0 +1,71 @@
+{
+  "group_id": "agent-protocols-module",
+  "specs": [
+    {
+      "path": "specs/cclab-agent/core-types.md",
+      "relevance": "high",
+      "reason": "Message, Role, ToolCall, ToolResult, TokenUsage are fundamental types that protocols will model and reference"
+    },
+    {
+      "path": "specs/cclab-agent/agents.md",
+      "relevance": "high",
+      "reason": "ChangeProtocol will model AnalystAgent state machine, CodingAgent configuration, and agent execution patterns"
+    },
+    {
+      "path": "specs/cclab-agent/storage.md",
+      "relevance": "high",
+      "reason": "SessionState and SessionInfo are core types; ChangeProtocol extends these types as domain contracts"
+    },
+    {
+      "path": "specs/cclab-agent/llm-providers.md",
+      "relevance": "high",
+      "reason": "CompletionRequest, CompletionResponse, ToolDefinition are types that appear in protocol contracts"
+    },
+    {
+      "path": "specs/cclab-agent/tools.md",
+      "relevance": "high",
+      "reason": "Tool trait, ToolRegistry, ToolDefinition, ToolParameter are essentials for tool-related protocol contracts"
+    },
+    {
+      "path": "specs/cclab-agent/security.md",
+      "relevance": "high",
+      "reason": "SecurityPolicy, ApprovalRequest, ApprovalResponse are security protocols and contracts that will be modeled"
+    },
+    {
+      "path": "specs/cclab-agent/context.md",
+      "relevance": "high",
+      "reason": "ContextManager, ContextStats model context management state that protocols will codify"
+    },
+    {
+      "path": "specs/cclab-agent/architecture.md",
+      "relevance": "medium",
+      "reason": "Module dependency diagram shows how protocols fit into overall architecture; C4 context clarifies system boundaries"
+    },
+    {
+      "path": "specs/cclab-agent/integrations.md",
+      "relevance": "medium",
+      "reason": "Issue, PlatformIntegration types inform SyncTarget and change state protocol design"
+    },
+    {
+      "path": "specs/cclab-agent/streaming.md",
+      "relevance": "medium",
+      "reason": "StreamEvent types and state machine may be part of protocol contracts for streaming awareness"
+    },
+    {
+      "path": "specs/cclab-agent/tools-coding.md",
+      "relevance": "medium",
+      "reason": "Tool input/output schemas (BashTool, ReadFileTool, WriteFileTool, etc.) inform CodeIndex field design"
+    },
+    {
+      "path": "specs/cclab-agent/tools-analysis.md",
+      "relevance": "medium",
+      "reason": "Analysis tool types and schemas inform protocol field design for session state and findings"
+    },
+    {
+      "path": "specs/cclab-agent/error-handling.md",
+      "relevance": "medium",
+      "reason": "NovaError classification and error types are part of protocol result and response contracts"
+    }
+  ],
+  "summary": "Reference context covers cclab-agent's complete type system, agent execution patterns, and domain contracts needed to define agent-protocols-module. HIGH relevance specs provide core types and behaviors that protocols will model as pure contracts. MEDIUM relevance specs provide architectural context and supporting details for comprehensive protocol design."
+}

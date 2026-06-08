@@ -1,0 +1,29 @@
+change_id: mamba-type-3arg
+schema_version: '2.0'
+created_at: 2026-04-10T09:30:49.855433Z
+updated_at: 2026-04-11T07:27:28.601520Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: worktree
+revision_counts:
+  ref_ctx:mamba-type-3arg-core: 2
+current_task_id: mamba-type-3arg-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 974
+    title: type() 3-arg dynamic class creation — type(name, bases, dict)
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: cclab/mamba-type-3arg

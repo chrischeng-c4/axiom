@@ -1,0 +1,17 @@
+{
+  "group_id": "check-alignment-phase3",
+  "answers": [
+    {
+      "question": "Should artifact tools validate ONLY the section being written, or the entire spec file?",
+      "answer": "Entire file. After writing, run check() on the whole spec to ensure global consistency."
+    },
+    {
+      "question": "For merge workflow: should alignment warnings be written to implementation.md or just printed to stdout?",
+      "answer": "Write to implementation.md — append alignment warnings to the review section."
+    },
+    {
+      "question": "Should the alignment_warnings in run-change response include the full violation list or just a count + summary?",
+      "answer": "Full violation list — include all violations as complete JSON in the alignment_warnings field."
+    }
+  ]
+}

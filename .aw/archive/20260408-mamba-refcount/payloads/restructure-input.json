@@ -1,0 +1,29 @@
+{
+  "groups": [
+    {
+      "id": "jit-refcount-enable",
+      "issues": [],
+      "requirements": "Enable CPython 3.12-style reference counting in Mamba's JIT codegen by fixing the remaining closure ownership bug and flipping EMIT_REFCOUNT_CALLS to true. This is a single cohesive change across codegen and runtime modules within cclab-mamba.\n\n### What needs to change\n\n1. **Fix closure ownership symmetry** (root cause of SIGBUS): `mb_closure_release` in `runtime/closure.rs` line 137-140 removes the closure from the thread-local HashMap via `.remove()` but does NOT release the captured MbValues. When refcount calls are enabled, captured heap objects (strings, lists) that were retained via `mb_closure_get_capture` become dangling — the closure's captures are dropped without decrementing refcounts, causing use-after-free when sequential tests share runtime state.\n\n   Fix: Before removing from HashMap, iterate `closure.captures` and call `rc::release_if_ptr(val)` for each captured value. Also release `closure.func` if it's a heap pointer. Also release any values in `closure.defaults`.\n\n2. **Verify all borrowed-reference runtime functions have retain_if_ptr**: The ownership audit (documented in rc.rs lines 1-68) classifies ~22 functions as BORROWED. Cross-check that every one listed actually has a `retain_if_ptr` call. The existing code already has these calls based on the audit (confirmed by reading `mb_closure_get_capture` at closure.rs:100).\n\n3. **Enable EMIT_REFCOUNT_CALLS**: Set `const EMIT_REFCOUNT_CALLS: bool = true` in `codegen/cranelift/mod.rs` line 15. This activates all conditional refcount emission blocks in both mod.rs (AOT) and jit.rs (JIT).\n\n4. **Re-enable GC**: Set `enabled: true` in `GcState::new()` in `runtime/gc.rs` line 50. With refcounting active, GC only handles cyclic garbage.\n\n5. **Update tests**: The existing `jit_refcount_audit_tests.rs` has tests that verify EMIT_REFCOUNT_CALLS=true and GC enabled. These should pass after the fixes. Run conformance suite to verify no regressions.\n\n### Key constraints\n\n- The closure fix must cascade-release ALL contained MbValues: captures Vec, func, and defaults Vec\n- retain_if_ptr is already a no-op for non-pointer values (ints, bools, floats, None) so no risk of over-retaining NaN-boxed scalars\n- Immortal objects (rc == u32::MAX) are skipped by both retain and release — compile-time string constants are safe\n- Phase ordering: closure fix BEFORE enabling the flag; flag BEFORE enabling GC\n- Must pass `cargo test -p cclab-mamba --test jit_refcount_audit_tests -- --test-threads=1` without SIGBUS\n- Must pass full conformance suite with zero regressions\n\n### Integration points\n\n- `codegen/cranelift/mod.rs` and `codegen/cranelift/jit.rs`: Both import and gate on `EMIT_REFCOUNT_CALLS`\n- `runtime/closure.rs`: `mb_closure_release` is called from JIT-compiled code via `runtime_symbols()` registration\n- `runtime/gc.rs`: `gc_track`/`gc_untrack` already called by MbObject constructors; enabling just flips the auto-collection trigger\n- `runtime/rc.rs`: `retain_if_ptr`/`release_if_ptr` already exist and are used by ~22 borrowed-reference functions\n- `tests/jit_refcount_audit_tests.rs`: Existing test file with 20+ tests specifically for this feature",
+      "questions": [
+        {
+          "id": "q1",
+          "question": "Should mb_closure_release also release values in the defaults Vec, or are default argument values always NaN-boxed scalars that don't need releasing?",
+          "context": "MbClosure has a `defaults: Vec<MbValue>` field (closure.rs:27). Default args can be any Python expression including heap objects like lists or strings. If a lambda has `def f(x=[1,2,3])`, the default is a heap-allocated list that would leak if not released.",
+          "suggested_answer": "Yes, release defaults too. Python default args can be arbitrary objects including mutable containers. The closure owns these values."
+        },
+        {
+          "id": "q2",
+          "question": "After enabling EMIT_REFCOUNT_CALLS, should we also add mb_closure_release calls at function return for closure locals, or are closures already handled by the return cleanup logic?",
+          "context": "The return cleanup in jit.rs releases all I64 locals at Terminator::Return. Closures are stored as MbValue::from_int(id) — they are NaN-boxed integers, not heap pointers. So mb_release_value on a closure handle is a no-op (it's an int). The closure's captured values are only freed when mb_closure_release is explicitly called.",
+          "suggested_answer": "Closures use integer handles in thread-local storage, not heap pointers. The existing JIT return cleanup already calls mb_release_value on all locals, but this is a no-op for closure handles (they're ints). Explicit mb_closure_release calls are emitted by the compiler for closure-typed locals. No additional change needed."
+        },
+        {
+          "id": "q3",
+          "question": "Should we run the conformance suite under ASan as part of this change, or defer ASan validation to a follow-up?",
+          "context": "The jit-refcount spec (R5) requires ASan validation with zero heap-use-after-free reports. However, ASan requires nightly Rust and RUSTFLAGS=\"-Zsanitizer=address\" which may not be available in all CI environments.",
+          "suggested_answer": "Defer ASan to manual verification. The primary validation is: (1) jit_refcount_audit_tests pass with --test-threads=1, (2) full conformance suite passes, (3) no SIGBUS/SIGSEGV in any test. ASan is a belt-and-suspenders check."
+        }
+      ]
+    }
+  ]
+}

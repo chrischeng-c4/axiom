@@ -1,0 +1,17 @@
+{
+  "artifact_kind": "api_surface",
+  "intent_read": "Preserve API compatibility while making validation explicit.",
+  "audience": "client implementers",
+  "constraints": ["schema compatibility"],
+  "quality_dials": [
+    { "key": "schema_stability", "value": "high", "rationale": "clients depend on fields" }
+  ],
+  "source_policy": {
+    "mode": "api_contract",
+    "evidence_ref": "typed API spec"
+  },
+  "preflight_gate_set": {
+    "id": "api-surface-preflight",
+    "gates": ["schema validation"]
+  }
+}

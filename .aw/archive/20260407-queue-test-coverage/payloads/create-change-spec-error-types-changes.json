@@ -1,0 +1,6 @@
+{
+  "spec_id": "error-types",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: error-types-changes\n  refs:\n    - $ref: \"#task-error-schema\"\nchanges:\n  - path: crates/cclab-queue/src/error.rs\n    action: modify\n    description: Add #[cfg(test)] mod tests with 31 unit tests covering Display, From conversions, Debug, and Send+Sync bounds\n```"
+}

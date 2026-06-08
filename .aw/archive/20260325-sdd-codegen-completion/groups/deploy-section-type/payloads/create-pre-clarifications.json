@@ -1,0 +1,22 @@
+{
+  "change_id": "sdd-codegen-completion",
+  "group_id": "deploy-section-type",
+  "answers": [
+    {
+      "question_id": "Q1",
+      "question": "First codegen target: docker-compose vs k8s",
+      "answer": "k8s Deployment + Service manifests. Already partially implemented in DeployGenerator from previous change."
+    },
+    {
+      "question_id": "Q2",
+      "question": "Deploy YAML DSL finalization",
+      "answer": "The DSL from the proposal is final for this change. Resource limits already supported in DeploySpec. No Helm/Terraform needed."
+    },
+    {
+      "question_id": "Q3",
+      "question": "Cross-ref validation strictness",
+      "answer": "Soft warning — proceed with best-effort output. Cross-ref validation deferred to later iteration."
+    }
+  ],
+  "follow_up_needed": false
+}

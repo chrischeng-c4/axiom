@@ -1,0 +1,8 @@
+{
+  "spec_id": "ratelimit",
+  "group_id": "queue-unit-test-coverage",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-queue/logic/ratelimit.md",
+  "fill_sections": ["overview", "logic", "test-plan", "changes"],
+  "content": "<!-- type: overview lang: markdown -->\n\nRate limiting module for cclab-queue task execution. Provides two algorithm implementations behind a common `RateLimiter` async trait, plus a composite `RateLimitManager` for layered enforcement.\n\n| Component | Type | Purpose |\n|-----------|------|--------|\n| `RateLimitConfig` | Config struct | Rate (tokens/sec), burst capacity, key; convenience constructors `per_second`, `per_minute`, `per_hour`, `with_key` |\n| `RateLimitResult` | Value object | Outcome of rate check: `allowed`, `retry_after`, `remaining`, `limit`; constructors `allowed()`, `denied()` |\n| `RateLimiter` | Async trait | `acquire`, `acquire_many`, `peek`, `reset` — Send + Sync |\n| `TokenBucket` | Impl | Token bucket algorithm — smooth rate with burst; refills tokens at `config.rate` per second up to `capacity` |\n| `SlidingWindow` | Impl | Sliding window algorithm — tracks request timestamps; evicts entries older than `window_duration` |\n| `RateLimitManager` | Composite | Manages per-task, per-queue, and global rate limits; checks in order: global → queue → task |\n\nThis spec defines the logic, data model, and test plan for achieving comprehensive unit test coverage of `crates/cclab-queue/src/ratelimit.rs`."
+}

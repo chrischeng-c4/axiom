@@ -1,0 +1,14 @@
+- spec_id: tokens-and-indent
+  action: modify
+  main_spec_ref: crates/cclab-mamba/lexer/tokens-and-indent.md
+  source: crates/cclab-mamba/lexer/tokens-and-indent.md
+  sections:
+  - overview
+  - changes
+- spec_id: statements
+  action: modify
+  main_spec_ref: crates/cclab-mamba/parser/statements.md
+  source: crates/cclab-mamba/parser/statements.md
+  sections:
+  - overview
+  - changes

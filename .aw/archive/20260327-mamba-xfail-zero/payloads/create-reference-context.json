@@ -1,0 +1,199 @@
+{
+  "group_id": "xfail-zero",
+  "specs": [
+    {
+      "spec_id": "cclab-mamba-fix-xfail-spec",
+      "spec_group": "testing",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: Kwargs arg count fix in codegen — HIR→MIR emits kwargs as trailing positional args to match runtime arity",
+        "R2: No-arg constructor guard — list()/tuple()/set()/bytes() zero-arg route to _new variants",
+        "R3: Print sep/end kwargs runtime — mb_print_kwargs(args, sep, end)",
+        "R4: Sorted/min/max/sum kwargs runtime — key function, reverse flag, default, start accumulator",
+        "R5: Numeric builtins — pow(x,y,mod) three-arg form, int(s, base) radix conversion",
+        "R6: chr/ord full Unicode range via char::from_u32",
+        "R7: Parse inline dict/set literals in try body — expr.rs/expr_compound.rs",
+        "R8: str.format() keyword argument substitution via {name} placeholders",
+        "R9: Generator send TypeError on just-started generator (state==Created)",
+        "R10: Generator throw propagation; StopIteration on exhausted generator",
+        "R11: Generator close no-op on exhausted; RuntimeError if yields after GeneratorExit",
+        "R12: iter(callable, sentinel) two-arg form; zip/map/filter accept generator iterators",
+        "R13: isinstance(x, tuple-of-types); getattr(obj, attr, default) three-arg form",
+        "Conformance harness: # mamba-xfail: <reason> directive marks expected failures",
+        "Golden files: .py + .expected pairs, regenerated via python3 tests/regen_golden.py"
+      ]
+    },
+    {
+      "spec_id": "generator",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: GeneratorState enum — Created/Running/Suspended/Completed state machine",
+        "R2: yield suspension/resumption — local variables preserved in heap frame",
+        "R4: send(value) — yield expression evaluates to sent value; first send must be None (TypeError otherwise)",
+        "R5: throw(exc)/close() — inject exception at yield point; GeneratorExit on close; no-op on Completed",
+        "close() must raise RuntimeError if generator catches GeneratorExit and yields again",
+        "throw() on Completed state must raise StopIteration"
+      ]
+    },
+    {
+      "spec_id": "iter",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: mb_iter_new/mb_iter_next — __iter__/__next__ dispatch, StopIteration terminates loop",
+        "R2: Built-in iterator variants — ListIter, DictIter, SetIter, TupleIter",
+        "R3: Iterator combinators — zip(*iters), map(fn, iter), filter(fn, iter) accepting generator iterators",
+        "iter(callable, sentinel) two-argument form — call callable until result == sentinel",
+        "R5: next(iter, default) — returns default instead of raising StopIteration"
+      ]
+    },
+    {
+      "spec_id": "builtins",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R2: Aggregation — sorted(iter, key, reverse), min(iter, key, default), max(iter, key, default), sum(iter, start)",
+        "R3: isinstance(obj, classinfo) — accept tuple-of-types as second arg via MRO walk",
+        "R4: chr(n) full Unicode via char::from_u32; ord(c) full Unicode codepoint",
+        "R5: pow(x, y, mod) three-arg modular exponentiation; int(s, base) radix conversion",
+        "getattr(obj, attr, default) optional third argument — return default on missing attr",
+        "R6: Symbol registration — kwargs-aware variants registered in symbols.rs with correct arity"
+      ]
+    },
+    {
+      "spec_id": "string-ops",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R4: mb_string_format(template, args, argc) — f-string and str.format() runtime formatting",
+        "Extend mb_string_format for {name} keyword placeholder substitution from kwargs dict",
+        "R1: Core string methods — split, join, strip, replace, find, startswith, endswith, upper, lower"
+      ]
+    },
+    {
+      "spec_id": "hir-to-mir",
+      "spec_group": "lower",
+      "relevance": "high",
+      "key_requirements": [
+        "CallExtern emission — when HIR Call has kwargs and target is a known builtin, emit kwargs as trailing positional args",
+        "builtin_extern_map entries for _kwargs variants with correct param counts",
+        "Zero-arg arity guard — when args.is_empty() and extern is _from_iterable/_from_pairs, redirect to _new variant",
+        "MIR::CallExtern { func: '_kwargs variant', args: [positional ++ kwargs_values] }"
+      ]
+    },
+    {
+      "spec_id": "cranelift-jit",
+      "spec_group": "codegen",
+      "relevance": "high",
+      "key_requirements": [
+        "JIT symbol table registration — mb_print_kwargs, mb_sorted_kwargs, mb_min_kwargs, mb_max_kwargs, mb_sum_kwargs",
+        "Each kwargs symbol registered with correct param count matching extended runtime signature",
+        "JIT_LOCK serializes compilation+execution across test threads (SIGBUS prevention on aarch64)"
+      ]
+    },
+    {
+      "spec_id": "cranelift",
+      "spec_group": "codegen",
+      "relevance": "medium",
+      "key_requirements": [
+        "Function signature generation — declare signatures with extended params for kwargs variants",
+        "Call site emission — emit call instruction with matching arg count so Cranelift verifier passes",
+        "Codegen emits mb_getattr/mb_setattr for all user-class attribute access (descriptor protocol path)"
+      ]
+    },
+    {
+      "spec_id": "expressions",
+      "spec_group": "parser",
+      "relevance": "high",
+      "key_requirements": [
+        "parse_expr_stmt — try dict/set literal when '{' encountered at statement position before block fallback",
+        "Dict literal {key: val} and set literal {expr, expr} in compound expression contexts (e.g., inside try body)",
+        "Allows {}['x'] and {1,2}.remove(99) as expression statements inside try blocks",
+        "Postfix parsing: subscript/method call after dict/set literal — {}['x'] and {1,2}.remove(99)"
+      ]
+    },
+    {
+      "spec_id": "exception",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "Exception chaining — __cause__ attribute set when 'raise X from Y' used",
+        "Exception chaining — __context__ set implicitly during exception handling",
+        "Custom exception classes — inheritance, super().__init__(), custom attributes"
+      ]
+    },
+    {
+      "spec_id": "class",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R1: Type-tagged dispatch — mb_call_method routes by ObjData variant tag",
+        "R2: MRO fallback — C3 MRO attribute lookup for ObjData::Instance",
+        "MRO introspection — __mro__ attribute access, staticmethod/classmethod dispatch",
+        "R9: Magic method dispatch — __len__, __contains__, __iter__, __repr__, __str__"
+      ]
+    },
+    {
+      "spec_id": "test-harness",
+      "spec_group": "testing",
+      "relevance": "medium",
+      "key_requirements": [
+        "# mamba-xfail: <reason> directive — marks fixture as expected failure, skipped in CI",
+        "R1: RUN directive dispatch — parse/typecheck/jit runners",
+        "R3: Recursive fixture discovery — auto-discovers .py under tests/fixtures/conformance/",
+        "Conformance test: parse + typecheck + JIT execute + compare stdout vs .expected golden"
+      ]
+    },
+    {
+      "spec_id": "math",
+      "spec_group": "stdlib",
+      "relevance": "low",
+      "key_requirements": [
+        "math.floor, math.ceil, math.sqrt, math.factorial, math.gcd — basic functions",
+        "math.log, math.log2, math.log10 — logarithmic functions (partial support gap)",
+        "math.sin, math.cos, math.tan — trigonometric (partial support gap)",
+        "math.pi, math.e, math.inf, math.nan — constants"
+      ]
+    },
+    {
+      "spec_id": "itertools",
+      "spec_group": "stdlib",
+      "relevance": "low",
+      "key_requirements": [
+        "itertools.chain, itertools.islice, itertools.product, itertools.combinations, itertools.permutations",
+        "itertools.groupby, itertools.takewhile, itertools.dropwhile, itertools.zip_longest",
+        "Fixture simplification: test only implemented itertools functions; skip unimplemented"
+      ]
+    },
+    {
+      "spec_id": "functools",
+      "spec_group": "stdlib",
+      "relevance": "low",
+      "key_requirements": [
+        "functools.reduce, functools.partial, functools.lru_cache, functools.wraps",
+        "functools.cache, functools.cached_property",
+        "Fixture simplification: test only implemented functools functions"
+      ]
+    },
+    {
+      "spec_id": "collections",
+      "spec_group": "stdlib",
+      "relevance": "low",
+      "key_requirements": [
+        "collections.defaultdict, collections.Counter, collections.OrderedDict, collections.deque",
+        "collections.namedtuple — factory for tuple subclasses with named fields",
+        "Fixture simplification: test only implemented collections types"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "xfail-zero",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/testing/conformance.md",
+      "source": "cclab/specs/crates/cclab-mamba/testing/conformance.md",
+      "sections": ["overview", "requirements", "scenarios", "changes", "test-plan"]
+    }
+  ]
+}

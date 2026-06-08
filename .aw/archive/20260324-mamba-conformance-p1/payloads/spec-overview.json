@@ -1,0 +1,9 @@
+{
+  "spec_id": "mamba-conformance-p1-spec",
+  "group_id": "mamba-p1-oop",
+  "section": "overview",
+  "main_spec_ref": "cclab-mamba/logic/oop-conformance.md",
+  "merge_strategy": "new",
+  "fill_sections": ["overview", "requirements", "scenarios", "logic", "dependency", "test-plan", "changes"],
+  "content": "<!-- type: overview lang: markdown -->\n\nFix 5 P1 OOP conformance gaps in Mamba's Cranelift codegen and runtime class system to match CPython 3.12 behavior.\n\n| Bug | Component | Root Cause |\n|-----|-----------|------------|\n| @classmethod wrong param count | `codegen/cranelift/mod.rs` | Codegen does not prepend implicit `cls` parameter for classmethods |\n| @property codegen crash | `codegen/cranelift/mod.rs` | No descriptor protocol dispatch — property decorator not lowered to getter/setter |\n| getattr/setattr/delattr IR verifier error | `codegen/cranelift/mod.rs` | Generated Cranelift IR for attribute reflection builtins has invalid instruction sequence |\n| super().method() return value lost | `lower/mod.rs`, `codegen/cranelift/mod.rs` | MIR lowering discards return value from MRO-dispatched call via super proxy |\n| Multiple inheritance MRO wrong order | `runtime/class.rs` | C3 linearization in `compute_mro` / `c3_merge` produces incorrect ordering |\n\nAll fixes are scoped to crate `cclab-mamba`. No public API changes. No new dependencies."
+}

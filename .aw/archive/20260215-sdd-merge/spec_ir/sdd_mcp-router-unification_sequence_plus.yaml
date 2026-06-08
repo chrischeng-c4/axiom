@@ -1,0 +1,35 @@
+apiVersion: cclab.dev/v1
+kind: SequencePlus
+metadata:
+  name: mcp-router-unification
+  change_id: sdd-merge
+  source_file: sdd-merge/specs/sdd/mcp-router-unification.md
+  spec_group: sdd
+  spec_id: mcp-router-unification
+spec:
+  title: Tool Listing Flow
+  diagram_type: sequence
+  content:
+    messages:
+    - from: Client
+      text: list_tools(stage=plan)
+      to: UnifiedRouter
+    - from: UnifiedRouter
+      text: get_tools(plan)
+      to: Registry
+    - from: Registry
+      text: return [plan_tools]
+      to: UnifiedRouter
+    - from: UnifiedRouter
+      text: return [plan_tools]
+      to: Client
+    participants:
+    - id: Client
+      label: MCP Client
+      type: participant
+    - id: UnifiedRouter
+      label: Unified Router
+      type: participant
+    - id: Registry
+      label: Tool Registry
+      type: participant

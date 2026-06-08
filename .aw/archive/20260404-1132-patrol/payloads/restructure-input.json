@@ -1,0 +1,13 @@
+{
+  "groups": [
+    {
+      "id": "wire-mamba-modules",
+      "issues": [1132],
+      "requirements": "Wire the compiler's import resolver to the MAMBA_MODULES distributed slice / RuntimeSymbol registry. When a mamba script does `from cclab.log import get_logger`, the import resolver should: (1) call find_module() to search MAMBA_MODULES for a matching module, (2) look up the RuntimeSymbol entry for the imported name, (3) resolve the Python name to the FFI function pointer via the expose table or alias mapping, (4) emit correct JIT codegen to call the FFI function. Currently all imported names resolve to 0.0 (default float).",
+      "questions": [
+        "Where in the compiler pipeline should MAMBA_MODULES lookup happen — in the resolver (name resolution phase) or in the codegen (JIT emission phase)?",
+        "How should Python-name → FFI-name mapping work — via mamba.toml expose table or via aliases in the registry?"
+      ]
+    }
+  ]
+}

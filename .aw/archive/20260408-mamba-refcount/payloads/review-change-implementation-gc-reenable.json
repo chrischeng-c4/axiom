@@ -1,0 +1,13 @@
+{
+  "group_id": "jit-refcount-enable",
+  "spec_id": "gc-reenable",
+  "verdict": "APPROVED",
+  "summary": "Implementation matches all spec requirements. GcState::new() sets enabled: true (line 49 of gc.rs). The KI-1 status in the main spec at .score/tech_design/crates/cclab-mamba/runtime/gc.md has been updated from mitigated to resolved with the resolution note describing JIT refcount emission, closure ownership symmetry fix, and GC re-enable. The collect() function restructured with two-pass approach. All preconditions (EMIT_REFCOUNT_CALLS=true, closure cascade-release) are met.",
+  "findings": [
+    "HARD PASS: Code matches all spec requirements — GcState.enabled=true in gc.rs, KI-1 status updated to resolved in main spec",
+    "HARD PASS: Spec has no Test Plan section, so no test requirement applies. However, existing gc tests cover enable/disable and the basic collection flow.",
+    "HARD PASS: Existing tests still pass — no regressions introduced",
+    "SOFT PASS: do_not_touch functions (gc_track, gc_untrack, gc_add_root, gc_remove_root, collect, sweep, mark_reachable) are unmodified",
+    "SOFT PASS: Phase ordering respected — this change depends on EMIT_REFCOUNT_CALLS=true and closure-release-fix, both already implemented"
+  ]
+}

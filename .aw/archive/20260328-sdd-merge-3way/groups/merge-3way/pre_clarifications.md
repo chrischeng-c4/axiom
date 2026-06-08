@@ -1,0 +1,25 @@
+---
+change: sdd-merge-3way
+group: merge-3way
+date: 2026-03-27
+status: answered
+---
+
+# Pre-Clarifications
+
+### Q1: General
+- **Question**: When to snapshot the base spec?
+- **Answer**: At prepare_modify_spec() in spec_plan.rs — when the main spec is already being read for action:modify. Save a copy as {spec_id}.base.md alongside the working spec in groups/{group}/specs/. action:create specs don't need a base (no existing file). Cost: one extra fs::write, negligible.
+
+### Q2: General
+- **Question**: How to perform 3-way merge at merge time?
+- **Answer**: Use git merge-file in create_change_merge.rs. Three inputs: current main spec (ours), base snapshot .base.md (base), cleaned change spec (theirs). Write to temp files, invoke git merge-file, read result. Clean merge (exit 0) → write result to cclab/specs/. Conflicts (exit >0) → abort. No .base.md present (action:create or legacy) → fall back to current overwrite behavior.
+
+### Q3: General
+- **Question**: Conflict handling strategy?
+- **Answer**: Abort entire merge if any spec has conflicts — consistent with existing all-or-nothing validation semantics. Report which specs conflicted. User must manually resolve before retrying merge.
+
+### Q4: General
+- **Question**: What about .base.md files?
+- **Answer**: find_specs_to_merge() in helpers.rs should skip .base.md files — they are merge artifacts, not spec content. They get archived with the change directory but are not merged into cclab/specs/.
+

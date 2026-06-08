@@ -1,0 +1,1 @@
+feat(agent): add generic CRR cycle and ReviewAgent — Create-Review-Revise pattern with verdict routing, max revisions, and opinionated spec/code review #926 #924

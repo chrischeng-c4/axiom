@@ -1,0 +1,133 @@
+change_id: improve-quasar-maturity
+schema_version: '2.0'
+created_at: 2026-01-28T07:31:44.180378Z
+updated_at: 2026-01-28T17:25:25.272925Z
+phase: implemented
+iteration: 1
+last_action: validate-proposal
+session_id: null
+checksums:
+  specs/quasar-test-client.md:
+    hash: sha256:0dd9249e0d949646d72d799fecc336fb0bc2bf534e99a4574e7ac35e2e03a0b4
+    validated_at: 2026-01-28T17:25:25.271973Z
+  tasks.md:
+    hash: sha256:6fd93cb20f45565b6b51dcdc8105602aa1d70ea698a86b9cacf4116613ad35c7
+    validated_at: 2026-01-28T17:25:25.271784Z
+  proposal.md:
+    hash: sha256:6b29df1039c1d673d43f2b065a11abfd8ddd6fe0488438f4f3cd5e840980c8a8
+    validated_at: 2026-01-28T17:25:25.271466Z
+  specs/quasar-docs.md:
+    hash: sha256:94e36b8c0b9aeeac55c70dff593cdbd51e9d93008d5d41638d6c5caa2595f150
+    validated_at: 2026-01-28T17:25:25.272590Z
+  specs/quasar-test-expansion.md:
+    hash: sha256:1abd095cdac6e47a715f412c49a6866c51d1ba6a37e6efaf8114e8233f836138
+    validated_at: 2026-01-28T17:25:25.272433Z
+  specs/quasar-lifespan.md:
+    hash: sha256:76ede1778c13e45d302357999bd5c2667e5b5479579b49cac4ef94882b076be4
+    validated_at: 2026-01-28T17:25:25.272921Z
+  specs/quasar-maturity-upgrade.md:
+    hash: sha256:a9bb23d3b069caf7e86f865ba935818598472ef059cf79eff7647b7c63ae0c53
+    validated_at: 2026-01-28T17:25:25.272252Z
+  specs/quasar-di.md:
+    hash: sha256:51bc6c5fca36a56c7532f9e735c68d458866d66f9dd851c69ab628b7a2176848
+    validated_at: 2026-01-28T17:25:25.272753Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-28T07:33:23.454903Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T07:34:40.715297Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T07:34:48.661540Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T07:35:22.746862Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T07:35:26.962615Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T17:21:42.758584Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T17:25:25.271158Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

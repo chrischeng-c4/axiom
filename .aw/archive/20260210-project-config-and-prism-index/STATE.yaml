@@ -1,0 +1,14 @@
+change_id: project-config-and-prism-index
+schema_version: '2.0'
+created_at: 2026-02-10T06:08:46.090235Z
+updated_at: 2026-02-10T07:39:57.094039Z
+phase: archived
+iteration: 1
+last_action: review_approved
+session_id: null
+checksums: {}
+validations: []
+revision_counts:
+  spec: 1
+current_task_id: '1.1'
+telemetry: null

@@ -1,0 +1,30 @@
+{
+  "project_path": ".",
+  "change_id": "sdd-structured-issue",
+  "group_id": "structured-issue-format",
+  "spec_id": "sdd-structured-issue",
+  "files_changed": [
+    {
+      "path": "crates/sdd/src/services/issue_parser.rs",
+      "action": "create",
+      "description": "Issue section parser: is_structured_issue(), parse_structured_issue(), extract_issue_slug(), load_issue_body(), and artifact generators for requirements/pre_clarifications/post_clarifications/reference_context"
+    },
+    {
+      "path": "crates/sdd/src/services/mod.rs",
+      "action": "modify",
+      "description": "Register new issue_parser module"
+    },
+    {
+      "path": "crates/sdd/src/tools/init_change.rs",
+      "action": "modify",
+      "description": "Add try_structured_issue_skip() that detects structured issues via issue slug, parses sections, auto-generates group artifacts, and advances phase to PostClarificationsCreated"
+    }
+  ],
+  "test_results": {
+    "total": 39,
+    "passed": 39,
+    "failed": 0,
+    "test_commands": ["cargo test -p sdd -- issue_parser", "cargo test -p sdd -- init_change"]
+  },
+  "summary": "Structured issue format support: issue_parser.rs parses ## Problem/Requirements/Scope sections from .score/issues/ files; init_change.rs detects structured issues via issue:{slug} in description, auto-generates group artifacts, and skips to PostClarificationsCreated phase. Unstructured issues fall back to normal flow."
+}

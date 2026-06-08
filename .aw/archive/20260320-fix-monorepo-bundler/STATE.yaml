@@ -1,0 +1,64 @@
+change_id: fix-monorepo-bundler
+schema_version: '2.0'
+created_at: 2026-03-20T04:23:42.843999Z
+updated_at: 2026-03-20T07:53:51.616055Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: fix-monorepo-bundler-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 89170
+    timestamp: 2026-03-20T04:25:31.690117Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1103702
+    timestamp: 2026-03-20T04:58:56.984158Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1861368
+    timestamp: 2026-03-20T04:59:43.968610Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 962
+    title: 'jet-build: bundler resolver doesn''t walk up to monorepo root node_modules'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - monorepo-bundler-fixes
+  pre_clarifications:
+  - monorepo-bundler-fixes
+  change_spec: []
+  post_clarifications:
+  - monorepo-bundler-fixes
+  change_implementation: []

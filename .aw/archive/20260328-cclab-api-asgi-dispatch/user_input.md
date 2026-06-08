@@ -1,0 +1,1 @@
+Fix cclab.api.App ASGI __call__ to dispatch FastAPI Router endpoints — currently only app.get/post decorators work, include_router routes return 404

@@ -1,0 +1,15 @@
+{
+  "group_id": "stdlib-main-module",
+  "verdict": "APPROVED",
+  "summary": "Reference context correctly identifies runtime/module.md as the key spec. spec_plan creates main-module.md under stdlib/ with appropriate sections.",
+  "checklist_results": [
+    {"item": "All affected crates covered", "passed": true},
+    {"item": "Relevance scores reasonable", "passed": true},
+    {"item": "Key requirements accurate", "passed": true},
+    {"item": "No irrelevant specs", "passed": true},
+    {"item": "spec_plan main_spec_ref set", "passed": true},
+    {"item": "spec_plan sections reasonable", "passed": true},
+    {"item": "spec_plan paths include subfolder", "passed": true}
+  ],
+  "issues": []
+}

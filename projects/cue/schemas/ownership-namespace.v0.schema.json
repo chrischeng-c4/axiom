@@ -1,0 +1,327 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cclab.dev/cue/ownership-namespace/v0",
+  "title": "Cue Ownership Namespace v0",
+  "description": "Companion metadata for Cue generated-app ownership, quota, visibility, and hidden GitLab path derivation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "app_id",
+    "namespace",
+    "display_name",
+    "owner",
+    "platform_owner",
+    "emergency_contact",
+    "quota_policy",
+    "transfer_policy",
+    "visibility",
+    "orphan_state",
+    "role_assignments",
+    "quota_state",
+    "gitlab_mapping",
+    "audit"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "cue.ownership-namespace.v0"
+    },
+    "app_id": {
+      "$ref": "#/$defs/app_id"
+    },
+    "namespace": {
+      "enum": ["personal", "team", "cross_team", "platform"]
+    },
+    "display_name": {
+      "$ref": "#/$defs/non_empty_string"
+    },
+    "owner": {
+      "$ref": "#/$defs/owner"
+    },
+    "platform_owner": {
+      "$ref": "#/$defs/non_empty_string"
+    },
+    "emergency_contact": {
+      "$ref": "#/$defs/non_empty_string"
+    },
+    "quota_policy": {
+      "$ref": "#/$defs/non_empty_string"
+    },
+    "transfer_policy": {
+      "enum": ["owner_required", "manager_required", "platform_required"]
+    },
+    "visibility": {
+      "enum": [
+        "private_to_owner",
+        "team_visible",
+        "cross_team_visible",
+        "platform_visible"
+      ]
+    },
+    "orphan_state": {
+      "enum": ["healthy", "candidate", "disabled", "archived", "retired"]
+    },
+    "role_assignments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/role_assignment"
+      }
+    },
+    "quota_state": {
+      "$ref": "#/$defs/quota_state"
+    },
+    "gitlab_mapping": {
+      "$ref": "#/$defs/gitlab_mapping"
+    },
+    "audit": {
+      "$ref": "#/$defs/audit_metadata"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "namespace": {
+            "const": "personal"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "owner": {
+            "properties": {
+              "owner_user": {
+                "$ref": "#/$defs/non_empty_string"
+              }
+            }
+          },
+          "visibility": {
+            "const": "private_to_owner"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "namespace": {
+            "const": "team"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "owner": {
+            "properties": {
+              "owner_user": {
+                "$ref": "#/$defs/non_empty_string"
+              },
+              "owner_team": {
+                "$ref": "#/$defs/non_empty_string"
+              }
+            }
+          },
+          "visibility": {
+            "const": "team_visible"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "namespace": {
+            "const": "cross_team"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "owner": {
+            "properties": {
+              "owner_user": {
+                "$ref": "#/$defs/non_empty_string"
+              },
+              "owner_team": {
+                "$ref": "#/$defs/non_empty_string"
+              },
+              "data_owner": {
+                "$ref": "#/$defs/non_empty_string"
+              }
+            }
+          },
+          "visibility": {
+            "const": "cross_team_visible"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "namespace": {
+            "const": "platform"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "visibility": {
+            "const": "platform_visible"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1
+    },
+    "nullable_string": {
+      "type": ["string", "null"]
+    },
+    "app_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{2,62}$"
+    },
+    "owner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner_user", "owner_team", "data_owner"],
+      "properties": {
+        "owner_user": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "owner_team": {
+          "$ref": "#/$defs/nullable_string"
+        },
+        "data_owner": {
+          "$ref": "#/$defs/nullable_string"
+        }
+      }
+    },
+    "role_assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "principal_type", "principal", "source"],
+      "properties": {
+        "role": {
+          "enum": [
+            "creator",
+            "app_owner",
+            "editor",
+            "viewer",
+            "approver",
+            "data_owner",
+            "platform_admin",
+            "security",
+            "auditor",
+            "emergency_operator"
+          ]
+        },
+        "principal_type": {
+          "enum": ["user", "team", "group", "service_account"]
+        },
+        "principal": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "source": {
+          "enum": ["direct", "group", "iam", "platform"]
+        },
+        "expires_at": {
+          "$ref": "#/$defs/nullable_string"
+        }
+      }
+    },
+    "quota_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sandbox_apps_count",
+        "production_apps_count",
+        "active_exceptions"
+      ],
+      "properties": {
+        "sandbox_apps_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "production_apps_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "active_exceptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/quota_exception"
+          }
+        }
+      }
+    },
+    "quota_exception": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "reason", "approved_by", "expires_at"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "reason": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "approved_by": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    },
+    "gitlab_mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "root_group",
+        "group_path",
+        "project_path",
+        "full_path",
+        "user_visible"
+      ],
+      "properties": {
+        "root_group": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "group_path": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "project_path": {
+          "$ref": "#/$defs/app_id"
+        },
+        "full_path": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "user_visible": {
+          "const": false
+        }
+      }
+    },
+    "audit_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created_by", "created_at", "updated_at"],
+      "properties": {
+        "created_by": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "created_at": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "updated_at": {
+          "$ref": "#/$defs/non_empty_string"
+        }
+      }
+    }
+  }
+}

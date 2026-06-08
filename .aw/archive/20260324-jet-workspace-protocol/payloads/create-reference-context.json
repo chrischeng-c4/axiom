@@ -1,0 +1,21 @@
+{
+  "group_id": "jet-workspace-protocol",
+  "specs": [
+    {
+      "spec_path": "cclab/specs/crates/cclab-jet/pkg-manager-pnpm-parity.md",
+      "relevance": "high",
+      "rationale": "Directly defines workspace discovery, protocol resolution, lockfile integration, and catalog support which are explicitly requested in the pre-clarifications."
+    },
+    {
+      "spec_path": "cclab/specs/crates/cclab-jet/pkg-manager.md",
+      "relevance": "medium",
+      "rationale": "Defines core installation routines and lockfile usage, which the workspace logic builds on."
+    }
+  ],
+  "spec_plan": {
+    "sections": [
+      "overview",
+      "changes"
+    ]
+  }
+}

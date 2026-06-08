@@ -1,0 +1,31 @@
+{
+  "groups": [
+    {
+      "id": "agent-pyo3-bindings",
+      "issues": [927],
+      "requirements": "Create `crates/cclab-agent-pyo3/` — a new maturin-built crate exposing all layers of `cclab-agent` to Python under the module name `_agent` (Python import: `cclab_agent`).\n\n**Engine layer** (wrap with `Py{Name}` convention):\n- `PyClaudeProvider`, `PyOpenAIProvider`, `PyGeminiProvider`\n- `PyToolRegistry`, `PyToolExecutor` (Python callable → Rust Tool bridge)\n- `PyContextManager`\n- `complete_structured()` async binding\n- `PyMessage`, `PyRole`, `PyToolCall`, `PyTokenUsage`\n\n**Integrations layer**:\n- `PyGitHubIntegration`, `PyGitLabIntegration`, `PyJiraIntegration`\n\n**Agents layer**:\n- `PyRestructureAgent`, `PySpecAgent`, `PyCodeAgent`, `PyReviewAgent`\n- `PyCRRCycle`\n\n**Conventions**:\n- Wrapper types: `Py{OriginalName}`\n- Async methods: `pyo3_async_runtimes::tokio::future_into_py`\n- Python stubs: `__init__.py` + `__init__.pyi` via `cclab lens gen-stub`\n- Build: `maturin develop`; install in Conductor via `uv add --path /path/to/cclab-agent-pyo3`\n\n**Acceptance criteria**:\n- `from cclab_agent import ClaudeProvider, OpenAIProvider, GeminiProvider` works\n- `from cclab_agent import SpecAgent, ReviewAgent, CRRCycle` works\n- `from cclab_agent import GitLabIntegration` works\n- Full Python stubs with type hints are generated",
+      "questions": [
+        {
+          "topic": "parent-issues-readiness",
+          "question": "Are all dependent cclab-agent crates (engine, integrations, agents from parent #920) already implemented and stable enough to wrap, or does this change also need to implement some of the underlying Rust types first?"
+        },
+        {
+          "topic": "tool-executor-callable-api",
+          "question": "For `PyToolExecutor` (Python callable → Rust Tool bridge): should it accept an async callable `Callable[[str, dict], Awaitable[str]]`, a sync callable `Callable[[str, dict], str]`, or both? Is the signature `(tool_name: str, args: dict) -> str`?"
+        },
+        {
+          "topic": "complete-structured-return-type",
+          "question": "Should `complete_structured()` return a Python-native `dict` (deserialized from the JSON schema output), or a wrapped Rust type? How is the output schema passed in — as a JSON schema `dict`, a `type[T]` Python class, or a path string?"
+        },
+        {
+          "topic": "pyo3-crate-structure",
+          "question": "Should `cclab-agent-pyo3` follow the standard `pyo3_bindings/{mod.rs, types.rs, methods.rs}` layout from CLAUDE.md, or is a flat `src/lib.rs` structure acceptable given the large number of exposed types?"
+        },
+        {
+          "topic": "stub-generation-timing",
+          "question": "Should `cclab lens gen-stub` be run automatically as part of `build.rs` / post-build, or is it a manual step that the developer runs after `maturin develop`? Does the generated stub need to be checked into git?"
+        }
+      ]
+    }
+  ]
+}

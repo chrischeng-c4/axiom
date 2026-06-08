@@ -1,0 +1,32 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: mamba-runtime-core-p2
+  change_id: mamba-p2
+  source_file: mamba-p2/specs/mamba-runtime-core-p2.md
+  spec_id: mamba-runtime-core-p2
+spec:
+  title: Dict/List Unpacking Pipeline
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: parse
+      to: ast
+    - from: ast
+      to: hir
+    - from: hir
+      to: mir
+    - from: mir
+      to: rt
+    nodes:
+    - id: parse
+      label: 'Parser: detect ** or * in dict/list literal'
+    - id: ast
+      label: 'AST: DictUnpack / ListUnpack node'
+    - id: hir
+      label: 'HIR: lower to unpack representation'
+    - id: mir
+      label: 'MIR: emit dict_new+merge / list_new+extend'
+    - id: rt
+      label: 'Runtime: execute merge/extend operations'

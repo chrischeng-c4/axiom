@@ -1,0 +1,6 @@
+{
+  "spec_id": "sdd-impl-test-split-spec",
+  "group_id": "sdd-impl-test-split",
+  "section": "interaction",
+  "content": "```mermaid\nsequenceDiagram\n    participant M as Mainthread\n    participant A as Agent\n    participant R as Reviewer\n\n    M->>A: ImplementSpecCode prompt (code only)\n    A-->>M: code written\n    M->>M: cargo build --workspace\n    alt build fails\n        M-->>M: return {status: error, build_output}\n    else build passes\n        M->>A: ImplementSpecTests prompt (tests only)\n        A-->>M: tests written\n        M->>M: count #[test] in added diff lines\n        M->>M: compare vs spec Test Plan count\n        M->>A: WriteDiff prompt\n        A-->>M: sdd_artifact_create_change_implementation(diff, summary)\n        M->>R: ReviewSpec prompt (with hard-reject rule)\n        R->>R: read spec ## Test Plan\n        alt Test Plan present AND zero tests in diff\n            R-->>M: sdd_artifact_review_change_implementation(verdict=REJECTED)\n        else tests present or no Test Plan\n            R-->>M: sdd_artifact_review_change_implementation(verdict=APPROVED|REVIEWED)\n        end\n        M->>M: advance phase per verdict\n    end\n```"
+}

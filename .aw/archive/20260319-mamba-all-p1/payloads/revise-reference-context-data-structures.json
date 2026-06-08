@@ -1,0 +1,46 @@
+{
+  "group_id": "data-structures",
+  "specs": [
+    {
+      "path": "cclab-mamba/runtime/list-ops.md",
+      "relevance": "high",
+      "reason": "Directly covers list_ops.rs (cited in Q1 answer at lines 132-176): R4 (Subscript and Slicing Operations — mb_list_slice for list[start:stop:step], mb_list_getitem, negative index handling, out-of-range IndexError), R1 (Mutation Methods — append, extend, insert, remove, pop, clear, reverse, sort for regression coverage), R2 (Query Methods — count, index). This is the primary spec for Q1 list slicing implementation. Implementers need this spec contract to validate slice implementation against conformance tests."
+    },
+    {
+      "path": "cclab-mamba/runtime/dict-ops.md",
+      "relevance": "high",
+      "reason": "Directly covers dict_ops.rs (cited in Q2 answer at lines 320-352): R5 (Dict Merge for Unpacking — mb_dict_merge(target, source) merges key-value pairs with source overriding target on conflict, implementing {**d1, **d2} semantics for the | operator), R3 (Mutation Methods — update, pop, popitem, clear, setdefault for regression coverage), R4 (Subscript Operations — dict getitem, setitem, delitem). This is the primary runtime spec for Q2 dict merge via | operator. Implementers need this spec contract for merge semantics validation."
+    },
+    {
+      "path": "cclab-mamba/runtime/string-ops.md",
+      "relevance": "high",
+      "reason": "Directly covers string_ops.rs (cited in Q3 answer, dispatch table at lines 848-901): 39 implemented methods. R1 covers 23 core string methods (upper, lower, capitalize, title, swapcase, strip, lstrip, rstrip, find, rfind, count, startswith, endswith, replace, split, splitlines, join, center, ljust, rjust, zfill, maketrans, translate, expandtabs), R2 covers 6 predicate methods (isdigit, isalpha, isalnum, isspace, isupper, islower, istitle, isidentifier, isprintable, isnumeric, isdecimal, casefold). Q3 notes 9 missing methods including maketrans, translate, expandtabs which ARE in the spec but missing from implementation — revealing spec-vs-implementation gaps. This is the primary spec for Q3 conformance test failures."
+    },
+    {
+      "path": "cclab-mamba/all-mamba-p0.md",
+      "relevance": "high",
+      "reason": "R5 (Builtins Conformance) directly addresses Python 3.12 validation for sequence, numeric, and string operations: R5.1 (migrate 108 builtin tests to CPython 3.12 conformance), R5.2 (achieve 100% compatibility for numeric, sequence, string, and type functions). This directly governs the conformance test failures cited in Q3 for list, dict, and string operations. Correctly includes R5 only (NOT R3 BigInt which is unrelated to list slicing, dict merge, or string methods)."
+    },
+    {
+      "path": "cclab-mamba/parser/ast.md",
+      "relevance": "medium",
+      "reason": "Covers ast.rs (cited in Q1 at lines 298-303 for slice AST nodes): R1 (Expr enum including Slice variant — the AST node produced for list[start:stop:step] with 3-arg start/stop/step structure). The AST contract for slice representation is the interface between parser (expr.rs:350-369) which produces the Slice node and runtime (list_ops.rs:132-176) which consumes it. Without this spec, the AST representation for Q1 is unspecified."
+    },
+    {
+      "path": "cclab-mamba/runtime/builtins.md",
+      "relevance": "medium",
+      "reason": "Covers builtins.rs (cited in Q2 at lines 576-591 for mb_bitor which routes Dict|Dict to mb_dict_merge): R5 (Enhanced P1 Builtins — operator dispatch, including mb_bitor routing Dict|Dict to dict_ops::mb_dict_merge()), R6 (Symbol Registration — mb_bitor registered with correct MirExtern declaration in symbols.rs:200). The | operator dispatch for Dict types is part of the operator overloading infrastructure. Without this spec, the type-level dispatch for Q2 is unspecified."
+    },
+    {
+      "path": "cclab-mamba/types/type-checker.md",
+      "relevance": "medium",
+      "reason": "Covers check_expr.rs (cited in Q2 at lines 414-421 for Dict|Dict type checking: returns Ty::Any for non-integer | operands): R2 (Expression Type Inference — binary op type checking, including | operator handling for Dict types which returns Ty::Any to allow PEP 584 runtime semantics). The type checker behavior for | on Dict operands must be understood by implementers working on Q2 conformance."
+    },
+    {
+      "path": "cclab-mamba/README.md",
+      "relevance": "low",
+      "reason": "Authoritative spec index for cclab-mamba mapping source files to specifications. Shows list_ops.rs→runtime/list-ops.md, dict_ops.rs→runtime/dict-ops.md, string_ops.rs→runtime/string-ops.md mapping. Value is spec discovery only, not implementable requirements — consistent with class-features review rating of README as 'low'. Primary specs are directly included above."
+    }
+  ],
+  "notes": "REVISION SUMMARY: Addressed all seven review issues for data-structures group: (1) Added runtime/list-ops.md at HIGH — primary spec for Q1 (list slicing at list_ops.rs:132-176), (2) Added runtime/dict-ops.md at HIGH — primary spec for Q2 (dict merge at dict_ops.rs:320-352), (3) Added runtime/string-ops.md at HIGH — primary spec for Q3 (39 string methods at string_ops.rs:848-901), (4) Added parser/ast.md at MEDIUM — AST node contract for Q1 slice representation (ast.rs:298-303), (5) Added runtime/builtins.md at MEDIUM — Q2 operator dispatch routing (builtins.rs:576-591), (6) Added types/type-checker.md at MEDIUM — Q2 type checking for | operator on Dict (check_expr.rs:414-421), (7) Fixed all-mamba-p0.md key requirement from R3 (BigInt — unrelated) to R5 only (Builtins Conformance), (8) Removed pattern-matching.md entirely (no connection to Q1/Q2/Q3 data structure operations), (9) Downgraded README.md from MEDIUM to LOW (spec discovery only, not implementable). Direct mapping: Q1→list-ops.md R4 + parser/ast.md R1, Q2→dict-ops.md R5 + builtins.md R5-R6 + type-checker.md R2, Q3→string-ops.md R1-R2. Complete coverage of affected source files: ast.rs, expr.rs, list_ops.rs, check_expr.rs, builtins.rs, dict_ops.rs, symbols.rs, string_ops.rs."
+}

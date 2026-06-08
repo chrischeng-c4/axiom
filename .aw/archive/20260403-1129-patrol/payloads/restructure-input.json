@@ -1,0 +1,13 @@
+{
+  "groups": [
+    {
+      "id": "jit-refcount-audit",
+      "issues": [1129],
+      "requirements": "Complete the CPython 3.12 reference counting implementation in Mamba's JIT codegen. The retain/release infrastructure is already committed (immortal refcount, JIT wrappers, container retain on store, cascading release, release-before-overwrite, copy retain, return cleanup) but EMIT_REFCOUNT_CALLS flag is disabled due to heap-use-after-free. Remaining work: (1) Audit all mb_* runtime functions to classify return values as new reference (caller owns) or borrowed reference (caller must retain before use), (2) Add mb_retain calls for borrowed-reference returns so callers always get owned references, (3) Enable EMIT_REFCOUNT_CALLS = true, (4) Re-enable GC in gc.rs.",
+      "questions": [
+        "Should the ownership audit be exhaustive (all mb_* functions) or focused on the known borrowed-reference returns (mb_list_getitem, mb_dict_getitem, mb_getattr)?",
+        "Should enabling GC be part of this change or a separate follow-up issue?"
+      ]
+    }
+  ]
+}

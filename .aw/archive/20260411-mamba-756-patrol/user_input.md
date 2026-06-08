@@ -1,0 +1,1 @@
+Py3.12 conformance: Generator & iterator protocol #756 issue:enhancement-py3-12-conformance-generator-iterator-protocol

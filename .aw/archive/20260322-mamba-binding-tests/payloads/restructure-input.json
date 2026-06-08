@@ -1,0 +1,35 @@
+{
+  "groups": [
+    {
+      "id": "mamba-tests",
+      "issues": [1035],
+      "requirements": "Add comprehensive test coverage across two layers of the Mamba ecosystem, targeting 2,000+ total tests (from the current ~434) with 100% line and branch coverage.\n\n**Layer 1 — Mamba binding crates** (user input): cclab-pg-mamba, cclab-api-mamba, cclab-runtime-mamba, cclab-agent-mamba, cclab-fetch-mamba, cclab-log-mamba, cclab-mcp-mamba each currently have 0 tests. Every mb_* function exposed by each crate must have at least one unit test covering: (a) happy path with valid inputs, and (b) error case with invalid/boundary inputs. Additionally, fix the 3 ignored tests in cclab-mamba-registry so they pass.\n\n**Layer 2 — Mamba language runtime internals** (#1035): Fill critical per-module coverage gaps across the compiler and runtime stack.\n\nP0 — zero coverage (implement first):\n- `runtime/` (35,483 LOC): NaN-boxed MbValue round-trips for all tag types (INT, BOOL, NONE, FUNC, PTR, Float, Str, List, Dict, Set, Tuple, Bytes, Native), every builtin function (mb_print, mb_len, mb_int, mb_str, mb_float, mb_bool, mb_abs, mb_pow, mb_hash, mb_type, mb_isinstance, mb_getattr/setattr/delattr, mb_iter/next, mb_map/filter/zip/enumerate, mb_range, mb_sorted/reversed), MRO + class system (C3, __init__, super, descriptors, __slots__), GC cycle detection, module import/cache/circular, every collection method\n- `lower/` (5,668 LOC): every AST→HIR lowering rule (funcdef, classdef, decorators, async/await, generators, comprehensions, match/case, try/except/finally, with, import, augmented assign, walrus)\n- `resolve/` (744 LOC): scope chain (LEGB), nonlocal/global declarations, class-scope quirks, closure capture, comprehension scope (PEP 709), star import\n- `hir/` (494 LOC): HIR node construction and traversal\n- `driver/` (1,236 LOC): module graph cycle detection and topological sort, config merge (CLI > TOML > defaults), CompilerSession lifecycle\n- `stdlib/` (15,921 LOC): every exported function in every module — priority: json, os, re, datetime, collections, pathlib, io, csv, hashlib, asyncio, math, sys, struct, random, itertools, functools\n\nP1 — partial coverage (extend):\n- `parser/` (5,829 LOC): every grammar production, error recovery, deeply nested/unicode edge cases\n- `types/` (4,178 LOC): every type inference rule, generic instantiation, union narrowing, protocol structural matching\n- `codegen/` (3,303 LOC): every MIR→Cranelift instruction, register allocation edge cases, NaN-boxing correctness per value type\n- `lexer/` (1,469 LOC): every token type, INDENT/DEDENT mixed tabs/spaces, f-string edge cases, unicode, error recovery\n\n**Tooling**: Use `cargo-llvm-cov` for line/branch coverage reporting. CI gate: no PR merges below 95% line coverage (ramp to 100%).\n\n**Success metrics**: total tests ≥ 2,000; runtime direct tests ≥ 500; lower ≥ 100; resolve ≥ 50; stdlib ≥ 300; parser ≥ 280; types ≥ 100; codegen ≥ 85; lexer ≥ 40; hir+driver ≥ 60; XFAIL count = 0.",
+      "questions": [
+        {
+          "topic": "scope-split",
+          "question": "The user input focuses on binding crates (cclab-pg-mamba, cclab-api-mamba, etc.) while #1035 focuses on the language runtime internals (lower, resolve, runtime, stdlib). Should this single change implement both layers together, or should they be split into separate changes/PRs? The binding-crate tests likely need a different harness (mock Mamba interpreter or integration-style) compared to the pure Rust unit tests for the runtime."
+        },
+        {
+          "topic": "binding-crates-mb-functions",
+          "question": "For the binding crates (cclab-pg-mamba, etc.), what is the shape of an `mb_*` function? Are they Mamba FFI entry points registered via a macro or trait (e.g., `#[mb_function]`, `MbRegistry::register`)? Is there an existing registry or enumeration of all exposed functions that can be used to derive test scaffolding, or must each crate be inspected manually?"
+        },
+        {
+          "topic": "registry-ignored-tests",
+          "question": "What are the 3 ignored tests in cclab-mamba-registry and why are they currently `#[ignore]`d? Are they blocked by unimplemented runtime functionality, flaky infrastructure, or just never completed? Knowing the root cause determines whether they can be un-ignored as-is or require upstream fixes first."
+        },
+        {
+          "topic": "runtime-test-placement",
+          "question": "For the runtime/ module (35,483 LOC), should new tests be added as inline `#[cfg(test)]` modules co-located with each source file, placed in a dedicated `crates/cclab-mamba/tests/` directory, or both? Where are the existing 49 unit tests located — inline or in a test directory?"
+        },
+        {
+          "topic": "stdlib-scope",
+          "question": "The stdlib target is 300+ tests across many modules. Should this change implement tests for ALL stdlib modules, or focus only on the priority list (json, os, re, datetime, collections, pathlib, io, csv, hashlib, asyncio, math, sys, struct, random, itertools, functools)? Are any stdlib modules blocked by incomplete Mamba runtime support (e.g., asyncio requires async runtime completion)?"
+        },
+        {
+          "topic": "coverage-tooling",
+          "question": "Is `cargo-llvm-cov` already installed and configured in the CI pipeline (GitHub Actions / Makefile / nextest config), or does this change also need to set up the coverage infrastructure and add the CI gate? Is there an existing `coverage` Makefile target or CI job to extend?"
+        }
+      ]
+    }
+  ]
+}

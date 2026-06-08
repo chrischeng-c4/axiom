@@ -1,0 +1,54 @@
+{
+  "group_id": "wire-mamba-modules",
+  "specs": [
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/mamba-crate-wiring-and-schema-binding.md",
+      "relevance": "high",
+      "usage_notes": "Primary spec for the MAMBA_MODULES integration. R2 (Native Module Registration) describes register_external_modules() and MAMBA_MODULES wiring into the Cranelift JIT symbol table. R3 (Expose Filtering) describes the ImportError check in check_native_imports(). This spec must be updated to describe the resolver-time MAMBA_MODULES lookup added by this change — R2 currently covers only codegen-time JIT injection, not resolve-time symbol definition."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/resolve/name-resolution.md",
+      "relevance": "high",
+      "usage_notes": "The resolver (resolve/pass.rs) is where the fix goes per pre-clarification Q1. Currently the resolver's Stmt::Import arm is a no-op (`Stmt::Import { .. } => {}`), meaning imported names from native modules are never defined in the symbol table, leaving them unresolved. This spec needs a new requirement describing how import statements query find_module() / MAMBA_MODULES, collect RuntimeSymbol entries matching the python_name, and define them as SymbolKind::Function entries in the symbol table. The existing VarKind/SymbolTable infrastructure is the injection point for native symbol bindings."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/runtime/symbols.md",
+      "relevance": "high",
+      "usage_notes": "Describes the RuntimeSymbol struct in cclab-mamba-registry. The bug root cause (per pre-clarification Q2) is that RuntimeSymbol.name contains the FFI name (e.g. 'mb_log_get_logger') rather than the Python-visible name (e.g. 'get_logger'). The spec docs already say 'Python-visible name' but the actual rt_sym!() usages set FFI names. This spec must be updated to describe the python_name field that needs to be added to RuntimeSymbol, and to clarify that the existing `name` field is the FFI symbol name used for JIT symbol table injection. The rt_sym!() macro and all binding crates must be updated to provide python_name values for resolver lookup."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/runtime/module.md",
+      "relevance": "medium",
+      "usage_notes": "Describes the module import system: R1 (module path resolution), R2 (sys.modules caching), R4 (import/from-import syntax support). The module system handles file-based imports, while the MAMBA_MODULES registry handles native Rust module imports. Understanding the existing import flow (mb_import extern call in hir_to_mir.rs:1679-1701) is needed to implement the native module import path correctly — native module imports must short-circuit before the file-based path and resolve directly to RuntimeSymbol func_ptrs at the resolve phase."
+    },
+    {
+      "file_path": "cclab/specs/crates/cclab-mamba/driver/compiler-driver.md",
+      "relevance": "medium",
+      "usage_notes": "Describes the compilation pipeline phases. R1 (Full pipeline orchestration) shows Phase 4 (Name resolution) feeds Resolved AST to Phase 5 (Type checking) and onward to Phase 8 (Codegen). The fix must propagate the native symbol FFI-name mapping from the resolver output (ResolveResult or SymbolTable) through to the HIR-to-MIR lowerer (lower_hir_to_mir_with_symbols) so that builtin_syms includes native module function names alongside the existing Python builtin → mb_* mappings."
+    }
+  ],
+  "context_summary": "Issue #1132: `from cclab.log import get_logger` resolves to 0.0 (the default float) because resolve/pass.rs completely ignores Stmt::Import (line 251: `Stmt::Import { .. } => {}`). The infrastructure exists on all sides — cclab-mamba-registry provides MAMBA_MODULES/RuntimeSymbol/find_module(), binding crates register symbols via rt_sym!(), and register_external_modules() injects them into the JIT — but the resolver never calls find_module() to define imported names in the symbol table. The fix requires: (1) adding python_name to RuntimeSymbol so the resolver can match 'get_logger' to 'mb_log_get_logger', (2) processing Stmt::Import in the resolver to query MAMBA_MODULES and define symbols for imported names, and (3) propagating the python→FFI name mapping from the symbol table into lower_hir_to_mir_with_symbols so native calls emit CallExtern with the correct FFI name.",
+  "spec_plan": [
+    {
+      "spec_id": "mamba-crate-wiring-r2-resolver",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/mamba-crate-wiring-and-schema-binding.md",
+      "source": "cclab/specs/crates/cclab-mamba/mamba-crate-wiring-and-schema-binding.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "name-resolution-native-imports",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/resolve/name-resolution.md",
+      "source": "cclab/specs/crates/cclab-mamba/resolve/name-resolution.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "runtime-symbols-python-name",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/symbols.md",
+      "source": "cclab/specs/crates/cclab-mamba/runtime/symbols.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

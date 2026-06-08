@@ -1,0 +1,9 @@
+{
+  "spec_id": "jit-memory",
+  "group_id": "jit-memory",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes", "test-plan"],
+  "main_spec_ref": "crates/cclab-mamba/codegen/jit-memory.md",
+  "merge_strategy": "new",
+  "content": "New module `jit_memory.rs` implementing `JitMemory` — a platform-aware executable memory loader for Cranelift-emitted object files. Replaces cranelift-jit's built-in memory management which causes SIGBUS (EXC_BAD_ACCESS code=257 / PAC failure) on macOS aarch64 under concurrent JIT compilation.\n\n`JitMemory` takes in-memory Mach-O (macOS) or ELF (Linux) object bytes produced by `ObjectModule::finish().emit()`, parses them with the `object` crate to extract `.text` and `.data` sections, allocates executable pages using platform-appropriate APIs, resolves external `mb_*` symbol relocations, and returns a callable function pointer to the entry symbol.\n\nPlatform memory strategies:\n- **macOS aarch64**: `mmap(MAP_JIT)` + `pthread_jit_write_protect_np(false)` to write, then `pthread_jit_write_protect_np(true)` to execute. No `mprotect` needed — MAP_JIT pages are always RX when JIT-write-protect is on.\n- **Linux / other**: `mmap(PROT_READ | PROT_WRITE)` → copy code → `mprotect(PROT_READ | PROT_EXEC)` to make executable.\n\nEach compilation allocates its own isolated mmap region — no shared mutable state between threads. This eliminates the need for `JIT_LOCK` serialization.\n\nFile: `crates/cclab-mamba/src/codegen/cranelift/jit_memory.rs`\nIssue: #1114"
+}

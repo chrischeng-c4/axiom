@@ -1,0 +1,416 @@
+// SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+// CODEGEN-BEGIN
+/// Import/Export detection using Tree-sitter.
+///
+/// Also provides `apply_alias` — a lightweight pre-processor that substitutes
+/// module path aliases (e.g. `@/components/Foo` → `./src/components/Foo`)
+/// before the specifier is handed to the Node.js resolver.  This mirrors
+/// what Vite does: alias resolution happens in the module graph construction
+/// step, before any `node_modules` lookup.
+use anyhow::Result;
+use tree_sitter::{Node, Parser};
+
+/// Import/export information extracted from a module
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+#[derive(Debug, Clone)]
+pub struct ModuleImports {
+    pub static_imports: Vec<ImportDeclaration>,
+    pub dynamic_imports: Vec<String>,
+    pub exports: Vec<ExportDeclaration>,
+}
+
+/// Static import declaration
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+#[derive(Debug, Clone)]
+pub struct ImportDeclaration {
+    pub source: String,
+    pub kind: ImportKind,
+}
+
+/// Kind of import
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportKind {
+    Default,
+    Named,
+    Namespace,
+    SideEffect,
+}
+
+/// Export declaration
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+#[derive(Debug, Clone)]
+pub struct ExportDeclaration {
+    pub kind: ExportKind,
+    pub source: Option<String>,
+}
+
+/// Kind of export
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExportKind {
+    Named,
+    Default,
+    All,
+}
+
+/// Extract imports from JavaScript/TypeScript source code
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+pub fn extract_imports(source: &str, is_typescript: bool) -> Result<ModuleImports> {
+    let mut parser = Parser::new();
+
+    let language = if is_typescript {
+        tree_sitter_typescript::LANGUAGE_TSX.into()
+    } else {
+        tree_sitter_javascript::LANGUAGE.into()
+    };
+
+    parser.set_language(&language)?;
+
+    let tree = parser
+        .parse(source, None)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse source"))?;
+
+    let root = tree.root_node();
+
+    let mut imports = ModuleImports {
+        static_imports: Vec::new(),
+        dynamic_imports: Vec::new(),
+        exports: Vec::new(),
+    };
+
+    extract_from_node(source, &root, &mut imports);
+
+    Ok(imports)
+}
+
+/// Recursively extract imports/exports from AST node
+fn extract_from_node(source: &str, node: &Node, imports: &mut ModuleImports) {
+    match node.kind() {
+        "import_statement" => {
+            if let Some(import_decl) = parse_import_statement(source, node) {
+                imports.static_imports.push(import_decl);
+            }
+        }
+
+        "call_expression" => {
+            if is_dynamic_import(node) {
+                if let Some(specifier) = extract_dynamic_import(source, node) {
+                    imports.dynamic_imports.push(specifier);
+                }
+            } else if is_require_call(source, node) {
+                if let Some(specifier) = extract_require_specifier(source, node) {
+                    imports.static_imports.push(ImportDeclaration {
+                        source: specifier,
+                        kind: ImportKind::Default,
+                    });
+                }
+            }
+        }
+
+        "export_statement" => {
+            if let Some(export_decl) = parse_export_statement(source, node) {
+                // Re-exports with a source need to be tracked as static imports too
+                if let Some(ref src) = export_decl.source {
+                    imports.static_imports.push(ImportDeclaration {
+                        source: src.clone(),
+                        kind: ImportKind::Named,
+                    });
+                }
+                imports.exports.push(export_decl);
+            }
+        }
+
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        extract_from_node(source, &child, imports);
+    }
+}
+
+fn parse_import_statement(source: &str, node: &Node) -> Option<ImportDeclaration> {
+    let source_node = find_child_by_kind(node, "string")?;
+    let source_text = node_text(source, &source_node);
+    let import_source = strip_quotes(&source_text);
+
+    let kind = determine_import_kind(node);
+
+    Some(ImportDeclaration {
+        source: import_source,
+        kind,
+    })
+}
+
+fn determine_import_kind(node: &Node) -> ImportKind {
+    if let Some(import_clause) = find_child_by_kind(node, "import_clause") {
+        if find_child_by_kind(&import_clause, "identifier").is_some() {
+            return ImportKind::Default;
+        }
+        if find_child_by_kind(&import_clause, "namespace_import").is_some() {
+            return ImportKind::Namespace;
+        }
+        return ImportKind::Named;
+    }
+    ImportKind::SideEffect
+}
+
+fn is_dynamic_import(node: &Node) -> bool {
+    if let Some(function) = find_child_by_kind(node, "import") {
+        return function.kind() == "import";
+    }
+    false
+}
+
+fn extract_dynamic_import(source: &str, node: &Node) -> Option<String> {
+    let args = find_child_by_kind(node, "arguments")?;
+    let string_node = find_child_by_kind(&args, "string")?;
+    let source_text = node_text(source, &string_node);
+    Some(strip_quotes(&source_text))
+}
+
+fn is_require_call(source: &str, node: &Node) -> bool {
+    let mut cursor = node.walk();
+    let children: Vec<_> = node.children(&mut cursor).collect();
+
+    if let Some(function) = children.first() {
+        if function.kind() == "identifier" {
+            let function_name = node_text(source, function);
+            return function_name == "require";
+        }
+    }
+    false
+}
+
+fn extract_require_specifier(source: &str, node: &Node) -> Option<String> {
+    let args = find_child_by_kind(node, "arguments")?;
+
+    let mut cursor = args.walk();
+    let children: Vec<_> = args.children(&mut cursor).collect();
+
+    for child in children {
+        if child.kind() == "string" {
+            let source_text = node_text(source, &child);
+            let specifier = strip_quotes(&source_text);
+
+            if specifier.contains(".development.") || specifier.contains("-development.") {
+                tracing::debug!("Skipping development build: {}", specifier);
+                return None;
+            }
+
+            return Some(specifier);
+        }
+    }
+
+    None
+}
+
+fn parse_export_statement(source: &str, node: &Node) -> Option<ExportDeclaration> {
+    // Check for star re-export: export * from "./foo"
+    if find_child_by_kind(node, "*").is_some() {
+        let source_node = find_child_by_kind(node, "string");
+        let source_val = source_node.map(|n| strip_quotes(&node_text(source, &n)));
+        return Some(ExportDeclaration {
+            kind: ExportKind::All,
+            source: source_val,
+        });
+    }
+
+    // Named re-export: export { X } from "./X" or local export { X }
+    if find_child_by_kind(node, "export_clause").is_some() {
+        let source_node = find_child_by_kind(node, "string");
+        let source_val = source_node.map(|n| strip_quotes(&node_text(source, &n)));
+        return Some(ExportDeclaration {
+            kind: ExportKind::Named,
+            source: source_val,
+        });
+    }
+
+    if node_text(source, node).contains("export default") {
+        return Some(ExportDeclaration {
+            kind: ExportKind::Default,
+            source: None,
+        });
+    }
+
+    Some(ExportDeclaration {
+        kind: ExportKind::Named,
+        source: None,
+    })
+}
+
+fn find_child_by_kind<'a>(node: &'a Node, kind: &str) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    let children: Vec<_> = node.children(&mut cursor).collect();
+    children.into_iter().find(|child| child.kind() == kind)
+}
+
+fn node_text(source: &str, node: &Node) -> String {
+    source[node.byte_range()].to_string()
+}
+
+fn strip_quotes(s: &str) -> String {
+    s.trim_matches(|c| c == '"' || c == '\'' || c == '`')
+        .to_string()
+}
+
+// ─── Alias resolution helper ─────────────────────────────────────────────────
+
+/// Apply module path alias mappings to a specifier string.
+///
+/// Called during module graph construction (before the Node.js resolver) so
+/// that alias-based imports like `"@/components/Foo"` are normalised to
+/// `"./src/components/Foo"` before any `node_modules` lookup.
+///
+/// `aliases` is a slice of `(prefix, replacement_path_str)` pairs sorted by
+/// descending prefix length so longer prefixes win.  For example:
+///
+/// ```text
+/// [("@/", "./src/")]
+/// ```
+///
+/// Given specifier `"@/components/Foo"`, returns `"./src/components/Foo"`.
+/// If no prefix matches the specifier is returned unchanged.
+/// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+pub fn apply_alias(specifier: &str, aliases: &[(String, String)]) -> String {
+    for (prefix, replacement) in aliases {
+        if specifier.starts_with(prefix.as_str()) {
+            let rest = &specifier[prefix.len()..];
+            return format!("{}{}", replacement, rest);
+        }
+    }
+    specifier.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_static_imports() {
+        let source = r#"
+            import React from 'react';
+            import { useState } from 'react';
+            import * as utils from './utils';
+            import './styles.css';
+        "#;
+
+        let imports = extract_imports(source, false).unwrap();
+
+        assert_eq!(imports.static_imports.len(), 4);
+        assert_eq!(imports.static_imports[0].source, "react");
+        assert_eq!(imports.static_imports[0].kind, ImportKind::Default);
+        assert_eq!(imports.static_imports[1].source, "react");
+        assert_eq!(imports.static_imports[1].kind, ImportKind::Named);
+        assert_eq!(imports.static_imports[2].source, "./utils");
+        assert_eq!(imports.static_imports[2].kind, ImportKind::Namespace);
+        assert_eq!(imports.static_imports[3].source, "./styles.css");
+        assert_eq!(imports.static_imports[3].kind, ImportKind::SideEffect);
+    }
+
+    #[test]
+    fn test_extract_dynamic_imports() {
+        let source = r#"
+            const module = import('./dynamic-module');
+            async function load() {
+                const mod = await import('./lazy-module');
+            }
+        "#;
+
+        let imports = extract_imports(source, false).unwrap();
+
+        assert_eq!(imports.dynamic_imports.len(), 2);
+        assert_eq!(imports.dynamic_imports[0], "./dynamic-module");
+        assert_eq!(imports.dynamic_imports[1], "./lazy-module");
+    }
+
+    #[test]
+    fn test_extract_typescript_imports() {
+        let source = r#"
+            import type { User } from './types';
+            import React from 'react';
+        "#;
+
+        let imports = extract_imports(source, true).unwrap();
+
+        assert!(imports.static_imports.len() >= 1);
+        assert!(imports.static_imports.iter().any(|i| i.source == "react"));
+    }
+
+    #[test]
+    fn test_extract_exports() {
+        let source = r#"
+            export const foo = 1;
+            export default function bar() {}
+            export * from './other';
+        "#;
+
+        let imports = extract_imports(source, false).unwrap();
+
+        assert_eq!(imports.exports.len(), 3);
+    }
+
+    // ─── Alias integration tests ──────────────────────────────────────────────
+
+    /// REQ-JET-05/REQ-JET-07: apply_alias correctly maps aliased specifiers to
+    /// their target paths — the same function used in both dev (JIT) and prod
+    /// (bundler) module graph construction.
+    #[test]
+    fn alias_works_in_prod_build() {
+        let aliases = vec![("@/".to_string(), "./src/".to_string())];
+
+        // Aliased import resolves correctly
+        assert_eq!(
+            apply_alias("@/components/Foo", &aliases),
+            "./src/components/Foo"
+        );
+        assert_eq!(
+            apply_alias("@/utils/helpers", &aliases),
+            "./src/utils/helpers"
+        );
+
+        // Non-aliased specifiers are returned unchanged
+        assert_eq!(apply_alias("react", &aliases), "react");
+        assert_eq!(apply_alias("./local-module", &aliases), "./local-module");
+        assert_eq!(
+            apply_alias("../parent-module", &aliases),
+            "../parent-module"
+        );
+    }
+
+    /// REQ-JET-06: longest alias prefix wins when multiple entries are defined.
+    #[test]
+    fn alias_longest_prefix_wins() {
+        let aliases = vec![
+            // Sorted longest-first (as AliasResolver produces)
+            ("@/components/".to_string(), "./src/ui/".to_string()),
+            ("@/".to_string(), "./src/".to_string()),
+        ];
+
+        // More specific prefix wins
+        assert_eq!(
+            apply_alias("@/components/Button", &aliases),
+            "./src/ui/Button"
+        );
+
+        // Less specific prefix used when no longer match
+        assert_eq!(
+            apply_alias("@/hooks/useData", &aliases),
+            "./src/hooks/useData"
+        );
+    }
+
+    /// REQ-JET-07: apply_alias is deterministic across calls (prod == dev).
+    #[test]
+    fn alias_resolution_is_deterministic() {
+        let aliases = vec![("@/".to_string(), "./src/".to_string())];
+        let specifier = "@/pages/Home";
+
+        // Calling apply_alias multiple times always yields the same result
+        let result_1 = apply_alias(specifier, &aliases);
+        let result_2 = apply_alias(specifier, &aliases);
+        assert_eq!(result_1, result_2);
+    }
+}
+// CODEGEN-END

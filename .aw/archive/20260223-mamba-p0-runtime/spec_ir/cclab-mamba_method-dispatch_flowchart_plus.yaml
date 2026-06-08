@@ -1,0 +1,67 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: method-dispatch
+  change_id: mamba-p0-runtime
+  source_file: mamba-p0-runtime/specs/cclab-mamba/method-dispatch.md
+  spec_group: cclab-mamba
+  spec_id: method-dispatch
+spec:
+  title: Dispatch Flow
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: s
+      to: t
+    - from: t
+      label: prim
+      to: p
+    - from: t
+      label: PTR
+      to: d
+    - from: p
+      to: r
+    - from: d
+      to: m
+    - from: m
+      label: builtin
+      to: b
+    - from: m
+      label: Instance
+      to: i
+    - from: m
+      label: other
+      to: e
+    - from: b
+      to: r
+    - from: i
+      to: r
+    nodes:
+    - id: s
+      label: mb_call_method
+      shape: stadium
+    - id: t
+      label: Check tag
+      shape: diamond
+    - id: p
+      label: Primitive dispatch
+      shape: rectangle
+    - id: d
+      label: Deref ObjData
+      shape: rectangle
+    - id: m
+      label: Match variant
+      shape: diamond
+    - id: b
+      label: Builtin table
+      shape: rectangle
+    - id: i
+      label: MRO fallback
+      shape: rectangle
+    - id: e
+      label: AttributeError
+      shape: stadium
+    - id: r
+      label: Return
+      shape: stadium

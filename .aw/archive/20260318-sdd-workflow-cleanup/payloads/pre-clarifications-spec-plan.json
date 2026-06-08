@@ -1,0 +1,14 @@
+{
+  "change_id": "sdd-workflow-cleanup",
+  "group_id": "spec-plan",
+  "answers": [
+    {
+      "question": "Should the agent be allowed to override the Spec Plan manually during the analyze step?",
+      "answer": "Yes. The spec plan from reference_context is the default, but the agent can override main_spec_ref and merge_strategy during analyze if it finds the plan is wrong. The artifact CLI should accept these as parameters and update frontmatter."
+    },
+    {
+      "question": "For action: modify, if the main_spec_ref file does not exist, should it fail or fall back to create_new?",
+      "answer": "Fall back to create_new with a warning log. The spec might have been renamed or moved."
+    }
+  ]
+}

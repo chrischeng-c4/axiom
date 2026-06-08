@@ -1,0 +1,73 @@
+change_id: reference-context-agent
+schema_version: '2.0'
+created_at: 2026-03-18T08:56:05.648840Z
+updated_at: 2026-03-18T09:17:32.404894Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:reference-context-agent: 1
+current_task_id: reference-context-agent-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 190057
+    timestamp: 2026-03-18T09:02:33.653989Z
+  - step: analyze_spec_reference-context-agent-spec
+    sdd_version: 0.3.41
+    model: gemini-3.1-pro-preview
+    tokens_in: 558982
+    tokens_out: 1947
+    cost_usd: null
+    duration_ms: 175703
+    timestamp: 2026-03-18T09:07:22.393275Z
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 724555
+    timestamp: 2026-03-18T09:08:13.348664Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 463413
+    timestamp: 2026-03-18T09:16:18.348523Z
+  total_cost_usd: 0.0
+  total_tokens_in: 558982
+  total_tokens_out: 1947
+dag:
+  issues:
+  - number: 928
+    title: 'feat(agent): Add ReferenceContextAgent — spec exploration with CRR'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - reference-context-agent
+  change_implementation: []
+  change_spec: []
+  post_clarifications:
+  - reference-context-agent
+  reference_context:
+  - reference-context-agent

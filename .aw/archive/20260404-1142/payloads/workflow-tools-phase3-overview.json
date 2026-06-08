@@ -1,0 +1,9 @@
+{
+  "spec_id": "workflow-tools-phase3",
+  "group_id": "check-alignment-phase3",
+  "section": "overview",
+  "content": "Extend workflow tool interfaces with alignment validation integration. Two changes to the OpenRPC definitions in `workflow-tools.md`:\n\n1. **`sdd_run_change` response extension**: Add `alignment_warnings` field (array of Violation objects or null) to the result schema. Populated for alignment-eligible phases (`ChangeSpecCreated`, `ChangeSpecReviewed`, `ChangeImplementationCreated`, `ChangeImplementationReviewed`); null for all other phases.\n\n2. **Review tool prompt injection**: `sdd_workflow_review_change_implementation` and `sdd_workflow_review_change_spec` inject an `## Alignment Report` section into the review prompt. Not a schema change — behavioral change documented via `x-alignment-injection` extension field.\n\n**Scope**: Interface-level changes only. Implementation logic (how violations are collected, error isolation) is specified in `check-alignment-phase3`. This spec updates the OpenRPC contracts to reflect the new response shape and behavioral extension.\n\n| Tool | Change | Schema impact |\n|------|--------|---------------|\n| `sdd_run_change` | Add `alignment_warnings` to result | New optional field in result schema |\n| `sdd_workflow_review_change_implementation` | Inject alignment report into prompt | Behavioral — `x-alignment-injection` extension |\n| `sdd_workflow_review_change_spec` | Inject alignment report into prompt | Behavioral — `x-alignment-injection` extension |",
+  "fill_sections": ["overview", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+  "merge_strategy": "new"
+}

@@ -1,0 +1,122 @@
+{
+  "change_id": "sdd-codegen-completion",
+  "group_id": "frontend-codegen",
+  "artifact_type": "reference_context",
+  "specs": [
+    {
+      "spec_id": "codegen-system",
+      "spec_path": "cclab-sdd/generate/codegen-system.md",
+      "group": "code-generation",
+      "relevance": "high",
+      "key_requirements": "SpecIRGenerator trait definition and routing, Pluggable generators for multiple frameworks, Code generation system architecture, Support for wireframe/component/design-token section types"
+    },
+    {
+      "spec_id": "generator-react",
+      "spec_path": "cclab-sdd/generate/generator-react.md",
+      "group": "code-generation",
+      "relevance": "high",
+      "key_requirements": "WireframeSpec input schema (name, component_type, props, layout), JSX rendering for node kinds (text, button, input, list, semantic HTML), TypeScript props interface generation, Barrel export file generation, Template fallback mechanism"
+    },
+    {
+      "spec_id": "spec-ir-schema",
+      "spec_path": "cclab-sdd/generate/spec-ir-schema.md",
+      "group": "code-generation",
+      "relevance": "high",
+      "key_requirements": "SpecIR YAML manifest schema with Kubernetes-style envelope (apiVersion, kind, metadata, spec), Kind enum definition (Api, FlowchartPlus, SequencePlus, ClassPlus, ErdPlus, RequirementPlus), SpecMetadata contract, Strict serialization validation"
+    },
+    {
+      "spec_id": "spec-ir-contract",
+      "spec_path": "cclab-sdd/generate/spec-ir-contract.md",
+      "group": "code-generation",
+      "relevance": "high",
+      "key_requirements": "SpecIR enum type definition (Api, Wireframe, Component, DesignToken, Deploy variants), SpecMetadata structure for routing, From trait implementations for type conversion"
+    },
+    {
+      "spec_id": "code-generator-contract",
+      "spec_path": "cclab-sdd/generate/code-generator-contract.md",
+      "group": "code-generation",
+      "relevance": "high",
+      "key_requirements": "Code generator contract and responsibilities, Spec input to framework-specific output mapping, Inference rules for semantic interpretation, Generator composition patterns"
+    },
+    {
+      "spec_id": "template-engine",
+      "spec_path": "cclab-sdd/generate/template-engine.md",
+      "group": "code-generation",
+      "relevance": "high",
+      "key_requirements": "Tera template engine integration, Template directory structure (react/, component/, design-token/), Fallback to inline string generation, Template discovery and routing"
+    },
+    {
+      "spec_id": "spec-validator",
+      "spec_path": "cclab-sdd/generate/spec-validator.md",
+      "group": "code-generation",
+      "relevance": "high",
+      "key_requirements": "Spec validation framework for all section types, Validator logic and error reporting, Completeness checks for wireframe/component/design-token inputs"
+    },
+    {
+      "spec_id": "architecture",
+      "spec_path": "cclab-sdd/generate/architecture.md",
+      "group": "code-generation",
+      "relevance": "medium",
+      "key_requirements": "Generate subsystem architecture, Generation pipeline and data flow, Code generation framework overview, Section type routing"
+    },
+    {
+      "spec_id": "sdd-readme",
+      "spec_path": "cclab-sdd/README.md",
+      "group": "sdd-framework",
+      "relevance": "low",
+      "key_requirements": "SDD phase flow context, Reference context phase placement in workflow"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "frontend-codegen-main",
+      "action": "create",
+      "main_spec_ref": "cclab-sdd/generate/frontend-codegen.md",
+      "sections": [
+        "overview",
+        "schema",
+        "logic",
+        "interaction",
+        "component",
+        "wireframe",
+        "design-token",
+        "template",
+        "test-plan"
+      ]
+    }
+  ],
+  "revisions_applied": [
+    {
+      "issue_number": 1,
+      "title": "Add spec-validator.md to reference context",
+      "description": "spec-validator.md is required for validation of all three frontend section types (wireframe, component, design-token)",
+      "specs_added": [
+        "cclab-sdd/generate/spec-validator.md"
+      ]
+    },
+    {
+      "issue_number": 2,
+      "title": "Fix spec-ir-schema.md entry accuracy",
+      "description": "Original entry claimed 'Wireframe kind definition' but actual spec's kind enum does not include Wireframe (only Api, FlowchartPlus, SequencePlus, ClassPlus, ErdPlus, RequirementPlus)",
+      "spec_fixes": [
+        {
+          "spec_path": "cclab-sdd/generate/spec-ir-schema.md",
+          "old_key_requirements": "SpecIR YAML manifest schema, Wireframe kind definition, WireframeSpec structure for component layout",
+          "new_key_requirements": "SpecIR YAML manifest schema with Kubernetes-style envelope (apiVersion, kind, metadata, spec), Kind enum definition (Api, FlowchartPlus, SequencePlus, ClassPlus, ErdPlus, RequirementPlus), SpecMetadata contract, Strict serialization validation"
+        }
+      ]
+    },
+    {
+      "issue_number": 3,
+      "title": "Add component generator reference coverage",
+      "description": "Component (CEM → TypeScript) had zero spec references. Added spec-ir-contract.md which covers Component variant in SpecIR enum, and codegen-system.md which covers component generation routing",
+      "coverage_notes": "spec-ir-contract.md defines Component as a SpecIR variant, codegen-system.md describes the routing and architecture for component generators"
+    },
+    {
+      "issue_number": 4,
+      "title": "Add design-token generator reference coverage",
+      "description": "Design-token (DTCG → CSS + Tailwind) had zero spec references. Added spec-ir-contract.md which covers DesignToken variant, and codegen-system.md which describes design-token generation routing",
+      "coverage_notes": "spec-ir-contract.md defines DesignToken as a SpecIR variant, codegen-system.md describes the routing and architecture for design-token generators, template-engine.md describes the template directory structure for design-token/"
+    }
+  ]
+}

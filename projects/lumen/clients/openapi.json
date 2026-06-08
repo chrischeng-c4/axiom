@@ -1,0 +1,1309 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "lumen",
+    "description": "Standalone search and duplicate-detection index. Generic Collection / Field primitive; the caller owns the source of truth.",
+    "contact": {
+      "name": "Chris Cheng",
+      "email": "chris.cheng.c4@gmail.com"
+    },
+    "license": {
+      "name": "MIT"
+    },
+    "version": "0.3.60"
+  },
+  "servers": [
+    {
+      "url": "http://lumen-svc:8080",
+      "description": "in-cluster ClusterIP"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "local dev"
+    }
+  ],
+  "paths": {
+    "/collections": {
+      "get": {
+        "tags": [
+          "Collections"
+        ],
+        "operationId": "list_collections",
+        "responses": {
+          "200": {
+            "description": "List collection IDs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}": {
+      "put": {
+        "tags": [
+          "Collections"
+        ],
+        "operationId": "create_collection",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCollectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Collection created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateCollectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid schema",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "operationId": "drop_collection",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "description": "Skip the soft-delete grace window",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "nullable": true
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Soft-deleted (grace window)"
+          },
+          "204": {
+            "description": "Physically dropped"
+          },
+          "404": {
+            "description": "Unknown collection"
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/duplicates": {
+      "post": {
+        "tags": [
+          "Query"
+        ],
+        "operationId": "duplicates",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicatesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Duplicate groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DuplicatesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/fields/{field_name}": {
+      "delete": {
+        "tags": [
+          "Collections"
+        ],
+        "operationId": "drop_field",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "field_name",
+            "in": "path",
+            "description": "Field to drop",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Field dropped; new schema version",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown collection or field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/index": {
+      "post": {
+        "tags": [
+          "Index"
+        ],
+        "operationId": "index",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IndexRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Items indexed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown collection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Type mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/index/{external_id}": {
+      "delete": {
+        "tags": [
+          "Index"
+        ],
+        "operationId": "delete_external_id",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "external_id",
+            "in": "path",
+            "description": "Caller-owned identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "field",
+            "in": "query",
+            "description": "Restrict deletion to one field",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/search": {
+      "post": {
+        "tags": [
+          "Query"
+        ],
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Search hits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_id}/stats": {
+      "get": {
+        "tags": [
+          "Query"
+        ],
+        "operationId": "stats",
+        "parameters": [
+          {
+            "name": "collection_id",
+            "in": "path",
+            "description": "Collection namespace",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Collection stats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/debug/cluster": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "debug_cluster",
+        "responses": {
+          "200": {
+            "description": "Cluster state snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterStateView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "description": "Process is alive",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "metrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus text-format metrics",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "description": "Engine ready"
+          },
+          "503": {
+            "description": "Not ready"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Analyzer": {
+        "type": "string",
+        "enum": [
+          "whitespace_lower",
+          "jieba",
+          "ngram"
+        ]
+      },
+      "ApiError": {
+        "type": "object",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "CacheStats": {
+        "type": "object",
+        "required": [
+          "posting_hit_ratio"
+        ],
+        "properties": {
+          "posting_hit_ratio": {
+            "type": "number",
+            "format": "float",
+            "description": "Hit ratio on the posting-list cache. `1.0` when no cache layer\nis attached (in-memory engine has no need for one)."
+          }
+        }
+      },
+      "ClusterStateView": {
+        "type": "object",
+        "required": [
+          "pod_name",
+          "shard_index",
+          "replica_index",
+          "role",
+          "peers",
+          "applied_index",
+          "leader_term",
+          "replication_lag_ms"
+        ],
+        "properties": {
+          "applied_index": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "leader_term": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "peers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PeerAddr"
+            }
+          },
+          "pod_name": {
+            "type": "string"
+          },
+          "replica_index": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "replication_lag_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "role": {
+            "$ref": "#/components/schemas/RaftRole"
+          },
+          "shard_index": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateCollectionRequest": {
+        "type": "object",
+        "description": "`PUT /collections/{id}` body.",
+        "required": [
+          "fields"
+        ],
+        "properties": {
+          "fields": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FieldSpec"
+            }
+          }
+        }
+      },
+      "CreateCollectionResponse": {
+        "type": "object",
+        "description": "`PUT /collections/{id}` response.",
+        "required": [
+          "collection_id",
+          "version",
+          "fields_count"
+        ],
+        "properties": {
+          "collection_id": {
+            "type": "string"
+          },
+          "fields_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "DuplicateGroup": {
+        "type": "object",
+        "required": [
+          "value",
+          "external_ids"
+        ],
+        "properties": {
+          "external_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "value": {}
+        }
+      },
+      "DuplicatesRequest": {
+        "type": "object",
+        "required": [
+          "field"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "min_group_size": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "DuplicatesResponse": {
+        "type": "object",
+        "required": [
+          "groups",
+          "truncated",
+          "took_ms"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DuplicateGroup"
+            }
+          },
+          "took_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "FieldSpec": {
+        "type": "object",
+        "description": "One field declaration inside a collection schema.\n\nThe `dim` / `metric` / `backend` / `quantize` fields are only\nmeaningful when `field_type == FieldType::Vector`; they are\nrejected by schema validation on any other field type.",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "analyzer": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Analyzer"
+              }
+            ],
+            "nullable": true
+          },
+          "backend": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VectorBackend"
+              }
+            ],
+            "nullable": true
+          },
+          "dim": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Vector dimensionality. Required when `type == \"vector\"`,\nrejected otherwise. Immutable for the field's lifetime.",
+            "nullable": true,
+            "minimum": 0
+          },
+          "metric": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VectorMetric"
+              }
+            ],
+            "nullable": true
+          },
+          "multi": {
+            "type": "boolean",
+            "description": "Convenience flag: `{type: \"keyword\", multi: true}` is sugar for\n`{type: \"set\"}`. Normalized at schema-validation time.",
+            "nullable": true
+          },
+          "quantize": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VectorQuantize"
+              }
+            ],
+            "nullable": true
+          },
+          "type": {
+            "$ref": "#/components/schemas/FieldType"
+          }
+        }
+      },
+      "FieldStats": {
+        "type": "object",
+        "required": [
+          "type",
+          "unique_terms",
+          "bytes"
+        ],
+        "properties": {
+          "avg_doc_len": {
+            "type": "number",
+            "format": "float",
+            "description": "Mean tokens per document, only populated on `text` fields.\nExposes the BM25 length-normalization denominator so callers\ncan reason about scoring stability without dumping internals.",
+            "nullable": true
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes the engine attributes to this field's indexes.",
+            "minimum": 0
+          },
+          "type": {
+            "$ref": "#/components/schemas/FieldType"
+          },
+          "unique_terms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct terms / values / elements / vectors (depending on type).",
+            "minimum": 0
+          }
+        }
+      },
+      "FieldType": {
+        "type": "string",
+        "enum": [
+          "text",
+          "keyword",
+          "number",
+          "set",
+          "vector"
+        ]
+      },
+      "FieldValue": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ],
+        "description": "Polymorphic field value. Validated against the declared `FieldType`\nat index time; mismatches return 422.\n\nOn the wire, `Vector` is a plain JSON `[f32]` array — `serde(untagged)`\nresolves the variant by JSON shape (string vs number vs list-of-string\nvs list-of-number)."
+      },
+      "IndexItem": {
+        "type": "object",
+        "required": [
+          "external_id",
+          "field",
+          "value"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/FieldValue"
+          }
+        }
+      },
+      "IndexRequest": {
+        "type": "object",
+        "description": "`POST /collections/{id}/index` body.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IndexItem"
+            }
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Optional idempotency key. Repeated requests within 5 min are\nsilently deduplicated.",
+            "nullable": true
+          }
+        }
+      },
+      "IndexResponse": {
+        "type": "object",
+        "required": [
+          "indexed",
+          "bytes_written",
+          "shard_lag_ms"
+        ],
+        "properties": {
+          "bytes_written": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          "indexed": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "shard_lag_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "KnnQuery": {
+        "type": "object",
+        "description": "kNN vector search node. Returns the `k` external_ids closest to\n`vector` under the field's declared metric. Scores are the negated\ndistance — higher = better, consistent with BM25 / term scoring.",
+        "required": [
+          "field",
+          "vector",
+          "k"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "k": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "vector": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        }
+      },
+      "MatchOp": {
+        "type": "string",
+        "enum": [
+          "and",
+          "or"
+        ]
+      },
+      "MatchQuery": {
+        "type": "object",
+        "required": [
+          "field",
+          "text"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "op": {
+            "$ref": "#/components/schemas/MatchOp"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "PeerAddr": {
+        "type": "object",
+        "required": [
+          "pod_name",
+          "host",
+          "raft_port",
+          "client_port",
+          "role"
+        ],
+        "properties": {
+          "client_port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "host": {
+            "type": "string"
+          },
+          "pod_name": {
+            "type": "string"
+          },
+          "raft_port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "role": {
+            "$ref": "#/components/schemas/RaftRole"
+          }
+        }
+      },
+      "QueryNode": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "match"
+            ],
+            "properties": {
+              "match": {
+                "$ref": "#/components/schemas/MatchQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "term"
+            ],
+            "properties": {
+              "term": {
+                "$ref": "#/components/schemas/TermQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "terms"
+            ],
+            "properties": {
+              "terms": {
+                "$ref": "#/components/schemas/TermsQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "range"
+            ],
+            "properties": {
+              "range": {
+                "$ref": "#/components/schemas/RangeQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "knn"
+            ],
+            "properties": {
+              "knn": {
+                "$ref": "#/components/schemas/KnnQuery"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "and"
+            ],
+            "properties": {
+              "and": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/QueryNode"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "or"
+            ],
+            "properties": {
+              "or": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/QueryNode"
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "not"
+            ],
+            "properties": {
+              "not": {
+                "$ref": "#/components/schemas/QueryNode"
+              }
+            }
+          }
+        ],
+        "description": "A search query node. Externally tagged on the wire:\n\n```json\n{ \"match\": { \"field\": \"bio\", \"text\": \"engineer\" } }\n{ \"term\":  { \"field\": \"tags\", \"value\": \"rust\" } }\n{ \"knn\":   { \"field\": \"embedding\", \"vector\": [0.1, ...], \"k\": 10 } }\n{ \"and\":   [ {...}, {...} ] }\n```"
+      },
+      "RaftRole": {
+        "type": "string",
+        "enum": [
+          "leader",
+          "follower",
+          "learner",
+          "candidate"
+        ]
+      },
+      "RangeQuery": {
+        "type": "object",
+        "required": [
+          "field"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "gt": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "gte": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "lt": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          },
+          "lte": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
+          }
+        }
+      },
+      "SearchHit": {
+        "type": "object",
+        "required": [
+          "external_id",
+          "score"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "SearchRequest": {
+        "type": "object",
+        "description": "`POST /collections/{id}/search` body.",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "query": {
+            "$ref": "#/components/schemas/QueryNode"
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "required": [
+          "hits",
+          "total",
+          "took_ms"
+        ],
+        "properties": {
+          "cursor": {
+            "type": "string",
+            "nullable": true
+          },
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchHit"
+            }
+          },
+          "took_ms": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "StatsResponse": {
+        "type": "object",
+        "description": "Engine-level metadata about one collection.\n\nEverything here describes **the index**, not the caller's data —\nlumen is a search specialist, not an analytics engine. For data\naggregations (group-by / histogram / percentile / pipeline), pair\nlumen with an OLAP store (ClickHouse / Druid / BigQuery / DuckDB)\nand dual-write.",
+        "required": [
+          "documents_indexed",
+          "fields",
+          "storage",
+          "cache"
+        ],
+        "properties": {
+          "cache": {
+            "$ref": "#/components/schemas/CacheStats"
+          },
+          "documents_indexed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct `external_id` count in this collection.",
+            "minimum": 0
+          },
+          "fields": {
+            "type": "object",
+            "description": "Per-field engine metadata.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FieldStats"
+            }
+          },
+          "last_indexed_at": {
+            "type": "string",
+            "description": "Most recent successful write into this collection, RFC 3339\n(UTC). `None` when no write has landed since the last reboot.",
+            "nullable": true
+          },
+          "storage": {
+            "$ref": "#/components/schemas/StorageStats"
+          }
+        }
+      },
+      "StorageStats": {
+        "type": "object",
+        "required": [
+          "total_bytes"
+        ],
+        "properties": {
+          "total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "TermQuery": {
+        "type": "object",
+        "required": [
+          "field",
+          "value"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/FieldValue"
+          }
+        }
+      },
+      "TermsQuery": {
+        "type": "object",
+        "required": [
+          "field",
+          "values"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldValue"
+            }
+          }
+        }
+      },
+      "VectorBackend": {
+        "type": "string",
+        "description": "Index backend for `FieldType::Vector`. Wire forms are\n`hnsw-cpu` / `wgpu-brute-force` (kebab-case).",
+        "enum": [
+          "hnsw-cpu",
+          "wgpu-brute-force"
+        ]
+      },
+      "VectorMetric": {
+        "type": "string",
+        "description": "Distance metric for `FieldType::Vector`. Wire form is snake_case.",
+        "enum": [
+          "cosine",
+          "dot",
+          "l2"
+        ]
+      },
+      "VectorQuantize": {
+        "type": "string",
+        "description": "Quantization scheme for `FieldType::Vector`.\n\n`sq` enables transparent scalar quantization (f32 stored as u8).\n`pq` is reserved for a future product-quantization landing and\nis not yet implemented — declaring it will be rejected at schema\ntime until the backing codec ships.",
+        "enum": [
+          "sq",
+          "pq"
+        ]
+      },
+      "VectorSpec": {
+        "type": "object",
+        "description": "Resolved vector field configuration. Built from a `FieldSpec`\nonce schema validation has confirmed all required slots are present.",
+        "required": [
+          "dim",
+          "metric",
+          "backend"
+        ],
+        "properties": {
+          "backend": {
+            "$ref": "#/components/schemas/VectorBackend"
+          },
+          "dim": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "metric": {
+            "$ref": "#/components/schemas/VectorMetric"
+          },
+          "quantize": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VectorQuantize"
+              }
+            ],
+            "nullable": true
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Collections",
+      "description": "Schema lifecycle"
+    },
+    {
+      "name": "Index",
+      "description": "Document writes & deletes"
+    },
+    {
+      "name": "Query",
+      "description": "Search & duplicate detection"
+    },
+    {
+      "name": "Admin",
+      "description": "Health, stats, OpenAPI"
+    }
+  ]
+}

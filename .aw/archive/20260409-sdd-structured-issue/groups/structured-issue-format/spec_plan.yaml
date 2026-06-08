@@ -1,0 +1,8 @@
+- spec_id: sdd-structured-issue
+  action: create
+  main_spec_ref: crates/sdd/logic/structured-issue.md
+  sections:
+  - overview
+  - schema
+  - cli
+  - changes

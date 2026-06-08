@@ -1,0 +1,10 @@
+{
+  "group_id": "monorepo-bundler-fixes",
+  "answers": [
+    {"question_id": "Q1", "answer": "(b) workspace root — stop at the directory containing nx.json or the top-level package.json. WorkspaceMode::detect() already finds this. Reuse that."},
+    {"question_id": "Q2", "answer": "Use the existing __jet__ runtime format (generate_bundle_with_runtime in mod.rs). Cyclic modules stay as __jet__.define(N, function(){...}) with __jet__.require(N). Non-cyclic modules use scope hoisting. This is the existing Phase 1 IIFE wrapper — just don't bail on the entire bundle when a cycle is found."},
+    {"question_id": "Q3", "answer": "(b) build completes AND React is included in the bundle (output > 100KB for demo app). Add integration test with trimmed fixture."}
+  ],
+  "follow_up_questions": [],
+  "clarification_complete": true
+}

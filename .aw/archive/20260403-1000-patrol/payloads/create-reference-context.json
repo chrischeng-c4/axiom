@@ -1,0 +1,52 @@
+{
+  "group_id": "add-idlelib-stdlib",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-mamba/stdlib/native-implementations.md",
+      "spec_group": "stdlib-registration",
+      "relevance": "high",
+      "key_requirements": [
+        "Module registration pattern: pub fn register() calls register_module(name, attrs)",
+        "register_stdlib() in mod.rs must call idlelib_mod::register()",
+        "mod.rs pub mod declaration required for new module file",
+        "P3 module placement convention in mod.rs (// P3 stdlib modules block)"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/runtime/module.md",
+      "spec_group": "module-system",
+      "relevance": "high",
+      "key_requirements": [
+        "R2: Module caching via sys.modules — import idlelib must be cacheable",
+        "R4: import and from-import syntax — import idlelib and from idlelib import X must work",
+        "R5: Module object attributes (__name__, __file__, __dict__) set on registration"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/runtime/exception.md",
+      "spec_group": "exception-system",
+      "relevance": "medium",
+      "key_requirements": [
+        "NotImplementedError is in the exception hierarchy (R1)",
+        "mb_raise(exc_type, message) is the mechanism for raising exceptions from stub functions",
+        "Stub functions should call mb_raise with NotImplementedError type and descriptive message"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/ffi/bindings-and-stubs.md",
+      "spec_group": "ffi-stubs",
+      "relevance": "low",
+      "key_requirements": [
+        "Background context only: stub pattern philosophy for unimplemented functionality"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "idlelib-stub",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/stdlib/ui-tools.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

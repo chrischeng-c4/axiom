@@ -1,0 +1,1 @@
+Wire existing SpecIR parsers and code generators to new CLI commands: gen code (spec to implementation code), gen parse (spec to SpecIR JSON dump), gen diff (main_spec vs change_spec to code patch). Phase 1 of spec-diff-codegen pipeline. #1128

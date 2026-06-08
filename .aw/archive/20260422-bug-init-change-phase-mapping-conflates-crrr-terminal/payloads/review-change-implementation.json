@@ -1,0 +1,7 @@
+{
+  "spec_id": "bug-init-change-phase-mapping-conflates-crrr-terminal-spec",
+  "verdict": "APPROVED",
+  "summary": "Implementation satisfies all hard checklist items. R1-R3 covered by split match arm + inline comment + regression test T1. R2 covered by T2 (merging preserved). R4 documented in issue-crrr-state-machine.md as a new H3 subsection immediately following the Lifecycle-Stage Trailers table; this is a minor deviation from the Changes-block target (Merge row) but satisfies the R4 text (explicit CRRR-terminal -> change-lifecycle-initial transition rule). R5 covered transitively by T1 (merged still parses without error). R6 alias audit reported negative findings for archived, rejected, impl_approved. Tests green: cargo test -p sdd --lib tools::phase_transition -> 3/3 pass, plus 7/7 related workspace transition tests unchanged. @spec annotation present on parse_phase. Soft observation: T4 (init-change integration) was not implemented as a separate integration test — transitively covered by unit-level T1 on parse_phase (the exact function init-change invokes). Not a hard-reject trigger; approved.",
+  "issues": [],
+  "problem_sections": []
+}

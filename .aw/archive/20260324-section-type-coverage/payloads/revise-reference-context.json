@@ -1,0 +1,56 @@
+{
+  "group_id": "frontend-design-system",
+  "specs": [
+    {
+      "spec_id": "change-spec",
+      "spec_group": "logic",
+      "relevance": "high",
+      "key_requirements": ["section-selection", "section-optionality", "fill-order"]
+    },
+    {
+      "spec_id": "generator-react",
+      "spec_group": "generate",
+      "relevance": "high",
+      "key_requirements": ["wireframe-spec", "react-scaffold"]
+    },
+    {
+      "spec_id": "code-generator-contract",
+      "spec_group": "generate",
+      "relevance": "medium",
+      "key_requirements": ["inference-rules"]
+    },
+    {
+      "spec_id": "scope-resolution",
+      "spec_group": "logic",
+      "relevance": "high",
+      "key_requirements": ["workspace-type-detection", "package-json-detection"]
+    },
+    {
+      "spec_id": "platform",
+      "spec_group": "config",
+      "relevance": "low",
+      "key_requirements": ["config-format"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "tech-stack-inference",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/logic/tech-stack-inference.md",
+      "sections": ["overview", "logic", "config", "test-plan", "changes"]
+    },
+    {
+      "spec_id": "change-spec-section-optionality",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/change-spec.md",
+      "sections": ["overview", "logic", "changes"]
+    },
+    {
+      "spec_id": "ux-pattern-library",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/generate/ux-pattern-library.md",
+      "sections": ["overview", "schema", "logic", "changes"]
+    }
+  ],
+  "revision_notes": "No changes needed — review was APPROVED with no issues."
+}

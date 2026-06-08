@@ -1,0 +1,20 @@
+change_id: sdd-spec-format-unify
+schema_version: '2.0'
+created_at: 2026-04-10T05:52:10.872991Z
+updated_at: 2026-04-11T07:29:27.862379Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:sdd-spec-format-unify: 1
+current_task_id: sdd-spec-format-unification
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null

@@ -1,0 +1,9 @@
+{
+  "spec_id": "cranelift-jit-memory-fix",
+  "group_id": "jit-memory",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes", "test-plan"],
+  "main_spec_ref": "crates/cclab-mamba/codegen/cranelift-jit.md",
+  "merge_strategy": "new",
+  "content": "Replace cranelift-jit's `JITModule` with `ObjectModule` + custom `JitMemory` loader in `jit.rs`. Currently `CraneliftJitBackend` uses `JITModule::new()` / `finalize_definitions()` which calls `mprotect` internally — on macOS aarch64 this causes EXC_BAD_ACCESS (PAC failure / SIGBUS) under concurrent compilation because Cranelift's memory allocator is not thread-safe. The workaround `JIT_LOCK: LazyLock<Mutex<()>>` serializes all JIT operations, eliminating parallelism.\n\nFix: change `CraneliftJitBackend` to use `ObjectModule` (same as the AOT path in `aot.rs`) to produce in-memory Mach-O/ELF object bytes. A new `JitMemory` struct (in `jit_memory.rs`) parses the object with the `object` crate, loads `.text`/`.data` sections into `mmap(MAP_JIT)` pages on macOS (`mmap + mprotect` on Linux), resolves `mb_*` symbol relocations, and returns a callable function pointer. Each compilation allocates its own isolated memory region — no shared mutable state, no lock needed.\n\nKey changes to `jit.rs`:\n- Replace `JITModule` field with `ObjectModule`\n- Replace `JITBuilder` init with `ObjectBuilder` init (same ISA setup)\n- Replace `finalize_definitions()` + `get_finalized_function()` with `module.finish().emit()` + `JitMemory::load()`\n- Remove `JIT_LOCK` export and all lock references\n- `CodegenOutput::Jit { entry }` return type unchanged — pointer now points into `JitMemory` mmap region\n\nDependency changes: drop `cranelift-jit` from `Cargo.toml`; keep `cranelift-codegen`, `cranelift-frontend`, `cranelift-module`; add `cranelift-object` (already a dep for AOT).\n\nIssue: #1114"
+}

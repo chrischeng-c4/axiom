@@ -1,0 +1,6 @@
+{
+  "spec_id": "revocation",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: revocation-changes\n  refs:\n    - $ref: \"#in-memory-is-revoked\"\n    - $ref: \"#in-memory-revoke\"\n    - $ref: \"#in-memory-cleanup\"\n    - $ref: \"#revoke-request-execute\"\nchanges:\n  - path: crates/cclab-queue/src/revocation.rs\n    action: modify\n    description: >\n      Expand existing #[cfg(test)] mod tests from 9 to 44 tests.\n      Add coverage for: RevokedTask (new constructors, is_expired paths, serde roundtrip, Debug, Clone),\n      InMemoryRevocationStore (Default, with_ttl, auto-remove on is_revoked, get_revoked filtering,\n      cleanup edge cases, revoke overwrite, revoke_many empty slice),\n      RevokeRequest (Default, new, task_ids batch, execute empty, builder chaining),\n      RevokeByNameRequest (defaults, terminate, signal, Debug+Clone),\n      helper functions (revoke single id verification),\n      store utility methods (len accuracy),\n      trait bounds (Send+Sync), and concurrent access safety.\n```"
+}

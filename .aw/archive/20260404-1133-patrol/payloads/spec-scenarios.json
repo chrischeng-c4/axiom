@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chrischeng/projects/wt/mamba",
+  "change_id": "1133-patrol",
+  "spec_id": "name-builtin-init",
+  "group_id": "fix-name-builtin",
+  "section": "scenarios",
+  "content": "<!-- type: scenarios lang: markdown -->\n\n### Scenario: Entry-point __name__ is __main__\n\n- **GIVEN** a script `print(__name__)` run via `cclab mamba run`.\n- **THEN** output is `__main__`.\n\n### Scenario: if __name__ == \"__main__\" guard executes\n\n- **GIVEN** a script containing `if __name__ == \"__main__\": print(\"ok\")`.\n- **WHEN** run as entry point via `cclab mamba run`.\n- **THEN** output includes `ok`.\n\n### Scenario: REPL __name__ is __main__\n\n- **GIVEN** an interactive REPL session.\n- **WHEN** user evaluates `__name__`.\n- **THEN** result is `__main__`.\n\n### Scenario: __name__ type is str\n\n- **GIVEN** a script `print(type(__name__).__name__)` run via `cclab mamba run`.\n- **THEN** output is `str` (not `float`).\n\n### Scenario: __name__ initialization precedes user code\n\n- **GIVEN** a script where `__name__` is referenced on the first line.\n- **THEN** `__name__` is already initialized to `\"__main__\"` — no uninitialized VReg (0.0) observed."
+}

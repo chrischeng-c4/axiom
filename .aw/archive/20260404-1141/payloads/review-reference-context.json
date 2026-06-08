@@ -1,0 +1,76 @@
+{
+  "group_id": "check-alignment-phase2",
+  "verdict": "REVIEWED",
+  "summary": "Critical inaccuracy in lens-index-storage.md key requirements (attributes DaemonClient API/socket details that don't exist in that spec); missing lens-cli-subcommands.md which is the actual source for DaemonClient::symbols(), IndexStatus.is_ready; code-analysis-service-v2.md relevance overstated at medium.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "DaemonClient API (symbols(), index_status(), for_workspace()) is not covered — lens-index-storage.md was misattributed these details. The actual source spec (interfaces/lens/lens-cli-subcommands.md) is missing from the reference context."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "code-analysis-service-v2.md rated medium but is only tangentially related background — it covers the fillback LLM-enrichment service, not @spec annotation scanning. Should be low."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "lens-index-storage.md key requirements are fabricated. The spec's actual content (R1-R4) is entirely about storage path resolution. No daemon socket, no DaemonClient, no IndexStatus, no symbols() in that spec."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true
+    },
+    {
+      "item": "spec_plan: every entry has main_spec_ref set (not null)",
+      "passed": true,
+      "note": "Single entry: crates/cclab-sdd/logic/check-alignment.md"
+    },
+    {
+      "item": "spec_plan: sections are reasonable for the requirements",
+      "passed": true,
+      "note": "overview, schema, logic, dependency, interaction, cli, test-plan, changes — appropriate for Phase 2 extension"
+    },
+    {
+      "item": "spec_plan: modify entries have valid source paths",
+      "passed": true,
+      "note": "crates/cclab-sdd/logic/check-alignment.md exists on disk"
+    },
+    {
+      "item": "spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)",
+      "passed": true,
+      "note": "logic/ subfolder present"
+    },
+    {
+      "item": "spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)",
+      "passed": true
+    },
+    {
+      "item": "spec_plan: no spec file would require duplicate section types (split into separate files if needed)",
+      "passed": true
+    },
+    {
+      "item": "spec_plan: spec paths mirror source structure (interfaces/, logic/, generate/)",
+      "passed": true,
+      "note": "logic/check-alignment.md mirrors crates/cclab-sdd/src/spec_alignment/"
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "lens-index-storage.md key requirements are inaccurate. The reference context claims this spec defines: 'socket at {root}/cclab/.index/daemon.sock', 'DaemonClient::for_workspace(root) constructs client from storage::resolve_socket_path()', 'Phase 2 calls DaemonClient::symbols(file) over the Unix socket', and 'IndexStatus.is_ready check needed before coverage analysis runs'. The actual spec (R1-R4) covers ONLY storage path resolution: {project_root}/cclab/.index/ directory, path canonicalization, SHA256 hashing, and module sub-path separation. None of DaemonClient, socket path, IndexStatus, or symbols() appear in lens-index-storage.md.",
+      "recommendation": "Correct the key requirements for lens-index-storage.md to reflect its actual content: R1 ({project_root}/cclab/.index/ storage root), R2 (path canonicalization), R3 (SHA256 hashing), R4 (module index separation)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Missing spec entry: interfaces/lens/lens-cli-subcommands.md is not in the reference context, yet it is the actual spec defining DaemonClient::for_workspace(root), client.symbols(file), client.index_status() with is_ready flag, and the ensure_daemon_ready() pattern (R1-R2 of that spec). Phase 2's daemon interaction requires querying DaemonClient::symbols(file) — this spec is directly relevant.",
+      "recommendation": "Add interfaces/lens/lens-cli-subcommands.md to the reference table with relevance 'medium'. Key requirements: R1 (ensure_daemon_ready: DaemonClient::for_workspace(), index_status().is_ready, 30s timeout), R2 table entry (client.symbols(file) method signature)."
+    },
+    {
+      "severity": "LOW",
+      "description": "code-analysis-service-v2.md relevance is overstated at 'medium'. This spec covers the sdd_analyze_code_for_spec fillback tool — AST parsing + LLM enrichment for spec generation from source code. Phase 2's @spec annotation extraction is simple comment-line parsing, not this full pipeline. The claim 'same infrastructure as daemon' is not established by the spec itself.",
+      "recommendation": "Downgrade to 'low' relevance. Narrow key requirements to: R1 (multi-language tree-sitter support — background context that language parsers exist), R6 (fast-path AST-only — pattern reference only)."
+    }
+  ]
+}

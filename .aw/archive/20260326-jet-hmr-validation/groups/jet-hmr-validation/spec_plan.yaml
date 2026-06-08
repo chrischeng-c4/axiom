@@ -1,0 +1,12 @@
+- spec_id: jet-hmr
+  action: create
+  main_spec_ref: crates/cclab-jet/hmr.md
+  sections:
+  - overview
+  - schema
+  - state-machine
+  - logic
+  - interaction
+  - e2e-scenario
+  - test-plan
+  - changes

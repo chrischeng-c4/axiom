@@ -1,0 +1,8 @@
+{
+  "spec_id": "task-state-machine",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "main_spec_ref": "crates/cclab-queue/logic/task-state-machine.md",
+  "fill_sections": ["overview", "state-machine", "logic", "test-plan", "changes"],
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: task-state-machine-changes\n  refs:\n    - $ref: \"#task-state-schema\"\nchanges:\n  - path: crates/cclab-queue/src/state.rs\n    action: modify\n    description: Add #[cfg(test)] mod tests with 39 unit tests covering TaskState enum (default, serde, is_terminal, is_active, is_offloaded, can_transition_to for all 16 valid + invalid transitions), TaskResult constructors (pending, success, failure, serde round-trip), and trait bounds (Copy, Clone, Eq, Debug)\n```"
+}

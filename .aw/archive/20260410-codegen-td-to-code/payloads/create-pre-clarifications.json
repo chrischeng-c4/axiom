@@ -1,0 +1,47 @@
+{
+  "change_id": "codegen-td-to-code",
+  "answers": [
+    {
+      "topic": "Implementation scope",
+      "question": "Which crates and files will this change affect?",
+      "answer": "crate:sdd — crates/sdd/src/generate/ (extend existing), projects/score/cli/src/commands.rs (new GenCommands variants)",
+      "rationale": "Issue scopes explicitly to sdd crate and score CLI entry points"
+    },
+    {
+      "topic": "Diagram Content types vs Graph<N,E>",
+      "question": "Should we use a universal Graph<N,E> or per-diagram Content types?",
+      "answer": "Per-diagram Content types (D3). Common envelope = {id, title, content, metadata}. Each diagram has its own Content shape. Not a universal Graph<N,E>.",
+      "rationale": "D3 from issue: requirement diagram has 3 collections, flowchart has nodes/edges, sequence has actors/messages. Per-type is cleaner."
+    },
+    {
+      "topic": "CODEGEN marker format",
+      "question": "What format for CODEGEN block markers?",
+      "answer": "// CODEGEN-BEGIN and // CODEGEN-END. Codegen updates content inside, wrapper preserved. Multiple blocks per file allowed (one per spec section). SPEC-MANAGED comment above each block.",
+      "rationale": "D4 from issue: no merge conflicts, hand-written code outside preserved."
+    },
+    {
+      "topic": "Language target for MVP",
+      "question": "Which target languages for MVP?",
+      "answer": "Rust only (D2). Abstract type system designed for multi-language but generators target Rust first. Python/TS deferred.",
+      "rationale": "D2 from issue: focus on Rust codebase first."
+    },
+    {
+      "topic": "Entry points",
+      "question": "What CLI entry points?",
+      "answer": "score gen diff / apply / render / validate. All 4 integrated into check-alignment. Diff shows drift, apply writes, render regenerates Mermaid body from frontmatter, validate checks frontmatter schema.",
+      "rationale": "D16 from issue."
+    },
+    {
+      "topic": "XState schema replacement",
+      "question": "Should we replace existing XState schemas?",
+      "answer": "Yes (D8). Existing *_plus/schema.rs are unused XState complexity. Replace with new Graph-based schemas that match codegen targets directly.",
+      "rationale": "D8 from issue: clean up unused complexity."
+    },
+    {
+      "topic": "Config layering",
+      "question": "How does config layering work?",
+      "answer": "3 levels: global (.score/config.toml [codegen.*]) -> per-spec (x-rust: extensions in section frontmatter) -> per-file (CODEGEN markers scope generated region).",
+      "rationale": "D7 from issue."
+    }
+  ]
+}

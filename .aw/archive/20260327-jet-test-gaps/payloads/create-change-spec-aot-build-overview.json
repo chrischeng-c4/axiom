@@ -1,0 +1,9 @@
+{
+  "spec_id": "jet-aot-build",
+  "group_id": "jet-test-gaps",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "test-plan", "changes"],
+  "main_spec_ref": "crates/cclab-jet/logic/aot-build.md",
+  "merge_strategy": "new",
+  "content": "<!-- type: overview lang: markdown -->\n\nAdd integration tests for code splitting multi-entry scenarios in the jet AOT build pipeline (`bundler/splitting.rs`). Closes the third major test coverage gap identified in jet.\n\n### Current Test Coverage\n\n| Area | File | Existing Tests | Gap |\n|------|------|----------------|-----|\n| Single-entry splitting | `splitting.rs` | `test_no_dynamic_imports`, `test_dynamic_import_split` | None |\n| Shared module extraction | `splitting.rs` | `test_shared_module_extraction` | None |\n| Manual chunks | `splitting.rs` | `test_manual_chunks_routing`, `test_manual_chunks_empty_config` | None |\n| Preload hints | `splitting.rs` | `test_preload_hints_for_shared_chunks` | Async preload metadata not validated |\n| Multi-entry splitting | — | None | **No coverage** |\n| Circular dynamic imports | — | None | **No coverage** |\n| Chunk naming / dedup | `splitting.rs` | `test_chunk_naming` | Edge cases missing |\n\n### Target Coverage\n\n- Multi-entry: multiple `entry` roots share common modules → shared chunk extracted\n- Async preload: `SplitResult.preload_hints` validated for multi-chunk graphs\n- Circular dynamic imports: `import()` targets forming cycles → fallback behavior\n- Diamond dependency: A→B, A→C, B→D, C→D with dynamic boundaries\n\n### Scope\n\nRust `#[test]` functions in `crates/cclab-jet/src/bundler/splitting.rs` (unit) and `crates/cclab-jet/src/bundler/graph.rs` (module graph cycle with dynamic edges). No E2E tests."
+}

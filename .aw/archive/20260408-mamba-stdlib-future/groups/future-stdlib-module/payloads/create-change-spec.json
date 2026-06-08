@@ -1,0 +1,6 @@
+{
+  "group_id": "future-stdlib-module",
+  "spec_id": "future-stdlib",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\nfiles:\n  - path: crates/cclab-mamba/src/runtime/stdlib/future_mod.rs\n    action: create\n    description: |\n      New native __future__ module.\n      - `pub fn register()`: registers \"__future__\" via `register_module(\"__future__\", attrs)`\n      - CO_* compiler flag constants as MbValue::from_int():\n        CO_NESTED=0x0010, CO_GENERATOR_ALLOWED=0,\n        CO_FUTURE_DIVISION=0x20000, CO_FUTURE_ABSOLUTE_IMPORT=0x40000,\n        CO_FUTURE_WITH_STATEMENT=0x80000, CO_FUTURE_PRINT_FUNCTION=0x100000,\n        CO_FUTURE_UNICODE_LITERALS=0x200000, CO_FUTURE_ANNOTATIONS=0x1000000\n      - Feature flag constants:\n        annotations=CO_FUTURE_ANNOTATIONS, division=CO_FUTURE_DIVISION,\n        print_function=CO_FUTURE_PRINT_FUNCTION, unicode_literals=CO_FUTURE_UNICODE_LITERALS,\n        with_statement=CO_FUTURE_WITH_STATEMENT, absolute_import=CO_FUTURE_ABSOLUTE_IMPORT\n      - Unit tests: test_co_future_annotations_value, test_feature_flags_are_integers,\n        test_register_module\n\n  - path: crates/cclab-mamba/src/runtime/stdlib/mod.rs\n    action: modify\n    description: |\n      - Add `pub mod future_mod;` declaration\n      - Add `future_mod::register();` call in `register_stdlib()`\n```"
+}

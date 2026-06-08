@@ -1,0 +1,78 @@
+{
+  "group_id": "check-alignment-phase1",
+  "verdict": "REVIEWED",
+  "summary": "Reference context is largely sound — specs are relevant, relevance scores are defensible, and the spec plan targets correct paths with valid subfolders. Four issues require attention: (1) spec plan for 'check-alignment' omits 'schema' section needed for the Violation data model (format_priority_violation kind + path), which spec-structure.md explicitly models with a JSON Schema; (2) spec plan omits 'test-plan', auto-required by section_rules when section_count > 2; (3) spec-structure.md key requirements description references a Rust function signature 'run(path, json)' not present in the spec; (4) 'overview' in cli-commands-check-alignment (modify) is superfluous — commands.md has no existing Overview section and only cli + changes are needed.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": true
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": true,
+      "note": "sdd-cli.md 'medium' is slightly generous — its actual content is a change spec for MCP cleanup, but the embedded R5 principle (CLI as sole execution path) is genuinely relevant for the new subcommand pattern"
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "spec-structure.md key requirements description claims 'run(path, json) Rust module pattern' but no such function signature exists in the spec. The spec defines CLI args (--json flag), a ValidationViolation JSON Schema, and mermaid logic flowcharts."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true
+    },
+    {
+      "item": "spec_plan: every entry has main_spec_ref set (not null)",
+      "passed": true
+    },
+    {
+      "item": "spec_plan: sections are reasonable for the requirements",
+      "passed": false,
+      "note": "check-alignment sections (overview, logic, cli, changes) is missing 'schema' for the Violation data model and 'test-plan' (auto-required when section_count > 2 per change-spec.md section_rules)"
+    },
+    {
+      "item": "spec_plan: modify entries have valid source paths",
+      "passed": true,
+      "note": "crates/cclab-sdd/interfaces/cli/commands.md exists on disk"
+    },
+    {
+      "item": "spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)",
+      "passed": true,
+      "note": "logic/check-alignment.md and interfaces/cli/commands.md both have subfolder components"
+    },
+    {
+      "item": "spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)",
+      "passed": true
+    },
+    {
+      "item": "spec_plan: no spec file would require duplicate section types (split into separate files if needed)",
+      "passed": true
+    },
+    {
+      "item": "spec_plan: spec paths mirror source structure (interfaces/, logic/, generate/)",
+      "passed": true
+    }
+  ],
+  "issues": [
+    {
+      "severity": "MEDIUM",
+      "description": "Spec plan 'check-alignment' (create) sections list: overview, logic, cli, changes — missing 'schema'. The violation data model (format_priority_violation: kind + section_path) requires a JSON Schema section for codegen. spec-structure.md — the explicitly cited Rust module pattern for check-alignment — provides both a Schema section (ValidationViolation: kind + path JSON Schema) and a Logic section. Omitting schema leaves the violation type undefined for the implementation agent.",
+      "recommendation": "Add 'schema' to check-alignment sections: overview, schema, logic, cli, changes"
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Spec plan 'check-alignment' (create) sections list is missing 'test-plan'. Per change-spec.md § Section Selection, rule 'if_section_count_gt_2: [test-plan]' auto-adds test-plan when section_count > 2. With 4 sections (overview, logic, cli, changes), this threshold is exceeded but test-plan is not included.",
+      "recommendation": "Add 'test-plan' to check-alignment sections"
+    },
+    {
+      "severity": "LOW",
+      "description": "spec-structure.md key requirements description says 'the Rust module pattern (run(path, json), Violation struct, hard-error exit) that check-alignment follows'. No run(path, json) Rust function signature exists in spec-structure.md — the spec defines CLI flags (--json), a ValidationViolation JSON Schema, and mermaid flowcharts. The fabricated function signature could mislead the implementation agent into expecting an API that doesn't exist.",
+      "recommendation": "Correct to: 'the sibling validate-spec-structure CLI command pattern — --json flag, ValidationViolation schema (kind + path fields), hard-error exit non-zero on any violation'"
+    },
+    {
+      "severity": "LOW",
+      "description": "cli-commands-check-alignment (modify, commands.md) includes 'overview' in sections. commands.md has no existing ## Overview section; adding one in a modify would insert new top-level prose into a spec whose structure is command-tree YAML + CLI→Logic mapping table. For adding a single new subcommand, only 'cli' (command tree + mapping update) and 'changes' (record of what changed) are needed.",
+      "recommendation": "Remove 'overview' from cli-commands-check-alignment sections; keep: cli, changes"
+    }
+  ]
+}

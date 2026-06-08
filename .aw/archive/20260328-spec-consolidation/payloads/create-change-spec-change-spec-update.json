@@ -1,0 +1,6 @@
+{
+  "spec_id": "change-spec-update",
+  "group_id": "spec-consolidation-enforcement",
+  "section": "changes",
+  "content": "Remove all `merge_strategy` references from the spec — the field is dead code. Actual merge behavior is always: write to `cclab/specs/{main_spec_ref}` (create if absent, overwrite if exists). No variant is needed.\n\n### Frontmatter tracking\n\nRemove `merge_strategy` line from the frontmatter example YAML block:\n\n| Location | Change |\n|----------|--------|\n| `## Frontmatter tracking` code block | Remove line: `merge_strategy: new \\| append \\| replace` |\n\n### Artifact call per section\n\nUpdate trailing prose to drop `merge_strategy` mention:\n\n| Location | Before | After |\n|----------|--------|-------|\n| `## Artifact call per section`, closing sentence | \"`fill_sections`, `main_spec_ref`, and `merge_strategy` are set by spec preparation and not modified by the agent.\" | \"`fill_sections` and `main_spec_ref` are set by spec preparation and not modified by the agent.\" |"
+}

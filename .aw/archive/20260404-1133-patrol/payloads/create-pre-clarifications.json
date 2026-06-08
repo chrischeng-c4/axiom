@@ -1,0 +1,1 @@
+{"group_id":"fix-name-builtin","answers":[{"question":"Where should __name__ be set?","answer":"In the driver/runtime module initialization — set __name__ = \"__main__\" as a global string before executing the module body. This matches CPython behavior."}]}

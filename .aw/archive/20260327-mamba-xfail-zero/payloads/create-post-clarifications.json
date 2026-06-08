@@ -1,0 +1,13 @@
+{
+  "group_id": "xfail-zero",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "34 xfail conformance tests remain across stdlib, data_structures, language, iterators, generators, class_system, exceptions.",
+    "success_criteria": "Zero xfails. All 149 tests pass with output matching CPython 3.12 exactly.",
+    "boundary": {
+      "in_scope": "Runtime fixes (KeyError/IndexError raising, exception chaining, MRO), parser fixes (edge cases), codegen fixes (lambda, decorators, pattern matching, comprehension scope), stdlib module conformance (simplify fixtures or implement missing features), iterator/generator protocol completion",
+      "out_of_scope": "GC root scanning (separate work), new language features not in CPython 3.12",
+      "constraints": "Must not break existing 115 passing conformance tests."
+    }
+  }
+}

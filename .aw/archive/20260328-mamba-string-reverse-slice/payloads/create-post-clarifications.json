@@ -1,0 +1,5 @@
+{
+  "group_id": "string-reverse-slice",
+  "skipped": true,
+  "scope_summary": "**Problem**: s[::-1] returns empty string → requirements.md. **Success Criteria**: Fix negative step slice defaults, convert xfail to passing test. **Boundary**: In scope: string-ops.md (runtime). Out of scope: other slice bugs."
+}

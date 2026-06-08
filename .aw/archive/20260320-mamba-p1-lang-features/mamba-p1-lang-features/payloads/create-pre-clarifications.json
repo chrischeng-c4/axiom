@@ -1,0 +1,44 @@
+{
+  "groups": {
+    "decorator-full": {
+      "answers": {
+        "Q1": "Current parser supports stacked decorators with simple names. Limitation: no call expressions or attribute access in decorator position.",
+        "Q2": "Use Any/unknown fallback for decorator return-type inference in this iteration. Precise higher-order modeling deferred.",
+        "Q3": "@property, @staticmethod, @classmethod should be special-cased in the type checker with hardcoded semantics.",
+        "Q4": "Full PEP 614 — any expression in decorator position, including @buttons[0], @f()(x)."
+      }
+    },
+    "extended-unpacking": {
+      "answers": {
+        "Q1": "Starred variable typed as list[T] where T is inferred from RHS element type, matching CPython Py3.12 behavior.",
+        "Q2": "Splat unpacking in function calls (*args, **kwargs) should also be addressed if not already supported — match Py3.12 behavior.",
+        "Q3": "Yes, include nested destructuring with stars (e.g., a, (*b, c) = ...) — full Py3.12 behavior.",
+        "Q4": "Use a runtime helper function: runtime::unpack_star(iter, n_before, n_after) for cleaner codegen."
+      }
+    },
+    "scope-modifiers": {
+      "answers": {
+        "Q1": "Check existing codegen for closures/captures and integrate nonlocal with whatever mechanism exists.",
+        "Q2": "Silently allowed, matching CPython behavior — defer to runtime NameError if accessed before assignment.",
+        "Q3": "Type checker should be updated to respect global/nonlocal annotations for correct type inference across scopes.",
+        "Q4": "nonlocal upgrades implicit read-only capture to mutable capture, matching CPython semantics."
+      }
+    },
+    "slice-step": {
+      "answers": {
+        "Q1": "Check existing slice dispatch pattern and follow the same approach for step implementation.",
+        "Q2": "Check if 3-arg slice is already in AST/HIR — add parser/codegen changes as needed to pass step through.",
+        "Q3": "String step-slicing on Unicode codepoints, matching CPython behavior.",
+        "Q4": "a[::0] raises Python ValueError at runtime, matching CPython behavior."
+      }
+    },
+    "string-literals": {
+      "answers": {
+        "Q1": "bytes as NaN-boxed heap object wrapping Vec<u8>, with ObjKind::Bytes in the existing value model.",
+        "Q2": "f-strings are already partially supported — not in scope for this change unless lexer prefix handling requires it.",
+        "Q3": "Full \\N{name} Unicode named escapes — embed or query Unicode name database.",
+        "Q4": "Full CPython bytes API scope: find, replace, decode, startswith, endswith, split, join, hex, etc."
+      }
+    }
+  }
+}

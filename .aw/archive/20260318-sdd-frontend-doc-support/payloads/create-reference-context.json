@@ -1,0 +1,70 @@
+{
+  "change_id": "sdd-frontend-doc-support",
+  "group_id": "sdd-frontend-doc-artifacts",
+  "specs": [
+    {
+      "spec_id": "cclab-sdd/logic/change-spec.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "high",
+      "key_requirements": [
+        "Section type system — 17 types including wireframe, component, design-token",
+        "Section fill order and CLI-driven generation",
+        "Spec preparation from spec_plan",
+        "Cross-reference system with content-level id and $ref"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/logic/reference-context.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "high",
+      "key_requirements": [
+        "spec_plan array with sections field",
+        "Section selection via rule engine"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/logic/implement-task.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "medium",
+      "key_requirements": [
+        "Group-scoped spec paths",
+        "Per-spec implementation loop"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/logic/change-merge.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "medium",
+      "key_requirements": [
+        "Merge from groups/*/specs/ to cclab/specs/",
+        "main_spec_ref guaranteed by preparation"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/generate/spec-model.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "medium",
+      "key_requirements": [
+        "Spec-to-code model — how specs map to generated code",
+        "Mermaid Plus diagram types"
+      ]
+    },
+    {
+      "spec_id": "cclab-sdd/logic/executor-resolution.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "low",
+      "key_requirements": [
+        "Agent executor chain configuration"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "sdd-spec-system-redesign",
+      "action": "modify",
+      "main_spec_ref": "cclab-sdd/logic/change-spec.md",
+      "source": "cclab-sdd/logic/change-spec.md",
+      "sections": ["overview", "logic", "state-machine", "interaction", "changes"]
+    }
+  ]
+}

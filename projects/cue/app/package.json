@@ -1,0 +1,11 @@
+{
+  "name": "@cue/app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cue UI app layer — Jet-authored, target-neutral. See .aw/tech-design/projects/cue/cue-multi-target-slice.md",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

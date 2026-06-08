@@ -1,0 +1,8 @@
+{
+  "spec_id": "cli-commands-docs-phase",
+  "group_id": "sdd-docs-phase",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "cli", "changes"],
+  "content": "Extend CLI commands spec with docs-phase action routing. No new top-level subcommands — docs-phase operations use the existing `cclab sdd workflow` and `cclab sdd artifact` dynamic dispatch.\n\n**What**: Document 6 new action names routable through existing CLI dispatch and update the delegation guard mapping to permit docs-phase artifact actions.\n\n**Why**: The artifact-tools-docs-phase spec defines 6 new MCP tools (`sdd_{workflow,artifact}_{create,review,revise}_change_docs`). These tools are invoked via CLI using `cclab sdd workflow <action>` / `cclab sdd artifact <action>` dynamic dispatch. The delegation guard function `is_artifact_permitted_under_guard` needs updating to map docs-phase workflow guards to their artifact counterparts.\n\n| Aspect | Value |\n|--------|-------|\n| New subcommands | None — reuses existing `workflow` and `artifact` dispatch |\n| New actions (workflow) | `create-change-docs`, `review-change-docs`, `revise-change-docs` |\n| New actions (artifact) | `create-change-docs`, `review-change-docs`, `revise-change-docs` |\n| Guard mapping | `create_change_docs` → `create_change_docs`, `revise_change_docs` → `create_change_docs` |\n| Handler crate | `cclab-sdd-cli` (existing `commands.rs`) |"
+}

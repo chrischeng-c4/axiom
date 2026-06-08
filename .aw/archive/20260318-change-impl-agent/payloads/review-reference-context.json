@@ -1,0 +1,49 @@
+{
+  "group_id": "code-agent-core",
+  "verdict": "REVIEWED",
+  "summary": "Two substantive issues: (1) security.md is missing — CodingAgent has a direct SecurityPolicy dependency (architecture.md: CodingAgent --> SecurityPolicy; builder exposes with_security()), but it is absent from the reference context. (2) storage.md is over-included at medium — architecture spec shows CodingAgent does NOT depend on Storage (only AnalystAgent does), and the requirements make no mention of session persistence. Additionally, no spec exists for CRRCycle (crr.rs) or TaskGraph/TaskBlock (cclab-sdd), which are explicitly required by the pre-clarifications — these are spec landscape gaps that must be resolved before implementation.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "security.md is absent despite CodingAgent having a direct SecurityPolicy dependency (architecture.md class diagram, CodingAgentBuilder.with_security()). CRRCycle (crr.rs) and TaskGraph/TaskBlock (cclab-sdd/src/models/task_graph.rs) referenced in Q3/Q2 of pre-clarifications have no corresponding spec. These are real spec gaps, not just missing references."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "storage.md scored medium but should be excluded or low. Architecture.md class diagram shows CodingAgent depends on LLMProvider, ToolRegistry, SecurityPolicy, and ContextManager — Storage is NOT in that list. Only AnalystAgent uses Storage. The requirements make no mention of session persistence for CodeAgent."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": true,
+      "note": "All listed key requirements were verified against the actual spec content. No fabricated requirements found. Minor gap: architecture entry omits the SecurityPolicy dependency of CodingAgent, and integrations entry only says 'to be extended' without naming the new methods (create_branch, commit_files, create_pr/mr) from requirements.md."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "storage.md is included at medium but CodeAgent has no Storage dependency per architecture spec. All other included specs are correctly relevant."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "security.md is missing from the reference context. The architecture.md class diagram shows CodingAgent --> SecurityPolicy as a direct dependency. The CodingAgentBuilder includes with_security(SecurityPolicy). The security.md spec defines SecurityPolicy schema (blocked_paths, allowed_paths, blocked_commands, tools_requiring_approval), path validation logic, and tool approval flow — all directly needed when wiring CodeAgent. Omitting this will cause the implementer to either miss the SecurityPolicy wiring or duplicate its design.",
+      "recommendation": "Add cclab-agent/security with relevance MEDIUM and key_requirements: SecurityPolicy schema (blocked_paths, allowed_paths, tools_requiring_approval), path validation logic (is_path_allowed), tool approval flow (ApprovalHandler, ApprovalRequest/Response)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "storage.md is included at medium relevance but CodingAgent does not use Storage. The architecture.md class diagram explicitly shows CodingAgent depends on LLMProvider, ToolRegistry, SecurityPolicy, and ContextManager — Storage is absent. Only AnalystAgent holds a Storage reference. The requirements (parse specs, topological sort, multi-file codegen, CRR cycle, Git ops) have no session persistence requirement. Including it at medium will cause the implementer to unnecessarily design storage integration.",
+      "recommendation": "Remove storage.md from the reference context. If background reference is needed, downgrade to low with a note that it is AnalystAgent-specific."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "No spec exists for CRRCycle (crates/cclab-agent/src/agents/crr.rs). Requirements explicitly mandate integration with CRRCycle for automated code review orchestration. The source exists and is substantive (CRREvent, CRRVerdictType, CRRCycle struct), but no spec covers its interface, event model, or max_revisions semantics. review-agent.md is also an empty stub. Without specs, the reference context has no entry to reference for this critical integration point.",
+      "recommendation": "Create cclab-agent/crr.md spec covering: CRRCycle interface (creator/reviewer/reviser, max_revisions), CRREvent variants, ReviewVerdict model, and CRRCycle.run() contract. Then add it to this reference context with relevance HIGH. This must happen before the change-spec phase."
+    },
+    {
+      "severity": "LOW",
+      "description": "Pre-clarifications Q2/Q3 reference cclab-sdd/src/models/task_graph.rs (TaskGraph, TaskBlock, get_execution_order) as a structural reference for CodeAgent's task decomposition and topological sorting. No spec exists for this model. The cclab-sdd/logic/implement-task.md is the closest spec (it describes Kahn's algorithm and build_spec_execution_order) but is scoped to cclab-sdd's own workflow, not exported as a reusable model.",
+      "recommendation": "Either create a cclab-sdd/models/task-graph.md spec covering TaskGraph, TaskBlock schemas and topological sort contract, or note in the integrations key_requirements that CodeAgent must design its own task model inspired by cclab-sdd's pattern. No immediate blocker since Q2/Q3 already clarified this is for reference only."
+    }
+  ]
+}

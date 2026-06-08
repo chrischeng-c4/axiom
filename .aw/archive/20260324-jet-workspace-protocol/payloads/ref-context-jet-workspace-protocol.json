@@ -1,0 +1,49 @@
+{
+  "group_id": "jet-workspace-protocol",
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-jet/pkg-manager-pnpm-parity.md",
+      "relevance": "high",
+      "key_requirements": "Defines workspace discovery flow and install algorithm. Lines 217-244 specify workspace detection priority and install behavior."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/nx-support.md",
+      "relevance": "medium",
+      "key_requirements": "Defines WorkspaceMode enum (Nx > Jet/pnpm > Single). Lines 47-60 workspace detection priority. Lines 352-398 workspace protocol detection."
+    }
+  ],
+  "codebase": [
+    {
+      "path": "crates/cclab-jet/src/pkg_manager/workspace.rs",
+      "relevance": "high",
+      "summary": "WorkspaceManager with load_config() (lines 60-103): tries jet-workspace.yaml then package.json.workspaces. WorkspaceConfig struct has packages + catalog fields. resolve_workspace_protocol() and is_workspace_protocol() already exist."
+    },
+    {
+      "path": "crates/cclab-jet/src/pkg_manager/mod.rs",
+      "relevance": "high",
+      "summary": "PackageManager::install_with_options() (lines 111-280): main install flow. Resolves deps via DependencyResolver, downloads tarballs, hardlinks from ~/.jet-store/. No workspace dep handling yet."
+    },
+    {
+      "path": "crates/cclab-jet/src/pkg_manager/resolver.rs",
+      "relevance": "high",
+      "summary": "DependencyResolver with resolve_alias() (lines 140-160): handles npm: protocol but not workspace: protocol. resolve_with_prefetch() sends all deps to npm registry."
+    },
+    {
+      "path": "crates/cclab-jet/src/cli.rs",
+      "relevance": "medium",
+      "summary": "Install command (lines 318-370): detects WorkspaceMode, dispatches to Nx, Jet workspace, or Single install path."
+    },
+    {
+      "path": "crates/cclab-jet/src/pkg_manager/lockfile.rs",
+      "relevance": "medium",
+      "summary": "Lockfile struct stores packages with tarball URL + shasum. No workspace: flag or local path support yet."
+    }
+  ],
+  "gaps": [
+    "workspace.rs load_config() does not check pnpm-workspace.yaml",
+    "mod.rs install_with_options() does not filter workspace: deps before resolution",
+    "resolver.rs resolve_alias() does not handle workspace: prefix — sends to npm registry",
+    "lockfile.rs has no representation for workspace-linked packages",
+    "No catalog: field parsing from pnpm-workspace.yaml (struct has field but no parser for pnpm format)"
+  ]
+}

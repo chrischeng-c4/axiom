@@ -1,0 +1,66 @@
+{
+  "change_id": "mamba-conformance-p0",
+  "spec_id": "py312-behavioral-conformance",
+  "verdict": "REJECTED",
+  "summary": "Spec has ## Test Plan (T1-T20, 80+ test cases across 20 groups). The diff contains 51+ #[test] functions in p0_conformance_tests.rs and runtime_bugs_conformance_tests.rs — Hard Reject Rule does NOT apply. REJECTED due to two hard checklist failures: (1) cargo test conformance_tests reports a regression: run_conformance::language/pattern_matching.py FAILED — line 22 expected 'origin' got 'not a point', caused by the P1 OOP changes in commit b3b90fe4 breaking class pattern matching for Point(x=0, y=0); (2) R22 CLI runner ('cclab mamba test --conformance') is NOT implemented — the spec's Changes section specifies MODIFY crates/cclab-mamba-cli/src/test_cmd.rs but this crate does not exist and no CLI --conformance flag was added anywhere.",
+  "hard_checklist": {
+    "code_matches_spec": {
+      "result": "fail",
+      "notes": "R22 (CLI runner) is unimplemented. The spec requires: 'cclab mamba test --conformance discovers all .py fixtures, compares against .expected, reports pass/fail/xfail summary, exits non-zero on unexpected failure'. The Changes section lists 'path: crates/cclab-mamba-cli/src/test_cmd.rs, action: MODIFY' as required. No cclab-mamba-cli crate exists and no --conformance flag was found in any CLI file. The existing conformance_tests.rs auto-discovery harness satisfies functional coverage but not the explicit R22 CLI entry-point requirement (T20.1-T20.3). All fixture files required by T1-T19 (R1-R21) ARE present on disk and cover the spec's scenarios."
+    },
+    "tests_present_when_test_plan_exists": {
+      "result": "pass",
+      "notes": "Spec has ## Test Plan with T1-T20 (80+ test cases). The diff adds 51+ #[test] functions: p0_conformance_tests.rs covers TC-1 through TC-6 (lambda, with-statement, decorator, stdlib, comprehension scope, walrus), runtime_bugs_conformance_tests.rs covers R1-R5 (semicolons, floor division, decorator return, nested f-string, json.dumps). codegen/cranelift/mod.rs adds 9 P1 OOP extern-collection tests. resolve/pass.rs adds 8 comprehension scope isolation tests. lower/hir_to_mir.rs adds 2 with-statement/call-extern tests. Hard Reject Rule condition (zero #[test] blocks) is not met."
+    },
+    "no_regressions": {
+      "result": "fail",
+      "notes": "cargo test -p cclab-mamba --test conformance_tests: 1 FAILED out of 149 tests. FAILING: run_conformance::language/pattern_matching.py — 'line 22: expected \"origin\", got \"not a point\"'. The fixture tests classify_point(Point(0, 0)) which hits the class pattern case Point(x=0, y=0) and should return 'origin'. The P1 OOP commit b3b90fe4 (runtime/class.rs +1001 lines, hir_to_mir.rs +254 lines) introduced this regression by changing how class attribute access and pattern matching interact. The language/pattern_matching.py fixture is a pre-existing test (not added by this change) that was passing before the OOP changes."
+    }
+  },
+  "soft_findings": [
+    {
+      "severity": "major",
+      "title": "Spec constraint 'test-only' violated — extensive runtime changes in scope",
+      "details": "The spec explicitly states on line 66: 'No changes to runtime implementation in this spec — test-only; implementation bugs found are tracked as separate issues'. The implementation includes significant runtime changes: resolve/pass.rs (+297 lines, ComprehensionScopeVisitor), lower/ast_to_hir.rs (comprehension scope save/restore, walrus lowering), lower/hir_to_mir.rs (+254 lines, OOP method lowering), runtime/class.rs (+1001 lines, full OOP runtime), hir/mod.rs (all_bases, class_attr_assigns, Walrus HirExpr). These are attributable to the P0/P1/P2 conformance work covering the same issue #1037. The constraint means 'this spec does not design runtime changes', not 'no runtime changes may be made', so this is a scope interpretation issue rather than a blocking violation — but the spec should clarify which runtime changes are authorized.",
+      "locations": [
+        "groups/mamba-py312-conformance/specs/py312-behavioral-conformance.md:66",
+        "crates/cclab-mamba/src/runtime/class.rs (P1 OOP changes)",
+        "crates/cclab-mamba/src/resolve/pass.rs:1688-1988",
+        "crates/cclab-mamba/src/lower/hir_to_mir.rs (+254 lines)"
+      ],
+      "recommendation": "Either (a) revise the spec constraint to acknowledge the runtime changes as authorized prerequisites for passing the conformance tests, or (b) create explicit separate specs for the runtime changes (comprehension scope isolation spec, OOP runtime spec) and cross-reference from py312-behavioral-conformance."
+    },
+    {
+      "severity": "major",
+      "title": "Multiple new fixture files carry xfail markers — T6-T13 stdlib tests are all expected-failures",
+      "details": "Several new conformance fixtures are marked with # mamba-xfail directives: stdlib/math/math_conformance.py ('math module extended functions (comb, perm, lcm) not supported'), stdlib/json/json_conformance.py ('json module extended features not supported'), stdlib/re/re_conformance.py ('re module extended features not supported'), stdlib/itertools/itertools_conformance.py ('itertools module extended features not supported'), stdlib/struct/struct_conformance.py ('struct module not supported'), stdlib/random/random_conformance.py ('random module not supported'). This means R6-R13 acceptance criteria (stdlib math/json/re/itertools/struct/random conformance) are unverified — no new passing tests are added for these requirements.",
+      "locations": [
+        "crates/cclab-mamba/tests/fixtures/conformance/stdlib/math/math_conformance.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/stdlib/json/json_conformance.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/stdlib/re/re_conformance.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/stdlib/itertools/itertools_conformance.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/stdlib/struct/struct_conformance.py:1",
+        "crates/cclab-mamba/tests/fixtures/conformance/stdlib/random/random_conformance.py:1"
+      ],
+      "recommendation": "For each xfail, open a dedicated issue tracking the missing stdlib implementation and include the issue ID in the xfail comment. The fixtures themselves are valuable as regression sentinels once the stdlib is implemented."
+    },
+    {
+      "severity": "moderate",
+      "title": "implementation.md diff does not include fixture file additions",
+      "details": "The 25+ new .py and .expected fixture files specified in the spec's Changes section are absent from the diff recorded in implementation.md. The summary mentions '22 files: New .py + .expected golden files' and '17 new conformance fixtures' but no diff hunks for language/*.py, class_system/*.py, exceptions/*.py, stdlib/**/*.py, or builtins/*.py appear in the diff body. The fixture files exist on disk as untracked git files. The recorded implementation artifact is incomplete and cannot be reviewed against the spec Changes section using the diff alone.",
+      "locations": [
+        "cclab/changes/mamba-conformance-p0/implementation.md:38-42"
+      ],
+      "recommendation": "Regenerate or amend the implementation.md diff to include the fixture file additions so the artifact accurately reflects what was delivered."
+    },
+    {
+      "severity": "minor",
+      "title": "conformance_tests.rs not modified despite spec MODIFY action",
+      "details": "The spec's Changes section specifies 'path: crates/cclab-mamba/tests/conformance_tests.rs, action: MODIFY, desc: Register new builtins/, stdlib/, language/, class_system/, exceptions/ edge-case fixtures'. No modification appears in the diff. This is acceptable in practice because the existing harness uses harness!(run_conformance, \"tests/fixtures/conformance\", r\".*\\.py$\") which auto-discovers all .py files recursively. The spec requirement is functionally satisfied without explicit registration.",
+      "locations": [
+        "crates/cclab-mamba/tests/conformance_tests.rs:205"
+      ],
+      "recommendation": "Update the spec Changes section to remove the conformance_tests.rs MODIFY entry and add a note that auto-discovery covers new fixtures without explicit registration."
+    }
+  ]
+}

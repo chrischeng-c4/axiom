@@ -1,0 +1,21 @@
+{
+  "groups": [
+    {
+      "id": "jet-dev-server-v2",
+      "issues": [1089, 1090, 1091, 1092],
+      "requirements": "Overhaul Jet dev server to reliably serve modern React/TS projects:\n\n1. Replace line-based CJS→ESM flattening with bundler-based per-dependency pre-bundling (#1089). Scan package.json deps, create virtual ESM entries, bundle with crate::bundler::Bundler, write to node_modules/.jet/. Cache invalidated by package.json/lockfile changes. Startup < 3s for ~20 CJS deps.\n\n2. Move all TypeScript type stripping into transform_tsx() AST pass (#1090). Handle: export type, import type, inline type in imports, export interface, type aliases, declare statements, satisfies operator. Remove line-based post-filter. No false positives on 'type' as JS identifier.\n\n3. Generate browser-compatible Node.js builtin polyfills during pre-bundling (#1091). Polyfill: crypto, url, buffer, path, events, util, querystring, process, stream. Stub with warning: fs, child_process, cluster, net, tls, etc.\n\n4. Fix .jet-store symlink-based install so Node.js module resolution works (#1092). Packages with optionalDependencies (esbuild, rollup) must resolve. Create nested node_modules within store entries for their deps (pnpm-style).\n\nAcceptance: cclab jet dev on create-react-app renders without errors. All @cclab/ui components serve without syntax errors. cclab jet install + npx vite works. react, react-dom, axios, date-fns pre-bundle correctly.",
+      "questions": [
+        {
+          "id": "q1",
+          "question": "For #1092 .jet-store fix: should we implement pnpm-style nested node_modules in store entries, or install packages with optionalDependencies directly into project node_modules (not store)?",
+          "why": "Issue lists 3 options. Pnpm-style is most correct but most complex. Direct-install for native deps is simpler but loses dedup benefits."
+        },
+        {
+          "id": "q2",
+          "question": "For #1091 polyfills: should polyfills be served as separate .jet/polyfill-{name}.mjs files via importmap, or bundled inline into the consuming package's .jet/ output?",
+          "why": "Inline is simpler but duplicates code. Separate files are cleaner and cacheable but need importmap entries."
+        }
+      ]
+    }
+  ]
+}

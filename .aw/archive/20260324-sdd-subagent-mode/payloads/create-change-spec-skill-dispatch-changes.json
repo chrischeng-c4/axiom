@@ -1,0 +1,6 @@
+{
+  "spec_id": "subagent-skill-dispatch",
+  "group_id": "subagent-dispatch",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  # Skill template — add subagent:* dispatch branch to loop\n  - path: crates/cclab-sdd/src/skills/run_change.rs\n    action: MODIFY\n    desc: |\n      Update the embedded skill template (include_str! content). Replace Loop steps 3-4\n      with three-way executor dispatch: mainthread (inline), subagent:* (parse + Agent\n      tool + verify), other (handled by workflow tool internally). Add verification\n      instructions: read STATE.yaml phase, check expected artifact, handle retry/fallback.\n\n  # Main spec update\n  - path: cclab/specs/crates/cclab-sdd/skills/run-change.md\n    action: MODIFY\n    desc: |\n      Update Loop section with three-way executor dispatch. Update Execution Loop\n      flowchart to show subagent:* branch with parse/Agent/verify steps. Add\n      verification instructions for subagent dispatch. Keep Entry Point unchanged.\n```"
+}

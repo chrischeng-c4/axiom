@@ -1,0 +1,58 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: titan-test-expansion
+  change_id: pylibs-refactor
+  source_file: pylibs-refactor/specs/titan-test-expansion.md
+  spec_id: titan-test-expansion
+spec:
+  title: Titan Test Architecture
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: test_runner
+      label: executes
+      to: pool_tests
+    - from: test_runner
+      label: executes
+      to: constraint_tests
+    - from: test_runner
+      label: executes
+      to: cascade_tests
+    - from: test_runner
+      label: executes
+      to: upsert_tests
+    - from: pool_tests
+      label: verifies
+      to: connection_rs
+    - from: constraint_tests
+      label: verifies
+      to: error_rs
+    - from: cascade_tests
+      label: verifies
+      to: schema_rs
+    - from: upsert_tests
+      label: verifies
+      to: query_rs
+    id: titan_test_flow
+    nodes:
+    - id: test_runner
+      label: Test Runner (cargo test)
+    - id: pool_tests
+      label: pool_tests.rs
+    - id: constraint_tests,label:constraint_tests.rs
+      label: constraint_tests.rs
+    - id: cascade_tests
+      label: cascade_tests.rs
+    - id: upsert_tests
+      label: upsert_tests.rs
+    - id: connection_rs
+      label: connection.rs (Pooling)
+    - id: error_rs
+      label: error.rs (Constraints)
+    - id: schema_rs
+      label: schema.rs (Cascade)
+    - id: query_rs
+      label: query.rs (Upsert)
+    title: Titan Test Expansion Architecture

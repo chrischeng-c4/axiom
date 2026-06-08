@@ -1,0 +1,154 @@
+{
+  "group_id": "sdd-docs-phase",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-sdd/logic/state-machine.md",
+      "spec_group": "state-machine",
+      "relevance": "high",
+      "key_requirements": [
+        "Add DocsCreated, DocsReviewed, DocsRevised states to StatePhase enum between ChangeImplementationReviewed and ChangeMergeCreated",
+        "Add DocsCheck routing logic: if no [sdd.docs] config or no crate match, skip to ChangeMergeCreated; otherwise advance to DocsCreated",
+        "Add docs phase to Phase Routing table in run-change section",
+        "CRR cycle for docs phase: DocsCreated → DocsReviewed → DocsRevised (same max revisions pattern)"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/config/agents.md",
+      "spec_group": "config",
+      "relevance": "high",
+      "key_requirements": [
+        "Add [sdd.docs] config section to SddConfig schema with output_dir (default: 'docs') and targets array",
+        "DocsTarget fields: crate (string, required), guide (string, required path), audience (enum: developer/end-user/admin), sections (string array)",
+        "Add sdd-doc-writer agent definition to Agent Definitions table (tools: Read, Write, Glob, Grep, Bash; model: sonnet)",
+        "Add sdd-doc-reviewer agent definition (tools: Read, Glob, Grep, Bash; model: sonnet)",
+        "Presence of [sdd.docs] section = enabled (no explicit 'enabled' flag)",
+        "All four execution mode presets (multi_agents, multi_claude_agents, claude_subagents, mainthread) need docs phase action entries"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "spec_group": "mcp-tools",
+      "relevance": "high",
+      "key_requirements": [
+        "Add OpenRPC definitions for sdd_workflow_create_change_docs, sdd_workflow_review_change_docs, sdd_workflow_revise_change_docs",
+        "sdd_workflow_create_change_docs: routes to doc-writer agent, returns prompt_path + executor",
+        "sdd_workflow_review_change_docs: routes to doc-reviewer agent; executes CLI commands to verify accuracy",
+        "DocsCheck decision is embedded in sdd_run_change routing — not a separate tool"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "spec_group": "cli",
+      "relevance": "high",
+      "key_requirements": [
+        "Add create-change-docs, review-change-docs, revise-change-docs to the sdd workflow command tree",
+        "Add CLI → Logic Mapping rows for new docs workflow commands"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/reference-context.md",
+      "spec_group": "logic",
+      "relevance": "medium",
+      "key_requirements": [
+        "CRR cycle pattern: Create → Review (APPROVED/REVIEWED) → Revise → re-review; max 1 revision per group, auto-approve on exceed",
+        "Artifact writing enforcement pattern: prompt constraint + verify_artifact_cli_called() + mainthread fallback",
+        "Agent retry mechanism with MAX_AGENT_RETRIES=2",
+        "Phase routing: group progress tracking via groups_progress in STATE.yaml"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/implement-task.md",
+      "spec_group": "logic",
+      "relevance": "medium",
+      "key_requirements": [
+        "Docs phase occurs after ChangeImplementationReviewed (APPROVED) — same trigger point as merge in current implementation",
+        "Per-spec/per-target CRR sub-state pattern for inline reviews",
+        "Side effects pattern: phase transitions in STATE.yaml",
+        "Revision tracking pattern via task_revisions in STATE.yaml"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/change-merge.md",
+      "spec_group": "logic",
+      "relevance": "medium",
+      "key_requirements": [
+        "Merge phase now comes after docs phase (ChangeMergeCreated only reached after DocsReviewed APPROVED or docs skipped)",
+        "Merge still includes doc output files (in output_dir) as part of the committed change",
+        "Archive structure unchanged — docs are in repo output_dir, not in archive"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/skills/run-change.md",
+      "spec_group": "skills",
+      "relevance": "medium",
+      "key_requirements": [
+        "Execution loop handles new docs phase tools: sdd_workflow_create_change_docs etc.",
+        "sdd-doc-writer agent dispatched via subagent:* executor in claude_subagents mode",
+        "No structural loop changes needed — existing executor dispatch handles new tools"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/change-spec.md",
+      "spec_group": "logic",
+      "relevance": "low",
+      "key_requirements": [
+        "CRR cycle pattern reference — docs phase uses same Create-Review-Revise structure",
+        "Section type system — doc prompts may reference section types to guide what to document"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/post-clarifications.md",
+      "spec_group": "logic",
+      "relevance": "low",
+      "key_requirements": [
+        "Simple phase logic pattern without CRR — contrast with docs phase which does have CRR",
+        "Side effects table pattern for STATE.yaml changes"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/config/platform.md",
+      "spec_group": "config",
+      "relevance": "low",
+      "key_requirements": [
+        "docs_platform is documented as a reserved future section in platform.md — [sdd.docs] config in agents.md is separate from this",
+        "Precedent for multi-section config structure under [sdd.*] namespace"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "state-machine-docs-phase",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/state-machine.md",
+      "source": "crates/cclab-sdd/logic/state-machine.md",
+      "sections": ["overview", "state-machine", "changes"]
+    },
+    {
+      "spec_id": "config-docs-section",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/config/agents.md",
+      "source": "crates/cclab-sdd/config/agents.md",
+      "sections": ["overview", "config", "changes"]
+    },
+    {
+      "spec_id": "workflow-tools-docs-phase",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "source": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "sections": ["overview", "rpc-api", "changes"]
+    },
+    {
+      "spec_id": "cli-commands-docs-phase",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "source": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "sections": ["overview", "cli", "changes"]
+    },
+    {
+      "spec_id": "docs-phase-logic",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/logic/docs-phase.md",
+      "sections": ["overview", "state-machine", "logic", "interaction", "schema", "config", "test-plan", "changes"]
+    }
+  ]
+}

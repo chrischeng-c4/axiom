@@ -1,0 +1,6 @@
+{
+  "change_id": "agent-crr-review",
+  "group_id": "agent-crr-core",
+  "skipped": true,
+  "reason": "No contradictions. CRR cycle and ReviewAgent are entirely new types. No existing agent patterns conflict — ReviewAgent follows the same builder + TypedAgent pattern as RestructureAgent. ReviewVerdict is a new enum, no naming conflicts."
+}

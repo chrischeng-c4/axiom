@@ -1,0 +1,7 @@
+{
+  "change_id": "resolver-compat",
+  "spec_id": "resolver-compat-spec",
+  "verdict": "APPROVED",
+  "summary": "Implementation correctly fixes both #960 (hyphen range) and #957 (bare alias). Single file changed: resolver.rs. All 96 pkg_manager tests pass.",
+  "issues": []
+}

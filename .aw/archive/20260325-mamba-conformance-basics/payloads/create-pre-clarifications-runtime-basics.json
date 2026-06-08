@@ -1,0 +1,9 @@
+{
+  "group_id": "runtime-basics",
+  "answers": [
+    {"topic":"Scope boundary","answer":"Fix all 3 bugs in this change. They're all basic runtime correctness — can't ship anything else until these work."},
+    {"topic":"Recursion bug root cause","answer":"Likely in codegen — recursive call result not properly returned. Check Cranelift JIT function call emission: the return value from recursive mb_call may not be propagated back through NaN-boxing. Debug by tracing fib(3) step by step."},
+    {"topic":"String concat dispatch","answer":"String + string should call mb_str_concat in string_ops.rs. The type checker wrongly requires numeric types for +. Fix in types/check_expr.rs or codegen binary op emission to dispatch to concat for str operands."},
+    {"topic":"print() return value","answer":"print() should return None (TAG_NONE). If it returns 0 (TAG_INT), the top-level expression evaluator is printing the return value. Fix: either make print return None, or suppress top-level expression result printing (REPL vs script mode)."}
+  ]
+}

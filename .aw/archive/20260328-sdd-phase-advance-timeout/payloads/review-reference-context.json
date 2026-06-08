@@ -1,0 +1,7 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-phase-advance-timeout",
+  "group_id": "phase-advance-and-timeout",
+  "verdict": "approved",
+  "summary": "Reference context correctly identifies state-machine.md and reference-context.md as primary specs. Spec plan covers both fixes with appropriate sections."
+}

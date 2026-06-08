@@ -1,0 +1,8 @@
+{
+  "spec_id": "error-types",
+  "group_id": "queue-unit-test-coverage",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-queue/logic/error-types.md",
+  "fill_sections": ["overview", "schema", "logic", "test-plan", "changes"],
+  "content": "<!-- type: overview lang: markdown -->\n\n`TaskError` is the unified error enum for cclab-queue. It covers 17 variants spanning broker, backend, serialization, connection, task-lifecycle, workflow, auth, and rate-limiting failures. Three `From` impls provide automatic conversion:\n\n- `TaskError → DataBridgeError` (upstream propagation to cclab-core)\n- `serde_json::Error → TaskError::Serialization`\n- `uuid::Error → TaskError::InvalidTaskId`\n\nThis spec defines the variant schema, conversion logic, and test plan for achieving full unit test coverage of `crates/cclab-queue/src/error.rs`."
+}

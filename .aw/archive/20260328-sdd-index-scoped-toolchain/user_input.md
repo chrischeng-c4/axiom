@@ -1,0 +1,1 @@
+Index server scoped toolchain binding — auto-discover project roots from Cargo.toml/pyproject.toml/package.json, per-scope handlers with correct search_paths for ImportResolver and StubLoader, file-to-scope routing by longest prefix match, per-scope cache directories under cclab/.index/scopes/ #1127

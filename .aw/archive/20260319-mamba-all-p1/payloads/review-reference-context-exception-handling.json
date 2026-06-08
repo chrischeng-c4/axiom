@@ -1,0 +1,66 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-mamba",
+  "change_id": "mamba-all-p1",
+  "group_id": "exception-handling",
+  "verdict": "FAIL",
+  "summary": "The three most directly relevant specs — runtime/exception.md, parser/statements.md, hir/hir.md — are entirely absent. These are 1:1 matches for all three pre-clarification questions: exception.md covers exception.rs which is cited in Q1 (ExceptionGroup at lines 417-456, mb_except_star at 458-528), Q2 (MbException struct at lines 10-24, chaining helpers at 38-46), and Q3 (chained traceback display); statements.md covers stmt_compound.rs which is explicitly cited in Q1 (is_star flag at lines 289-295); hir/hir.md covers the HIR propagation of is_star in HirExceptHandler cited in Q1. Additionally, stdlib/diagnostics-utils.md (traceback_mod.rs for Q3 integration) is missing at medium relevance. The two included specs at low relevance — all-mamba-p0.md and pattern-matching.md — have no requirements addressing exception handling, exception chaining, ExceptionGroup, or traceback rendering. An implementer reading this reference context would find zero spec guidance for the runtime/exception.rs file they must work in.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Q1 (ExceptionGroup / except*): Pre-clarifications cite exception.rs:417-456 (ExceptionGroup), exception.rs:458-528 (mb_except_star), stmt_compound.rs:289-295 (is_star flag in parser), and HirExceptHandler (is_star in HIR). None of these files has a corresponding spec in the reference context. runtime/exception.md (R5: ExceptionGroup, R6: except* syntax), parser/statements.md (R2: compound statement parsing including try/except), and hir/hir.md (R1: HirStmt::Try) are all absent. Q2 (exception chaining): Pre-clarifications cite exception.rs:10-24 (MbException struct with cause/context/suppress_context/traceback), exception.rs:38-46 (with_cause/with_context), mb_raise_from(), mb_raise_with_context(). Again, runtime/exception.md (R2: exception instantiation with chaining, R4: thread-local state) is absent and is the only spec covering these functions. Q3 (traceback rendering): Pre-clarifications cite exception.rs (chained display) and note potential integration with the diagnostic module. runtime/exception.md and stdlib/diagnostics-utils.md (R5: traceback.format_exc, R6: traceback.print_exc) are both absent."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "README.md rated MEDIUM: inflated. README is a spec-index table with no implementable requirements — it lists which specs exist but defines no R1-Rn requirements, no acceptance criteria, and no behavioral contracts. Its 'Navigation' value is LOW at best. The artifact's own coverage note acknowledges it only points to exception.md, statements.md, hir.md, diagnostics-utils.md — but none of those specs are included. all-mamba-p0.md rated LOW: its five requirements (R1 module system, R2 pattern matching, R3 BigInt, R4 benchmarks, R5 builtins conformance) have zero connection to exception handling, chaining, ExceptionGroup, or traceback rendering. The LOW rating still implies background relevance that does not exist. pattern-matching.md rated LOW: PEP 634 pattern dispatch (R1-R8) covers match/case parser patterns, HIR pattern nodes, decision-tree MIR lowering, and Cranelift codegen. None of its requirements address exception hierarchy, except*, chaining, or traceback. Assigning any relevance level implies a connection that pre-clarifications do not support."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "README.md: Listed key requirement is 'Navigation: exception.md, statements.md, hir.md, diagnostics-utils.md'. This is not a requirement ID — it is a discovery hint. Reading README.md confirms it contains only a table of spec-to-file mappings with no R-prefixed requirements. The listed 'key requirements' expose a fundamental problem: the artifact acknowledges these four specs are relevant but fails to include any of them. all-mamba-p0.md: Listed key requirement is 'General P0 scope, shared infrastructure'. Reading all-mamba-p0.md: its actual requirements are R1 (import aliases/relative imports), R2 (PEP 634 pattern matching), R3 (BigInt overflow), R4 (benchmark suite), R5 (builtins conformance). Not one of these five requirements touches exception handling. 'General P0 scope, shared infrastructure' is a fabricated description that does not correspond to any requirement ID in the spec. pattern-matching.md: Listed key requirement is 'Type narrowing, structural dispatch (future integration)'. Reading pattern-matching.md R4: it defines type narrowing for case branches in match/case statements. This has no connection to exception type matching in except clauses. The 'future integration' framing is speculative and unsupported by any pre-clarification answer."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "all-mamba-p0.md is irrelevant. Its requirements (module imports, PEP 634, BigInt, benchmarks, builtins conformance) have no intersection with exception handling, exception chaining, ExceptionGroup, or traceback rendering. None of the three pre-clarification questions mention module systems, BigInt arithmetic, benchmark suites, or structural pattern matching. pattern-matching.md is irrelevant. PEP 634 defines match/case structural dispatch entirely separate from Python's exception mechanism. The pre-clarifications do not reference match/case, HirPattern, or decision-tree lowering anywhere. Including it at any relevance level misguides implementers about what language features are in scope."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "runtime/exception.md is absent. This is the primary spec for this group — it directly covers exception.rs, which is cited in all three pre-clarification answers. Q1: R5 (ExceptionGroup wrapping Vec<MbValue>, mb_exception_group_new/split/subgroup) and R6 (except* AST variant, is_star parsing, HIR/MIR multi-handler splitting) are exact matches for the ExceptionGroup and mb_except_star implementations at exception.rs:417-528. Q2: R2 (mb_exception_new with cause/traceback fields) and R4 (mb_raise/mb_get_exception/mb_clear_exception thread-local state) cover the MbException struct (lines 10-24) and chaining helpers (lines 38-46). Q3: R1 (exception hierarchy for traceback display) provides the class structure used in chained traceback rendering. The spec exists at cclab/specs/cclab-mamba/runtime/exception.md.",
+      "recommendation": "Add runtime/exception.md at HIGH relevance. Key requirements: R5 (ExceptionGroup — mb_exception_group_new, split, subgroup, exceptions — PEP 654), R6 (except* syntax — ExceptStar AST variant, HIR/MIR multi-handler splitting), R2 (exception instantiation with cause/context/traceback — MbException chaining), R4 (thread-local state — mb_raise, mb_get_exception, mb_clear_exception)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "parser/statements.md is absent. This spec directly covers stmt_compound.rs (explicitly cited in Q1 at lines 289-295 for the is_star flag). The spec's R2 covers compound statement parsing including the try/except statement with ExceptHandler. The is_star flag on the except handler — which triggers except* semantics — lives in stmt_compound.rs:289-295, the exact location cited in Q1. Without this spec, the parsing contract for except* is unspecified in the reference context.",
+      "recommendation": "Add parser/statements.md at HIGH relevance. Key requirements: R2 (compound statement parsing — try/except including ExceptHandler is_star flag for PEP 654 except* syntax at stmt_compound.rs:289-295)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "hir/hir.md is absent. Pre-clarification Q1 explicitly states 'HIR propagates is_star in HirExceptHandler.' The spec's R1 defines HirStmt variants including Try (exception handling blocks). HirExceptHandler with is_star is the HIR representation of except* — the bridge between the parser's is_star flag and the MIR multi-handler splitting logic. Without this spec, the HIR data-model contract for except* is unspecified.",
+      "recommendation": "Add hir/hir.md at HIGH relevance. Key requirements: R1 (HirStmt variants — Try block with HirExceptHandler, is_star propagation for except* desugaring)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "stdlib/diagnostics-utils.md is absent. Pre-clarification Q3 explicitly states traceback rendering 'could benefit from integration with the diagnostic module for richer ANSI colored output and code snippets.' This spec covers traceback_mod.rs (R5: traceback.format_exc — format current exception traceback, R6: traceback.print_exc — print to stderr) and contextlib_mod.rs (R1: contextlib.suppress — context manager that suppresses exception types). These are direct stdlib dependencies of the exception-handling subsystem. The spec also declares its own dependency: 'Exception hierarchy (for suppress and warnings categories).'",
+      "recommendation": "Add stdlib/diagnostics-utils.md at MEDIUM relevance. Key requirements: R5 (traceback.format_exc — format traceback string, includes file/line/function per frame), R6 (traceback.print_exc — stderr output), R1 (contextlib.suppress — suppress listed exception types, depends on exception hierarchy)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "all-mamba-p0.md is included but is irrelevant. Reading all-mamba-p0.md: R1 (import aliases/relative imports), R2 (PEP 634 pattern matching), R3 (BigInt fallback), R4 (benchmark suite), R5 (builtins conformance). None of the five requirements address exception handling, ExceptionGroup, chaining, or traceback. The listed key requirement 'General P0 scope, shared infrastructure' does not correspond to any actual requirement ID in the spec and misrepresents its content. An implementer would find no actionable guidance for the exception-handling work.",
+      "recommendation": "Remove all-mamba-p0.md from this group's reference context entirely. It provides no spec coverage for any pre-clarification question and would mislead an implementer into reading irrelevant requirements."
+    },
+    {
+      "severity": "LOW",
+      "description": "pattern-matching.md is included at LOW but has no connection to exception handling. Its eight requirements cover PEP 634: R1 (parser pattern types), R2 (AS patterns), R3 (mapping **rest), R4 (case-branch type narrowing), R5 (HIR pattern nodes), R6 (AST→HIR lowering for patterns), R7 (nested patterns in MIR), R8 (Cranelift codegen for pattern dispatch). None of these address ExceptionGroup, except*, exception chaining, or traceback rendering. The 'future integration' note in the key requirements field is speculative and unsubstantiated by any pre-clarification answer.",
+      "recommendation": "Remove pattern-matching.md from this group's reference context entirely. Including it at any relevance level implies a connection that the pre-clarifications do not support."
+    },
+    {
+      "severity": "LOW",
+      "description": "README.md is rated MEDIUM but is an index with no implementable requirements. Its content is a table of spec-to-file mappings (e.g., 'runtime/exception.md | exception.rs | Exception hierarchy, ExceptionGroup'). It has no R-prefixed requirements, no acceptance criteria, and no behavioral contracts. The index value is at most LOW. Worse, the artifact uses README as a proxy to acknowledge exception.md, statements.md, hir.md, and diagnostics-utils.md are relevant — but then fails to include any of them directly.",
+      "recommendation": "Downgrade README.md to LOW. The specs it indexes — runtime/exception.md, parser/statements.md, hir/hir.md, stdlib/diagnostics-utils.md — must be added directly at their appropriate relevance levels (high/high/high/medium)."
+    }
+  ]
+}

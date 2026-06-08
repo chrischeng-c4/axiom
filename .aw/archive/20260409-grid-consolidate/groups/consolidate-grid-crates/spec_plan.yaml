@@ -1,0 +1,6 @@
+- spec_id: grid-crate-structure
+  action: create
+  main_spec_ref: crates/cclab-grid/logic/crate-structure.md
+  sections:
+  - overview
+  - changes

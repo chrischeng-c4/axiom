@@ -1,0 +1,9 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "lens-dissolution",
+  "spec_id": "sdd-cli-context-command",
+  "group_id": "lens-dissolution",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "content": "CLI interface additions to `cclab sdd` for agent context building (#946) and agent-optimized output (#949). Modifies the existing CLI commands spec to register two new subcommand/option entries.\n\n| Attribute | Value |\n|-----------|-------|\n| Crate | cclab-sdd-cli |\n| Spec target | `cclab/specs/crates/cclab-sdd/interfaces/cli/commands.md` |\n| Issues | #946, #949 |\n| New commands | `cclab sdd context <targets...> [--depth N]` |\n| New options | `cclab sdd check --format agent` |\n| Interface only | CLI-only — no MCP exposure (Q2 clarification) |"
+}

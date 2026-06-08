@@ -1,0 +1,4 @@
+[wasm]
+entry = "src/ClassName.tsx"
+root_component = "ClassName"
+root_props = [0]

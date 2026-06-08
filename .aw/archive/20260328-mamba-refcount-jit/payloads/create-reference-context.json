@@ -1,0 +1,42 @@
+{
+  "change_id": "mamba-refcount-jit",
+  "group_id": "refcount-jit",
+  "reference_context": "| Spec | Relevance | Key Requirements |\n|------|-----------|------------------|\n| crates/cclab-mamba/runtime/value-and-rc.md | high | R4 mb_retain/mb_release (rc.rs), AtomicU32 header, NaN-boxing TAG_PTR=0 is_ptr() check — Phases 4+5: add IMMORTAL_REFCOUNT constant, guard retain/release to skip immortal objects |\n| crates/cclab-mamba/runtime/gc.md | high | KI-1: GC disabled (enabled:false) because JIT emits no roots; Phase 6 re-enables auto-collection once refcounting is correct |\n| crates/cclab-mamba/runtime/symbols.md | high | R3 register_symbols() / runtime_symbols() — Phase 1: add mb_retain and mb_release to the JIT symbol table |\n| crates/cclab-mamba/codegen/cranelift-jit.md | high | emit_inst (jit.rs) — Phase 2: emit mb_release before StoreVar reassignment + mb_retain for new heap pointer; CraneliftJitBackend tracks compile-time str/bytes allocations and releases on Drop |\n| crates/cclab-mamba/codegen/cranelift.md | high | emit_terminator (mod.rs) — Phase 3: emit mb_release for all live local variables at Return terminator |\n| crates/cclab-mamba/mir/mir.md | medium | StoreVar and Return MIR instructions are the two trigger points for retain/release emission; MirFunction.locals enumerates live variable slots |\n| crates/cclab-mamba/runtime/thread-safe-runtime.md | low | AtomicU32 rc with AcqRel ordering in MbObjectHeader is already thread-safe; no changes needed here |",
+  "specs": [
+    {
+      "spec_id": "value-and-rc",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/value-and-rc.md",
+      "source": "crates/cclab-mamba/runtime/value-and-rc.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "gc",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/gc.md",
+      "source": "crates/cclab-mamba/runtime/gc.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "symbols",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/symbols.md",
+      "source": "crates/cclab-mamba/runtime/symbols.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "cranelift-jit",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/codegen/cranelift-jit.md",
+      "source": "crates/cclab-mamba/codegen/cranelift-jit.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "cranelift",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/codegen/cranelift.md",
+      "source": "crates/cclab-mamba/codegen/cranelift.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

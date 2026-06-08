@@ -1,0 +1,218 @@
+change_id: mamba-p1-lang-features
+schema_version: '2.0'
+created_at: 2026-03-20T04:10:45.400867Z
+updated_at: 2026-03-20T09:10:29.516361Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:slice-step: 1
+  ref_ctx:scope-modifiers: 1
+  ref_ctx:decorator-full: 1
+  ref_ctx:extended-unpacking: 1
+  ref_ctx:string-literals: 1
+current_task_id: mamba-p1-lang-features-spec
+task_revisions:
+  mamba-p1-lang-features-spec: 2
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 244551
+    timestamp: 2026-03-20T04:15:08.785437Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 167449
+    timestamp: 2026-03-20T04:23:39.800467Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 199369
+    timestamp: 2026-03-20T04:30:32.231285Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 622900
+    timestamp: 2026-03-20T04:31:00.643521Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 234631
+    timestamp: 2026-03-20T04:36:33.834726Z
+  - step: revise_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 40645
+    timestamp: 2026-03-20T04:37:46.088736Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 293690
+    timestamp: 2026-03-20T04:42:55.706718Z
+  - step: revise_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 132836
+    timestamp: 2026-03-20T04:45:33.368581Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 379829
+    timestamp: 2026-03-20T04:52:06.470788Z
+  - step: revise_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 72936
+    timestamp: 2026-03-20T04:53:48.433270Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 665998
+    timestamp: 2026-03-20T06:26:40.966354Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 5309067
+    timestamp: 2026-03-20T06:27:37.528044Z
+  - step: review_impl_mamba-p1-lang-features-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 174329
+    timestamp: 2026-03-20T06:30:54.395130Z
+  - step: review_impl_mamba-p1-lang-features-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 451257
+    timestamp: 2026-03-20T07:42:43.838682Z
+  - step: review_impl_mamba-p1-lang-features-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 403062
+    timestamp: 2026-03-20T07:47:51.027707Z
+  - step: review_impl_mamba-p1-lang-features-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 337556
+    timestamp: 2026-03-20T08:07:23.082865Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 3331220
+    timestamp: 2026-03-20T08:28:11.062814Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 835
+    title: List/tuple slicing with step — a[::2], a[::-1]
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 845
+    title: Star expressions — *a, b = [1, 2, 3] extended unpacking
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 846
+    title: Global and nonlocal statements
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 847
+    title: Decorator arguments and chaining — @decorator(args) and stacked decorators
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 848
+    title: String escape sequences — full Unicode escapes, raw strings, byte strings
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - decorator-full
+  - extended-unpacking
+  - scope-modifiers
+  - slice-step
+  - string-literals
+  pre_clarifications:
+  - decorator-full
+  - extended-unpacking
+  - scope-modifiers
+  - slice-step
+  - string-literals
+  change_spec: []
+  post_clarifications:
+  - decorator-full
+  - extended-unpacking
+  - scope-modifiers
+  - slice-step
+  - string-literals
+  change_implementation: []

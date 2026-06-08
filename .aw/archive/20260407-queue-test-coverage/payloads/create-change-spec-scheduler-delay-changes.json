@@ -1,0 +1,6 @@
+{
+  "spec_id": "scheduler-delay",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: scheduler-delay-changes\n  refs:\n    - $ref: \"#scheduled-message-handler\"\n    - $ref: \"#scheduler-lifecycle\"\nchanges:\n  - path: crates/cclab-queue/src/scheduler/delay.rs\n    action: modify\n    description: >\n      Refactor: extract handler decision logic into module-level\n      `check_scheduled_message` function (pub(crate) for testability).\n      Expand existing #[cfg(all(test, feature = \"nats\"))] mod tests from 1 to 21 tests.\n      Add unit tests for: DelayedTaskConfig (defaults, custom, Debug, Clone, edge cases),\n      DelayedTaskScheduler construction (default config, custom config, shutdown idempotency),\n      handler logic (missing ETA, invalid ETA, future ETA, missing target-queue, happy path, boundary cases).\n  - path: crates/cclab-queue/tests/scheduler_delay_integration.rs\n    action: create\n    description: >\n      Integration tests requiring real NATS.\n      Tests: start+shutdown lifecycle, end-to-end scheduled message delivery,\n      future ETA nack, error resilience for malformed messages.\n      Gated behind #[cfg(feature = \"nats\")].\n```"
+}

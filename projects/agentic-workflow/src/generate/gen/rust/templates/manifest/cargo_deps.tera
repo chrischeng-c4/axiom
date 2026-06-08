@@ -1,0 +1,11 @@
+{%- for d in dependencies -%}
+{%- if d.kind == "workspace" and d.features -%}
+{{ d.name }} = { workspace = true, features = [{% for f in d.features %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}] }
+{% elif d.kind == "workspace" -%}
+{{ d.name }}.workspace = true
+{% elif d.kind == "version" -%}
+{{ d.name }} = { version = "{{ d.version }}"{% if d.features %}, features = [{% for f in d.features %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}]{% endif %} }
+{% elif d.kind == "path" -%}
+{{ d.name }} = { path = "{{ d.path }}"{% if d.features %}, features = [{% for f in d.features %}"{{ f }}"{% if not loop.last %}, {% endif %}{% endfor %}]{% endif %} }
+{% endif -%}
+{%- endfor -%}

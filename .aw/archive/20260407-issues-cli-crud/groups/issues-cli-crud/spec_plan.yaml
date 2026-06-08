@@ -1,0 +1,62 @@
+- spec_id: issues-backend-trait
+  action: create
+  main_spec_ref: crates/sdd/logic/issues-backend.md
+  sections:
+  - overview
+  - trait-extension
+  - issue-patch-struct
+  - state-machine
+  - json-schema
+  - scenarios
+- spec_id: issues-cli-write-subcommands
+  action: create
+  main_spec_ref: crates/sdd/interfaces/cli/issues-write.md
+  sections:
+  - overview
+  - create-args
+  - update-args
+  - close-args
+  - find-args
+  - json-output-format
+  - error-format
+  - exit-codes
+  - scenarios
+- spec_id: issues-cross-artifact-refs
+  action: create
+  main_spec_ref: crates/sdd/logic/issues-cross-refs.md
+  sections:
+  - overview
+  - frontmatter-schema
+  - validation-rules
+  - list-time-warnings
+  - scenarios
+- spec_id: issues-gitlab-backend
+  action: create
+  main_spec_ref: crates/sdd/logic/issues-gitlab-backend.md
+  sections:
+  - overview
+  - glab-shell-out-pattern
+  - list-impl
+  - get-impl
+  - create-impl
+  - update-impl
+  - close-impl
+  - search-impl
+  - error-handling
+  - unit-test-strategy
+  - scenarios
+- spec_id: issues-structured-errors
+  action: create
+  main_spec_ref: crates/sdd/interfaces/cli/issues-errors.md
+  sections:
+  - overview
+  - error-code-enum
+  - json-error-format
+  - exit-code-mapping
+  - scenarios
+- spec_id: issues-backend-trait-existing
+  action: modify
+  main_spec_ref: crates/sdd/logic/issues-backend.md
+  source: crates/sdd/src/issues/backend.rs
+  sections:
+  - trait-extension

@@ -1,0 +1,81 @@
+change_id: restructure-agent
+schema_version: '2.0'
+created_at: 2026-03-18T03:28:52.276776Z
+updated_at: 2026-03-18T08:17:40.829599Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:restructure-agent-core: 1
+current_task_id: restructure-agent-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.42
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 180278
+    timestamp: 2026-03-18T03:32:17.719386Z
+  - step: create_reference_context
+    sdd_version: 0.3.42
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 129497
+    timestamp: 2026-03-18T05:51:08.571221Z
+  - step: review_reference_context
+    sdd_version: 0.3.42
+    model: gpt-5.4
+    tokens_in: 2609300
+    tokens_out: 15242
+    cost_usd: null
+    duration_ms: 333308
+    timestamp: 2026-03-18T05:57:24.325594Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.42
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 184431
+    timestamp: 2026-03-18T06:17:14.921140Z
+  - step: begin_implementation
+    sdd_version: 0.3.42
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 567144
+    timestamp: 2026-03-18T06:17:40.329016Z
+  total_cost_usd: 0.0
+  total_tokens_in: 2609300
+  total_tokens_out: 15242
+dag:
+  issues:
+  - number: 900
+    title: 'feat(agent): Restructure Agent — LLM-based prompt refinement with structured I/O'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec: []
+  pre_clarifications:
+  - restructure-agent-core
+  reference_context:
+  - restructure-agent-core
+  post_clarifications:
+  - restructure-agent-core
+  change_implementation: []

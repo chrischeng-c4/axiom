@@ -1,0 +1,45 @@
+# Agentic Workflow Configuration
+# This file lives at .aw/config.toml and is created by `aw init`.
+
+# SDD schema version (bumped on breaking changes).
+version = "0.3.13"
+
+# Interface mode — how skills invoke Agentic Workflow tools.
+# - "cli" (default): skills run `aw wi`, `aw td`, `aw cb`, and related commands directly
+# - "mcp": skills call MCP tools via server (requires `cclab server start`)
+interface = "cli"
+
+# =============================================================================
+# Platform Sections
+# =============================================================================
+
+# Issue tracker (GitHub, GitLab, Jira). Required for `aw platform` commands.
+[agentic_workflow.issue_platform]
+type = "github"
+repo = "owner/repo"
+auth_method = "cli"
+
+# VCS platform for auto-commit / auto-PR after change merge.
+[agentic_workflow.repo_platform]
+type = "github"
+repo = "owner/repo"
+default_branch = "main"
+auto_commit = false
+auto_pr = false
+
+# Tech design storage backend (previously called spec_platform).
+# Currently only `local` type is supported.
+[agentic_workflow.tech_design_platform]
+type = "local"
+path = ".aw/tech-design"
+
+# =============================================================================
+# Project Layout (optional)
+# =============================================================================
+
+# Monorepo-aware module configuration. Helps SDD resolve scopes and
+# language-specific conventions per subdirectory.
+# [project]
+# tool = "cargo"
+# language = "rust"
+# members = ["crate-a", "crate-b"]

@@ -1,0 +1,104 @@
+change_id: install-perf
+schema_version: '2.0'
+created_at: 2026-03-20T08:37:13.437596Z
+updated_at: 2026-03-20T09:32:09.145664Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: install-perf-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: gemini-3-flash-preview
+    tokens_in: 2415219
+    tokens_out: 12463
+    cost_usd: null
+    duration_ms: 1023589
+    timestamp: 2026-03-20T08:54:32.002455Z
+  - step: analyze_spec_install-perf-spec
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 571887
+    tokens_out: 3711
+    cost_usd: null
+    duration_ms: 586489
+    timestamp: 2026-03-20T09:06:30.854039Z
+  - step: fill_spec_install-perf-spec_overview
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 617481
+    tokens_out: 3045
+    cost_usd: null
+    duration_ms: 467127
+    timestamp: 2026-03-20T09:14:18.197277Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 213775
+    timestamp: 2026-03-20T09:18:32.756987Z
+  - step: fill_spec_install-perf-spec_requirements
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 561610
+    tokens_out: 2185
+    cost_usd: null
+    duration_ms: 365749
+    timestamp: 2026-03-20T09:20:24.053901Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 689199
+    timestamp: 2026-03-20T09:20:37.445337Z
+  - step: fill_spec_install-perf-spec_scenarios
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 305584
+    tokens_out: 1632
+    cost_usd: null
+    duration_ms: 238580
+    timestamp: 2026-03-20T09:24:22.638539Z
+  - step: fill_spec_install-perf-spec_changes
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 723273
+    tokens_out: 3894
+    cost_usd: null
+    duration_ms: 466528
+    timestamp: 2026-03-20T09:32:09.145663Z
+  total_cost_usd: 0.0
+  total_tokens_in: 5195054
+  total_tokens_out: 26930
+dag:
+  issues:
+  - number: 881
+    title: 'jet-install: cold install 4.9s vs pnpm 3.4s — optimize metadata resolution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - install-perf
+  change_implementation: []
+  reference_context:
+  - install-perf
+  change_spec: []
+  post_clarifications:
+  - install-perf

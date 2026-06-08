@@ -1,0 +1,8 @@
+{
+  "spec_id": "config-docs-section",
+  "group_id": "sdd-docs-phase",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-sdd/config/agents.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "config", "changes"],
+  "content": "Extend the SDD config schema (`agents.md`) with docs generation phase configuration. Adds `[sdd.docs]` section to `cclab/config.toml` and two new agent definitions (`sdd-doc-writer`, `sdd-doc-reviewer`) to the workflow preset tables.\n\n**What changes in `agents.md`**:\n\n| Addition | Section | Purpose |\n|----------|---------|---------|\n| `[sdd.docs]` config schema | New top-level section | Doc generation output directory + target array |\n| `[[sdd.docs.targets]]` schema | Under `[sdd.docs]` | Per-crate guide path, audience, sections |\n| `sdd-doc-writer` agent def | Agent Definitions table | Dedicated doc-writer agent with Write + Read tools |\n| `sdd-doc-reviewer` agent def | Agent Definitions table | Doc-reviewer agent with Bash(read-only) + Read, no Write |\n| Docs-phase actions | Workflow preset tables | `create_change_docs`, `review_change_docs`, `revise_change_docs` routing |\n\n**Design decisions**:\n- Presence of `[sdd.docs]` = enabled; no `enabled` flag (same pattern as `[sdd.repo_platform]`)\n- `output_dir` defaults to `\"docs\"` relative to project root (per clarification Q3)\n- `sdd-doc-writer` is a dedicated agent type, not reusing existing agents (per clarification Q1)\n- `sdd-doc-reviewer` has Bash (read-only by prompt) to verify CLI output matches docs (per clarification Q2, C2)\n\n**Scope**: Config schema documentation only — no code changes. Struct definitions and parsing logic are in `docs-phase-logic`. State machine is in `state-machine-docs-phase`."
+}

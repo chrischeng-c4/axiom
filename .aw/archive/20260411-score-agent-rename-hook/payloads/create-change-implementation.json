@@ -1,0 +1,29 @@
+{
+  "group_id": "rename-agents-and-add-hook",
+  "spec_id": "score-agent-rename-hook-dispatch",
+  "summary": "Renamed all sdd-* agent definitions to score-* and added SubagentStop hook infrastructure.",
+  "files_changed": [
+    ".claude/agents/score-change-implementation.md",
+    ".claude/agents/score-change-spec.md",
+    ".claude/agents/score-reference-context.md",
+    ".claude/agents/score-review.md",
+    ".claude/agents/score-issue-author.md",
+    ".claude/agents/sdd-change-implementation.md",
+    ".claude/agents/sdd-change-spec.md",
+    ".claude/agents/sdd-reference-context.md",
+    ".claude/agents/sdd-review.md",
+    ".claude/agents/sdd-issue-author.md",
+    ".claude/hooks/score-safe-bash.sh",
+    ".claude/hooks/score-readonly-bash.sh",
+    ".claude/hooks/score-next-step.sh",
+    ".claude/hooks/sdd-safe-bash.sh",
+    ".claude/hooks/sdd-readonly-bash.sh",
+    ".claude/settings.json",
+    ".score/tech_design/crates/sdd/logic/dispatch-model.md",
+    "CLAUDE.md",
+    "crates/sdd/src/workflow/mod.rs",
+    "crates/sdd/tests/execution_modes_test.rs"
+  ],
+  "requirements_met": ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8"],
+  "diff": "Renamed .claude/agents/sdd-*.md to score-*.md (5 files). Renamed .claude/hooks/sdd-*.sh to score-*.sh (2 files, kept old files as delegates). Created .claude/hooks/score-next-step.sh SubagentStop hook. Added SubagentStop hook config to .claude/settings.json. Updated crates/sdd/src/workflow/mod.rs default_agent strings from sdd-* to score-*. Updated CLAUDE.md example JSON. Updated .score/tech_design/crates/sdd/logic/dispatch-model.md agent name references. Updated crates/sdd/tests/execution_modes_test.rs to reference score-* files."
+}

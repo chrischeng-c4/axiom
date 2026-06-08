@@ -1,0 +1,65 @@
+change_id: unified-server
+schema_version: '2.0'
+created_at: 2026-01-24T08:52:22.292168Z
+updated_at: 2026-01-24T13:22:56.061562Z
+phase: archived
+iteration: 0
+last_action: validate-proposal
+session_id: null
+checksums:
+  tasks.md:
+    hash: sha256:6efbb023b18d7100d42da0a9594d366deed1f89b4b018ccd3a3294ebf9bb8d41
+    validated_at: 2026-01-24T13:22:56.060626Z
+  IMPLEMENTATION.md:
+    hash: sha256:e2862f806b9660066622ba69ec844a8fbab07a4be8e4f2cde802a2b1775334ea
+    validated_at: 2026-01-24T13:22:56.061303Z
+  specs/unified-server-architecture.md:
+    hash: sha256:61e1df768fda0f2e7b0c29220f5585cda490ded32aa63fe8e1c65764fded52e9
+    validated_at: 2026-01-24T13:22:56.061558Z
+  proposal.md:
+    hash: sha256:441a0ed54a7fb24dbe5dca24f1c075a504cce7a369fa904a913bfd2d1b15eace
+    validated_at: 2026-01-24T13:22:56.060285Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-24T08:53:22.990673Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-24T08:59:25.611294Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-24T13:22:56.059933Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

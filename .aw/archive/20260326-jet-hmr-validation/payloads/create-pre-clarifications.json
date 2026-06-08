@@ -1,0 +1,17 @@
+{
+  "group_id": "jet-hmr-validation",
+  "answers": [
+    {
+      "id": "q1",
+      "question": "import.meta.hot API scope?",
+      "answer": "Full Vite-compatible API: accept, dispose, prune, invalidate, data. Enables third-party HMR plugins and full parity with Vite dev experience.",
+      "impact": "HMR client runtime must implement all 5 methods. Server-side must track module invalidation chains and support prune callbacks for cleanup."
+    },
+    {
+      "id": "q2",
+      "question": "React Fast Refresh injection method?",
+      "answer": "AST-based in transform_tsx.rs. Inject $RefreshReg$ and $RefreshSig$ calls by analyzing the AST to find React component declarations and hooks usage.",
+      "impact": "transform_tsx.rs needs to detect function components (capitalized exports returning JSX), class components, and hook signatures. More code in the Rust transform layer but handles edge cases (HOCs, forwardRef, memo) correctly."
+    }
+  ]
+}

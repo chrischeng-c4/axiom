@@ -1,0 +1,17 @@
+{
+  "artifact_kind": "code_artifact",
+  "intent_read": "Implement a TD with bounded source changes.",
+  "audience": "maintainers",
+  "constraints": ["scope control", "local verification"],
+  "quality_dials": [
+    { "key": "testability", "value": "required", "rationale": "behavior needs proof" }
+  ],
+  "source_policy": {
+    "mode": "spec",
+    "evidence_ref": "TD contract"
+  },
+  "preflight_gate_set": {
+    "id": "code-artifact-preflight",
+    "gates": ["cargo fmt", "targeted unit tests"]
+  }
+}

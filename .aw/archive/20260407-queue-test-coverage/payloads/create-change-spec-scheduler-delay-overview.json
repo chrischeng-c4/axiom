@@ -1,0 +1,8 @@
+{
+  "spec_id": "scheduler-delay",
+  "group_id": "queue-unit-test-coverage",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-queue/logic/scheduler-delay.md",
+  "fill_sections": ["overview", "logic", "test-plan", "changes"],
+  "content": "<!-- type: overview lang: markdown -->\n\nDelayed task scheduler for cclab-queue. Polls scheduled messages on NATS `scheduled.*` subjects and republishes them to target queues when ETA is reached. All types gated behind `#[cfg(feature = \"nats\")]`.\n\n| Component | Type | Purpose |\n|-----------|------|--------|\n| `DelayedTaskConfig` | Config struct | `poll_interval: Duration` (default 1s), `batch_size: usize` (default 100); implements `Default`, `Debug`, `Clone` |\n| `DelayedTaskScheduler` | Scheduler struct | Holds `config`, `broker: Arc<NatsBroker>`, `shutdown: CancellationToken`; methods `new`, `start`, `shutdown` |\n| `ScheduledMessageHandler` | Inner struct (in `start`) | Implements `MessageHandler` trait; core decision logic for ETA checking + republish |\n\n### Handler Decision Logic\n\n| Header | Condition | Outcome |\n|--------|-----------|--------|\n| `eta` missing | — | `TaskError::Internal(\"Missing ETA header\")` |\n| `eta` present | Invalid RFC3339 | `TaskError::Internal(\"Invalid ETA: {e}\")` |\n| `eta` present | `eta > Utc::now()` | `TaskError::Internal(\"Not ready yet\")` (nack/requeue) |\n| `eta` present, `target-queue` missing | `eta <= Utc::now()` | `TaskError::Internal(\"Missing target-queue header\")` |\n| `eta` present, `target-queue` present | `eta <= Utc::now()` | `broker.publish(target_queue, payload)` → `Ok(())` |\n\nThis spec defines the logic and test plan for achieving unit + integration test coverage of `crates/cclab-queue/src/scheduler/delay.rs`."
+}

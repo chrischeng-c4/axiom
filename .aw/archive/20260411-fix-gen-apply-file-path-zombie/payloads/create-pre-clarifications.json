@@ -1,0 +1,24 @@
+{
+  "answers": [
+    {
+      "question": "Which files are affected?",
+      "answer": "crates/sdd/src/generate/apply.rs (primary fix: extract_change_entries) and crates/sdd/src/generate/diff.rs (if it duplicates the same path lookup logic)."
+    },
+    {
+      "question": "What is the canonical field name going forward?",
+      "answer": "path: is canonical. file: is accepted as backward-compatible alias. A comment in the code will document this."
+    },
+    {
+      "question": "What warning should be emitted for 0 entries?",
+      "answer": "When Changes section has valid YAML but 0 entries extracted, emit a warning via log::warn! or eprintln! indicating that no change entries were found. This prevents silent no-op from masking bugs."
+    },
+    {
+      "question": "Scope of regression tests?",
+      "answer": "Unit tests in crates/sdd/src/generate/ covering: (1) YAML block with path: key works, (2) YAML block with file: key works, (3) both path: and file: in same block (path: takes precedence), (4) block with neither key produces 0 entries."
+    },
+    {
+      "question": "Should the spec be updated?",
+      "answer": "Add a comment in code noting that both path: and file: are accepted with path: as canonical. No separate spec file needed for this small bug fix."
+    }
+  ]
+}

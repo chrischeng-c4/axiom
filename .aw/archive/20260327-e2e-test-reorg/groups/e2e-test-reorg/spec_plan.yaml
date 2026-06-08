@@ -1,0 +1,9 @@
+- spec_id: e2e-test-infrastructure
+  action: create
+  main_spec_ref: crates/cclab-jet/e2e/e2e-test-infrastructure.md
+  sections:
+  - overview
+  - test-fixture
+  - test-plan
+  - e2e-scenario
+  - changes

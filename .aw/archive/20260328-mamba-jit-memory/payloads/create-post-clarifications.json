@@ -1,0 +1,13 @@
+{
+  "group_id": "jit-memory",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "cranelift-jit uses alloc::alloc + region::protect(mprotect) for JIT pages. On macOS aarch64, this causes EXC_BAD_ACCESS code=257 after ~100 cross-thread JIT executions. CPython 3.14, V8, JavaScriptCore all use MAP_JIT + pthread_jit_write_protect_np on Apple Silicon.",
+    "success_criteria": "Generator stress test (200+ iterations with list comprehensions) passes on macOS aarch64. Conformance suite can enable >99 active tests. cranelift-jit removed from Cargo.toml.",
+    "boundary": {
+      "in_scope": "New jit_memory.rs module. Modify jit.rs to use ObjectModule + custom memory manager. Platform-specific mmap on macOS (MAP_JIT) vs Linux (standard mmap).",
+      "out_of_scope": "cranelift-codegen internals. Generator state machine. Conformance test runner. AOT compilation path (cranelift-object already used for that).",
+      "constraints": "cranelift-jit spec (cranelift-jit.md) R1-R5 must be replicated. All 6 JITModule API methods must have equivalents. symbol.rs runtime symbols must resolve correctly."
+    }
+  }
+}

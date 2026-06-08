@@ -1,0 +1,6 @@
+{
+  "spec_id": "1134-mamba-dual-config-spec",
+  "group_id": "unify-mamba-config",
+  "section": "logic",
+  "content": "N/A — this change is a data model unification. The data model class diagram in the db-model section captures the full structure."
+}

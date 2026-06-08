@@ -1,0 +1,13 @@
+{
+  "group_id": "unify-mamba-config",
+  "answers": [
+    {
+      "question": "Which format should become canonical?",
+      "answer": "The richer format from config/schema.rs — with [project] table, CrateEntry enum (Version or Config), CrateConfig with path/version/expose/module, and backward-compatible flat format support."
+    },
+    {
+      "question": "Should backward compatibility with the flat format be maintained?",
+      "answer": "Yes. The flat format (entry_point at root, crates as HashMap<String, String>) must remain valid via the CrateEntry::Version variant and top-level expose HashMap."
+    }
+  ]
+}

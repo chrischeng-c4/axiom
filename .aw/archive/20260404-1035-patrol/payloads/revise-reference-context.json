@@ -1,0 +1,29 @@
+{
+  "group_id": "test-coverage-gaps",
+  "specs": [
+    {
+      "spec_path": "crates/cclab-mamba/testing/stdlib-coverage-lower.md",
+      "relevance": "high",
+      "key_requirements": "R1-R4: queue_mod, statistics_mod, shlex_mod, calendar_mod coverage targets. Inline #[cfg(test)] test strategy, cargo llvm-cov measurement"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/testing/test-coverage-remaining.md",
+      "relevance": "high",
+      "key_requirements": "ffi/c_types.rs (0% coverage): CType 17 variants, CFunction, CParam, CStruct, CField, CEnum, CEnumVariant, CHeader — construct + Clone + PartialEq tests"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/ffi/c-parser-and-types.md",
+      "relevance": "medium",
+      "key_requirements": "R3: CType enum design (spec defines 11 variants — diverges from source which has 17). Background for understanding what c_types.rs implements"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "stdlib-coverage-top5",
+      "action": "modify",
+      "source": "crates/cclab-mamba/testing/stdlib-coverage-lower.md",
+      "main_spec_ref": "crates/cclab-mamba/testing/stdlib-coverage-lower.md",
+      "sections": ["overview", "requirements", "test-plan"]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+# NATS is the only stateful component, so it gets the meaningful PDB:
+# never let a voluntary disruption drop the JetStream quorum. At 1 replica
+# this still prevents a node drain from evicting the sole broker without an
+# operator override; at 3 replicas (prod) it keeps a quorum of 2.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lumen-nats
+  namespace: lumen
+  labels:
+    app: lumen
+    role: nats
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: lumen
+      role: nats
+---
+# Light PDB on the stateless serving fleet: keep read capacity during node
+# drains / cluster upgrades. The pods are cattle, so this is a comfort
+# guard, not a correctness requirement.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: lumen
+  namespace: lumen
+  labels:
+    app: lumen
+    role: server
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: lumen
+      role: server

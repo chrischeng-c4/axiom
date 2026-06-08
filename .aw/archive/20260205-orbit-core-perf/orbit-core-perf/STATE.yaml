@@ -1,0 +1,46 @@
+change_id: orbit-core-perf
+schema_version: '2.0'
+created_at: 2026-02-05T04:27:21.120512Z
+updated_at: 2026-02-05T07:35:03.162810Z
+phase: archived
+iteration: 1
+last_action: archive
+session_id: null
+checksums:
+  tasks.md:
+    hash: sha256:42effec1890db9622a3b62d60a016ebe7732f1f74323f729840356efb2225f4f
+    validated_at: 2026-02-05T04:33:59.791006Z
+  specs/mpsc-task-queue.md:
+    hash: sha256:2167106654ad9a2d78631d4117ea28c7e24a72147083e695faee619f57938576
+    validated_at: 2026-02-05T04:33:59.797716Z
+  specs/hashed-timer-wheel.md:
+    hash: sha256:25207a7c76a02e3c128ebb65da2a6a2e4e7b7d79694571a4fd8406e16bcbab75
+    validated_at: 2026-02-05T04:33:59.796105Z
+  specs/io-uring-backend.md:
+    hash: sha256:d1be089dfca6f1b2b7098489b75778a22f0dac746beacd0a94c06662a989e841
+    validated_at: 2026-02-05T04:33:59.794457Z
+  proposal.md:
+    hash: sha256:36c585ffc2f18d9122a9d7e9d477f65b96d97adbdb1d4a14af7c0f0d46919a8b
+    validated_at: 2026-02-05T04:33:59.786498Z
+  specs/gil-waker-polling.md:
+    hash: sha256:008959096733237a145740836837c590b57b4ed0f1cfaed54d69c70e6e188116
+    validated_at: 2026-02-05T04:33:59.797426Z
+  specs/adaptive-gil-batching.md:
+    hash: sha256:5a253187e648809cac1af4d8f57981467c27696a431f1c02825b0c6f7068a9d1
+    validated_at: 2026-02-05T04:33:59.792528Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-05T04:33:59.774729Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

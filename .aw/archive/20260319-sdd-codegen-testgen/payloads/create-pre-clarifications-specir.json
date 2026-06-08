@@ -1,0 +1,10 @@
+{
+  "change_id": "sdd-codegen-testgen",
+  "group_id": "specir-codegen",
+  "answers": [
+    {"question_id": "Q1", "answer": "Python (FastAPI). Match tech-platform backend stack."},
+    {"question_id": "Q2", "answer": "Filesystem. Templates loaded from configurable path, enables hot-reload and customization."},
+    {"question_id": "Q3", "answer": "Include Phase 2 — cross-section composition (e.g., route handler = rest-api × schema) is in scope."},
+    {"question_id": "Q4", "answer": "One file per section (e.g., models.py, routes.py, schemas.py). Output to configurable directory."}
+  ]
+}

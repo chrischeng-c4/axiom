@@ -1,0 +1,38 @@
+change_id: 1133-patrol
+schema_version: '2.0'
+created_at: 2026-04-04T09:01:07.529160Z
+updated_at: 2026-04-04T10:08:37.980975Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:fix-name-builtin: 1
+current_task_id: name-builtin-init
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1133
+    title: 'mamba: __name__ resolves to 0.0 instead of "__main__" for entry point'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - fix-name-builtin
+  change_implementation: []
+  reference_context:
+  - fix-name-builtin
+  change_spec: []
+  post_clarifications:
+  - fix-name-builtin

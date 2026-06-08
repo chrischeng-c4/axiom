@@ -1,0 +1,83 @@
+{
+  "group_id": "fix-name-builtin",
+  "verdict": "REVIEWED",
+  "summary": "Reference context is fundamentally sound — the fix location (hir_to_mir.rs lower_top_level) and the chosen spec to modify (hir-to-mir.md) are correct and well-supported by code evidence. Two medium-severity issues need correction: (1) spec_plan sections include the non-standard 'logic' label not used anywhere in the project's change spec format; (2) compiler-driver.md is rated HIGH relevance but the fix is in the lowering layer, not the driver — it should be MEDIUM. Two low-severity observations: resolve/name-resolution.md's key requirements cite code observations rather than spec requirements, and hir-to-mir.md currently has no R covering __name__ initialization (a new requirement must be added, not just a modification to existing ones).",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": true,
+      "note": "Pre-clarification says fix is in module initialization before executing the module body. The chosen spec hir-to-mir.md covers hir_to_mir.rs where lower_top_level() lives — the right place."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "compiler-driver.md is rated HIGH but the fix is entirely in the lowering layer (lower_top_level in hir_to_mir.rs), not in the driver. CompilerSession::run() calls the lowering pass but does not itself implement __name__ initialization. HIGH implies directly implements — this spec should be MEDIUM."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": true,
+      "note": "Most key requirements are accurate: hir-to-mir line references (3007-3013) verified, module.md R5 verified, value-and-rc R1 NaN-boxing explanation verified. resolve/name-resolution.md requirements are code-level observations rather than spec IDs, but the underlying facts are correct."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "All 6 specs are at least marginally relevant to the bug and fix path."
+    },
+    {
+      "item": "spec_plan: every entry has main_spec_ref set (not null)",
+      "passed": true,
+      "note": "main_spec_ref = crates/cclab-mamba/lower/hir-to-mir.md is set."
+    },
+    {
+      "item": "spec_plan: sections are reasonable for the requirements",
+      "passed": false,
+      "note": "'logic' is not a standard section in the CCLAB change spec format. Existing change specs in this project (e.g. the lower/hir-to-mir no-arg-constructor change spec) use: Overview, Requirements, Scenarios, Diagrams, Test Plan, Changes. The section should be 'requirements' or 'scenarios', not 'logic'."
+    },
+    {
+      "item": "spec_plan: modify entries have valid source paths",
+      "passed": true,
+      "note": "crates/cclab-mamba/lower/hir-to-mir.md exists and is readable."
+    },
+    {
+      "item": "spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)",
+      "passed": true,
+      "note": "Path includes lower/ subfolder: crates/cclab-mamba/lower/hir-to-mir.md."
+    },
+    {
+      "item": "spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)",
+      "passed": true,
+      "note": "hir-to-mir.md covers HIR→MIR lowering as a single logical unit. Adding __name__ initialization (a module preamble injection in the same source file) is consistent with this scope."
+    },
+    {
+      "item": "spec_plan: no spec file would require duplicate section types (split into separate files if needed)",
+      "passed": true
+    },
+    {
+      "item": "spec_plan: spec paths mirror source structure (interfaces/, logic/, generate/)",
+      "passed": true,
+      "note": "lower/hir-to-mir.md mirrors src/lower/hir_to_mir.rs correctly."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "MEDIUM",
+      "description": "spec_plan sections contain non-standard 'logic' label. The sections listed are 'overview, logic, changes, test-plan'. 'logic' does not exist in the CCLAB change spec format. The existing same-file change spec at cclab/specs/crates/cclab-mamba/lower/hir-to-mir (no-arg-constructor fix) uses: Overview, Requirements, Scenarios, Diagrams, API Spec, Test Plan, Changes.",
+      "recommendation": "Replace 'logic' with 'requirements' (for the new R covering __name__ StoreGlobal injection in lower_top_level) and add 'scenarios' for the test case. Final sections: overview, requirements, scenarios, changes, test-plan."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "compiler-driver.md is rated HIGH relevance but the fix does not touch the driver. HIGH means 'directly implements'; the driver only orchestrates the call to lower_hir_to_mir_with_symbols(). The actual __name__ injection lives entirely in lower_top_level() inside hir_to_mir.rs. The driver spec has no spec_plan entry, which is consistent with the fix not being there — but the HIGH rating contradicts that.",
+      "recommendation": "Downgrade compiler-driver.md relevance from HIGH to MEDIUM. Keep it in the context table since it provides useful pipeline context, but the rating should reflect that the fix is in the lowering layer."
+    },
+    {
+      "severity": "LOW",
+      "description": "resolve/name-resolution.md key requirements cite code-level observations, not spec requirements. The listed requirements ('VariableClass::Local is the classification for __name__ when never assigned by user code', 'VarKind classification determines whether LoadGlobal or local VReg is used') are observations about hir_to_mir.rs lines 2994-3013, not formal requirements from the name-resolution.md spec. The spec's actual requirements (R1-R5) cover global/nonlocal statement semantics, not __name__-specific VariableClass behavior.",
+      "recommendation": "Rephrase key requirements to reference the spec's actual R5 ('LoadGlobal/StoreGlobal MIR instructions') rather than code-level VariableClass behavior. Alternatively, clarify these as 'implementation observations' rather than 'key requirements'."
+    },
+    {
+      "severity": "LOW",
+      "description": "hir-to-mir.md currently has NO existing requirement covering __name__ initialization. None of R1-R9 address module-level variable preamble setup. The spec modification will need to ADD a new requirement (e.g., R10) for 'Module preamble: inject StoreGlobal(__name__, \"__main__\") at the top of lower_top_level() after mb_register_builtins'. The reference context's key requirements section describes implementation details rather than flagging that a new spec requirement must be authored.",
+      "recommendation": "Note in the change spec that R10 (or next available R) must be added to hir-to-mir.md, not just that existing requirements are modified."
+    }
+  ]
+}

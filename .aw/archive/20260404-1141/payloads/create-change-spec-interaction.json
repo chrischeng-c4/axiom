@@ -1,0 +1,10 @@
+{
+  "project_path": "/Users/chrischeng/projects/wt/sdd",
+  "change_id": "1141",
+  "spec_id": "check-alignment-phase2",
+  "group_id": "check-alignment-phase2",
+  "section": "interaction",
+  "section_type": "interaction",
+  "main_spec_ref": "crates/cclab-sdd/logic/check-alignment.md",
+  "content": "```mermaid\nsequenceDiagram\n    participant CLI as cclab sdd check-alignment --coverage\n    participant Check as spec_alignment::check()\n    participant Parser as parser::parse()\n    participant Annot as annotations::scan()\n    participant Daemon as DaemonClient\n    participant Coverage as coverage::analyze()\n    participant ReqCov as requirement_coverage::check()\n\n    CLI->>Check: check(path, mode=coverage)\n    Check->>Parser: parse each spec .md file\n    Parser-->>Check: Vec<SpecDocument>\n\n    Check->>Check: run format_rules::check()\n    Check->>Check: run logical_rules::check() (with nested traversal)\n\n    Check->>Annot: scan(source_dirs)\n    Annot-->>Check: Vec<SpecAnnotation>\n\n    Check->>Daemon: symbols(file) for each source file\n    Daemon-->>Check: Vec<Symbol> (public fns)\n\n    Check->>Coverage: analyze(specs, annotations, symbols)\n    Coverage-->>Check: CoverageReport\n\n    Check->>ReqCov: check(spec_documents)\n    ReqCov-->>Check: Vec<Violation> (orphan_requirement)\n\n    Check->>Check: merge all violations\n    Check-->>CLI: CheckResult + CoverageReport\n    CLI->>CLI: render coverage report section in output\n```"
+}

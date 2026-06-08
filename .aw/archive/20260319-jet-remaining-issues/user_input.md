@@ -1,0 +1,1 @@
+Work on remaining open jet issues: resolver bugs (#883), cold install perf (#881), real-world validation (#797), bundle size gap (#882), scope hoisting Phase 2 (#903), AOT pipeline (#765). Also remove nx CLI dependency — jet parses project.json directly.

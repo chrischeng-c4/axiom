@@ -1,0 +1,38 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: shield-performance-opt
+  change_id: pylibs-refactor
+  source_file: pylibs-refactor/specs/shield-performance-opt.md
+  spec_id: shield-performance-opt
+spec:
+  title: Shield Optimization Architecture
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: type_desc
+      label: compile()
+      to: validator_tree
+    - from: json_input
+      label: direct validation
+      to: sonic_validator
+    - from: validator_tree
+      label: executes
+      to: validation_result
+    - from: sonic_validator
+      label: executes
+      to: validation_result
+    id: shield_opt_flow
+    nodes:
+    - id: type_desc
+      label: TypeDescriptor (Declarative)
+    - id: validator_tree
+      label: Validator Tree (Trait Objects)
+    - id: json_input
+      label: JSON Byte Slice (sonic-rs)
+    - id: sonic_validator
+      label: Specialized JSON Validator
+    - id: validation_result
+      label: Validation Result (Errors/Value)
+    title: Shield Performance Optimization Architecture

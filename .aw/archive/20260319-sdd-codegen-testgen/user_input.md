@@ -1,0 +1,1 @@
+SpecIR codegen last mile — consume specs to generate Rust types, routes, models. RequirementPlus test generation — generate test scaffolds from requirement diagrams. #932 #933

@@ -1,0 +1,11 @@
+{
+  "name": "cue-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "mamba run --config mamba.toml",
+    "dev:bridge": "uv run python src/main.py",
+    "test": "uv run --with pytest python -m pytest tests"
+  }
+}

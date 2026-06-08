@@ -1,0 +1,53 @@
+[package]
+name = "cclab-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Unified HTTP server for cclab (MCP + Dashboard + Plan Viewer)"
+
+[lib]
+name = "cclab_server"
+path = "src/lib.rs"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive", "color"] }
+colored = "3"
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+async-stream.workspace = true
+
+# HTTP server
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+hyper = "1"
+
+# File operations
+dirs = "5"
+
+# Markdown rendering
+pulldown-cmark = "0.12"
+
+# Internal dependencies
+agentic-workflow = { path = "../../projects/agentic-workflow" }
+
+[features]
+default = []
+ui = ["agentic-workflow/ui", "open"]
+
+[dependencies.open]
+version = "5"
+optional = true

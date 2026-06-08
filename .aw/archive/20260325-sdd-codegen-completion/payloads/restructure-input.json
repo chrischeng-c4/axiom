@@ -1,0 +1,65 @@
+{
+  "groups": [
+    {
+      "id": "core-codegen",
+      "issues": [932, 933],
+      "requirements": "Implement the SpecIR → code generation pipeline by wiring the existing Tera template engine to actual .tera template files for backend targets (Axum required, FastAPI optional). At least one single-section generator must produce compilable Rust from a SpecIR input. A template test suite is required: known SpecIR input → known correct output. Additionally, add a RequirementPlus → test file scaffold generator: BDD fields (given/when/then, test_type) map to #[test] function skeletons with assertion stubs and traceability comments. A coverage validation report must flag requirements that have no Verifies relationship to any Element. SpecBundle cross-section composition (Phase 2) and cclab-probe integration are deferred unless confirmed in-scope. Hybrid cutover (Phase 3) — templates for verified section types, agent fallback for unverified — is in scope as part of the implementation phase integration.",
+      "questions": [
+        {
+          "topic": "First generator target for #932",
+          "question": "Which single-section type should be the first working generator: `schema` (JSON Schema → Rust struct/Python dataclass), `rest-api` (OpenAPI → Axum route handler skeleton), or another? The proposal lists 6 types but the acceptance criteria only requires at least one. Picking the right first target sets the template authoring pattern for the rest."
+        },
+        {
+          "topic": "Template file embedding vs filesystem",
+          "question": "Should .tera template files be embedded in the binary at compile time (via `include_str!` or Rust `include_bytes!`) or loaded from the filesystem at runtime from a known path? Embedding avoids deployment friction and keeps templates version-pinned to the binary, but prevents user customization. Runtime loading enables template overrides but requires path resolution logic."
+        },
+        {
+          "topic": "SpecBundle cross-section composition scope",
+          "question": "Should Phase 2 (SpecBundle cross-section composition: generator receives SpecBundle, traverses dependency graph, resolves cross-refs) be included in this change, or is Phase 1 (single-section codegen per SemanticType) sufficient to close #932? Cross-section composition is a significantly larger surface area."
+        },
+        {
+          "topic": "cclab-probe integration for #933",
+          "question": "The draft test-generation.md spec references integration with cclab-probe. Is cclab-probe integration in scope for this change, or should the test scaffold generator output standalone test files only (no probe runtime dependency) and probe integration be a follow-up?"
+        }
+      ]
+    },
+    {
+      "id": "deploy-section-type",
+      "issues": [934],
+      "requirements": "Add a `deploy` section type to the SDD section type system. Register section_rules keyword matchers for deploy|container|k8s|docker|helm|terraform|infra|migration|rollback. Implement the section type matcher and define the YAML DSL schema (services with image/replicas/env/ports/health_check, migrations with type/path/run_before, rollback with strategy/auto_rollback_on). Implement k8s validation rules (referenced services/migrations are internally consistent). Deliver at least one codegen target: docker-compose YAML or k8s Deployment+Service manifests. Cross-ref validation: deploy section referencing db-model must validate migration paths; deploy referencing rest-api must validate port/route consistency.",
+      "questions": [
+        {
+          "topic": "First codegen target: docker-compose vs k8s",
+          "question": "Should the first deploy codegen target produce docker-compose YAML or k8s manifests (Deployment + Service)? Or are both required to close #934? Docker-compose is simpler to implement; k8s covers the validation rules listed in the acceptance criteria."
+        },
+        {
+          "topic": "Deploy YAML DSL finalization",
+          "question": "Is the deploy YAML DSL shown in the proposal (services/migrations/rollback fields) considered final for this change, or are there known fields to add (e.g., Helm values, Terraform resource blocks, resource limits) before writing the JSON Schema validator?"
+        },
+        {
+          "topic": "Cross-ref validation strictness",
+          "question": "When a deploy section references a db-model or rest-api section that doesn't exist in the SpecBundle, should this be a hard validation error (blocks code generation) or a warning (proceeds with best-effort output)?"
+        }
+      ]
+    },
+    {
+      "id": "frontend-codegen",
+      "issues": [937],
+      "requirements": "Implement validators and code generators for the three frontend section types: wireframe (YAML DSL), component (CEM JSON), and design-token (DTCG JSON). Deliverables: (1) DTCG design tokens → CSS custom properties and/or Tailwind config output; (2) CEM component definition → TypeScript prop interface + component skeleton; (3) wireframe YAML → React/Vue/Svelte component tree scaffold (one framework target required). Cross-section composition rule: wireframe + component + design-token → complete UI component with typed props and applied tokens. Cross-ref to rest-api section enables data fetching hook generation in the component skeleton. Validators for all three section types are required before any generator is wired.",
+      "questions": [
+        {
+          "topic": "Primary frontend framework target",
+          "question": "Which framework should the wireframe → component scaffold target first: React (TSX), Vue 3 (SFC), or Svelte? The acceptance criteria requires at least one. React is the most common but Vue SFC has a cleaner separation that may map more directly to the wireframe DSL structure."
+        },
+        {
+          "topic": "Wireframe YAML DSL schema source",
+          "question": "Issue #897 proposes a wireframe YAML DSL. Should this change derive the wireframe validator schema from #897's proposal, or is a different/finalized wireframe DSL spec already in the codebase that should be used as the canonical source?"
+        },
+        {
+          "topic": "Design-token output priority",
+          "question": "Should DTCG → CSS custom properties or DTCG → Tailwind config be implemented first? CSS custom properties are framework-agnostic and simpler; Tailwind config requires knowing the project's Tailwind version. Or is producing both outputs from a single pass required for the acceptance criteria?"
+        }
+      ]
+    }
+  ]
+}

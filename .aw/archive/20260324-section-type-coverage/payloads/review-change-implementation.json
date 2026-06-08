@@ -1,0 +1,6 @@
+{
+  "spec_id": "ux-pattern-library",
+  "verdict": "APPROVED",
+  "summary": "UX pattern library extension point implemented: UxPattern/PatternSlot/PatternNode types, PatternSource trait, resolve_pattern + expand_pattern functions, empty PATTERN_REGISTRY. Implementation deferred — types and interface ready.",
+  "issues": []
+}

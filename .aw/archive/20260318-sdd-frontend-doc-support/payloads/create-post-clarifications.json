@@ -1,0 +1,6 @@
+{
+  "change_id": "sdd-frontend-doc-support",
+  "group_id": "sdd-frontend-doc-artifacts",
+  "skipped": true,
+  "reason": "No contradictions found. The specs (change-spec.md v7, reference-context.md v4, implement-task.md v2, change-merge.md v3) were updated in this same session to align with the requirements. Section type system, CLI generators, group-scoped specs, spec_plan — all already consistent."
+}

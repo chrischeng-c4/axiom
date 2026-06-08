@@ -1,0 +1,4 @@
+[wasm]
+entry = "src/ItemsList.tsx"
+root_component = "ItemsList"
+root_props = [[10, 20, 30, 40]]

@@ -1,0 +1,7 @@
+- spec_id: asgi-dispatch-spec
+  action: create
+  main_spec_ref: crates/cclab-api/logic/asgi-dispatch.md
+  sections:
+  - overview
+  - requirements
+  - changes

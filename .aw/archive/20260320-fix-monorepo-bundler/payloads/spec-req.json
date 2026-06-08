@@ -1,0 +1,11 @@
+{"spec_id":"fix-monorepo-bundler-spec","section":"requirements","content":"### R1: project.json projectType Detection
+
+Read project.json for each Nx project. If projectType is library or lib, set externalize_all_packages=true. Path heuristic (/libs/) as fallback.
+
+### R2: Build Timeout
+
+Add 30s timeout per project build. If exceeded, log warning and skip to next project. Configurable via --timeout flag.
+
+### R3: Parallel Builds
+
+Build projects in parallel within each topological level. Projects at the same level have no inter-dependencies and can build concurrently."}

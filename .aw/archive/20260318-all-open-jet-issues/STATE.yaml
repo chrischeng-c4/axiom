@@ -1,0 +1,143 @@
+change_id: all-open-jet-issues
+schema_version: '2.0'
+created_at: 2026-03-18T08:59:51.038826Z
+updated_at: 2026-03-18T09:46:00.192062Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:jet-build-real-world-validation: 1
+  ref_ctx:jet-install-optimizations: 1
+  ref_ctx:jet-build-aot-production: 1
+current_task_id: all-open-jet-issues-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 200642
+    tokens_out: 605
+    cost_usd: null
+    duration_ms: 40684
+    timestamp: 2026-03-18T09:08:59.508879Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 159497
+    timestamp: 2026-03-18T09:11:59.490795Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 200203
+    tokens_out: 814
+    cost_usd: null
+    duration_ms: 36456
+    timestamp: 2026-03-18T09:16:45.919499Z
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 2351812
+    tokens_out: 5859
+    cost_usd: null
+    duration_ms: 960668
+    timestamp: 2026-03-18T09:22:17.077846Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 167431
+    timestamp: 2026-03-18T09:27:58.821204Z
+  - step: analyze_spec_all-open-jet-issues-spec
+    sdd_version: 0.3.41
+    model: gemini-3.1-pro-preview
+    tokens_in: 783667
+    tokens_out: 3977
+    cost_usd: null
+    duration_ms: 284231
+    timestamp: 2026-03-18T09:34:14.419740Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 233798
+    timestamp: 2026-03-18T09:45:18.883003Z
+  - step: begin_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 691147
+    timestamp: 2026-03-18T09:46:00.192059Z
+  total_cost_usd: 0.0
+  total_tokens_in: 3536324
+  total_tokens_out: 11255
+dag:
+  issues:
+  - number: 765
+    title: 'feat(jet): AOT production build — tree shaking, code splitting, minification, source maps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 797
+    title: 'jet build: validate against real-world open-source React apps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 881
+    title: 'jet-install: cold install 4.9s vs pnpm 3.4s — optimize metadata resolution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 882
+    title: 'jet-build: bundle size 215KB vs webpack 192KB — implement scope hoisting'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 883
+    title: 'jet-install: resolver bugs fixed — version conflicts, ||, pre-release, optional deps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 903
+    title: 'jet-build: scope hoisting Phase 2 — true module flattening for cross-module optimization'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - jet-install-optimizations
+  - jet-build-aot-production
+  - jet-build-real-world-validation
+  change_spec: []
+  post_clarifications:
+  - jet-build-aot-production
+  - jet-build-real-world-validation
+  - jet-install-optimizations
+  change_implementation: []
+  reference_context:
+  - jet-build-aot-production
+  - jet-build-real-world-validation
+  - jet-install-optimizations

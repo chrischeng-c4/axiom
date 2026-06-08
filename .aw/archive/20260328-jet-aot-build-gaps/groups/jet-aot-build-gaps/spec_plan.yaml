@@ -1,0 +1,10 @@
+- spec_id: aot-build-gaps
+  action: modify
+  main_spec_ref: crates/cclab-jet/logic/aot-build.md
+  source: cclab/specs/crates/cclab-jet/aot-build.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+  - test_plan

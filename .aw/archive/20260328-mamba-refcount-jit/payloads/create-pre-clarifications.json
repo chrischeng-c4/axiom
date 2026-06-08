@@ -1,0 +1,9 @@
+{
+  "group_id": "refcount-jit",
+  "answers": [
+    {
+      "question": "Scope confirmation",
+      "answer": "All 6 phases as described in the requirements. Start with Phase 1-2 (symbols + reassignment release), verify with ASan, then proceed to Phase 3-6. Immortal refcount for compile-time constants (Phase 4) preferred over tracking (Phase 5)."
+    }
+  ]
+}

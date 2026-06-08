@@ -1,0 +1,1 @@
+Add Nx monorepo support: workspace detection, project graph integration, task pipeline for jet build/install in Nx monorepos

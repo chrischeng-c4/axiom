@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jet-wasm-binding-manifest",
+  "title": "ParsedManifest",
+  "description": "In-memory representation of a fully-merged jet.declare.d.ts binding manifest. Produced by parse_manifest(); consumed by the transpiler import resolver. Cross-references: subset.md#S9 (whitelisted import acceptance), subset.md#X5 (dynamic-import-non-tsx rejection), subset.md#X6 (undeclared-import rejection).",
+  "type": "object",
+  "required": ["entries"],
+  "properties": {
+    "entries": {
+      "type": "array",
+      "description": "Ordered list of module binding entries. Merged across all ancestor jet.declare.d.ts files; inner manifests win on per-module_name conflict.",
+      "items": { "$ref": "#/$defs/ModuleEntry" },
+      "minItems": 0
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ModuleEntry": {
+      "$id": "module-entry",
+      "title": "ModuleEntry",
+      "type": "object",
+      "required": ["module_name", "exports", "jet_impl"],
+      "properties": {
+        "module_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The bare-specifier or package path exactly as it appears in the `declare module \"<name>\"` string literal."
+        },
+        "exports": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ExportEntry" }
+        },
+        "jet_impl": { "$ref": "#/$defs/JetImpl" }
+      },
+      "additionalProperties": false
+    },
+    "ExportEntry": {
+      "$id": "export-entry",
+      "type": "object",
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["default", "named"] },
+        "name": { "type": "string", "minLength": 1 },
+        "signature": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "JetImpl": {
+      "$id": "jet-impl",
+      "description": "Discriminated union: `rust:<symbol>` or `bridge:<symbol>`. Any other prefix is MANIFEST_PARSE_004.",
+      "oneOf": [
+        { "$ref": "#/$defs/JetImplRust" },
+        { "$ref": "#/$defs/JetImplBridge" }
+      ]
+    },
+    "JetImplRust": {
+      "$id": "jet-impl-rust",
+      "type": "object",
+      "required": ["discriminant", "symbol"],
+      "properties": {
+        "discriminant": { "type": "string", "const": "rust" },
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_:]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "JetImplBridge": {
+      "$id": "jet-impl-bridge",
+      "type": "object",
+      "required": ["discriminant", "symbol"],
+      "properties": {
+        "discriminant": { "type": "string", "const": "bridge" },
+        "symbol": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "ManifestError": {
+      "$id": "manifest-error",
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "MANIFEST_PARSE_001",
+            "MANIFEST_PARSE_002",
+            "MANIFEST_PARSE_003",
+            "MANIFEST_PARSE_004",
+            "MANIFEST_PARSE_005"
+          ]
+        },
+        "message": { "type": "string" },
+        "path": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "col": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    }
+  }
+}

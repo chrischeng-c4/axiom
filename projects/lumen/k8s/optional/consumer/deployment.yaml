@@ -1,0 +1,87 @@
+# Optional / sample. The real consumer adapters live under examples/
+# (consumer-alloydb, consumer-postgres-logical). This manifest wraps the
+# `lumen-consumer` placeholder binary as a starting template only. It is
+# NOT pulled in by base/ or any overlay — opt in explicitly.
+#
+# In the write-log architecture a consumer typically PUBLISHES mutations to
+# the NATS JetStream broker (the serving Deployment tails the same log);
+# pointing it straight at the client API on :7373 also works for adapters
+# that call the index API directly.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lumen-consumer
+  namespace: lumen
+  labels:
+    app: lumen
+    role: consumer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: lumen
+      role: consumer
+  template:
+    metadata:
+      labels:
+        app: lumen
+        role: consumer
+    spec:
+      serviceAccountName: lumen
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: consumer
+          image: lumen:latest
+          imagePullPolicy: IfNotPresent
+          command: ["lumen-consumer"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SHARD_COUNT
+              valueFrom:
+                configMapKeyRef:
+                  name: lumen-config
+                  key: SHARD_COUNT
+            # Client API endpoint (port 7373).
+            - name: LUMEN_HOST
+              value: lumen.lumen.svc.cluster.local
+            - name: LUMEN_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: lumen-config
+                  key: LUMEN_PORT
+            # Write log: a real adapter publishes mutations here.
+            - name: LUMEN_NATS_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: lumen-config
+                  key: LUMEN_NATS_URL
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

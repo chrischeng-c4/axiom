@@ -1,0 +1,1 @@
+{"change_id": "sync-adapter", "spec_id": "sync-adapter-spec", "section": "overview", "content": "## Overview\n\nDomain-specific sync traits for synchronizing protocol types with third-party platforms. Split by domain: IssueSyncAdapter, SpecSyncAdapter, CodeSyncAdapter, ChangeSyncAdapter. Each platform implements only supported domains."}

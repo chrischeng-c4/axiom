@@ -1,0 +1,6 @@
+{
+  "group_id": "stdlib-builtins-module",
+  "verdict": "approve",
+  "summary": "Reference context covers all relevant specs. The spec plan correctly creates a new builtins.md under stdlib/ since no existing spec file covers the builtins importable module (the existing runtime/builtins.md covers the runtime functions, not the importable module). Pattern references to future_mod.rs and main_mod.rs are accurate.",
+  "issues": []
+}

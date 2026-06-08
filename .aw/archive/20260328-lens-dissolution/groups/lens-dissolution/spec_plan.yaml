@@ -1,0 +1,44 @@
+- spec_id: lens-dissolution-restructure
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/merge-lens-into-sdd-spec.md
+  source: cclab/specs/crates/cclab-sdd/logic/merge-lens-into-sdd-spec.md
+  sections:
+  - overview
+  - requirements
+  - changes
+  - test-plan
+- spec_id: type-inference-pipeline
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/type-inference-pipeline.md
+  sections:
+  - overview
+  - requirements
+  - logic
+  - schema
+  - changes
+  - test-plan
+- spec_id: agent-context-builder
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/agent-context-builder.md
+  sections:
+  - overview
+  - requirements
+  - schema
+  - logic
+  - changes
+  - test-plan
+- spec_id: agent-output-format
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/agent-output-format.md
+  sections:
+  - overview
+  - requirements
+  - schema
+  - changes
+  - test-plan
+- spec_id: sdd-cli-context-command
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/cli/commands.md
+  source: cclab/specs/crates/cclab-sdd/interfaces/cli/commands.md
+  sections:
+  - changes

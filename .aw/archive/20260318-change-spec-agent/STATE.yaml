@@ -1,0 +1,81 @@
+change_id: change-spec-agent
+schema_version: '2.0'
+created_at: 2026-03-18T09:25:21.239515Z
+updated_at: 2026-03-18T09:49:55.478709Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:spec-agent-core: 1
+current_task_id: change-spec-agent-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 238747
+    timestamp: 2026-03-18T09:31:49.380805Z
+  - step: analyze_spec_change-spec-agent-spec
+    sdd_version: 0.3.41
+    model: gemini-3.1-pro-preview
+    tokens_in: 475027
+    tokens_out: 2056
+    cost_usd: null
+    duration_ms: 141363
+    timestamp: 2026-03-18T09:35:25.492173Z
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 618721
+    timestamp: 2026-03-18T09:35:44.991579Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 120026
+    timestamp: 2026-03-18T09:47:34.961204Z
+  - step: begin_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 711094
+    timestamp: 2026-03-18T09:48:05.159700Z
+  total_cost_usd: 0.0
+  total_tokens_in: 475027
+  total_tokens_out: 2056
+dag:
+  issues:
+  - number: 923
+    title: 'feat(agent): Add SpecAgent — opinionated spec generation with CRR cycle'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  post_clarifications:
+  - spec-agent-core
+  pre_clarifications:
+  - spec-agent-core
+  reference_context:
+  - spec-agent-core
+  change_implementation: []
+  change_spec: []

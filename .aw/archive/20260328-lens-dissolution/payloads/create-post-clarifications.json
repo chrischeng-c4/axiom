@@ -1,0 +1,13 @@
+{
+  "group_id": "lens-dissolution",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "lens/ is a 90+ file sub-module acting as a crate-within-a-crate (→ requirements.md §1). DeepTypeInferencer::propagate_types() is implemented but never called — imported symbols return Type::Unknown (→ requirements.md §2). No tool combines import graph + call graph + type info for agent context selection (→ requirements.md §3). Output formats are human/CI-oriented, not agent-optimized (→ requirements.md §4).",
+    "success_criteria": "All lens sub-modules promoted to SDD top-level with no naming collisions. CLI commands `cclab sdd *` still work. lens_type_at returns propagated cross-file types for Python imports. New `cclab sdd context <file:symbol> --depth N` CLI returns must_read + may_affect + type_context. New `--format agent` produces symbol-centric JSON. No MCP tools remain (→ pre_clarifications Q2).",
+    "boundary": {
+      "in_scope": "lens-dissolution-restructure (module promotion, spec migration, MCP removal including cclab-server handlers), type-inference-pipeline (wire propagate_types into analysis pipeline), agent-context-builder (new CLI command), agent-output-format (new output format), sdd-cli-context-command (CLI interface addition)",
+      "out_of_scope": "New language support (Go, HTML/CSS expansion from lens-beyond-ide.md — excluded, not in issues). Undo/redo for refactoring. LSP protocol changes. Index storage path changes (→ lens-index-storage.md stays as-is).",
+      "constraints": "Dissolution order: #1087 first, then #944/#946/#949 (→ pre_clarifications Q1). All features CLI-only, no MCP (→ pre_clarifications Q2). Focus Python first for type propagation (→ issue #944 scope). types/ module renamed to type_inference/ to avoid collision (→ issue #1087 tasks)."
+    }
+  }
+}

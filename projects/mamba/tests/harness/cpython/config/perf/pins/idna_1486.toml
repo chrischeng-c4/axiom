@@ -1,0 +1,9 @@
+# Perf-pin regression gate (#1486).
+# Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/idna_1486.toml)
+issue = 1486
+lib = "idna"
+fixture = "tests/cpython/fixtures/3rd-libs/idna/bench/idna_type_read_hot.py"
+floor = 1.0
+mem_floor = 1.0
+samples = 9
+prereq_imports = ["idna"]

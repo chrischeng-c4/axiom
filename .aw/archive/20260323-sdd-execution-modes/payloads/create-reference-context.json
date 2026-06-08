@@ -1,0 +1,13 @@
+{
+  "change_id": "sdd-execution-modes",
+  "group_id": "sdd-execution-modes",
+  "reference_context": "| Spec | Group | Relevance | Key Requirements |\n|------|-------|-----------|------------------|\n| executor-resolution.md | crates/cclab-sdd/logic | high | Resolution Flow, Delegation Protocol |\n| agents.md | crates/cclab-sdd/config | high | workflow.agents, Agent Mode |\n| delegate-agent.md | crates/cclab-sdd/tools/utils | high | Error Recovery, Agent Failure |\n| state-machine.md | crates/cclab-sdd/logic | medium | Phase Routing, State |",
+  "specs": [
+    {
+      "spec_id": "sdd-execution-modes",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/logic/executor-resolution.md",
+      "sections": ["overview", "logic", "config", "state-machine", "dependency", "interaction", "cli", "test-plan", "changes"]
+    }
+  ]
+}

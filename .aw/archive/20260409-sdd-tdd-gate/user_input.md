@@ -1,0 +1,1 @@
+SDD TDD test gate: add [sdd.test] config with GitLab CI-style changes patterns, score workflow enforces test coverage (requirementDiagram → test files) and test execution before advancing to review. PR1: config parsing. PR2: workflow gate + conductor test-env.sh. Crates: sdd

@@ -1,0 +1,8 @@
+{
+  "spec_id": "metrics",
+  "group_id": "queue-unit-test-coverage",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-queue/logic/metrics.md",
+  "fill_sections": ["overview", "logic", "test-plan", "changes"],
+  "content": "<!-- type: overview lang: markdown -->\n\n`TaskMetrics` is the Prometheus-based observability struct for cclab-queue, gated behind `#[cfg(feature = \"metrics\")]`. It exposes 6 metric instruments:\n\n| Instrument | Type | Label Keys | Prometheus Name |\n|------------|------|------------|----------------|\n| `tasks_published` | CounterVec | task_name, queue | `tasks_published_total` |\n| `tasks_executed` | CounterVec | task_name, queue, status | `tasks_executed_total` |\n| `task_duration_seconds` | HistogramVec | task_name, queue | `task_duration_seconds` |\n| `tasks_in_progress` | GaugeVec | task_name, queue | `tasks_in_progress` |\n| `task_retries` | CounterVec | task_name, queue | `task_retries_total` |\n| `task_failures` | CounterVec | task_name, queue, error_type | `task_failures_total` |\n\nConvenience methods (`record_published`, `record_started`, `record_completed`, `record_retry`, `record_failure`) encapsulate label construction and metric updates. A global `METRICS` static (`Lazy<TaskMetrics>`) provides singleton access. `gather_metrics()` exports all registered metrics in Prometheus text format.\n\nThis spec defines the data model, recording logic, and test plan for unit test coverage of `crates/cclab-queue/src/metrics.rs`."
+}

@@ -1,0 +1,39 @@
+{
+  "groups": [
+    {
+      "id": "sdd-frontend-doc-artifacts",
+      "issues": [897, 898],
+      "requirements": "Extend the SDD workflow with two new artifact types in `crate:sdd`:\n\n**1. Wireframe YAML DSL (issue #897)**\n- Define a JSON Schema for a wireframe-level YAML format with framework-agnostic primitives (`stack`, `form`, `nav-list`, `heading`, `action-group`, ...).\n- Integrate into the SDD change-spec: wireframe YAML populates the `ui_spec` section (or `api_spec` with type marker); no new `spec_type` value to be added.\n- Add validation of wireframe YAML against the schema in the SDD pipeline.\n- Agent auto-fills wireframe when change touches frontend UI.\n- Per-section-type CLI generator pattern (decided 2026-03-18): a `fill-section --type wireframe` subcommand handles agent-to-spec translation; agents never write raw wireframe YAML directly.\n\n**2. User-facing doc as change artifact (issue #898)**\n- Treat doc updates as a full spec/artifact sharing the per-spec lifecycle (create → fill → review → implement → merge).\n- Doc spec frontmatter: `id`, `doc_target` (target path), `merge_strategy` (append | replace), `fill_sections`.\n- Auto-trigger doc spec creation when change involves: CLI command changes, new/modified public API, behavior changes, or config format changes.\n- Implement step: writes doc content to `doc_target` path on disk.\n- Merge step: doc changes archived alongside code specs.\n\n**Constraints:**\n- Do not introduce new `spec_type` values for either artifact type.\n- Both wireframe and doc artifacts must participate in the standard per-spec lifecycle, not be special-cased.\n- Agents use CLI generators to produce spec content; never write spec lang directly.",
+      "questions": [
+        {
+          "topic": "wireframe section placement",
+          "question": "Should wireframe YAML live in a new `ui_spec` section of the change-spec, or in `api_spec` with a `type: wireframe` marker? The issue leans toward `ui_spec` or `api_spec` with marker — which avoids schema changes while staying consistent with existing sections?"
+        },
+        {
+          "topic": "wireframe primitive vocabulary",
+          "question": "What is the MVP set of primitive types for the initial wireframe DSL? The issue lists `stack`, `form`, `nav-list`, `heading`, `action-group` — is this the complete initial set, or should others (e.g. `table`, `modal`, `button-group`, `card`) be included from the start?"
+        },
+        {
+          "topic": "wireframe codegen scope",
+          "question": "Is generating actual component code from wireframe YAML in scope for this change, or is the scope limited to DSL definition, JSON Schema validation, and agent-fill support via the CLI generator?"
+        },
+        {
+          "topic": "doc spec file location",
+          "question": "Where do doc spec files live in the change directory — alongside code specs in `specs/`, or in a dedicated `docs/` subfolder? Should the filename follow the same `{id}.md` convention as code specs?"
+        },
+        {
+          "topic": "doc artifact embedding vs separate file",
+          "question": "Is a doc artifact always a separate file, or can it be embedded as a section within an existing code spec? Separate files are simpler to archive and version independently — is that the preferred model?"
+        },
+        {
+          "topic": "doc implement step mechanics",
+          "question": "For the 'implement' step, does the agent write directly to `doc_target` path, or should a CLI command (e.g. `cclab sdd artifact implement-doc`) own the write to ensure consistent merge-strategy (append vs replace) application?"
+        },
+        {
+          "topic": "doc auto-trigger: heuristic vs rule-based",
+          "question": "Should doc auto-triggering be heuristic (agent infers user-facing impact from change-spec content) or rule-based (if change-spec contains CLI command changes → create doc spec)? Heuristic is more flexible; rule-based is easier to test and audit."
+        }
+      ]
+    }
+  ]
+}

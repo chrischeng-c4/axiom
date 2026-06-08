@@ -1,0 +1,6 @@
+- spec_id: main-module
+  action: create
+  main_spec_ref: crates/cclab-mamba/stdlib/main-module.md
+  sections:
+  - overview
+  - changes

@@ -1,0 +1,40 @@
+{
+  "change_id": "mamba-config-unify",
+  "group_id": "unify-mamba-config",
+  "specs": [
+    {
+      "spec_id": "config-schema",
+      "spec_group": "crates/cclab-mamba/config",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R4", "R5", "R6"]
+    },
+    {
+      "spec_id": "compiler-driver",
+      "spec_group": "crates/cclab-mamba/driver",
+      "relevance": "high",
+      "key_requirements": ["R2", "R4"]
+    },
+    {
+      "spec_id": "conductor-mamba-p1-core-spec",
+      "spec_group": "crates/cclab-mamba",
+      "relevance": "medium",
+      "key_requirements": ["R1", "R3"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "config-schema-unified",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/config/config-schema.md",
+      "source": ".score/tech_design/crates/cclab-mamba/config/config-schema.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "compiler-driver-config-update",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/driver/compiler-driver.md",
+      "source": ".score/tech_design/crates/cclab-mamba/driver/compiler-driver.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

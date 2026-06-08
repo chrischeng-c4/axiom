@@ -1,0 +1,27 @@
+{
+  "groups": [
+    {
+      "id": "runtime-basics",
+      "issues": [1037],
+      "requirements": "Fix three critical correctness bugs in the Mamba runtime/codegen that block any meaningful conformance testing: (1) recursive functions return the wrong value — fib(30) returns 0 instead of 832040, indicating a broken return-value propagation path through recursive call frames; (2) string concatenation via the + operator raises a type error instead of concatenating, indicating missing or broken str.__add__ dispatch in the operator codegen; (3) print() returns 0 instead of None, and this spurious 0 leaks into stdout as extra output, indicating the JIT treats the void/None return of print as integer 0. All three are in cclab-mamba (runtime, codegen, or builtins layer). These must be fixed before the broader Py3.12 conformance testing suite described in #1037 can produce meaningful results.",
+      "questions": [
+        {
+          "topic": "Scope boundary",
+          "question": "Should this change be limited strictly to fixing these three bugs (recursion return value, str + str, print() return), or does it also include setting up the cclab mamba test --conformance runner infrastructure from #1037?"
+        },
+        {
+          "topic": "Recursion bug root cause",
+          "question": "Is fib(30) = 0 a stack-frame / calling-convention bug (return value not preserved across recursive calls), a NaN-boxing issue (large int 832040 misinterpreted), or a codegen issue (recursive call site not wired to the correct return register)? Do you have a reproduction script?"
+        },
+        {
+          "topic": "String concat dispatch",
+          "question": "Does 'hello' + 'world' raise TypeError or a different error? Is the issue in the binary-op codegen (wrong type dispatch), in the missing str.__add__ builtin implementation, or in type inference incorrectly widening str to object?"
+        },
+        {
+          "topic": "print() return value",
+          "question": "Python's print() returns None. Is the spurious 0 caused by the JIT mapping None → 0 in the return value slot, by the call-site emitting a stray integer result, or by the builtin implementation returning 0 explicitly instead of None?"
+        }
+      ]
+    }
+  ]
+}

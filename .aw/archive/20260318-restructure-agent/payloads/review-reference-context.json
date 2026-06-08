@@ -1,0 +1,46 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-agent",
+  "change_id": "restructure-agent",
+  "group_id": "restructure-agent-core",
+  "verdict": "REVIEWED",
+  "summary": "The reference context is too broad for `restructure-agent-core` and misses several group-defining contracts. It cites general `cclab-agent` framework docs, but none of the listed specs cover the clarified `SpecStore` dependency, the new `TypedAgent<I, O>` trait, the `include_str!` prompt file location, or the new `agents/restructure/` module layout and output types.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Coverage is missing for the hard `SpecStore` dependency, the new `TypedAgent<I, O>` abstraction, the compile-time prompt template at `crates/cclab-agent/prompts/restructure.md`, and the new `crates/cclab-agent/src/agents/restructure/` module with typed I/O."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "Only `agents.md`, `architecture.md`, and `llm-providers.md` are clearly central. `core-types.md` is background at most, and `tools.md`, `security.md`, `streaming.md`, `storage.md`, `tools-analysis.md`, `tools-coding.md`, and `integrations.md` do not directly implement this stateless restructure-agent core."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "The cited `cclab-agent` specs do not expose requirement IDs at all, so the table cannot satisfy an ID-based mapping check. The table also misattributes the `Agent` trait interface to `agents.md`; the explicit `run` and `run_with_handler` trait methods are shown in `architecture.md`, not `agents.md`."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "Several entries are unrelated to the clarified scope: storage/session state, approval/security flows, streaming handlers, analysis/coding tool catalogs, and platform integrations."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "The reference set misses multiple areas that define this group's scope. `pre_clarifications.md` requires a hard dependency on `SpecStore` (#901), a new `TypedAgent<I, O>` trait, a compile-time prompt template at `crates/cclab-agent/prompts/restructure.md`, and a new `crates/cclab-agent/src/agents/restructure/` module with typed output types, but none of the cited specs in `reference_context.md` cover those topics.",
+      "recommendation": "Add or cite specs that explicitly cover the `SpecStore` interface/dependency, typed-agent abstraction, restructure prompt embedding, and restructure module/type layout. If those specs do not exist yet, record them as missing coverage instead of implying the current table is complete."
+    },
+    {
+      "severity": "HIGH",
+      "description": "The `Key Requirements` column is not traceable to actual requirement IDs. The current `cclab-agent` specs are sectioned design docs with headings, schemas, and diagrams, not requirement-ID documents, so entries such as `reference_context.md`'s prose summaries cannot be verified against real requirement identifiers. There is also a concrete mismatch: the `agents.md` row claims the `Agent` trait interface (`run`, `run_with_handler`), but the explicit trait appears in `architecture.md` instead.",
+      "recommendation": "Rewrite the table to reference actual requirement IDs if they exist elsewhere, or switch to precise section-based citations. Also move the `Agent` trait interface claim from `agents.md` to `architecture.md`."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "The relevance scoring is inflated and the reference set includes unrelated framework areas. The requirements say `RestructureAgent` is stateless and platform-agnostic, yet the table includes storage/session lifecycle, approval/security flows, streaming handlers, platform integrations, and full coding/analysis tool catalogs that are not part of the clarified scope.",
+      "recommendation": "Trim the reference set to the small number of directly relevant specs, likely centered on agent abstractions, architecture, and LLM provider contracts. Keep broader crate docs only if they are explicitly needed, and downgrade them to background."
+    }
+  ]
+}

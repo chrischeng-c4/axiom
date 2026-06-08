@@ -1,0 +1,58 @@
+change_id: mamba-p0-bugfix
+schema_version: '2.0'
+created_at: 2026-03-25T07:08:36.900591Z
+updated_at: 2026-03-28T04:06:26.581009Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: string-reverse-slice-fix
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1108
+    title: 'fix(mamba): keyword argument dispatch not implemented — sorted(key=), print(sep=), etc.'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1109
+    title: 'fix(mamba): no-arg constructor codegen verifier error — list(), tuple(), set()'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1111
+    title: 'fix(mamba): string reverse slice [::-1] returns empty string'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 1114
+    title: 'fix(mamba): SIGBUS crash in multi-threaded conformance test execution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - mamba-codegen-runtime-fixes
+  - mamba-kwargs-dispatch
+  change_implementation: []
+  post_clarifications:
+  - mamba-codegen-runtime-fixes
+  - mamba-kwargs-dispatch
+  reference_context:
+  - mamba-codegen-runtime-fixes
+  - mamba-kwargs-dispatch
+  change_spec: []

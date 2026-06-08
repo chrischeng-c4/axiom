@@ -1,0 +1,68 @@
+{
+  "group_id": "gcp-cloud-integration",
+  "specs": [
+    {
+      "spec_id": "scheduler-backends",
+      "spec_group": "cclab-meteor",
+      "relevance": "high",
+      "key_requirements": [
+        "SchedulerBackend trait: acquire_leader(ttl), renew_leader(ttl), release_leader(), get_task_state(name), set_task_state(name, state)",
+        "TaskScheduleState: enabled, last_run_at, total_run_count",
+        "IonSchedulerBackend as existing production backend (pattern to follow)",
+        "InMemorySchedulerBackend as testing backend (pattern to follow)",
+        "Cloud Scheduler backend must implement the same SchedulerBackend trait"
+      ]
+    },
+    {
+      "spec_id": "scheduler-architecture",
+      "spec_group": "cclab-meteor",
+      "relevance": "medium",
+      "key_requirements": [
+        "Current leader election loop: acquire_leader → evaluate schedules → enqueue tasks → renew_leader",
+        "Cloud Scheduler backend replaces the self-hosted leader election loop",
+        "Pluggable backend architecture — SchedulerBackend is decoupled from PeriodicScheduler"
+      ]
+    },
+    {
+      "spec_id": "broker-traits",
+      "spec_group": "cclab-meteor",
+      "relevance": "high",
+      "key_requirements": [
+        "Broker trait: connect(), disconnect(), publish(queue, message), health_check(), delivery_model(), capabilities()",
+        "PushBroker trait: parse_push_request(headers, body), ack_status_code(), nack_status_code(), endpoint_path()",
+        "DelayedBroker trait: publish_delayed(queue, message, delay: Duration), publish_at(queue, message, eta: DateTime<Utc>)",
+        "BrokerCapabilities: delayed_tasks, dead_letter, priority, batching, max_delay",
+        "DeliveryModel enum: Pull, Push",
+        "CloudTasksBroker must implement Broker + PushBroker + DelayedBroker",
+        "Reference source: crates/cclab-queue/src/broker/mod.rs"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "broker-traits",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-fetch/broker/broker-traits.md",
+      "sections": ["overview", "schema"]
+    },
+    {
+      "spec_id": "cloudtasks-broker",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-fetch/broker/cloudtasks.md",
+      "sections": ["overview", "schema", "rest-api", "changes"]
+    },
+    {
+      "spec_id": "cloud-scheduler-backend",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-fetch/scheduler/cloud-scheduler-backend.md",
+      "sections": ["overview", "schema", "rest-api", "changes"]
+    },
+    {
+      "spec_id": "scheduler-backends-gcp",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-fetch/scheduler/scheduler-backends.md",
+      "source": "cclab/specs/crates/cclab-fetch/scheduler-backends.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

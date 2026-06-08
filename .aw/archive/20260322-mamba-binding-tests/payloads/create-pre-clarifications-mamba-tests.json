@@ -1,0 +1,29 @@
+{
+  "group_id": "mamba-tests",
+  "answers": [
+    {
+      "topic": "scope-split",
+      "answer": "This change is ONLY for binding crates (cclab-*-mamba) + registry. NOT runtime/lower/resolve/stdlib — those are separate per #1035. Focus: 8 binding crates + registry = 9 crates total."
+    },
+    {
+      "topic": "binding-crates-mb-functions",
+      "answer": "Each binding crate has methods.rs with pub fn mb_* functions taking MbValue args and returning MbValue. They're registered via MambaModule trait impl in lib.rs. Inspect each crate's methods.rs to enumerate all mb_* functions. No macro-based discovery — manual inspection."
+    },
+    {
+      "topic": "registry-ignored-tests",
+      "answer": "Check the actual #[ignore] tests in cclab-mamba-registry. They may need MbValue runtime (NaN-boxing) which requires cclab-mamba dependency to be properly linked. Un-ignore if possible, or document why blocked."
+    },
+    {
+      "topic": "runtime-test-placement",
+      "answer": "Out of scope for this change — runtime tests are #1035 separate work. This change only covers binding crate tests. For binding crates: tests go in crates/cclab-{name}-mamba/tests/ directory (integration test style)."
+    },
+    {
+      "topic": "stdlib-scope",
+      "answer": "Out of scope. This change is binding crates only. Stdlib tests are in #1035."
+    },
+    {
+      "topic": "coverage-tooling",
+      "answer": "Out of scope. Coverage tooling setup is separate. This change just adds test files. No CI changes."
+    }
+  ]
+}

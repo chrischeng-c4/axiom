@@ -1,0 +1,55 @@
+{
+  "schema_version": "cue.runtime-tenant.v0",
+  "runtime_tenant_id": "rt-team-request-tracker-sandbox-v1",
+  "app_id": "t-operations-team-request-tracker",
+  "environment": "sandbox",
+  "app_version": 1,
+  "app_spec_ref": "8a58d2e59c7f409184b85d9b46a0f45e3f28de8f",
+  "release_ref": "8a58d2e59c7f409184b85d9b46a0f45e3f28de8f",
+  "owner_namespace": "team",
+  "owner_user": "ops-lead@example.com",
+  "owner_team": "Operations",
+  "storage": {
+    "backend": "postgresql",
+    "local_backend": "postgresql",
+    "cluster_id": "local-dev-postgres",
+    "cluster_mode": "shared",
+    "isolation_unit": "database",
+    "database_name": "cue_app_t_operations_team_request_tracker_sandbox",
+    "schema_name": "app",
+    "tenant_key_columns": ["app_id", "environment", "runtime_tenant_id"],
+    "backup_required": false
+  },
+  "data_region": "local-dev",
+  "retention": {
+    "policy_id": "sandbox_30d_resettable",
+    "archive_after_days": 30,
+    "retire_after_days": 60,
+    "export_required_before_retire": false,
+    "erase_supported": true
+  },
+  "migration": {
+    "state": "current",
+    "last_checked_at": "2026-05-08T00:00:00Z",
+    "migration_plan_ref": null
+  },
+  "sandbox_policy": {
+    "default_expiry_days": 30,
+    "reset_allowed": true,
+    "production_copy_allowed": false
+  },
+  "runtime_families": [
+    "record",
+    "comment",
+    "attachment",
+    "workflow_state",
+    "dashboard_materialization",
+    "usage_metric",
+    "runtime_audit"
+  ],
+  "audit": {
+    "created_by": "cue-platform@example.com",
+    "created_at": "2026-05-08T00:00:00Z",
+    "updated_at": "2026-05-08T00:00:00Z"
+  }
+}

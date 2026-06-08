@@ -1,0 +1,23 @@
+{
+  "groups": [
+    {
+      "id": "monorepo-bundler-fixes",
+      "issues": [962],
+      "requirements": "Fix two bugs in the cclab-jet bundler (crates/cclab-jet/src/resolver/) for Nx monorepo compatibility:\n\n1. **Resolver: walk up to root node_modules** — Implement the Node.js module resolution algorithm. When resolving a bare import (e.g., `import React from 'react'`), search for `node_modules/<pkg>` starting from the importing file's directory, then walk up each parent directory until found or filesystem root is reached. Currently the resolver only checks the project dir, causing workspace-root dependencies (e.g., `frontend/node_modules/`) to be treated as external in Nx monorepos (observed: 8.7KB output instead of ~140KB with React bundled).\n\n2. **Circular dependency handling: runtime wrappers instead of bail** — When the bundler detects a circular dependency cycle (as seen in `shared-ui-form-inputs`), instead of bailing/erroring, generate a runtime module wrapper that lazily dereferences the cyclic export. This allows circular graphs to resolve at runtime without build failure.\n\nAcceptance: both fixes must work together on the tech-platform Nx monorepo build.",
+      "questions": [
+        {
+          "topic": "Resolver traversal stop condition",
+          "question": "When walking up parent directories to find `node_modules`, what should cap the traversal? Options: (a) filesystem root `/`, (b) a detected workspace root (e.g., the directory containing the top-level `package.json` or `nx.json`), or (c) a configurable max-depth. Is there an existing workspace-root detection mechanism in cclab-jet we should reuse?"
+        },
+        {
+          "topic": "Runtime wrapper implementation for circular deps",
+          "question": "What does 'runtime wrapper' mean technically in the context of cclab-jet's output format? For example: (a) a getter thunk `() => module.export`, (b) a `Object.defineProperty` lazy getter on the exports object, or (c) something similar to Rollup's cycle-breaking approach? Is there an existing pattern in the codebase to follow, or should we design it from scratch?"
+        },
+        {
+          "topic": "Tech-platform test acceptance criteria",
+          "question": "For the tech-platform Nx monorepo test, what is the precise acceptance criterion? (a) Build completes without errors, (b) build completes and output bundle size is above a threshold (e.g., React is included), or (c) a specific output artifact is verified? Are there existing integration tests, or should new ones be added?"
+        }
+      ]
+    }
+  ]
+}

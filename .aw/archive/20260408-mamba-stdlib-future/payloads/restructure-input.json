@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "id": "future-stdlib-module",
+      "issues": [],
+      "requirements": "Add native stdlib `__future__` module to Mamba. Implement as `crates/cclab-mamba/src/runtime/stdlib/future_mod.rs` following the existing stdlib module pattern (register function + HashMap of MbValue attributes). Export CPython-compatible feature flag constants: `annotations`, `division`, `print_function`, `unicode_literals`, `with_statement`, `absolute_import`. Also export CO_* compiler flag integer constants: CO_NESTED, CO_GENERATOR_ALLOWED, CO_FUTURE_DIVISION, CO_FUTURE_ABSOLUTE_IMPORT, CO_FUTURE_WITH_STATEMENT, CO_FUTURE_PRINT_FUNCTION, CO_FUTURE_UNICODE_LITERALS, CO_FUTURE_ANNOTATIONS. Each feature flag should be an MbValue integer matching CPython's values. Register as `__future__` module name. Wire into mod.rs and register_stdlib().",
+      "questions": []
+    }
+  ]
+}

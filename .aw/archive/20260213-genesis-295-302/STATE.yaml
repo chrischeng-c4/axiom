@@ -1,0 +1,64 @@
+change_id: genesis-295-302
+schema_version: '2.0'
+created_at: 2026-02-13T08:00:27.508147Z
+updated_at: 2026-02-13T09:04:42.233860Z
+phase: merge_approved
+iteration: 1
+last_action: merge_review_approved_no_issues
+session_id: null
+checksums: {}
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-13T08:00:33.237770Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: false
+    high: 1
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors:
+  - '[proposal.md] "status" is a required property'
+  warnings: []
+revision_counts:
+  implementation: 1
+telemetry:
+  calls:
+  - step: review_proposal
+    genesis_version: 0.3.6
+    model: gpt-5.3-codex
+    tokens_in: 77217
+    tokens_out: 1229
+    cost_usd: null
+    duration_ms: 26188
+    timestamp: 2026-02-13T08:52:12.327760Z
+  - step: review_implementation
+    genesis_version: 0.3.6
+    model: gpt-5.3-codex
+    tokens_in: 862505
+    tokens_out: 7124
+    cost_usd: null
+    duration_ms: 150794
+    timestamp: 2026-02-13T08:56:23.042323Z
+  - step: review_implementation
+    genesis_version: 0.3.6
+    model: gpt-5.3-codex
+    tokens_in: 1284970
+    tokens_out: 6917
+    cost_usd: null
+    duration_ms: 140274
+    timestamp: 2026-02-13T09:03:09.698562Z
+  - step: review_merge
+    genesis_version: 0.3.6
+    model: gpt-5.3-codex
+    tokens_in: 245658
+    tokens_out: 2086
+    cost_usd: null
+    duration_ms: 48155
+    timestamp: 2026-02-13T09:04:34.719781Z
+  total_cost_usd: 0.0
+  total_tokens_in: 2470350
+  total_tokens_out: 17356

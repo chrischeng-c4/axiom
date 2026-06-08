@@ -1,0 +1,64 @@
+{
+  "group_id": "specir-and-test-codegen",
+  "verdict": "REVIEWED",
+  "summary": "Four deficiencies block acceptance: (1) template-engine.md is absent despite being the rendering backbone for both Axum and FastAPI generators — Q2 addresses template loading via include_str!, this spec is directly required; (2) sdd-cli included at HIGH relevance but covers SDD workflow phase commands (restructure/clarify/spec-create), not code generation — zero overlap with #932/#933; (3) test-generation.md lists probe adapter as a key requirement without noting Q5 explicitly deferred it, risking incorrect implementation; (4) no spec covers #933's core requirement — BDD given/when/then fields to test function body mapping and coverage validation (warn on requirements without Verifies). Core codegen specs (codegen-system, generators, spec-ir-contract, requirement-plus-enhancement, code-generator-contract) are accurately included and well-specified.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "template-engine.md is missing — both generator-axum and generator-fastapi explicitly depend on TemplateEngine; Q2 calls out include_str! template loading which this spec directly defines. No spec covers BDD given/when/then → test body generation (core of #933) or coverage validation (warn on requirements without Verifies). requirement-plus-enhancement.md covers the schema types but not the generator consuming them for test scaffolding."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "sdd-cli at HIGH is wrong — it covers SDD workflow CLI (restructure, clarify-pre, context-reference), not code generation from SpecIR. No codegen command exists in this spec. cclab-sdd/README at HIGH is too generous — it is a spec index, not implementation guidance. README should be medium at most."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "spec-ir-contract R5 is listed as 'Serialization support for MCP transport' but actual R5 is 'SpecBundle for multi-spec input (Vec<SpecIR> + dependency graph)' — serialization is part of R4. test-generation key requirements include 'Probe adapter packaging with metadata' (R2) without flagging that Q5 explicitly defers cclab-probe integration. cclab-sdd/README key requirement 'Spec format priority (OpenRPC > JSON Schema > Mermaid)' is not in this spec — it is in CLAUDE.md."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "sdd-cli covers SDD workflow phase advancement (restructure, clarify, spec-create, merge), not code generation from SpecIR. Its requirements (R1-R6) have no bearing on #932 (consuming SpecIR in generators) or #933 (test scaffold from RequirementPlus). Should be removed."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "cclab-sdd/generate/template-engine.md is absent from the reference context. Both generator-axum.md and generator-fastapi.md explicitly depend on TemplateEngine for rendering (AxumGenerator uses render() for models/handlers/main; FastAPIGenerator uses TemplateEngine for all project files). Q2 answer specifically addresses template file location (crates/cclab-sdd/templates/) and loading mechanism (include_str! for binary embedding). The template-engine spec defines R1 (Tera initialization from directory), R2 (render method contract), R3 (filter registration: pascal_case, snake_case, kebab_case), and R4 (structured error types: NotFound, ParseError). Without this spec, the implementer lacks the rendering contract when writing template files and wiring generators.",
+      "recommendation": "Add cclab-sdd/generate/template-engine.md at HIGH relevance. Key requirements: Tera initialization with recursive template discovery (.j2/.tera), render(template_name, context) contract, filter registration for case conversions, TemplateError variants (NotFound, ParseError, ContextMismatch). Directly relevant to Q2 (include_str! embedding) and to both Axum/FastAPI generator implementations."
+    },
+    {
+      "severity": "HIGH",
+      "description": "cclab-sdd/sdd-cli is included at HIGH relevance but is entirely irrelevant to #932 and #933. The spec covers SDD workflow phase commands: restructure, clarify-pre, clarify-post, context-reference, spec-create, spec-review, tasks-generate, merge-specs. These are phase-advancement commands, not code generation commands. #932 asks for generators to consume SpecIR (internal implementation in crates/cclab-sdd/src/generators/). #933 asks for test scaffolding from RequirementPlus (also internal generator logic). Neither issue requires new CLI commands or changes to the SDD workflow CLI surface. The CliModule and distributed_slice patterns are background Rust architecture, not specific to codegen.",
+      "recommendation": "Remove cclab-sdd/sdd-cli from the reference context. If a codegen CLI command is planned (e.g., 'cclab sdd codegen'), it is not specified in this spec and the existing sdd-cli spec does not define it. Do not mislead the implementation agent into thinking codegen is CLI-driven by this spec."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "test-generation.md key requirements list 'Probe adapter packaging with metadata (endpoints, expected responses, runtime config)' as a deliverable — this is R2 of the spec. However Q5 explicitly answers: 'cclab-probe integration deferred. Deliverable is file scaffold generation only, no probe integration.' An implementation agent reading this reference context will see R2 as a requirement to implement, directly contradicting Q5. The reference context must flag which requirements are in-scope vs. deferred.",
+      "recommendation": "Revise test-generation key requirements to flag the scope boundary: R1 (test artifact generation for FastAPI/Axum — in scope), R2 (probe adapter — DEFERRED per Q5), R3 (deterministic output — in scope), R4 (structured error reporting — in scope). Add explicit note: 'R2 probe adapter deferred per pre-clarification Q5; deliverable is file scaffold only.'"
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "#933 core requirement — BDD fields to test body generation — is not covered by any listed spec. Issue #933 states: 'ElementDef with test_type (unit/integration/e2e), BDD given/when/then' should map to test function structure with Given/When/Then comment blocks and assertion stubs. requirement-plus-enhancement.md defines the schema types (ElementDef fields, relationship types) but does not define how generators consume them to produce test code. code-generator-contract.md mentions 'N Requirements → N Test Classes, N Scenarios → N Functions' at the architectural level but does not specify BDD field → function body mapping. Coverage validation (warn when requirements have no Verifies element) is also not addressed anywhere.",
+      "recommendation": "The gap requires either: (1) an update to code-generator-contract.md adding BDD field mapping rules (given → // Given: comment, when → // When: comment, then → assert!(...) stub) and coverage validation logic (iterate requirements, flag any without Verifies relationship), or (2) a new spec for RequirementPlus test codegen. Add this as a spec_plan entry for the change_spec phase."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "spec-ir-contract.md R5 is misidentified in key requirements. Listed as 'Serialization support for MCP transport' — but actual R5 is 'SpecBundle for multi-spec input (Vec<SpecIR> + dependency graph)'. Serialization (Serialize + Deserialize for MCP transport) is part of R4. Additionally, Q3 defers SpecBundle cross-section composition (Phase 2 out of scope) — this context is absent from the reference entry. An agent implementing #932 Phase 1 (single-spec codegen) does not need SpecBundle, but may incorrectly implement it if R5 appears as an active requirement.",
+      "recommendation": "Correct key requirements for spec-ir-contract: replace 'Serialization support for MCP transport' with 'SpecBundle for multi-spec input (Vec<SpecIR> + dependency graph) — deferred per Q3, Phase 2 only'. The first 4 requirements (SpecIR enum, metadata, From<T> impls, public API) are the relevant Phase 1 items."
+    },
+    {
+      "severity": "LOW",
+      "description": "cclab-sdd/README relevance is HIGH but should be MEDIUM. The README is a spec index — it lists specs and their format, provides a phase flow Mermaid diagram, and links to generate/README.md. It does not directly implement codegen or test generation. The listed key requirement 'Spec format priority (OpenRPC > JSON Schema > Mermaid)' is not in this spec — it is in CLAUDE.md under 'Spec Authoring Rules'. Including it as HIGH misleads the agent into spending time on background documentation.",
+      "recommendation": "Downgrade cclab-sdd/README to MEDIUM (background/orientation). Remove 'Spec format priority (OpenRPC > JSON Schema > Mermaid)' from key requirements — it is not in this spec."
+    },
+    {
+      "severity": "LOW",
+      "description": "All spec entries have group: '?' (unresolved placeholder) in the reference_context.md artifact table. Logical grouping aids the implementation agent in understanding architectural layers. With all groups blank, the agent cannot distinguish core codegen specs from background specs.",
+      "recommendation": "Assign logical groups: generator-axum, generator-fastapi, test-generation, template-engine → 'generators'; codegen-system, code-generator-contract → 'codegen-architecture'; spec-ir-contract, spec-ir-schema → 'spec-ir'; requirement-plus-enhancement → 'diagram-types'; README, generate/README → 'overview'."
+    }
+  ]
+}

@@ -1,0 +1,109 @@
+change_id: jet-remaining-issues
+schema_version: '2.0'
+created_at: 2026-03-19T09:57:10.916481Z
+updated_at: 2026-03-19T10:29:33.196653Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: jet-remaining-issues-spec
+task_revisions:
+  jet-remaining-issues-spec: 1
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 199284
+    timestamp: 2026-03-19T10:00:50.299768Z
+  - step: analyze_spec_jet-remaining-issues-spec
+    sdd_version: 0.3.41
+    model: gemini-3.1-pro-preview
+    tokens_in: 445942
+    tokens_out: 2162
+    cost_usd: null
+    duration_ms: 166350
+    timestamp: 2026-03-19T10:06:57.909579Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 478163
+    timestamp: 2026-03-19T10:28:45.991234Z
+  - step: begin_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1289829
+    timestamp: 2026-03-19T10:28:54.442437Z
+  total_cost_usd: 0.0
+  total_tokens_in: 445942
+  total_tokens_out: 2162
+dag:
+  issues:
+  - number: 765
+    title: 'feat(jet): AOT production build — tree shaking, code splitting, minification, source maps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 797
+    title: 'jet build: validate against real-world open-source React apps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 881
+    title: 'jet-install: cold install 4.9s vs pnpm 3.4s — optimize metadata resolution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 882
+    title: 'jet-build: bundle size 215KB vs webpack 192KB — implement scope hoisting'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 883
+    title: 'jet-install: resolver bugs fixed — version conflicts, ||, pre-release, optional deps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 903
+    title: 'jet-build: scope hoisting Phase 2 — true module flattening for cross-module optimization'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  pre_clarifications:
+  - jet-build-aot-pipeline
+  - jet-build-scope-hoisting
+  - jet-install
+  post_clarifications:
+  - jet-build-aot-pipeline
+  - jet-build-scope-hoisting
+  - jet-install
+  reference_context:
+  - jet-build-aot-pipeline
+  - jet-build-scope-hoisting
+  - jet-install
+  change_spec: []

@@ -1,0 +1,8 @@
+{
+  "spec_id": "artifact-tools-docs-phase",
+  "group_id": "sdd-docs-phase",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+  "fill_sections": ["overview", "rpc-api", "changes"],
+  "content": "Extend artifact tool interfaces with docs-phase artifact operations. Three new artifact tool pairs (workflow + artifact) follow the existing CRR pattern established by change-spec and change-implementation tools:\n\n1. **`sdd_workflow_create_change_docs` / `sdd_artifact_create_change_docs`** — doc-writer agent creates/updates guide sections from change specs + CLI specs + config specs + scenarios\n2. **`sdd_workflow_review_change_docs` / `sdd_artifact_review_change_docs`** — doc-reviewer agent reviews for accuracy (via CLI execution), completeness, audience fit\n3. **`sdd_workflow_revise_change_docs` / `sdd_artifact_revise_change_docs`** — doc-writer agent revises based on review feedback\n\n**Scope**: This spec covers the artifact tool interface definitions only (OpenRPC params/result schemas). Workflow orchestration logic is in `docs-phase-logic`. State machine changes are in `state-machine-docs-phase`.\n\n| Tool pair | Agent | Pattern source |\n|-----------|-------|----------------|\n| create_change_docs | sdd-doc-writer | `create_change_impl` |\n| review_change_docs | sdd-doc-reviewer | `review_change_impl` |\n| revise_change_docs | sdd-doc-writer | `revise_change_impl` |"
+}

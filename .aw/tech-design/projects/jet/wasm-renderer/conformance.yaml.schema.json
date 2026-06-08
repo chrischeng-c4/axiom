@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "conformance-manifest",
+  "title": "ConformanceManifest",
+  "description": "Top-level shape of conformance.yaml. A YAML document with a single top-level key `entries` holding the list of ConformanceEntry objects.",
+  "type": "object",
+  "required": ["entries"],
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ConformanceEntry" },
+      "minItems": 1
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "ConformanceEntry": {
+      "$id": "conformance-entry",
+      "title": "ConformanceEntry",
+      "description": "One entry in conformance.yaml. Each entry represents one row from the former §Verified Features table in subset.md and binds a tested feature to its subset rule, SWC AST node kinds, test artefacts, and verification status.",
+      "type": "object",
+      "required": ["id", "subset_rule", "feature", "demo_dir", "test_file", "status"],
+      "if": {
+        "properties": {
+          "subset_rule": { "not": { "pattern": "^B[0-9]+$" } }
+        }
+      },
+      "then": {
+        "required": ["ast_node_kinds"]
+      },
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Za-z0-9_-]+$",
+          "description": "Stable identifier for this entry, unique within conformance.yaml."
+        },
+        "subset_rule": {
+          "type": "string",
+          "pattern": "^(S[0-9]+|X[0-9]+|B[0-9]+)$",
+          "description": "The inclusion rule (S1–S10), exclusion rule (X1–X12), or boundary category (B1–B3)."
+        },
+        "feature": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short human-readable feature name."
+        },
+        "sub_item": {
+          "type": "string",
+          "description": "Optional refinement of the feature."
+        },
+        "ast_node_kinds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "SWC AST node kind strings (swc_ecma_ast / @swc/types) that trigger the associated subset rule. Required for S1–S10 and X1–X12 entries; omit for boundary entries (B1–B3)."
+        },
+        "disambiguation_predicate": {
+          "type": "string",
+          "description": "Required when ast_node_kinds overlaps with another rule. Human-readable predicate distinguishing this rule's trigger."
+        },
+        "demo_dir": {
+          "type": "string",
+          "description": "Directory name under examples/ that contains the demo app exercising this feature."
+        },
+        "test_file": {
+          "type": "string",
+          "description": "File name of the integration test under crates/jet/tests/ covering this feature. May be a comma-separated list."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["verified", "unit_only", "pending"],
+          "description": "verified — end-to-end integration test passes in CI. unit_only — unit test exists but no in-browser integration test. pending — neither demo nor integration test exists; path checks skipped."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

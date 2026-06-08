@@ -1,0 +1,10 @@
+{
+  "project_path": "/Users/chrischeng/projects/cclab-sdd",
+  "change_id": "mamba-p1-bugfix",
+  "spec_id": "statements",
+  "section": "overview",
+  "content": "This change modifies the compound statement parsing logic in R2 to fix issue #1112: dict/set literals (`{}`, `{1,2}`) inside `try` block bodies trigger a parse error.\n\n### Bug\n\n| Input | Expected | Actual |\n|-------|----------|--------|\n| `try:\\n    d = {}['x']\\nexcept KeyError:\\n    pass` | Parses as `Try` with `Assign` body | Parse error on `{` |\n| `try:\\n    s = {1,2}.remove(99)\\nexcept KeyError:\\n    pass` | Parses as `Try` with `Assign` body | Parse error on `{` |\n\n### Root Cause\n\nThe `{` token (LBrace) inside a try block body is mishandled during parsing. The parser or its interaction with the IndentProcessor's `paren_depth` tracking (which increments on `{` for implicit line continuation) causes the block structure to be corrupted when `{` appears as part of an expression inside compound statement bodies.\n\n### Scope\n\n- **Affected**: `parse_try` in `stmt_compound.rs`, `parse_block` in `stmt.rs` — compound statement body parsing when expressions contain brace-delimited literals\n- **Not affected**: Single-line suites, other compound statements only if they share the same `parse_block` code path",
+  "main_spec_ref": "crates/cclab-mamba/parser/statements.md",
+  "group_id": "try-except-dict-set-parse",
+  "fill_sections": ["overview", "changes"]
+}

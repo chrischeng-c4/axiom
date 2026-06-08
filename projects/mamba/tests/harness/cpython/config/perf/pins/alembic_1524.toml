@@ -1,0 +1,9 @@
+# Perf-pin regression gate (#1524).
+# Source: tests/cpython/perf_pin.rs (per-pin: tests/cpython/perf/pins/alembic_1524.toml)
+issue = 1524
+lib = "alembic"
+fixture = "tests/cpython/fixtures/3rd-libs/alembic/bench/alembic_type_read_hot.py"
+floor = 1.0
+mem_floor = 1.0
+samples = 9
+prereq_imports = ["alembic"]

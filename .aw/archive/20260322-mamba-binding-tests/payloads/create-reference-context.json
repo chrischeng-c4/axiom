@@ -1,0 +1,40 @@
+{
+  "change_id": "mamba-binding-tests",
+  "group_id": "mamba-tests",
+  "specs": [
+    {
+      "path": "cclab-mamba/conductor-mamba-p0-spec.md",
+      "relevance": "high",
+      "reasoning": "Defines the MambaRegistry crate (cclab-mamba-registry), MambaModule trait, ModuleRegistrar structure, MAMBA_MODULES distributed slice, and MbValue conversion helpers (FromMbValue/IntoMbValue). R1 and R3 include test plan for registry unit tests verifying trait implementations and symbol registration."
+    },
+    {
+      "path": "cclab-mamba/mamba-crate-wiring-and-schema-binding.md",
+      "relevance": "high",
+      "reasoning": "Specifies the binding crate architecture blueprint that all 8 binding crates follow: lib.rs implements MambaModule trait, types.rs implements FromMbValue/IntoMbValue conversions, methods.rs provides mb_* FFI functions. cclab-schema-mamba serves as the prototype. R4 includes comprehensive test plan for unit tests (MambaModule trait, symbol registration) and integration tests."
+    },
+    {
+      "path": "conductor-mamba-p2-bindings-spec.md",
+      "relevance": "high",
+      "reasoning": "Defines 4 of the 8 binding crates in scope: cclab-agent-mamba (agent builder, providers, run), cclab-fetch-mamba (HTTP client, responses), cclab-log-mamba (logger, info/error/debug/warning), cclab-mcp-mamba (MCPServer). All follow the lib.rs/types.rs/methods.rs pattern. R1-R6 and test plan enumerate all mb_* functions for each crate."
+    },
+    {
+      "path": "cclab-mamba/runtime/value-and-rc.md",
+      "relevance": "medium",
+      "reasoning": "Defines MbValue NaN-boxing representation and MbObject reference counting. Essential foundation for all mb_* functions: value constructors (mb_value_int, mb_value_float, mb_value_bool), extractors (mb_value_as_int, mb_value_as_float), and ObjData variants (Str, List, Dict, Instance, etc). Understanding MbValue is critical for binding crate function implementation and testing."
+    },
+    {
+      "path": "cclab-mamba/runtime/module.md",
+      "relevance": "medium",
+      "reasoning": "Defines Mamba module system (import resolution, sys.modules caching, circular import handling) that underlies how binding crates are registered and imported. R1-R5 cover module path resolution, caching, and import syntax support that enables 'from cclab.agent import ...' style imports in Mamba scripts that use binding crate functions."
+    }
+  ],
+  "sections": [
+    "overview",
+    "interaction",
+    "logic",
+    "schema",
+    "config",
+    "test-plan",
+    "changes"
+  ]
+}

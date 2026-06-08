@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chrischeng/projects/wt/mamba",
+  "change_id": "1133-patrol",
+  "spec_id": "name-builtin-init",
+  "group_id": "fix-name-builtin",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\nchanges:\n  - path: crates/cclab-mamba/src/lower/hir_to_mir.rs\n    action: modify\n    description: |\n      In lower_top_level(): after mb_register_builtins call (~line 813),\n      emit emit_str_const(\"__main__\") + StoreGlobal for __name__ SymbolId.\n      In lower_top_level_repl(): same emission after mb_register_builtins,\n      before global restore loop.\n      Requires resolving __name__ SymbolId from symbol_table or sym_names.\n\n  - path: crates/cclab-mamba/tests/\n    action: add\n    description: |\n      Add test verifying __name__ == \"__main__\" for entry-point scripts.\n      Add test verifying if __name__ == \"__main__\" guard body executes.\n```"
+}

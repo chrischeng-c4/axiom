@@ -1,0 +1,9 @@
+{
+  "spec_id": "cloudtasks-broker",
+  "group_id": "gcp-cloud-integration",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "schema", "rest-api", "changes"],
+  "main_spec_ref": "crates/cclab-fetch/broker/cloudtasks.md",
+  "merge_strategy": "new",
+  "content": "Implements `Broker + PushBroker + DelayedBroker` traits backed by GCP Cloud Tasks REST API v2. Replaces the current stub `publish()` with actual HTTP API calls to create tasks via `POST https://cloudtasks.googleapis.com/v2/{queue_path}/tasks`. Push-based delivery model: Cloud Tasks dispatches HTTP POST requests to the worker endpoint at `/meteor/push/{queue}`. Supports native delayed task scheduling via the `scheduleTime` field on task creation. Parses incoming Cloud Tasks push requests using headers `x-cloudtasks-taskname` (delivery tag) and `x-cloudtasks-taskretrycount` (redelivery detection). Outbound API calls authenticated via OIDC bearer tokens (GCP metadata server in production, service account JSON key for local dev). Inbound push requests validated by checking the `Authorization` header OIDC JWT against configured service account. `BrokerCapabilities`: `delayed_tasks: true`, `dead_letter: true`, `priority: false`, `batching: false`, `max_delay: 30 days`. Feature-gated under `cloudtasks` Cargo feature.\n\nSource: `crates/cclab-queue/src/broker/cloudtasks.rs` (existing stub), `crates/cclab-queue/src/broker/mod.rs` (trait definitions)"
+}

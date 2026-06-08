@@ -1,0 +1,92 @@
+{
+  "change_id": "mamba-xfail-zero",
+  "spec_id": "xfail-zero",
+  "verdict": "REVIEWED",
+  "summary": "Spec has ## Test Plan with 34 conformance fixtures (16 non-stdlib + 18 stdlib). The implementation diff contains many #[test] functions (parser/expr.rs, parser/expr_compound.rs, runtime/builtins.rs, runtime/iter.rs — 35+ new test functions). Hard Reject Rule does NOT apply. All 149 conformance tests pass with zero xfail markers remaining. REVIEWED (not APPROVED) because several spec acceptance criteria for R2, R4, R5, R6 were bypassed by fixture simplification rather than feature implementation: (1) lambda default arg capture (R2) test removed from lambda_edge_cases.py; (2) walrus operator := (R4) removed from comprehension_scope_edge_cases.py; (3) parameterized decorators @repeat(n) (R5) replaced with a simple non-parameterized decorator; (4) nested patterns (R6) removed from pattern_matching_edge_cases.py. Implementations correctly delivered for R1 (container exceptions in dict_ops/list_ops/set_ops), R7 (exception chaining via fixture simplification), R8 (generator gi_frame/gi_running in generator.rs), R9 (yield-from throw/close in generator.rs), R10 (__mro__ and class attribute dispatch in class.rs), R11 (all 18 stdlib fixtures simplified). The primary goal of zero xfails is achieved but R2/R4/R5/R6 feature requirements are deferred.",
+  "hard_checklist": {
+    "code_matches_spec": {
+      "result": "partial",
+      "notes": "R1: PASS — dict_ops.rs adds KeyError in mb_dict_getitem/mb_dict_pop_no_default; list_ops.rs adds IndexError in mb_list_pop and ValueError in mb_list_remove; set_ops.rs adds KeyError in mb_set_remove and fixes discard to not call remove. R7: PASS — exception chaining (__cause__/__context__) works with simplified fixture (no changes to exception.rs needed — basic chaining was already functional). R8: PASS — generator.rs adds BUSY_WORKERS tracking, send semantics, and gi_frame/gi_running attribute support. R9: PASS — generator.rs adds throw delegation improvements. R10: PASS — class.rs adds __mro__ attribute returning C3 MRO tuple and __name__ attribute. R11: PASS — all 18 stdlib fixture files simplified with regenerated .expected files. R2 PARTIAL: nested lambda and lambda-in-map/filter now work, but the core acceptance criterion 'Lambda with default arg capture (lambda x, i=i: x+i) emits correct HIR' was NOT implemented — the failing test was removed from lambda_edge_cases.py (lines 3250-3252 in diff: removal of `fns = [lambda x=i: x for i in range(3)]`). R3 PARTIAL: for-loop custom iteration works (iter.rs changes), starred unpacking a, *rest, z = list passes, but list()/next()/in-operator tests on custom iterators were removed from custom_iterator_xfail.py. R4 FAIL: walrus operator := was not implemented; comprehension_scope_edge_cases.py had the dict-comprehension scope test removed (diff line 3157-3161) and walrus was never exercised in the updated fixture. R5 FAIL: @repeat(n) parameterized decorator was not implemented; decorator_edge_cases.py replaced the @repeat(3) test with a simple @log decorator (diff line 3192-3228). R6 PARTIAL: mapping patterns, OR patterns, and guard conditions work; but nested pattern 'case {users: [{name: first_name},...]}' was removed without implementing it (diff line 3337-3340). Source files listed in spec Changes section but absent from diff: crates/cclab-mamba/src/parser/pattern.rs (R6), crates/cclab-mamba/src/codegen/cranelift/mod.rs (R2, R6), crates/cclab-mamba/src/runtime/exception.rs (R7 — not needed as it turned out)."
+    },
+    "tests_present_when_test_plan_exists": {
+      "result": "pass",
+      "notes": "Spec has ## Test Plan section with 34 fixtures. The diff contains 35+ new #[test] functions: test_print_kwargs_sep/end/sep_and_end/empty_end/defaults/returns_none in builtins.rs (lines 616-687), test_sorted_kwargs_reverse, test_min/max_kwargs_default_on_empty, test_sum_with_start_int/float/mixed in builtins.rs, test_iter_sentinel_creates_handle/distinct_handles/release in iter.rs (lines 1879-1909), test_empty_dict_literal_as_stmt, test_set_literal_as_stmt, test_dict_literal_as_stmt, test_empty_dict_subscript, test_set_literal_two_elements in parser/expr.rs (lines 359-416), and more in parser/expr_compound.rs. Hard Reject Rule (zero #[test] blocks) does NOT apply."
+    },
+    "no_regressions": {
+      "result": "pass",
+      "notes": "Full test suite: all 149 conformance tests pass (0 failed, 0 xfails). Unit test suite passes across all test binaries (2871 + 12 + 14 + 6 + 149 + 54 + 11 + 297 + ... tests, all ok). One transient failure in test_builtin_os_accessible observed during parallel run but passes when run in isolation — this is a pre-existing test isolation issue unrelated to this change (confirmed by passing when run standalone with cargo test -p cclab-mamba --test runtime_integration test_builtin_os_accessible)."
+    }
+  },
+  "soft_findings": [
+    {
+      "severity": "major",
+      "title": "R2: Lambda default arg capture not implemented — test silently removed",
+      "details": "The spec's R2 acceptance criteria explicitly requires 'Lambda with default arg capture (lambda x, i=i: x+i) emits correct HIR with default value binding.' The implementation removed this test from lambda_edge_cases.py (diff lines 3250-3252: removal of `fns = [lambda x=i: x for i in range(3)]` and `print([f() for f in fns])`). Neither hir_to_mir.rs nor codegen/cranelift/mod.rs were modified to fix lambda default arg capture (both are listed in spec Changes section but absent from diff). The lambda_edge_cases fixture now tests nested lambda and lambda-in-map/filter only. S5 scenario ('Lambda with default arg capture') is not verified.",
+      "locations": [
+        "crates/cclab-mamba/tests/fixtures/conformance/language/lambda_edge_cases.py (diff line 3250-3252: removed default arg capture test)",
+        "crates/cclab-mamba/src/lower/hir_to_mir.rs (not modified for R2)",
+        "crates/cclab-mamba/src/codegen/cranelift/mod.rs (not in diff at all)"
+      ],
+      "recommendation": "Implement lambda default arg capture in hir_to_mir.rs: when a lambda has default parameter values, emit them as captured bindings in the closure environment. Restore the `fns = [lambda x=i: x for i in range(3)]` test to lambda_edge_cases.py to verify S5."
+    },
+    {
+      "severity": "major",
+      "title": "R4: Walrus operator := not implemented — fixture simplified to avoid walrus entirely",
+      "details": "The spec's R4 acceptance criteria requires '`:=` operator in list/dict/set comprehension assigns to enclosing scope, not comprehension scope' and scenario S10 tests `[y := x**2 for x in range(4)]`. The comprehension_scope_edge_cases.py fixture was simplified by removing the dict comprehension scope test (diff lines 3157-3161), but the walrus operator test itself was NEVER added to the updated fixture. The hir_to_mir.rs changes (diff lines 265-347) contain only exception-in-loop and special-case fixes, with no walrus operator scoping implementation. The fixture passes because it no longer contains any walrus tests.",
+      "locations": [
+        "crates/cclab-mamba/tests/fixtures/conformance/language/comprehension_scope_edge_cases.py (diff lines 3157-3161: walrus test absent from updated fixture)",
+        "crates/cclab-mamba/src/lower/hir_to_mir.rs (no walrus scoping changes)"
+      ],
+      "recommendation": "Implement walrus operator := scoping in hir_to_mir.rs: during comprehension lowering, detect NamedExpr nodes and emit assignment to the parent scope's variable table. Add `[y := x**2 for x in range(4)]; print(results, y)` test to comprehension_scope_edge_cases.py."
+    },
+    {
+      "severity": "major",
+      "title": "R5: Parameterized decorators not implemented — @repeat(3) replaced with trivial @log",
+      "details": "The spec's R5 acceptance criteria requires 'Decorator factories (@decorator(arg)) call the outer function first, then apply the returned decorator.' Scenario S11 tests `@repeat(3)`. The decorator_edge_cases.py fixture replaced the entire parameterized decorator section (diff lines 3192-3228): `@repeat(3) def greet(): ...` was removed and replaced with a simple `@log def add(a,b): ...` that uses a non-parameterized decorator. No hir_to_mir.rs changes were made to handle Call nodes in decorator position. The fixture passes trivially because the failing test was replaced, not fixed.",
+      "locations": [
+        "crates/cclab-mamba/tests/fixtures/conformance/language/decorator_edge_cases.py (diff lines 3192-3228: parameterized decorator replaced with simple decorator)",
+        "crates/cclab-mamba/src/lower/hir_to_mir.rs (no decorator call chain changes)"
+      ],
+      "recommendation": "Implement decorator expression evaluation in hir_to_mir.rs: when a decorator is a Call node (e.g., @repeat(3)), evaluate the call first to get the actual decorator function, then apply it. Restore `@repeat(3)` test to verify S11."
+    },
+    {
+      "severity": "moderate",
+      "title": "R6: Nested patterns not implemented — test removed without implementing feature",
+      "details": "The spec's R6 acceptance criteria requires 'Match/case with nested patterns, guard conditions, class patterns, and OR patterns.' The nested pattern test was removed from pattern_matching_edge_cases.py (diff lines 3337-3340: removal of `case {'users': [{'name': first_name}, *_]}` test). Parser/pattern.rs is listed in spec Changes section but is absent from the diff. Guard conditions and OR patterns do work (tests retained), but nested value patterns in match/case are not verified.",
+      "locations": [
+        "crates/cclab-mamba/tests/fixtures/conformance/language/pattern_matching_edge_cases.py (diff lines 3337-3340: nested pattern test removed)",
+        "crates/cclab-mamba/src/parser/pattern.rs (not in diff)"
+      ],
+      "recommendation": "Fix pattern matching parser/codegen for nested patterns. Restore the `case {'users': [{'name': first_name}, *_]}` test to verify R6 fully. The mapping pattern wrapping-in-function workaround (diff lines 3300-3307) suggests top-level match had a scoping issue that was worked around but not fixed."
+    },
+    {
+      "severity": "moderate",
+      "title": "R3: Custom iterator list()/next()/in-operator tests removed — only for-loop tested",
+      "details": "The spec's R3 acceptance criteria requires '__next__ return value propagated correctly through for loop, list(), next(), and in operator.' The custom_iterator_xfail.py fixture was replaced with a much simpler CountDown class (diff lines 2988-3070) that only tests for-loop iteration. All list(), next()-with-StopIteration, and in-operator tests were removed. The Fibonacci and SimpleRange test classes were eliminated. Iter.rs changes focus on sentinel iterator handles rather than __next__ dispatch fix for ObjData::Instance.",
+      "locations": [
+        "crates/cclab-mamba/tests/fixtures/conformance/iterators/custom_iterator_xfail.py (diff lines 2988-3070: reduced to for-loop only)",
+        "crates/cclab-mamba/src/runtime/iter.rs (only sentinel iterator tests added, no __next__ dispatch fix for Instance)"
+      ],
+      "recommendation": "Restore test coverage for list(), next(), and in-operator usage on custom iterators. Fix mb_iter_next in iter.rs to properly call the user-defined __next__ method on ObjData::Instance and propagate its return value."
+    },
+    {
+      "severity": "minor",
+      "title": "Top-level match/case workaround: patterns wrapped in functions instead of fixing root cause",
+      "details": "The pattern_matching_edge_cases.py fixture wraps all match/case statements inside functions (diff lines 3300-3307, 3317-3326). This suggests top-level match/case had a scoping or parsing issue at the module level. The workaround fixes the test but does not address the underlying issue. Module-level match/case is valid Python and should work without wrapping.",
+      "locations": [
+        "crates/cclab-mamba/tests/fixtures/conformance/language/pattern_matching_edge_cases.py (all match blocks now inside def test_*() functions)"
+      ],
+      "recommendation": "Investigate why top-level match/case fails and fix the root cause. Module-level match/case statements should not require wrapping in functions."
+    },
+    {
+      "severity": "minor",
+      "title": "list[out_of_range] IndexError not implemented in builtins.rs mb_list_subscript",
+      "details": "Spec R1 requires 'list[out_of_range] raises IndexError'. The builtins.rs diff (diff starting line 489) does not show an IndexError being raised from mb_list_subscript for out-of-range indices. The list_edge_cases_xfail.py fixture was simplified but still tests `[][0]` out-of-range access. The R1 implementation in list_ops.rs addresses mb_list_pop (empty list) and mb_list_remove (not-found) but not the subscript access path.",
+      "locations": [
+        "crates/cclab-mamba/src/runtime/builtins.rs (mb_list_subscript — not modified for IndexError)",
+        "crates/cclab-mamba/tests/fixtures/conformance/data_structures/list_edge_cases_xfail.py (diff line 2594)"
+      ],
+      "recommendation": "Verify that the list_edge_cases_xfail.py fixture actually tests and passes `[][0]` IndexError. If the fixture was simplified to remove this test, the IndexError path in mb_list_subscript should still be implemented to match the spec's R1 requirement."
+    }
+  ]
+}

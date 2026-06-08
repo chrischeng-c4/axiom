@@ -1,0 +1,19 @@
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/semantic/agentic-workflow-packages-sdd.md#manifest
+// CODEGEN-BEGIN
+{
+  "name": "@sdd/core",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.48",
+    "typescript": "^5.3.3"
+  }
+}
+// CODEGEN-END

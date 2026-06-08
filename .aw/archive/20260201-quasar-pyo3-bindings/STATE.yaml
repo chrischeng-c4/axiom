@@ -1,0 +1,48 @@
+change_id: quasar-pyo3-bindings
+schema_version: '2.0'
+created_at: 2026-02-01T10:29:10.259687Z
+updated_at: 2026-02-01T10:30:54.866849Z
+phase: archived
+iteration: 1
+last_action: merge-complete
+session_id: null
+checksums:
+  proposal.md:
+    hash: sha256:60b0249f27404306a46c73867f401f7d951a10e904c39e7b3bea26f9bd3cdf86
+    validated_at: 2026-02-01T10:30:38.554635Z
+  specs/quasar-pyo3-bindings-spec.md:
+    hash: sha256:90783ae36ae7bb3c50bd2869b33f0d279141a0763a091eefb02e22d78a2bb640
+    validated_at: 2026-02-01T10:30:38.555013Z
+  tasks.md:
+    hash: sha256:33ecbd5e30c0535699e0d253f4d78326252adeb688984cc480db29652ee36458
+    validated_at: 2026-02-01T10:30:38.554756Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-01T10:29:57.360107Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-01T10:30:38.554496Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

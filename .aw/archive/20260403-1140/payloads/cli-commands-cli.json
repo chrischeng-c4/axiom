@@ -1,0 +1,7 @@
+{
+  "spec_id": "cli-commands-check-alignment",
+  "section": "cli",
+  "group_id": "check-alignment-phase1",
+  "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md",
+  "content": "```yaml\ncclab sdd:\n  check-alignment [path]:\n    args:\n      path:\n        type: string\n        required: false\n        description: \"File or directory path. If directory, recursively checks all .md files. Defaults to cclab/specs/ if omitted.\"\n    flags:\n      --json:\n        type: bool\n        default: false\n        description: \"Emit results as JSON (CheckResult schema) instead of text\"\n    behavior:\n      - Resolve path: if omitted, use {project_root}/cclab/specs/\n      - Delegate to spec_alignment::check(resolved_path)\n      - Text output (default): OK/FAIL per file, indented violations under FAIL\n      - JSON output (--json): serialize CheckResult as JSON\n      - Exit 0 if passed, exit 1 if violations\n    output_format:\n      text: |\n        FAIL  {relative_path}\n          {violation_kind}: {message}\n        OK    {relative_path}\n      json: |\n        { \"files\": [...], \"total_violations\": N, \"passed\": bool }\n    exit_codes:\n      0: \"All files passed\"\n      1: \"One or more violations found\"\n```"
+}

@@ -1,0 +1,7 @@
+{
+  "group_id": "mamba-type-3arg-core",
+  "skipped": true,
+  "scope_summary": "Problem: type(name, bases, namespace) 3-arg form was missing — only 1-arg type(x) worked. This blocked Django ORM, SQLAlchemy, Pydantic, attrs, dataclasses, enum.Enum, ABCMeta, and parametrized test frameworks. Success Criteria: mb_type3(name, bases, dict) creates a new class object registered in CLASS_REGISTRY; the class has correct __name__, __bases__, namespace entries as attrs/methods; C3 MRO computed at creation time; isinstance/issubclass work; __init_subclass__ and __set_name__ hooks fire; class statement and type() share mb_class_register. Boundary: In scope = builtins.rs (mb_type3), class.rs (mb_class_register, C3 MRO, hooks), conformance tests. Out of scope = custom metaclass __new__/__init__ overrides, types.new_class, types.prepare_class, post-creation attribute mutation.",
+  "questions": [],
+  "contradictions": []
+}

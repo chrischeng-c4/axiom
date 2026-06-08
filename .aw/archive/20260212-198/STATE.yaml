@@ -1,0 +1,12 @@
+change_id: '198'
+schema_version: '2.0'
+created_at: 2026-02-12T08:21:35.334129Z
+updated_at: 2026-02-12T08:22:45.417479Z
+phase: archived
+iteration: 1
+last_action: 'synced action enum: added 6 missing actions, removed orphan complete'
+session_id: null
+checksums: {}
+validations: []
+revision_counts: {}
+telemetry: null

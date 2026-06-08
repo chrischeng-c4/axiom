@@ -1,0 +1,32 @@
+{
+  "groups": [
+    {
+      "id": "jet-aot-build-gaps",
+      "issues": [765],
+      "requirements": "Complete remaining AOT production build gaps in cclab-jet bundler. Core features (tree shaking, code splitting, minification, scope hoisting, DCE, source maps, CSS bundling, define replacement) are already implemented. This change fills the remaining gaps: (1) preload hints — generate <link rel=\"modulepreload\"> for chunk dependencies, (2) manual chunks config — user-configurable chunk boundaries beyond dynamic imports, (3) HTML minification — whitespace/comment removal for HTML output, (4) source map chaining — compose maps across multi-pass transforms (TS → JS → minified → bundled), (5) image optimization — implement actual compression in the existing TODO stub, (6) JSON tree-shaking — dead code elimination for JSON imports, (7) CSS asset URL rewriting — rewrite url() references to hashed asset paths.",
+      "constraints": [
+        "All changes in crates/cclab-jet/src/bundler/ and crates/cclab-jet/src/asset/",
+        "Must not regress existing build pipeline functionality",
+        "File size limit: split files >= 1000 lines",
+        "Existing tests must continue to pass"
+      ],
+      "questions": [
+        {
+          "id": "q1",
+          "question": "For image optimization, should we use the existing `image` crate for basic resize/compress, or integrate a more specialized crate like `oxipng`/`mozjpeg`?",
+          "options": ["image crate (already a dependency)", "oxipng + mozjpeg (better compression)", "skip image optimization for now (p3)"]
+        },
+        {
+          "id": "q2",
+          "question": "For HTML minification, custom implementation (simple regex-based) or integrate `minify-html` crate?",
+          "options": ["custom (minimal, no new dependency)", "minify-html crate (battle-tested)"]
+        },
+        {
+          "id": "q3",
+          "question": "Should manual chunks config follow Vite/Rollup's `manualChunks` API shape, or a simpler jet-native format?",
+          "options": ["Vite-compatible (function or object)", "Simple object mapping (name → glob patterns)"]
+        }
+      ]
+    }
+  ]
+}

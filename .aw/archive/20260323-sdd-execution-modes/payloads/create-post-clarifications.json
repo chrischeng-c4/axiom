@@ -1,0 +1,6 @@
+{
+  "change_id": "sdd-execution-modes",
+  "group_id": "sdd-execution-modes",
+  "skipped": true,
+  "reason": "No conflicts found. Requirements replace existing per-action config with mode-based presets. executor-resolution.md still has stale merge CRR entries (review_change_merge, fix_change_merge) — tracked in #1047 separately. No blocking contradictions."
+}

@@ -1,0 +1,109 @@
+change_id: all-issues
+schema_version: '2.0'
+created_at: 2026-03-17T06:27:43.830035Z
+updated_at: 2026-03-18T10:51:07.243173Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:jet-build-production: 1
+  ref_ctx:jet-install-enhancements: 1
+current_task_id: all-issues-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.42
+    model: gemini-3-flash-preview
+    tokens_in: 500141
+    tokens_out: 1753
+    cost_usd: null
+    duration_ms: 85514
+    timestamp: 2026-03-17T06:29:18.274689Z
+  - step: review_reference_context
+    sdd_version: 0.3.40
+    model: gpt-5.4
+    tokens_in: 1779653
+    tokens_out: 11632
+    cost_usd: null
+    duration_ms: 252705
+    timestamp: 2026-03-17T07:06:19.586737Z
+  - step: create_reference_context
+    sdd_version: 0.3.42
+    model: gemini-3-flash-preview
+    tokens_in: 2672559
+    tokens_out: 4844
+    cost_usd: null
+    duration_ms: 847436
+    timestamp: 2026-03-17T07:07:24.667881Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.42
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 440558
+    timestamp: 2026-03-17T08:25:47.168191Z
+  - step: begin_implementation
+    sdd_version: 0.3.42
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1188852
+    timestamp: 2026-03-17T08:27:05.978153Z
+  total_cost_usd: 0.0
+  total_tokens_in: 4952353
+  total_tokens_out: 18229
+dag:
+  issues:
+  - number: 765
+    title: 'feat(jet): AOT production build — tree shaking, code splitting, minification, source maps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 797
+    title: 'jet build: validate against real-world open-source React apps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 881
+    title: 'jet-install: cold install 4.9s vs pnpm 3.4s — optimize metadata resolution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 882
+    title: 'jet-build: bundle size 215KB vs webpack 192KB — implement scope hoisting'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 883
+    title: 'jet-install: resolver bugs fixed — version conflicts, ||, pre-release, optional deps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  reference_context:
+  - jet-build-production
+  - jet-install-enhancements
+  post_clarifications:
+  - jet-build-production
+  - jet-install-enhancements
+  change_spec: []
+  pre_clarifications:
+  - jet-build-production
+  - jet-install-enhancements

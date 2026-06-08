@@ -1,0 +1,1409 @@
+use super::dict_ops::DictKey;
+use indexmap::IndexMap;
+use num_bigint::BigInt;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
+/// Reference-counted heap objects (#280) — thread-safe, no-GIL.
+///
+/// Every heap-allocated Mamba object starts with a MbObjectHeader containing
+/// an atomic reference count and a type tag. The runtime uses `mb_retain` /
+/// `mb_release` to manage lifetimes. When refcount drops to zero, the object
+/// is freed.
+///
+/// Cycle collection is deferred — containers (list, dict) are tracked separately
+/// and a mark-sweep collector runs periodically to break cycles.
+///
+/// # Ownership Audit (#1129)
+///
+/// Every `mb_*` function registered in `runtime_symbols()` that returns `MbValue`
+/// is classified as NEW, BORROWED, or VOID. Borrowed-reference functions call
+/// `retain_if_ptr(result)` before returning so callers always receive an owned
+/// reference.
+///
+/// ## NEW (caller owns, rc=1 — no retain needed)
+///
+/// Constructors / allocators:
+///   mb_list_new, mb_list_from, mb_list_from_iterable, mb_list_copy,
+///   mb_list_concat, mb_list_repeat, mb_list_pop, mb_list_pop_at,
+///   mb_list_to_tuple, mb_dict_new, mb_dict_from_pairs, mb_dict_copy,
+///   mb_dict_keys, mb_dict_values, mb_dict_items, mb_dict_pop,
+///   mb_set_new, mb_set_from_list, mb_set_from_iterable,
+///   mb_tuple_new, mb_tuple_from, mb_tuple_from_iterable,
+///   mb_str_concat, mb_str, mb_repr, mb_str_format, mb_str_join,
+///   mb_str_split, mb_str_upper, mb_str_lower, mb_str_replace,
+///   mb_str_strip, mb_str_lstrip, mb_str_rstrip, mb_str_encode,
+///   mb_bytes_decode, mb_bytes_new, mb_bytes_concat,
+///   mb_instance_new, mb_instance_new_with_init,
+///   mb_exception_new, mb_exception_new_with_args,
+///   mb_iter, mb_enumerate, mb_zip, mb_range,
+///   mb_closure_new, mb_cell_new,
+///   mb_generator_create, mb_frozenset_new,
+///   mb_sorted, mb_reversed, mb_list_comprehension,
+///   mb_dict_comprehension, mb_set_comprehension,
+///   mb_box_int, mb_box_bool, mb_box_float
+///
+/// Arithmetic / comparison (return NaN-boxed or new objects):
+///   mb_add, mb_sub, mb_mul, mb_truediv, mb_floordiv, mb_mod,
+///   mb_pow, mb_neg, mb_pos, mb_invert, mb_lshift, mb_rshift,
+///   mb_bitand, mb_bitor, mb_bitxor, mb_matmul,
+///   mb_eq, mb_ne, mb_lt, mb_le, mb_gt, mb_ge, mb_not
+///
+/// ## BORROWED (container/global still owns — retain_if_ptr added)
+///
+///   mb_list_getitem, mb_dict_getitem, mb_tuple_getitem,
+///   mb_seq_getitem, mb_getattr, mb_getattr_default,
+///   mb_global_get, mb_global_get_id, mb_cell_get,
+///   mb_closure_get_capture, mb_module_getattr, mb_import_from,
+///   mb_next, mb_next_raise, mb_generator_yield_value,
+///   mb_coroutine_get_local, mb_property_get, mb_super_getattr,
+///   mb_dict_get, mb_dict_setdefault,
+///   mb_catch_exception, mb_catch_exception_instance
+///
+/// ## VOID (no MbValue return — not in scope)
+///
+///   mb_list_append, mb_list_extend, mb_list_insert,
+///   mb_list_remove, mb_list_clear, mb_list_reverse, mb_list_sort,
+///   mb_dict_setitem, mb_dict_update, mb_dict_clear,
+///   mb_set_add, mb_set_discard, mb_set_remove, mb_set_clear,
+///   mb_setattr, mb_print, mb_gc_collect
+///
+/// ## NON-POINTER (returns NaN-boxed i64/f64/bool — retain_if_ptr is no-op)
+///
+///   mb_len, mb_is_truthy, mb_hash, mb_id, mb_bool
+use std::sync::atomic::{AtomicU32, Ordering};
+
+#[inline]
+fn is_typed_native_wrapper(val: super::value::MbValue) -> bool {
+    let registry_value = cclab_mamba_registry::MbValue::from_bits(val.to_bits());
+    cclab_mamba_registry::convert::native_type_name(registry_value).is_some()
+}
+
+/// Backing buffer for `ObjData::List` and `ObjData::Set` (#2517).
+///
+/// `SmallVec<[MbValue; 8]>` is inline-storage-up-to-8-elements: a
+/// `[a,b,c,d]`-style list literal stores its elements directly inside
+/// the `MbObject` heap allocation, eliminating the inner `Vec` heap
+/// alloc that previously dominated literal construction cost. Beyond
+/// 8 elements the SmallVec spills to a heap buffer (identical to
+/// `Vec`'s representation, no extra cost).
+///
+/// `SmallVec` is API-compatible with `Vec` for `.push() / .pop() /
+/// .iter() / .iter_mut() / .len() / .is_empty() / .clear() /
+/// .extend() / .extend_from_slice() / .truncate() / .swap_remove() /
+/// .insert() / .remove() / .resize() / .as_slice() / .as_mut_slice() /
+/// .drain() / .retain() / .sort_by() / .with_capacity() / .capacity()`
+/// — the ~387 `ObjData::List(ref lock)` pattern-match arms across the
+/// runtime compile unchanged.
+///
+/// Inline capacity 8 covers the dominant literal arity (`mb_list_new_1`
+/// through `mb_list_new_8` fixed-arity JIT shims).
+pub type MbList = SmallVec<[super::value::MbValue; 8]>;
+
+/// Container lock for `ObjData::{List,Dict,Set,ByteArray}` + `Instance.fields`
+/// (#2518). Wraps `parking_lot::RwLock` so the uncontended read+write fast
+/// path drops from `std::sync::RwLock`'s ~22 ns/pair to ~16 ns/pair on
+/// aarch64 — a ~30% win on a probe loop, clearing the ≥20% acceptance gate.
+///
+/// `read()` / `write()` return `Result<Guard, Infallible>` so the ~994
+/// existing `lock.read().unwrap()` / `lock.write().unwrap()` callsites
+/// across the runtime compile unchanged. `try_read()` / `try_write()`
+/// return `Result<Guard, ()>` to match the std `TryLockResult` pattern
+/// used by `dict_ops.rs` / `list_ops.rs`'s `match lock.try_read() { Ok(g)
+/// => g, Err(_) => lock.read().unwrap() }` fallback.
+///
+/// parking_lot does not poison on panic, so the `Err` arm of `read()` /
+/// `write()` is statically unreachable — `Infallible` makes that explicit.
+pub struct MbRwLock<T: ?Sized>(parking_lot::RwLock<T>);
+
+impl<T> MbRwLock<T> {
+    #[inline]
+    pub fn new(val: T) -> Self {
+        Self(parking_lot::RwLock::new(val))
+    }
+
+    #[inline]
+    pub fn into_inner(self) -> T {
+        self.0.into_inner()
+    }
+}
+
+impl<T: ?Sized> MbRwLock<T> {
+    #[inline]
+    pub fn read(&self) -> Result<parking_lot::RwLockReadGuard<'_, T>, std::convert::Infallible> {
+        Ok(self.0.read())
+    }
+
+    #[inline]
+    pub fn write(&self) -> Result<parking_lot::RwLockWriteGuard<'_, T>, std::convert::Infallible> {
+        Ok(self.0.write())
+    }
+
+    #[inline]
+    pub fn try_read(&self) -> Result<parking_lot::RwLockReadGuard<'_, T>, ()> {
+        self.0.try_read().ok_or(())
+    }
+
+    #[inline]
+    pub fn try_write(&self) -> Result<parking_lot::RwLockWriteGuard<'_, T>, ()> {
+        self.0.try_write().ok_or(())
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self) -> &mut T {
+        self.0.get_mut()
+    }
+}
+
+impl<T: Default> Default for MbRwLock<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+/// Backing map for `ObjData::Instance.fields`.
+///
+/// Uses `FxHash` instead of the std `SipHash13` default — Instance attribute
+/// names are short ASCII identifiers, do not need DoS resistance, and SipHash13
+/// dominated the per-call cost on subset-B fixtures (urllib.parse, http,
+/// mimetypes; #2381 / #2096 layer-2). FxHashMap keeps the same API surface as
+/// `HashMap<String, MbValue>` so `.read()` / `.write()` / `.insert()` / `.get()`
+/// callsites stay byte-identical.
+pub type InstanceFields = FxHashMap<String, super::value::MbValue>;
+
+/// Cycle-capable test — returns true if `v` is a heap pointer to a kind that
+/// can participate in a reference cycle (containers + closures + class
+/// instances). Used by immutable-container allocators (`new_tuple`,
+/// `new_frozenset`) to elide `gc_track` when contents are exclusively atomic
+/// (CPython's "untracked tuple" optimization). Strs/bytes/numerics can't form
+/// cycles so they're skipped here.
+fn value_is_cycle_capable(v: super::value::MbValue) -> bool {
+    let Some(ptr) = v.as_ptr() else {
+        return false;
+    };
+    if ptr.is_null() {
+        return false;
+    }
+    let kind = unsafe { (*ptr).header.kind };
+    matches!(
+        kind,
+        ObjKind::List
+            | ObjKind::Dict
+            | ObjKind::Tuple
+            | ObjKind::Set
+            | ObjKind::FrozenSet
+            | ObjKind::Instance
+            | ObjKind::Function
+            | ObjKind::Class
+    )
+}
+
+/// Type tag for heap objects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ObjKind {
+    Str = 0,
+    List = 1,
+    Dict = 2,
+    Tuple = 3,
+    Function = 4,
+    Class = 5,
+    Instance = 6,
+    Set = 7,
+    Bytes = 8,
+    ByteArray = 9,
+    FrozenSet = 10,
+    /// Arbitrary-precision integer (BigInt fallback, R3/#833).
+    BigInt = 11,
+    /// Complex number — real + imaginary f64 pair (R3 CPython 3.12 conformance).
+    Complex = 12,
+    // @spec .aw/changes/mamba-compile-builtin/groups/default/specs/mamba-compile-builtin-value-rc.md#R1
+    /// Code object produced by compile() (#976).
+    CodeObject = 13,
+    // HANDWRITE-BEGIN reason: #2182 — Generator runtime type missing; blocks lazy
+    // stdlib iterator semantics (itertools.chain/islice/count/cycle/...,
+    // csv.reader, glob.iglob, re.finditer, xml.etree.iter, os.walk).
+    // Closing #2182 lands a true `Generator = 14` kind backed by either a
+    // closure-state pair (`next_fn: fn(*mut Self) -> Option<MbValue>` + boxed
+    // state) or the existing low-level coroutine infrastructure in
+    // `projects/mamba/src/runtime/generator.rs` (already shipped for
+    // user-defined `def f(): yield`). Until then every "iterator" surface
+    // above ships as `ObjKind::List` (eager materialization), which is
+    // behaviourally CPython-compatible for finite inputs but breaks
+    // infinite generators (`itertools.count`, `itertools.cycle`), breaks
+    // `next()/send()` step semantics, and defeats the memory-axis
+    // subset-B wins tracked by #2096. Replace this carve-out with the
+    // actual variant + supporting `MbObject::new_generator(...)` ctor
+    // when the Phase-1 retrofit (csv.reader as worked example) lands.
+    // HANDWRITE-END
+}
+
+/// Object header — prefixes every heap-allocated object.
+/// Uses atomic refcount for thread-safe retain/release.
+#[repr(C)]
+pub struct MbObjectHeader {
+    pub rc: AtomicU32,
+    pub kind: ObjKind,
+}
+
+/// A heap-allocated Mamba object.
+#[repr(C)]
+pub struct MbObject {
+    pub header: MbObjectHeader,
+    pub data: ObjData,
+}
+
+// Safety: MbObject is safe to send/share across threads because:
+// - rc is AtomicU32
+// - Mutable collections are wrapped in RwLock
+// - Immutable data (Str, Tuple, Bytes, FrozenSet) is inherently safe
+unsafe impl Send for MbObject {}
+unsafe impl Sync for MbObject {}
+
+/// Union of possible object data.
+/// Mutable collections are wrapped in RwLock for thread-safe access.
+pub enum ObjData {
+    Str(String),
+    List(MbRwLock<MbList>),
+    Dict(MbRwLock<IndexMap<DictKey, super::value::MbValue>>),
+    Tuple(Vec<super::value::MbValue>),
+    Instance {
+        class_name: String,
+        fields: MbRwLock<InstanceFields>,
+    },
+    Set(MbRwLock<MbList>),
+    Bytes(Vec<u8>),
+    ByteArray(MbRwLock<Vec<u8>>),
+    FrozenSet(Vec<super::value::MbValue>),
+    /// Arbitrary-precision integer heap object (BigInt fallback, R3/#833).
+    BigInt(BigInt),
+    /// Complex number: (real, imag) as f64 pair (R3 CPython 3.12 conformance).
+    Complex(f64, f64),
+    // @spec .aw/changes/mamba-compile-builtin/groups/default/specs/mamba-compile-builtin-value-rc.md#R2
+    /// Code object produced by compile(source, filename, mode) (#976).
+    ///
+    /// Stores the parsed AST (`Module`), original source text, filename for
+    /// diagnostic threading, and compilation mode.
+    CodeObject {
+        source: String,
+        filename: String,
+        mode: String,
+        ast: Box<crate::parser::ast::Module>,
+    },
+    // HANDWRITE-BEGIN reason: #2182 — Generator(GeneratorState) variant placeholder.
+    // The companion to `ObjKind::Generator` above. Will hold either a
+    // `Box<dyn FnMut() -> Option<MbValue>>` (option A — closure-state) or
+    // a handle into `runtime::generator::GenEntry` (option C — reuse the
+    // existing coroutine engine that already powers user-defined
+    // `def f(): yield`). Whichever lands, `class.rs::mb_iter_next` and
+    // the `for x in <iterable>` lowering must learn to dispatch on this
+    // variant before the stdlib retrofit can proceed. Until then this
+    // sibling is a doc-only carve-out — no enum entry, no field — so the
+    // ObjData union stays exhaustive against `ObjKind`.
+    // HANDWRITE-END
+}
+
+/// Immortal refcount sentinel — objects with this value are never freed.
+/// Used for compile-time string/bytes constants embedded in JIT code.
+pub const IMMORTAL_REFCOUNT: u32 = u32::MAX;
+
+fn atomic_rc(val: u32) -> AtomicU32 {
+    AtomicU32::new(val)
+}
+
+impl MbObject {
+    pub fn new_str(s: String) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Str,
+            },
+            data: ObjData::Str(s),
+        });
+        Box::into_raw(obj)
+    }
+
+    /// Allocate an immortal string — rc is set to IMMORTAL_REFCOUNT so
+    /// `mb_retain`/`mb_release` are no-ops. Used for compile-time constants.
+    pub fn new_str_immortal(s: String) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(IMMORTAL_REFCOUNT),
+                kind: ObjKind::Str,
+            },
+            data: ObjData::Str(s),
+        });
+        Box::into_raw(obj)
+    }
+
+    /// Create a new list, taking ownership of elements (no retain).
+    /// Use `new_list_borrowed` when elements are borrowed from another container.
+    ///
+    /// Converts the input `Vec<MbValue>` to an inline `MbList` (SmallVec
+    /// inline-8) at the boundary. For `len <= 8` the conversion copies
+    /// elements into the inline storage and drops the Vec's heap buffer
+    /// (net: 1 heap free at boundary, but every subsequent `.read()` on
+    /// the list avoids an indirection). For `len > 8` `SmallVec::from_vec`
+    /// reuses the Vec's existing heap buffer as the spilled allocation
+    /// (zero extra copies, just a pointer transfer). #2517.
+    pub fn new_list(elements: Vec<super::value::MbValue>) -> *mut Self {
+        let buf: MbList = if elements.len() <= 8 {
+            MbList::from_slice(&elements)
+        } else {
+            MbList::from_vec(elements)
+        };
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::List,
+            },
+            data: ObjData::List(MbRwLock::new(buf)),
+        });
+        let ptr = Box::into_raw(obj);
+        super::gc::gc_track(ptr);
+        ptr
+    }
+
+    /// Create a new list from an inline-built `MbList`, skipping the
+    /// `Vec` boundary entirely. Used by the JIT `mb_list_new_<N>`
+    /// fixed-arity shims (`list_ops.rs`) where the literal arity is
+    /// known at compile time and the SmallVec is built inline via
+    /// `smallvec![a,b,c,d]` without ever touching a `Vec` heap
+    /// allocation. #2517.
+    pub fn new_list_inline(buf: MbList) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::List,
+            },
+            data: ObjData::List(MbRwLock::new(buf)),
+        });
+        let ptr = Box::into_raw(obj);
+        super::gc::gc_track(ptr);
+        ptr
+    }
+
+    /// Create a new list, retaining all pointer elements.
+    /// Use when elements are borrowed from another container (e.g., cloned Vec from a list).
+    /// `release_contained_values` will release them when this list is freed.
+    pub fn new_list_borrowed(elements: Vec<super::value::MbValue>) -> *mut Self {
+        unsafe {
+            for &item in &elements {
+                super::rc::retain_if_ptr(item);
+            }
+        }
+        Self::new_list(elements)
+    }
+
+    pub fn new_dict() -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Dict,
+            },
+            data: ObjData::Dict(MbRwLock::new(IndexMap::new())),
+        });
+        let ptr = Box::into_raw(obj);
+        super::gc::gc_track(ptr);
+        ptr
+    }
+
+    /// Create a dict with pre-allocated capacity.
+    /// Used when the number of entries is known or estimated.
+    pub fn new_dict_with_capacity(capacity: usize) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Dict,
+            },
+            data: ObjData::Dict(MbRwLock::new(IndexMap::with_capacity(capacity))),
+        });
+        let ptr = Box::into_raw(obj);
+        super::gc::gc_track(ptr);
+        ptr
+    }
+
+    pub fn new_tuple(elements: Vec<super::value::MbValue>) -> *mut Self {
+        let needs_tracking = elements.iter().any(|v| value_is_cycle_capable(*v));
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Tuple,
+            },
+            data: ObjData::Tuple(elements),
+        });
+        let ptr = Box::into_raw(obj);
+        if needs_tracking {
+            super::gc::gc_track(ptr);
+        }
+        ptr
+    }
+
+    /// Create a new tuple, retaining all pointer elements (borrowed from another container).
+    pub fn new_tuple_borrowed(elements: Vec<super::value::MbValue>) -> *mut Self {
+        unsafe {
+            for &item in &elements {
+                super::rc::retain_if_ptr(item);
+            }
+        }
+        Self::new_tuple(elements)
+    }
+
+    pub fn new_set(elements: Vec<super::value::MbValue>) -> *mut Self {
+        let buf: MbList = if elements.len() <= 8 {
+            MbList::from_slice(&elements)
+        } else {
+            MbList::from_vec(elements)
+        };
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Set,
+            },
+            data: ObjData::Set(MbRwLock::new(buf)),
+        });
+        let ptr = Box::into_raw(obj);
+        super::gc::gc_track(ptr);
+        ptr
+    }
+
+    /// Create a new set, retaining all pointer elements (borrowed from another container).
+    pub fn new_set_borrowed(elements: Vec<super::value::MbValue>) -> *mut Self {
+        unsafe {
+            for &item in &elements {
+                super::rc::retain_if_ptr(item);
+            }
+        }
+        Self::new_set(elements)
+    }
+
+    // Carve-out for #2107 (bytes-object materialization hot path —
+    // speed-axis sibling of #2096 memory-allocator overhead).
+    //
+    // Per #2107's post-#2108 reframe, this constructor itself is already
+    // optimal: it is a pure `Box::new` + move (no extra memcpy, no
+    // allocator round-trip beyond what `Box::new` already costs). The
+    // residual cross-cutting cost lives at shim sites that do
+    //
+    //     let mut buf = Vec::with_capacity(N);
+    //     buf.extend_from_slice(src);
+    //     MbObject::new_bytes(buf)
+    //
+    // where the `extend_from_slice` adds a full memcpy on top of
+    // whatever the source already held. Compression shims
+    // (`zlib_mod`, `gzip_mod`, `lzma_mod`, `bz2_mod`) already avoid
+    // that pattern by passing `Vec::with_capacity(...)` directly into
+    // the encoder and moving the encoder-owned `Vec` straight into
+    // `new_bytes` — no audit action needed there.
+    //
+    // Re-open #2107 only when a workload dominated by repeated
+    // bytes round-trips (large `bytes(buf)` allocate-drop cycles,
+    // `io.BytesIO`-heavy pipelines, codec encode/decode chains)
+    // surfaces in a bench. Until then this hot path is intentionally
+    // unchanged; see the `bytes_materialization_hot_path_carveout`
+    // doc-test below for the regression marker.
+    pub fn new_bytes(mut data: Vec<u8>) -> *mut Self {
+        // #2096 mitigation: bytes are immutable post-construction, so any
+        // capacity slack (extend_from_slice / Vec doubling / encoder
+        // over-allocate) is dead weight for the lifetime of the object.
+        // The cross-runtime memory bench for `base64/encode_decode`
+        // measured mamba at 0.50× CPython (2× more RSS); a portion of
+        // that comes from Vec capacity > len on the bytes returned by
+        // `b64encode`/`b64decode` (each calls Vec::with_capacity then
+        // pushes/extends, which can round up). Trim once here so the
+        // object's lifetime memory footprint matches its payload.
+        if data.capacity() > data.len() {
+            data.shrink_to_fit();
+        }
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Bytes,
+            },
+            data: ObjData::Bytes(data),
+        });
+        Box::into_raw(obj)
+    }
+
+    /// Allocate immortal bytes — rc is set to IMMORTAL_REFCOUNT so
+    /// `mb_retain`/`mb_release` are no-ops. Used for compile-time constants.
+    pub fn new_bytes_immortal(mut data: Vec<u8>) -> *mut Self {
+        if data.capacity() > data.len() {
+            data.shrink_to_fit();
+        }
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(IMMORTAL_REFCOUNT),
+                kind: ObjKind::Bytes,
+            },
+            data: ObjData::Bytes(data),
+        });
+        Box::into_raw(obj)
+    }
+
+    pub fn new_bytearray(data: Vec<u8>) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::ByteArray,
+            },
+            data: ObjData::ByteArray(MbRwLock::new(data)),
+        });
+        Box::into_raw(obj)
+    }
+
+    pub fn new_frozenset(elements: Vec<super::value::MbValue>) -> *mut Self {
+        let needs_tracking = elements.iter().any(|v| value_is_cycle_capable(*v));
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::FrozenSet,
+            },
+            data: ObjData::FrozenSet(elements),
+        });
+        let ptr = Box::into_raw(obj);
+        if needs_tracking {
+            super::gc::gc_track(ptr);
+        }
+        ptr
+    }
+
+    /// Allocate a BigInt heap object (#833).
+    pub fn new_bigint(value: BigInt) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::BigInt,
+            },
+            data: ObjData::BigInt(value),
+        });
+        Box::into_raw(obj)
+    }
+
+    /// Allocate a Complex heap object (R3 CPython 3.12 conformance).
+    pub fn new_complex(real: f64, imag: f64) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Complex,
+            },
+            data: ObjData::Complex(real, imag),
+        });
+        Box::into_raw(obj)
+    }
+
+    /// Allocate a CodeObject heap object produced by compile() (#976).
+    ///
+    /// Not GC-tracked — CodeObject is immutable (like BigInt/Complex) and
+    /// cannot participate in reference cycles.
+    // @spec .aw/changes/mamba-compile-builtin/groups/default/specs/mamba-compile-builtin-value-rc.md#R3
+    pub fn new_code_object(
+        source: String,
+        filename: String,
+        mode: String,
+        ast: crate::parser::ast::Module,
+    ) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::CodeObject,
+            },
+            data: ObjData::CodeObject {
+                source,
+                filename,
+                mode,
+                ast: Box::new(ast),
+            },
+        });
+        Box::into_raw(obj)
+    }
+
+    pub fn new_instance(class_name: String) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Instance,
+            },
+            data: ObjData::Instance {
+                class_name,
+                fields: MbRwLock::new(InstanceFields::default()),
+            },
+        });
+        let ptr = Box::into_raw(obj);
+        super::gc::gc_track(ptr);
+        ptr
+    }
+
+    /// Create an instance with pre-allocated field capacity.
+    /// Used when the number of __init__ params is known, avoiding HashMap resizing
+    /// during field assignment in __init__.
+    pub fn new_instance_with_capacity(class_name: String, capacity: usize) -> *mut Self {
+        let obj = Box::new(MbObject {
+            header: MbObjectHeader {
+                rc: atomic_rc(1),
+                kind: ObjKind::Instance,
+            },
+            data: ObjData::Instance {
+                class_name,
+                fields: MbRwLock::new(InstanceFields::with_capacity_and_hasher(
+                    capacity,
+                    Default::default(),
+                )),
+            },
+        });
+        let ptr = Box::into_raw(obj);
+        super::gc::gc_track(ptr);
+        ptr
+    }
+}
+
+/// Debug: validate an MbObject pointer looks reasonable before dereferencing.
+/// Checks pointer alignment and that the kind field is a valid ObjKind variant.
+#[cfg(debug_assertions)]
+unsafe fn debug_validate_obj(obj: *mut MbObject, caller: &str) {
+    let addr = obj as usize;
+    // Check alignment (MbObject should be at least 4-byte aligned for AtomicU32)
+    if addr % 4 != 0 {
+        panic!("{caller}: misaligned MbObject pointer {obj:?} (addr={addr:#x})");
+    }
+    // Check that kind field is a valid ObjKind variant (0..=13)
+    let kind_byte = (*obj).header.kind as u8;
+    if kind_byte > 13 {
+        panic!(
+            "{caller}: invalid ObjKind={kind_byte} at {obj:?} — likely use-after-free \
+             or dangling pointer. rc={:#x}",
+            (*obj).header.rc.load(Ordering::Relaxed)
+        );
+    }
+}
+
+/// Increment the reference count atomically.
+///
+/// # Safety
+/// `obj` must be a valid pointer returned by `MbObject::new_*`.
+pub unsafe fn mb_retain(obj: *mut MbObject) {
+    if !obj.is_null() {
+        #[cfg(debug_assertions)]
+        debug_validate_obj(obj, "mb_retain");
+        // Immortal objects must never have their refcount modified.
+        if (*obj).header.rc.load(Ordering::Relaxed) == IMMORTAL_REFCOUNT {
+            return;
+        }
+        (*obj).header.rc.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Decrement the reference count atomically. Frees the object when it
+/// reaches zero.
+///
+/// # Safety
+/// `obj` must be a valid pointer returned by `MbObject::new_*`.
+pub unsafe fn mb_release(obj: *mut MbObject) {
+    if obj.is_null() {
+        return;
+    }
+    #[cfg(debug_assertions)]
+    debug_validate_obj(obj, "mb_release");
+    // Immortal objects must never be freed.
+    if (*obj).header.rc.load(Ordering::Relaxed) == IMMORTAL_REFCOUNT {
+        return;
+    }
+    // Use AcqRel: Release on the decrement so prior writes are visible,
+    // Acquire on the load so we see all prior writes before freeing.
+    if (*obj).header.rc.fetch_sub(1, Ordering::Release) == 1 {
+        std::sync::atomic::fence(Ordering::Acquire);
+        // #2096 subset A — eager free Bytes on rc=0 (Task #57).
+        // Bytes has no contained MbValue pointers (verified in
+        // release_contained_values' `_ => {}` arm) and is never inserted
+        // into the GC tracked set (new_bytes doesn't call gc_track), so
+        // skip the immortal-store re-entrancy guard, gc_untrack lookup,
+        // and contained-values walk. Drop the Box (which frees the
+        // Vec<u8> buffer) directly.
+        if matches!((*obj).header.kind, ObjKind::Bytes) {
+            drop(Box::from_raw(obj));
+            return;
+        }
+        // Mark as immortal BEFORE releasing contained values to prevent
+        // re-entrant mb_release from cyclic references (A→B→A).
+        (*obj).header.rc.store(IMMORTAL_REFCOUNT, Ordering::Relaxed);
+        super::gc::gc_untrack(obj);
+        release_contained_values(obj);
+        drop(Box::from_raw(obj));
+    }
+}
+
+/// Release all MbValues contained in a heap object.
+/// Called before freeing the object to cascade reference decrement.
+/// Mirrors CPython's tp_dealloc calling Py_DECREF on contained refs.
+/// Public entry point for GC sweep to release contained values.
+pub unsafe fn release_contained_values_pub(obj: *mut MbObject) {
+    release_contained_values(obj);
+}
+
+unsafe fn release_contained_values(obj: *mut MbObject) {
+    match &(*obj).data {
+        ObjData::List(lock) => {
+            let items = lock.read().unwrap();
+            for item in items.iter() {
+                release_if_ptr(*item);
+            }
+        }
+        ObjData::Dict(lock) => {
+            let map = lock.read().unwrap();
+            for val in map.values() {
+                release_if_ptr(*val);
+            }
+        }
+        ObjData::Tuple(items) => {
+            for item in items {
+                release_if_ptr(*item);
+            }
+        }
+        ObjData::Set(lock) => {
+            let items = lock.read().unwrap();
+            for item in items.iter() {
+                release_if_ptr(*item);
+            }
+        }
+        ObjData::FrozenSet(items) => {
+            for item in items {
+                release_if_ptr(*item);
+            }
+        }
+        ObjData::Instance { fields, .. } => {
+            let map = fields.read().unwrap();
+            for val in map.values() {
+                release_if_ptr(*val);
+            }
+        }
+        // Str, Bytes, ByteArray, BigInt, Complex — no contained MbValues
+        _ => {}
+    }
+}
+
+/// Release an MbValue if it's a heap pointer. Helper for container cleanup.
+#[inline]
+pub unsafe fn release_if_ptr(val: super::value::MbValue) {
+    if is_typed_native_wrapper(val) {
+        return;
+    }
+    if let Some(ptr) = val.as_ptr() {
+        #[cfg(debug_assertions)]
+        {
+            // Validate before releasing to avoid panicking inside an extern "C"
+            // call stack (which would abort the process).
+            let kind_byte = (*ptr).header.kind as u8;
+            if kind_byte > 13 {
+                return; // skip invalid pointer — likely UAF
+            }
+        }
+        mb_release(ptr);
+    }
+}
+
+/// Retain an MbValue if it's a heap pointer. Safe helper for container storage.
+#[inline]
+pub unsafe fn retain_if_ptr(val: super::value::MbValue) {
+    if is_typed_native_wrapper(val) {
+        return;
+    }
+    if let Some(ptr) = val.as_ptr() {
+        mb_retain(ptr);
+    }
+}
+
+/// Get the current reference count.
+///
+/// # Safety
+/// `obj` must be a valid pointer.
+pub unsafe fn mb_refcount(obj: *mut MbObject) -> u32 {
+    (*obj).header.rc.load(Ordering::Relaxed)
+}
+
+// ── JIT-callable retain/release value wrappers ──
+//
+// These take a raw `u64` (NaN-boxed MbValue) from JIT-compiled code,
+// check if it's a heap pointer, and delegate to mb_retain/mb_release.
+// Non-pointer values (ints, bools, None, floats) are no-ops.
+
+/// Increment the reference count of a NaN-boxed MbValue, if it points to a
+/// heap object. Called from JIT-compiled code.
+///
+/// # Safety
+/// `val` must be a valid NaN-boxed MbValue (as produced by the JIT).
+pub unsafe extern "C" fn mb_retain_value(val: u64) {
+    let v = super::value::MbValue::from_bits(val);
+    if is_typed_native_wrapper(v) {
+        return;
+    }
+    if let Some(ptr) = v.as_ptr() {
+        mb_retain(ptr);
+        return;
+    }
+    // #2111: integer-pattern handles (array, hashlib, BytesIO, …) have no
+    // heap pointer, so retain/release were previously no-ops and per-iter
+    // rebinds leaked the backing storage. Dispatch to the registry so
+    // handle-aware modules can refcount their entries.
+    if let Some(id) = v.as_int() {
+        if id > 0 {
+            super::integer_handle_registry::retain(id as u64);
+        }
+    }
+}
+
+/// Decrement the reference count of a NaN-boxed MbValue, freeing the
+/// object if the count reaches zero. Non-pointer values are no-ops.
+/// Called from JIT-compiled code.
+///
+/// # Safety
+/// `val` must be a valid NaN-boxed MbValue (as produced by the JIT).
+pub unsafe extern "C" fn mb_release_value(val: u64) {
+    let v = super::value::MbValue::from_bits(val);
+    if is_typed_native_wrapper(v) {
+        return;
+    }
+    if let Some(ptr) = v.as_ptr() {
+        #[cfg(debug_assertions)]
+        {
+            let kind_byte = (*ptr).header.kind as u8;
+            if kind_byte > 13 {
+                // Log but do NOT panic — this is extern "C" so panicking
+                // would abort the entire process.  Skipping the release
+                // leaks memory but avoids a double-free crash.
+                #[cfg(debug_assertions)]
+                eprintln!("mb_release_value: UAF detected (kind={kind_byte}), skipping release");
+                return;
+            }
+        }
+        mb_release(ptr);
+        return;
+    }
+    // #2111: integer-pattern handles (array, hashlib, BytesIO, …) refcounted
+    // via the integer-handle registry. Drops the underlying handle table
+    // entry when the per-handle refcount reaches zero.
+    if let Some(id) = v.as_int() {
+        if id > 0 {
+            super::integer_handle_registry::release(id as u64);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::value::MbValue;
+    use super::*;
+
+    #[test]
+    fn test_str_object_lifecycle() {
+        unsafe {
+            let obj = MbObject::new_str("hello".into());
+            assert_eq!(mb_refcount(obj), 1);
+            assert_eq!((*obj).header.kind, ObjKind::Str);
+
+            mb_retain(obj);
+            assert_eq!(mb_refcount(obj), 2);
+
+            mb_release(obj);
+            assert_eq!(mb_refcount(obj), 1);
+
+            mb_release(obj); // should free
+        }
+    }
+
+    #[test]
+    fn test_list_object() {
+        unsafe {
+            let list = MbObject::new_list(vec![MbValue::from_int(1), MbValue::from_int(2)]);
+            assert_eq!((*list).header.kind, ObjKind::List);
+            if let ObjData::List(ref lock) = (*list).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items.len(), 2);
+            } else {
+                panic!("expected List");
+            }
+            mb_release(list);
+        }
+    }
+
+    #[test]
+    fn test_dict_object() {
+        unsafe {
+            let dict = MbObject::new_dict();
+            assert_eq!((*dict).header.kind, ObjKind::Dict);
+            mb_release(dict);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_retain_release() {
+        use std::thread;
+
+        let obj = MbObject::new_str("shared".into());
+        // Bump refcount so it survives all threads
+        unsafe {
+            (*obj).header.rc.store(1001, Ordering::Relaxed);
+        }
+        let addr = obj as usize;
+
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                thread::spawn(move || {
+                    let ptr = addr as *mut MbObject;
+                    for _ in 0..100 {
+                        unsafe {
+                            mb_retain(ptr);
+                            mb_release(ptr);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // After balanced retain/release, refcount should be back to 1001
+        unsafe {
+            assert_eq!(mb_refcount(obj), 1001);
+            // Clean up
+            (*obj).header.rc.store(1, Ordering::Relaxed);
+            mb_release(obj);
+        }
+    }
+
+    // ── Additional tests ──
+
+    #[test]
+    fn test_tuple_object() {
+        unsafe {
+            let tup = MbObject::new_tuple(vec![
+                MbValue::from_int(10),
+                MbValue::from_int(20),
+                MbValue::from_int(30),
+            ]);
+            assert_eq!((*tup).header.kind, ObjKind::Tuple);
+            assert_eq!(mb_refcount(tup), 1);
+            if let ObjData::Tuple(ref items) = (*tup).data {
+                assert_eq!(items.len(), 3);
+                assert_eq!(items[0].as_int(), Some(10));
+                assert_eq!(items[2].as_int(), Some(30));
+            } else {
+                panic!("expected Tuple");
+            }
+            mb_release(tup);
+        }
+    }
+
+    #[test]
+    fn test_set_object() {
+        unsafe {
+            let set = MbObject::new_set(vec![MbValue::from_int(1), MbValue::from_int(2)]);
+            assert_eq!((*set).header.kind, ObjKind::Set);
+            if let ObjData::Set(ref lock) = (*set).data {
+                let items = lock.read().unwrap();
+                assert_eq!(items.len(), 2);
+            } else {
+                panic!("expected Set");
+            }
+            mb_release(set);
+        }
+    }
+
+    #[test]
+    fn test_bytes_object() {
+        unsafe {
+            let b = MbObject::new_bytes(vec![0x41, 0x42, 0x43]);
+            assert_eq!((*b).header.kind, ObjKind::Bytes);
+            assert_eq!(mb_refcount(b), 1);
+            if let ObjData::Bytes(ref data) = (*b).data {
+                assert_eq!(data, &[0x41, 0x42, 0x43]);
+            } else {
+                panic!("expected Bytes");
+            }
+            mb_release(b);
+        }
+    }
+
+    #[test]
+    fn test_bytearray_object() {
+        unsafe {
+            let ba = MbObject::new_bytearray(vec![1, 2, 3]);
+            assert_eq!((*ba).header.kind, ObjKind::ByteArray);
+            if let ObjData::ByteArray(ref lock) = (*ba).data {
+                let data = lock.read().unwrap();
+                assert_eq!(&*data, &[1, 2, 3]);
+            } else {
+                panic!("expected ByteArray");
+            }
+            mb_release(ba);
+        }
+    }
+
+    #[test]
+    fn test_frozenset_object() {
+        unsafe {
+            let fs = MbObject::new_frozenset(vec![MbValue::from_int(10)]);
+            assert_eq!((*fs).header.kind, ObjKind::FrozenSet);
+            if let ObjData::FrozenSet(ref items) = (*fs).data {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].as_int(), Some(10));
+            } else {
+                panic!("expected FrozenSet");
+            }
+            mb_release(fs);
+        }
+    }
+
+    #[test]
+    fn test_instance_object() {
+        unsafe {
+            let inst = MbObject::new_instance("MyClass".to_string());
+            assert_eq!((*inst).header.kind, ObjKind::Instance);
+            assert_eq!(mb_refcount(inst), 1);
+            if let ObjData::Instance {
+                ref class_name,
+                ref fields,
+            } = (*inst).data
+            {
+                assert_eq!(class_name, "MyClass");
+                assert!(fields.read().unwrap().is_empty());
+            } else {
+                panic!("expected Instance");
+            }
+            mb_release(inst);
+        }
+    }
+
+    #[test]
+    fn test_retain_null_is_safe() {
+        unsafe {
+            mb_retain(std::ptr::null_mut());
+        }
+        // Should not panic
+    }
+
+    #[test]
+    fn test_release_null_is_safe() {
+        unsafe {
+            mb_release(std::ptr::null_mut());
+        }
+        // Should not panic
+    }
+
+    #[test]
+    fn test_multiple_retain_release() {
+        unsafe {
+            let obj = MbObject::new_str("multi".into());
+            mb_retain(obj);
+            mb_retain(obj);
+            assert_eq!(mb_refcount(obj), 3);
+            mb_release(obj);
+            mb_release(obj);
+            assert_eq!(mb_refcount(obj), 1);
+            mb_release(obj); // frees
+        }
+    }
+
+    #[test]
+    fn test_empty_list_object() {
+        unsafe {
+            let list = MbObject::new_list(vec![]);
+            assert_eq!((*list).header.kind, ObjKind::List);
+            if let ObjData::List(ref lock) = (*list).data {
+                assert!(lock.read().unwrap().is_empty());
+            }
+            mb_release(list);
+        }
+    }
+
+    #[test]
+    fn test_empty_str_object() {
+        unsafe {
+            let obj = MbObject::new_str(String::new());
+            assert_eq!((*obj).header.kind, ObjKind::Str);
+            if let ObjData::Str(ref s) = (*obj).data {
+                assert!(s.is_empty());
+            }
+            mb_release(obj);
+        }
+    }
+
+    #[test]
+    fn test_obj_kind_values() {
+        assert_eq!(ObjKind::Str as u8, 0);
+        assert_eq!(ObjKind::List as u8, 1);
+        assert_eq!(ObjKind::Dict as u8, 2);
+        assert_eq!(ObjKind::Tuple as u8, 3);
+        assert_eq!(ObjKind::Function as u8, 4);
+        assert_eq!(ObjKind::Class as u8, 5);
+        assert_eq!(ObjKind::Instance as u8, 6);
+        assert_eq!(ObjKind::Set as u8, 7);
+        assert_eq!(ObjKind::Bytes as u8, 8);
+        assert_eq!(ObjKind::ByteArray as u8, 9);
+        assert_eq!(ObjKind::FrozenSet as u8, 10);
+    }
+
+    // ── Refcount JIT tests (#1129) ──
+
+    #[test]
+    fn test_immortal_refcount_constant() {
+        // R4: IMMORTAL_REFCOUNT must be u32::MAX
+        assert_eq!(IMMORTAL_REFCOUNT, u32::MAX);
+    }
+
+    #[test]
+    fn test_new_str_immortal() {
+        // R4: new_str_immortal creates object with rc == IMMORTAL_REFCOUNT
+        unsafe {
+            let obj = MbObject::new_str_immortal("hello".into());
+            assert_eq!(mb_refcount(obj), IMMORTAL_REFCOUNT);
+            assert_eq!((*obj).header.kind, ObjKind::Str);
+            if let ObjData::Str(ref s) = (*obj).data {
+                assert_eq!(s, "hello");
+            } else {
+                panic!("expected Str data");
+            }
+            // Cleanup: immortal objects are never freed by mb_release,
+            // so force-free via Box::from_raw.
+            drop(Box::from_raw(obj));
+        }
+    }
+
+    #[test]
+    fn test_new_bytes_immortal() {
+        // R4: new_bytes_immortal creates object with rc == IMMORTAL_REFCOUNT
+        unsafe {
+            let obj = MbObject::new_bytes_immortal(vec![1, 2, 3]);
+            assert_eq!(mb_refcount(obj), IMMORTAL_REFCOUNT);
+            assert_eq!((*obj).header.kind, ObjKind::Bytes);
+            if let ObjData::Bytes(ref data) = (*obj).data {
+                assert_eq!(data, &[1, 2, 3]);
+            } else {
+                panic!("expected Bytes data");
+            }
+            drop(Box::from_raw(obj));
+        }
+    }
+
+    /// #2107 carve-out regression marker — bytes-object materialization
+    /// hot path. Locks in the invariant that `new_bytes` is a pure
+    /// `Box::new` + move (zero memcpy of the payload buffer): the
+    /// `Vec<u8>` storage pointer the caller hands in must be the
+    /// SAME pointer reachable through `ObjData::Bytes` afterwards.
+    ///
+    /// If a future refactor copies the payload (e.g. by switching to
+    /// an inline / compact-bytes layout that re-allocs for sizes
+    /// above some threshold), this test will fail and the author
+    /// must update #2107 with the new cost model before re-baselining
+    /// the gzip / zlib / lzma / base64 cross-runtime benches.
+    #[test]
+    fn test_new_bytes_zero_copy_carveout_2107() {
+        // 1 MiB payload — matches the cross-runtime bench fixture size
+        // (`tests/cpython/fixtures/std-libs/{gzip,zlib,lzma}/bench/compress_1mb.py`)
+        // so a regression here is directly visible in those benches.
+        let mut data = vec![0u8; 1024 * 1024];
+        // Touch the first byte so MIRI / LLVM cannot fold the alloc.
+        data[0] = 0x5A;
+        let src_ptr = data.as_ptr();
+        let src_len = data.len();
+        let src_cap = data.capacity();
+
+        unsafe {
+            let obj = MbObject::new_bytes(data);
+            // Same pointer ⇒ no memcpy of payload occurred during materialization.
+            if let ObjData::Bytes(ref stored) = (*obj).data {
+                assert_eq!(
+                    stored.as_ptr(),
+                    src_ptr,
+                    "new_bytes must not memcpy payload (#2107)"
+                );
+                assert_eq!(stored.len(), src_len);
+                assert_eq!(stored.capacity(), src_cap);
+                assert_eq!(stored[0], 0x5A);
+            } else {
+                panic!("expected Bytes data");
+            }
+            drop(Box::from_raw(obj));
+        }
+    }
+
+    #[test]
+    fn test_retain_value_int_noop() {
+        // R1: mb_retain_value on an integer MbValue is a no-op (no crash)
+        unsafe {
+            let int_val = MbValue::from_int(42);
+            mb_retain_value(int_val.to_bits());
+            // No crash, no state change — just verifying it doesn't segfault
+        }
+    }
+
+    #[test]
+    fn test_release_value_int_noop() {
+        // R1: mb_release_value on an integer MbValue is a no-op (no crash)
+        unsafe {
+            let int_val = MbValue::from_int(42);
+            mb_release_value(int_val.to_bits());
+        }
+    }
+
+    #[test]
+    fn test_retain_value_none_noop() {
+        // R1: mb_retain_value on None is a no-op (no crash)
+        unsafe {
+            let none_val = MbValue::none();
+            mb_retain_value(none_val.to_bits());
+        }
+    }
+
+    #[test]
+    fn test_release_value_zero_noop() {
+        // R1: mb_release_value(0) is a no-op (uninitialized VReg default)
+        unsafe {
+            mb_release_value(0);
+        }
+    }
+
+    #[test]
+    fn test_retain_value_heap_obj() {
+        // R1: mb_retain_value on a heap object increments refcount
+        unsafe {
+            let obj = MbObject::new_list(vec![MbValue::from_int(1)]);
+            assert_eq!(mb_refcount(obj), 1);
+
+            let val = MbValue::from_ptr(obj);
+            mb_retain_value(val.to_bits());
+            assert_eq!(mb_refcount(obj), 2);
+
+            // Cleanup
+            mb_release(obj);
+            mb_release(obj); // frees at rc=0
+        }
+    }
+
+    #[test]
+    fn test_release_value_heap_obj() {
+        // R1: mb_release_value on a heap object with rc=2 decrements refcount
+        unsafe {
+            let obj = MbObject::new_str("temp".into());
+            assert_eq!(mb_refcount(obj), 1);
+            mb_retain(obj);
+            assert_eq!(mb_refcount(obj), 2);
+
+            let val = MbValue::from_ptr(obj);
+            mb_release_value(val.to_bits());
+            assert_eq!(mb_refcount(obj), 1);
+
+            // Cleanup
+            mb_release(obj); // frees at rc=0
+        }
+    }
+
+    #[test]
+    fn test_retain_immortal_noop() {
+        // R4: mb_retain_value on an immortal string keeps rc at IMMORTAL_REFCOUNT
+        unsafe {
+            let obj = MbObject::new_str_immortal("constant".into());
+            assert_eq!(mb_refcount(obj), IMMORTAL_REFCOUNT);
+
+            let val = MbValue::from_ptr(obj);
+            mb_retain_value(val.to_bits());
+            assert_eq!(mb_refcount(obj), IMMORTAL_REFCOUNT);
+
+            // Cleanup: force-free since mb_release won't touch immortals
+            drop(Box::from_raw(obj));
+        }
+    }
+
+    #[test]
+    fn test_release_immortal_noop() {
+        // R4: mb_release_value on an immortal string keeps rc at IMMORTAL_REFCOUNT, not freed
+        unsafe {
+            let obj = MbObject::new_str_immortal("persistent".into());
+            assert_eq!(mb_refcount(obj), IMMORTAL_REFCOUNT);
+
+            let val = MbValue::from_ptr(obj);
+            mb_release_value(val.to_bits());
+            // Must still be alive with IMMORTAL_REFCOUNT
+            assert_eq!(mb_refcount(obj), IMMORTAL_REFCOUNT);
+
+            // Verify it's still accessible (not freed)
+            if let ObjData::Str(ref s) = (*obj).data {
+                assert_eq!(s, "persistent");
+            } else {
+                panic!("immortal object was corrupted or freed");
+            }
+
+            drop(Box::from_raw(obj));
+        }
+    }
+
+    #[test]
+    fn test_release_value_bool_noop() {
+        // R1: mb_release_value on a boolean MbValue is a no-op
+        unsafe {
+            mb_release_value(MbValue::from_bool(true).to_bits());
+            mb_release_value(MbValue::from_bool(false).to_bits());
+        }
+    }
+
+    #[test]
+    fn test_retain_release_value_float_noop() {
+        // R1: mb_retain_value/mb_release_value on a float MbValue is a no-op
+        unsafe {
+            let float_val = MbValue::from_float(3.14);
+            mb_retain_value(float_val.to_bits());
+            mb_release_value(float_val.to_bits());
+        }
+    }
+
+    #[test]
+    fn test_typed_native_wrapper_refcount_ops_noop() {
+        #[derive(Debug)]
+        struct NativeProbe {
+            marker: u32,
+        }
+
+        let registry_value = cclab_mamba_registry::convert::mb_wrap_native_typed(
+            "NativeProbe",
+            NativeProbe { marker: 41 },
+        );
+        let value = MbValue::from_bits(registry_value.to_bits());
+
+        unsafe {
+            mb_retain_value(value.to_bits());
+            retain_if_ptr(value);
+            mb_release_value(value.to_bits());
+            release_if_ptr(value);
+        }
+
+        let probe: &NativeProbe =
+            unsafe { cclab_mamba_registry::convert::mb_unwrap_native_ref(registry_value) }
+                .expect("typed native wrapper should remain readable");
+        assert_eq!(
+            probe.marker, 41,
+            "runtime refcount ops must not treat typed native wrappers as MbObject"
+        );
+    }
+
+    #[test]
+    fn test_bigint_and_complex_constructors() {
+        // Anchors ObjKind::BigInt (=11) and ObjKind::Complex (=12) —
+        // both in code but missing from spec R3 (tick-232 drift finding).
+        unsafe {
+            let bi = MbObject::new_bigint(BigInt::from(999_999_999_999i64));
+            assert_eq!((*bi).header.kind, ObjKind::BigInt);
+            assert_eq!(mb_refcount(bi), 1);
+            mb_release(bi);
+
+            let cx = MbObject::new_complex(1.0, -2.5);
+            assert_eq!((*cx).header.kind, ObjKind::Complex);
+            if let ObjData::Complex(r, i) = &(*cx).data {
+                assert_eq!(*r, 1.0);
+                assert_eq!(*i, -2.5);
+            } else {
+                panic!("expected ObjData::Complex");
+            }
+            mb_release(cx);
+        }
+    }
+}

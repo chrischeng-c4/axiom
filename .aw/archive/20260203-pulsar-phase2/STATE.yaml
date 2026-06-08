@@ -1,0 +1,54 @@
+change_id: pulsar-phase2
+schema_version: '2.0'
+created_at: 2026-01-31T09:35:34.534008Z
+updated_at: 2026-01-31T09:36:07.489219Z
+phase: planned
+iteration: 1
+last_action: plan-complete
+session_id: null
+checksums:
+  specs/pulsar-array-ext.md:
+    hash: sha256:2b8cc5db352d041995d765e3a1ece623d1b44cd515ef59f28c9cc7161de9a8a3
+    validated_at: 2026-01-31T09:35:54.140314Z
+  proposal.md:
+    hash: sha256:0ae08524e0df2cb2443a8b83489f6026a96879c2509c1b86f8347fe32c9736fb
+    validated_at: 2026-01-31T09:35:54.139569Z
+  tasks.md:
+    hash: sha256:adfbcaccad504141b894c8ccea5e79e1c7bc461a1f3b0b615bfafb30f52c7c3f
+    validated_at: 2026-01-31T09:35:54.139756Z
+  specs/pulsar-frame-ext.md:
+    hash: sha256:105e62dbb00557b8a0755e673516bb4c4d52c722f10f4cd281fe854ccd234cb3
+    validated_at: 2026-01-31T09:35:54.140122Z
+  specs/pulsar-stats.md:
+    hash: sha256:b0bc7f2e4b6453226bade4e57041c62a36814caf031ac8d32c80ee193bdb5365
+    validated_at: 2026-01-31T09:35:54.139931Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-31T09:35:48.934759Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T09:35:54.139430Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

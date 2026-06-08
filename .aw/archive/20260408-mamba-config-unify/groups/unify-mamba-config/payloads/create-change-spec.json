@@ -1,0 +1,7 @@
+{
+  "change_id": "mamba-config-unify",
+  "group_id": "unify-mamba-config",
+  "spec_id": "mamba-config-unify-spec",
+  "section": "changes",
+  "content": "```yaml\nchanges:\n  - path: crates/cclab-mamba/src/config/schema.rs\n    action: MODIFY\n    targets:\n      - type: struct\n        name: MambaConfig\n        change: add discover(), entry_point(), is_symbol_exposed(), has_crate_expose() methods migrated from driver/config.rs\n      - type: struct\n        name: ProjectConfig\n        change: add entry_point field, derive Default, add serde(default) on all fields\n    do_not_touch: [from_file, validate]\n  - path: crates/cclab-mamba/src/driver/config.rs\n    action: MODIFY\n    targets:\n      - type: struct\n        name: MambaConfig\n        change: remove duplicate struct and all its impl methods; replace with re-export from crate::config::schema\n  - path: crates/cclab-cli/src/mamba.rs\n    action: MODIFY\n    targets:\n      - type: impl\n        name: CliModule for MambaCli\n        change: update entry_point field access to use entry_point() method returning Option\n```"
+}

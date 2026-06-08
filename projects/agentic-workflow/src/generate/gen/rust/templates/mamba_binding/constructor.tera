@@ -1,0 +1,33 @@
+{% if spec_path %}/// @spec {{ spec_path }}#x-constructor
+{% endif -%}
+impl {{ struct_name }} {
+    /// Constructor generated from `x-constructor`. Returns `Err(String)` when
+    /// a validation rule fails.
+    pub fn new(
+{%- for a in args %}
+        {{ a.name }}: {{ a.param_type }},
+{%- endfor %}
+    ) -> Result<Self, String> {
+{%- for v in validations %}
+        if !({{ v.check_expr }}) {
+            return Err(format!("{{ v.message }}"));
+        }
+{%- endfor %}
+{%- for a in args %}
+{%- if a.default_expr and a.nullable %}
+        let {{ a.name }} = {{ a.name }}.unwrap_or_else(|| {{ a.default_expr }});
+{%- elif a.default_expr %}
+        let {{ a.name }} = if {{ a.name }}.is_empty() { {{ a.default_expr }} } else { {{ a.name }} };
+{%- endif %}
+{%- endfor %}
+        Ok(Self {
+{%- for a in args %}
+{%- if a.wrap_some_in_init %}
+            {{ a.name }}: Some({{ a.name }}),
+{%- else %}
+            {{ a.name }},
+{%- endif %}
+{%- endfor %}
+        })
+    }
+}

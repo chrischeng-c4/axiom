@@ -1,0 +1,87 @@
+{
+  "group_id": "queue-unit-test-coverage",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-queue/cclab-nova-persistence.md",
+      "spec_group": "persistence",
+      "relevance": "medium",
+      "key_requirements": [
+        "R1: PostgreSQL adapter with save_message/get_messages/clear_history — test pattern mirrors Redis/Ion backend test structure for cclab-queue backends",
+        "R2: Redis adapter for high-performance temporary storage — directly mirrors RedisBackend and RedisRevocationStore which need integration tests",
+        "R3: Thread-safe persistence from multiple agent instances — parallels worker concurrency tests needed for ratelimit and revocation stores"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-queue/storage-backend.md",
+      "spec_group": "storage",
+      "relevance": "medium",
+      "key_requirements": [
+        "R2: MemoryStorage implementation — analogous to InMemoryRevocationStore and MemorySchedulerBackend unit test patterns (isolation, independence)",
+        "R3: FileStorage implementation — acceptance criteria (save/reload across restarts) maps to IonBackend and IonSchedulerBackend persistence tests",
+        "R4: Session serialization format — drives serde round-trip test requirements for TaskMessage, TaskResult, TaskState, and WorkflowMeta structs"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-queue/cclab-nova-core.md",
+      "spec_group": "execution-loop",
+      "relevance": "low",
+      "key_requirements": [
+        "R4: Execution loop with max_turns limit — provides acceptance-criteria template ('GIVEN agent with limit, WHEN exceeded, THEN error returned') applicable to worker max-retries and rate-limit exhaustion tests",
+        "Scenario: Max turns reached — maps to RetryPolicy::max_retries test and TokenBucket exhaustion scenarios"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-queue/analyst-agent-async.md",
+      "spec_group": "async-state",
+      "relevance": "low",
+      "key_requirements": [
+        "R3: Execution pause state — parallels task revocation mid-execution and worker graceful shutdown signal test requirements",
+        "Scenario: Save and load message history — drives MemorySchedulerBackend state-persistence unit test structure"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "core-primitives-test-plan",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/core-primitives.md",
+      "sections": ["overview", "schema", "state-machine", "logic", "test-plan"]
+    },
+    {
+      "spec_id": "routing-ratelimit-test-plan",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/routing-ratelimit.md",
+      "sections": ["overview", "logic", "test-plan"]
+    },
+    {
+      "spec_id": "signals-revocation-test-plan",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/signals-revocation.md",
+      "sections": ["overview", "state-machine", "logic", "test-plan"]
+    },
+    {
+      "spec_id": "workflow-primitives-test-plan",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/workflow-primitives.md",
+      "sections": ["overview", "logic", "interaction", "test-plan"]
+    },
+    {
+      "spec_id": "broker-integration-test-plan",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/broker-integration.md",
+      "sections": ["overview", "async-api", "interaction", "config", "test-plan"]
+    },
+    {
+      "spec_id": "backend-scheduler-test-plan",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/backend-scheduler.md",
+      "sections": ["overview", "async-api", "test-plan", "changes"]
+    },
+    {
+      "spec_id": "metrics-worker-test-plan",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/metrics-worker.md",
+      "sections": ["overview", "logic", "test-plan", "changes"]
+    }
+  ]
+}

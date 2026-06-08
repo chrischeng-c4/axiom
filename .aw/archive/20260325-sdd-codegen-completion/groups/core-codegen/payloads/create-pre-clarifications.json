@@ -1,0 +1,27 @@
+{
+  "change_id": "sdd-codegen-completion",
+  "group_id": "core-codegen",
+  "answers": [
+    {
+      "question_id": "Q1",
+      "question": "First generator target for #932",
+      "answer": "Both schema (JSON Schema → Rust struct) and rest-api (OpenAPI → Axum route handler skeleton) for Axum target. FastAPI also in scope."
+    },
+    {
+      "question_id": "Q2",
+      "question": "Template file embedding vs filesystem",
+      "answer": "Embedded via include_str! in crates/cclab-sdd/templates/. No runtime file dependency."
+    },
+    {
+      "question_id": "Q3",
+      "question": "SpecBundle cross-section composition scope",
+      "answer": "Phase 1 only (single-section codegen). Phase 2 SpecBundle cross-section composition deferred."
+    },
+    {
+      "question_id": "Q4",
+      "question": "cclab-probe integration for #933",
+      "answer": "Standalone test files only. No cclab-probe integration. Probe is deferred."
+    }
+  ],
+  "follow_up_needed": false
+}

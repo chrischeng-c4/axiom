@@ -1,0 +1,18 @@
+{
+  "spec_id": "enhancement-score-sync-writes-into-score-config-toml-retires-p-spec",
+  "verdict": "APPROVED",
+  "summary": "Spec covers all 11 Requirements. Logic flowchart extends the existing Rules A-F graph with the new marker-aware write path (read_config → locate_markers → replace_block|append_block → write_config → check_stale → delete_stale → done) and Rule E now routes through read_pkg_name. Schema + Config JSON Schemas capture the delimited-section contract and the toml_edit operation constraints. Test plan T17-T22 covers R1, R2, R3, R5, R7, R8, R9, R10, R11. Out-of-scope boundaries respected (user's [[workspaces]] WIP untouched; no downstream consumer wiring). R4 (toml_edit lossless) is verifymethod: inspection — acceptable. The one soft gap: R6 (full enumeration of ~82 projects) has verifymethod: test but no T-element explicitly verifies it — easily backfilled in T18 with an assert_eq!(projects.len(), N) where N is derived from the fixture. Linter warnings on Schema/Config ```json fencing are false positives per AUTHORING.md format priority (OpenRPC > JSON Schema > Mermaid > YAML > Markdown) — JSON-fenced JSON Schema is preferred.",
+  "issues": [
+    {
+      "severity": "low",
+      "section": "test-plan",
+      "message": "R6 (full enumeration) has verifymethod: test but no T-element verifies relation. Recommend adding an assert on total discovered count to T18 during implementation."
+    },
+    {
+      "severity": "low",
+      "section": "schema",
+      "message": "Linter flagged ```json fencing as format_priority_violation expecting yaml; per AUTHORING.md this is a false positive — JSON Schema should be fenced as json."
+    }
+  ],
+  "problem_sections": []
+}

@@ -1,0 +1,89 @@
+change_id: agent-pyo3
+schema_version: '2.0'
+created_at: 2026-03-18T10:32:01.048788Z
+updated_at: 2026-03-18T11:10:23.698898Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:agent-pyo3-bindings: 1
+current_task_id: agent-pyo3-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 83058
+    timestamp: 2026-03-18T10:33:41.988405Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 71153
+    timestamp: 2026-03-18T10:35:47.922518Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 244103
+    timestamp: 2026-03-18T10:40:11.535090Z
+  - step: analyze_spec_agent-pyo3-spec
+    sdd_version: 0.3.41
+    model: gemini-3.1-pro-preview
+    tokens_in: 438490
+    tokens_out: 2608
+    cost_usd: null
+    duration_ms: 183864
+    timestamp: 2026-03-18T10:47:38.329982Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 197194
+    timestamp: 2026-03-18T11:06:00.247704Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 713908
+    timestamp: 2026-03-18T11:06:19.107050Z
+  total_cost_usd: 0.0
+  total_tokens_in: 438490
+  total_tokens_out: 2608
+dag:
+  issues:
+  - number: 927
+    title: 'feat(agent): Build cclab-agent-pyo3 crate — PyO3 bindings for Python'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - agent-pyo3-bindings
+  post_clarifications:
+  - agent-pyo3-bindings
+  change_implementation: []
+  change_spec: []
+  pre_clarifications:
+  - agent-pyo3-bindings

@@ -1,0 +1,13 @@
+{
+  "group_id": "queue-unit-test-coverage",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "requirements.md: 8 untested modules (error, state, ratelimit, revocation, metrics, scheduler/delay, scheduler/memory_backend, scheduler/cloud_scheduler_backend) need unit + integration tests",
+    "success_criteria": "Each module has #[cfg(test)] with happy path, edge case, and error tests. Integration tests use real NATS/Redis. Cloud backends use homebrew-installable emulators. Metrics tested both with and without feature flag. → pre_clarifications answers",
+    "boundary": {
+      "in_scope": "10 change specs (error-types, task-state-machine, ratelimit, revocation, metrics, scheduler-delay, scheduler-memory-backend, scheduler-cloud-backend, result-backend, worker) → spec_plan",
+      "out_of_scope": "No changes to existing source code. No new features. Tests only.",
+      "constraints": "Tests must compile without external dependencies for unit tests. Integration tests requiring infra should use #[ignore] or feature gates."
+    }
+  }
+}

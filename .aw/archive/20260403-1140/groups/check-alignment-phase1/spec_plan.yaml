@@ -1,0 +1,17 @@
+- spec_id: check-alignment
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/check-alignment.md
+  sections:
+  - overview
+  - schema
+  - logic
+  - cli
+  - test-plan
+  - changes
+- spec_id: cli-commands-check-alignment
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/cli/commands.md
+  source: crates/cclab-sdd/interfaces/cli/commands.md
+  sections:
+  - cli
+  - changes

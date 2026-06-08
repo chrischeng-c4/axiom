@@ -1,0 +1,28 @@
+branch: null
+change_id: align-fetch-api
+checksums: {}
+created_at: 2026-03-20 08:25:12.776578+00:00
+current_task_id: null
+dag:
+  complete: false
+  current_index: 0
+  issues:
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 964
+    processed: false
+    title: 'epic(ecosystem): Align cclab.* Python API to ecosystem conventions'
+delegation_guard: null
+git_workflow: in_place
+groups_progress: {}
+iteration: 1
+last_action: null
+phase: change_rejected
+revision_counts: {}
+schema_version: '2.0'
+session_id: null
+task_revisions: {}
+telemetry: null
+updated_at: 2026-03-20 08:25:12.778786+00:00
+validations: []

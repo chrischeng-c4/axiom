@@ -1,0 +1,6 @@
+{
+  "spec_id": "jet-hmr-validation-spec",
+  "group_id": "jet-hmr-validation",
+  "section": "state-machine",
+  "content": "```mermaid\nstateDiagram-v2\n    [*] --> Idle\n\n    Idle --> FileChanged : watcher detects save\n\n    FileChanged --> TransformFile : file is .ts/.tsx/.js/.jsx\n    FileChanged --> CssRebuild : file is .css/.scss\n\n    TransformFile --> TransformError : parse/transform fails\n    TransformFile --> GraphUpdate : transform succeeds\n\n    TransformError --> Idle : send error message to clients\n\n    GraphUpdate --> InvalidationWalk : diff imports, update module graph\n\n    InvalidationWalk --> HotUpdate : boundary found (self-accept or parent-accept or react-refresh)\n    InvalidationWalk --> FullReload : no boundary found (reached entry point)\n\n    HotUpdate --> Idle : send update message with module URL + timestamp\n    FullReload --> Idle : send full-reload message\n\n    CssRebuild --> CssHotUpdate : rebuild succeeds\n    CssRebuild --> TransformError : rebuild fails\n\n    CssHotUpdate --> Idle : send css-update message\n```"
+}

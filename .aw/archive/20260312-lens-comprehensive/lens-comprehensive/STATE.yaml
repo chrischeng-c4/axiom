@@ -1,0 +1,83 @@
+change_id: lens-comprehensive
+schema_version: '2.0'
+created_at: 2026-03-12T09:02:15.760846Z
+updated_at: 2026-03-12T10:16:03.424975Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+branch: cclab-lens
+revision_counts: {}
+current_task_id: lens-comprehensive-spec
+task_revisions: {}
+telemetry: null
+dag:
+  issues:
+  - number: 798
+    title: 'fix(lens): YAML dispatcher — route K8s vs GitLab CI by content detection'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 799
+    title: 'feat(lens): implement refactoring engine — Extract, Rename, Move, Inline'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 800
+    title: 'feat(lens): implement semantic search engine — type signatures, call hierarchy, usages'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 801
+    title: 'feat(lens): expand lint rules to full coverage per language'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 802
+    title: 'feat(lens): add symbol tables for new languages (Dockerfile, HCL, K8s, GitLab CI)'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 803
+    title: 'feat(lens): bundle JSON schemas for K8s and GitLab CI validation'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 804
+    title: 'feat(lens): TypeScript/Rust type inference — close generic and trait gaps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+groups_progress:
+  pre_clarifications:
+  - lint-and-dispatch
+  - refactoring-engine
+  - semantic-search
+  - symbol-tables
+  - type-inference-gaps
+  post_clarifications:
+  - lint-and-dispatch
+  - refactoring-engine
+  - semantic-search
+  - symbol-tables
+  - type-inference-gaps
+  change_spec: []
+  reference_context:
+  - lint-and-dispatch
+  - refactoring-engine
+  - semantic-search
+  - symbol-tables
+  - type-inference-gaps
+  change_implementation: []

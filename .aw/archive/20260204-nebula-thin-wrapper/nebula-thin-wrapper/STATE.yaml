@@ -1,0 +1,125 @@
+change_id: nebula-thin-wrapper
+schema_version: '2.0'
+created_at: 2026-02-03T09:31:43.633592Z
+updated_at: 2026-02-04T06:25:10.269036Z
+phase: archived
+iteration: 1
+last_action: archive
+session_id: null
+checksums:
+  specs/cclab-nebula/link-fetching.md:
+    hash: sha256:cea35151ca81155a1863c4097b314fa01b17e3e13d14dec2285e6b182f763067
+    validated_at: 2026-02-04T06:17:34.232025Z
+  specs/cclab-nebula/query-builder.md:
+    hash: sha256:1d62ac72dc6e2aab525cebd3f228ee299c6db40eb49c2b9de6644f2730984cdb
+    validated_at: 2026-02-04T06:17:34.231696Z
+  specs/state-management.md:
+    hash: sha256:b4c08f55025cbc9f32e3fc7d61c97c1f64befe138e05f3689ad4b551188bba30
+    validated_at: 2026-02-04T06:17:34.232445Z
+  specs/query-builder.md:
+    hash: sha256:c548737e95c73a724cca6559c1a8c086fbcb0c0ac9c36689533f8c3018c0ca07
+    validated_at: 2026-02-04T06:17:34.232802Z
+  specs/link-fetching.md:
+    hash: sha256:487dd813fbfae191cd14b8a747c84f1893d94e65c8494a506487e243dc4bf202
+    validated_at: 2026-02-04T06:17:34.233454Z
+  specs/cclab-nebula/state-management.md:
+    hash: sha256:3b95565efc8c7f39c9333a6010e8d2a07f4bd6009dc7c5e24d3cf7bbee9122e8
+    validated_at: 2026-02-04T06:17:34.231502Z
+  specs/cclab-nebula/aggregation.md:
+    hash: sha256:33af970909afed7f10e4cd6c1ed58b1cc50c58cd09c44fcaf1db3a0295fb2a48
+    validated_at: 2026-02-04T06:17:34.231854Z
+  specs/cclab-nebula/bulk-write.md:
+    hash: sha256:8fa9b69217af10a81d06054fea78a2a297339f1578b3bfac3a0f3c5d53bf3713
+    validated_at: 2026-02-04T06:17:34.231329Z
+  tasks.md:
+    hash: sha256:dc5360e88838e592469f5376fd64c3082f60c3fa3ed6b1f50f0b69ae7d6b0e12
+    validated_at: 2026-02-04T06:17:34.230924Z
+  proposal.md:
+    hash: sha256:1e554f2db80104a92855e6e9c8d92a0fb4ce494df6adc2afa571374324288adf
+    validated_at: 2026-02-04T06:17:34.230643Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-03T09:32:07.804194Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 4
+    low: 5
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-03T09:33:55.316710Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 4
+    low: 5
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-03T09:34:58.462644Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 4
+    low: 5
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-04T06:10:35.575080Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-04T06:10:56.178583Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-02-04T06:17:34.230457Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

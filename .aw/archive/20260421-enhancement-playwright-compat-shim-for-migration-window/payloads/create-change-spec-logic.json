@@ -1,0 +1,5 @@
+{
+  "spec_id": "enhancement-playwright-compat-shim-for-migration-window-spec",
+  "section": "logic",
+  "content": "```mermaid\n---\nid: logic\n---\nflowchart TD\n    A([jet test invoked]) --> B{--playwright flag set?}\n\n    B -- No --> C{spec imports @playwright/test?}\n    C -- No --> D([native runner executes])\n    C -- Yes --> E([error: spec uses @playwright/test but --playwright flag is absent\\nexit 1])\n\n    B -- Yes --> F{native-only flags present?\\n--reporter / --trace / --workers / --shard / --report-dir}\n    F -- Yes --> G([stderr: error: --flag cannot be combined with --playwright\\nexit 2])\n    F -- No --> H{JET_SUPPRESS_PLAYWRIGHT_WARNING=1?}\n\n    H -- No --> I[stderr: warning: --playwright is deprecated\\nand will be removed; see migration-guide-url]\n    H -- Yes --> J[suppress warning]\n    I --> K[playwright_shim::run spawns npx playwright test]\n    J --> K\n\n    K --> L[Playwright subprocess runs spec files]\n    L --> M{exit code from Playwright}\n    M -- 0 --> N([jet exits 0])\n    M -- nonzero --> O([jet exits with Playwright exit code])\n```"
+}

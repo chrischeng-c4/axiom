@@ -1,0 +1,1 @@
+{"group_id":"asgi-fix","spec_id":"asgi-dispatch-spec","verdict":"APPROVED","summary":"All endpoints verified against real PostgreSQL via Rust server. Dashboard, projects, issues, workflows all return correct data."}

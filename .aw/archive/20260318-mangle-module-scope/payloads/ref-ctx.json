@@ -1,0 +1,7 @@
+{
+  "group_id": "mangle-module-scope",
+  "specs": [
+    {"spec": "variable-mangling", "group": "cclab-jet", "relevance": "high", "key_requirements": "R2 Scope Analysis, R3 Variable Mangling — currently only function-local, need to extend to IIFE wrapper scope"},
+    {"spec": "scope-hoisting", "group": "cclab-jet", "relevance": "high", "key_requirements": "Phase 1 IIFE wrappers — module body inside !function(module,exports,require){...}() is a function scope"}
+  ]
+}

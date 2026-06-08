@@ -1,0 +1,6 @@
+{
+  "change_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness",
+  "spec_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness-spec",
+  "section": "doc",
+  "content": "Documentation files that must be updated as part of this change (R9):\n\n**CHANGELOG.md** (repo root)\n- Line 26: `@playwright/test import rewrite recipes` — rewrite to `import rewrite recipes (from @playwright/test to @jet/test, legacy)` to frame as historical context rather than an active dependency claim.\n\n**crates/jet/docs/migration-from-playwright.md** — NO CHANGE\n- Owned by the compat-shim sibling issue. All references are intentionally framed as legacy migration guidance. This file is excluded per R9.\n\nFiles confirmed clean (no updates needed):\n- `.github/workflows/docs.yml` — no playwright references\n- `.github/workflows/miri.yml` — no playwright references\n- `.github/workflows/release.yml` — no playwright references\n- `.github/workflows/test-with-junit.yml` — no playwright references\n- `crates/jet/docs/` contains only `migration-from-playwright.md` — excluded per R9"
+}

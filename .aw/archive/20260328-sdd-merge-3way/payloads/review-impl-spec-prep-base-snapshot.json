@@ -1,0 +1,24 @@
+{
+  "spec_id": "spec-prep-base-snapshot",
+  "verdict": "APPROVED",
+  "summary": "All spec requirements are implemented correctly. `prepare_modify_spec` now returns `(String, Option<String>)`, clones raw source before frontmatter mutation, and the caller writes `.base.md` only for modify specs with existing source. All 4 required test functions are present and passing. No regressions in spec_plan tests.",
+  "checklist_results": [
+    {
+      "item": "[HARD] Code matches all spec requirements",
+      "passed": true,
+      "note": "prepare_modify_spec (spec_plan.rs:346-401): returns (String, Option<String>), clones raw_source to base_content BEFORE frontmatter mutation (line 364), returns (content, Some(base_content)) when source exists (line 401), returns (content, None) via fallback when source missing (line 360). prepare_specs_from_plan (lines 322-327): writes {spec_id}.base.md when base_content is Some, immediately before writing working spec. Only action:modify specs get a .base.md; action:create returns None. prepare_create_spec, deduplicate_spec_plans, read_all_spec_plans all untouched (do_not_touch respected)."
+    },
+    {
+      "item": "[HARD] Spec has no ## Test Plan section — hard test-presence check N/A",
+      "passed": true,
+      "note": "The spec (spec-prep-base-snapshot.md) has no ## Test Plan section. Hard reject rule does not apply. The ## Changes section specifies 4 required test functions — all are present and passing: test_prepare_modify_creates_base_snapshot, test_prepare_create_no_base_snapshot, test_prepare_modify_missing_source_no_base, test_prepare_skip_already_prepared_no_duplicate_base."
+    },
+    {
+      "item": "[HARD] Existing tests still pass (no regressions)",
+      "passed": true,
+      "note": "All 21 tests in tools::spec_plan::tests pass. The single failing test (test_workflow_prompt_includes_spec_plan_guidance_with_subfolder_rule) is in create_reference_context.rs — an async integration test that attempts to spawn a live claude-agent subprocess. This is a pre-existing infrastructure failure unrelated to the spec_plan.rs changes."
+    }
+  ],
+  "soft_issues": [],
+  "required_fixes": []
+}

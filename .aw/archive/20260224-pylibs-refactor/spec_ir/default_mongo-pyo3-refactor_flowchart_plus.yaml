@@ -1,0 +1,42 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: mongo-pyo3-refactor
+  change_id: pylibs-refactor
+  source_file: pylibs-refactor/specs/mongo-pyo3-refactor.md
+  spec_id: mongo-pyo3-refactor
+spec:
+  title: File Structure Decomposition
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: mod_rs
+      label: exports
+      to: document_rs
+    - from: mod_rs
+      label: exports
+      to: query_expr_rs
+    - from: mod_rs
+      label: exports
+      to: query_builder_rs
+    - from: document_rs
+      label: includes pymethods from
+      to: document_ops_rs
+    - from: document_rs
+      label: includes pymethods from
+      to: document_static_rs
+    id: mongo_refactor_flow
+    nodes:
+    - id: mod_rs
+      label: mod.rs (Registry)
+    - id: document_rs
+      label: document.rs (Core)
+    - id: document_ops_rs
+      label: document_ops.rs (CRUD)
+    - id: document_static_rs
+      label: document_static.rs (Static)
+    - id: query_expr_rs
+      label: query_expr.rs
+    - id: query_builder_rs
+      label: query_builder.rs

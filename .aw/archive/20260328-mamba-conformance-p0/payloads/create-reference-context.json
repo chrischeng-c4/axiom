@@ -1,0 +1,199 @@
+{
+  "group_id": "mamba-py312-conformance",
+  "specs": [
+    {
+      "spec_id": "cclab-mamba-fix-xfail-spec",
+      "spec_group": "testing",
+      "relevance": "high",
+      "key_requirements": [
+        "R2: Generator state machine compilation — yield → suspend, state enum (Created/Running/Suspended/Completed)",
+        "R3: Generator send/throw/close protocol — full CPython semantics",
+        "R4: yield from delegation — sub-iterator forwarding, return value passthrough",
+        "R5: Custom iterator protocol — __iter__/__next__ MRO dispatch via mb_iter_new/mb_iter_next",
+        "Conformance test harness pattern: .py + .expected golden file, mamba-xfail directive"
+      ]
+    },
+    {
+      "spec_id": "mamba-conformance-p2-spec",
+      "spec_group": "testing",
+      "relevance": "high",
+      "key_requirements": [
+        "Conformance fixture structure: tests/fixtures/conformance/{category}/{name}.py + .expected",
+        "Golden file regeneration: python3 tests/regen_golden.py (runs on CPython 3.12)",
+        "Test runner: cargo test -p cclab-mamba --test conformance_tests",
+        "Fixture categories: generators/, iterators/, data_structures/, language/, builtins/",
+        "Scenario format: GIVEN/WHEN/THEN for conformance verification"
+      ]
+    },
+    {
+      "spec_id": "generator",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: GeneratorState enum (Created→Running→Suspended→Completed) — generator state machine",
+        "R2: yield suspension/resumption — local variables preserved in heap frame",
+        "R3: Generator as iterator — __iter__ returns self, __next__ resumes until yield/return",
+        "R4: send(value) — yield expression evaluates to sent value; first send must be None",
+        "R5: throw(exc)/close() — inject exception at yield point; GeneratorExit on close"
+      ]
+    },
+    {
+      "spec_id": "iter",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: mb_iter_new/mb_iter_next — call __iter__/__next__ on target, StopIteration terminates loop",
+        "R2: Built-in iterator variants — ListIter, DictIter, SetIter, TupleIter with index tracking",
+        "R3: Iterator combinators — enumerate(start), zip(*iters), reversed(seq), filter(fn), map(fn)",
+        "R4: range(stop/start/stop/step) — integer range with __len__ support",
+        "R5: StopIteration exhaustion — next(iter, default) returns default instead of raising"
+      ]
+    },
+    {
+      "spec_id": "list-ops",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: Mutation — append, extend, insert, pop(i?), remove, clear (all 6 mutation methods)",
+        "R2: Query — index(x), count(x), copy (non-mutating, all 3 query methods)",
+        "R3: sort(key?, reverse?) — in-place sort with optional key function; reverse() in-place",
+        "R4: Subscript/slicing — getitem/setitem/delitem with negative index; slice(start:stop:step)",
+        "R5: Construction — mb_list_new(), mb_list_from_values() for literal compilation"
+      ]
+    },
+    {
+      "spec_id": "dict-ops",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: Lookup — get(key, default=None), setdefault(key, default=None)",
+        "R2: Views — keys(), values(), items() returning materialized lists",
+        "R3: Mutation — update(other), pop(key, default?), clear(), copy()",
+        "R4: Subscript — getitem/setitem/delitem; KeyError on missing key",
+        "R5: PEP 584 merge — mb_dict_merge for {**d1, **d2} unpacking expressions"
+      ]
+    },
+    {
+      "spec_id": "set-ops",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: Element management — add, remove (KeyError), discard (no error), pop, clear",
+        "R2: Queries — contains (in operator), len",
+        "R3: Set algebra — union (|), intersection (&), difference (-), symmetric_difference (^)",
+        "R4: Comparisons — issubset (<=), issuperset (>=)",
+        "R5: NaN-boxed u64 hashing — raw bit patterns used directly as hash keys"
+      ]
+    },
+    {
+      "spec_id": "string-ops",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: 23 core methods — split, join, strip, lstrip, rstrip, replace, find, rfind, startswith, endswith, upper, lower, title, capitalize, count, swapcase, expandtabs, partition, rpartition, removeprefix, removesuffix, maketrans, translate",
+        "R2: 6 predicates — isdigit, isalpha, isalnum, isspace, isupper, islower",
+        "R3: Alignment — center, ljust, rjust, zfill",
+        "R4: F-string runtime formatting — mb_string_format(template, args, argc)",
+        "R5: Encoding — mb_string_encode(s, encoding) → ObjData::Bytes"
+      ]
+    },
+    {
+      "spec_id": "builtins",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: Iterator builtins — enumerate(iterable, start=0), zip(iter_a, iter_b), reversed(seq)",
+        "R2: Aggregation — min(iter), max(iter), sum(iter, start=0), sorted(iter)",
+        "R3: Type checking — isinstance(obj, classinfo) via MRO walk",
+        "R4: Conversion — repr, hash, id, input, chr, ord, hex, oct, bin",
+        "R5: P1 builtins — abs, all, any, divmod, filter, map, round (20 additional functions)",
+        "R6: Symbol registration — all mb_builtin_* registered in symbols.rs with correct MirExtern signatures"
+      ]
+    },
+    {
+      "spec_id": "mamba-tuple-cmp-spec",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R5: Tuple ordering — mb_tuple_lt/le/gt/ge for lexicographic comparison",
+        "Lexicographic algorithm: element-by-element, shorter tuple is less when all compared equal",
+        "Integration with mb_values_lt/le/gt/ge dispatch in builtins.rs"
+      ]
+    },
+    {
+      "spec_id": "test-harness",
+      "spec_group": "testing",
+      "relevance": "medium",
+      "key_requirements": [
+        "R1: RUN directive dispatch — parse, typecheck, jit runners",
+        "R2: Enhanced error reporting — file path + diagnostic engine context in failures",
+        "R3: Recursive fixture discovery — auto-discovers .py files under tests/fixtures/",
+        "R4: CPython fixture directory — tests/fixtures/parse/cpython/ for parse-only checks",
+        "R5: Directive-based format — # RUN: parse at top of each fixture"
+      ]
+    },
+    {
+      "spec_id": "mamba-merge-tests-spec",
+      "spec_group": "testing",
+      "relevance": "medium",
+      "key_requirements": [
+        "CPython compliance test in tests/cpython_compat.rs with datatest-stable harness",
+        "cpython_known_failures.toml xfail manifest for expected parse failures",
+        "Fixture path: tests/fixtures/cpython/ for CPython source snippets",
+        "xpass warning when previously-failing fixture now passes"
+      ]
+    },
+    {
+      "spec_id": "class",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R1: Type-tagged dispatch — mb_call_method routes by ObjData variant tag",
+        "R2: MRO fallback — ObjData::Instance falls back to C3 MRO attribute lookup",
+        "R5: Context manager protocol — __enter__/__exit__ dispatch for with-statement",
+        "R6-R9: Magic method dispatch — __len__, __contains__, __iter__, __repr__, __str__",
+        "Required for custom iterator protocol test fixtures"
+      ]
+    },
+    {
+      "spec_id": "mamba-test-coverage-remaining-spec",
+      "spec_group": "testing",
+      "relevance": "low",
+      "key_requirements": [
+        "Background: stdlib module coverage targets (argparse, platform, unittest, socket, etc.)",
+        "Test strategy: inline #[cfg(test)] + integration tests for per-function branch coverage"
+      ]
+    },
+    {
+      "spec_id": "mamba-test-coverage-spec",
+      "spec_group": "testing",
+      "relevance": "low",
+      "key_requirements": [
+        "Background: lowest-coverage stdlib modules (queue, statistics, shlex, calendar, locale, lzma, zlib, secrets, bisect, abc)",
+        "Self-contained test strategy: no network, no filesystem writes outside temp dirs"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "generator-iterator-conformance",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/testing/conformance.md",
+      "source": "cclab/specs/crates/cclab-mamba/testing/conformance.md",
+      "sections": ["overview", "requirements", "scenarios", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "data-structure-conformance",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/testing/mamba-py312-conformance.md",
+      "source": "cclab/specs/crates/cclab-mamba/testing/mamba-py312-conformance.md",
+      "sections": ["overview", "requirements", "scenarios", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "py312-behavioral-conformance",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/testing/py312-behavioral-conformance.md",
+      "sections": ["overview", "requirements", "scenarios", "changes", "test-plan"]
+    }
+  ]
+}

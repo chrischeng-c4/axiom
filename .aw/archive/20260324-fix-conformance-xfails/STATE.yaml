@@ -1,0 +1,99 @@
+change_id: fix-conformance-xfails
+schema_version: '2.0'
+created_at: 2026-03-23T09:07:55.636133Z
+updated_at: 2026-03-24T04:07:56.186479Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: fix-conformance-xfails-spec
+task_revisions:
+  fix-conformance-xfails-spec: 2
+impl_spec_phase: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 198621
+    timestamp: 2026-03-23T09:11:17.868186Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: gemini-3.1-pro-preview
+    tokens_in: 880658
+    tokens_out: 3264
+    cost_usd: null
+    duration_ms: 172833
+    timestamp: 2026-03-23T09:15:02.168680Z
+  - step: analyze_spec_fix-conformance-xfails-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 579223
+    timestamp: 2026-03-23T09:25:27.062520Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 13707003
+    timestamp: 2026-03-23T13:14:08.520317Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 155251
+    timestamp: 2026-03-24T02:24:15.122426Z
+  - step: implement_tests_fix-conformance-xfails-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 991142
+    timestamp: 2026-03-24T02:25:39.890849Z
+  - step: review_impl_fix-conformance-xfails-spec
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 190200
+    timestamp: 2026-03-24T02:30:04.374513Z
+  total_cost_usd: 0.0
+  total_tokens_in: 880658
+  total_tokens_out: 3264
+dag:
+  issues:
+  - number: 1037
+    title: 'test(mamba): Py3.12 behavioral conformance — every function must match CPython'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  post_clarifications:
+  - mamba-conformance-xfails
+  change_spec:
+  - mamba-conformance-xfails
+  pre_clarifications:
+  - mamba-conformance-xfails
+  reference_context:
+  - mamba-conformance-xfails
+  change_implementation: []

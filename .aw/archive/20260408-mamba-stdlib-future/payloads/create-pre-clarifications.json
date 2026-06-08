@@ -1,0 +1,9 @@
+{
+  "group_id": "future-stdlib-module",
+  "answers": [
+    {
+      "question": "Should feature flags be simple integer constants or _Feature objects?",
+      "answer": "Simple integer constants matching CPython's CO_* values. No need for _Feature class — Mamba just needs the constants for compatibility."
+    }
+  ]
+}

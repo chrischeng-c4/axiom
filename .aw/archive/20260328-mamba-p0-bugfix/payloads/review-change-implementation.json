@@ -1,0 +1,31 @@
+{
+  "change_id": "mamba-p0-bugfix",
+  "spec_id": "string-reverse-slice-fix",
+  "verdict": "APPROVED",
+  "summary": "Spec has a ## Test Plan section (lines 132-135) with a '<!-- TODO -->' placeholder — zero explicit test cases defined. The diff contains 8 #[test] functions in string_ops.rs covering all 8 spec scenarios (S1-S8). Hard Reject Rule does NOT apply. The core fix in string_ops.rs correctly replaces unconditional clamp_rev_str calls with None-aware match expressions: absent start defaults to len-1 directly, absent stop defaults to literal -1 (bypassing clamp_rev_str which would erroneously normalize -1 to len-1 and break the loop). Fix is precisely localized to the negative-step branch of mb_str_slice_full; clamp_rev_str itself is unmodified; positive step path is untouched. All 161 string_ops tests pass with zero regressions. APPROVED with one minor soft finding: the ## Test Plan section remains an empty TODO placeholder.",
+  "hard_checklist": {
+    "code_matches_spec": {
+      "result": "pass",
+      "notes": "R1: string_ops.rs lines 123-125 — `e_idx = match stop.as_int() { Some(v) => clamp_rev_str(v, len), None => -1 }` — absent stop uses literal -1 without clamping, so loop `while i > -1` iterates down to index 0 inclusive. R2: lines 119-121 — `s_idx = match start.as_int() { Some(v) => clamp_rev_str(v, len), None => len - 1 }` — absent start uses len-1 directly. R3: Explicit negative indices enter the Some(v) branch and still go through clamp_rev_str (e.g. test S4 'abcdef'[-2::-1] = 'edcba'). R4: Explicit stop values enter the Some(v) branch and still clamp (e.g. test S5 'abcdef'[4:1:-1] = 'edc'). R5: Positive step branch (string_ops.rs lines 111-114, unchanged) uses normalize_index as before. R6: Unicode S8 test confirms '你好世界'[::-1] = '界世好你'. Constraints: fix localized to mb_str_slice_full only; clamp_rev_str at line 94 is unmodified; mb_str_slice (2-arg) is unaffected."
+    },
+    "tests_present_when_test_plan_exists": {
+      "result": "pass",
+      "notes": "Spec has ## Test Plan section (string-reverse-slice-fix.md lines 132-135) even though content is '<!-- TODO -->'. The diff contains 8 #[test] functions in string_ops.rs mod tests block (implementation.md lines 1290-1388): test_str_slice_full_reverse (S1), test_str_slice_full_reverse_single_char (S2), test_str_slice_full_reverse_empty (S3), test_str_slice_partial_reverse_explicit_start (S4), test_str_slice_partial_reverse_explicit_start_stop (S5), test_str_slice_positive_step_unaffected (S6), test_str_slice_reverse_step_minus_2 (S7), test_str_slice_full_reverse_unicode (S8). Hard Reject Rule condition (zero #[test] blocks) is not met."
+    },
+    "no_regressions": {
+      "result": "pass",
+      "notes": "cargo test -p cclab-mamba --lib string_ops: test result: ok. 161 passed; 0 failed; 0 ignored. The fix modifies only the negative-step absent-start/stop path inside mb_str_slice_full. The positive step branch (normalize_index path) is untouched. Explicit value handling through clamp_rev_str is preserved in the Some(v) branches. All 153 pre-existing string_ops tests pass alongside the 8 new tests."
+    }
+  },
+  "soft_findings": [
+    {
+      "severity": "minor",
+      "title": "## Test Plan section is an empty TODO placeholder",
+      "details": "The spec's ## Test Plan section (string-reverse-slice-fix.md lines 132-135) contains only '<!-- TODO -->' with no explicit test plan entries. The 8 scenarios (S1-S8) in ## Scenarios are well-defined with GIVEN/WHEN/THEN structure and could have been directly formalized into T1-T8 test plan entries. The missing test plan did not trigger the Hard Reject Rule since the section header exists and 8 tests are present in the diff, but the spec quality would benefit from explicit T1-T8 entries that specify test function name, input values, and expected output for each scenario.",
+      "locations": [
+        "cclab/changes/mamba-p0-bugfix/groups/mamba-codegen-runtime-fixes/specs/string-reverse-slice-fix.md:132-135"
+      ],
+      "recommendation": "Fill the ## Test Plan section with T1-T8 entries corresponding to S1-S8, each specifying: test function name, input (s, start, stop, step), and expected output string."
+    }
+  ]
+}

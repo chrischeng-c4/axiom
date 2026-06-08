@@ -1,0 +1,39 @@
+change_id: 1132-patrol
+schema_version: '2.0'
+created_at: 2026-04-04T07:34:58.587815Z
+updated_at: 2026-04-04T09:00:06.074500Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:wire-mamba-modules: 1
+current_task_id: native-import-resolution
+task_revisions:
+  native-import-resolution: 1
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1132
+    title: 'mamba: compiler import resolution does not wire MAMBA_MODULES registry symbols'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - wire-mamba-modules
+  change_implementation: []
+  post_clarifications:
+  - wire-mamba-modules
+  change_spec: []
+  pre_clarifications:
+  - wire-mamba-modules

@@ -1,0 +1,13 @@
+{
+  "group_id": "gen-thread-pool",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "requirements.md: after ~130 sequential generator thread::spawn calls on macOS aarch64, JIT code execution crashes with EXC_BAD_ACCESS code=257 (PAC failure). Thread counts stay at 2 — threads ARE joined — but cumulative pthread lifecycle corrupts process state.",
+    "success_criteria": "Generator stress test (200+ iterations with list comprehensions) passes without SIGBUS/SIGSEGV. Conformance suite can enable >99 active tests. Existing generator tests (basic_yield, send_throw, yield_from) remain passing.",
+    "boundary": {
+      "in_scope": "generator.rs: replace thread::spawn in ensure_started() with lazy-initialized pool of 2-4 worker threads. Workers receive (body_fn, args, channels, shared_capture) and set up thread_local GEN_TX/GEN_RX per task.",
+      "out_of_scope": "Generator state machine (R1-R6 in generator.md unchanged). Async runtime. JIT codegen. Conformance test runner changes.",
+      "constraints": "Generator spec (generator.md) defines state machine semantics but does not mandate threads — thread pool is a compatible implementation change. Thread-safe runtime spec (thread-safe-runtime.md R5/R7) requires global registries use Arc<Mutex>/DashMap + AtomicU64 counters — pool must follow this pattern."
+    }
+  }
+}

@@ -1,0 +1,29 @@
+change_id: consolidate-codegen
+schema_version: '2.0'
+created_at: 2026-04-07T08:37:19.917032Z
+updated_at: 2026-04-07T09:41:07.495094Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: consolidate-codegen-spec
+task_revisions: {}
+impl_spec_phase:
+  consolidate-codegen-spec: code
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  post_clarifications:
+  - consolidate-codegen
+  change_spec: []
+  pre_clarifications:
+  - consolidate-codegen
+  reference_context:
+  - consolidate-codegen

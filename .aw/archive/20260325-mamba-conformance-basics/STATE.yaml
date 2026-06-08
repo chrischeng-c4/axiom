@@ -1,0 +1,341 @@
+branch: null
+change_id: mamba-conformance-basics
+checksums: {}
+created_at: 2026-03-22 17:11:50.578264+00:00
+current_task_id: type-checker
+dag:
+  complete: false
+  current_index: 0
+  issues:
+  - blocked_by: []
+    dependents: []
+    depends: []
+    number: 1037
+    processed: false
+    title: 'test(mamba): Py3.12 behavioral conformance — every function must match
+      CPython'
+delegation_guard: null
+git_workflow: in_place
+groups_progress:
+  change_implementation: []
+  change_spec: []
+  post_clarifications:
+  - runtime-basics
+  pre_clarifications:
+  - runtime-basics
+  reference_context:
+  - runtime-basics
+impl_spec_phase: {}
+iteration: 1
+last_action: null
+phase: change_rejected
+revision_counts:
+  impl:cranelift-jit: 1
+  ref_ctx:runtime-basics: 1
+schema_version: '2.0'
+session_id: null
+task_revisions:
+  cranelift-jit: 2
+telemetry:
+  calls:
+  - cost_usd: null
+    duration_ms: 85874
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: restructure_input
+    timestamp: 2026-03-22 17:13:26.805290+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 146446
+    model: gemini-3.1-pro-preview
+    sdd_version: 0.3.43
+    step: create_reference_context
+    timestamp: 2026-03-22 17:16:31.599833+00:00
+    tokens_in: 928873
+    tokens_out: 2418
+  - cost_usd: null
+    duration_ms: 198838
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_reference_context
+    timestamp: 2026-03-23 02:29:42.397504+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 194813
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_reference_context
+    timestamp: 2026-03-23 02:31:49.539511+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 533196
+    model: gemini-3.1-pro-preview
+    sdd_version: 0.3.43
+    step: revise_reference_context
+    timestamp: 2026-03-23 02:41:17.141819+00:00
+    tokens_in: 913118
+    tokens_out: 6835
+  - cost_usd: null
+    duration_ms: 256432
+    model: gemini-3.1-pro-preview
+    sdd_version: 0.3.43
+    step: revise_reference_context
+    timestamp: 2026-03-23 03:48:19.725015+00:00
+    tokens_in: 1815184
+    tokens_out: 4212
+  - cost_usd: null
+    duration_ms: 288217
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: analyze_spec_builtins
+    timestamp: 2026-03-23 03:59:17.003548+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 582658
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: analyze_spec_builtins
+    timestamp: 2026-03-23 04:00:00.417834+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 741308
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: analyze_spec_cranelift-jit
+    timestamp: 2026-03-23 04:12:26.903143+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 661045
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: analyze_spec_cranelift-jit
+    timestamp: 2026-03-23 04:21:20.145380+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 225268
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: analyze_spec_cranelift
+    timestamp: 2026-03-23 04:25:14.099770+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 431088
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: analyze_spec_repl
+    timestamp: 2026-03-23 04:32:33.604869+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 267841
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: analyze_spec_string-ops
+    timestamp: 2026-03-23 04:37:08.300542+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 573978
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: analyze_spec_type-checker
+    timestamp: 2026-03-23 04:46:49.892788+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 389296
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_tests_cranelift-jit
+    timestamp: 2026-03-23 05:24:32.931817+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 572319
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_spec
+    timestamp: 2026-03-23 05:24:50.875210+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 84893
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_tests_type-checker
+    timestamp: 2026-03-23 05:31:37.573565+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 209892
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_spec
+    timestamp: 2026-03-23 05:31:48.058232+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 496654
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_tests_string-ops
+    timestamp: 2026-03-23 05:32:08.403245+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 614340
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_spec
+    timestamp: 2026-03-23 05:32:25.048400+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 691919
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_tests_repl
+    timestamp: 2026-03-23 05:32:52.851371+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 762106
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_spec
+    timestamp: 2026-03-23 05:33:04.891226+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 226859
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: write_implementation_diff
+    timestamp: 2026-03-23 05:34:22.204910+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 2300482
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_tests_cranelift
+    timestamp: 2026-03-23 05:36:29.034181+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 2564766
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_spec
+    timestamp: 2026-03-23 05:36:36.238434+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 2763842
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: implement_tests_builtins
+    timestamp: 2026-03-23 05:36:44.488659+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 2988877
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: begin_implementation
+    timestamp: 2026-03-23 05:36:52.466037+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 187745
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_impl_builtins
+    timestamp: 2026-03-23 05:40:11.710682+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 180571
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_impl_cranelift
+    timestamp: 2026-03-23 05:43:22.090517+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 262641
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_impl_cranelift-jit
+    timestamp: 2026-03-23 05:47:52.865398+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 133845
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_impl_builtins
+    timestamp: 2026-03-23 05:56:15.077270+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 238684
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_impl_cranelift
+    timestamp: 2026-03-23 06:00:22.693384+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 225852
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_impl_cranelift-jit
+    timestamp: 2026-03-23 06:04:16.978104+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 136041
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_impl_repl
+    timestamp: 2026-03-23 06:06:45.725986+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 120155
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_impl_string-ops
+    timestamp: 2026-03-23 06:08:53.244446+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 117524
+    model: claude-opus-4-6
+    sdd_version: 0.3.43
+    step: review_impl_type-checker
+    timestamp: 2026-03-23 06:10:57.670283+00:00
+    tokens_in: null
+    tokens_out: null
+  - cost_usd: null
+    duration_ms: 1413887
+    model: claude-sonnet-4-6
+    sdd_version: 0.3.43
+    step: revise_change_implementation
+    timestamp: 2026-03-23 06:11:36.083349+00:00
+    tokens_in: null
+    tokens_out: null
+  total_cost_usd: 0.0
+  total_tokens_in: 3657175
+  total_tokens_out: 13465
+updated_at: 2026-03-23 06:11:36.089345+00:00
+validations: []

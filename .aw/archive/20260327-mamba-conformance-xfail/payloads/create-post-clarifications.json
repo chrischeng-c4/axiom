@@ -1,0 +1,13 @@
+{
+  "group_id": "conformance-xfail-reduction",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "48 xfail conformance tests remain. Breakdown: 5 verifier (kwargs arg count mismatch in codegen), 30 output mismatch, 6 other, 3 parse. → requirements.md",
+    "success_criteria": "Reduce xfail count. Priority: kwargs verifier errors first (depth), then output mismatches. Runtime must match CPython 3.12 output exactly. → pre_clarifications.md",
+    "boundary": {
+      "in_scope": "kwargs codegen fix (cranelift mod.rs + jit.rs symbol registration + builtins.rs kwargs functions), output mismatch fixes in builtins.rs/string_ops.rs, parser edge case fixes",
+      "out_of_scope": "GC root scanning integration (separate future work), generator frame-switching migration, new stdlib module implementations",
+      "constraints": "Must not break existing 101 passing conformance tests. All changes go through JIT pipeline (parse→typecheck→HIR→MIR→cranelift→execute)."
+    }
+  }
+}

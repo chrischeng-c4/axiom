@@ -1,0 +1,4 @@
+[wasm]
+entry = "src/SelfClosing.tsx"
+root_component = "SelfClosing"
+root_props = [0]

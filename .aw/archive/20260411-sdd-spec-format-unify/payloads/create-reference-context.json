@@ -1,0 +1,57 @@
+{
+  "group_id": "sdd-spec-format-unify",
+  "specs": [
+    {
+      "spec_id": "mermaid-plus-format",
+      "spec_group": "crates/sdd/generate",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R3", "R4"]
+    },
+    {
+      "spec_id": "requirement-plus-enhancement",
+      "spec_group": "crates/sdd/generate",
+      "relevance": "high",
+      "key_requirements": ["R1", "R2", "R3", "R4"]
+    },
+    {
+      "spec_id": "spec-structure-rules",
+      "spec_group": "crates/sdd/logic",
+      "relevance": "high",
+      "key_requirements": ["REQ-1"]
+    },
+    {
+      "spec_id": "check-alignment-phase3",
+      "spec_group": "crates/sdd/logic",
+      "relevance": "high",
+      "key_requirements": ["R22", "R23", "R24"]
+    },
+    {
+      "spec_id": "change-spec-logic",
+      "spec_group": "crates/sdd/logic",
+      "relevance": "medium",
+      "key_requirements": ["R1", "R2"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "sdd-spec-format-unification",
+      "action": "create",
+      "main_spec_ref": "crates/sdd/logic/spec-format-unification.md",
+      "sections": ["overview", "requirements", "scenarios", "changes"]
+    },
+    {
+      "spec_id": "sdd-fill-order-topdown",
+      "action": "modify",
+      "main_spec_ref": "crates/sdd/logic/spec-structure.md",
+      "source": ".score/tech_design/crates/sdd/logic/spec-structure.md",
+      "sections": ["requirements", "changes"]
+    },
+    {
+      "spec_id": "sdd-format-rules-yaml",
+      "action": "modify",
+      "main_spec_ref": "crates/sdd/logic/check-alignment.md",
+      "source": ".score/tech_design/crates/sdd/logic/check-alignment.md",
+      "sections": ["requirements", "changes"]
+    }
+  ]
+}

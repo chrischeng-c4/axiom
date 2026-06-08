@@ -1,0 +1,15 @@
+{
+  "groups": [
+    {
+      "id": "consolidate-grid-crates",
+      "issues": [],
+      "requirements": "Consolidate 5 separate cclab-grid-* crates (core, formula, history, db, server) into a single cclab-grid crate with sub-modules. The cclab-grid-wasm crate stays separate because it requires a cdylib build target.\n\nScope:\n1. Create new crate crates/cclab-grid/ with sub-modules: core/, formula/, history/, db/, server/\n2. Move source files from each crate into the corresponding sub-module directory\n3. Merge all Cargo.toml dependencies into a single cclab-grid/Cargo.toml\n4. Update all internal imports: cross-crate deps (e.g. cclab-grid-formula depending on cclab-grid-core) become intra-crate module references (crate::core::*)\n5. Update cclab-grid-wasm/Cargo.toml to depend on cclab-grid instead of the 3 separate crates (core, formula, history)\n6. Update cclab-grid-server binary: the server has a [[bin]] target — this moves into the consolidated crate or becomes a separate thin binary crate\n7. Update workspace Cargo.toml members: remove 5 old crate paths, add crates/cclab-grid\n8. Remove the 5 old crate directories after migration\n9. Ensure all tests pass: cargo test -p cclab-grid, WASM build still works\n\nKey constraints:\n- cclab-grid-server has a binary (cclab-grid-server) with a main.rs — need to preserve this as either a [[bin]] in cclab-grid or a separate thin binary\n- cclab-grid-db depends on cclab-wal (external workspace crate) — this dependency must be preserved\n- cclab-grid-server depends on cclab-kv (external workspace crate) — this dependency must be preserved\n- Feature-gated dependencies: server has heavy deps (axum, tokio, tower, yrs, etc.) that should likely be behind a feature flag so library users of cclab-grid don't pull them in\n- No functional changes — purely structural refactor",
+      "questions": [
+        "Should the server binary remain as a [[bin]] target inside cclab-grid, or should we create a thin cclab-grid-server binary crate that just depends on cclab-grid?",
+        "Should heavy server dependencies (axum, tokio, tower, yrs, uuid, chrono, etc.) be behind a cargo feature flag (e.g. 'server') to avoid pulling them in for library-only consumers?",
+        "Should the db module dependencies (cclab-wal, tokio, bincode, parking_lot) also be behind a feature flag (e.g. 'db')?",
+        "The cclab-grid-db Cargo.toml uses explicit version numbers instead of workspace versions — should we normalize it to use workspace versions during consolidation?"
+      ]
+    }
+  ]
+}

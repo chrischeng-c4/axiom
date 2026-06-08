@@ -1,0 +1,178 @@
+openapi: 3.1.0
+info:
+  title: cclab-server MCP API
+  description: Unified HTTP server for MCP + Dashboard + Plan Viewer
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:3456
+    description: Default MCP server
+
+paths:
+  /mcp:
+    post:
+      summary: MCP JSON-RPC endpoint
+      description: Handle MCP tool calls via JSON-RPC 2.0
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JsonRpcRequest'
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+  /dashboard:
+    get:
+      summary: Dashboard UI
+      responses:
+        '200':
+          description: HTML dashboard
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /api/changes:
+    get:
+      summary: List all changes
+      responses:
+        '200':
+          description: List of changes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Change'
+
+  /api/changes/{change_id}:
+    get:
+      summary: Get change details
+      parameters:
+        - name: change_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Change details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Change'
+
+  /api/changes/{change_id}/specs:
+    get:
+      summary: List specs for a change
+      parameters:
+        - name: change_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of specs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Spec'
+
+components:
+  schemas:
+    JsonRpcRequest:
+      type: object
+      required: [jsonrpc, method, id]
+      properties:
+        jsonrpc:
+          type: string
+          const: "2.0"
+        method:
+          type: string
+        params:
+          type: object
+        id:
+          oneOf:
+            - type: string
+            - type: integer
+
+    JsonRpcResponse:
+      type: object
+      required: [jsonrpc, id]
+      properties:
+        jsonrpc:
+          type: string
+          const: "2.0"
+        result:
+          type: object
+        error:
+          $ref: '#/components/schemas/JsonRpcError'
+        id:
+          oneOf:
+            - type: string
+            - type: integer
+
+    JsonRpcError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data:
+          type: object
+
+    Change:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        phase:
+          type: string
+          enum: [clarifying, exploring, drafting, planned, implementing, implemented, archived, rejected]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Spec:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+          enum: [http-api, event-driven, data-model, algorithm, integration, utility, rpc-api, workflow]
+        version:
+          type: integer

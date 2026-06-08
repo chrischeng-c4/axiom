@@ -1,0 +1,17 @@
+{
+  "artifact_kind": "cli_surface",
+  "intent_read": "Keep CLI output deterministic and scriptable.",
+  "audience": "agents and operators",
+  "constraints": ["backward-compatible JSON"],
+  "quality_dials": [
+    { "key": "machine_readability", "value": "strict", "rationale": "agents parse stdout" }
+  ],
+  "source_policy": {
+    "mode": "cli_transcript",
+    "evidence_ref": "command contract"
+  },
+  "preflight_gate_set": {
+    "id": "cli-surface-preflight",
+    "gates": ["json roundtrip"]
+  }
+}

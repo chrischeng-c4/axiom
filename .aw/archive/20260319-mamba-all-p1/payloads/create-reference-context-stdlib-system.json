@@ -1,0 +1,21 @@
+{
+  "change_id": "mamba-all-p1",
+  "group_id": "stdlib-system",
+  "specs": [
+    {
+      "spec_path": "specs/cclab-mamba/README.md",
+      "relevance": "medium",
+      "reason": "Codebase spec index identifying key infrastructure components mapped to .rs files. Critical sections: runtime/stdlib/ (lines 92-126) shows where stdlib modules are implemented; runtime/value-and-rc.md and runtime/gc.md (lines 72-73) detail NaN-boxed value system and cycle-detecting GC infrastructure underlying all stdlib modules; runtime/module.md (line 87) documents import system and sys.modules. Provides essential context for understanding how native stdlib types (#654 type creation) and GC infrastructure (#653 garbage collection interface) are exposed through stdlib modules"
+    },
+    {
+      "spec_path": "specs/cclab-mamba/all-mamba-p0.md",
+      "relevance": "medium",
+      "reason": "Comprehensive P0 feature spec with two directly relevant components: (1) R1 Module System & Imports (lines 20-23) addresses #655 importlib requirements including import aliases, relative imports, multi-file compilation, and cross-module type checking; (2) R5 Builtins Conformance (lines 40-42) addresses #654 type creation utilities by requiring type() builtin conformance with dynamic type object synthesis. Establishes architectural foundation for import machinery and type infrastructure needed by stdlib-system modules (type, importlib, atexit, codecs, tracemalloc, errno)"
+    },
+    {
+      "spec_path": "specs/cclab-mamba/pattern-matching.md",
+      "relevance": "low",
+      "reason": "Detailed PEP 634 pattern matching spec covering match/case implementation across compiler layers (parser, type checker, HIR/MIR lowering, Cranelift codegen). While not directly related to stdlib-system core requirements, provides context on AST nodes and compiler infrastructure (type narrowing in case branches R4, MIR decision trees R7) that underlies stdlib introspection modules like inspect and ast. Included for completeness as architectural background"
+    }
+  ]
+}

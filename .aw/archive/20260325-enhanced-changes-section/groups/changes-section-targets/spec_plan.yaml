@@ -1,0 +1,16 @@
+- spec_id: changes-section-schema
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-spec.md
+  source: crates/cclab-sdd/logic/change-spec.md
+  sections:
+  - overview
+  - schema
+  - changes
+- spec_id: lens-impl-prompt
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/implement-task.md
+  source: crates/cclab-sdd/logic/implement-task.md
+  sections:
+  - overview
+  - logic
+  - changes

@@ -1,0 +1,16 @@
+{
+  "groups": [
+    {
+      "id": "bug-and-agent",
+      "issues": [],
+      "requirements": "1) Fix reference context table rendering — render actual spec paths/relevance into markdown table instead of ? placeholders. In create_reference_context.rs render_specs_markdown(). 2) Fix gen test to accept .md spec files — use gen parse internally to extract RequirementPlus SpecIR. 3) Update sdd-change-implementation agent description to mandate code intelligence (score symbols/references/impact) before modifying existing files.",
+      "questions": []
+    },
+    {
+      "id": "codegen-extensions",
+      "issues": [],
+      "requirements": "4) L3 codegen state-machine: stateDiagram-v2 → Python enum + transition function with match arms. 5) L2 codegen FlowchartPlus: nodes with fn signatures → function skeletons + @sdd:implement markers. 6) L2 codegen SequencePlus: actor messages → async call chain skeleton + @sdd:implement markers. All 3 implement SpecIRGenerator trait in sdd/generate/generators/.",
+      "questions": []
+    }
+  ]
+}

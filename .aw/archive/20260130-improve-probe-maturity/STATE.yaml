@@ -1,0 +1,60 @@
+change_id: improve-probe-maturity
+schema_version: '2.0'
+created_at: 2026-01-28T16:58:54.781523Z
+updated_at: 2026-01-28T16:59:25.510147Z
+phase: drafting
+iteration: 1
+last_action: validate-proposal
+session_id: null
+checksums:
+  proposal.md:
+    hash: sha256:33b39754dade0f7de005f7b72556dd4afc97175e03821a04f228f72ce620c52e
+    validated_at: 2026-01-28T16:59:25.508978Z
+  specs/fixture-di-integration.md:
+    hash: sha256:9dede45decab898b019422d0a4bee8048d3f3c7becc00029b8502bc908a50c72
+    validated_at: 2026-01-28T16:59:25.509779Z
+  specs/plugin-system.md:
+    hash: sha256:88cb02fa47481b218e2af4435cdfc10b1f54aa437b6e0a87a0cc49c6a4cb3458
+    validated_at: 2026-01-28T16:59:25.509438Z
+  specs/expect-api-reference.md:
+    hash: sha256:ee9cc28ddf70ada6a3faf7cb9c95db8d23481bd521a381adc9f2be87d3d150d2
+    validated_at: 2026-01-28T16:59:25.509605Z
+  tasks.md:
+    hash: sha256:4d05e0539916e542db4fb4100247ab6feaf8f258f982c1f8eada6329a3e5f1ad
+    validated_at: 2026-01-28T16:59:25.509196Z
+  specs/fixture-di-integration-alt.md:
+    hash: sha256:fc533b7d9479fb8ac42a1be5cd2f986f41233d64202906141c4e6f580aaa5aca
+    validated_at: 2026-01-28T16:59:25.510145Z
+  specs/agent-eval.md:
+    hash: sha256:aef8548c61fb990ff7c3e1d819d528a656e392b2d5de526653cd01d931094343
+    validated_at: 2026-01-28T16:59:25.509971Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-28T16:58:58.701792Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T16:59:25.508833Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

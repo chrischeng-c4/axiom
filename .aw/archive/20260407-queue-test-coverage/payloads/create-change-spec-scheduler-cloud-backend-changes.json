@@ -1,0 +1,6 @@
+{
+  "spec_id": "scheduler-cloud-backend",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: scheduler-cloud-backend-changes\n  refs:\n    - $ref: \"#cloud-scheduler-backend-async-api\"\n    - $ref: \"error-types#task-error-schema\"\nchanges:\n  - path: crates/cclab-queue/src/scheduler/cloud_scheduler_backend_tests.rs\n    action: existing\n    description: >-\n      Tests already exist (43 tests). No new tests needed — existing coverage is comprehensive.\n      Covers: leader election no-ops (4), config helpers + job serde (9), pause/resume local state (2),\n      task state CRUD + record_task_run (7), OIDC token cache validity (7), GCP error mapping (8),\n      delete local state cleanup (1), construction + Send+Sync (2), HttpTarget serde (2),\n      MetadataTokenResponse deserialization (1).\n```"
+}

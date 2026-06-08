@@ -1,0 +1,8 @@
+{
+  "group_id": "jet-build-real-world-validation",
+  "specs": [
+    {"spec": "aot-build", "group": "cclab-jet", "relevance": "high", "key_requirements": "R13 Build Verification, mini-react example patterns"},
+    {"spec": "tree-shaking", "group": "cclab-jet", "relevance": "high", "key_requirements": "R6 Bundle Size Target, S2 React Production Build"},
+    {"spec": "scope-hoisting", "group": "cclab-jet", "relevance": "medium", "key_requirements": "Phase 1 IIFE, bundle size 206.8KB"}
+  ]
+}

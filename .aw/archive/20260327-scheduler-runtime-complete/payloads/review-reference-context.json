@@ -1,0 +1,82 @@
+{
+  "group_id": "scheduler-runtime-complete",
+  "verdict": "pass",
+  "summary": "Reference context covers all four pre-clarification areas and references 7 valid, relevant specs. Spec plan structure is sound: all 4 create entries use crates/cclab-fetch/scheduler/ subfolder paths, one logical unit per file, no duplicate section types. Two accuracy warnings: (1) scheduler-backends key requirements attribute method signatures (acquire_leader, renew_leader, etc.) that are not present in the old scheduler-backends.md spec directly — they exist in scheduler-backends-gcp scenario S3 and cloud-scheduler-backend R1, so the info is correct but the attribution is off; (2) cloud-scheduler-backend key requirements include 'Push receiver must validate OIDC tokens from Cloud Scheduler callbacks' which is a derived consequence of R5 (httpTarget.oidcToken config), not a stated requirement in that spec — this belongs to the push-receiver spec to be created. Neither issue blocks the change spec phase since the implementation agent will read the actual specs.",
+  "checklist": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "result": "pass",
+      "notes": "Q1 (push receiver on existing axum server): covered by broker-traits (PushBroker interface), cloud-scheduler-backend (target_base_url + httpTarget pattern), and push-receiver spec plan entry with rest-api section. Q2 (K8s CronJob HTTP POST to push receiver): covered by k8s-job-executor (kube-rs integration patterns R2/R3/R4), scheduler-backends (SchedulerBackend trait K8sCronJobBackend must implement), scheduler-backends-gcp (cfg(feature) registration pattern in mod.rs), and k8s-cronjob-backend spec plan. Q3 (schedule monitor Prometheus + webhook): covered by schedule-monitor spec plan. Q4 (HMAC auth for K8s): no existing spec covers HMAC auth — acknowledged gap, handled by push-receiver spec plan (schema + rest-api sections define new design from scratch). Minor gap: no existing cclab-server spec referenced for axum Router registration point, but push-receiver spec plan handles this as a create action."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "result": "pass",
+      "notes": "scheduler-backends=high: K8sCronJobBackend directly implements this trait — correct. cloud-scheduler-backend=high: target_base_url field and httpTarget schema are directly reused by push-receiver spec — correct. broker-traits=high: Broker.publish() and BrokerMessage are mandatory downstream path from every push callback — correct. cloudtasks-broker=medium: reference pattern for push request parsing and inbound OIDC JWT validation only — correct, not directly reimplemented. scheduler-backends-gcp=medium: feature registration template only — correct. scheduler-architecture=medium: architectural context for mode-selection, not modified — correct. k8s-job-executor=medium: kube-rs client setup patterns to reuse, not modified — correct. All 7 scores well-calibrated."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "result": "pass",
+      "notes": "WARNING (minor): scheduler-backends key requirements list method signatures 'acquire_leader(ttl), renew_leader(ttl), release_leader(), get_task_state(name), set_task_state(name, state)' attributed to R1. The actual scheduler-backends.md (old format at crates/cclab-fetch/scheduler-backends.md) only states R1 as 'Define a trait to abstract away the leader election and state persistence' — no method signatures. The method list is accurate (confirmed in scheduler-backends-gcp scenario S3 line 45 and cloud-scheduler-backend R1), but technically sourced from adjacent specs, not the cited spec. R2/R3 IDs match exactly. WARNING (minor): cloud-scheduler-backend key requirements include 'Push receiver must validate OIDC tokens from Cloud Scheduler callbacks' — this is a derived consequence of R5 (httpTarget.oidcToken configures GCP to send OIDC in callbacks) but is NOT a stated requirement in cloud-scheduler-backend. Inbound OIDC validation belongs in the push-receiver spec to be created. All other key requirements accurately reference stated spec content: cloud-scheduler-backend target_base_url (schema line 248), OidcTokenCache (schema lines 292-311), httpTarget (schema lines 357-414); broker-traits R3 PushBroker/endpoint_path (line 20), R1 Broker.publish (line 18), R7 BrokerMessage (line 24); cloudtasks-broker R5 JWT validation (line 21-22), R2 endpoint_path /meteor/push/{queue} (line 19); scheduler-backends-gcp R4 (line 18); scheduler-architecture R3 (line 63-70); k8s-job-executor R2/R3/R4 (lines 51-62)."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "result": "pass",
+      "notes": "All 7 specs are directly relevant: scheduler-backends (SchedulerBackend trait that K8sCronJobBackend implements), cloud-scheduler-backend (push receiver URL shape and OIDC token cache design pattern), broker-traits (PushBroker + Broker + BrokerMessage interface downstream from push receiver), cloudtasks-broker (existing push request parsing + inbound JWT validation pattern to model), scheduler-backends-gcp (cfg(feature) registration pattern for k8s-scheduler feature), scheduler-architecture (pluggable backend architecture context for mode-selection), k8s-job-executor (kube-rs client setup patterns for K8sCronJobBackend). No extraneous background specs included."
+    },
+    {
+      "item": "spec_plan: every entry has main_spec_ref set (not null)",
+      "result": "pass",
+      "notes": "All 4 entries have explicit paths: push-receiver=crates/cclab-fetch/scheduler/push-receiver.md, k8s-cronjob-backend=crates/cclab-fetch/scheduler/k8s-cronjob-backend.md, schedule-monitor=crates/cclab-fetch/scheduler/schedule-monitor.md, scheduler-mode-selection=crates/cclab-fetch/scheduler/scheduler-mode-selection.md. None are null."
+    },
+    {
+      "item": "spec_plan: sections are reasonable for the requirements",
+      "result": "pass",
+      "notes": "push-receiver [overview, schema, rest-api, changes]: rest-api section correctly included to define the axum route /scheduler/push/{task}, request format, HMAC-SHA256 validation (Q4), and OIDC token validation for Cloud Scheduler callbacks (Q1/Q2). k8s-cronjob-backend [overview, schema, changes]: rest-api absent is correct — K8s CronJob interaction is kube-rs API, not HTTP routes exposed by the service. schema section covers SchedulerBackend impl and K8s CronJob spec. schedule-monitor [overview, schema, changes]: schema must cover Prometheus metric definitions (counter for missed, histogram for fire latency per Q3) and webhook URL config. Note: an explicit 'config' section would make webhook URL configuration more discoverable, but schema can serve this role. scheduler-mode-selection [overview, schema, changes]: schema covers mode enum (self-hosted / cloud-scheduler / k8s-cronjob) and per-mode runtime config."
+    },
+    {
+      "item": "spec_plan: modify entries have valid source paths",
+      "result": "pass",
+      "notes": "All 4 spec plan entries use action=create (no modify entries). Source path validation is not applicable."
+    },
+    {
+      "item": "spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)",
+      "result": "pass",
+      "notes": "All 4 paths use crates/cclab-fetch/scheduler/ subfolder. Consistent with existing new-format specs: cloud-scheduler-backend.md and scheduler-backends.md (scheduler-backends-gcp) also live at crates/cclab-fetch/scheduler/. Root-level old-format specs (scheduler-backends.md, scheduler-architecture.md, k8s-job-executor.md) are reference context entries only, not spec plan targets."
+    },
+    {
+      "item": "spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)",
+      "result": "pass",
+      "notes": "push-receiver: one unit — HTTP trigger endpoint with dual auth (OIDC for Cloud Scheduler, HMAC for K8s) and broker.publish downstream. k8s-cronjob-backend: one unit — SchedulerBackend backed by K8s CronJob objects via kube-rs. schedule-monitor: one unit — schedule fire tracking, Prometheus metrics emission, and webhook alert dispatch for missed schedules. scheduler-mode-selection: one unit — PeriodicScheduler runtime mode branching (tick-loop vs push-receiver server). No cross-concerns merged into a single file."
+    },
+    {
+      "item": "spec_plan: no spec file would require duplicate section types (split into separate files if needed)",
+      "result": "pass",
+      "notes": "push-receiver: [overview, schema, rest-api, changes] — each section type appears once. k8s-cronjob-backend, schedule-monitor, scheduler-mode-selection: [overview, schema, changes] — each once. No splitting needed."
+    },
+    {
+      "item": "spec_plan: spec paths mirror source structure (interfaces/, logic/, generate/)",
+      "result": "pass",
+      "notes": "All new specs use crates/cclab-fetch/scheduler/ which mirrors crates/cclab-queue/src/scheduler/ (Rust module path for scheduler submodules). Existing broker specs at crates/cclab-fetch/broker/ match crates/cclab-queue/src/broker/. Convention is consistent with the cclab-fetch spec layout throughout."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "warn",
+      "location": "reference context table, scheduler-backends row, Key Requirements column",
+      "description": "Method signatures (acquire_leader(ttl), renew_leader(ttl), release_leader(), get_task_state(name), set_task_state(name, state)) are attributed to scheduler-backends (old-format spec at crates/cclab-fetch/scheduler-backends.md), but that spec only states R1 as 'Define a trait to abstract away the leader election and state persistence' with no method-level detail. The method list is accurate — it appears in scheduler-backends-gcp scenario S3 (crates/cclab-fetch/scheduler/scheduler-backends.md line 45) and cloud-scheduler-backend R1. Attribution mismatch does not block implementation but could mislead an agent inspecting the old spec directly."
+    },
+    {
+      "severity": "warn",
+      "location": "reference context table, cloud-scheduler-backend row, Key Requirements column",
+      "description": "'Push receiver must validate OIDC tokens from Cloud Scheduler callbacks' is not a stated requirement in cloud-scheduler-backend spec. It is a derived consequence of R5 (httpTarget.oidcToken — configures GCP Cloud Scheduler to include an OIDC token when calling the push endpoint). The actual inbound OIDC validation requirement belongs in the push-receiver spec to be created. This creates a mismatch between what an agent reads in the spec vs what the key requirements claim."
+    }
+  ],
+  "devil_advocate_coverage_check": {
+    "q1_push_receiver_axum_routes": "Covered by push-receiver spec plan (rest-api + changes sections). No existing axum server route-mounting spec is referenced — gap acknowledged. The implementer must inspect cclab-server source to find the Router registration point. This is a source-code-level concern outside spec scope; acceptable since no route-mounting spec exists in crates/cclab-server/ for this pattern.",
+    "q2_k8s_cronjob_http_post": "Covered by k8s-cronjob-backend spec plan. k8s-job-executor provides kube-rs client setup (R2) and resource config patterns (R3/R4). K8sCronJobBackend creates CronJob objects (vs one-shot Job objects in executor) — same kube-rs API surface. The minimal binary that POSTs to push receiver is a separate concern from the backend implementation; it falls within k8s-cronjob-backend spec's changes section.",
+    "q3_schedule_monitor_metrics_webhook": "Covered by schedule-monitor spec plan. No existing cclab-queue Prometheus spec is referenced — acknowledged. Prometheus counter and histogram are standard prometheus_client crate patterns; no internal spec precedent is needed. Webhook outbound HTTP callback is net-new design to be specified in schedule-monitor schema.",
+    "q4_hmac_auth": "No existing HMAC auth spec exists in cclab-queue. This is a new design to be specified in push-receiver (schema covers HmacConfig struct, rest-api section covers HMAC-SHA256 signature validation header). The gap is by design since cloudtasks-broker (OIDC JWT) uses a different auth mechanism — correctly excluded from HMAC coverage.",
+    "k8s_cronjob_backend_registration": "Covered by scheduler-backends-gcp reference (R4: cfg(feature) pattern in scheduler/mod.rs, crates/cclab-fetch/scheduler/scheduler-backends.md lines 18, 107-119). K8sCronJobBackend follows the same k8s-scheduler feature flag pattern. Template is present.",
+    "scheduler_mode_selection_architecture": "Covered by scheduler-architecture reference (R3 pluggable backend, leader election flowchart at crates/cclab-fetch/scheduler-architecture.md lines 63-115). scheduler-mode-selection spec extends this with mode enum and branching logic between tick-loop and push-server modes."
+  }
+}

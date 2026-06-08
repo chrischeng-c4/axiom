@@ -1,0 +1,81 @@
+change_id: change-impl-agent
+schema_version: '2.0'
+created_at: 2026-03-18T09:50:42.642819Z
+updated_at: 2026-03-18T10:21:52.514253Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:code-agent-core: 1
+current_task_id: change-impl-agent-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 264841
+    timestamp: 2026-03-18T09:57:53.854377Z
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 3554106
+    tokens_out: 6298
+    cost_usd: null
+    duration_ms: 497647
+    timestamp: 2026-03-18T09:59:04.553016Z
+  - step: analyze_spec_change-impl-agent-spec
+    sdd_version: 0.3.41
+    model: gemini-3.1-pro-preview
+    tokens_in: 608282
+    tokens_out: 2981
+    cost_usd: null
+    duration_ms: 153537
+    timestamp: 2026-03-18T10:02:20.628688Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 149281
+    timestamp: 2026-03-18T10:15:56.312309Z
+  - step: begin_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 820730
+    timestamp: 2026-03-18T10:16:18.719773Z
+  total_cost_usd: 0.0
+  total_tokens_in: 4162388
+  total_tokens_out: 9279
+dag:
+  issues:
+  - number: 925
+    title: 'feat(agent): Add CodeAgent — spec-to-code with server-side git'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - code-agent-core
+  change_implementation: []
+  post_clarifications:
+  - code-agent-core
+  change_spec: []
+  reference_context:
+  - code-agent-core

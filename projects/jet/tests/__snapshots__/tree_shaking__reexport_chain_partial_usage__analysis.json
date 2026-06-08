@@ -1,0 +1,14 @@
+{
+  "eliminated_bytes": 20,
+  "eliminated_modules": [
+    "/fixture/b.js"
+  ],
+  "used_exports": {
+    "/fixture/a.js": [
+      "a"
+    ],
+    "/fixture/barrel.js": [
+      "a"
+    ]
+  }
+}

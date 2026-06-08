@@ -1,0 +1,65 @@
+{
+  "change_id": "lens-dissolution",
+  "spec_id": "sdd-cli-context-command",
+  "verdict": "REJECTED",
+  "summary": "Two hard checklist failures prevent approval. (1) The spec's required target file `cclab/specs/crates/cclab-sdd/interfaces/cli/commands.md` was NOT updated: the Command Tree YAML block is missing the `context <targets...>` entry and the `check --format` accepted-values list, and the CLI→Logic Mapping table is missing both new rows (R7: `sdd context` → `ContextBuilder::build_context()`, R8: `sdd check --format agent` → `AgentOutputBuilder::build()`). This violates changes[0] and requirements R7/R8 directly. (2) The spec contains a `## Test Plan` section (line 137) and the implementation diff contains zero `#[test]` or `#[cfg(test)]` blocks in commands.rs or direct.rs — the Hard Reject Rule applies. The functional code changes themselves are correct and complete: Context variant is properly defined in commands.rs (lines 123-135), ContextTarget::parse validates file:symbol format, depth defaults to 2, JSON is printed to stdout, and check --format agent routes through Reporter::generate_agent() in direct.rs (lines 95-98). cclab-sdd-cli compiles cleanly.",
+  "checklist_results": [
+    {
+      "item": "Code matches all spec requirements",
+      "passed": false,
+      "note": "R1-R6 PASS (Context variant at commands.rs:123-135; targets: Vec<String> required positional; depth: u32 default 2; JSON to stdout; check accepts 'agent' in direct.rs:170; AgentOutput routed via Reporter::generate_agent). R7 FAIL: CLI→Logic Mapping in commands.md has no `sdd context <targets...>` row. R8 FAIL: CLI→Logic Mapping in commands.md has no `sdd check --format agent` row. NF1 PASS: no MCP registration. NF2 PASS: integrated into existing clap command tree. Changes[0] FAIL: cclab/specs/crates/cclab-sdd/interfaces/cli/commands.md was not modified — Command Tree missing 'context' block, check subcommand '--format agent' not documented, two CLI→Logic Mapping rows absent."
+    },
+    {
+      "item": "If spec has Test Plan: diff contains at least one #[test] function",
+      "passed": false,
+      "note": "Spec has a `## Test Plan` section at line 137 (content is `<!-- TODO -->`, 0 test cases defined). The implementation diff is empty (fatal: bad revision '/dev/null'). Examining actual source: commands.rs has no `#[test]` blocks; direct.rs has no `#[test]` blocks. The cclab-sdd-cli test suite (platform.rs, list.rs, etc.) contains no tests exercising the new Context command or check --format agent path. The check --format agent integration tests (test_cli_check_format_agent_*) were written under the agent-output-format spec, not this spec. Hard Reject Rule fires: Test Plan section present + zero #[test] in this spec's diff."
+    },
+    {
+      "item": "Existing tests still pass (no regressions)",
+      "passed": true,
+      "note": "cargo check -p cclab-sdd-cli: PASS (10.44s). No compile errors. The Context variant dispatch at commands.rs:708-764 is well-formed and does not break existing command routing."
+    },
+    {
+      "item": "Code quality and readability",
+      "passed": true,
+      "note": "Context handler has a clear comment explaining the stub indices (lines 737-742). ContextTarget::parse uses rsplit_once for correct handling of paths like 'src/a.py:b:c'. Invalid-target fallback uses eprintln! + filter_map (graceful skip). The --root parameter (lines 133-134) is a minor addition not in spec but adds useful flexibility. Depth arg is u32 (not Option<u32> as spec text says) — actually cleaner since clap handles the default."
+    },
+    {
+      "item": "Error handling completeness",
+      "passed": true,
+      "note": "S4 (invalid target format) handled: warns to stderr and skips, then bail! on zero valid targets (line 728-730). JSON serialization errors propagate via ?. canonicalize() on root path propagates errors. check --format agent falls through to generate_agent() on OutputFormat::Agent match."
+    },
+    {
+      "item": "Performance considerations",
+      "passed": true,
+      "note": "Context handler uses walkdir for project file enumeration — O(n files). Empty stub indices mean no traversal work happens at runtime. Direct.rs build_agent_data is O(files × symbols) — same as approved agent-output-format review."
+    },
+    {
+      "item": "Documentation where needed",
+      "passed": true,
+      "note": "Context command clap doc comment ('Build agent context: smart file selection for AI task execution') is clear. --depth help text present. Stub comment at line 737 explains the deferred daemon integration. direct.rs build_agent_data has module-level doc comment."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "hard",
+      "description": "cclab/specs/crates/cclab-sdd/interfaces/cli/commands.md was not updated. The Command Tree YAML block (lines 17-42 of commands.md) is missing the `context <targets...>: --depth: integer (default 2)` entry. The `check` subcommand and its `--format: enum [json, markdown, console, sarif, github, gitlab, agent]` are absent from the command tree. The CLI→Logic Mapping table (lines 46-54) is missing two rows: `sdd context <targets...>` → `context_builder::ContextBuilder::build_context()` and `sdd check --format agent` → `output::agent::AgentOutputBuilder::build()`. Spec changes[0] explicitly required this file modification. Fix: add the context subcommand block, update check --format documentation, and append the two mapping rows."
+    },
+    {
+      "severity": "hard",
+      "description": "The spec has a `## Test Plan` section (sdd-cli-context-command.md line 137) and the implementation diff contains zero `#[test]` or `#[cfg(test)]` blocks. commands.rs and direct.rs — the only two Rust files modified — have no test coverage for the new Context command or check --format agent path. The Hard Reject Rule fires unconditionally. Fix: add at minimum one unit test for ContextTarget::parse validation (S4 scenario) and one test verifying the check --format argument accepts 'agent' without panic. The Test Plan section should also be filled in with actual test cases before re-review."
+    },
+    {
+      "severity": "soft",
+      "description": "The `## Test Plan` section (lines 137-141) contains only `<!-- TODO -->` — no test cases were defined. While this partially explains why no tests were implemented, a CLI-layer spec should define at least the S4 (invalid target format) and S6 (existing formats unaffected) scenarios as unit test cases. Spec quality gap: fill in the Test Plan before the next implementation attempt."
+    },
+    {
+      "severity": "soft",
+      "description": "The Context variant's `depth` field is declared as `u32` with `#[arg(default_value = \"2\")]` (commands.rs:129-130). The spec's changes section says 'Option<u32> default 2'. The u32-with-default is cleaner and functionally equivalent for clap, but it diverges from the spec wording. Minor discrepancy — not a blocker."
+    },
+    {
+      "severity": "soft",
+      "description": "The Context command adds a `--root` flag (commands.rs:133-134) not mentioned in the spec (R1-R4 define only `<targets...>` and `--depth N`). This extra flag improves usability but represents scope creep beyond the spec. Document it in the spec or note it as an intentional addition."
+    }
+  ]
+}

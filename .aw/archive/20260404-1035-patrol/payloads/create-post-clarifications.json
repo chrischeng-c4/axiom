@@ -1,0 +1,13 @@
+{
+  "group_id": "test-coverage-gaps",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "5 files below 10% line coverage: ffi/c_types.rs (0%), queue_mod.rs (4%), statistics_mod.rs (5%), shlex_mod.rs (7%), calendar_mod.rs (8%)",
+    "success_criteria": "Each file reaches at least 50% line coverage via inline #[cfg(test)] tests. cargo test passes.",
+    "boundary": {
+      "in_scope": "Inline tests for 5 target files only",
+      "out_of_scope": "All other files in the coverage report, conformance tests, integration tests",
+      "constraints": "Tests must be inline #[cfg(test)] blocks, no external test files"
+    }
+  }
+}

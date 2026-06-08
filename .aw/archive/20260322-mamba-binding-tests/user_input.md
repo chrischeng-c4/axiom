@@ -1,0 +1,1 @@
+#1035 — Add comprehensive tests for all Mamba binding crates: cclab-pg-mamba, cclab-api-mamba, cclab-runtime-mamba, cclab-agent-mamba, cclab-fetch-mamba, cclab-log-mamba, cclab-mcp-mamba. Each crate currently has 0 tests. Also fix cclab-mamba-registry 3 ignored tests. Target: every mb_* function has at least one unit test covering happy path + error case.

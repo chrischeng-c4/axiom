@@ -1,0 +1,8 @@
+{
+  "spec_id": "state-machine-docs-phase",
+  "group_id": "sdd-docs-phase",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-sdd/logic/state-machine.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "state-machine", "changes"],
+  "content": "Extend the SDD state machine to include the docs generation phase. Inserts four new `StatePhase` variants and corresponding transitions between `ChangeImplementationReviewed` and `ChangeMergeCreated`.\n\n| Aspect | Value |\n|--------|-------|\n| Target spec | `cclab/specs/crates/cclab-sdd/logic/state-machine.md` |\n| Action | Modify — add states, transitions, routing entries |\n| New states | `DocsCheck` (transient), `DocsCreated`, `DocsReviewed`, `DocsRevised` |\n| Insertion point | After `ChangeImplementationReviewed` (APPROVED), before `ChangeMergeCreated` |\n| Guard | `DocsCheck` — transient choice state resolved inline in `route()` (no agent dispatch) |\n| CRR states | `DocsCreated` → `DocsReviewed` → `DocsRevised` (same max-1-revision pattern) |\n| Skip path | No `[sdd.docs]` config OR no crate intersection → straight to `ChangeMergeCreated` |\n| Total variants | 16 → 20 (adds `docs_check`, `docs_created`, `docs_reviewed`, `docs_revised`) |\n\n**Scope**: StatePhase enum, Phase Flow diagram, Phase Routing table, x-total-variants count. Detailed docs-phase logic (decision tree, target matching, prompt building) lives in `docs-phase-logic` change-spec."
+}

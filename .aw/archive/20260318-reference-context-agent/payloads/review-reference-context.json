@@ -1,0 +1,54 @@
+{
+  "group_id": "reference-context-agent",
+  "verdict": "REVIEWED",
+  "summary": "Three substantive issues found: (1) critical omission of cclab-sdd/logic/reference-context.md which is the primary spec for this phase, (2) fabricated TypedAgent trait requirement that does not exist in codebase or specs, (3) wrong HIGH relevance for context.md given the agent follows the stateless RestructureAgent pattern not the ContextManager-based AnalystAgent pattern. Also missing llm-providers.md which the agent uses directly.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "cclab-sdd/logic/reference-context.md is absent — it defines the artifact schema, prompt templates, and CRR cycle rules for the exact phase being implemented. llm-providers.md is also absent despite the agent invoking LLMProvider directly."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "context.md is scored HIGH but should be LOW. ReferenceContextAgent follows the stateless RestructureAgent pattern (single CompletionRequest, no multi-turn ContextManager loop). Verified by reading restructure.rs: ContextManager is never used."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "restructure-agent entry lists 'TypedAgent trait pattern' — this trait does not exist anywhere in the codebase or specs. restructure-agent.md is an empty stub; the actual code in restructure.rs shows no TypedAgent. Also 'SpecStore interface usage (search, read)' is inaccurate — SpecStore only has search(), not read()."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "All included specs are at least tangentially relevant. tools-analysis medium rating is borderline (RecordFindingTool/TakeNoteTool are not used by the stateless pattern) but acceptable."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "cclab-sdd/logic/reference-context.md is missing from the reference context. This spec defines the exact artifact schema (spec_id, spec_group, relevance, key_requirements), prompt templates for Create/Review/Revise, CRR cycle rules (max_revisions=1, auto-approve on exceed), and side effects on STATE.yaml. It is the primary contract the ReferenceContextAgent must implement.",
+      "recommendation": "Add cclab-sdd/logic/reference-context.md with relevance HIGH and key_requirements: artifact schema (spec_id, spec_group, relevance, key_requirements), CRR cycle (max_revisions=1, auto-approve), phase transition (PreClarificationsCreated → PostClarificationsCreated)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "restructure-agent entry lists 'TypedAgent trait pattern' as a key requirement. No TypedAgent trait exists in the codebase (verified: restructure.rs, mod.rs, lib.rs) or in any spec. The restructure-agent.md spec is an empty stub. This fabricated requirement will mislead implementation.",
+      "recommendation": "Replace 'TypedAgent trait pattern' with an accurate description of how RestructureAgent works: stateless agent with typed run(input: &RestructureInput) -> NovaResult<RestructureOutput>, using complete_structured() for LLM calls, Builder pattern (RestructureAgentBuilder)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "context.md is scored HIGH but should be LOW. ReferenceContextAgent follows the stateless RestructureAgent pattern, not the multi-turn AnalystAgent pattern. RestructureAgent never instantiates ContextManager — it builds a CompletionRequest directly from two Message objects. ContextManager is only used by AnalystAgent and CodingAgent.",
+      "recommendation": "Downgrade context.md relevance from HIGH to LOW. It is background knowledge about the crate, not a direct dependency of the ReferenceContextAgent."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "llm-providers.md is missing. The ReferenceContextAgent will hold Arc<dyn LLMProvider> and call complete() with a CompletionRequest, exactly like RestructureAgent. The CompletionRequest/CompletionResponse schemas and the LLMProvider trait are directly required.",
+      "recommendation": "Add llm-providers.md with relevance MEDIUM and key_requirements: LLMProvider trait (complete), CompletionRequest schema (messages, model, temperature, max_tokens), CompletionResponse schema."
+    },
+    {
+      "severity": "LOW",
+      "description": "restructure-agent key_requirements says 'SpecStore interface usage (search, read)' but SpecStore only has search(). There is no read() method — verified in restructure.rs: `async fn search(&self, query: &str) -> NovaResult<Vec<SpecExcerpt>>`.",
+      "recommendation": "Change to 'SpecStore interface (search only)' or 'SpecStore.search(query) -> Vec<SpecExcerpt>'."
+    }
+  ]
+}

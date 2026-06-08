@@ -1,0 +1,35 @@
+apiVersion: cclab.dev/v1
+kind: FlowchartPlus
+metadata:
+  name: prompt-template-update
+  change_id: sdd-merge
+  source_file: sdd-merge/specs/sdd/prompt-template-update.md
+  spec_group: sdd
+  spec_id: prompt-template-update
+spec:
+  title: Template Update Flow
+  diagram_type: flowchart
+  content:
+    direction: TB
+    edges:
+    - from: Templates
+      label: rename tools
+      style: arrow
+      to: UpdatedTemplates
+    - from: Docs
+      label: update refs
+      style: arrow
+      to: UpdatedDocs
+    nodes:
+    - id: Templates
+      label: Old Templates (aurora_*)
+      shape: rectangle
+    - id: UpdatedTemplates
+      label: New Templates (sdd_*)
+      shape: rectangle
+    - id: Docs
+      label: Documentation
+      shape: rectangle
+    - id: UpdatedDocs
+      label: Updated Documentation
+      shape: rectangle

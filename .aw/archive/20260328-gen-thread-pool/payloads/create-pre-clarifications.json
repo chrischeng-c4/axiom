@@ -1,0 +1,14 @@
+{
+  "group_id": "gen-thread-pool",
+  "answers": [
+    {
+      "question": "Single worker thread or small pool?",
+      "answer": "Small pool (2-4 threads). Allows parallel list comprehensions within a single test. Nested comprehensions like `[[j for j in range(3)] for i in range(3)]` need concurrent generators."
+    },
+    {
+      "question": "When to create the worker thread(s)?",
+      "answer": "Lazy initialization. Create pool on first mb_generator_create() call. No overhead for tests that don't use generators."
+    }
+  ],
+  "updated_requirements": "Replace per-generator thread::spawn in generator.rs with a lazy-initialized pool of 2-4 reusable worker threads. Workers receive (body_fn, args, channels, shared_capture) tuples via a shared job channel and execute generator bodies. Workers set up thread_local GEN_TX/GEN_RX per job. Pool is created on first generator creation. This avoids cumulative pthread lifecycle issues that cause EXC_BAD_ACCESS code=257 on macOS aarch64 after ~130 generator thread spawns."
+}

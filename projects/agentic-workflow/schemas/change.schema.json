@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cclab.dev/blueprint/change/v1",
+  "title": "Change",
+  "description": "Abstract data model for an SDD change — a unit of work going through the spec-driven development lifecycle.",
+  "type": "object",
+  "required": ["id", "project_id", "description", "phase", "created_at"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "Kebab-case change identifier (e.g. 'add-auth-flow')"
+    },
+    "project_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "description": {
+      "type": "string"
+    },
+    "phase": {
+      "$ref": "#/$defs/Phase"
+    },
+    "groups": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/ChangeGroup" },
+      "default": []
+    },
+    "issues": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Issue references (e.g. '#1094', 'github.com/.../issues/42')"
+    },
+    "branch": {
+      "type": ["string", "null"]
+    },
+    "git_workflow": {
+      "type": ["string", "null"],
+      "enum": ["in_place", "new_branch", null]
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "Phase": {
+      "type": "string",
+      "enum": [
+        "change_inited",
+        "input_restructured",
+        "pre_clarifications_created",
+        "reference_context_created",
+        "reference_context_reviewed",
+        "reference_context_revised",
+        "post_clarifications_created",
+        "change_spec_created",
+        "change_spec_reviewed",
+        "change_spec_revised",
+        "change_implementation_created",
+        "change_implementation_reviewed",
+        "change_implementation_revised",
+        "archived",
+        "rejected"
+      ]
+    },
+    "ChangeGroup": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string" },
+        "issues": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "default": []
+        },
+        "requirements": { "type": ["string", "null"] },
+        "pre_clarifications": { "type": ["string", "null"] },
+        "reference_context": { "type": ["string", "null"] },
+        "post_clarifications": { "type": ["string", "null"] },
+        "specs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Spec IDs belonging to this group"
+        }
+      }
+    }
+  }
+}

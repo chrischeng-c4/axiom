@@ -1,0 +1,9 @@
+{
+  "spec_id": "sigbus-jit-concurrency-fix",
+  "group_id": "mamba-codegen-runtime-fixes",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "main_spec_ref": "crates/cclab-mamba/codegen/cranelift-jit",
+  "merge_strategy": "new",
+  "content": "`CraneliftJitBackend::new()` calls `cranelift_native::builder()` and `JITModule::new(jit_builder)` to create an isolated JIT compilation context per invocation. When `cargo test` runs conformance tests with multiple threads (default `--test-threads=N`), each test thread independently instantiates a `CraneliftJitBackend`, compiles MIR, calls `finalize_definitions()` (which invokes `mprotect` to mark pages executable), and transmutes the entry pointer to a callable `fn() -> i64`. On aarch64 (Apple Silicon), concurrent `JITModule` finalization causes SIGBUS — the underlying Cranelift memory allocator and `mprotect` calls are not safe for concurrent use across threads.\n\nSingle-threaded execution (`--test-threads=1`) passes because JIT init/finalize/execute never overlaps. The `gc.rs` module already uses `GC_TEST_LOCK: LazyLock<Mutex<()>>` to serialize GC-sensitive test paths — the same pattern applies here.\n\nFix: introduce a global `JIT_LOCK: LazyLock<Mutex<()>>` in `jit.rs` and acquire it around the entire JIT pipeline (`new()` → `codegen()` → execute entry) in the conformance runner's `run_and_capture()`. This serializes JIT operations across test threads without modifying the JIT backend itself.\n\nIssue: #1114"
+}

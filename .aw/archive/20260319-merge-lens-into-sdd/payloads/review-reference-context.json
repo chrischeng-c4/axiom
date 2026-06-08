@@ -1,0 +1,56 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "merge-lens-into-sdd",
+  "group_id": "merge-lens-into-sdd",
+  "verdict": "REVIEWED",
+  "summary": "The reference context artifact is a skeleton: all 20 Spec and Group cells are '?' — the artifact CLI wrote placeholder rows but never populated them from the payload. Even evaluating the underlying create-reference-context.json payload, three problems remain: (1) spec-ir-contract and spec-ir-schema are absent despite Q5 explicitly requiring SpecIR to stay in cclab-sdd, and lens-codegen-unification.md itself declares depends:[spec-ir-contract]; (2) lens-beyond-ide.md is listed as 'high' but its primary content is MCP wiring that Q2 explicitly excludes; (3) cclab-sdd/README.md and cclab-sdd/sdd-cli.md are both 'high' but are generic background — sdd-cli.md covers cclab sdd workflow commands, not cclab lens CLI routing. Key requirements column is entirely blank across all 20 entries. The artifact must be revised before approval.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "The artifact is a skeleton — all Spec/Group fields are '?', so no area is actually covered. Even reading the payload: Q5 (SpecIR stays in cclab-sdd/src/spec_ir/, lens code imports from there) has zero spec coverage; cclab-sdd/generate/spec-ir-contract.md and spec-ir-schema.md are missing. Q1 (flat mirror of cclab-lens/src/ into cclab-sdd/src/lens/) has adequate coverage via lens-comprehensive and lens-cli-subcommands. Q3 (remove cclab-lens immediately) and Q2 (no MCP migration) are not explicitly covered."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "Several relevance scores conflict with pre-clarifications. lens-beyond-ide.md is marked 'high' but its primary content is MCP wiring (Q2 explicitly excludes MCP migration) — should be 'medium'. cclab-sdd/README.md is 'high' but is generic background context with no implementation requirements for this merge — should be 'low'. cclab-sdd/sdd-cli.md is 'high' but covers cclab sdd workflow commands, not cclab lens CLI routing — should be 'low'. The remaining lens-* specs at 'high' (README, class-diagram, code-analysis-service-v2, lens-cli-subcommands, lens-comprehensive, lens-codegen-unification) are correctly scored."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "All 20 entries have '—' in the Key Requirements column, both in the artifact and in the payload. No requirement IDs or named anchors are cited for any spec. This provides zero traceability from the group scope to concrete spec requirements."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "cclab-sdd/sdd-cli.md is borderline irrelevant: it specifies the cclab sdd workflow CLI (run-change, clarify-pre, spec-create, etc.), not the cclab lens CLI commands that must remain functional after the merge. Its CLI registration pattern (R6/CliModule) is tangentially related, but the spec is not the right reference for cclab lens routing. cclab-lens/usage-examples.md (14 practical examples, documentation) is acceptable as low-relevance background but is marked 'medium'."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "The reference context artifact is structurally incomplete: all 20 rows have '?' for both Spec and Group columns. The artifact_cli tool wrote the skeleton with correct row count and relevance scores but never populated spec paths or groups from the payload. The artifact is not reviewable in its current form — it provides no traceability to any spec.",
+      "recommendation": "Re-run the create-reference-context tool to regenerate the artifact from the payload, then verify the output is fully populated before submitting for review."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Q5 explicitly states 'Keep SpecIR at top-level src/spec_ir/ (already exists in cclab-sdd). After merge, lens code imports from the existing spec_ir module.' This is the core architectural change (eliminating cross-crate serialization boundary), yet neither cclab-sdd/generate/spec-ir-contract.md nor cclab-sdd/generate/spec-ir-schema.md appears in the reference context. Notably, lens-codegen-unification.md itself declares depends:[spec-ir-contract], yet its dependency spec is absent from the context.",
+      "recommendation": "Add cclab-sdd/generate/spec-ir-contract.md at 'high' relevance (it defines the SpecIR enum, SpecMetadata, and SpecBundle now consumed by cclab_sdd::lens::gen internally). Add cclab-sdd/generate/spec-ir-schema.md at 'medium' relevance (YAML manifest schema used by the lens YAML codegen path)."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Key requirements column is entirely blank ('—') for all 20 entries. This makes the artifact unfit for spec planning: implementers cannot identify which specific requirements in each spec they must satisfy during the merge.",
+      "recommendation": "Populate concrete requirement IDs for each spec. For example: lens-cli-subcommands.md should cite R1 (ensure_daemon_ready), R2 (8 code analysis subcommands), R6 (file extraction to lens_cli.rs); lens-codegen-unification.md should cite R1 (CodeGenerator trait), R2 (GeneratorRegistry), R4 (SpecIR import path change after merge)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "lens-beyond-ide.md is listed as 'high' relevance, but its primary focus is MCP wiring (registering lens_refactor, lens_search, lens_call_graph MCP tools). Q2 explicitly answered 'No MCP tools for lens. Lens is CLI-only. No MCP tool migration needed.' The spec's MCP content is directly excluded by the clarification. Its remaining content (JSON schema bundling, HCL grammar fix, HTML/CSS/Go expansion) is relevant but secondary.",
+      "recommendation": "Downgrade lens-beyond-ide.md to 'medium'. Cite only the non-MCP requirement IDs (JSON schema validation, tree-sitter upgrade, HTML/CSS/Go symbols) and note that MCP registration sections are excluded per Q2."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "cclab-sdd/README.md is listed as 'high' and cclab-sdd/sdd-cli.md is listed as 'high', but neither spec defines any implementation requirement for this merge. README.md is a structural index. sdd-cli.md specifies the cclab sdd workflow CLI subcommands (run-change, spec-create, etc.) — not the cclab lens subcommand routing that must survive the merge. Both are background reading at best.",
+      "recommendation": "Downgrade cclab-sdd/README.md to 'low'. Either downgrade cclab-sdd/sdd-cli.md to 'low' or replace it with cclab-sdd/interfaces/cli/commands.md (which documents the CliModule registration mechanism relevant to how cclab lens commands continue to work after cclab-lens crate removal)."
+    }
+  ]
+}

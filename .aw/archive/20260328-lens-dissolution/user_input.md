@@ -1,0 +1,1 @@
+#1087 #944 #946 #949 — dissolve lens/ module into sdd top-level, wire cross-file type propagation, agent context builder, agent-optimized output

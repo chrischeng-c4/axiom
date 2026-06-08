@@ -1,0 +1,8 @@
+{
+  "change_id": "mamba-compile-builtin",
+  "group_id": "default",
+  "spec_id": "mamba-compile-builtin-value-rc",
+  "verdict": "APPROVED",
+  "summary": "Implementation is complete and correct. ObjKind::CodeObject (tag 13) added to the enum. ObjData::CodeObject { source, filename, mode, ast } variant added to the data enum. MbObject::new_code_object() constructor allocates a non-GC-tracked object with rc=1 as specified (immutable like BigInt/Complex). @spec annotations are present for R1, R2, and R3. All exhaustive match statements across gc.rs, iter.rs, class.rs, builtins.rs, and string_ops.rs have been updated with appropriate CodeObject arms.",
+  "issues": []
+}

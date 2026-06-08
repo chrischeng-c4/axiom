@@ -1,0 +1,17 @@
+{"spec_id":"install-perf-spec","section":"scenarios","content":"### S1: Async Cache No Block
+
+Given 100 concurrent metadata fetches with disk cache
+When all hit disk cache
+Then no tokio thread blocking, all complete in <1s
+
+### S2: Eager Prefetch
+
+Given package A depends on B, B depends on C
+When resolver resolves A
+Then B metadata fetch starts immediately after A resolves (not after all level-0 complete)
+
+### S3: Tech Platform True Cold <20s
+
+Given tech-platform with 1886 packages, no cache
+When jet install runs
+Then completes in <20s"}

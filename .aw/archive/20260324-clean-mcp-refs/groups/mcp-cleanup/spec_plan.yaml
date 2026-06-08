@@ -1,0 +1,7 @@
+- spec_id: mcp-refs-cleanup
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/cli/sdd-cli.md
+  source: crates/cclab-sdd/interfaces/cli/sdd-cli.md
+  sections:
+  - overview
+  - changes

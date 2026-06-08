@@ -1,0 +1,37 @@
+change_id: sdd-index-scoped-toolchain
+schema_version: '2.0'
+created_at: 2026-03-26T10:59:47.378739Z
+updated_at: 2026-03-26T11:00:56.792767Z
+phase: archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: null
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1127
+    title: 'feat(sdd): index server scoped toolchain binding — auto-discover project roots from Cargo.toml/pyproject.toml/package.json'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec: []
+  reference_context:
+  - scoped-toolchain
+  post_clarifications:
+  - scoped-toolchain
+  pre_clarifications:
+  - scoped-toolchain
+  change_implementation: []

@@ -1,0 +1,17 @@
+{
+  "group_id": "jet-dev-server-v2",
+  "answers": [
+    {
+      "id": "q1",
+      "question": "For #1092 .jet-store fix: should we implement pnpm-style nested node_modules in store entries, or install packages with optionalDependencies directly into project node_modules?",
+      "answer": "pnpm-style nested node_modules in store entries. Create node_modules inside each .jet-store/{pkg}@{version}/ containing symlinks to that package's dependencies. Full Node.js resolution compatibility.",
+      "impact": "The install command must create nested node_modules/ directories within each .jet-store/{pkg}@{version}/ containing symlinks to that package's dependencies. Same approach as pnpm."
+    },
+    {
+      "id": "q2",
+      "question": "For #1091 polyfills: should polyfills be served as separate files or bundled inline?",
+      "answer": "Separate .jet/polyfill-{name}.mjs files via importmap. Each Node.js builtin polyfill is a standalone ESM file, importmap maps bare specifier (e.g. 'crypto') to .jet/polyfill-crypto.mjs.",
+      "impact": "Pre-bundling phase generates polyfill files and adds importmap entries. No duplication, browser-cacheable."
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "group_id": "agent-crr-core",
+  "specs": [
+    {
+      "spec_id": "cclab-agent/agents.md",
+      "spec_group": "agent-core",
+      "relevance": "high",
+      "key_requirements": [
+        "Agent trait (run, run_with_handler) — ReviewAgent implements this or TypedAgent",
+        "Agent builder pattern — CRRCycle and ReviewAgent follow same builder convention",
+        "Agent execution loop — CRR wraps multiple agent runs in a loop"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/llm-providers.md",
+      "spec_group": "llm-integration",
+      "relevance": "high",
+      "key_requirements": [
+        "LLMProvider trait — ReviewAgent calls complete() or complete_structured()",
+        "CompletionRequest/Response — used for review calls"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/architecture.md",
+      "spec_group": "system-design",
+      "relevance": "medium",
+      "key_requirements": [
+        "Module structure — agents/review/ fits in agents module",
+        "Trait hierarchy — CRRCycle orchestrates agents"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/error-handling.md",
+      "spec_group": "error-handling",
+      "relevance": "medium",
+      "key_requirements": [
+        "NovaError — MaxRevisionsExceeded error variant needed"
+      ]
+    }
+  ],
+  "notes": "CRR pattern is NEW — no existing spec covers it. ReviewAgent, ReviewVerdict, CRRCycle are all new types. The cclab-sdd CRR implementation is in cclab-sdd crate (separate), used as design reference but not a spec dependency."
+}

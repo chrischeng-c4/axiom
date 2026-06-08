@@ -1,0 +1,22 @@
+{
+  "change_id": "sdd-codegen-completion",
+  "group_id": "frontend-codegen",
+  "answers": [
+    {
+      "question_id": "Q1",
+      "question": "Primary frontend framework target",
+      "answer": "React (TSX). ReactGenerator already partially implemented from previous change."
+    },
+    {
+      "question_id": "Q2",
+      "question": "Wireframe YAML DSL schema source",
+      "answer": "Use the wireframe YAML DSL from #897's proposal. WireframeSpec already defined in SpecIR types."
+    },
+    {
+      "question_id": "Q3",
+      "question": "Design-token output priority",
+      "answer": "Both CSS custom properties and Tailwind config from a single pass. CSS custom properties first, then Tailwind config object."
+    }
+  ],
+  "follow_up_needed": false
+}

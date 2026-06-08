@@ -1,0 +1,14 @@
+{
+  "groups": [
+    {
+      "id": "queue-unit-test-coverage",
+      "issues": [],
+      "requirements": "Add unit tests (#[cfg(test)] modules) for all untested modules in cclab-queue crate:\n- error.rs: Error type construction, Display impl, conversion traits (From impls)\n- state.rs: Task state machine transitions, state enum variants, serialization\n- ratelimit.rs: Rate limiter creation, token consumption, limit enforcement\n- revocation.rs: Revocation store operations, task revocation checks\n- metrics.rs: Metric recording, counter increments, histogram observations\n- scheduler/delay.rs: Delayed task scheduling, delay computation\n- scheduler/memory_backend.rs: In-memory scheduler backend CRUD operations\n- scheduler/cloud_scheduler_backend.rs: Cloud Scheduler backend operations\n\nGoal: Bring unit test coverage to parity with well-tested modules (broker, workflow). Each module should have tests covering happy path, edge cases, and error conditions.",
+      "questions": [
+        "Should we also add integration tests that require running infrastructure (NATS/Redis), or focus purely on unit tests that run without external dependencies?",
+        "For cloud_scheduler_backend, should we mock the Google Cloud API or skip tests that require credentials?",
+        "Should metrics tests require the 'metrics' feature flag, or should we test the no-op path as well?"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+change_id: mamba-py312-p1
+schema_version: '2.0'
+created_at: 2026-03-10T08:53:30.445109Z
+updated_at: 2026-03-10T10:13:26.292364Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+branch: cclab/mamba-py312-p1
+revision_counts: {}
+current_task_id: mamba-py312-p1-spec
+task_revisions: {}
+telemetry: null
+dag:
+  issues:
+  - number: 755
+    title: 'Py3.12 conformance: Exception hierarchy'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 756
+    title: 'Py3.12 conformance: Generator & iterator protocol'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 759
+    title: 'Py3.12 conformance: Data structure ops — list, dict, set, tuple, str, bytes'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+groups_progress:
+  change_spec: []
+  pre_clarifications:
+  - py312-conformance-p1
+  reference_context:
+  - py312-conformance-p1
+  post_clarifications:
+  - py312-conformance-p1
+  change_implementation: []

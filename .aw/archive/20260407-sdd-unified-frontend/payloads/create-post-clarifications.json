@@ -1,0 +1,13 @@
+{
+  "group_id": "sdd-unified-frontend",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "Two separate frontends (vanilla JS viewer in SDD + React app in Conductor) render the same domain. Wasted effort maintaining two codebases.",
+    "success_criteria": "Single React app under crates/sdd/packages/@score/ that both Score (via axum embedded) and Conductor (via import) consume. score view opens the React app. Conductor FE imports @score/app as sub-routes.",
+    "boundary": {
+      "in_scope": ["Move @cclab/* → @score/*", "DataSource adapter (local + remote)", "@score/app React SPA", "Replace vanilla viewer assets", "Update Conductor FE imports"],
+      "out_of_scope": ["Auth/RBAC (Conductor-only, separate chain)", "New UI features beyond existing viewer capabilities", "Backend API changes beyond SddDataSource endpoints"],
+      "constraints": ["React Router for routing", "cclab-jet for build", "tech-design (not specs) in API naming", "Pre-built assets committed (no Node.js at cargo build time)"]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "id": "unify-mamba-config",
+      "issues": [],
+      "requirements": "Unify dual MambaConfig structs into a single canonical definition.\n\n## Current State\n- `driver/config.rs::MambaConfig` -- simple struct (entry_point, crates: HashMap<String, String>, expose: HashMap<String, Vec<String>>). Has discover(), from_file(), is_symbol_exposed(). Used by driver/mod.rs, main.rs, and all tests.\n- `config/schema.rs::MambaConfig` -- richer struct (project: ProjectConfig, crates: HashMap<String, CrateConfig>, build: BuildConfig, paths: PathsConfig). Has from_file(), from_str(), validate(). Exported from config/mod.rs but NOT used by any code outside its own module.\n\n## What Needs to Change\n1. Keep `config/schema.rs::MambaConfig` as the canonical definition (it is richer and more forward-looking with project metadata, build config, paths, per-crate CrateConfig)\n2. Migrate features from `driver/config.rs::MambaConfig` into the canonical one: discover() method, is_symbol_exposed() method\n3. Add an `entry_point` accessor or field to the canonical struct (currently uses project.name, but driver needs entry_point)\n4. Update `driver/config.rs` to remove MambaConfig, keep CompilerConfig/Backend/EmitMode/OptLevel\n5. Update `driver/mod.rs` re-exports to pull MambaConfig from `crate::config` instead of `config::MambaConfig`\n6. Update `main.rs` imports\n7. Update all tests in driver/mod.rs that construct MambaConfig with the old shape\n8. Ensure `CompilerConfig.project_config: Option<MambaConfig>` uses the unified type\n\n## Acceptance Criteria\n- Single MambaConfig struct in crate, defined in config/schema.rs\n- All code compiles: cargo check -p cclab-mamba\n- All existing tests pass: cargo test -p cclab-mamba --lib\n- driver/config.rs no longer defines a MambaConfig struct\n- The is_symbol_exposed() and discover() methods work on the unified struct",
+      "questions": []
+    }
+  ]
+}

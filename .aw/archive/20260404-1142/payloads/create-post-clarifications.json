@@ -1,0 +1,22 @@
+{
+  "group_id": "check-alignment-phase3",
+  "contradictions": [
+    {
+      "area": "artifact-tools result schema",
+      "finding": "artifact-tools.md has no explicit result schema — all content passes through side-effects (file writes). Adding alignment_violations to the response requires defining a result schema first.",
+      "resolution": "Define a minimal result schema in the changes section: { status, artifacts_written, alignment_violations: Violation[], next_actions }. This matches the existing Rust implementation's return shape."
+    },
+    {
+      "area": "merge workflow: check() vs check_with_coverage()",
+      "finding": "Merge doesn't have source_dirs context needed for check_with_coverage(). Using check_with_coverage() at merge time would require passing source directories from config.",
+      "resolution": "Use check() (format + logical rules only) at merge time. Coverage analysis is a separate concern run via CLI --coverage flag. This keeps merge fast and avoids config dependency."
+    }
+  ],
+  "assumptions_verified": [
+    "State transitions do not change — alignment check is a non-blocking side effect, not a new state",
+    "alignment_warnings is a passive field in sdd_run_change response — no executor branch change needed",
+    "Artifact tools block on format violations (Phase 1 rules) but allow writes with coverage warnings (Phase 2 rules)",
+    "Merge appends warnings to implementation.md — does NOT block the merge"
+  ],
+  "questions": []
+}

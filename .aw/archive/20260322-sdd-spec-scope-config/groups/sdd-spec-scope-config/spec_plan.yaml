@@ -1,0 +1,37 @@
+- spec_id: sdd-config-scopes
+  action: modify
+  main_spec_ref: crates/cclab-sdd/config/agents.md
+  source: crates/cclab-sdd/config/agents.md
+  sections:
+  - overview
+  - config
+  - test-plan
+  - changes
+- spec_id: cli-init-scopes
+  action: modify
+  main_spec_ref: crates/cclab-cli/init.md
+  source: crates/cclab-cli/init.md
+  sections:
+  - overview
+  - cli
+  - logic
+  - test-plan
+  - changes
+- spec_id: sdd-scope-resolution
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/scope-resolution.md
+  sections:
+  - overview
+  - dependency
+  - logic
+  - test-plan
+  - changes
+- spec_id: agent-file-system-spec-store
+  action: create
+  main_spec_ref: crates/cclab-agent/spec-store.md
+  sections:
+  - overview
+  - dependency
+  - logic
+  - test-plan
+  - changes

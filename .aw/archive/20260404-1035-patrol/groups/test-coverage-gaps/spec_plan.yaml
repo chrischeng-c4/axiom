@@ -1,0 +1,8 @@
+- spec_id: stdlib-coverage-top5
+  action: modify
+  main_spec_ref: crates/cclab-mamba/testing/stdlib-coverage-lower.md
+  source: crates/cclab-mamba/testing/stdlib-coverage-lower.md
+  sections:
+  - overview
+  - requirements
+  - test-plan

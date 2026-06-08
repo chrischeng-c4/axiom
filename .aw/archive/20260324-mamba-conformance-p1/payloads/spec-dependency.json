@@ -1,0 +1,6 @@
+{
+  "spec_id": "mamba-conformance-p1-spec",
+  "group_id": "mamba-p1-oop",
+  "section": "dependency",
+  "content": "<!-- type: dependency lang: mermaid -->\n\n```mermaid\nflowchart LR\n    subgraph cclab-mamba\n        Parser[parser/stmt_compound.rs] -->|decorators in AST| Lower[lower/ast_to_hir.rs]\n        Lower -->|MIR with decorator metadata| MIR[mir/mod.rs]\n        MIR -->|MirInst stream| Codegen[codegen/cranelift/mod.rs]\n        Codegen -->|emits calls to| Runtime[runtime/class.rs]\n        Codegen -->|emits calls to| Builtins[runtime/builtins.rs]\n    end\n\n    subgraph Fix Locations\n        F1[\"R1: @classmethod\"] -.->|param count| Codegen\n        F2[\"R2: @property\"] -.->|descriptor dispatch| Codegen\n        F2 -.->|descriptor lookup| Runtime\n        F3[\"R3: getattr/setattr/delattr\"] -.->|IR signature| Codegen\n        F4[\"R4: super() return\"] -.->|dest VReg| MIR\n        F4 -.->|return propagation| Codegen\n        F5[\"R5: MRO order\"] -.->|c3_merge| Runtime\n    end\n```"
+}

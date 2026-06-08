@@ -1,0 +1,6 @@
+{
+  "group_id": "new-section-types",
+  "verdict": "APPROVED",
+  "summary": "Comprehensive reference context covering change-spec (section types table, rules, fill order), reference-context (spec_plan sections enum), codegen system (SpecIR variants), spec-ir-contract, artifact-tools, and supporting specs. spec_plan correctly targets change-spec.md and reference-context.md as modify actions.",
+  "findings": []
+}

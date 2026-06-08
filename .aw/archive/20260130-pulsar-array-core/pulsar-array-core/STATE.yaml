@@ -1,0 +1,51 @@
+change_id: pulsar-array-core
+schema_version: '2.0'
+created_at: 2026-01-30T03:34:18.472954Z
+updated_at: 2026-01-30T04:18:00.930937Z
+phase: archived
+iteration: 1
+last_action: archive
+session_id: null
+checksums:
+  proposal.md:
+    hash: sha256:bce9b9d24a3086012e4dade498569672844cefa1100b328d3af7da8a835f879c
+    validated_at: 2026-01-30T03:37:03.277488Z
+  specs/cclab-pulsar-array-core/pulsar-array-core-design.md:
+    hash: sha256:3bc0fbcf81abfc3e45cc76c587268c97ffb6a1bfa335e2265d85e4c088706059
+    validated_at: 2026-01-30T03:37:03.277607Z
+  specs/pulsar-array-core-design.md:
+    hash: sha256:2eb656cec16fbaf304a530201726fcebfc14ef58a5a58a9b8cad99a65520763b
+    validated_at: 2026-01-30T03:37:03.277562Z
+  tasks.md:
+    hash: sha256:de09101bc0ad60e9456dced7541ff8bc0f1a180917bb7f794ea8d17c72ea44ea
+    validated_at: 2026-01-30T03:37:03.277513Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-30T03:34:37.206216Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-30T03:37:03.277460Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

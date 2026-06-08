@@ -1,0 +1,1 @@
+feat(sdd): 4 execution modes with fixed agent presets — multi_agents, multi_claude_agents, claude_subagents, mainthread #1046

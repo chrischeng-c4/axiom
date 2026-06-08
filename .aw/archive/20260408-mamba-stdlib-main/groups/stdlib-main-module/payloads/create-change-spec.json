@@ -1,0 +1,6 @@
+{
+  "spec_id": "mamba-stdlib-main-spec",
+  "group_id": "stdlib-main-module",
+  "section": "test-plan",
+  "content": "### Unit Tests (main_mod.rs)\n\n| Test | Given | When | Then |\n|------|-------|------|------|\n| test_main_name_value | MbValue::from_string(\"__main__\") created | as_str() called | Returns \"__main__\" |\n| test_main_doc_is_none | MbValue::none() created | is_none() checked | Returns true |\n| test_main_loader_is_none | MbValue::none() created | is_none() checked | Returns true |\n| test_main_spec_is_none | MbValue::none() created | is_none() checked | Returns true |\n| test_register_module | register() called | No panic | Module registered successfully |\n\n### Integration\n\n- Verify `cargo test -p cclab-mamba --lib` passes with no regressions\n- Verify `__main__` module is accessible after register_stdlib()"
+}

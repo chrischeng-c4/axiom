@@ -1,0 +1,6 @@
+{
+  "spec_id": "jet-postcss-tailwind-spec",
+  "group_id": "jet-postcss-tailwind",
+  "section": "logic",
+  "content": "```mermaid\nflowchart TD\n    A[CssPipeline::process entry_path] --> B[lightningcss::parse source]\n    B --> C[resolve_imports: inline all @import]\n    C --> D{Has @tailwind directives?}\n\n    D -->|Yes| E[ContentScanner::scan glob_patterns]\n    E --> F[Extract used class names]\n    F --> G[TailwindEmitter::generate layers]\n    G --> H[Inject base/components/utilities at @tailwind positions]\n    D -->|No| I\n    H --> I[expand_at_apply: resolve @apply to CSS rules]\n\n    I --> J{Has @apply?}\n    J -->|Yes| K[Lookup utility rules for each class in @apply]\n    K --> L[Replace @apply with property declarations]\n    J -->|No| M\n    L --> M[route_at_layer: insert @layer custom rules]\n\n    M --> N[lightningcss::transform]\n    N --> O[Apply: nesting, custom media, vendor prefixes]\n    O --> P{Production mode?}\n\n    P -->|Yes| Q[lightningcss::minify]\n    P -->|No| R[Return expanded CSS]\n    Q --> R\n\n    R --> S[CssOutput: css + source_map + hash]\n```"
+}

@@ -1,0 +1,37 @@
+change_id: issues-cli-crud
+schema_version: '2.0'
+created_at: 2026-04-06T13:19:26.759182Z
+updated_at: 2026-04-07T09:41:07.998337Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: issues-cli-crud-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1179
+    title: 'notation(4.3): Issue authoring notation + agent for rough-idea → well-formed issue'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  post_clarifications:
+  - issues-cli-crud
+  change_spec: []
+  pre_clarifications:
+  - issues-cli-crud
+  reference_context:
+  - issues-cli-crud
+  change_implementation: []

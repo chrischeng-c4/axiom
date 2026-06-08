@@ -1,0 +1,15 @@
+- spec_id: cranelift-jit-memory-fix
+  action: modify
+  main_spec_ref: crates/cclab-mamba/codegen/cranelift-jit.md
+  source: cclab/specs/crates/cclab-mamba/codegen/cranelift-jit.md
+  sections:
+  - overview
+  - changes
+  - test-plan
+- spec_id: jit-memory
+  action: create
+  main_spec_ref: crates/cclab-mamba/codegen/jit-memory.md
+  sections:
+  - overview
+  - changes
+  - test-plan

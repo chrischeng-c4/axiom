@@ -1,0 +1,9 @@
+{
+  "spec_id": "repl",
+  "group_id": "runtime-basics",
+  "section": "overview",
+  "fill_sections": ["overview", "changes"],
+  "main_spec_ref": "crates/cclab-mamba/driver/repl",
+  "merge_strategy": "new",
+  "content": "The REPL currently echoes expression-statement results verbatim via `println!(\"{result}\")` whenever `has_echo = true`, without inspecting the returned value. Before the cranelift-jit and builtins changes, `print()` returned raw `0`; after those fixes it returns `MbValue::none().to_bits()` (bit-pattern `0xFFFB_0000_0000_0000`, tag `TAG_NONE = 3`). Without a None-guard, this NaN sentinel is forwarded directly to stdout as extra output after any `print()` call — reproducing the reported spurious `0` behaviour.\n\nFix: in `eval`, decode the raw `i64` result via `MbValue::from_bits(result as u64)` and suppress the echo when `is_none()` returns `true`. This implements the R5 requirement (\"print the result unless it is `None`\") without changing the `eval_raw` return signature. The import `use crate::runtime::MbValue` is added to `driver/repl.rs`; `runtime::mod.rs` already re-exports `MbValue` via `pub use value::MbValue`.\n\nA `test_repl_print_no_echo` unit test is added to verify that evaluating `print(42)\\n` yields `has_echo = true` (the call is an expression statement) and a result for which `MbValue::from_bits(val as u64).is_none()` holds — confirming the None-guard fires correctly."
+}

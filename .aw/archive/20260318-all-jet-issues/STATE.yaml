@@ -1,0 +1,161 @@
+change_id: all-jet-issues
+schema_version: '2.0'
+created_at: 2026-03-18T07:37:19.852122Z
+updated_at: 2026-03-18T08:28:59.118651Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:jet-infra-codesign: 1
+  ref_ctx:jet-build-aot: 1
+  ref_ctx:jet-install-optimizations: 1
+current_task_id: all-jet-issues-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 168345
+    tokens_out: 1458
+    cost_usd: null
+    duration_ms: 33351
+    timestamp: 2026-03-18T07:37:59.612253Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 776567
+    tokens_out: 1278
+    cost_usd: null
+    duration_ms: 100281
+    timestamp: 2026-03-18T07:47:53.469243Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: gpt-5.4
+    tokens_in: 2634403
+    tokens_out: 13940
+    cost_usd: null
+    duration_ms: 298499
+    timestamp: 2026-03-18T07:58:30.681472Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 212690
+    timestamp: 2026-03-18T08:03:28.865911Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 385457
+    tokens_out: 880
+    cost_usd: null
+    duration_ms: 51710
+    timestamp: 2026-03-18T08:04:42.499299Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 4349917
+    tokens_out: 5471
+    cost_usd: null
+    duration_ms: 1521032
+    timestamp: 2026-03-18T08:04:58.436650Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 147628
+    timestamp: 2026-03-18T08:28:00.205793Z
+  - step: begin_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1283257
+    timestamp: 2026-03-18T08:28:59.118650Z
+  total_cost_usd: 0.0
+  total_tokens_in: 8314689
+  total_tokens_out: 23027
+dag:
+  issues:
+  - number: 765
+    title: 'feat(jet): AOT production build — tree shaking, code splitting, minification, source maps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 797
+    title: 'jet build: validate against real-world open-source React apps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 881
+    title: 'jet-install: cold install 4.9s vs pnpm 3.4s — optimize metadata resolution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 882
+    title: 'jet-build: bundle size 215KB vs webpack 192KB — implement scope hoisting'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 883
+    title: 'jet-install: resolver bugs fixed — version conflicts, ||, pre-release, optional deps'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 903
+    title: 'jet-build: scope hoisting Phase 2 — true module flattening for cross-module optimization'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 904
+    title: 'jet-build: DCE and minifier assume ASCII-only source — audit all char-index-as-byte-offset usage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 905
+    title: 'jet-install: validate disk cache + HTTP/2 performance impact'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 906
+    title: 'chore(jet): codesign release binary — macOS kills unsigned cp''d binary'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - jet-build-aot
+  - jet-infra-codesign
+  - jet-install-optimizations
+  change_implementation: []
+  reference_context:
+  - jet-build-aot
+  - jet-infra-codesign
+  - jet-install-optimizations
+  change_spec: []
+  post_clarifications:
+  - jet-build-aot
+  - jet-infra-codesign
+  - jet-install-optimizations

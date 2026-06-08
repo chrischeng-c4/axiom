@@ -1,0 +1,20 @@
+{"spec_id":"stream-resolver-spec","section":"overview","content":"Rewrite resolver from BFS level-based to stream-based architecture.
+
+### Current Architecture (BFS levels)
+```
+Level 0: fetch metadata for 152 direct deps (parallel)
+         wait for ALL to complete
+Level 1: fetch metadata for ~400 transitive deps (parallel)
+         wait for ALL to complete
+...
+Level 8-12: last few transitive deps
+```
+Each level blocks on the slowest fetch in that level.
+
+### Target Architecture (stream-based)
+```
+For each package resolved:
+  spawn async task → fetch metadata → for each dep → spawn task
+All tasks run concurrently, bounded by semaphore.
+No level barriers.
+```","fill_sections":["overview","requirements","scenarios","changes"]}

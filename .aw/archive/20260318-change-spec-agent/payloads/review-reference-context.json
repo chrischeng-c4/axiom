@@ -1,0 +1,49 @@
+{
+  "group_id": "spec-agent-core",
+  "verdict": "REVIEWED",
+  "summary": "The reference context covers the correct spec set at appropriate relevance levels, but two included specs (restructure-agent.md, review-agent.md) are empty stubs with no actual content. Listing them implies StructuredIssue schema and ReviewAgent pattern are specified, when they are not. This will mislead the ChangeSpecAgent during implementation. The context should either (a) note these specs are stubs and define StructuredIssue inline, or (b) flag them as gaps requiring spec authoring before SpecAgent can be implemented.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "StructuredIssue (Q3 input type) is referenced by restructure-agent.md but that file is an empty stub — no schema definition exists anywhere in the spec tree."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": true,
+      "note": "All scores are appropriate: HIGH for direct agent inputs (core-types, context, reference-context-agent, restructure-agent), MEDIUM for supporting infrastructure."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "restructure-agent.md claims to document StructuredIssue format — spec is empty. review-agent.md claims to document ReviewAgent pattern — spec is empty. reference-context-agent.md requirement is slightly mis-framed (SpecStore extension already done, not SpecAgent's concern)."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "All 11 entries are genuinely relevant. storage.md, integrations.md, and security.md were correctly excluded."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "restructure-agent.md is listed as HIGH relevance with the claim 'StructuredIssue output format (produced by this agent, consumed by SpecAgent)', but the spec file contains only frontmatter and empty section headers. StructuredIssue is a named core input type in pre-clarification Q3 — its schema is undefined.",
+      "recommendation": "Before proceeding to change-spec, author the StructuredIssue schema in restructure-agent.md (fields: issue_id, title, structured sections, etc.), or define it inline in the reference context under a new 'Type Definitions' section."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "review-agent.md is listed as MEDIUM relevance with the claim 'Reference pattern for a specialized ReviewAgent', but the spec file contains only frontmatter and empty section headers. If SpecAgent uses an internal CRR cycle, this missing pattern is a blocker.",
+      "recommendation": "Author the ReviewAgent spec (Reviewer trait, CRR cycle wiring, verdict schema) or confirm in pre-clarifications that SpecAgent does not require an internal CRR cycle, and remove this entry."
+    },
+    {
+      "severity": "LOW",
+      "description": "Key requirement for reference-context-agent.md reads 'SpecStore interface extension with read() method', implying extension is SpecAgent's responsibility. Per pre-clarification Q2, SpecStore already has both search and read; no extension is needed.",
+      "recommendation": "Rephrase to: 'SpecStore interface with search() and read() methods (already implemented); sufficient as-is for SpecAgent'."
+    },
+    {
+      "severity": "LOW",
+      "description": "tools.md (Tool trait, ToolRegistry, ToolExecutor) is absent from the reference context. SpecAgent will register tools following this contract, and the executor retry/timeout semantics are only defined there.",
+      "recommendation": "Add tools.md at LOW relevance: 'Tool trait and ToolRegistry contract for registering SpecAgent tools'."
+    }
+  ]
+}

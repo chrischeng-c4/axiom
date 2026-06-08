@@ -1,0 +1,266 @@
+change_id: spec-consolidation
+schema_version: '2.0'
+created_at: 2026-03-23T07:36:45.889763Z
+updated_at: 2026-03-28T06:22:46.149774Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: change-merge-update
+task_revisions:
+  change-merge-update: 1
+impl_spec_phase: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 95448
+    timestamp: 2026-03-23T07:38:31.109368Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 79832
+    timestamp: 2026-03-23T07:46:24.183638Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 194866
+    timestamp: 2026-03-23T08:00:31.231590Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 265600
+    timestamp: 2026-03-23T08:05:49.931023Z
+  - step: analyze_spec_artifact-tools-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 853082
+    timestamp: 2026-03-23T08:21:12.835016Z
+  - step: analyze_spec_change-merge-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 208490
+    timestamp: 2026-03-23T08:24:56.564023Z
+  - step: analyze_spec_change-spec-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 223576
+    timestamp: 2026-03-23T08:28:44.379221Z
+  - step: analyze_spec_cli-commands-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 206540
+    timestamp: 2026-03-23T08:32:16.262186Z
+  - step: analyze_spec_reference-context-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 369717
+    timestamp: 2026-03-23T08:38:31.717731Z
+  - step: analyze_spec_scope-resolution-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 542862
+    timestamp: 2026-03-23T08:47:39.537558Z
+  - step: analyze_spec_spec-structure-rules
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 556297
+    timestamp: 2026-03-23T08:57:00.964063Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 356532
+    timestamp: 2026-03-23T09:17:00.053269Z
+  - step: implement_tests_change-spec-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 477241
+    timestamp: 2026-03-23T09:22:10.314241Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 187883
+    timestamp: 2026-03-23T09:51:06.844801Z
+  - step: implement_tests_spec-structure-rules
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 589982
+    timestamp: 2026-03-23T09:51:30.021812Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 675519
+    timestamp: 2026-03-23T09:52:25.277940Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1611252
+    timestamp: 2026-03-23T09:52:43.662279Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1994011
+    timestamp: 2026-03-23T09:52:52.550336Z
+  - step: implement_tests_scope-resolution-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1149968
+    timestamp: 2026-03-23T09:53:18.478077Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 2300833
+    timestamp: 2026-03-23T09:53:27.497520Z
+  - step: implement_tests_reference-context-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1957411
+    timestamp: 2026-03-23T09:53:36.104468Z
+  - step: implement_tests_change-merge-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 2900625
+    timestamp: 2026-03-23T09:54:10.935263Z
+  - step: implement_tests_cli-commands-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 2296189
+    timestamp: 2026-03-23T09:54:15.452942Z
+  - step: implement_spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 2961340
+    timestamp: 2026-03-23T09:54:22.875315Z
+  - step: implement_tests_artifact-tools-update
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 3273105
+    timestamp: 2026-03-23T09:54:31.066382Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 3451734
+    timestamp: 2026-03-23T09:54:48.567192Z
+  - step: review_impl_artifact-tools-update
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 152904
+    timestamp: 2026-03-23T09:57:40.116655Z
+  - step: review_impl_change-merge-update
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 211524
+    timestamp: 2026-03-23T10:01:41.491444Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 1039
+    title: 'fix(sdd): enforce spec consolidation — prevent scattered specs after SDD lifecycle'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  reference_context:
+  - spec-consolidation-enforcement
+  change_implementation: []
+  post_clarifications:
+  - spec-consolidation-enforcement
+  change_spec: []
+  pre_clarifications:
+  - spec-consolidation-enforcement

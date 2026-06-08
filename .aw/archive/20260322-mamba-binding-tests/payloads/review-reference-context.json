@@ -1,0 +1,44 @@
+{
+  "group_id": "mamba-tests",
+  "verdict": "REJECTED",
+  "summary": "Reference context artifact is empty — contains only placeholder '?' entries with no actual spec references. Must be rewritten with the 5+ directly relevant specs covering binding crate architecture, registry, P2 bindings, and MbValue.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Artifact contains zero spec references (all '?'). Even with correct population, 3/8 binding crates (cclab-api-mamba, cclab-pg-mamba, cclab-runtime-mamba) have no dedicated spec — this gap should be noted. Specs that SHOULD be referenced: conductor-mamba-p0-spec (registry, MambaModule trait, MbValue conversions), mamba-crate-wiring-and-schema-binding (blueprint binding crate pattern), conductor-mamba-p2-bindings-spec (agent/fetch/log/mcp bindings), runtime/value-and-rc (MbValue foundation), runtime/module (module registration)."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "No relevance scores assigned — all entries are '?'."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "No key requirements listed — all entries show '—'."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "Vacuously true — no specs are included at all."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "Artifact is entirely empty. The reference_context.md has only placeholder '?' rows with no spec paths, no relevance scores, and no key requirements. The agent that produced this artifact failed to identify any specs.",
+      "recommendation": "Re-run reference context exploration. At minimum, include: (1) cclab-mamba/conductor-mamba-p0-spec.md [HIGH] — defines cclab-mamba-registry, MambaModule trait, MAMBA_MODULES distributed slice, MbValue conversion helpers, R1/R3 with test plan for registry unit tests and type conversion round-trips. (2) cclab-mamba/mamba-crate-wiring-and-schema-binding.md [HIGH] — defines the binding crate blueprint (lib.rs/types.rs/methods.rs pattern), cclab-schema-mamba prototype, R4 with test plan for unit+integration tests. (3) conductor-mamba-p2-bindings-spec.md [HIGH] — defines 4/8 binding crates (agent/fetch/log/mcp), R1-R6 with per-crate symbol lists and test plan. (4) cclab-mamba/runtime/value-and-rc.md [MEDIUM] — MbValue NaN-boxing foundation, constructors/extractors used by all mb_* functions. (5) cclab-mamba/runtime/module.md [MEDIUM] — module system for binding crate registration."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Three binding crates in scope have no dedicated spec: cclab-api-mamba, cclab-pg-mamba, cclab-runtime-mamba. The reference context should explicitly note these coverage gaps so the change-spec phase knows it must define tests based on code inspection rather than spec requirements.",
+      "recommendation": "In the reference context, add a 'Coverage Gaps' section noting these 3 unspecified crates. The existing cclab-schema-mamba/tests/test_binding.rs (which tests MambaModule trait, symbol registration, and MbValue conversions) serves as the pattern template for all binding crate tests."
+    },
+    {
+      "severity": "LOW",
+      "description": "The testing/test-harness.md spec is about the core mamba fixture test harness (parse/typecheck/jit runners), not binding crate integration tests. If included, it should be scored as LOW relevance since binding crate tests use standard #[test] in tests/ directories, not the fixture harness.",
+      "recommendation": "If test-harness.md is referenced, assign LOW relevance and note it's tangential — binding tests use cargo test, not fixture runners."
+    }
+  ]
+}

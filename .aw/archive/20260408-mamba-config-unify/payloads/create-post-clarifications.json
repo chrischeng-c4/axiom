@@ -1,0 +1,6 @@
+{
+  "change_id": "mamba-config-unify",
+  "group_id": "unify-mamba-config",
+  "skipped": true,
+  "scope_summary": "**Problem**: Two MambaConfig structs exist in cclab-mamba (driver/config.rs and config/schema.rs) causing namespace collision and confusion. -> requirements.md\n\n**Success Criteria**: Single MambaConfig struct in config/schema.rs with discover(), is_symbol_exposed(), from_file(), from_str(), validate() methods. All tests pass. cargo check succeeds. -> requirements.md acceptance criteria\n\n**Boundary**: In scope: config/schema.rs (canonical struct), driver/config.rs (remove MambaConfig, keep CompilerConfig), driver/mod.rs (update re-exports), main.rs (update imports), all tests. Out of scope: new features, API changes beyond unification. Constraints: backward-compatible mamba.toml format, entry_point field must be accessible."
+}

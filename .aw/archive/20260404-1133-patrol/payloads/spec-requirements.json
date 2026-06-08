@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chrischeng/projects/wt/mamba",
+  "change_id": "1133-patrol",
+  "spec_id": "name-builtin-init",
+  "group_id": "fix-name-builtin",
+  "section": "requirements",
+  "content": "<!-- type: requirements lang: markdown -->\n\n### R10 - Module-Scope Dunder Variable Initialization\n\n```yaml\nid: R10\npriority: high\nissue: \"#1133\"\n```\n\n`lower_top_level()` must emit `StoreGlobal` instructions to initialize module-scope dunder variables before any user code runs. For the entry-point module:\n\n| Variable | Value | Condition |\n|----------|-------|-----------|\n| `__name__` | `\"__main__\"` | Always (entry-point script) |\n\nEmission sequence in `lower_top_level()`:\n1. `mb_register_builtins()` (existing)\n2. `emit_str_const(\"__main__\")` → VReg\n3. `StoreGlobal { name: __name__ SymbolId, value: VReg }` ← **new**\n4. Class registrations (existing)\n5. User statements (existing)\n\n### R11 - REPL Dunder Initialization\n\n```yaml\nid: R11\npriority: high\nissue: \"#1133\"\n```\n\n`lower_top_level_repl()` must also emit `StoreGlobal(__name__, \"__main__\")` after `mb_register_builtins`, before restoring globals. REPL sessions are entry-point contexts and must have `__name__ == \"__main__\"` consistent with CPython.\n\n### R12 - Symbol Resolution for Dunder Stores\n\n```yaml\nid: R12\npriority: medium\nissue: \"#1133\"\n```\n\nThe `__name__` SymbolId must be resolved from the symbol table (`symbols.lookup(\"__name__\")`) when available (in `lower_hir_to_mir_with_symbols`), or from `hir.sym_names` reverse lookup. For the non-symbol-table path (`lower_hir_to_mir`), use a well-known sentinel SymbolId or emit a `CallExtern` to `mb_global_set` with a string key."
+}

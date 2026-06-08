@@ -1,0 +1,33 @@
+{
+  "change_id": "mamba-string-reverse-slice",
+  "spec_id": "string-reverse-slice-fix",
+  "verdict": "APPROVED",
+  "summary": "Implementation correctly fixes string reverse slice `[::-1]` returning empty string (#1111). All spec requirements R6–R12 are satisfied. The fix in mb_str_slice_full (string_ops.rs lines 119–126) uses None-aware match expressions: absent start defaults to len-1 directly, absent stop defaults to literal -1, bypassing clamp_rev_str in both cases. Explicit values still go through clamp_rev_str. The spec has no ## Test Plan section, so the hard reject rule does not apply — nevertheless 14 unit tests covering all scenarios (S1–S9 plus boundary cases) are present and all pass. xfail fixture deleted and conformance test passes. Main spec updated with R6 decision table.",
+  "hard_checklist": {
+    "code_matches_spec": {
+      "result": "pass",
+      "notes": "R6 (absent stop → -1 literal): string_ops.rs lines 123–126, `match stop.as_int() { Some(v) => clamp_rev_str(v, len), None => -1 }`. R7 (absent start → len-1): lines 119–122, `match start.as_int() { Some(v) => clamp_rev_str(v, len), None => len - 1 }`. R8 (explicit negative start still clamp_rev_str): Some(v) branch used, test S4 'abcdef'[-2::-1]=>'edcba' passes. R9 (explicit stop still clamp_rev_str): Some(v) branch, test S5 'abcdef'[4:1:-1]=>'edc' passes. R10 (positive step unchanged): lines 111–114, normalize_index path untouched. R11 (Unicode): chars().collect() codepoint iteration, test S8 '你好世界'[::-1]=>'界世好你' passes. R12 (xfail fixture converted): string_edge_cases_xfail.py and .expected deleted (confirmed absent on disk); 4 reverse slice cases merged into string_edge_cases.py lines 18–22 and matching outputs appended to .expected lines 9–12. Constraints respected: clamp_rev_str function unmodified, mb_str_slice (2-arg) unaffected, do_not_touch list functions intact."
+    },
+    "tests_present_when_test_plan_exists": {
+      "result": "pass",
+      "notes": "Spec has no ## Test Plan section (sections present: Overview, Source Files, Requirements, Acceptance Criteria, Scenarios, Changes). Hard reject rule does not apply. Implementation adds 14 #[test] functions at string_ops.rs lines 2367–2547 under #[cfg(test)] mod tests. Tests cover: S1 full reverse, S2 single-char, S3 empty string, S4 explicit negative start, S5 explicit start+stop, S6 positive step, S7 step=-2, S8 unicode, plus boundary cases: step=0, explicit start=0, explicit stop=0, forward absent start/stop, step=2, explicit negative stop."
+    },
+    "no_regressions": {
+      "result": "pass",
+      "notes": "cargo test -p cclab-mamba --lib -- test_str_slice: 14 passed, 0 failed (2876 other tests filtered out, none failing). Conformance test data_structures/string_edge_cases.py: ok, 1 passed. Fix is localized to the negative-step absent-start/stop match arms only; the positive-step branch and all other string functions are untouched."
+    }
+  },
+  "soft_findings": [
+    {
+      "severity": "info",
+      "title": "Test labels in source reference spec requirement IDs that differ from the spec",
+      "details": "The doc comments on the new tests (e.g. `/// S1: Full reverse slice s[::-1] produces reversed string (R1, R2, R6)`) cite requirement IDs R1/R2/R6 which don't all match the spec's requirement numbering (spec uses R6, R7, R8, R9, R10, R11, R12). The test correctly exercises the right behaviors; the requirement citations are just minor annotation inaccuracies. Not a blocking issue.",
+      "locations": [
+        "crates/cclab-mamba/src/runtime/string_ops.rs:2369",
+        "crates/cclab-mamba/src/runtime/string_ops.rs:2381",
+        "crates/cclab-mamba/src/runtime/string_ops.rs:2393"
+      ],
+      "recommendation": "Update doc comment requirement citations from (R1, R2, R6) to (R6, R7, R11) to match the spec's actual requirement IDs."
+    }
+  ]
+}

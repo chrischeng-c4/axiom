@@ -1,0 +1,8 @@
+[project]
+name = "cue-backend"
+version = "0.1.0"
+entry_point = "src/main.py"
+
+[dev]
+host = "127.0.0.1"
+port = 43219

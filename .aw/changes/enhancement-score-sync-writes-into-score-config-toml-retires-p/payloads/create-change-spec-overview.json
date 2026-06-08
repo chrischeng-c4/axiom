@@ -1,0 +1,7 @@
+{
+  "spec_id": "enhancement-score-sync-writes-into-score-config-toml-retires-p-spec",
+  "section": "overview",
+  "main_spec_ref": "projects/agentic-workflow/specs/sync-command.md",
+  "fill_sections": ["overview", "requirements", "logic", "schema", "config", "test-plan", "changes"],
+  "content": "<!-- type: overview lang: markdown -->\n\nRetires `.aw/projects.toml` as a separate write target. `aw sync` now writes a marker-delimited `[[projects]]` block directly inside `.aw/config.toml`, using `toml_edit` for lossless round-trips that preserve all non-generated content.\n\n| Aspect | Before | After |\n|--------|--------|-------|\n| Write target | `.aw/projects.toml` | `.aw/config.toml` (marker-delimited block) |\n| Load path | `projects.toml` overlaid with `config.toml` sparse entries | `config.toml` only (marker block) |\n| Round-trip safety | Header comment; serde full rewrite | `toml_edit` lossless; non-generated sections byte-identical |\n| Bug: Rule E name | Directory basename (`cli`) | `[package].name` from nested `Cargo.toml` (`score-cli`) |\n| Bug: test_cmd paths | May leak absolute paths | Project-relative (`cd projects/conductor/be && ...`) |\n| Migration | n/a | One-shot: delete `.aw/projects.toml` on first successful sync |\n\nTwo spec updates:\n- `projects/agentic-workflow/specs/sync-command.md` — update overview, requirements, logic, config, test-plan, changes\n- `projects/agentic-workflow/specs/sync-config-toml-schema.md` — new spec: schema + annotated config example"
+}

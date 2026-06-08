@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jet-multi-target-profiles",
+  "title": "jet target capability profiles",
+  "description": "Schema for target-profiles.yaml. Each profile describes one target (web, desktop, tui). Build pipeline (#1239) consumes this file to wire renderer feature flags and reject UI sources that demand absent capabilities.",
+  "type": "object",
+  "required": ["version", "profiles", "degradation_rules"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Bump on breaking change."
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/TargetProfile" },
+      "description": "One entry per target. Targets are uniquely identified by `target`."
+    },
+    "degradation_rules": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/DegradationRule" },
+      "description": "Cross-reference table. Every degradation.id mentioned in any profile MUST appear here."
+    }
+  },
+  "definitions": {
+    "TargetName": {
+      "type": "string",
+      "enum": ["web", "desktop", "tui"]
+    },
+    "TargetProfile": {
+      "type": "object",
+      "required": ["target"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "$ref": "#/definitions/TargetName" },
+        "inherits": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/definitions/TargetName" }
+          ],
+          "description": "If non-null, this profile inherits all fields from the named target. Fields supplied below override the inherited values."
+        },
+        "overrides": {
+          "type": "object",
+          "description": "Used in tandem with `inherits`. Annotates which inherited fields are intentionally extended (e.g., desktop's lifecycle event sources). Free-form; informational."
+        },
+        "display_kinds": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["block", "flex", "none"] },
+          "description": "Subset of ../../wasm-renderer/layout-runtime.md DisplayKind enum. Targets MUST NOT extend; they MAY restrict."
+        },
+        "color_depth": {
+          "type": "string",
+          "enum": ["rgba", "indexed-256", "ansi-16", "mono"]
+        },
+        "text": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "shaping": { "type": "string", "enum": ["full", "grid", "none"] },
+            "bidi": { "type": "boolean" },
+            "fonts": { "type": "string", "enum": ["any", "system", "terminal"] }
+          }
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pointer": {
+              "oneOf": [
+                { "type": "boolean" },
+                { "type": "string", "const": "optional" }
+              ],
+              "description": "true / false / 'optional'. 'optional' = capability resolved at runtime by the renderer."
+            },
+            "keyboard": { "type": "boolean" },
+            "touch": { "type": "boolean" }
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["mouse", "key", "focus", "lifecycle"] },
+          "description": "Subset of SyntheticEvent variants supported. Targets MUST NOT advertise events they cannot source."
+        },
+        "hooks": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Hooks the target supports. Per C7 every target MUST support the full hook set; this field is informational/audit-only."
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_layout_nodes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Informational. No hard cap is enforced."
+            }
+          }
+        },
+        "animation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "paint_loop": { "type": "string", "enum": ["raf", "poll", "none"] },
+            "paint_loop_hz": { "type": "integer", "minimum": 1, "maximum": 240 },
+            "css_transitions": { "type": "boolean" }
+          }
+        },
+        "markdown": { "$ref": "#/definitions/MarkdownCapability" },
+        "degradation": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/DegradationEntry" },
+          "description": "Per-target list of degradation rules that apply. IDs MUST cross-reference top-level degradation_rules[]."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Free-form prose. Build pipeline ignores; humans read."
+        }
+      }
+    },
+    "MarkdownCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inline_styles", "lists", "code_blocks", "tables", "images", "links"],
+      "description": "Per-feature Markdown rendering capability matrix. Consumed by the <markdown> element-contract intrinsic and by app code via use_target().markdown. Per-feature drop on TUI is governed by degradation rule T11.",
+      "properties": {
+        "inline_styles": { "type": "boolean", "description": "Bold, italic, code spans." },
+        "lists": { "type": "boolean", "description": "Bullet and ordered lists." },
+        "code_blocks": { "type": "boolean", "description": "Fenced code blocks." },
+        "tables": { "type": "boolean", "description": "GFM tables. TUI = false → T11 placeholder." },
+        "images": { "type": "boolean", "description": "Images. TUI = false → T11 placeholder." },
+        "links": { "type": "boolean", "description": "Hyperlinks. Clickable on web/desktop; rendered as label + footnote-style URL on TUI." }
+      }
+    },
+    "DegradationEntry": {
+      "type": "object",
+      "required": ["id", "applies_to", "rule"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Z][0-9]+$",
+          "description": "Cross-references DegradationRule.id."
+        },
+        "applies_to": { "type": "string" },
+        "rule": {
+          "type": "string",
+          "enum": [
+            "pass-through",
+            "round-to-cell",
+            "round-to-zero",
+            "quantize-to-ansi",
+            "drop-silent",
+            "synthesize-keyboard-equivalent",
+            "render-placeholder"
+          ]
+        }
+      }
+    },
+    "DegradationRule": {
+      "type": "object",
+      "required": ["id", "severity", "rationale"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Z][0-9]+$" },
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warn", "error"],
+          "description": "info = silent; warn = build emits warning; error = build refuses."
+        },
+        "rationale": { "type": "string" }
+      }
+    }
+  }
+}

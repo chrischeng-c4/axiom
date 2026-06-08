@@ -1,0 +1,26 @@
+change_id: fix-gen-apply-file-path
+schema_version: '2.0'
+created_at: 2026-04-10T10:06:09.405930Z
+updated_at: 2026-04-10T10:07:06.261185Z
+phase: archived
+archive_reason: |
+  Zombie change — branch was manually merged on 2026-04-10 via `git merge cclab/fix-gen-apply-file-path`
+  (commit 0e4b0956). Actual fix shipped in cc88f77b "fix(sdd): accept both path: and file: keys in
+  gen apply/diff parsers". The SDD machinery never advanced past pre_clarifications_created because
+  no `groups/` directory was created — subsequent phases (reference_context, etc.) require a group
+  context that this change never got. Cleaned up by cron-driven SDD-resume agent on 2026-04-11
+  after two failed score-reference-context dispatches confirmed it could not be advanced.
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: worktree
+revision_counts: {}
+current_task_id: null
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: cclab/fix-gen-apply-file-path

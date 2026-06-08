@@ -1,0 +1,7 @@
+- spec_id: mamba-p0-fixes-main
+  action: modify
+  main_spec_ref: crates/cclab-mamba/testing/mamba-py312-conformance.md
+  source: crates/cclab-mamba/testing/mamba-py312-conformance.md
+  sections:
+  - overview
+  - changes

@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cclab.dev/blueprint/pipeline/v1",
+  "title": "Pipeline",
+  "description": "Abstract data model for a pipeline execution — DAG of nodes with jobs.",
+  "type": "object",
+  "required": ["id", "project_id", "workflow_id", "status", "created_at"],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "workflow_id": { "type": "string" },
+    "trigger_type": { "type": "string", "default": "manual" },
+    "trigger_ref_id": { "type": ["string", "null"] },
+    "status": { "type": "string", "enum": ["pending", "running", "completed", "failed", "cancelled"] },
+    "nodes": { "type": "array", "items": { "$ref": "#/$defs/PipelineNode" }, "default": [] },
+    "error": { "type": ["string", "null"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "started_at": { "type": ["string", "null"], "format": "date-time" },
+    "completed_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "$defs": {
+    "PipelineNode": {
+      "type": "object",
+      "required": ["id", "node_id", "status"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "node_id": { "type": "string" },
+        "deps": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "status": { "type": "string", "enum": ["pending", "running", "completed", "failed", "skipped"] },
+        "artifact": { "default": null },
+        "error": { "type": ["string", "null"] },
+        "jobs": { "type": "array", "items": { "$ref": "#/$defs/PipelineJob" }, "default": [] },
+        "started_at": { "type": ["string", "null"], "format": "date-time" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "PipelineJob": {
+      "type": "object",
+      "required": ["id", "job_id", "status"],
+      "properties": {
+        "id": { "type": "string", "format": "uuid" },
+        "job_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "running", "completed", "failed"] },
+        "model": { "type": ["string", "null"] },
+        "tokens_used": { "type": ["integer", "null"], "minimum": 0 },
+        "error": { "type": ["string", "null"] },
+        "started_at": { "type": ["string", "null"], "format": "date-time" },
+        "completed_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    }
+  }
+}

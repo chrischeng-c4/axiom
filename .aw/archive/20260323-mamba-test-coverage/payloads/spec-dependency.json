@@ -1,0 +1,7 @@
+{
+  "change_id": "mamba-test-coverage",
+  "spec_id": "mamba-test-coverage-spec",
+  "group_id": "mamba-stdlib-coverage-lower",
+  "section": "dependency",
+  "content": "flowchart LR\n    subgraph concurrency[\"Spec: concurrency\"]\n        Q[\"queue_mod.rs\\n4%\"]\n    end\n    subgraph numeric[\"Spec: numeric\"]\n        S[\"statistics_mod.rs\\n5%\"]\n        BI[\"bisect_mod.rs\\n14%\"]\n    end\n    subgraph text[\"Spec: text-processing\"]\n        SH[\"shlex_mod.rs\\n7%\"]\n        L[\"locale_mod.rs\\n10%\"]\n    end\n    subgraph datetime[\"Spec: datetime\"]\n        C[\"calendar_mod.rs\\n8%\"]\n    end\n    subgraph archive[\"Spec: archive-and-compression\"]\n        LZ[\"lzma_mod.rs\\n11%\"]\n        ZL[\"zlib_mod.rs\\n11%\"]\n    end\n    subgraph random[\"Spec: random\"]\n        SE[\"secrets_mod.rs\\n12%\"]\n    end\n    subgraph typing[\"Spec: typing-and-inspect\"]\n        AB[\"abc_mod.rs\\n14%\"]\n    end\n    Q & S & BI & SH & L & C & LZ & ZL & SE & AB --> T[\"stdlib_coverage_lower_tests.rs\\nintegration tests\"]"
+}

@@ -1,0 +1,37 @@
+change_id: mamba-refcount-jit
+schema_version: '2.0'
+created_at: 2026-03-27T06:35:20.632663Z
+updated_at: 2026-03-28T06:22:46.121606Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: mamba-refcount-jit-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag:
+  issues:
+  - number: 1129
+    title: 'refactor(mamba): implement CPython 3.12 reference counting in JIT codegen'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  change_spec: []
+  post_clarifications:
+  - refcount-jit
+  pre_clarifications:
+  - refcount-jit
+  reference_context:
+  - refcount-jit

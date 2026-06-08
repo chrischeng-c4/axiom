@@ -1,0 +1,29 @@
+- spec_id: broker-traits
+  action: create
+  main_spec_ref: crates/cclab-fetch/broker/broker-traits.md
+  sections:
+  - overview
+  - schema
+- spec_id: cloudtasks-broker
+  action: create
+  main_spec_ref: crates/cclab-fetch/broker/cloudtasks.md
+  sections:
+  - overview
+  - schema
+  - rest-api
+  - changes
+- spec_id: cloud-scheduler-backend
+  action: create
+  main_spec_ref: crates/cclab-fetch/scheduler/cloud-scheduler-backend.md
+  sections:
+  - overview
+  - schema
+  - rest-api
+  - changes
+- spec_id: scheduler-backends-gcp
+  action: modify
+  main_spec_ref: crates/cclab-fetch/scheduler/scheduler-backends.md
+  source: cclab/specs/crates/cclab-fetch/scheduler-backends.md
+  sections:
+  - overview
+  - changes

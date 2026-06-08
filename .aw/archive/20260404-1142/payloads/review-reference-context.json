@@ -1,0 +1,84 @@
+{
+  "group_id": "check-alignment-phase3",
+  "verdict": "REVIEWED",
+  "summary": "Spec coverage is largely accurate and well-targeted, but the spec plan has a critical gap: Q2 (alignment warnings appended to implementation.md during merge) requires logic changes to the merge workflow that are not covered by any spec plan entry. change-merge.md is rated HIGH relevance but has no corresponding spec plan entry. Additionally, the key requirements for check-alignment.md contain an inaccuracy — 'check_with_coverage()' is referenced but this function does not exist; the Phase 2 spec only adds a mode parameter to the existing check() function.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Q2 (merge workflow: run check() on merged specs, append warnings to implementation.md) affects change-merge.md logic but there is no spec plan entry for change-merge.md. The merge flow change (inserting alignment check between Write and Archive steps) is architecture logic, not capturable in workflow-tools.md alone."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": true,
+      "note": "High: check-alignment.md, workflow-tools.md, artifact-tools.md — directly implements all three Q&A answers. Medium: state-machine.md, change-spec.md, implement-task.md, run-change.md — related but not directly modified. Low: reference-context.md — background pattern only. All scores are justified."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "check-alignment.md key requirements claim 'check_with_coverage() entry points' but this function does not exist. Phase 2 spec adds a mode parameter to check(path, mode) — there is no separate check_with_coverage() function (see Changes section: 'Add coverage mode parameter to check()'). Also, artifact-tools.md key requirements state 'response currently returns filled_sections, status, next_actions' but the current sdd_artifact_create_change_spec spec has no explicitly defined result schema."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "All 9 specs are relevant to some aspect of Phase 3 workflow integration."
+    },
+    {
+      "item": "spec_plan: every entry has main_spec_ref set (not null)",
+      "passed": true,
+      "note": "All three entries have main_spec_ref: check-alignment-phase3→crates/cclab-sdd/logic/check-alignment.md, workflow-tools-phase3→crates/cclab-sdd/interfaces/tools/workflow-tools.md, artifact-tools-phase3→crates/cclab-sdd/interfaces/tools/artifact-tools.md."
+    },
+    {
+      "item": "spec_plan: sections are reasonable for the requirements",
+      "passed": true,
+      "note": "check-alignment-phase3 uses overview+requirements+scenarios+logic+changes+test-plan — appropriate for adding Phase 3 requirements to an existing spec. workflow-tools-phase3 and artifact-tools-phase3 use overview+changes — minimal but sufficient for schema extension specs."
+    },
+    {
+      "item": "spec_plan: modify entries have valid source paths",
+      "passed": true,
+      "note": "All three source files exist under cclab/specs/crates/cclab-sdd/ and were confirmed readable."
+    },
+    {
+      "item": "spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)",
+      "passed": true,
+      "note": "crates/cclab-sdd/logic/check-alignment.md (subfolder: logic), crates/cclab-sdd/interfaces/tools/workflow-tools.md (subfolder: interfaces/tools), crates/cclab-sdd/interfaces/tools/artifact-tools.md (subfolder: interfaces/tools) — all compliant."
+    },
+    {
+      "item": "spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)",
+      "passed": true,
+      "note": "Each entry is narrowly scoped: Phase 3 validation logic, workflow tool schema changes, artifact tool schema changes."
+    },
+    {
+      "item": "spec_plan: no spec file would require duplicate section types (split into separate files if needed)",
+      "passed": true,
+      "note": "No duplicate section types detected across the three spec plan entries."
+    },
+    {
+      "item": "spec_plan: spec paths mirror source structure (interfaces/, logic/, generate/)",
+      "passed": true,
+      "note": "Logic spec → logic/, interface spec → interfaces/tools/. Structure is consistent."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "Spec plan missing entry for change-merge.md. Q2 answer explicitly requires: after specs are merged to cclab/specs/, run check() on each merged spec and append alignment warnings to implementation.md review section. This is a new step in the merge flow (between Write and Archive) that must be specified in crates/cclab-sdd/logic/change-merge.md. No spec plan entry exists for this. The code change to create_change_merge.rs implementing this logic will have no spec backing it.",
+      "recommendation": "Add a spec plan entry: { spec_id: 'change-merge-phase3', action: 'modify', main_spec_ref: 'crates/cclab-sdd/logic/change-merge.md', sections: ['overview', 'logic', 'changes'] }. The logic section should document the alignment check insertion point (after Write, before Archive) using a flowchart, and the changes section should list the create_change_merge.rs modification."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Key requirements for check-alignment.md incorrectly state 'check_with_coverage() entry points'. This function does not exist in the Phase 2 spec. The spec's Changes section shows: 'Add coverage mode parameter to check()' — the API is check(path, mode), not a separate check_with_coverage() function. Consumers calling the wrong function name will fail to integrate.",
+      "recommendation": "Correct the key requirement to: 'Architecture: spec_alignment::check(path, coverage_mode) — single entry point; coverage_mode=true enables Phase 2 checks (annotation scan, requirement↔scenario, schema↔struct). Returns CheckResult with optional CoverageReport.'"
+    },
+    {
+      "severity": "LOW",
+      "description": "Key requirements for artifact-tools.md claim 'Artifact tool response currently returns filled_sections, status, next_actions' but the current sdd_artifact_create_change_spec spec defines no result schema (only x-payload-schema). This assertion is based on implementation knowledge from Rust code, not the spec content. If the spec gets misread as the ground truth, the claim could mislead.",
+      "recommendation": "Qualify this key requirement as implementation-derived: 'Implementation note: tool returns filled_sections, status, next_actions in practice (from Rust source); spec will need to add formal result schema with alignment_violations array.'"
+    },
+    {
+      "severity": "LOW",
+      "description": "run-change.md (medium relevance) has no spec plan entry, yet the reference context notes 'Q3 implies skill should surface alignment_warnings to user when present (display or log)'. If the skill template needs updating to display warnings, the spec for run-change.md must be updated. The current spec plan silently omits this.",
+      "recommendation": "Either add a spec plan entry for crates/cclab-sdd/skills/run-change.md (sections: changes) to document the skill loop update that surfaces alignment_warnings, or explicitly note in the overview that the skill template update is out-of-scope for this change and explain why."
+    }
+  ]
+}

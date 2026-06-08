@@ -1,0 +1,1 @@
+feat(sdd): code↔spec coverage mapping via @spec annotations + nested schema fix — check-alignment Phase 2

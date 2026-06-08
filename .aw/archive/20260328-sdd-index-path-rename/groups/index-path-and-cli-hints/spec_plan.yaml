@@ -1,0 +1,14 @@
+- spec_id: index-path-rename
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/lens-index-storage.md
+  source: crates/cclab-sdd/logic/lens-index-storage.md
+  sections:
+  - overview
+  - changes
+- spec_id: cli-hints-impl-prompt
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/implement-task.md
+  source: crates/cclab-sdd/logic/implement-task.md
+  sections:
+  - overview
+  - changes

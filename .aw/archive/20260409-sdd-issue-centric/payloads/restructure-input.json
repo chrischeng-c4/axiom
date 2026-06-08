@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "id": "issue-centric-workflow",
+      "issues": [],
+      "requirements": "Make issue the unit of work in SDD.\n\n1. `score run-change` only accepts `--issue <slug>`, no `--description`\n2. One issue = one change (no multi-issue bundling)\n3. Issue frontmatter absorbs STATE.yaml fields (phase, branch, git_workflow)\n4. Change artifacts directory uses issue slug as name\n5. `score issues list` shows phase for in-progress issues\n6. No issue = no change. Error with guidance.",
+      "questions": []
+    }
+  ]
+}

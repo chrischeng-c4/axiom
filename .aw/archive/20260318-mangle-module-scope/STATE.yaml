@@ -1,0 +1,79 @@
+change_id: mangle-module-scope
+schema_version: '2.0'
+created_at: 2026-03-18T10:33:23.759840Z
+updated_at: 2026-03-18T11:12:44.414492Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:mangle-module-scope: 1
+current_task_id: mangle-module-scope-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 92855
+    timestamp: 2026-03-18T10:35:14.687924Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 143709
+    timestamp: 2026-03-18T10:38:36.617899Z
+  - step: analyze_spec_mangle-module-scope-spec
+    sdd_version: 0.3.41
+    model: gemini-3.1-pro-preview
+    tokens_in: 513171
+    tokens_out: 1730
+    cost_usd: null
+    duration_ms: 121042
+    timestamp: 2026-03-18T10:41:12.271058Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1877797
+    timestamp: 2026-03-18T11:12:44.413235Z
+  total_cost_usd: 0.0
+  total_tokens_in: 513171
+  total_tokens_out: 1730
+dag:
+  issues:
+  - number: 882
+    title: 'jet-build: bundle size 215KB vs webpack 192KB — implement scope hoisting'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 903
+    title: 'jet-build: scope hoisting Phase 2 — true module flattening for cross-module optimization'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - mangle-module-scope
+  reference_context:
+  - mangle-module-scope
+  change_implementation: []
+  change_spec: []
+  post_clarifications:
+  - mangle-module-scope

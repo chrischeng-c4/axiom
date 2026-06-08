@@ -1,0 +1,168 @@
+{
+  "group_id": "restructure-agent-core",
+  "specs": [
+    {
+      "spec_id": "cclab-agent/agents.md",
+      "spec_group": "agent-core",
+      "relevance": "high",
+      "key_requirements": [
+        "Agent trait interface (run, run_with_handler methods)",
+        "Agent execution loop (LLM turns, tool calls, approval flow)",
+        "AnalystAgent state machine (Active, Paused, Completed, Cancelled)",
+        "Agent builder pattern (CodingAgentBuilder, AnalystAgentBuilder)",
+        "Config structure (system_prompt, max_turns, model, temperature, max_tokens)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/architecture.md",
+      "spec_group": "system-design",
+      "relevance": "high",
+      "key_requirements": [
+        "Module dependency graph (agents, llm, tools, security, stream, context, storage, integrations)",
+        "C4 system context (users, LLM providers, platforms, file system)",
+        "Class hierarchy (Agent, LLMProvider, Tool, Storage, PlatformIntegration, StreamHandler, ApprovalHandler)",
+        "Integration points with external systems"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/core-types.md",
+      "spec_group": "type-system",
+      "relevance": "high",
+      "key_requirements": [
+        "Message type (role, content, tool_calls, tool_call_id, metadata, timestamp)",
+        "Role enum (system, user, assistant, tool)",
+        "ToolCall type (id, name, arguments)",
+        "ToolResult type (tool_call_id, output, is_error)",
+        "TokenUsage type (prompt_tokens, completion_tokens, total_tokens)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/llm-providers.md",
+      "spec_group": "llm-integration",
+      "relevance": "high",
+      "key_requirements": [
+        "LLMProvider trait (provider_name, supported_models, validate_model, complete, complete_stream)",
+        "CompletionRequest schema (messages, model, temperature, max_tokens, top_p, tools, extras)",
+        "CompletionResponse schema (content, tool_calls, finish_reason, usage, model, metadata)",
+        "Supported models (Claude, OpenAI, Gemini variants)",
+        "Message conversion per provider (system, user, assistant, tool roles)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/tools.md",
+      "spec_group": "tool-system",
+      "relevance": "high",
+      "key_requirements": [
+        "Tool trait (name, description, parameters, execute, definition, validate_arguments)",
+        "ToolRegistry (register, unregister, get, contains, tool_names, count, clear)",
+        "ToolExecutor (with timeout, with_retries, execute with error handling)",
+        "ToolParameter schema",
+        "Tool execution flow (lookup, timeout, retry, error handling)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/context.md",
+      "spec_group": "context-management",
+      "relevance": "medium",
+      "key_requirements": [
+        "ContextManager class (system_prompt, messages, token management)",
+        "Context compression flow (auto-compress when over limit)",
+        "Message window management (always keep system, retain recent messages)",
+        "ContextStats (message_count, estimated_tokens, max_tokens, available_tokens)",
+        "Token estimation (content.len() / 4 heuristic)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/error-handling.md",
+      "spec_group": "error-handling",
+      "relevance": "medium",
+      "key_requirements": [
+        "NovaError enum (LLMError, ToolError, SecurityViolation, Timeout, FileError, etc.)",
+        "Error classification (retriable vs non-retriable, requires_user_action)",
+        "Specific error variants (ApprovalRequired, ApprovalDenied, SecurityViolation, etc.)",
+        "Command execution errors (CommandFailed, CommandTimeout with exit_code/stderr)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/security.md",
+      "spec_group": "security",
+      "relevance": "medium",
+      "key_requirements": [
+        "SecurityPolicy configuration (blocked_paths, allowed_paths, blocked_commands, tools_requiring_approval)",
+        "ApprovalHandler trait (request_approval method)",
+        "ApprovalRequest/Response types (approved, denied, always_approve, approved_with_modifications)",
+        "Path validation logic (check against blocked/allowed lists)",
+        "Tool approval flow (approval → security checks → execution)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/streaming.md",
+      "spec_group": "streaming",
+      "relevance": "medium",
+      "key_requirements": [
+        "StreamEvent schema (started, thinking, text_chunk, tool_call_requested, execution events, approval events, completed, error)",
+        "StreamHandler trait (on_event, should_cancel)",
+        "Event flow state diagram (event transitions during execution)",
+        "Handler implementations (NoOpHandler, PrintHandler, CollectingHandler, CallbackHandler)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/storage.md",
+      "spec_group": "state-persistence",
+      "relevance": "medium",
+      "key_requirements": [
+        "Storage trait (save_session, load_session, list_sessions, delete_session, session_exists)",
+        "SessionState type (id, title, created_at, updated_at, status, messages, notes, findings, pending_clarification)",
+        "SessionStatus enum (active, paused, completed, cancelled)",
+        "SessionInfo for lightweight session listing",
+        "MemoryStorage and FileStorage implementations"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/tools-analysis.md",
+      "spec_group": "analysis-tools",
+      "relevance": "low",
+      "key_requirements": [
+        "AskUserTool (pause/resume flow for user input)",
+        "TakeNoteTool (save notes with categories)",
+        "RecordFindingTool (structured findings with severity)",
+        "WebSearchTool and WebFetchTool (information gathering)",
+        "PostCommentTool (platform integration for clarifications)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/tools-coding.md",
+      "spec_group": "coding-tools",
+      "relevance": "low",
+      "key_requirements": [
+        "BashTool (command execution with timeout)",
+        "ReadFileTool (file reading with pagination)",
+        "WriteFileTool (file creation)",
+        "EditFileTool (string replacement in files)",
+        "GlobTool (file pattern matching)",
+        "GrepTool (regex-based code search)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/README.md",
+      "spec_group": "documentation",
+      "relevance": "low",
+      "key_requirements": [
+        "Spec index and overview",
+        "References to all related specs (architecture, core-types, agents, etc.)",
+        "Framework structure documentation"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/integrations.md",
+      "spec_group": "platform-integration",
+      "relevance": "low",
+      "key_requirements": [
+        "PlatformIntegration trait (get_issue, list_issues, get_comments, post_comment, into_tools)",
+        "Issue schema (id, title, state, author, labels, comments, etc.)",
+        "GitHub, GitLab, Jira implementations and API mappings",
+        "Generated tools per platform"
+      ]
+    }
+  ]
+}

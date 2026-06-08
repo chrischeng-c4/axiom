@@ -1,0 +1,22 @@
+- spec_id: sdd-spec-format-unification
+  action: create
+  main_spec_ref: crates/sdd/logic/spec-format-unification.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+- spec_id: sdd-fill-order-topdown
+  action: modify
+  main_spec_ref: crates/sdd/logic/spec-structure.md
+  source: .score/tech_design/crates/sdd/logic/spec-structure.md
+  sections:
+  - requirements
+  - changes
+- spec_id: sdd-format-rules-yaml
+  action: modify
+  main_spec_ref: crates/sdd/logic/check-alignment.md
+  source: .score/tech_design/crates/sdd/logic/check-alignment.md
+  sections:
+  - requirements
+  - changes

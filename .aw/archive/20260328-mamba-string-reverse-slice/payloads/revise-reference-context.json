@@ -1,0 +1,38 @@
+{
+  "change_id": "mamba-string-reverse-slice",
+  "group_id": "string-reverse-slice",
+  "specs": [
+    {
+      "spec_id": "string-ops",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "R6: mb_str_slice_full(s, start, stop, step) must support negative step",
+        "Absent start defaults to len-1, absent stop defaults to -1 sentinel bypassing clamp_rev_str",
+        "Fix applied in bc5921e9",
+        "s[::-1] reverses full string, s[4:1:-1] yields chars at indices 4,3,2",
+        "Unicode codepoint-based iteration"
+      ]
+    },
+    {
+      "spec_id": "conformance",
+      "spec_group": "testing",
+      "relevance": "medium",
+      "key_requirements": [
+        "Golden file conformance: JIT stdout vs .expected byte-for-byte",
+        "Xfail: # mamba-xfail directive skips fixture; removal re-enables",
+        "Fixture: data_structures/string_edge_cases_xfail.py expects fedcba",
+        "Verify: cargo test -p cclab-mamba --test conformance_tests"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "string-reverse-slice-fix",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/string-ops.md",
+      "source": "crates/cclab-mamba/runtime/string-ops.md",
+      "sections": ["overview", "requirements", "changes"]
+    }
+  ]
+}

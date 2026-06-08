@@ -1,0 +1,10 @@
+{
+  "project_path": "/Users/chrischeng/projects/cclab-sdd",
+  "change_id": "mamba-p1-bugfix",
+  "spec_id": "tokens-and-indent",
+  "section": "overview",
+  "content": "This change-spec reviews the Mamba lexer's handling of `{`/`}` tokens (LBrace/RBrace) in context of issue #1112: dict/set literals inside `try` blocks triggering parse errors.\n\n### Analysis\n\n| Aspect | Finding |\n|--------|---------|\n| IndentProcessor `{` at line start | Correct — computes indent and emits INDENT/DEDENT **before** incrementing `paren_depth` (R2 step 2) |\n| Implicit line continuation for `{...}` | Correct — newlines inside braces suppressed per R2 step 2 |\n| Token stream for `try:\\n    d = {}['x']\\nexcept:` | Correct — emits `INDENT` at column 4, pairs `{}`/`[]` with balanced paren_depth, `DEDENT` before `except` |\n| Token stream for `try:\\n    {}\\nexcept:` | Correct — `{` at line start triggers indent calc first, then enters paren mode |\n\n### Conclusion\n\nThe IndentProcessor (R2) correctly handles all brace scenarios. **No lexer code changes required.** The bug root cause is in the parser layer (`parse_block` / `parse_try` in `stmt.rs` / `stmt_compound.rs`), which misinterprets the correctly-produced token stream.\n\n### Scope\n\n- **Confirmed correct**: `IndentProcessor.process()` in `indent.rs` — brace handling order (indent check → paren_depth increment)\n- **Clarification added**: R2 brace-at-line-start ordering guarantee (see Changes section)\n- **No file modifications**: Lexer code is unchanged",
+  "main_spec_ref": "crates/cclab-mamba/lexer/tokens-and-indent.md",
+  "group_id": "try-except-dict-set-parse",
+  "fill_sections": ["overview", "changes"]
+}

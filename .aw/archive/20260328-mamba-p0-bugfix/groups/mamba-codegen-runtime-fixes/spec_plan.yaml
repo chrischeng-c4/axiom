@@ -1,0 +1,37 @@
+- spec_id: no-arg-constructor-codegen-fix
+  action: modify
+  main_spec_ref: crates/cclab-mamba/lower/hir-to-mir.md
+  source: cclab/specs/crates/cclab-mamba/lower/hir-to-mir.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+- spec_id: string-reverse-slice-fix
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/string-ops.md
+  source: cclab/specs/crates/cclab-mamba/runtime/string-ops.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+- spec_id: sigbus-runtime-thread-safety-fix
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/thread-safe-runtime.md
+  source: cclab/specs/crates/cclab-mamba/runtime/thread-safe-runtime.md
+  sections:
+  - overview
+  - requirements
+  - state-machine
+  - scenarios
+  - changes
+- spec_id: sigbus-jit-concurrency-fix
+  action: modify
+  main_spec_ref: crates/cclab-mamba/codegen/cranelift-jit.md
+  source: cclab/specs/crates/cclab-mamba/codegen/cranelift-jit.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes

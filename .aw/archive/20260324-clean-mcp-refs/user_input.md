@@ -1,0 +1,1 @@
+Clean up stale MCP references from all SDD specs — update mcp/tools/ file paths to actual CLI paths, replace MCP tool terminology with CLI command, evaluate template-mcp-configs.md for archival. #1047

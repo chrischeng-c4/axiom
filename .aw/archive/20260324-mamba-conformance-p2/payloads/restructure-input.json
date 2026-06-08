@@ -1,0 +1,1 @@
+{"groups":[{"id":"mamba-p2-advanced","issues":[1037],"requirements":"Fix 3 P2 advanced features: nested f-strings PEP 701, metaclass= keyword, descriptor protocol codegen"}]}

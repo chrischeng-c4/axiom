@@ -1,0 +1,12 @@
+{
+  "group_id": "unify-mamba-config",
+  "verdict": "approve",
+  "summary": "Reference context is complete. Both relevant specs (config-schema.md and compiler-driver.md) cover the affected areas. config-schema.md is the primary MambaConfig spec; compiler-driver.md documents the driver's CompilerConfig and its project_config field that holds MambaConfig. No gaps or irrelevant specs.",
+  "findings": [
+    "config-schema.md is the primary spec for MambaConfig and directly covers the unification work — high relevance is correct",
+    "compiler-driver.md documents the driver's use of MambaConfig via project_config field and already notes removal of duplicate from driver/config.rs — high relevance is correct",
+    "All affected areas (config module and driver module) have spec coverage",
+    "No irrelevant specs included"
+  ],
+  "issues": []
+}

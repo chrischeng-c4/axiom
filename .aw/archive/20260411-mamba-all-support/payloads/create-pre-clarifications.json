@@ -1,0 +1,21 @@
+{
+  "group_id": "all-support",
+  "answers": [
+    {
+      "question": "Should __all__ detection be static-only or also runtime?",
+      "answer": "Static-only for now. Only literal list/tuple of string literals at top-level is supported (R4). Dynamic __all__ construction is deferred."
+    },
+    {
+      "question": "How should star-import behave for submodules vs packages?",
+      "answer": "Focus on module-level __all__. Package __init__.py __all__ controls what from pkg import * exposes — same mechanism."
+    },
+    {
+      "question": "Should __all__ affect from X import name (explicit imports) or X.name access?",
+      "answer": "No (R5). __all__ only restricts star-imports. Explicit imports and attribute access are unaffected."
+    },
+    {
+      "question": "What happens when __all__ references a name that does not exist in the module?",
+      "answer": "Raise AttributeError at import time (R3/AC3): 'module <name> has no attribute <missing_name>'."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "group_id": "mamba-type-3arg-core",
+  "spec_id": "mamba-type-3arg-spec",
+  "summary": "Added @spec traceability annotations to mb_type3, mb_class_register, and dispatch_type. The core implementation of 3-arg type() was already complete on main (from previous merged change, commit 73d162b8). This change updates @spec annotations to point to the current spec and adds comprehensive coverage annotations for R1-R7.",
+  "files_changed": [
+    "crates/cclab-mamba/src/runtime/builtins.rs",
+    "crates/cclab-mamba/src/runtime/class.rs",
+    "crates/cclab-mamba/src/runtime/stdlib/builtins_mod.rs"
+  ],
+  "requirements_met": ["R1", "R2", "R3", "R4", "R5", "R7"],
+  "diff": "Updated @spec annotation on mb_type3 to point to new spec (R1, R2, R4). Added @spec annotations to mb_class_register (R3, R5, R7) and dispatch_type (R1). All 6 unit tests and 1 conformance test pass. cargo check clean."
+}

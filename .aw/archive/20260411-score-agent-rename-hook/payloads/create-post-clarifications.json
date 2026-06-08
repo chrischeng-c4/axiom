@@ -1,0 +1,5 @@
+{
+  "group_id": "rename-agents-and-add-hook",
+  "skipped": true,
+  "scope_summary": "Problem: Agent naming mismatch (sdd-* vs score-* brand) and lack of SubagentStop hook for auto-injecting next-step context → requirements.md § R1-R8. Success Criteria: No sdd-* agent definitions remain, score run-change dispatch uses score-* names, SubagentStop hook injects context after any score-* agent completion → requirements.md AC1-AC4. Boundary: In scope — .claude/agents/sdd-*.md rename, .claude/hooks/sdd-*.sh rename, .claude/settings.json update, crates/sdd/src/workflow/mod.rs agent name strings, CLAUDE.md references, new .claude/hooks/score-next-step.sh. Out of scope — worktree-per-change, structured issue create, new agent types beyond what already exists. Constraints — hook must be observation-only (exit 0, inject additionalContext only)."
+}

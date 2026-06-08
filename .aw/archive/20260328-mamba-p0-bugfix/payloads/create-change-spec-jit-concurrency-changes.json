@@ -1,0 +1,6 @@
+{
+  "spec_id": "sigbus-jit-concurrency-fix",
+  "group_id": "mamba-codegen-runtime-fixes",
+  "section": "changes",
+  "content": "```yaml\nfiles:\n  - path: crates/cclab-mamba/src/codegen/cranelift/jit.rs\n    action: MODIFY\n    desc: \"Add `pub static JIT_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));` at module level. Import `std::sync::{LazyLock, Mutex}`. The lock is pub so the conformance runner can acquire it. No changes to CraneliftJitBackend methods.\"\n  - path: crates/cclab-mamba/src/conformance/mod.rs\n    action: MODIFY\n    desc: \"In `run_and_capture()`, acquire `let _jit_guard = crate::codegen::cranelift::jit::JIT_LOCK.lock().unwrap();` as the first statement, before `CraneliftJitBackend::new()`. The guard is held through backend init, codegen, entry point execution, and cleanup_all_generators(). The MutexGuard drops automatically at function exit (success or error), ensuring the lock is always released.\"\n```"
+}

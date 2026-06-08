@@ -1,0 +1,64 @@
+{
+  "group_id": "builtins-conformance",
+  "verdict": "FAIL",
+  "summary": "Two critical problems: (1) mamba-py312-conformance spec is entirely absent — this is the spec that defines the CPython 3.12 golden-file harness the group will extend, making it the highest-relevance reference for this change; (2) tuple-ops cites R1 which does not exist in that spec (spec id: mamba-tuple-cmp-spec contains only R5). Additionally, conformance spec cites R4 (yield from delegation, a generators concern) which is unrelated to builtins conformance, and patterns spec (PEP 634 match/case parsing) is irrelevant and should be removed.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "mamba-py312-conformance is absent. It is the spec that defines the golden-file conformance harness (CPython 3.12 vs Mamba output comparison) for data structures, exceptions, and iterators — exactly what builtins-conformance must build upon. Q1 answer requires comparing CPython 3.12, Mamba JIT, and Mamba AOT; no spec in the context covers the AOT runtime path. string-ops is also absent: string methods are Python builtins and mamba-py312-conformance R4.2 explicitly covers string conformance."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "conformance spec (testing/conformance.md, id: cclab-mamba-fix-xfail-spec) is rated HIGH. Its content covers generators, class system, and ExceptionGroup for a prior change — not builtins conformance infrastructure. patterns spec (parser/patterns.md) is rated MEDIUM but covers PEP 634 match/case parsing only; zero overlap with builtins output comparison or divergence fixes."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "tuple-ops cites R1, but the spec at runtime/tuple-ops.md is a change spec (mamba-tuple-cmp-spec) that defines only R5 (tuple ordering operators). R1 does not exist in this file. conformance spec cites R4, which is 'yield from delegation' (generator protocol) — unrelated to builtins conformance. test-harness cites R6 ('syntax-focused extraction from CPython test_grammar.py'), which is about parsing fixtures, not runtime output comparison required by Q1."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "patterns (cclab-mamba/parser) covers PEP 634 structural pattern matching (match/case syntax parsing, AST Pattern variants, guard expressions). This has no connection to builtin function output, CPython output comparison, or fixing runtime divergences. Should be removed."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "mamba-py312-conformance (cclab-mamba/testing) is not in the reference context. This spec defines the conformance test infrastructure the builtins-conformance group directly extends: CPython 3.12 golden-file harness, data structure conformance tests (list R1, dict R2, set R3, tuple/str R4), exception hierarchy conformance (R5), generator/iterator protocol (R6). Q1 pre-clarification requires comparing CPython 3.12, Mamba JIT, and Mamba AOT — this spec is the foundation for that work.",
+      "recommendation": "Add mamba-py312-conformance (cclab-mamba/testing) with HIGH relevance, key requirements R1, R2, R3, R4, R5."
+    },
+    {
+      "severity": "HIGH",
+      "description": "tuple-ops cites R1 but that requirement does not exist in the spec. The file at runtime/tuple-ops.md is a change spec (id: mamba-tuple-cmp-spec) that defines a single requirement: R5 (tuple lexicographic comparison operators mb_tuple_lt/le/gt/ge). There is no R1 in this spec.",
+      "recommendation": "Replace R1 with R5 in tuple-ops key requirements, or verify whether the canonical runtime/tuple-ops.md base spec has been created and linked elsewhere."
+    },
+    {
+      "severity": "HIGH",
+      "description": "conformance spec (testing/conformance.md) cites R4, which is 'yield from delegation' (generator protocol in a prior change). The conformance.md file is a change spec about fixing 7 generator/exception/class-system xfail tests — a different scope. Citing it as HIGH relevance with R4 conflates two separate changes.",
+      "recommendation": "Remove conformance from the reference context or replace it with mamba-py312-conformance (the actual conformance harness spec). If conformance.md is kept for context, change relevance to LOW and cite no specific requirements since none are directly relevant."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "patterns spec (parser/patterns.md) is included at MEDIUM relevance. This spec covers PEP 634 structural pattern matching: literal patterns, capture/wildcard, sequence patterns, mapping patterns, class patterns, OR patterns, and guard expressions. None of these constructs are Python builtins, and the spec contains no intersection with runtime output comparison, CPython conformance, or divergence fixes.",
+      "recommendation": "Remove patterns from the reference context entirely."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "string-ops spec is absent. String methods (split, join, strip, replace, find, format, f-string) are Python builtins that must be tested for CPython conformance. mamba-py312-conformance R4.2 explicitly includes string conformance. Q2 says fix divergences — string ops are a likely area of divergence.",
+      "recommendation": "Add string-ops (cclab-mamba/runtime) with MEDIUM relevance, key requirements R1 (core string methods), R4 (f-string runtime formatting)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "test-harness cites R6 ('Syntax-focused Extraction from CPython test_grammar.py/test_syntax.py'). R6 is specifically about extracting parsing syntax snippets for the parse-only test runner — not runtime output comparison. Builtins conformance requires runtime execution comparison (JIT and AOT vs CPython), not parse-only fixtures.",
+      "recommendation": "Remove R6 from test-harness key requirements. Retain R1 (directive dispatch) and R4 (CPython fixture directory structure)."
+    },
+    {
+      "severity": "LOW",
+      "description": "iter, list-ops, dict-ops, set-ops each cite only R1. Builtins conformance will verify all methods of these types against CPython output, so the relevant requirements span multiple Rx per spec (e.g., list-ops R1-R5, dict-ops R1-R5, iter R1-R5).",
+      "recommendation": "Expand key requirements: list-ops R1-R5, dict-ops R1-R5, set-ops R1-R5, iter R1-R5."
+    }
+  ]
+}

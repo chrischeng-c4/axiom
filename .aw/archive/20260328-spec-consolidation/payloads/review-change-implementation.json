@@ -1,0 +1,52 @@
+{
+  "spec_id": "change-merge-update",
+  "verdict": "REVIEWED",
+  "summary": "Implementation correctly adds merge-time path validation (main_spec_ref must contain '/'), two-pass pre-validation/write architecture (all-or-nothing abort), and create-vs-overwrite audit logging in create_change_merge.rs. merge_strategy removed from strip_change_spec_fields. 7 create_change_merge tests + 8 workflow::merge tests + 1 strip test all pass (20 total merge-related, 0 failures). Two soft issues: (1) workflow/merge.rs BeginMerge prompt still references merge_strategy concepts (lines 102-107) — stale dead code in old agent-based merge path; (2) audit log format uses '[merge] create {rel}' instead of spec's 'audit: create cclab/specs/{ref}' — functional but format mismatch.",
+  "checklist_results": [
+    {
+      "item": "[HARD] Code matches all spec requirements",
+      "passed": true,
+      "note": "All 4 spec requirements implemented: (1) merge_strategy removed from stripped_fields in strip_change_spec_fields(); (2) flowchart validation+audit flow implemented via two-pass architecture; (3) main_spec_ref must contain '/' — hard error with bail!() aborts merge, no files written; (4) create-vs-overwrite audit logging via audit_log vec included in JSON response. Pre-validation pass ensures all-or-nothing semantics (test_validation_aborts_before_write confirms)."
+    },
+    {
+      "item": "[HARD] If spec has Test Plan section: diff contains at least one #[test] function",
+      "passed": true,
+      "note": "Spec has no ## Test Plan section — hard reject rule does not apply. Implementation includes 7 #[tokio::test] functions: test_programmatic_merge_with_main_spec_ref, test_missing_main_spec_ref_rejected, test_root_level_path_rejected, test_audit_log_create, test_audit_log_overwrite, test_validation_aborts_before_write, test_programmatic_merge_no_specs."
+    },
+    {
+      "item": "[HARD] Existing tests still pass (no regressions introduced)",
+      "passed": true,
+      "note": "20 merge-related tests pass (7 create_change_merge + 8 workflow::merge + others). 1 strip_change_spec test passes. Zero failures, zero regressions."
+    },
+    {
+      "item": "Code quality and readability",
+      "passed": true,
+      "note": "Two-pass architecture (pre-validate then write) is clean and well-commented. Tests are thorough with descriptive names and assertion messages. Minor: workflow/merge.rs BeginMerge prompt (lines 102-107) still references merge_strategy concepts — stale in the old agent-based merge path that is superseded by programmatic create_change_merge."
+    },
+    {
+      "item": "Error handling completeness",
+      "passed": true,
+      "note": "Hard errors via anyhow::bail!() for: missing main_spec_ref, root-level path (no '/'), missing spec file. Pre-validation ensures no partial writes on error."
+    },
+    {
+      "item": "Performance considerations",
+      "passed": true,
+      "note": "Specs read once in validation pass, content cached in Vec for write pass — no redundant I/O."
+    },
+    {
+      "item": "Documentation where needed",
+      "passed": true,
+      "note": "Module doc updated. Test comments explain rationale for each assertion."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "low",
+      "description": "workflow/merge.rs BeginMerge prompt (lines 102-107) still references merge_strategy concepts ('Read each spec's YAML frontmatter for merge_strategy', 'Apply merge based on strategy: new/extend/replace/patch'). This is stale dead code in the old agent-based merge path, superseded by programmatic create_change_merge. Should be cleaned up to avoid confusion."
+    },
+    {
+      "severity": "low",
+      "description": "Audit log format mismatch: code produces '[merge] create {rel_path}' (e.g. '[merge] create cclab-sdd/logic/new-spec.md') while spec defines 'audit: create cclab/specs/{main_spec_ref}'. Functionally correct but prefix and path format differ from spec."
+    }
+  ]
+}

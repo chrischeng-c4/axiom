@@ -1,0 +1,9 @@
+{
+  "spec_id": "k8s-cronjob-backend",
+  "group_id": "scheduler-runtime-complete",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "schema", "changes"],
+  "main_spec_ref": "crates/cclab-fetch/scheduler/k8s-cronjob-backend.md",
+  "merge_strategy": "new",
+  "content": "Implements `SchedulerBackend` trait backed by Kubernetes CronJob resources. Replaces the self-hosted leader election loop (acquire_leader → evaluate → enqueue → renew) with K8s-managed cron scheduling. CronJob pods run a minimal HTTP client container that POSTs to the shared push receiver endpoint (`/scheduler/push/{task_name}`), routing all triggers through the unified push path consistent with the Cloud Scheduler pattern.\n\nTask state (enabled, last_run_at, total_run_count) is tracked locally via `get_task_state`/`set_task_state` backed by an in-memory store with `Arc<RwLock<HashMap>>`. Schedule CRUD (create, update, delete, suspend, resume) maps to K8s CronJob API operations via kube-rs `Api<CronJob>` client. Authentication uses shared HMAC-SHA256 secret — CronJob pods sign requests with `X-Scheduler-Signature` header, push receiver validates by recomputing HMAC. Secret injected via K8s Secret as environment variable.\n\nFeature-gated under `k8s-scheduler` Cargo feature. Follows the same registration pattern as `CloudSchedulerBackend` — `#[cfg(feature = \"k8s-scheduler\")] pub mod k8s_cronjob_backend` in `scheduler/mod.rs`. Reuses kube-rs client setup patterns from existing `K8sJobExecutor` in `executor/k8s.rs`.\n\nSource: `crates/cclab-queue/src/scheduler/backend.rs` (SchedulerBackend trait), `crates/cclab-queue/src/executor/k8s.rs` (kube-rs patterns)"
+}

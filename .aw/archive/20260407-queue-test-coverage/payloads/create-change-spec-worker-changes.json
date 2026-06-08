@@ -1,0 +1,8 @@
+{
+  "spec_id": "worker",
+  "group_id": "queue-unit-test-coverage",
+  "section": "changes",
+  "main_spec_ref": "crates/cclab-queue/logic/worker.md",
+  "fill_sections": ["overview", "state-machine", "async-api", "test-plan", "changes"],
+  "content": "<!-- type: changes lang: yaml -->\n\n```yaml\n_sdd:\n  id: worker-changes\n  refs:\n    - $ref: \"#worker-async-api\"\n    - $ref: \"#worker-lifecycle-fsm\"\n    - $ref: \"#task-executor-handle-flow\"\n    - $ref: \"error-types#error-types-schema\"\n    - $ref: \"task-state-machine#task-state-schema\"\nchanges:\n  - path: crates/cclab-queue/src/worker/mod.rs\n    action: modify\n    description: >-\n      Expand #[cfg(test)] mod tests with 32 new unit tests.\n      Add mock infrastructure: MockBackend (in-memory ResultBackend impl with HashMap),\n      MockRevocationStore (HashSet-based RevocationStore impl),\n      MockTask (configurable Task impl for outcome/timeout/queue/retry).\n      New tests cover: WorkerConfig Debug/Clone (3), Worker construction/accessors/shutdown/builders (7),\n      TaskExecutor::check_revocation with None/false/true store (3),\n      TaskExecutor::execute_with_timeout no-timeout/within/exceeds (3),\n      TaskExecutor::handle message processing paths — expired/revoked/not-found/success/failure/retry/\n      rate-limited/signal-dispatch/no-optionals/context-construction (16).\n```"
+}

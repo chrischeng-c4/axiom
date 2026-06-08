@@ -1,0 +1,30 @@
+{
+  "group_id": "structured-issue-format",
+  "verdict": "revise",
+  "summary": "Reference context structure is sound but contains critical spec path validation error (missing 'cclab-' prefix) and 6 unresolved '?' spec entries. Existing related specs are correctly identified but not explicitly cross-referenced in the table.",
+  "findings": [
+    "Reference context table uses '?' for all 6 spec entries instead of actual paths from .score/tech_design/",
+    "main_spec_ref format is invalid: 'crates/sdd/logic/structured-issue.md' is missing 'cclab-' prefix and should be 'crates/cclab-sdd/logic/structured-issue.md'",
+    "Existing related specs correctly identified (state-machine.md, restructure-input.md, pre-clarifications.md, reference-context.md, post-clarifications.md, issues-backend.md) but not explicitly referenced in the table",
+    "Missing explicit spec reference for init_change routing logic — should cross-reference dispatch-model.md or create new init-change-spec.md",
+    "Issue section parser design (YAML frontmatter extension, structured markdown detection) not addressed in any referenced spec",
+    "Artifact output formats (requirements.md, pre_clarifications.md with 'status: answered') mentioned in pre-clarifications but not centrally documented",
+    "CLI subcommand interface for 'score issues enrich' mentioned but not spec'd — needs sdd-cli.md update or new spec"
+  ],
+  "issues": [
+    "CRITICAL: main_spec_ref missing 'cclab-' crate name prefix",
+    "HIGH: Reference context table rows 1-6 show '?' instead of actual spec paths — makes requirements unverifiable",
+    "HIGH: No spec path for init_change structured issue detection and phase skip routing logic",
+    "MEDIUM: Issue section parser design not documented in any existing spec",
+    "MEDIUM: 'score issues enrich' subcommand interface not formally spec'd"
+  ],
+  "checklist": {
+    "affected_crates_identified": "pass",
+    "all_affected_areas_covered": "fail",
+    "relevance_scores_reasonable": "fail",
+    "spec_plan_valid_main_spec_ref": "fail",
+    "spec_plan_sections_reasonable": "pass",
+    "each_spec_covers_logical_unit": "pass",
+    "notes": "Spec plan sections (overview, schema, cli, changes) are appropriate for a feature that spans issue format, parsing logic, artifact generation, and CLI integration. However, the main_spec_ref path format violation prevents approval."
+  }
+}

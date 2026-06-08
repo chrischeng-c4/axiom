@@ -1,0 +1,6 @@
+{
+  "change_id": "refactor-eliminate-state-yaml-user-input-md-groups-nesting",
+  "spec_id": "refactor-eliminate-state-yaml-user-input-md-groups-nesting-spec",
+  "section": "changes",
+  "content": "See Changes section in spec file — table of affected files with satisfies-R mappings covering init_change.rs, manager.rs, state.rs, create_change_merge.rs, list.rs, issue-centric-workflow.md, state-machine.md."
+}

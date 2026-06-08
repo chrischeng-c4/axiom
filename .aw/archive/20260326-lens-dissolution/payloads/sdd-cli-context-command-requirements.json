@@ -1,0 +1,8 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "lens-dissolution",
+  "spec_id": "sdd-cli-context-command",
+  "group_id": "lens-dissolution",
+  "section": "requirements",
+  "content": "### Functional\n\n| ID | Requirement | Source |\n|----|-------------|--------|\n| R1 | Add `context` subcommand to `cclab sdd` command tree: `cclab sdd context <targets...> [--depth N]` | #946 |\n| R2 | `<targets...>` accepts one or more positional args in `file:symbol` format | #946 AC (agent-context-builder R1) |\n| R3 | `--depth N` optional flag with default value 2 | #946 AC (agent-context-builder R2) |\n| R4 | `context` subcommand outputs JSON to stdout (ContextResponse schema) | #946 (agent-context-builder R7, NF4) |\n| R5 | Extend `check` subcommand `--format` accepted values to include `agent` | #949 (agent-output-format R1) |\n| R6 | `check --format agent` outputs AgentOutput JSON to stdout | #949 (agent-output-format NF4) |\n| R7 | Add `context` entry to CLI→Logic mapping table: routes to `ContextBuilder::build_context()` | #946 |\n| R8 | Add `check --format agent` entry to CLI→Logic mapping: routes to `AgentOutputBuilder::build()` | #949 |\n\n### Non-Functional\n\n| ID | Requirement |\n|----|-------------|\n| NF1 | No MCP tool registration for `context` or `check --format agent` (Q2 clarification) |\n| NF2 | Both new entries integrated into existing clap command tree in `cclab-sdd-cli/src/commands.rs` |"
+}

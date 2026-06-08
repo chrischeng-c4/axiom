@@ -1,0 +1,24 @@
+{
+  "group_id": "jet-hmr-validation",
+  "specs": [
+    {"path": "cclab/specs/crates/cclab-jet/dev-server.md", "relevance": "high", "summary": "Dev server spec with /__jet_hmr WebSocket, generate_hmr_client(), serve_root_file(), transform_tsx pipeline."},
+    {"path": "cclab/specs/crates/cclab-jet/postcss-tailwind.md", "relevance": "medium", "summary": "CSS HMR rebuild integration (R9). Cross-cutting HMR protocol context."},
+    {"path": "cclab/specs/crates/cclab-jet/jit-runner.md", "relevance": "low", "summary": "Shares transform_tsx.rs pipeline. Background context for AST transforms."},
+    {"path": "cclab/specs/crates/cclab-jet/aot-build.md", "relevance": "low", "summary": "Production build. Background only."}
+  ],
+  "codebase_explored": [
+    {"path": "crates/cclab-jet/src/dev_server/hmr.rs", "summary": "HmrManager with broadcast channel. HmrMessage enum. Missing: import.meta.hot runtime, module graph."},
+    {"path": "crates/cclab-jet/src/dev_server/mod.rs", "summary": "WebSocket at /__jet_hmr. generate_hmr_client() does full reload. serve_root_file() transform integration point."},
+    {"path": "crates/cclab-jet/src/transform/transform_tsx.rs", "summary": "AST-based TSX→JS. Missing: React Fast Refresh injection."},
+    {"path": "crates/cclab-jet/src/dev_server/watcher.rs", "summary": "FileWatcher via notify crate. Basis for module invalidation trigger."}
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "jet-hmr",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-jet/hmr.md",
+      "sections": ["overview", "schema", "state-machine", "logic", "interaction", "e2e-scenario", "test-plan", "changes"]
+    }
+  ],
+  "revision_notes": "Review accepted. Content unchanged — reaffirming spec plan."
+}

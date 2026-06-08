@@ -1,0 +1,397 @@
+{
+  "change_id": "mamba-test-coverage-remaining",
+  "group_id": "mamba-test-coverage-remaining",
+  "group": "mamba-test-coverage-remaining",
+  "specs": [
+    {
+      "path": "crates/cclab-mamba/README.md",
+      "relevance": "low",
+      "section": "architecture-overview",
+      "key_requirements": "Module index, architecture overview"
+    },
+    {
+      "path": "crates/cclab-mamba/lexer/tokens-and-indent.md",
+      "relevance": "high",
+      "section": "lexer-coverage",
+      "key_requirements": "R1: Token types, R2: INDENT/DEDENT, R3: F-string lexing"
+    },
+    {
+      "path": "crates/cclab-mamba/parser/ast.md",
+      "relevance": "high",
+      "section": "parser-coverage",
+      "key_requirements": "R1: AST nodes, R2: Type expression nodes, R3: All variants"
+    },
+    {
+      "path": "crates/cclab-mamba/parser/expressions.md",
+      "relevance": "high",
+      "section": "parser-coverage",
+      "key_requirements": "R1: Expression parsing, R2: Operator precedence, R3: Precedence climbing"
+    },
+    {
+      "path": "crates/cclab-mamba/parser/statements.md",
+      "relevance": "high",
+      "section": "parser-coverage",
+      "key_requirements": "R1: Statement parsing, R2: Compound statements, R3: PEP 695 generics"
+    },
+    {
+      "path": "crates/cclab-mamba/parser/patterns.md",
+      "relevance": "high",
+      "section": "parser-coverage",
+      "key_requirements": "R1: PEP 634 patterns, R2: All pattern types, R3: Nested patterns"
+    },
+    {
+      "path": "crates/cclab-mamba/pattern-matching.md",
+      "relevance": "high",
+      "section": "compiler-pipeline",
+      "key_requirements": "R1: Parser support, R2: AS patterns, R3: Mapping rest, R4: Type narrowing, R5: HIR patterns, R6: AST-to-HIR, R7: MIR decision trees, R8: Cranelift codegen"
+    },
+    {
+      "path": "crates/cclab-mamba/types/type-checker.md",
+      "relevance": "high",
+      "section": "type-checking-coverage",
+      "key_requirements": "R1: Bidirectional inference, R2: Type narrowing, R3: Constraint solving, R4: Protocol checking"
+    },
+    {
+      "path": "crates/cclab-mamba/lower/ast-to-hir.md",
+      "relevance": "high",
+      "section": "lowering-coverage",
+      "key_requirements": "R1: Desugaring rules, R2: Comprehensions, R3: Walrus operator, R4: Bare annotations"
+    },
+    {
+      "path": "crates/cclab-mamba/lower/hir-to-mir.md",
+      "relevance": "high",
+      "section": "lowering-coverage",
+      "key_requirements": "R1: Pattern lowering, R2: Decision trees, R3: Comprehensions, R4: Context managers"
+    },
+    {
+      "path": "crates/cclab-mamba/codegen/cranelift.md",
+      "relevance": "high",
+      "section": "codegen-coverage",
+      "key_requirements": "R1: Core codegen, R2: Value marshaling, R3: Type conversions, R4: Instruction emission"
+    },
+    {
+      "path": "crates/cclab-mamba/codegen/cranelift-jit.md",
+      "relevance": "high",
+      "section": "codegen-coverage",
+      "key_requirements": "R1: JIT execution, R2: Symbol wiring, R3: Function linking"
+    },
+    {
+      "path": "crates/cclab-mamba/codegen/cranelift-aot.md",
+      "relevance": "high",
+      "section": "codegen-coverage",
+      "key_requirements": "R1: AOT compilation, R2: Object file emission, R3: Static linking"
+    },
+    {
+      "path": "crates/cclab-mamba/driver/compiler-driver.md",
+      "relevance": "high",
+      "section": "driver-coverage",
+      "key_requirements": "R1: Pipeline orchestration, R2: Config discovery, R3: Module graph, R4: Backend selection"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/value-and-rc.md",
+      "relevance": "high",
+      "section": "runtime-coverage",
+      "key_requirements": "R1: NaN-boxing, R2: Type conversions, R3: Reference counting, R4: Value variants"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/gc.md",
+      "relevance": "high",
+      "section": "runtime-coverage",
+      "key_requirements": "R1: Mark phase, R2: Sweep phase, R3: Cycle detection, R4: Safepoint handling"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/thread-safe-runtime.md",
+      "relevance": "high",
+      "section": "concurrency-coverage",
+      "key_requirements": "R1: Atomic RC, R2: Thread-safe collections, R3: No-GIL concurrency, R4: Safepoint GC, R5: Global async state, R6: Tokio integration, R7: Atomic counters"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/class.md",
+      "relevance": "high",
+      "section": "runtime-coverage",
+      "key_requirements": "R1: Class definition, R2: MRO, R3: Dispatch, R4: Magic methods, R5: Descriptors, R6: Metaclass, R7: __init_subclass__"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/exception.md",
+      "relevance": "medium",
+      "section": "runtime-coverage",
+      "key_requirements": "R1: Exception hierarchy, R2: Matching, R3: ExceptionGroup, R4: Tracebacks"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/async.md",
+      "relevance": "high",
+      "section": "concurrency-coverage",
+      "key_requirements": "R1: Coroutines, R2: Tasks, R3: Await, R4: Event loop, R5: Task scheduling"
+    },
+    {
+      "path": "crates/cclab-mamba/runtime/builtins.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R5: All 100+ builtin functions, CPython 3.12 conformance"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/argparse.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R8: ArgumentParser, actions, type conversion, help, subparsers"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/database.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R5: SQLite3 interface, connections, cursors, transactions"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/logging.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R6: Logger, handlers, formatters, levels"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/testing.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R5: TestCase, assertions, test discovery, test runners"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/io.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R4: StringIO, BytesIO, CSV, pprint"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/struct-and-binary.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R5: Struct packing, base64, pickle serialization"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/diagnostics-utils.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R4: Context managers, weakref, traceback, warnings"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/os.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R5: File system ops, environ, os.path, error handling"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/network.md",
+      "relevance": "high",
+      "section": "stdlib-coverage",
+      "key_requirements": "R1-R4: Socket API, HTTP client, connection handling, loopback testing"
+    },
+    {
+      "path": "crates/cclab-mamba/stdlib/concurrency.md",
+      "relevance": "high",
+      "section": "concurrency-coverage",
+      "key_requirements": "R1-R5: Threading, locks, barriers, subprocess, synchronization"
+    },
+    {
+      "path": "crates/cclab-mamba/ffi/c-parser-and-types.md",
+      "relevance": "high",
+      "section": "ffi-coverage",
+      "key_requirements": "R1: C header parsing, R2: Type mapping, R3: CType enum, R4: Type conversions, R5: Size and alignment"
+    },
+    {
+      "path": "crates/cclab-mamba/testing/test-harness.md",
+      "relevance": "medium",
+      "section": "integration-test-patterns",
+      "key_requirements": "R1: Fixture-based testing, R2: Directive dispatch, R3: CPython integration"
+    },
+    {
+      "path": "crates/cclab-mamba/testing/stdlib-coverage-lower.md",
+      "relevance": "medium",
+      "section": "stdlib-test-patterns",
+      "key_requirements": "R1-R7: Completed 10 modules, branch coverage methodology, concurrency patterns"
+    },
+    {
+      "path": "crates/cclab-mamba/all-mamba-p0.md",
+      "relevance": "low",
+      "section": "context-requirements",
+      "key_requirements": "Background: P0 features scope (imports, pattern matching, BigInt, benchmarks, builtins)"
+    },
+    {
+      "path": "crates/cclab-mamba/conductor-mamba-p0-spec.md",
+      "relevance": "low",
+      "section": "context-requirements",
+      "key_requirements": "Background: Registry, config, type conversions, language blockers"
+    },
+    {
+      "path": "crates/cclab-mamba/conductor-mamba-p0-remaining-spec.md",
+      "relevance": "low",
+      "section": "context-requirements",
+      "key_requirements": "Background: Remaining blockers (bare annotations, __init_subclass__, match/case)"
+    },
+    {
+      "path": "crates/cclab-mamba/mamba-crate-wiring-and-schema-binding.md",
+      "relevance": "low",
+      "section": "context-requirements",
+      "key_requirements": "Background: Project-mode build/run, schema binding prototype"
+    }
+  ],
+  "spec_plan": {
+    "title": "Comprehensive Per-Module Test Coverage for Mamba Compiler and Runtime",
+    "summary": "This reference context gathers specifications for comprehensive per-module test coverage across the Mamba Python compiler and runtime. The goal is to raise branch coverage from partial (0%-78%) to 100% for all 23 target modules across 4 batches. Coverage spans: lexer (tokenization, INDENT/DEDENT), parser (all expression/statement/pattern types), type checker (type narrowing), HIR/MIR lowering (desugaring, decision trees), codegen (Cranelift JIT/AOT), driver (module graph, config), runtime (thread safety, GC, async), FFI (C types, conversions), and 19 stdlib modules.",
+    "scope": {
+      "in_scope": [
+        "Lexer (lexer/token.rs, 70%): INDENT/DEDENT handling, f-string tokenization, all token types",
+        "Parser (50-78%): all AST nodes, expressions (precedence, operators), statements, compound statements, patterns (literal, capture, sequence, mapping, class, OR, AS, guard)",
+        "Type checker (60-80%): bidirectional inference, type narrowing in case branches, protocol checking, generic constraints",
+        "HIR lowering (60-80%): AST desugaring rules, bare annotations, comprehensions, walrus operator, f-strings",
+        "MIR lowering (60-80%): decision tree compilation for patterns, nested pattern handling, comprehension lowering",
+        "Codegen (40-67%): Cranelift IR emission (all types, patterns, instructions), value marshaling, JIT symbol wiring, AOT object file linking",
+        "Driver (33-76%): mamba.toml discovery, module graph building, config file walking, entry point handling",
+        "Runtime value system (20-70%): NaN-boxed representation, type conversions, size/alignment assertions",
+        "Runtime GC (20-70%): mark phase, sweep phase, cycle detection, safepoint-based STW",
+        "Runtime concurrency (20-70%): atomic reference counting, per-object locking, thread lifecycle, synchronization primitives (barriers, channels, locks), global async state (DashMap/RwLock), Tokio integration, task spawning",
+        "FFI (0-50%): C type parsing, type mapping (CType enum), size/alignment checks, foreign function calls",
+        "Stdlib modules (0-49% coverage, 19 modules): argparse (20%), database/sqlite3 (49%), logging (46%), testing/unittest (31%), io (30%), struct/pickle (28%), diagnostics/traceback (25%), os (25%), network/socket (15%), concurrency/threading (10%), builtins (varies), and others",
+        "Integration tests: multi-file compilation, cross-module type checking, fixture-based scenarios, CPython conformance, deterministic concurrency testing"
+      ],
+      "out_of_scope": [
+        "Performance benchmarking (covered by separate benchmark suite)",
+        "Full conformance regression suite (covered by separate conformance tests)",
+        "LLVM backend (covered by separate phase)"
+      ]
+    },
+    "sections": [
+      {
+        "name": "lexer-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/lexer/tokens-and-indent.md"
+        ],
+        "reasoning": "Defines tokenization, INDENT/DEDENT stack, f-string lexing, all token types. lexer/token.rs at 70% coverage (Batch C). Requires tests for all token types, indent/dedent transitions, f-string nesting, and edge cases."
+      },
+      {
+        "name": "parser-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/parser/ast.md",
+          "crates/cclab-mamba/parser/expressions.md",
+          "crates/cclab-mamba/parser/statements.md",
+          "crates/cclab-mamba/parser/patterns.md"
+        ],
+        "reasoning": "AST node definitions, expression/statement/pattern parsing. Parser files at 50-78% coverage (Batch B-C). Requires unit tests for all AST variants, operator precedence, statement nesting, compound statements (if/for/while/with/try), and all pattern types."
+      },
+      {
+        "name": "type-checking-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/types/type-checker.md"
+        ],
+        "reasoning": "Type inference, bidirectional checking, type narrowing in case branches. Type checker modules at 60-80% coverage. Requires tests for all type combinations, narrowing rules, generic constraints, and protocol satisfaction."
+      },
+      {
+        "name": "lowering-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/lower/ast-to-hir.md",
+          "crates/cclab-mamba/lower/hir-to-mir.md"
+        ],
+        "reasoning": "AST desugaring to HIR, HIR to MIR with decision trees. Lowering modules at 60-80% coverage (Batch C). Requires tests for all desugaring rules (comprehensions, walrus, f-strings, bare annotations), pattern decision tree generation, and nested structures."
+      },
+      {
+        "name": "codegen-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/codegen/cranelift.md",
+          "crates/cclab-mamba/codegen/cranelift-jit.md",
+          "crates/cclab-mamba/codegen/cranelift-aot.md"
+        ],
+        "reasoning": "Cranelift backend (core, JIT, AOT), value marshaling, instruction emission. Codegen modules at 40-67% coverage (Batch B-C). Requires tests for all instruction types, value conversions, type-specific paths, JIT symbol linking, and AOT object file generation."
+      },
+      {
+        "name": "driver-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/driver/compiler-driver.md"
+        ],
+        "reasoning": "Compiler driver: mamba.toml discovery, module graph, config parsing, backend selection. Driver modules at 33-76% coverage (Batch B-C). Requires tests for config file walking, module graph building, entry point handling, cross-module type checking."
+      },
+      {
+        "name": "runtime-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/runtime/value-and-rc.md",
+          "crates/cclab-mamba/runtime/gc.md",
+          "crates/cclab-mamba/runtime/class.md",
+          "crates/cclab-mamba/runtime/exception.md"
+        ],
+        "reasoning": "Runtime value system (NaN-boxing, RC), GC (mark/sweep, cycle detection), class system (MRO, dispatch, __init_subclass__), exception hierarchy. Runtime modules at 20-70% coverage (Batch B-C). Requires tests for all type conversions, RC edge cases, GC cycles, MRO resolution, and exception matching."
+      },
+      {
+        "name": "concurrency-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/runtime/thread-safe-runtime.md",
+          "crates/cclab-mamba/runtime/async.md",
+          "crates/cclab-mamba/stdlib/concurrency.md"
+        ],
+        "reasoning": "Thread safety (atomic RC, locks, safepoints), GC safepoints, async/await, Tokio integration, threading/subprocess stdlib. Critical integration tests required. Pre-clarifications Q2-Q3 specify real loopback sockets, deterministic synchronization, all thread lifecycle branches, synchronization primitives (barriers, channels)."
+      },
+      {
+        "name": "ffi-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/ffi/c-parser-and-types.md"
+        ],
+        "reasoning": "C type parsing, CType enum, type mapping, size/alignment assertions. FFI modules at 0-50% coverage (Batch A-B). Requires unit tests for all CType variants, type conversions, size assertions, alignment checks (per pre-clarification Q4)."
+      },
+      {
+        "name": "stdlib-coverage",
+        "relevance": "high",
+        "candidate_specs": [
+          "crates/cclab-mamba/runtime/builtins.md",
+          "crates/cclab-mamba/stdlib/argparse.md",
+          "crates/cclab-mamba/stdlib/database.md",
+          "crates/cclab-mamba/stdlib/logging.md",
+          "crates/cclab-mamba/stdlib/testing.md",
+          "crates/cclab-mamba/stdlib/io.md",
+          "crates/cclab-mamba/stdlib/struct-and-binary.md",
+          "crates/cclab-mamba/stdlib/diagnostics-utils.md",
+          "crates/cclab-mamba/stdlib/os.md",
+          "crates/cclab-mamba/stdlib/network.md"
+        ],
+        "reasoning": "19 stdlib modules spanning 0-49% coverage (Batch A-B). Each spec defines function signatures, requirements, and test scenarios. Examples: argparse_mod.rs (20% → 100%), sqlite3_mod.rs (49% → 100%), logging_mod.rs (46% → 100%), unittest_mod.rs (31% → 100%). Tests require both unit (#[cfg(test)] inline) and integration forms, with no mocks, real loopback sockets for network tests."
+      },
+      {
+        "name": "integration-test-patterns",
+        "relevance": "medium",
+        "candidate_specs": [
+          "crates/cclab-mamba/testing/test-harness.md"
+        ],
+        "reasoning": "Fixture test harness, directive dispatch, error reporting. Defines how integration tests are structured, executed, and verified (refs to pre-clarifications Q5-Q7). Patterns apply to multi-file compilation, fixture-based conformance, and CPython integration."
+      },
+      {
+        "name": "stdlib-test-patterns",
+        "relevance": "medium",
+        "candidate_specs": [
+          "crates/cclab-mamba/testing/stdlib-coverage-lower.md"
+        ],
+        "reasoning": "Completed coverage for 10 stdlib modules (queue, statistics, shlex, calendar, locale, lzma, zlib, secrets, bisect, abc); provides test pattern and infrastructure reuse. Shows concrete branch coverage requirements and concurrency/integration scenarios (e.g., thread-safe queue, concurrent put/get)."
+      },
+      {
+        "name": "context-requirements",
+        "relevance": "low",
+        "candidate_specs": [
+          "crates/cclab-mamba/all-mamba-p0.md",
+          "crates/cclab-mamba/conductor-mamba-p0-spec.md",
+          "crates/cclab-mamba/conductor-mamba-p0-remaining-spec.md",
+          "crates/cclab-mamba/mamba-crate-wiring-and-schema-binding.md"
+        ],
+        "reasoning": "Background context on P0/P1 features, language blockers, and registry/config system. Not directly specifying test code, but provide requirements for end-to-end verification (bare annotations, __init_subclass__, metaclass+generics, match/case XFAIL cleanup, config discovery)."
+      }
+    ]
+  },
+  "metadata": {
+    "created_by": "Claude",
+    "created_at": "2026-03-23T00:00:00Z",
+    "phase": "reference-context",
+    "status": "ready",
+    "notes": "Final revision after two reviews. All 37 specs include requirement ID mappings. Added stdlib/testing.md for unittest_mod.rs (31%). Corrected relevance: high for per-module specs, medium for test infrastructure, low for background context. Organized into 12 focused sections covering all 23 target files across 4 batches."
+  }
+}

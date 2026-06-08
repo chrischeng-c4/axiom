@@ -1,0 +1,99 @@
+change_id: rust-querybuilder-extend
+schema_version: '2.0'
+created_at: 2026-01-31T10:10:51.707688Z
+updated_at: 2026-01-31T10:21:01.178450Z
+phase: implemented
+iteration: 1
+last_action: impl-complete
+session_id: null
+checksums:
+  tasks.md:
+    hash: sha256:f97ecb8d98783687ab5a9361cf07428ca36136952aa21dfd6aa00f88a74cce44
+    validated_at: 2026-01-31T10:21:01.177188Z
+  specs/builder-refinement.md:
+    hash: sha256:27609dc9df3213a62f8a1e16d5b3bd28376fd3681dca3aa4b180d7fd4ab74fa2
+    validated_at: 2026-01-31T10:21:01.177920Z
+  proposal.md:
+    hash: sha256:addc20cf9bebe87ff6e40f346c0cef153cad416bc54e6294517a41374eaf849c
+    validated_at: 2026-01-31T10:21:01.176894Z
+  specs/advanced-queries.md:
+    hash: sha256:410d349d8c830e26959111278f85ae3f806afe5210a7628a4230d2b5f0a6ef5a
+    validated_at: 2026-01-31T10:21:01.178444Z
+  specs/core-implementation-details.md:
+    hash: sha256:8680d67999b5bc4c9c49fa9ad6c2c5a3ef2db8508ff6ac31898e5f1a26f5daff
+    validated_at: 2026-01-31T10:21:01.177653Z
+  specs/query-extensions.md:
+    hash: sha256:6dcac76c759ff0b354010c6012d8eb4449c2d18ec96c74b92f5c2aadcd015bf0
+    validated_at: 2026-01-31T10:21:01.178179Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-31T10:12:07.226323Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 2
+    low: 3
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T10:15:10.248727Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T10:18:35.991580Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T10:19:01.814580Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-31T10:21:01.176674Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

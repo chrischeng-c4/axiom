@@ -1,0 +1,5 @@
+{
+  "spec_id": "enhancement-html-reporter-for-native-test-runner-spec",
+  "section": "logic",
+  "content": "```mermaid\n---\nid: logic\n---\nflowchart TD\n    A([NDJSON event stream]) --> B[Parse testEnd events]\n    B --> C{event.kind == testEnd?}\n    C -- no --> B\n    C -- yes --> D[Build TestRow from payload]\n    D --> E{status?}\n    E -- failed --> F[extract stack_trace, matcher_diff]\n    E -- passed/skipped/flaky --> G[store row]\n    F --> H{trace_path present?}\n    H -- yes --> I[set trace_link = ?trace=rel_path]\n    H -- no --> G\n    I --> G\n    G --> J{more events?}\n    J -- yes --> B\n    J -- no --> K[Compute aggregate stats]\n    K --> L[Sort rows by test_id]\n    L --> M[Render HTML from embedded template]\n    M --> N[Inline report.js + report.css as base64 data URIs]\n    N --> O[Write index.html]\n    O --> P([Done])\n\n    subgraph MergeFlow[Shard Merge]\n        Q([N shard dirs]) --> R[Read each dir NDJSON or cached rows]\n        R --> S[Deduplicate by test_id — last-writer wins]\n        S --> T[Re-sort by test_id]\n        T --> U[Re-render unified index.html]\n        U --> V([Merged dir])\n    end\n```"
+}

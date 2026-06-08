@@ -1,0 +1,52 @@
+{
+  "group_id": "restructure-agent-core",
+  "specs": [
+    {
+      "spec_id": "cclab-agent/agents.md",
+      "spec_group": "agent-core",
+      "relevance": "high",
+      "key_requirements": [
+        "Agent trait interface (run, run_with_handler) — base for new TypedAgent<I, O>",
+        "Agent builder pattern (CodingAgentBuilder) — RestructureAgentBuilder follows same pattern",
+        "Agent config structure (system_prompt, model, max_turns)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/llm-providers.md",
+      "spec_group": "llm-integration",
+      "relevance": "high",
+      "key_requirements": [
+        "LLMProvider trait — RestructureAgent calls complete() via complete_structured()",
+        "CompletionRequest schema (messages, model, response_schema)",
+        "CompletionResponse schema (content, usage)"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/architecture.md",
+      "spec_group": "system-design",
+      "relevance": "high",
+      "key_requirements": [
+        "Module dependency graph — agents/restructure/ fits in agents module",
+        "Class hierarchy — TypedAgent<I, O> extends Agent abstraction"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/core-types.md",
+      "spec_group": "type-system",
+      "relevance": "medium",
+      "key_requirements": [
+        "Message type — used in prompt assembly",
+        "Role enum — system/user/assistant for prompt construction"
+      ]
+    },
+    {
+      "spec_id": "cclab-agent/error-handling.md",
+      "spec_group": "error-handling",
+      "relevance": "medium",
+      "key_requirements": [
+        "NovaError enum — RestructureAgent errors (LLMError, SchemaValidationError)"
+      ]
+    }
+  ],
+  "notes": "Trimmed to directly relevant specs only. SpecStore trait, TypedAgent<I, O>, RestructureInput/Output, and prompt template are NEW — no existing specs cover them. Storage, security, streaming, tools, integrations are out of scope for this stateless, platform-agnostic agent."
+}

@@ -1,0 +1,44 @@
+change_id: mamba-conformance-p2
+schema_version: '2.0'
+created_at: 2026-03-24T08:21:23.657425Z
+updated_at: 2026-03-24T08:56:38.906254Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts: {}
+current_task_id: mamba-conformance-p2-spec
+task_revisions: {}
+impl_spec_phase:
+  mamba-conformance-p2-spec: tests
+telemetry: null
+dag:
+  issues:
+  - number: 1037
+    title: 'test(mamba): Py3.12 behavioral conformance — every function must match CPython'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard:
+  allowed_phases:
+  - change_implementation_created
+  phase_before: change_spec_created
+  action: begin_implementation
+  started_at: 2026-03-24T08:27:48.901476Z
+branch: null
+groups_progress:
+  post_clarifications:
+  - mamba-p2-advanced
+  pre_clarifications:
+  - mamba-p2-advanced
+  change_spec:
+  - mamba-p2-advanced
+  change_implementation: []
+  reference_context:
+  - mamba-p2-advanced

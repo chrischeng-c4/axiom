@@ -1,0 +1,28 @@
+change_id: mamba-stdlib-posix
+schema_version: '2.0'
+created_at: 2026-04-09T01:51:29.009162Z
+updated_at: 2026-04-09T03:59:48.862255Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: null
+revision_counts: {}
+current_task_id: mamba-stdlib-posix-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - stdlib-posix-module
+  post_clarifications:
+  - stdlib-posix-module
+  change_implementation: []
+  change_spec: []
+  reference_context:
+  - stdlib-posix-module

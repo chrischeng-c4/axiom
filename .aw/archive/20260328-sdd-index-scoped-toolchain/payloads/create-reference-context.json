@@ -1,0 +1,16 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-index-scoped-toolchain",
+  "group_id": "scoped-toolchain",
+  "specs": [
+    {"path": "crates/cclab-sdd/logic/lens-index-storage.md", "relevance": "high", "key_requirements": "Storage path resolution — resolve_lens_storage, resolve_cache_dir. Need per-scope cache paths."},
+    {"path": "crates/cclab-sdd/logic/code-analysis-service-v2.md", "relevance": "high", "key_requirements": "Daemon architecture — RequestHandler, DaemonConfig, file watcher. Core module for multi-handler routing."},
+    {"path": "crates/cclab-sdd/logic/type-inference-pipeline.md", "relevance": "high", "key_requirements": "ImportResolver search_paths, StubLoader stub_paths — need per-scope initialization."},
+    {"path": "crates/cclab-sdd/interfaces/cli/commands.md", "relevance": "medium", "key_requirements": "CLI surface — add scope list command."}
+  ],
+  "spec_plan": [
+    {"spec_id": "index-config-model", "action": "create", "main_spec_ref": "crates/cclab-sdd/logic/index-config.md", "sections": ["overview", "data-model", "changes"]},
+    {"spec_id": "auto-discover", "action": "create", "main_spec_ref": "crates/cclab-sdd/logic/auto-discover.md", "sections": ["overview", "changes"]},
+    {"spec_id": "multi-handler-daemon", "action": "modify", "main_spec_ref": "crates/cclab-sdd/logic/code-analysis-service-v2.md", "source": "crates/cclab-sdd/logic/code-analysis-service-v2.md", "sections": ["overview", "changes"]}
+  ]
+}

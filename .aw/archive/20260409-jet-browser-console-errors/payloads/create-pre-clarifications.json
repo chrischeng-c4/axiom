@@ -1,0 +1,14 @@
+{
+  "group_id": "browser-console-error-relay",
+  "answers": [
+    {
+      "question": "Should console.warn() be captured alongside console.error()?",
+      "answer": "Yes — capture both console.error and console.warn, plus uncaught exceptions and unhandled promise rejections."
+    },
+    {
+      "question": "Should there be a way to disable this feature?",
+      "answer": "No — always-on in dev mode. No flag or env var needed."
+    }
+  ],
+  "summary": "Capture console.error, console.warn, uncaught exceptions, and unhandled promise rejections. Always-on in dev mode with no toggle. One-way relay to server terminal with colored output."
+}

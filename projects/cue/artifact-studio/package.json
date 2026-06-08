@@ -1,0 +1,28 @@
+{
+  "name": "cue-artifact-studio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/jet.mjs dev --host 127.0.0.1 --port 3212",
+    "dev:e2e": "node scripts/jet.mjs dev --host 127.0.0.1",
+    "dev:fixture-api": "node e2e/workitems.e2e.mjs --fixture-api",
+    "build": "node scripts/jet.mjs build -o ../be/static/artifact-studio",
+    "build:wasm": "node scripts/jet.mjs build --wasm -o ../be/static/artifact-studio-wasm",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "node e2e/workitems.e2e.mjs"
+  },
+  "dependencies": {
+    "@emotion/react": "^11.11.3",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^9.0.1",
+    "@mui/material": "^9.0.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.48",
+    "@types/react-dom": "^18.2.18",
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,725 @@
+---
+id: sdd-models-task-graph
+fill_sections: [overview, schema, source, changes]
+capability_refs:
+  - id: aw-core-client-model-workitem-first-artifact-lifecycle
+    role: primary
+    gap: core-concept-model-and-invariants
+    claim: core-concept-model-and-invariants
+    coverage: full
+    rationale: "Core model/parser TDs define AW Core domain nouns, invariants, and artifact structure."
+---
+
+# Task Graph Types
+
+## Overview
+<!-- type: overview lang: markdown -->
+
+Public API manifest for `projects/agentic-workflow/src/models/task_graph.rs` generated from AST during Score force-regeneration standardization.
+
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Layer` | projects/agentic-workflow/src/models/task_graph.rs | struct | pub | 28 |  |
+| `SpecGroup` | projects/agentic-workflow/src/models/task_graph.rs | struct | pub | 40 |  |
+| `TaskGraph` | projects/agentic-workflow/src/models/task_graph.rs | struct | pub | 18 |  |
+| `TaskRef` | projects/agentic-workflow/src/models/task_graph.rs | struct | pub | 54 |  |
+| `can_execute_spec` | projects/agentic-workflow/src/models/task_graph.rs | function | pub | 484 | can_execute_spec(&self, spec_id: &str, completed: &HashSet<String>) -> bool |
+| `from_tasks_file` | projects/agentic-workflow/src/models/task_graph.rs | function | pub | 68 | from_tasks_file(tasks_path: &Path) -> Result<Self> |
+| `get_execution_order` | projects/agentic-workflow/src/models/task_graph.rs | function | pub | 430 | get_execution_order(&self) -> Vec<&SpecGroup> |
+| `get_tasks_for_spec` | projects/agentic-workflow/src/models/task_graph.rs | function | pub | 472 | get_tasks_for_spec(&self, spec_id: &str) -> Vec<&TaskRef> |
+| `validate_dependencies` | projects/agentic-workflow/src/models/task_graph.rs | function | pub | 496 | validate_dependencies(&self) -> Result<()> |
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+definitions:
+  TaskGraph:
+    type: object
+    required: [layers, specs_by_layer]
+    description: Task dependency graph.
+    properties:
+      layers:
+        type: array
+        items: { type: object }
+        x-rust-type: "Vec<Layer>"
+        description: "Layers organized by order."
+      specs_by_layer:
+        type: object
+        x-rust-type: "HashMap<String, Vec<SpecGroup>>"
+        description: "Specs grouped by layer name."
+    x-rust-struct:
+      derive: [Debug, Clone]
+
+  Layer:
+    type: object
+    required: [name, order, specs]
+    description: Layer definition.
+    properties:
+      name:
+        type: string
+        description: "Layer name."
+      order:
+        type: integer
+        x-rust-type: "u8"
+        description: "Layer order."
+      specs:
+        type: array
+        items: { type: object }
+        x-rust-type: "Vec<SpecGroup>"
+        description: "Specs in this layer."
+    x-rust-struct:
+      derive: [Debug, Clone]
+
+  SpecGroup:
+    type: object
+    required: [spec_id, spec_path, tasks, depends_on]
+    description: Group of tasks for a single spec.
+    properties:
+      spec_id:
+        type: string
+        description: "Spec identifier."
+      spec_path:
+        type: string
+        x-rust-type: "PathBuf"
+        description: "Path to spec file."
+      tasks:
+        type: array
+        items: { type: object }
+        x-rust-type: "Vec<TaskRef>"
+        description: "Tasks referencing this spec."
+      depends_on:
+        type: array
+        items: { type: string }
+        x-rust-type: "Vec<String>"
+        description: "Other spec IDs this depends on."
+    x-rust-struct:
+      derive: [Debug, Clone]
+
+  TaskRef:
+    type: object
+    required: [id, action, file, depends_on]
+    description: Reference to a task.
+    properties:
+      id:
+        type: string
+        description: "Task identifier."
+      action:
+        type: string
+        x-rust-type: "TaskAction"
+        description: "Task action (CREATE, MODIFY, DELETE)."
+      file:
+        type: string
+        description: "File path."
+      depends_on:
+        type: array
+        items: { type: string }
+        x-rust-type: "Vec<String>"
+        description: "Other task IDs this depends on."
+    x-rust-struct:
+      derive: [Debug, Clone]
+```
+
+## Source
+<!-- type: source lang: rust -->
+<!-- source-from-target: strip-managed-markers -->
+
+<!-- source-snapshot: path=projects/agentic-workflow/src/models/task_graph.rs -->
+````rust
+/// Task dependency graph for spec-by-spec implementation
+///
+/// This module provides functionality to parse tasks.md and build a dependency
+/// graph organized by layers and specs, enabling sequential implementation
+/// workflow.
+
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/models/task_graph.md#source
+use crate::models::frontmatter::{TaskAction, TaskBlock, TaskStatus, TasksFrontmatter};
+use anyhow::{bail, Context, Result};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+
+/// Task dependency graph.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/models/task_graph.md#schema
+#[derive(Debug, Clone)]
+pub struct TaskGraph {
+    /// Layers organized by order.
+    pub layers: Vec<Layer>,
+    /// Specs grouped by layer name.
+    pub specs_by_layer: HashMap<String, Vec<SpecGroup>>,
+}
+
+/// Layer definition.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/models/task_graph.md#schema
+#[derive(Debug, Clone)]
+pub struct Layer {
+    /// Layer name.
+    pub name: String,
+    /// Layer order.
+    pub order: u8,
+    /// Specs in this layer.
+    pub specs: Vec<SpecGroup>,
+}
+
+/// Group of tasks for a single spec.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/models/task_graph.md#schema
+#[derive(Debug, Clone)]
+pub struct SpecGroup {
+    /// Spec identifier.
+    pub spec_id: String,
+    /// Path to spec file.
+    pub spec_path: PathBuf,
+    /// Tasks referencing this spec.
+    pub tasks: Vec<TaskRef>,
+    /// Other spec IDs this depends on.
+    pub depends_on: Vec<String>,
+}
+
+/// Reference to a task.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/models/task_graph.md#schema
+#[derive(Debug, Clone)]
+pub struct TaskRef {
+    /// Task identifier.
+    pub id: String,
+    /// Task action (CREATE, MODIFY, DELETE).
+    pub action: TaskAction,
+    /// File path.
+    pub file: String,
+    /// Other task IDs this depends on.
+    pub depends_on: Vec<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/models/task_graph.md#source
+impl TaskGraph {
+    /// Parse tasks.md and build dependency graph
+    pub fn from_tasks_file(tasks_path: &Path) -> Result<Self> {
+        let content = std::fs::read_to_string(tasks_path)
+            .with_context(|| format!("Failed to read tasks.md from {}", tasks_path.display()))?;
+
+        // Extract change_id from path (.aw/changes/<change_id>/tasks.md)
+        let change_id = tasks_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Parse frontmatter to get layer definitions
+        let frontmatter = Self::parse_frontmatter(&content)?;
+
+        // Parse tasks from markdown
+        let tasks = Self::parse_tasks(&content)?;
+
+        // Build layer structure
+        let layers = Self::build_layers(&frontmatter, &tasks, &change_id)?;
+
+        // Build specs_by_layer map
+        let specs_by_layer = layers
+            .iter()
+            .map(|layer| (layer.name.clone(), layer.specs.clone()))
+            .collect();
+
+        Ok(Self {
+            layers,
+            specs_by_layer,
+        })
+    }
+
+    /// Parse YAML frontmatter from tasks.md
+    /// Returns default frontmatter if parsing fails (for robustness)
+    fn parse_frontmatter(content: &str) -> Result<TasksFrontmatter> {
+        // Extract frontmatter between --- delimiters
+        let Some(frontmatter_start) = content.find("---") else {
+            // No frontmatter found - return default
+            return Ok(TasksFrontmatter::default());
+        };
+
+        let content_after_start = &content[frontmatter_start + 3..];
+        let Some(frontmatter_end) = content_after_start.find("---") else {
+            // No frontmatter end found - return default
+            return Ok(TasksFrontmatter::default());
+        };
+
+        let frontmatter_str = &content_after_start[..frontmatter_end];
+
+        // Try to parse, return default on failure
+        match serde_yaml::from_str::<TasksFrontmatter>(frontmatter_str) {
+            Ok(fm) => Ok(fm),
+            Err(_) => Ok(TasksFrontmatter::default()),
+        }
+    }
+
+    /// Parse task blocks from markdown content
+    /// Supports two formats:
+    /// 1. YAML blocks (```yaml...```) - generated by MCP tool
+    /// 2. Markdown checkbox format (- [ ] ...) - generated by Gemini
+    fn parse_tasks(content: &str) -> Result<Vec<TaskBlock>> {
+        let mut tasks = Vec::new();
+
+        // Try YAML blocks first (```yaml...```)
+        let mut remaining = content;
+        while let Some(start) = remaining.find("```yaml") {
+            let content_after_start = &remaining[start + 7..];
+            if let Some(end) = content_after_start.find("```") {
+                let yaml_block = &content_after_start[..end];
+
+                // Try to parse as TaskBlock
+                if let Ok(task) = serde_yaml::from_str::<TaskBlock>(yaml_block) {
+                    tasks.push(task);
+                }
+
+                remaining = &content_after_start[end + 3..];
+            } else {
+                break;
+            }
+        }
+
+        // If no YAML blocks found, try markdown checkbox format
+        if tasks.is_empty() {
+            tasks = Self::parse_markdown_tasks(content)?;
+        }
+
+        if tasks.is_empty() {
+            bail!("No tasks found in tasks.md");
+        }
+
+        Ok(tasks)
+    }
+
+    /// Parse tasks from markdown checkbox format:
+    /// - [ ] 1.1 Task title
+    ///   - File: `path/to/file.rs` (CREATE)
+    ///   - Spec: `spec-ref`
+    ///   - Depends: 1.0, 1.1 or none
+    fn parse_markdown_tasks(content: &str) -> Result<Vec<TaskBlock>> {
+        use regex::Regex;
+
+        let mut tasks = Vec::new();
+
+        // Match task lines: - [ ] 1.1 Task title or - [x] 1.1 Task title
+        let task_re = Regex::new(r"^- \[[x ]\] (\d+\.\d+) (.+)$").unwrap();
+        let file_re = Regex::new(r"File: `([^`]+)`\s*\((\w+)\)").unwrap();
+        let spec_re = Regex::new(r"Spec: `([^`]+)`").unwrap();
+        let depends_re = Regex::new(r"Depends?: (.+)$").unwrap();
+
+        let lines: Vec<&str> = content.lines().collect();
+        let mut i = 0;
+
+        while i < lines.len() {
+            let line = lines[i].trim();
+
+            if let Some(caps) = task_re.captures(line) {
+                let id = caps.get(1).unwrap().as_str().to_string();
+                let mut file = String::new();
+                let mut action = TaskAction::Modify;
+                let mut spec_ref = None;
+                let mut depends_on = Vec::new();
+
+                // Look at following indented lines for details
+                i += 1;
+                while i < lines.len() {
+                    let detail_line = lines[i];
+                    // Check if still indented (part of this task)
+                    if !detail_line.starts_with("  ") && !detail_line.starts_with("\t") {
+                        break;
+                    }
+
+                    let detail_line = detail_line.trim();
+
+                    // Parse File line
+                    if let Some(caps) = file_re.captures(detail_line) {
+                        file = caps.get(1).unwrap().as_str().to_string();
+                        let action_str = caps.get(2).unwrap().as_str().to_uppercase();
+                        action = match action_str.as_str() {
+                            "CREATE" => TaskAction::Create,
+                            "MODIFY" => TaskAction::Modify,
+                            "DELETE" => TaskAction::Delete,
+                            "RENAME" => TaskAction::Rename,
+                            _ => TaskAction::Modify,
+                        };
+                    }
+
+                    // Parse Spec line
+                    if let Some(caps) = spec_re.captures(detail_line) {
+                        spec_ref = Some(caps.get(1).unwrap().as_str().to_string());
+                    }
+
+                    // Parse Depends line
+                    if let Some(caps) = depends_re.captures(detail_line) {
+                        let deps_str = caps.get(1).unwrap().as_str().trim();
+                        if deps_str.to_lowercase() != "none" && !deps_str.is_empty() {
+                            depends_on = deps_str
+                                .split(',')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect();
+                        }
+                    }
+
+                    i += 1;
+                }
+
+                // Only add if we found a file
+                if !file.is_empty() {
+                    tasks.push(TaskBlock {
+                        id,
+                        action,
+                        status: TaskStatus::default(),
+                        file,
+                        spec_ref,
+                        depends_on,
+                        estimated_lines: None,
+                    });
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        Ok(tasks)
+    }
+
+    /// Build layer structure from frontmatter and tasks
+    /// If frontmatter doesn't have layers, infer from task IDs
+    fn build_layers(
+        frontmatter: &TasksFrontmatter,
+        tasks: &[TaskBlock],
+        change_id: &str,
+    ) -> Result<Vec<Layer>> {
+        // Standard layer mapping
+        let layer_names: [(u8, &str); 4] = [
+            (1, "data"),
+            (2, "logic"),
+            (3, "integration"),
+            (4, "testing"),
+        ];
+
+        // Check if frontmatter has layers defined
+        let use_frontmatter_layers = frontmatter.layers.as_ref().map_or(false, |lb| {
+            lb.data.is_some()
+                || lb.logic.is_some()
+                || lb.integration.is_some()
+                || lb.testing.is_some()
+        });
+
+        let mut layers = Vec::new();
+
+        if use_frontmatter_layers {
+            // Use frontmatter layer definitions
+            let layer_breakdown = frontmatter.layers.as_ref().unwrap();
+            let layer_defs = vec![
+                (1, "data", &layer_breakdown.data),
+                (2, "logic", &layer_breakdown.logic),
+                (3, "integration", &layer_breakdown.integration),
+                (4, "testing", &layer_breakdown.testing),
+            ];
+
+            for (order, name, layer_info_opt) in layer_defs {
+                if layer_info_opt.is_none() {
+                    continue;
+                }
+
+                let layer_tasks: Vec<_> = tasks
+                    .iter()
+                    .filter(|t| {
+                        if let Some(first_dot) = t.id.find('.') {
+                            if let Ok(layer_num) = t.id[..first_dot].parse::<u8>() {
+                                return layer_num == order;
+                            }
+                        }
+                        false
+                    })
+                    .collect();
+
+                let specs = Self::group_by_spec(&layer_tasks, change_id)?;
+
+                layers.push(Layer {
+                    name: name.to_string(),
+                    order,
+                    specs,
+                });
+            }
+        } else {
+            // Infer layers from task IDs
+            // Group tasks by their layer number (first part of ID like "1.1" -> 1)
+            let mut layer_tasks_map: std::collections::HashMap<u8, Vec<&TaskBlock>> =
+                std::collections::HashMap::new();
+
+            for task in tasks {
+                if let Some(first_dot) = task.id.find('.') {
+                    if let Ok(layer_num) = task.id[..first_dot].parse::<u8>() {
+                        layer_tasks_map.entry(layer_num).or_default().push(task);
+                    }
+                }
+            }
+
+            // Build layers from the map
+            for (order, name) in &layer_names {
+                if let Some(layer_tasks) = layer_tasks_map.get(order) {
+                    let specs = Self::group_by_spec(layer_tasks, change_id)?;
+                    layers.push(Layer {
+                        name: name.to_string(),
+                        order: *order,
+                        specs,
+                    });
+                }
+            }
+        }
+
+        // Sort layers by order
+        layers.sort_by_key(|l| l.order);
+
+        if layers.is_empty() {
+            bail!("No layers found in tasks.md");
+        }
+
+        Ok(layers)
+    }
+
+    /// Group tasks by spec reference
+    fn group_by_spec(tasks: &[&TaskBlock], change_id: &str) -> Result<Vec<SpecGroup>> {
+        let mut spec_map: HashMap<String, Vec<&TaskBlock>> = HashMap::new();
+
+        for task in tasks {
+            let spec_id = task
+                .spec_ref
+                .as_ref()
+                .context(format!("Task {} has no spec_ref", task.id))?;
+
+            // Extract spec ID from spec_ref (format: "spec-id:R1" or "spec-id")
+            let spec_id = if let Some(colon_pos) = spec_id.find(':') {
+                &spec_id[..colon_pos]
+            } else {
+                spec_id.as_str()
+            };
+
+            spec_map
+                .entry(spec_id.to_string())
+                .or_insert_with(Vec::new)
+                .push(task);
+        }
+
+        let mut spec_groups = Vec::new();
+
+        for (spec_id, spec_tasks) in spec_map {
+            // Collect task dependencies for this spec
+            let mut spec_depends_on = HashSet::new();
+
+            let task_refs: Vec<TaskRef> = spec_tasks
+                .iter()
+                .map(|t| {
+                    // Add task dependencies from other specs
+                    for dep in &t.depends_on {
+                        // Find which spec the dependency belongs to
+                        if let Some(dep_task) = tasks.iter().find(|task| task.id == *dep) {
+                            if let Some(dep_spec_ref) = &dep_task.spec_ref {
+                                let dep_spec_id = if let Some(colon_pos) = dep_spec_ref.find(':') {
+                                    &dep_spec_ref[..colon_pos]
+                                } else {
+                                    dep_spec_ref.as_str()
+                                };
+
+                                // Only add if it's a different spec
+                                if dep_spec_id != spec_id {
+                                    spec_depends_on.insert(dep_spec_id.to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    TaskRef {
+                        id: t.id.clone(),
+                        action: t.action.clone(),
+                        file: t.file.clone(),
+                        depends_on: t.depends_on.clone(),
+                    }
+                })
+                .collect();
+
+            let spec_path =
+                PathBuf::from(format!(".aw/changes/{}/specs/{}.md", change_id, spec_id));
+
+            spec_groups.push(SpecGroup {
+                spec_id: spec_id.clone(),
+                spec_path,
+                tasks: task_refs,
+                depends_on: spec_depends_on.into_iter().collect(),
+            });
+        }
+
+        // Sort by spec_id for consistency
+        spec_groups.sort_by(|a, b| a.spec_id.cmp(&b.spec_id));
+
+        Ok(spec_groups)
+    }
+
+    /// Get specs in execution order (topological sort)
+    pub fn get_execution_order(&self) -> Vec<&SpecGroup> {
+        let mut result = Vec::new();
+        let mut completed = HashSet::new();
+
+        // Iterate through layers in order
+        for layer in &self.layers {
+            // Within each layer, execute specs in dependency order
+            let mut remaining: Vec<_> = layer.specs.iter().collect();
+
+            while !remaining.is_empty() {
+                let initial_len = remaining.len();
+
+                remaining.retain(|spec| {
+                    // Check if all dependencies are completed
+                    let can_execute = spec.depends_on.iter().all(|dep| completed.contains(dep));
+
+                    if can_execute {
+                        result.push(*spec);
+                        completed.insert(spec.spec_id.clone());
+                        false // Remove from remaining
+                    } else {
+                        true // Keep in remaining
+                    }
+                });
+
+                // Detect circular dependencies
+                if remaining.len() == initial_len && !remaining.is_empty() {
+                    // No progress made, but specs still remain
+                    // Add remaining specs anyway (circular dependency exists)
+                    for spec in remaining {
+                        result.push(spec);
+                        completed.insert(spec.spec_id.clone());
+                    }
+                    break;
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Get all tasks for a specific spec
+    pub fn get_tasks_for_spec(&self, spec_id: &str) -> Vec<&TaskRef> {
+        for layer in &self.layers {
+            for spec in &layer.specs {
+                if spec.spec_id == spec_id {
+                    return spec.tasks.iter().collect();
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    /// Check if all prerequisites are complete
+    pub fn can_execute_spec(&self, spec_id: &str, completed: &HashSet<String>) -> bool {
+        for layer in &self.layers {
+            for spec in &layer.specs {
+                if spec.spec_id == spec_id {
+                    return spec.depends_on.iter().all(|dep| completed.contains(dep));
+                }
+            }
+        }
+        false
+    }
+
+    /// Validate no circular dependencies exist
+    pub fn validate_dependencies(&self) -> Result<()> {
+        let execution_order = self.get_execution_order();
+        let total_specs: usize = self.layers.iter().map(|l| l.specs.len()).sum();
+
+        if execution_order.len() < total_specs {
+            bail!("Circular dependencies detected in task graph");
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_spec_ref() {
+        // Test parsing spec_ref with requirement suffix
+        let spec_ref = "mcp-tool-enforcement:R1";
+        let colon_pos = spec_ref.find(':').unwrap();
+        let spec_id = &spec_ref[..colon_pos];
+        assert_eq!(spec_id, "mcp-tool-enforcement");
+
+        // Test parsing spec_ref without suffix
+        let spec_ref_no_suffix = "mcp-tool-enforcement";
+        let spec_id_no_suffix = if let Some(colon_pos) = spec_ref_no_suffix.find(':') {
+            &spec_ref_no_suffix[..colon_pos]
+        } else {
+            spec_ref_no_suffix
+        };
+        assert_eq!(spec_id_no_suffix, "mcp-tool-enforcement");
+    }
+
+    #[test]
+    fn test_task_ref_creation() {
+        let task_ref = TaskRef {
+            id: "1.1".to_string(),
+            action: TaskAction::Create,
+            file: "src/models/user.rs".to_string(),
+            depends_on: vec![],
+        };
+
+        assert_eq!(task_ref.id, "1.1");
+        assert_eq!(task_ref.file, "src/models/user.rs");
+    }
+
+    #[test]
+    fn test_layer_ordering() {
+        let mut layers = vec![
+            Layer {
+                name: "testing".to_string(),
+                order: 4,
+                specs: vec![],
+            },
+            Layer {
+                name: "data".to_string(),
+                order: 1,
+                specs: vec![],
+            },
+            Layer {
+                name: "logic".to_string(),
+                order: 2,
+                specs: vec![],
+            },
+        ];
+
+        layers.sort_by_key(|l| l.order);
+
+        assert_eq!(layers[0].name, "data");
+        assert_eq!(layers[1].name, "logic");
+        assert_eq!(layers[2].name, "testing");
+    }
+}
+````
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: projects/agentic-workflow/src/models/task_graph.rs
+    action: modify
+    section: source
+    impl_mode: codegen
+    description: |
+      Source template owns the complete task graph module.
+  - action: annotate
+    section: schema
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the schema section."
+
+```
+
+# Reviews
+
+## Review 1
+<!-- type: doc lang: markdown -->
+**Verdict:** approved
+
+- [overview] Four data carriers; standard Debug+Clone.
+- [schema] All in `required:`; PathBuf, HashMap, Vec via x-rust-type.
+- [changes] Standard split with all four in `replaces`.

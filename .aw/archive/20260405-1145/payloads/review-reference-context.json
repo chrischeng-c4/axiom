@@ -1,0 +1,79 @@
+{
+  "group_id": "sdd-docs-phase",
+  "verdict": "REVIEWED",
+  "summary": "Reference context covers the core areas well (state machine, config, workflow tools, CLI, phase logic) but has one meaningful gap and two key-requirement inaccuracies that should be addressed before implementation. Missing: artifact-tools.md from both the specs list and spec_plan — the docs phase requires new artifact CLI tools for agents to record review verdicts, following the same pattern as all other phases. Two key requirements are misattributed: change-merge.md and implement-task.md are assigned state-machine routing concerns that belong in state-machine.md, not those specs.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "interfaces/tools/artifact-tools.md is absent. The docs phase requires artifact tools (create/review/revise change docs) for agents to record outputs via CLI — same pattern used by all other phases. The doc-reviewer agent has Bash but not Write, so it must call a CLI artifact command to record verdicts. These OpenRPC definitions belong in artifact-tools.md but it appears in neither the specs list nor spec_plan."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": true,
+      "note": "Scores are broadly reasonable. change-merge.md at medium is slightly over-included (see issues), but not wrong enough to fail."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "Two inaccuracies: (1) change-merge.md key requirement 'Merge still includes doc output files (in output_dir) as part of the committed change' is misleading — per pre-clarification Q3, docs go directly to output_dir; merge does not specially include them. Archive structure is unchanged. (2) implement-task.md key requirement 'Docs phase occurs after ChangeImplementationReviewed (APPROVED) — same trigger point as merge in current implementation' is a state-machine routing concern, not an implement-task.md concern; implement-task.md doesn't document where it sits relative to other phases."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "All referenced specs are plausibly related to the docs phase. change-merge.md and implement-task.md are borderline but defensible as pattern references."
+    },
+    {
+      "item": "spec_plan: every entry has main_spec_ref set (not null)",
+      "passed": true,
+      "note": "All 5 spec_plan entries have explicit main_spec_ref values."
+    },
+    {
+      "item": "spec_plan: sections are reasonable for the requirements",
+      "passed": true,
+      "note": "Sections are well-matched. docs-phase-logic has a config section alongside config-docs-section (agents.md), which creates minor conceptual overlap, but they target different files and serve different purposes (logic context vs canonical schema). Not a blocker."
+    },
+    {
+      "item": "spec_plan: modify entries have valid source paths",
+      "passed": true,
+      "note": "All four modify targets exist on disk: state-machine.md, agents.md, workflow-tools.md, commands.md confirmed present under cclab/specs/crates/cclab-sdd/."
+    },
+    {
+      "item": "spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)",
+      "passed": true,
+      "note": "All paths have ≥4 components: crates/cclab-sdd/{logic|config|interfaces/tools|interfaces/cli}/{file}.md."
+    },
+    {
+      "item": "spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)",
+      "passed": true,
+      "note": "No spec mixes unrelated concerns. docs-phase-logic covers the docs phase lifecycle as a single unit."
+    },
+    {
+      "item": "spec_plan: no spec file would require duplicate section types (split into separate files if needed)",
+      "passed": true,
+      "note": "No spec has duplicate section types within a single file."
+    },
+    {
+      "item": "spec_plan: spec paths mirror source structure (interfaces/, logic/, generate/)",
+      "passed": true,
+      "note": "All paths use correct structure subdirectories: logic/ for phase logic, config/ for config schema, interfaces/tools/ for MCP tools, interfaces/cli/ for CLI."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "MEDIUM",
+      "description": "Missing artifact-tools.md from both reference specs list and spec_plan. The docs phase needs new artifact tool OpenRPC definitions (sdd_artifact_create_change_docs, sdd_artifact_review_change_docs, sdd_artifact_revise_change_docs) in crates/cclab-sdd/interfaces/tools/artifact-tools.md. The established pattern for every other phase (reference-context, change-spec, implementation) is that agents write artifacts via CLI artifact commands, and the doc-reviewer agent (Bash but no Write access) must call a CLI command to record review verdicts. This file exists and was already modified for alignment checks; it needs a new modify entry in spec_plan for docs phase artifact tool definitions.",
+      "recommendation": "Add crates/cclab-sdd/interfaces/tools/artifact-tools.md to the reference specs list (relevance: high) and to spec_plan as a modify action with sections [overview, rpc-api, changes] covering sdd_artifact_create_change_docs, sdd_artifact_review_change_docs, sdd_artifact_revise_change_docs OpenRPC definitions."
+    },
+    {
+      "severity": "LOW",
+      "description": "Key requirement for change-merge.md claims 'Merge still includes doc output files (in output_dir) as part of the committed change'. This is inaccurate. Per pre-clarification Q3, docs are written directly to output_dir in the repo — they are NOT specially included by merge. The archive structure is unchanged. If auto_commit is enabled, docs files would be committed naturally by git as changed files, but this requires no special merge logic. The actual relevant fact is that merge comes AFTER docs phase, which is a state-machine routing concern covered by state-machine-docs-phase.",
+      "recommendation": "Replace the change-merge.md key requirement with: 'Merge phase comes after DocsReviewed APPROVED (or docs-skipped) — state routing only, no merge logic changes. Docs files in output_dir are committed naturally by git auto_commit; no special merge handling needed.' Consider reducing relevance from medium to low since no spec_plan modify entry exists for it."
+    },
+    {
+      "severity": "LOW",
+      "description": "Key requirement for implement-task.md claims 'Docs phase occurs after ChangeImplementationReviewed (APPROVED) — same trigger point as merge in current implementation'. implement-task.md does not contain phase routing logic; it defines the implementation CRR cycle. This is a state-machine.md concern already covered by state-machine-docs-phase in the spec_plan. Attributing it to implement-task.md will mislead the spec writer.",
+      "recommendation": "Replace this key requirement with the actual relevant reference pattern in implement-task.md: 'Per-spec CRR sub-state machine with max_revisions_per_spec=2 — docs phase borrows this per-target CRR pattern for per-crate doc targets.' Remove the phase routing claim."
+    }
+  ]
+}

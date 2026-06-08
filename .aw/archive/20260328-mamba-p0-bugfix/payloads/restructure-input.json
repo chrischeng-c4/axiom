@@ -1,0 +1,29 @@
+{
+  "groups": [
+    {
+      "id": "mamba-codegen-runtime-fixes",
+      "issues": [1109, 1111, 1114],
+      "summary": "Fix three targeted bugs: (1) no-arg constructor codegen verifier error — list(), tuple(), set() trigger verifier failure due to incorrect function signature in zero-arg builtin calls; (2) string reverse slice [::-1] returns empty string instead of reversed result — negative step handling in string_ops.rs; (3) SIGBUS crash in multi-threaded test execution — shared mutable state in runtime accessed without synchronization.",
+      "requirements": "list(), tuple(), set() must produce empty containers without codegen errors. 'abcdef'[::-1] must produce 'fedcba'. Multi-threaded cargo test must not SIGBUS — JIT code cache and runtime state must be thread-safe.",
+      "affected_files": [
+        "crates/cclab-mamba/src/codegen/cranelift/",
+        "crates/cclab-mamba/src/runtime/string_ops.rs",
+        "crates/cclab-mamba/src/runtime/builtins.rs",
+        "crates/cclab-mamba/src/codegen/cranelift/jit.rs"
+      ],
+      "questions": []
+    },
+    {
+      "id": "mamba-kwargs-dispatch",
+      "issues": [1108],
+      "summary": "Implement keyword argument dispatch throughout the calling convention. Currently mb_call* functions and Cranelift codegen do not propagate keyword arguments to callees. This affects builtins (sorted(key=), print(sep=, end=), min(default=), int(base=)), stdlib functions, and user-defined functions with keyword-only args. Requires changes to call instruction emission, builtin function signatures, and HIR-to-MIR keyword arg lowering.",
+      "requirements": "sorted(key=len, reverse=True), print(sep='-', end=''), min(key=fn, default=val), int('ff', base=16), str.format(name='Bob') must all produce CPython 3.12-identical results. User-defined keyword-only args (def f(*, key)) must work.",
+      "affected_files": [
+        "crates/cclab-mamba/src/runtime/builtins.rs",
+        "crates/cclab-mamba/src/codegen/cranelift/",
+        "crates/cclab-mamba/src/lower/hir_to_mir.rs"
+      ],
+      "questions": []
+    }
+  ]
+}

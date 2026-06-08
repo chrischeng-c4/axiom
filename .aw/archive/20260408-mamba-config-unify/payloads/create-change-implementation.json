@@ -1,0 +1,13 @@
+{
+  "change_id": "mamba-config-unify",
+  "group_id": "unify-mamba-config",
+  "spec_id": "mamba-config-unify-spec",
+  "summary": "Fix cclab-cli build: update entry_point field access to use the new entry_point() method after MambaConfig unification.",
+  "diff": "diff --git a/crates/cclab-cli/src/mamba.rs b/crates/cclab-cli/src/mamba.rs\nindex 9c095908..625e465d 100644\n--- a/crates/cclab-cli/src/mamba.rs\n+++ b/crates/cclab-cli/src/mamba.rs\n@@ -136,7 +136,7 @@ impl CliModule for MambaCli {\n \n                 // Determine source file: explicit arg > mamba.toml entry_point.\n                 let file_arg = sub.get_one::<String>(\"file\");\n-                let entry_from_config = project_config.as_ref().map(|c| c.entry_point.clone());\n+                let entry_from_config = project_config.as_ref().and_then(|c| c.entry_point().map(|s| s.to_string()));\n                 let file: String = match (file_arg, entry_from_config) {\n                     (Some(f), _) => f.clone(),\n                     (None, Some(ep)) => ep,\n@@ -225,7 +225,7 @@ impl CliModule for MambaCli {\n \n                 // Determine source file: explicit arg > mamba.toml entry_point.\n                 let file_arg = sub.get_one::<String>(\"file\");\n-                let entry_from_config = project_config.as_ref().map(|c| c.entry_point.clone());\n+                let entry_from_config = project_config.as_ref().and_then(|c| c.entry_point().map(|s| s.to_string()));\n                 let file: String = match (file_arg, entry_from_config) {\n                     (Some(f), _) => f.clone(),\n                     (None, Some(ep)) => ep,\n",
+  "files_changed": [
+    "crates/cclab-cli/src/mamba.rs"
+  ],
+  "test_results": {
+    "cargo_check": "passed"
+  }
+}

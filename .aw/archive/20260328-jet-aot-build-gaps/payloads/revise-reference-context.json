@@ -1,0 +1,64 @@
+{
+  "group_id": "jet-aot-build-gaps",
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-jet/aot-build.md",
+      "relevance": "high",
+      "summary": "Main spec for production build pipeline. Defines R1-R7 covering tree shaking, code splitting, minification, source maps, CSS pipeline, asset pipeline, and define replacement. Gaps: R2 preload hints + manual chunks, R4 source map chaining, R6 asset URL rewriting + image optimization."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/tree-shaking.md",
+      "relevance": "medium",
+      "summary": "Tree shaking with DCE, ESM/CJS analysis, side effects. Fully implemented. Reference for JSON tree-shaking gap."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/postcss-tailwind.md",
+      "relevance": "medium",
+      "summary": "CSS pipeline with lightningcss, Tailwind JIT. Reference for CSS asset URL rewriting gap."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/scope-hoisting.md",
+      "relevance": "low",
+      "summary": "Scope hoisting. Done. Background context only."
+    }
+  ],
+  "codebase_explored": [
+    {
+      "path": "crates/cclab-jet/src/bundler/splitting.rs",
+      "summary": "Code splitting. Missing: preload hints, manual chunks config."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/minify.rs",
+      "summary": "JS/CSS minification. Missing: HTML minification."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/sourcemap.rs",
+      "summary": "Source maps. Missing: multi-pass chaining."
+    },
+    {
+      "path": "crates/cclab-jet/src/asset/image_processor.rs",
+      "summary": "Image processing TODO stub. Needs actual compression."
+    },
+    {
+      "path": "crates/cclab-jet/src/asset/mod.rs",
+      "summary": "Asset processor. Missing: JSON tree-shake, CSS URL rewrite."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/mod.rs",
+      "summary": "Bundler orchestrator. Integration point for preload hints and HTML output."
+    },
+    {
+      "path": "crates/cclab-jet/src/bundler/types.rs",
+      "summary": "BundleConfig. Missing: manual_chunks field."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "aot-build-gaps",
+      "action": "modify",
+      "source": "cclab/specs/crates/cclab-jet/aot-build.md",
+      "main_spec_ref": "crates/cclab-jet/logic/aot-build.md",
+      "sections": ["overview", "requirements", "scenarios", "changes", "test_plan"]
+    }
+  ]
+}

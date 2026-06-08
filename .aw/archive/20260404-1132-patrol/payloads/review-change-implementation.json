@@ -1,0 +1,8 @@
+{
+  "group_id": "wire-mamba-modules",
+  "spec_id": "native-import-resolution",
+  "verdict": "APPROVED",
+  "summary": "Native import resolution implementation across 30 files, 1145 insertions. Wires compiler import resolver to MAMBA_MODULES registry. Manually approved after agent timeout.",
+  "checklist_results": [],
+  "issues": []
+}

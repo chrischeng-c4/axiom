@@ -1,0 +1,140 @@
+{
+  "group_id": "lens-dissolution",
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-sdd/logic/merge-lens-into-sdd-spec.md",
+      "relevance": "high",
+      "summary": "Existing (empty) stub spec for the dissolution. Direct target for #1087 change spec — module mapping table, naming collision resolution (types/ → type_inference/), import update strategy, and spec migration plan from cclab-lens → cclab-sdd."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/class-diagram.md",
+      "relevance": "high",
+      "summary": "Canonical class architecture: Analyzer interface, PythonAnalyzer/TypeScriptAnalyzer/RustAnalyzer hierarchy, RefactoringEngine, SemanticSearch. Analysis pipeline flowchart (Parse → TypeCheck → Lint → Index). MCP tool flow (being removed per dissolution Q2). Essential reference for the current lens structure that must be preserved functionally after promotion to SDD top-level."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/lens-comprehensive.md",
+      "relevance": "high",
+      "summary": "Covers YAML dispatcher, symbol tables for all languages, RefactoringEngine (6 ops), SemanticSearch (6 modes), TypeScript/Rust type inference gaps. Also documents cross-file ImportGraph (R12) and formatter (R13). Directly relevant to ensuring these subsystems remain functional after dissolution, and TypeScript/Rust inference gaps are background context for #944."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/lens-cli-subcommands.md",
+      "relevance": "high",
+      "summary": "All lens CLI subcommands: hover, definition, references, symbols, diagnostics, type-at, index-status, invalidate, pdg, slice, impact, taint. ensure_daemon_ready() flow, DaemonClient dispatch, pretty/compact output. Critical reference for post-dissolution CLI behavior, and output formatting context for #949 --format agent addition."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/lens-full-upgrade-spec.md",
+      "relevance": "medium",
+      "summary": "DiskCache (R1): PersistedEntry, content_hash-based invalidation, background write. Cross-file ImportGraph (R12): build from imports, detect_entry_points, find_circular_dependencies, find_unused_files, topological order. ImportGraph.topological_sort() is the ordering mechanism needed by #944 for propagate_types(). Also covers formatter integration (R13) being promoted post-dissolution."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/python-pdg-core.md",
+      "relevance": "medium",
+      "summary": "Python PDG: CFG construction, post-dominator tree (control deps), def-use chains (data deps), program slicing, change impact analysis, inter-procedural analysis across function call boundaries. The inter-procedural analysis (R8) is directly relevant to #946 context builder's backward call graph traversal algorithm."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/semantic-search-api.md",
+      "relevance": "medium",
+      "summary": "SemanticSearchEngine with SearchKind enum: CallHierarchy (callers/callees at depth N), TypeHierarchy, Usages, Implementations, SimilarPatterns, ByDocumentation. CallHierarchy with CallDirection::Callers maps directly to #946 backward traversal (what calls target?). Usages maps to test file detection. SearchScope::Project for cross-file coverage."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-sdd/interfaces/cli/commands.md",
+      "relevance": "medium",
+      "summary": "SDD CLI command tree under 'cclab sdd'. Current subcommands: status, list, view, fillback, platform, run-change, workflow, artifact. Registration via CliModule trait + cclab-sdd-cli crate. Need to add 'context <file:symbol> --depth N' command for #946 agent context builder."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/lens-lang-support.md",
+      "relevance": "medium",
+      "summary": "Language enum extension: JavaScript, Html, Css, Dockerfile, Hcl, Yaml. Per-language lint rules (DK/TF/K8/GL rule sets), symbol table builders, schema validators. YamlDispatcher content-based routing. Multi-language support context that must be preserved under the new SDD top-level structure after dissolution."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/lens-beyond-ide.md",
+      "relevance": "medium",
+      "summary": "RPC/MCP wiring for lens_refactor, lens_search, lens_call_graph (being REMOVED per dissolution Q2). JSON schema bundling for K8s/GitLab CI. HCL grammar version fix. HTML/CSS expansion. Go language support. Background context for which MCP tool registrations need to be cleaned up during dissolution."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/rust-symbol-analysis.md",
+      "relevance": "medium",
+      "summary": "Rust symbol extraction algorithm: fn_item, struct_item, trait_item, impl_item, const/static_item, doc comments. SymbolTableBuilder scope stack. TypeInfo parsing for Rust types. Part of the semantic/ module being promoted to SDD top-level."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/lens-pdg-mcp-tools.md",
+      "relevance": "low",
+      "summary": "lens_pdg, lens_slice, lens_impact, lens_taint MCP tool definitions. Daemon routing via ArgusDaemon. PDG JSON serialization. These MCP tools are REMOVED as part of dissolution per Q2 (no MCP at all). Background context only — confirms what is being deleted."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/lens-index-storage.md",
+      "relevance": "low",
+      "summary": "Index storage path: ~/.cclab/projects/{SHA256_hash}/lens/. Canonicalization, hashing, module sub-path separation. Background context for daemon storage path that remains unchanged after module restructure."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-sdd/logic/scope-resolution.md",
+      "relevance": "low",
+      "summary": "Config-driven spec scope resolution via [specs.scopes] in config.toml. resolve_spec_dir() probes crates/ → projects/ → root. Relevant for ensuring cclab-sdd config correctly maps specs migrated from cclab-lens (crates/cclab-sdd vs old crates/cclab-lens path)."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-lens/README.md",
+      "relevance": "low",
+      "summary": "cclab-lens feature index: multi-language support, refactoring (7 ops), semantic search (7 types), MCP integration. Tech stack: tree-sitter, tower-lsp, petgraph, tokio. Background reference for feature completeness check post-dissolution."
+    }
+  ],
+  "codebase_explored": [
+    {
+      "path": "crates/cclab-sdd/src/lib.rs",
+      "summary": "Top-level lib.rs: `pub mod lens;` is the sole lens entry point alongside workflow, tools, models, services, etc. After dissolution, individual promoted modules (lint, semantic, server, etc.) replace the single pub mod lens."
+    },
+    {
+      "path": "crates/cclab-sdd/src/lens/mod.rs",
+      "summary": "lens/mod.rs: 20 sub-modules — core, diagnostic, error, format, gen, graph, lint, lsp, handlers, output, refactoring, schemas, search, semantic, server, spec, storage, syntax, types, watch. Each becomes a top-level src/ module. Also re-exports ArgusConfig, Diagnostic, GenResult, CheckerRegistry, OutputFormat, ArgusDaemon, SpecIR, Language, FileWatcher — all need re-exporting from new locations."
+    },
+    {
+      "path": "crates/cclab-sdd/src/lens/types/deep_inference.rs",
+      "summary": "DeepTypeInferencer struct with TypeContext (cross-file bindings HashMap<PathBuf, HashMap<String, TypeBinding>>). propagate_types() method implemented but never called. TypeBinding has: ty, source_file, dependencies vec. TypeVarInfo, ProtocolDef, GenericKey. This is the wiring gap that #944 must close."
+    },
+    {
+      "path": "crates/cclab-sdd/src/lens/server/handler.rs",
+      "summary": "RequestHandler with FileAnalysis cache (parsed, symbol_table, semantic_model, diagnostics, last_updated_secs). Analysis pipeline: MultiParser → CheckerRegistry → build_semantic_model(). DiskCache for persistence. StubLoader for type stubs. Integration point where propagate_types() must be called after per-file inference (#944). Also imports point to crate::lens:: paths — all need updating after dissolution."
+    },
+    {
+      "path": "crates/cclab-sdd/src/lens/graph/mod.rs",
+      "summary": "ImportGraph: HashMap<PathBuf, GraphNode> nodes, Vec<PathBuf> entry_points. GraphNode has Vec<ImportEdge> (import_path, resolved Option<PathBuf>, line). Methods: build(), add_file(), remove_file(), detect_entry_points(), find_circular_dependencies(), find_unused_files(). resolve.rs handles per-language import resolution. Provides topological ordering needed by #944."
+    },
+    {
+      "path": "crates/cclab-sdd/src/lens/output.rs",
+      "summary": "OutputFormat enum: Json, Markdown, Console, Sarif, GitHub, GitLab — missing Agent variant. Reporter::generate() dispatch. Current Json format is file-centric (diagnostics per file). #949 adds OutputFormat::Agent with symbol-centric structure: symbols map, import edges, issues, impact scope."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "lens-dissolution-restructure",
+      "action": "modify",
+      "source": "cclab/specs/crates/cclab-sdd/logic/merge-lens-into-sdd-spec.md",
+      "main_spec_ref": "crates/cclab-sdd/logic/merge-lens-into-sdd-spec.md",
+      "sections": ["overview", "requirements", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "type-inference-pipeline",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/logic/type-inference-pipeline.md",
+      "sections": ["overview", "requirements", "logic", "schema", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "agent-context-builder",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/logic/agent-context-builder.md",
+      "sections": ["overview", "requirements", "schema", "logic", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "agent-output-format",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/logic/agent-output-format.md",
+      "sections": ["overview", "requirements", "schema", "changes", "test-plan"]
+    },
+    {
+      "spec_id": "sdd-cli-context-command",
+      "action": "modify",
+      "source": "cclab/specs/crates/cclab-sdd/interfaces/cli/commands.md",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "sections": ["changes"]
+    }
+  ]
+}

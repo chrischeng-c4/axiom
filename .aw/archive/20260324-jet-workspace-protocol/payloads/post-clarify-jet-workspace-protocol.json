@@ -1,0 +1,9 @@
+{
+  "group_id": "jet-workspace-protocol",
+  "answers": [
+    {
+      "topic": "No additional clarifications needed",
+      "answer": "All design decisions were resolved in pre-clarifications. The scope is clear: 3 files to modify (workspace.rs, mod.rs, resolver.rs) + lockfile.rs. Detection priority, symlink style, recursive install, catalog support, and lockfile format are all decided."
+    }
+  ]
+}

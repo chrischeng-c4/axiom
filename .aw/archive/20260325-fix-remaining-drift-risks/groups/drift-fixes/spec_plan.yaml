@@ -1,0 +1,14 @@
+- spec_id: fill-sections-fallback
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-spec.md
+  source: crates/cclab-sdd/logic/change-spec.md
+  sections:
+  - overview
+  - changes
+- spec_id: merge-strategy-doc
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-merge.md
+  source: crates/cclab-sdd/logic/change-merge.md
+  sections:
+  - overview
+  - changes

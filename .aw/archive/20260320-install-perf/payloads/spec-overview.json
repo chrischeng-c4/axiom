@@ -1,0 +1,6 @@
+{"spec_id":"install-perf-spec","section":"overview","content":"Optimize jet install true-cold performance. Current: 45.7s for 1886 packages (pnpm: 11.3s). Target: <20s.
+
+### Bottlenecks
+1. Sync disk cache I/O blocks async runtime during BFS metadata resolution
+2. BFS level serialization — each level waits for previous to complete before starting fetches
+3. No speculative prefetch for common transitive deps","fill_sections":["overview","requirements","scenarios","changes"]}

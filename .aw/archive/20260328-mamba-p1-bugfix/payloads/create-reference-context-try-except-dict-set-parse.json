@@ -1,0 +1,52 @@
+{
+  "change_id": "mamba-p1-bugfix",
+  "group_id": "try-except-dict-set-parse",
+  "specs": [
+    {
+      "spec_id": "tokens-and-indent",
+      "spec_group": "crates/cclab-mamba/lexer",
+      "relevance": "high",
+      "key_requirements": ["R2"]
+    },
+    {
+      "spec_id": "statements",
+      "spec_group": "crates/cclab-mamba/parser",
+      "relevance": "high",
+      "key_requirements": ["R2"]
+    },
+    {
+      "spec_id": "expressions",
+      "spec_group": "crates/cclab-mamba/parser",
+      "relevance": "medium",
+      "key_requirements": ["R2", "R5"]
+    },
+    {
+      "spec_id": "ast",
+      "spec_group": "crates/cclab-mamba/parser",
+      "relevance": "low",
+      "key_requirements": ["R1"]
+    },
+    {
+      "spec_id": "exception",
+      "spec_group": "crates/cclab-mamba/runtime",
+      "relevance": "low",
+      "key_requirements": ["R3"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "tokens-and-indent",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/lexer/tokens-and-indent.md",
+      "source": "crates/cclab-mamba/lexer/tokens-and-indent.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "statements",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/parser/statements.md",
+      "source": "crates/cclab-mamba/parser/statements.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

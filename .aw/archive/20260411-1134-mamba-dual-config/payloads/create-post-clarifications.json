@@ -1,0 +1,5 @@
+{
+  "group_id": "unify-mamba-config",
+  "skipped": true,
+  "scope_summary": "Problem: Two conflicting MambaConfig structs existed — one in driver/config.rs (flat format only) and one in config/schema.rs (richer format with CrateConfig, CrateEntry enum, ProjectConfig). The CLI used the driver version which caused TOML parse errors with the richer format. Success Criteria: Single canonical MambaConfig in config/schema.rs that supports both rich format (with [project] table and structured crates) and flat format (entry_point at root, crates as version strings) for backward compatibility. Boundary: In scope — merging the two structs, updating driver/config.rs to use crate::config::MambaConfig. Out of scope — changing the TOML format itself, modifying CLI commands, changing codegen backends. No contradictions found between requirements and existing specs. The config-schema.md spec already documents the unified design and notes the removal of the driver duplicate."
+}

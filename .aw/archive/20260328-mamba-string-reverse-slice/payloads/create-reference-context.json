@@ -1,0 +1,51 @@
+{
+  "group_id": "string-reverse-slice",
+  "specs": [
+    {
+      "spec_id": "string-ops",
+      "spec_group": "runtime",
+      "relevance": "high",
+      "key_requirements": [
+        "mb_str_slice_full(s, start, stop, step): for step < 0, absent start must default to len-1 (last char) and absent stop must default to -1 (sentinel: include char 0); clamp_rev_str() normalises explicit negative indices but must NOT be applied to the sentinel -1 default",
+        "Bug root (pre-fix): negative step branch called clamp_rev_str(stop.as_int().unwrap_or(-1), len) — clamp_rev_str(-1, 6) normalises -1 to len-1=5, making e_idx=5 and s_idx=5, so loop condition i>e_idx (5>5) is immediately false — empty result",
+        "Fix (bc5921e9): absent stop with negative step now uses literal -1 sentinel (None => -1 branch), bypassing clamp_rev_str; loop iterates i > -1 which correctly includes chars[0]",
+        "R1: slice methods must handle full Python slice semantics: s[::-1] reverses, s[4:1:-1] yields chars at indices 4,3,2, s[-2::-1] uses clamp_rev_str for explicit negative index",
+        "Unicode: chars() collection ensures step-based iteration is over codepoints, not bytes — s[::-1] on multibyte strings reverses correctly"
+      ]
+    },
+    {
+      "spec_id": "conformance",
+      "spec_group": "testing",
+      "relevance": "medium",
+      "key_requirements": [
+        "Xfail mechanism: # mamba-xfail: <reason> directive in .py file causes conformance_tests.rs to skip the fixture (return Ok immediately); removing the directive re-enables the test",
+        "Golden file comparison: actual JIT stdout must match .expected file byte-for-byte; string_edge_cases_xfail.expected contains 'fedcba\\n' (s[::-1] result)",
+        "Fixture: data_structures/string_edge_cases_xfail.py — s='abcdef'; print(s[::-1]) — expected output: fedcba",
+        "All 149 conformance tests currently pass (0 xfails); string_edge_cases_xfail.py is passing — confirm no # mamba-xfail directive present",
+        "Verify command: cargo test -p cclab-mamba --test conformance_tests"
+      ]
+    },
+    {
+      "spec_id": "test-harness",
+      "spec_group": "testing",
+      "relevance": "low",
+      "key_requirements": [
+        "Fixture discovery: datatest_stable::harness auto-discovers .py files under tests/fixtures/conformance/ recursively",
+        "Runner dispatch: run_conformance() reads directives, skips xfail, loads .expected, runs JIT, compares stdout",
+        "JIT pipeline: parse → TypeChecker → lower_module (HIR) → lower_hir_to_mir_with_symbols (MIR) → CraneliftJitBackend → capture stdout"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "string-reverse-slice-fix",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/string-ops.md",
+      "source": "cclab/specs/crates/cclab-mamba/runtime/string-ops.md",
+      "sections": [
+        "overview",
+        "changes"
+      ]
+    }
+  ]
+}

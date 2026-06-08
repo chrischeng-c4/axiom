@@ -1,0 +1,15 @@
+{
+  "group_id": "match-case",
+  "answers": [
+    {
+      "topic": "Pattern completeness",
+      "question": "Should exhaustiveness checking (warn on non-exhaustive match) be included in this iteration, or deferred?",
+      "answer": "Include exhaustiveness checking in this iteration alongside pattern matching implementation."
+    },
+    {
+      "topic": "Optimization",
+      "question": "Should the decision tree compilation optimize for common patterns (e.g., integer switch tables) or use a uniform nested-if approach first?",
+      "answer": "Optimized from start — generate switch tables for int/str literals, interleave guards for better codegen performance."
+    }
+  ]
+}

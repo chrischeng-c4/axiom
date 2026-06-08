@@ -1,0 +1,49 @@
+{
+  "group_id": "artifact-guard",
+  "verdict": "REVIEWED",
+  "summary": "Reference context is critically under-specified. The single included spec (executor-resolution.md) is background context for delegation mechanics, but misses the two highest-relevance specs: state-machine.md (defines DelegationGuard schema — the exact field the fix reads) and interfaces/cli/commands.md (defines the artifact CLI entry point — the exact code path being changed). Without these, the spec plan lacks the primary references for both the data model and the implementation site.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "cclab-sdd-cli/src/commands.rs is the fix site but interfaces/cli/commands.md is absent. STATE.yaml DelegationGuard is the core data model but state-machine.md is absent."
+    },
+    {
+      "item": "Relevance scores are reasonable",
+      "passed": false,
+      "note": "executor-resolution.md is scored 'high' but should be 'medium' — it explains why delegation happens (background) not where the fix is implemented. The specs truly rated 'high' are missing."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate",
+      "passed": true,
+      "note": "The two key requirements listed (Delegation protocol, Verification after agent dispatch) are present in executor-resolution.md. No inaccuracies, just incomplete coverage."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "executor-resolution.md is at least relevant background — not irrelevant."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "cclab-sdd/logic/state-machine.md is missing. This spec defines State.delegation_guard: Option<DelegationGuard> and the DelegationGuard struct (fields: allowed_phases, phase_before, action, started_at). The fix reads state.delegation_guard.action and compares it to the requested artifact action — state-machine.md is the primary data model reference for this change.",
+      "recommendation": "Add cclab-sdd/logic/state-machine.md with relevance 'high', key requirements: DelegationGuard schema definition (action field), State struct (delegation_guard optional field). Also update main_spec_ref in spec_plan from executor-resolution.md to state-machine.md, or add state-machine.md as a co-primary reference."
+    },
+    {
+      "severity": "HIGH",
+      "description": "cclab-sdd/interfaces/cli/commands.md is missing. This spec defines the 'artifact <action> <change_id> <payload_path>' CLI command and maps it to Commands::Artifact in cclab-sdd-cli/src/commands.rs — exactly where the guard check must be inserted. The fix is a code change at this entry point.",
+      "recommendation": "Add cclab-sdd/interfaces/cli/commands.md with relevance 'high', key requirements: artifact command entry point (Commands::Artifact match arm), kebab-to-snake action name mapping (action.replace('-', '_'))."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "cclab-sdd/interfaces/tools/artifact-tools.md is missing. It enumerates all sdd_artifact_* actions that an agent could call. This is needed to understand the full scope of what the guard protects against (e.g., create-pre-clarifications, create-reference-context, create-change-spec, etc.).",
+      "recommendation": "Add cclab-sdd/interfaces/tools/artifact-tools.md with relevance 'medium', key requirements: full artifact action name list (enumeration of sdd_artifact_* tools)."
+    },
+    {
+      "severity": "LOW",
+      "description": "executor-resolution.md relevance is overstated as 'high'. It documents how delegation is configured and which agent runs which action — useful background but the fix does not touch executor resolution code. The DelegationGuard is not defined there; it only references allowed_phases/phase_before/action in terms of a verification step.",
+      "recommendation": "Downgrade executor-resolution.md relevance from 'high' to 'medium'. It remains useful context for understanding the delegation lifecycle that motivates the guard."
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{"spec_id":"stream-resolver-spec","section":"scenarios","content":"### S1: No Level Barriers
+
+Given A depends on B, C depends on D
+When stream resolver runs
+Then B and D metadata fetches start immediately (not waiting for A and C to both complete)
+
+### S2: Version Conflict
+
+Given A needs lodash@^4.17.0 and B needs lodash@^4.15.0
+When both resolve concurrently
+Then first to resolve wins, second logs warning
+
+### S3: Tech Platform True Cold <15s
+
+Given 1886 packages, no cache
+When jet install runs with stream resolver
+Then completes in <15s"}

@@ -1,0 +1,51 @@
+change_id: pyo3-pyi-stub
+schema_version: '2.0'
+created_at: 2026-01-30T03:39:25.188566Z
+updated_at: 2026-01-30T03:45:06.114028Z
+phase: implemented
+iteration: 1
+last_action: impl-complete
+session_id: null
+checksums:
+  proposal.md:
+    hash: sha256:b72e396ea70aa8dc37fbcfedc9023d868fee3048bf9b1e3ac860d82dbe6e5d1c
+    validated_at: 2026-01-30T03:43:53.077988Z
+  specs/cclab-prism/cclab-prism-pyo3-stub.md:
+    hash: sha256:5446ca1755e86023bd3e7e44cebe08d75906d9f1d4a110c1341ee64097ae048a
+    validated_at: 2026-01-30T03:43:53.078160Z
+  specs/cclab-prism-pyo3-stub.md:
+    hash: sha256:84087bb65dbc995f6e705b19e24a2b0536b0226767637bd391df1dd036280625
+    validated_at: 2026-01-30T03:43:53.078230Z
+  tasks.md:
+    hash: sha256:163c73a1bdad29d5c7932ceddaf3ccacf92cd2deeeff33cc5cb946606c9f2d4b
+    validated_at: 2026-01-30T03:43:53.078019Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-30T03:41:23.922623Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-30T03:43:53.077946Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

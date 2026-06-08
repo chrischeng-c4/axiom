@@ -1,0 +1,96 @@
+{
+  "group_id": "default",
+  "specs": [
+    {
+      "spec_id": "generator",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/generator.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/generator.md",
+      "sections": ["overview", "requirements", "changes"],
+      "relevance": "high",
+      "notes": "Primary spec — implements send(), throw(), close(), GeneratorExit, StopIteration.value, yield from delegation, gi_frame/gi_running introspection, and the GenPool thread-based suspension model. Must be extended with R4–R9 from the xfail-zero conformance work."
+    },
+    {
+      "spec_id": "iter",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/iter.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/iter.md",
+      "sections": ["overview", "requirements", "changes"],
+      "relevance": "high",
+      "notes": "Iterator protocol spec: __iter__/__next__ dispatch, StopIteration termination, custom iterator support via ObjData::Instance, range/enumerate/zip/filter/map combinators. Needs fix for __next__ return value propagation (custom_iterator_xfail)."
+    },
+    {
+      "spec_id": "exception",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/exception.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/exception.md",
+      "sections": ["overview", "requirements", "changes"],
+      "relevance": "high",
+      "notes": "Defines StopIteration (with .value), RuntimeError (raised when generator yields after close()), and GeneratorExit exception classes. Exception matching via MRO is required for try/except in generator bodies. Also covers __cause__/__context__ chaining needed by generator throw() semantics."
+    },
+    {
+      "spec_id": "conformance",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/testing/conformance.md",
+      "source": ".score/tech_design/crates/cclab-mamba/testing/conformance.md",
+      "sections": ["overview", "requirements", "test-plan", "changes"],
+      "relevance": "high",
+      "notes": "Conformance xfail-zero spec tracks generator-specific xfails: gi_frame/gi_running (R8), yield-from throw/close passthrough (R9), custom iterator __next__ return value (R3). The new Py3.12 conformance suite for #756 directly extends this work."
+    },
+    {
+      "spec_id": "async",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/async.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/async.md",
+      "sections": ["overview", "changes"],
+      "relevance": "medium",
+      "notes": "Async generator protocol (async def + yield) is a secondary scope of #756. async_rt.rs / async_task.rs implement the Orbit event-loop bridge; async generators need aclose(), asend(), athrow() analogues. Currently constraints note async generators remain unsupported (#800)."
+    },
+    {
+      "spec_id": "mamba-py312-conformance",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/testing/mamba-py312-conformance.md",
+      "source": ".score/tech_design/crates/cclab-mamba/testing/mamba-py312-conformance.md",
+      "sections": ["overview", "test-plan", "changes"],
+      "relevance": "medium",
+      "notes": "Defines the conformance fixture harness pattern (.py + .expected golden files) used by cargo test --test conformance_tests. New generator/iterator conformance fixtures for #756 follow this pattern. Existing fixtures cover language, descriptors, metaclass; #756 adds generators/ and iterators/ categories."
+    },
+    {
+      "spec_id": "cpython-compliance",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/testing/cpython-compliance.md",
+      "source": ".score/tech_design/crates/cclab-mamba/testing/cpython-compliance.md",
+      "sections": ["overview", "changes"],
+      "relevance": "medium",
+      "notes": "CPython 3.12 cpython_compat test suite infrastructure (datatest-stable, xfail manifest). Generator/iterator protocol tests from CPython Lib/test/test_generators.py and test_coroutines.py feed into this suite."
+    },
+    {
+      "spec_id": "closure",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/closure.md",
+      "source": ".score/tech_design/crates/cclab-mamba/runtime/closure.md",
+      "sections": ["overview", "changes"],
+      "relevance": "medium",
+      "notes": "Generator body runs in GenPool worker thread using closure.rs GEN_TX/GEN_RX thread-locals for yield/send rendezvous. The refcount cascade-release semantics in closure.rs interact with generator cleanup (close/GeneratorExit). Lambda default-arg capture fix (R2 in xfail-zero) is prerequisite for generator expressions."
+    },
+    {
+      "spec_id": "test-harness",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/testing/test-harness.md",
+      "source": ".score/tech_design/crates/cclab-mamba/testing/test-harness.md",
+      "sections": ["overview", "changes"],
+      "relevance": "medium",
+      "notes": "fixture_tests.rs harness with # RUN: directive dispatch drives all conformance fixtures. New generator/iterator fixtures for #756 rely on the jit runner mode with golden .expected file comparison."
+    },
+    {
+      "spec_id": "hir-to-mir",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/lower/hir-to-mir.md",
+      "source": ".score/tech_design/crates/cclab-mamba/lower/hir-to-mir.md",
+      "sections": ["overview", "changes"],
+      "relevance": "low",
+      "notes": "hir_to_mir.rs lowers yield/yield from expressions to MIR CallExtern instructions targeting generator runtime functions. Also handles starred unpacking (R3) and walrus in comprehensions (R4) which interact with iterator protocol. Background context for understanding generator lowering pipeline."
+    }
+  ],
+  "context_notes": "Issue #756 focuses on verifying and completing the full generator + iterator protocol in Mamba against CPython 3.12 semantics. The existing runtime/generator.md already specifies the GenPool thread-based execution model with send/throw/close, but several protocol details are unverified: yield-from throw/close delegation (tracked as xfail R9 in conformance.md), gi_frame/gi_running introspection (R8), StopIteration.value propagation from return-inside-generator (generator.md R3), and async generator protocol (async.md — deferred to #800). The custom iterator protocol (__next__ return value dispatch) is a separate gap in iter.md tracked as R3. The conformance test suite (conformance.md, mamba-py312-conformance.md, test-harness.md) is the gate: new fixtures under generators/ and iterators/ must pass with cargo test -p cclab-mamba --test conformance_tests. References: PEP 255, PEP 342, PEP 380, PEP 525, CPython 3.12 test_generators.py, test_coroutines.py."
+}

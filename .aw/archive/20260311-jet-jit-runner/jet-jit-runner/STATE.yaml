@@ -1,0 +1,35 @@
+change_id: jet-jit-runner
+schema_version: '2.0'
+created_at: 2026-03-11T10:34:25.446187Z
+updated_at: 2026-03-11T11:01:46.438304Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+branch: cclab-jet
+revision_counts: {}
+current_task_id: jet-jit-runner-spec
+task_revisions: {}
+telemetry: null
+dag:
+  issues:
+  - number: 764
+    title: 'feat(jet): JIT execution + task runner — script runner, task graph, caching'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+groups_progress:
+  change_spec: []
+  post_clarifications:
+  - jit-runner
+  pre_clarifications:
+  - jit-runner
+  reference_context:
+  - jit-runner
+  change_implementation: []

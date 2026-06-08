@@ -1,0 +1,30 @@
+change_id: mamba-all-support
+schema_version: '2.0'
+created_at: 2026-04-08T22:51:35.407798Z
+updated_at: 2026-04-09T00:57:52.517834Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: null
+revision_counts:
+  ref_ctx:all-support: 1
+current_task_id: mamba-all-support-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+agent: mamba-developer
+groups_progress:
+  reference_context:
+  - all-support
+  change_implementation: []
+  change_spec: []
+  pre_clarifications:
+  - all-support
+  post_clarifications:
+  - all-support

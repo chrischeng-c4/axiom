@@ -1,0 +1,137 @@
+version = 1
+project = "vat"
+td_path = "projects/vat/tech-design"
+generated_at = "2026-06-07T09:33:01.464627+00:00"
+digest = "sha256:1b41a556c45a2eb396cd5031bb1763a1d31940c5f12c0dd4b7d10071605dfb3a"
+
+[[files]]
+path = "logic/external-contracts.md"
+digest = "sha256:9202db074fde90cb75a0140a122c8a60f66e05c59ab7a82ae9fb2a3a656f15bc"
+
+[[files]]
+path = "logic/llm-agent-usage-guide.md"
+digest = "sha256:64e3e06d6a885c3dd967d3c784594c1fc4fed7e1be91fb5b1377308a0473d0ee"
+
+[[files]]
+path = "logic/local-agent-test-runner-protocol.md"
+digest = "sha256:fc9d96d2f0ca6a7ac51fc318ac39975f0b6c4581e44e387cdc4875373d9eb715"
+
+[[files]]
+path = "semantic/source/projects-vat-src-cli-rs.md"
+digest = "sha256:f226e5bb08d9aa0a9689bcf9e3e8947bb129f476984d5c506e61e0a971e362fc"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-diff-rs.md"
+digest = "sha256:c1674ffef80db49b0443b0fc639bfb1d7cf912122bb7cc47f1214194c0ad2884"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-gpu-rs.md"
+digest = "sha256:38e5d6841c249d6b61111ffa2a1703eaa8d6c71ddbae5219ef82b9d6178ae750"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-llm-rs.md"
+digest = "sha256:2c15f9dd70c8e0213be17596599a8b2081f36d2529fdb0b62a8646d974c8c80d"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-logs-rs.md"
+digest = "sha256:3f9f72c407487f0d02a1dc0e6f28cbab27861ce4cb8700996e10ee6b6420e755"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-ls-rs.md"
+digest = "sha256:5b57db03a6e291b1d25d772e98c569d32245ae060171ee9bbc39fc196842ca78"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-mod-rs.md"
+digest = "sha256:8356f211f899d598cc053d06c9da4a0c8f6d1ae95fab560b28760be9b7d2b380"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-rm-rs.md"
+digest = "sha256:9a8e9129e7dfec5239eb1b78956cffe67392739a0ec35e05dd0e049bd0f3c341"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-run-rs.md"
+digest = "sha256:7409ae1e7a4253e9a3973d990a1cd31e44790b2934f9b13c82facf594257093c"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-snapshot-rs.md"
+digest = "sha256:0a44690f028d110af17c22c66e34581b18bcfa748ebace68b6d977c495482789"
+
+[[files]]
+path = "semantic/source/projects-vat-src-commands-state-rs.md"
+digest = "sha256:82a16459cc75d4f8bf07244db5f8ba21531fad2d1c3e6c1a81af729bc73a996f"
+
+[[files]]
+path = "semantic/source/projects-vat-src-config-rs.md"
+digest = "sha256:6312d74bda5f6a6b5022818cf9a92e1438bfa20dfd4bd29ef70fc1e1b399f2e1"
+
+[[files]]
+path = "semantic/source/projects-vat-src-event-rs.md"
+digest = "sha256:fd41ae076ebd4d7255618c88966bf020606c3e64feffa4b9f9e33785588322d1"
+
+[[files]]
+path = "semantic/source/projects-vat-src-gpu-rs.md"
+digest = "sha256:b515c75ce73607fd44412de6eeef627739617b1e76ca975bd89d501b64c61cd3"
+
+[[files]]
+path = "semantic/source/projects-vat-src-id-rs.md"
+digest = "sha256:cd3a54974aa1a57588623a5ab9cdf922f74ed201e05608906f497260cc0e38d7"
+
+[[files]]
+path = "semantic/source/projects-vat-src-lib-rs.md"
+digest = "sha256:7582edca9b63b99066e9c7506d5fe7f527e6b74e738468b168287734d7e2a9b5"
+
+[[files]]
+path = "semantic/source/projects-vat-src-main-rs.md"
+digest = "sha256:59e58e0520cefbfd1ddfd0d97c4a95eccf3cf93e332f734eee8f0734b187f7d8"
+
+[[files]]
+path = "semantic/source/projects-vat-src-overlay-rs.md"
+digest = "sha256:42c622f81a5885f77368b04490d84ef6b18b1091ca9be5a34122993dbce3a940"
+
+[[files]]
+path = "semantic/source/projects-vat-src-paths-rs.md"
+digest = "sha256:653fd162fd2e0f38320b50ecf128e4e10251a36c0bbf805a628e4f17ac8b7d47"
+
+[[files]]
+path = "semantic/source/projects-vat-src-sandbox-mod-rs.md"
+digest = "sha256:322d5cbe3837eded8a8c42e805b6e992107cf0219f788421dea04ab6d197edac"
+
+[[files]]
+path = "semantic/source/projects-vat-src-sandbox-process-rs.md"
+digest = "sha256:ee0b4c57b62e04981001a90d628407fb07ef49ff7eff0cede17c5c08d8ba4156"
+
+[[files]]
+path = "semantic/source/projects-vat-src-sandbox-seatbelt-rs.md"
+digest = "sha256:46b62ab4fd3ffce3f8a14c6340ced15ffaadaab81ed8f713a6bdb9827876882e"
+
+[[files]]
+path = "semantic/source/projects-vat-src-spec-rs.md"
+digest = "sha256:717df66f0116e197047512a7cbbdaf7f95fccdfecbe9accc050b91f33dbfd5a1"
+
+[[files]]
+path = "semantic/source/projects-vat-src-state-rs.md"
+digest = "sha256:460a701e9c338200ca2f1c6c03f723003b14dc2ce6cb4a6f5bba35b1f9513339"
+
+[[files]]
+path = "semantic/source/projects-vat-src-store-rs.md"
+digest = "sha256:c6bc7648f48b193100feb3af2e359d31b4c63619b06062705949d6b658638ccf"
+
+[[files]]
+path = "semantic/source/projects-vat-tests-vat_toml_runner-rs.md"
+digest = "sha256:be5ed52eb6efda96828a34574ffd310861c42b6c8be8c4d831b46ae13780f279"
+
+[[files]]
+path = "semantic/vat-commands.md"
+digest = "sha256:dbd88937cf530e063dfde05ed1ad01a17996ee000d8fcd677c3bc121e56090d7"
+
+[[files]]
+path = "semantic/vat-sandbox.md"
+digest = "sha256:1cb7d290f685bce33af5a11210a84be1e9aea62dd50fe68ea0f4c802247f0350"
+
+[[files]]
+path = "semantic/vat-src.md"
+digest = "sha256:a5035827d68a1603b77b2f466182a62dfc1cac54466cc7579a3c21add8ff0939"
+
+[[files]]
+path = "semantic/vat-tests.md"
+digest = "sha256:c5ccf817c09c8af7aba56ce8b3c05e3aa5a139ce418d8a096bd12fa64d9e8a57"

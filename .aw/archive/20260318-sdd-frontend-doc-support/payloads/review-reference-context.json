@@ -1,0 +1,51 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-sdd",
+  "change_id": "sdd-frontend-doc-support",
+  "group_id": "sdd-frontend-doc-artifacts",
+  "verdict": "REVIEWED",
+  "summary": "The reference set covers the broad SDD lifecycle docs, but it misses direct coverage for doc-specific artifact behavior and the CLI artifact contract, and it includes at least one unrelated spec. Several rows also overstate what the cited specs actually define.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "The cited set does not cover several clarified areas: `doc_target` semantics for doc specs, implement-phase writes to `doc_target`, doc merge behavior for `append|replace`, doc auto-trigger rules for public API/behavior changes, tech-platform primitive derivation, and the cclab-lens ownership boundary for wireframe codegen."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "`change-spec.md` and `reference-context.md` are correctly high, and `implement-task.md`/`change-merge.md` are related, but `generate/spec-model.md` is background rather than medium-priority implementation guidance and `executor-resolution.md` is not materially related to this group."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "Some summaries are accurate, but the table attributes `main_spec_ref guaranteed by preparation` to `change-merge.md` even though that guarantee is documented in `change-spec.md`, and the cited rows do not capture the missing doc-specific requirements from pre-clarifications. Most of these specs do not use formal R* IDs, so accuracy has to be judged against the actual text."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "`cclab-sdd/logic/executor-resolution.md` covers agent/provider selection and delegation verification, which is unrelated to wireframe/doc artifact support and CLI-owned artifact writes."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "The reference context misses direct spec coverage for the doc-artifact behavior clarified in `pre_clarifications.md:20-29`. The clarified scope requires docs to be ordinary specs in `groups/{group}/specs/`, use `overview` content plus `doc_target` frontmatter, and be written by CLI logic with merge-strategy application. But `cclab/specs/cclab-sdd/logic/change-spec.md:247-255,343-344` shows no `doc_target` field and only defines `overview` as prose plus `changes` as YAML, `cclab/specs/cclab-sdd/logic/implement-task.md:111-115` only says to implement code changes, and `cclab/specs/cclab-sdd/logic/change-merge.md:59-63` only defines `new` and `update` merge strategies rather than the required `append|replace` behavior.",
+      "recommendation": "Add or cite specs that explicitly define doc-spec frontmatter, implement-phase writes to `doc_target`, and doc merge behavior before approving the reference context."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Pre-clarifications also bring in areas with no effective coverage in the current reference set: tech-platform frontend primitive derivation and the cclab-lens ownership boundary for wireframe codegen (`pre_clarifications.md:14-17`). A repo-wide search found no cclab-sdd spec covering tech-platform component discovery, and no cited Lens spec at all. The closest existing Lens spec, `cclab/specs/cclab-lens/lens-yaml-codegen.md:39-71`, is generic YAML-manifest dispatch and does not mention wireframes.",
+      "recommendation": "Either add the relevant Lens/interface spec to the reference set or explicitly record that there is currently no governing spec for those clarified areas."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "The current reference set omits the direct artifact CLI contract even though `pre_clarifications.md:26-29` makes CLI-owned writes and rule-based triggering central to the design. `cclab/specs/cclab-sdd/interfaces/tools/artifact-tools.md:247-271` and `cclab/specs/cclab-sdd/tools/utils/write-artifact.md:227-239` are the specs that define artifact payload shapes, but they still describe the older `change_spec` payload model rather than the newer 17-section-type system and are not cited here at all.",
+      "recommendation": "Include the artifact-tool / CLI interface specs in the reference context so the change covers both workflow logic and the contract the CLI must actually implement."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Several table rows overstate the cited specs. In `reference_context.md:15`, the `change-merge.md` row claims `main_spec_ref guaranteed by preparation`, but that guarantee is documented in `cclab/specs/cclab-sdd/logic/change-spec.md:64-71,261-268`, not in `cclab/specs/cclab-sdd/logic/change-merge.md:29-39`. `cclab/specs/cclab-sdd/generate/spec-model.md:5-18,34-42` is broad background on six codegen spec families, so `medium` is generous for this group, and `cclab/specs/cclab-sdd/logic/executor-resolution.md:14-34,69-96` is about executor selection rather than frontend-doc artifacts.",
+      "recommendation": "Rewrite the table so each row only claims requirements explicitly present in that spec, lower or remove the background `spec-model.md` entry, and drop `executor-resolution.md` unless executor behavior is actually changing."
+    }
+  ]
+}

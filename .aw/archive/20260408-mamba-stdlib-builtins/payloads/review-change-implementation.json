@@ -1,0 +1,7 @@
+{
+  "change_id": "mamba-stdlib-builtins",
+  "spec_id": "mamba-stdlib-builtins-spec",
+  "verdict": "APPROVED",
+  "summary": "Implementation matches spec: builtins module exports all Python built-in functions via 60+ dispatch wrappers using native (args_ptr, nargs) ABI, plus True/False/None/Ellipsis/NotImplemented constants and __name__/__doc__ attributes. All dispatch wrappers registered in NATIVE_FUNC_ADDRS for mb_call_spread. 19 unit tests pass covering register(), constants, and key dispatch functions (len, abs, int, float, bool, str, chr, ord, list, dict, set, tuple). Module properly wired into stdlib via mod.rs (pub mod declaration + register_stdlib() call). cargo check passes with no errors. No regressions from builtins change (pre-existing SIGABRT in json_mod/random_mod tests is unrelated JIT crash #1187).",
+  "issues": []
+}

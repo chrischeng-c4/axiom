@@ -1,0 +1,95 @@
+change_id: mamba-binding-tests
+schema_version: '2.0'
+created_at: 2026-03-21T17:12:02.318530Z
+updated_at: 2026-03-22T04:45:38.678771Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:mamba-tests: 1
+current_task_id: mamba-binding-tests-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 169554
+    timestamp: 2026-03-21T17:14:58.093553Z
+  - step: review_reference_context
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 221434
+    timestamp: 2026-03-22T04:15:20.346984Z
+  - step: create_reference_context
+    sdd_version: 0.3.43
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 323673
+    timestamp: 2026-03-22T04:16:14.999153Z
+  - step: analyze_spec_mamba-binding-tests-spec
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 485498
+    timestamp: 2026-03-22T04:24:39.671912Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 135907
+    timestamp: 2026-03-22T04:39:18.109571Z
+  - step: begin_implementation
+    sdd_version: 0.3.43
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 879710
+    timestamp: 2026-03-22T04:39:36.918751Z
+  - step: review_impl_mamba-binding-tests-spec
+    sdd_version: 0.3.43
+    model: claude-opus-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 297997
+    timestamp: 2026-03-22T04:45:27.024895Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 1035
+    title: 'test(mamba): per-module test coverage gaps — lower, resolve, runtime severely undertested'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  change_spec: []
+  reference_context:
+  - mamba-tests
+  pre_clarifications:
+  - mamba-tests

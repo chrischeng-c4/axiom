@@ -1,0 +1,127 @@
+{
+  "group_id": "queue-unit-test-coverage",
+  "specs": [
+    {
+      "spec_path": "crates/cclab-fetch/broker/broker-traits.md",
+      "relevance": "high",
+      "key_requirements": "R1-R8: Broker/PullBroker/PushBroker/DelayedBroker trait hierarchy, BrokerCapabilities, DeliveryModel, BrokerMessage types. All trait methods return Result<_, TaskError> — foundational to error module tests. Feature-gated backends (nats/pubsub/cloudtasks)."
+    },
+    {
+      "spec_path": "crates/cclab-fetch/broker/cloudtasks.md",
+      "relevance": "high",
+      "key_requirements": "R1-R9: CloudTasksBroker impl. R7 is the canonical error mapping table (404→NotFound, 401/403→AuthenticationError, 429→RateLimited, 409→AlreadyExists, 5xx→BackendError). R3 governs scheduler/delay scenarios (scheduleTime, max 30 days). R4-R5 OIDC auth relevant to revocation/auth tests."
+    },
+    {
+      "spec_path": "crates/cclab-fetch/scheduler/scheduler-backends.md",
+      "relevance": "high",
+      "key_requirements": "R4-R6: CloudSchedulerBackend module registration under cloud-scheduler feature. R5: must implement SchedulerBackend trait (acquire_leader, renew_leader, release_leader, get_task_state, set_task_state). R6: feature isolation — enabling cloud-scheduler does not affect InMemory or Ion backends."
+    },
+    {
+      "spec_path": "crates/cclab-fetch/scheduler/cloud-scheduler-backend.md",
+      "relevance": "high",
+      "key_requirements": "R1: Leader election no-ops (always Ok(true)). R2: Local task state with known defaults (enabled:true, last_run_at:None, total_run_count:0). R3: CRUD via GCP API. R7: pause/resume sync (local + remote). R8: Error mapping (404→NotFound, 429→RateLimited, 5xx→BackendError)."
+    },
+    {
+      "spec_path": "crates/cclab-fetch/scheduler/scheduler-mode-selection.md",
+      "relevance": "high",
+      "key_requirements": "R1-R2: SchedulingMode enum (SelfHosted/ExternalPush). MemorySchedulerBackend uses default SelfHosted. R3: start() branches on mode; ExternalPush returns ConfigError if push_receiver_config missing. R8: register_external_schedule with no-op default."
+    },
+    {
+      "spec_path": "crates/cclab-fetch/workflow-state-machine.md",
+      "relevance": "high",
+      "key_requirements": "R1: 9 states (PENDING→REVOKED). R4: Retry lifecycle STARTED/OFFLOADED→RETRY→PENDING. R6: Invalid transition prevention — no leaving terminal states. R9: Per-transition preconditions and side-effects. Directly defines state module test surface."
+    },
+    {
+      "spec_path": "crates/cclab-fetch/scheduler-backends.md",
+      "relevance": "medium",
+      "key_requirements": "R1: SchedulerBackend trait (leader election + state persistence). R2: IonSchedulerBackend (production). R3: MemorySchedulerBackend (testing). Sequence diagram defines acquire_leader/get_task_state interaction pattern."
+    },
+    {
+      "spec_path": "crates/cclab-fetch/scheduler/schedule-monitor.md",
+      "relevance": "medium",
+      "key_requirements": "R1-R2: register_task/record_trigger with on_time/late/missed classification. R4: Prometheus metrics (scheduler_task_fire_total, scheduler_task_latency_seconds). R7-R8: Thread-safe Arc<RwLock> and lifecycle start/stop."
+    },
+    {
+      "spec_path": "crates/cclab-fetch/scheduler/push-receiver.md",
+      "relevance": "medium",
+      "key_requirements": "R2-R4: OIDC/HMAC auth. R5: Task→queue routing. R9: Prometheus metrics (scheduler_push_received_total, scheduler_push_duration_seconds). Relevant to metrics and error module tests."
+    },
+    {
+      "spec_path": "crates/cclab-fetch/scheduler/k8s-cronjob-backend.md",
+      "relevance": "medium",
+      "key_requirements": "R1-R2: Leader election no-ops + local state defaults (same pattern as CloudSchedulerBackend). R7: pause/resume via spec.suspend. R8: Error mapping (mirrors CloudTasksBroker pattern). Feature-gated under k8s-scheduler."
+    },
+    {
+      "spec_path": "crates/cclab-queue/cclab-nova-persistence.md",
+      "relevance": "low",
+      "key_requirements": "Pattern reference only. Redis/PostgreSQL adapter test patterns applicable to RedisBackend/IonBackend integration tests."
+    },
+    {
+      "spec_path": "crates/cclab-queue/storage-backend.md",
+      "relevance": "low",
+      "key_requirements": "Pattern reference only. MemoryStorage test patterns (isolation, independence) applicable to MemorySchedulerBackend unit tests."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "error-types",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/error-types.md",
+      "sections": ["overview", "schema", "logic", "test-plan"]
+    },
+    {
+      "spec_id": "task-state-machine",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/task-state-machine.md",
+      "sections": ["overview", "state-machine", "logic", "test-plan"]
+    },
+    {
+      "spec_id": "ratelimit",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/ratelimit.md",
+      "sections": ["overview", "logic", "test-plan"]
+    },
+    {
+      "spec_id": "revocation",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/revocation.md",
+      "sections": ["overview", "logic", "test-plan"]
+    },
+    {
+      "spec_id": "metrics",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/metrics.md",
+      "sections": ["overview", "logic", "test-plan"]
+    },
+    {
+      "spec_id": "scheduler-delay",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/scheduler-delay.md",
+      "sections": ["overview", "logic", "test-plan"]
+    },
+    {
+      "spec_id": "scheduler-memory-backend",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/scheduler-memory-backend.md",
+      "sections": ["overview", "async-api", "test-plan"]
+    },
+    {
+      "spec_id": "scheduler-cloud-backend",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/scheduler-cloud-backend.md",
+      "sections": ["overview", "async-api", "test-plan"]
+    },
+    {
+      "spec_id": "result-backend",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/result-backend.md",
+      "sections": ["overview", "async-api", "test-plan"]
+    },
+    {
+      "spec_id": "worker",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-queue/logic/worker.md",
+      "sections": ["overview", "state-machine", "async-api", "test-plan"]
+    }
+  ]
+}

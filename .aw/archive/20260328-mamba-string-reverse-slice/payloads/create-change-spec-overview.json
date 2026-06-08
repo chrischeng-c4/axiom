@@ -1,0 +1,8 @@
+{
+  "spec_id": "string-reverse-slice-fix",
+  "group_id": "string-reverse-slice",
+  "section": "overview",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "main_spec_ref": "crates/cclab-mamba/runtime/string-ops",
+  "content": "`mb_str_slice_full(s, start, stop, step)` handles Python `str[start:stop:step]` slicing. When `step < 0` and `start`/`stop` are absent (Python `None`), the original code passed the sentinel value through `clamp_rev_str`, which normalized `-1` to `len - 1` — collapsing `s_idx` and `e_idx` to the same value and making the loop condition `while i > e_idx` immediately false, producing an empty string.\n\nFix (commit bc5921e9): when `start`/`stop` are `None` and `step < 0`, bypass `clamp_rev_str` and use literal defaults — `len - 1` for absent start, `-1` for absent stop. The remaining work is converting the xfail conformance fixture (`string_edge_cases_xfail.py`) to a passing test and updating the main spec with an R6 requirement.\n\nIssue: #1111"
+}

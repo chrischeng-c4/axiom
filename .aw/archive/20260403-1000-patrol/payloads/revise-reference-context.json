@@ -1,0 +1,28 @@
+{
+  "group_id": "add-idlelib-stdlib",
+  "specs": [
+    {
+      "spec_path": "crates/cclab-mamba/runtime/module.md",
+      "relevance": "high",
+      "key_requirements": "R2: Module caching via sys.modules, R4: import and from-import syntax, R5: Module object attributes (__name__, __file__, __dict__)"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/stdlib/native-implementations.md",
+      "relevance": "medium",
+      "key_requirements": "Module registration pattern: register() function, register_stdlib() wiring, pub mod declaration"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/runtime/exception.md",
+      "relevance": "medium",
+      "key_requirements": "NotImplementedError in exception hierarchy, mb_raise mechanism for stub functions"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "idlelib-stub",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/stdlib/idlelib.md",
+      "sections": ["overview", "requirements", "scenarios", "changes"]
+    }
+  ]
+}

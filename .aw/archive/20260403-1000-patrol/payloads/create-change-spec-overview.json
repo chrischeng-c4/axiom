@@ -1,0 +1,8 @@
+{
+  "spec_id": "idlelib-stub",
+  "group_id": "add-idlelib-stdlib",
+  "section": "overview",
+  "main_spec_ref": "crates/cclab-mamba/stdlib/idlelib.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "changes"],
+  "content": "Stub implementation of Python's `idlelib` package for Mamba. Registers the `idlelib` module namespace so `import idlelib` succeeds. All functional APIs raise `NotImplementedError` — no Tkinter GUI functionality is provided.\n\nidlelib is CPython's IDLE editor internals package. It contains ~70 submodules for the IDLE IDE (editor, debugger, configuration, etc.). Since IDLE is rarely used in production and depends heavily on Tkinter, Mamba provides only a stub package that:\n\n- Registers the top-level `idlelib` module with standard attributes (`__name__`, `__file__`, `__package__`)\n- Exposes key submodule names as stub attributes that raise `NotImplementedError` on access\n- Follows the existing `register()` + `register_module()` pattern per `native-implementations.md`"
+}

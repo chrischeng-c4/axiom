@@ -1,0 +1,50 @@
+change_id: mamba-py312-test-suite
+schema_version: '2.0'
+created_at: 2026-02-13T10:34:46.321963Z
+updated_at: 2026-02-14T06:05:41.033394Z
+phase: merge_approved
+iteration: 1
+last_action: merge_review_approved_clean_no_issues
+session_id: null
+checksums: {}
+validations: []
+revision_counts:
+  implementation: 6
+  merge: 1
+telemetry:
+  calls:
+  - step: explore_spec
+    genesis_version: 0.3.6
+    model: gemini-3-flash-preview
+    tokens_in: 6426385
+    tokens_out: 15134
+    cost_usd: null
+    duration_ms: 490656
+    timestamp: 2026-02-13T10:38:25.000445Z
+  - step: review_task
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 399606
+    tokens_out: 5101
+    cost_usd: null
+    duration_ms: 86286
+    timestamp: 2026-02-14T05:40:09.041859Z
+  - step: review_task
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 2121039
+    tokens_out: 9353
+    cost_usd: null
+    duration_ms: 181967
+    timestamp: 2026-02-14T05:43:45.708931Z
+  - step: review_task
+    genesis_version: 0.3.8
+    model: gpt-5.3-codex
+    tokens_in: 1439093
+    tokens_out: 8633
+    cost_usd: null
+    duration_ms: 157200
+    timestamp: 2026-02-14T05:46:48.114082Z
+  total_cost_usd: 0.0
+  total_tokens_in: 10386123
+  total_tokens_out: 38221

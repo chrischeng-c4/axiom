@@ -1,0 +1,6 @@
+{
+  "spec_id": "sigbus-runtime-thread-safety-fix",
+  "group_id": "mamba-codegen-runtime-fixes",
+  "section": "state-machine",
+  "content": "```mermaid\nstateDiagram-v2\n    [*] --> Idle: Thread spawned (thread_locals empty)\n\n    Idle --> Capturing: begin_capture() called\n    Capturing --> Executing: JIT entry fn() invoked\n\n    state Executing {\n        Running --> RuntimeCall: JIT code calls mb_* extern\n        RuntimeCall --> Running: thread_local state updated\n    }\n\n    Executing --> CleaningUp: entry fn returns\n\n    state CleaningUp {\n        GenCleanup --> IterCleanup: cleanup_all_generators()\n        IterCleanup --> ClosureCleanup: cleanup_all_iterators()\n        ClosureCleanup --> ClassCleanup: cleanup_all_closures()\n        ClassCleanup --> ExceptionCleanup: cleanup_all_classes()\n        ExceptionCleanup --> FileCleanup: cleanup_all_exceptions()\n        FileCleanup --> ModuleCleanup: cleanup_all_files()\n        ModuleCleanup --> Done: cleanup_all_modules()\n    }\n\n    CleaningUp --> Captured: end_capture()\n    Captured --> [*]: tx.send() + thread exits\n```"
+}

@@ -1,0 +1,27 @@
+- spec_id: generator-iterator-conformance
+  action: create
+  main_spec_ref: crates/cclab-mamba/testing/generator-iterator-conformance.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+  - test-plan
+- spec_id: data-structure-conformance
+  action: create
+  main_spec_ref: crates/cclab-mamba/testing/data-structure-conformance.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+  - test-plan
+- spec_id: py312-behavioral-conformance
+  action: create
+  main_spec_ref: crates/cclab-mamba/testing/py312-behavioral-conformance.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+  - test-plan

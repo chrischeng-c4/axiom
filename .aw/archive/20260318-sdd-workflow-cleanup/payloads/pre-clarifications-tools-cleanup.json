@@ -1,0 +1,14 @@
+{
+  "change_id": "sdd-workflow-cleanup",
+  "group_id": "tools-cleanup",
+  "answers": [
+    {
+      "question": "Should sdd_run_change prompts be updated to avoid mentioning the removed tools?",
+      "answer": "Yes. All prompts that reference sdd_read_artifact or sdd_write_artifact should be updated to use direct file Read or the specific artifact CLI commands."
+    },
+    {
+      "question": "Are there any other legacy aliases for these tools that should also be removed?",
+      "answer": "Check for sdd_read_artifact and sdd_write_artifact in: mod.rs registrations, MCP tool definitions, agent prompts (create_reference_context.rs, create_change_spec.rs, etc.), and workflow/reference_context.rs. Remove all references."
+    }
+  ]
+}

@@ -1,0 +1,125 @@
+[package]
+name = "agentic-workflow"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Agentic Workflow — spec-governed workflow engine and CLI"
+
+[lib]
+name = "agentic_workflow"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aw"
+path = "src/bin/aw.rs"
+
+[dependencies]
+# Code intelligence (extracted to separate crate in #1164)
+cclab-compass = { path = "../compass" }
+
+# LLM agent framework
+agent = { path = "../mamba/mambalibs/agentkit/core" }
+
+# CLI
+clap = { version = "4", features = ["derive", "color"] }
+clap_complete = "4"
+colored = "3"
+dialoguer = "0.11"
+
+# Parsing
+pulldown-cmark = "0.12"
+regex.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+toml = "0.8"
+toml_edit = "0.22"
+chrono.workspace = true
+
+# Version comparison
+semver.workspace = true
+
+# Hashing
+sha2 = "0.10"
+blake3 = "1"
+
+# JSON Schema validation
+jsonschema = "0.29"
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Embedded generators (diagram + spec)
+tera = "1"
+heck = "0.5"
+indexmap = { version = "2", features = ["serde"] }
+
+# File operations
+walkdir.workspace = true
+glob = "0.3"
+globset = "0.4"
+ignore = "0.4"
+dirs = "5"
+fs2 = "0.4"
+libc = "0.2"
+
+# AST parsing (tree-sitter)
+tree-sitter = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-python = "0.25"
+tree-sitter-javascript = "0.25"
+tree-sitter-typescript = "0.23"
+tree-sitter-go = "0.25"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-hcl = "1.1"
+tree-sitter-yaml = "0.7"
+tree-sitter-sequel = "0.3"
+tree-sitter-proto = "0.4"
+tree-sitter-graphql = "0.1"
+tree-sitter-toml-ng = "0.7"
+
+# Git (vendored-openssl for cross-platform builds)
+git2 = { version = "0.20", features = ["vendored-openssl"] }
+
+# Async runtime
+tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# HTTP server (UI viewer)
+axum.workspace = true
+
+# HTTP client for platform sync (GitHub/GitLab) + Jira REST API backend
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+
+# Jira REST API: Basic auth header — base64(email:token)
+base64 = "0.22"
+
+rayon.workspace = true
+tracing.workspace = true
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Temp files
+tempfile = "3"
+
+[features]
+default = []
+ui = ["open"]
+
+[dependencies.open]
+version = "5"
+optional = true
+
+[dev-dependencies]
+tempfile = "3"
+# Used by tests/regen_syntax.rs to validate that rust/* codegen output
+# parses as syntactically valid Rust — cheaper than a full cargo check
+# and catches DSL-gap regressions (e.g. `fn type Item`, `mut` in type pos).
+syn = { version = "2", features = ["full", "parsing"] }

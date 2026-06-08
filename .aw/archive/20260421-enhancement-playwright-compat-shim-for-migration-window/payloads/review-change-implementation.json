@@ -1,0 +1,7 @@
+{
+  "change_id": "enhancement-playwright-compat-shim-for-migration-window",
+  "spec_id": "enhancement-playwright-compat-shim-for-migration-window-spec",
+  "verdict": "APPROVED",
+  "summary": "All hard checklist items pass. Spec's Test Plan T1-T9 map to 16 #[test] functions in crates/jet/tests/playwright_compat_tests.rs — 15 passing, 1 T9 #[ignore]d because it requires npx playwright on the host. Plus 11 inline unit tests in crates/jet/src/playwright_shim.rs. Code satisfies R1-R9: --playwright flag marked [deprecated] in --help (R1), spawn_playwright delegates to npx playwright subprocess (R1+R2), emit_deprecation_warning writes to stderr (R3) and respects JET_SUPPRESS_PLAYWRIGHT_WARNING=1 (R4), CHANGELOG + migration guide document two-minor-release lifetime (R5), validate_no_native_flags rejects --reporter/--trace/--workers/--shard/--report-dir with exit 2 (R6), native-only flags only consumed on native path (R7), migration guide at crates/jet/docs/migration-from-playwright.md (R8), fixture spec at tests/fixtures/playwright-compat/basic.spec.ts (R9). No test regressions — cargo check -p jet --tests is clean. Env-var tests properly serialized via Mutex<()> guard to prevent parallel-test pollution.",
+  "findings": []
+}

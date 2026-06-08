@@ -1,0 +1,90 @@
+change_id: merge-lens-into-sdd
+schema_version: '2.0'
+created_at: 2026-03-19T03:12:56.063981Z
+updated_at: 2026-03-19T07:52:38.643367Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:merge-lens-into-sdd: 1
+current_task_id: merge-lens-into-sdd-spec
+task_revisions:
+  merge-lens-into-sdd-spec: 1
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 190990
+    timestamp: 2026-03-19T03:16:31.072472Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 70693
+    timestamp: 2026-03-19T03:24:05.795492Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 273504
+    timestamp: 2026-03-19T03:29:40.448983Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 87110
+    timestamp: 2026-03-19T03:51:53.501477Z
+  - step: begin_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1027372
+    timestamp: 2026-03-19T03:52:05.470865Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 353142
+    timestamp: 2026-03-19T04:00:13.474682Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 942
+    title: 'refactor: merge cclab-lens into cclab-sdd'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_spec: []
+  post_clarifications:
+  - merge-lens-into-sdd
+  reference_context:
+  - merge-lens-into-sdd
+  change_implementation: []
+  pre_clarifications:
+  - merge-lens-into-sdd

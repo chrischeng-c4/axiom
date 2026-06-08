@@ -1,0 +1,104 @@
+change_id: mamba-test-coverage
+schema_version: '2.0'
+created_at: 2026-03-08T07:26:02.725467Z
+updated_at: 2026-03-08T14:42:13.456145Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: new_branch
+branch: cclab/mamba-test-coverage
+revision_counts: {}
+current_task_id: mamba-test-coverage-spec
+task_revisions: {}
+telemetry: null
+dag:
+  issues:
+  - number: 739
+    title: '[Tracking] Mamba test coverage — target 95%+ line coverage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 740
+    title: 'Test coverage: Runtime core — 30% → 95–98% line coverage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 741
+    title: 'Test coverage: Type checker — target 95–98% line coverage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 742
+    title: 'Test coverage: Stdlib modules — 90–95% (common) / 80%+ (edge)'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 743
+    title: 'Test coverage: HIR/MIR/Lowering — target 95–98% line coverage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 744
+    title: 'Test coverage: Codegen (JIT/AOT/LLVM) — target 95–98% line coverage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 745
+    title: 'Test coverage: Parser — target 95–98% line coverage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 746
+    title: 'Test coverage: Lexer — target 95–98% line coverage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 747
+    title: 'Test coverage: Name resolution — target 95–98% line coverage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 748
+    title: 'Test coverage: FFI — target 100% line coverage'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+groups_progress:
+  change_spec: []
+  pre_clarifications:
+  - codegen-hir-mir-coverage
+  - ffi-coverage
+  - parser-lexer-coverage
+  - runtime-core-coverage
+  - stdlib-coverage
+  - typechecker-coverage
+  post_clarifications:
+  - codegen-hir-mir-coverage
+  - ffi-coverage
+  - parser-lexer-coverage
+  - typechecker-coverage
+  - runtime-core-coverage
+  - stdlib-coverage
+  reference_context:
+  - codegen-hir-mir-coverage
+  - ffi-coverage
+  - parser-lexer-coverage
+  - typechecker-coverage
+  - runtime-core-coverage
+  - stdlib-coverage
+  change_implementation: []

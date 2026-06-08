@@ -1,0 +1,55 @@
+{
+  "group_id": "test-coverage-gaps",
+  "verdict": "reject",
+  "issues": [
+    {
+      "severity": "critical",
+      "spec": "crates/cclab-mamba/ffi/c-parser-and-types.md",
+      "description": "Key requirements attributed to this spec are factually wrong. The artifact claims R3 defines '17 variants (Void, Int8/16/32/64, UInt8/16/32/64, Float, Double, Bool, ConstChar, MutChar, Pointer(Box<CType>), ConstPointer(Box<CType>), Named(String))'. The actual spec R3 (line 60–74) defines a completely different variant set: Void, Int, Float, Double, Char, Pointer(Box<CType>), Array(Box<CType>, usize), Struct(String), Enum(String), FunctionPointer, Typedef(String) — 11 variants with different names. The 17-variant description matches the source file (ffi/c_types.rs lines 3–26) and the test-coverage-remaining.md spec, not this spec. The key requirements were not read from the spec but inferred from source or another spec."
+    },
+    {
+      "severity": "critical",
+      "spec": "crates/cclab-mamba/testing/test-harness.md",
+      "description": "Key requirements attributed to this spec don't exist in it. The artifact claims it covers 'Inline #[cfg(test)] mod tests strategy (not fixture-based conformance tests)', 'tests/stdlib_coverage_lower_tests.rs (already contains queue concurrent test)', 'tests/ffi_tests.rs (already imports c_types::*)'. The actual spec (id: test-harness) covers fixture_tests.rs and CPython fixture integration — its requirements are R1 (Directive Dispatch Logic), R2 (Enhanced Error Reporting), R3 (Recursive Fixture Discovery), R4 (CPython Fixture Directory Structure), R5 (Directive-based Snippet Format), R6 (Syntax-focused Extraction). None of the claimed key requirements appear in the spec. This makes the relevance classification of 'medium' also suspect."
+    },
+    {
+      "severity": "critical",
+      "spec": "crates/cclab-mamba/stdlib/text-processing.md",
+      "description": "This spec is listed as 'background for shlex_split/quote/join behavior' but it covers textwrap_mod.rs and string_constants_mod.rs only (textwrap.wrap/fill/dedent/indent, string constants like ascii_letters, digits, etc.). The spec contains no shlex content whatsoever. No shlex-specific spec exists under cclab/specs/crates/cclab-mamba/stdlib/. Including this spec as shlex background is misleading and wrong."
+    },
+    {
+      "severity": "critical",
+      "spec": "crates/cclab-mamba/stdlib/datetime.md",
+      "description": "This spec is listed as 'background for isleap/leapdays/monthrange/weekday behavior (calendar module)' but it covers datetime/date/timedelta classes from datetime_mod.rs only (R1–R5: constructor, today/now, arithmetic, strftime, timestamp). The spec contains zero calendar module content. No calendar-specific spec exists under cclab/specs/crates/cclab-mamba/stdlib/. Including this spec as calendar background is misleading and wrong."
+    },
+    {
+      "severity": "major",
+      "spec": "missing",
+      "description": "No background spec exists for shlex module (shlex_mod.rs) or calendar module (calendar_mod.rs) semantics. The reference context included text-processing.md and datetime.md as proxies, but they don't cover these modules. Either: (a) correct background specs are missing from the reference context, or (b) no spec covers these modules and that gap should be noted explicitly. Both shlex and calendar are in-scope per pre-clarification Q2."
+    },
+    {
+      "severity": "minor",
+      "spec": "spec_plan",
+      "description": "Both spec plan entries use 'sections: overview, changes'. The section name 'changes' is non-standard — standard spec section names are 'requirements', 'acceptance-criteria', 'diagrams', 'overview'. Using 'changes' does not map to any defined spec section type in the authoring guide."
+    },
+    {
+      "severity": "minor",
+      "spec": "crates/cclab-mamba/ffi/c-parser-and-types.md",
+      "description": "The spec (R3, line 60–74) is outdated relative to the source. The actual ffi/c_types.rs (lines 3–26) has 17 distinct variants including Int8/Int16/Int32/Int64/UInt8–UInt64/ConstChar/MutChar while the spec still describes the old design (Int, Char, Array, Struct, Enum, FunctionPointer, Typedef). The spec plan proposes to 'modify' this spec, but the key divergence should be made explicit in the reference context — not silently corrected by the implementation agent."
+    }
+  ],
+  "checklist": {
+    "all_affected_areas_covered": "pass",
+    "relevance_scores_reasonable": "fail",
+    "key_requirements_accurate": "fail",
+    "no_irrelevant_specs": "fail",
+    "spec_plan_main_spec_ref_set": "pass",
+    "spec_plan_sections_reasonable": "fail",
+    "spec_plan_modify_source_paths_valid": "pass",
+    "spec_plan_main_spec_ref_has_subfolder": "pass",
+    "spec_plan_one_logical_unit_per_file": "pass",
+    "spec_plan_no_duplicate_section_types": "pass",
+    "spec_plan_paths_mirror_source_structure": "pass"
+  },
+  "summary": "REJECT. Four critical issues: (1) c-parser-and-types.md key requirements list the wrong CType variants — the spec's actual R3 defines Void/Int/Float/Double/Char/Pointer/Array/Struct/Enum/FunctionPointer/Typedef, not the 17 source-code variants. (2) test-harness.md key requirements are fabricated — the spec covers CPython fixture integration (R1–R6), not the inline #[cfg(test)] strategy described. (3) text-processing.md is wrong background spec — covers textwrap/string constants, not shlex. (4) datetime.md is wrong background spec — covers datetime/date/timedelta, not calendar. Two of seven specs are entirely irrelevant as characterized. Revision must replace specs 6 and 7 with correct shlex/calendar background (or note no spec exists), and re-read specs 3 and 4 to produce accurate key requirements."
+}

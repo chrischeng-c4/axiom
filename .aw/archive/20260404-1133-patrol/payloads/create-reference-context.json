@@ -1,0 +1,69 @@
+{
+  "group_id": "fix-name-builtin",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-mamba/lower/hir-to-mir.md",
+      "spec_group": "lowering",
+      "relevance": "high",
+      "key_requirements": [
+        "lower_top_level() is where module-level MIR is emitted — the fix injects StoreGlobal for __name__ = '__main__' here, after mb_register_builtins call",
+        "Line 3007-3013: module-scope 'use before define' path allocates an uninitialized VReg (defaults to 0, i.e. 0.0 in NaN-box), which is the root cause of the bug",
+        "self.symbol_table is available in HirToMir — use symbols.lookup('__name__') to get SymbolId for the StoreGlobal emission"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/driver/compiler-driver.md",
+      "spec_group": "driver",
+      "relevance": "high",
+      "key_requirements": [
+        "R1 pipeline table: phase 8 is codegen/execution — the __name__ initialization should be part of module execution setup",
+        "CompilerSession::run() calls the JIT entry function; the __name__ setup must happen before user code runs",
+        "The pre-clarification confirms: 'In the driver/runtime module initialization — set __name__ = __main__ as a global string before executing the module body'"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/runtime/module.md",
+      "spec_group": "runtime",
+      "relevance": "medium",
+      "key_requirements": [
+        "R5: Each module object has __name__ attribute — for the entry module this must be '__main__' to match CPython behavior",
+        "module_to_value() already sets __name__ from module.name for imported modules — the entry-point module (run as main) also needs __name__ = '__main__'"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/resolve/name-resolution.md",
+      "spec_group": "resolve",
+      "relevance": "medium",
+      "key_requirements": [
+        "VariableClass::Local is the classification for __name__ when never assigned by user code",
+        "VarKind classification determines whether LoadGlobal or local VReg is used — __name__ falls through to the uninitialized VReg path at module scope"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/runtime/symbols.md",
+      "spec_group": "runtime",
+      "relevance": "low",
+      "key_requirements": [
+        "mb_global_get_id / mb_global_set_id are the runtime functions used by LoadGlobal/StoreGlobal MIR instructions",
+        "mb_global_get_id returns MbValue::none() when key not found — the fix must pre-populate __name__ before user code runs"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-mamba/runtime/value-and-rc.md",
+      "spec_group": "runtime",
+      "relevance": "low",
+      "key_requirements": [
+        "NaN-boxing: the bit pattern 0 (uninitialized VReg default) encodes as f64 0.0 — this explains why __name__ prints as '0.0' instead of '__main__'"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "name-builtin-init",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/lower/hir-to-mir.md",
+      "source": "crates/cclab-mamba/lower/hir-to-mir.md",
+      "sections": ["overview", "logic", "changes", "test-plan"]
+    }
+  ]
+}

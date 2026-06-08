@@ -1,0 +1,18 @@
+{
+  "group_id": "default",
+  "spec_id": "mamba-756-patrol-spec",
+  "summary": "Added Py3.12 generator/iterator protocol conformance test suite as a new cargo test binary `tests/conformance_generators.rs` with six submodules under `tests/conformance/generators/`. Each submodule ports a targeted subset of CPython 3.12 test_generators.py, test_iter.py, and test_asyncgen.py as #[test] functions driven through the mamba runtime. 36 tests total: 23 passing (core generator R1-R5 send/throw/close/yield-from + StopIteration.value propagation) and 12 ignored documenting two pre-existing runtime gaps (iterator protocol on user classes + async generator driver) — these map to the same root cause as existing generator_conformance_tests gaps and are out of scope for this conformance-gate change. No runtime code was modified; #756 explicitly established the test suite as the conformance gate #1187's perf rewrite must pass per AC8.",
+  "files_changed": [
+    "crates/cclab-mamba/tests/conformance_generators.rs",
+    "crates/cclab-mamba/tests/conformance_tests.rs",
+    "crates/cclab-mamba/tests/conformance/generators/mod.rs",
+    "crates/cclab-mamba/tests/conformance/generators/test_generators_basic.rs",
+    "crates/cclab-mamba/tests/conformance/generators/test_generators_send_throw.rs",
+    "crates/cclab-mamba/tests/conformance/generators/test_generators_close.rs",
+    "crates/cclab-mamba/tests/conformance/generators/test_generators_yield_from.rs",
+    "crates/cclab-mamba/tests/conformance/generators/test_iterator_protocol.rs",
+    "crates/cclab-mamba/tests/conformance/generators/test_async_generators.rs"
+  ],
+  "requirements_met": ["R1", "R2", "R3", "R4", "R5"],
+  "diff": "Added 1088 lines across 6 new conformance test files + 2 wiring files. test_generators_basic.rs (166 lines, 6 tests) exercises R1 yield/next/StopIteration and R8 edge cases (AC1, AC-edge). test_generators_send_throw.rs (144, 6 tests) covers R2 send + R3 throw round trip (AC2, AC3). test_generators_close.rs (129, 5 tests) covers R4 close/GeneratorExit + RuntimeError-on-ignored-exit (AC4). test_generators_yield_from.rs (146, 6 tests) covers R5 yield-from delegation + StopIteration.value (AC5). test_iterator_protocol.rs (202, 6 tests, all #[ignore]) covers R6 user-defined __iter__/__next__ — blocked by pre-existing gap. test_async_generators.rs (179, 5 tests, all #[ignore]) covers R7 async for/asend/athrow/aclose — blocked by pre-existing async gap. mod.rs (122 lines) wires the submodules and header comments citing CPython 3.12 Lib/test/test_generators.py source. No runtime (.rs) source file modified — this change is pure test code. cargo test -p cclab-mamba --test conformance_generators passes 23 / ignores 12 / fails 0. @spec annotations on each test function point back to the change spec at .score/changes/mamba-756-patrol/groups/default/specs/mamba-756-patrol-spec.md for traceability. Commit: 3ca1d59e."
+}

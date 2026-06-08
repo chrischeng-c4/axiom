@@ -1,0 +1,6 @@
+{
+  "change_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness",
+  "spec_id": "enhancement-remove-playwright-test-dependency-from-e2e-harness-spec",
+  "verdict": "APPROVED",
+  "summary": "Implementation matches all spec requirements R1-R9. C1-C7 rewrote all 7 spec files from '@playwright/test' to '@jet/test'. C8 deleted e2e/playwright.config.ts. C9 created jet.test.config.ts at repo root with all ported settings (testDir, timeout=30000, headless, trace=retain-on-failure, screenshot=only-on-failure, reporter=[['html']], three project blocks). C10 removed @playwright/test from e2e/jet/package.json devDependencies and changed npx playwright scripts to 'jet test'. C11 refreshed package-lock.json via npm install --package-lock-only — removed all playwright entries. C16 updated CHANGELOG.md line 26. C18 created crates/jet/tests/e2e_playwright_residue.rs with #[test] function e2e_playwright_residue_absent, registered in Cargo.toml. Atomicity verified: grep -rn '@playwright/test' e2e/ returns zero matches. The residue test passes. Hard checklist: (1) code matches spec ✓, (2) Test Plan + #[test] block present in e2e_playwright_residue.rs ✓, (3) residue test passes and no existing tests modified ✓. Compat shim (playwright_shim.rs, --playwright flag) correctly left untouched per R4."
+}

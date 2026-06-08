@@ -1,0 +1,157 @@
+{
+  "group_id": "spec-consolidation-enforcement",
+  "specs": [
+    {
+      "spec_id": "crates/cclab-sdd/logic/reference-context.md",
+      "spec_group": "lifecycle-enforcement",
+      "relevance": "high",
+      "key_requirements": [
+        "Central router for reference_context CRR lifecycle",
+        "Create prompt template — where spec_plan and spec listing are injected",
+        "spec_plan array generation (action, main_spec_ref, sections)",
+        "BUG: pre_filter_specs only lists root-level files — misses subdirectories"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/change-merge.md",
+      "spec_group": "lifecycle-enforcement",
+      "relevance": "high",
+      "key_requirements": [
+        "Merge reads main_spec_ref from change spec frontmatter",
+        "Writes to cclab/specs/{main_spec_ref} — create or overwrite",
+        "merge_strategy field references (dead code to remove)",
+        "Add merge-time validation: reject root-level main_spec_ref"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/change-spec.md",
+      "spec_group": "lifecycle-enforcement",
+      "relevance": "high",
+      "key_requirements": [
+        "Change spec preparation from spec_plan",
+        "action: modify copies existing spec, action: create writes skeleton",
+        "merge_strategy references to remove"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/state-machine.md",
+      "spec_group": "state-flow",
+      "relevance": "high",
+      "key_requirements": [
+        "Phase flow — reference_context phase where spec_plan is generated",
+        "Phase routing for validation gates"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/tools/workflow-tools.md",
+      "spec_group": "interfaces",
+      "relevance": "high",
+      "key_requirements": [
+        "sdd_workflow_create_reference_context tool definition",
+        "sdd_workflow_create_change_merge tool definition"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+      "spec_group": "interfaces",
+      "relevance": "high",
+      "key_requirements": [
+        "create-reference-context artifact schema",
+        "merge_strategy param to remove from artifact tools"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "spec_group": "interfaces",
+      "relevance": "high",
+      "key_requirements": [
+        "CLI command tree — scaffold-spec and validate-spec-structure commands to add"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/logic/scope-resolution.md",
+      "spec_group": "structure",
+      "relevance": "high",
+      "key_requirements": [
+        "Layer 1 scope resolution via config.toml",
+        "pre_filter_specs function — generates In-Scope Specs listing for agent prompt",
+        "BUG: uses read_dir (flat) not recursive — only sees root-level .md files"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/tools/utils/validate-spec-completeness.md",
+      "spec_group": "validation",
+      "relevance": "medium",
+      "key_requirements": [
+        "Existing spec validation pattern — validate-spec-structure builds on this"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/tools/utils/validate-change.md",
+      "spec_group": "validation",
+      "relevance": "medium",
+      "key_requirements": [
+        "Hard error validation pattern — merge-time validation follows this model"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/config/agents.md",
+      "spec_group": "config",
+      "relevance": "low",
+      "key_requirements": [
+        "Agent config — reference for prompt injection points"
+      ]
+    },
+    {
+      "spec_id": "crates/cclab-sdd/README.md",
+      "spec_group": "architecture",
+      "relevance": "low",
+      "key_requirements": [
+        "Overall SDD architecture overview"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "spec-structure-rules",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-sdd/logic/spec-structure.md",
+      "sections": ["overview", "schema", "logic", "cli"]
+    },
+    {
+      "spec_id": "reference-context-update",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/reference-context.md",
+      "source": "crates/cclab-sdd/logic/reference-context.md",
+      "sections": ["changes"]
+    },
+    {
+      "spec_id": "change-merge-update",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/change-merge.md",
+      "source": "crates/cclab-sdd/logic/change-merge.md",
+      "sections": ["changes"]
+    },
+    {
+      "spec_id": "change-spec-update",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/change-spec.md",
+      "source": "crates/cclab-sdd/logic/change-spec.md",
+      "sections": ["changes"]
+    },
+    {
+      "spec_id": "cli-commands-update",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "source": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "sections": ["changes"]
+    },
+    {
+      "spec_id": "artifact-tools-update",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+      "source": "crates/cclab-sdd/interfaces/tools/artifact-tools.md",
+      "sections": ["changes"]
+    }
+  ]
+}

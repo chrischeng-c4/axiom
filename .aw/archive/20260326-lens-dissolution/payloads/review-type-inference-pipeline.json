@@ -1,0 +1,85 @@
+{
+  "change_id": "lens-dissolution",
+  "spec_id": "type-inference-pipeline",
+  "verdict": "REJECTED",
+  "summary": "The type-inference-pipeline spec has a Test Plan with 15 unit tests and 5 integration tests. Two hard failures: (1) check_pipeline.rs is missing — this file is required by the spec changes section to wire PropagationPipeline into check_paths(), implementing R4 (type_at), R5 (hover), and R10 (check diagnostics); pub mod check_pipeline is absent from lib.rs. (2) propagation.rs (new module, action: create) has zero #[test] functions despite 9 spec-required unit tests assigned to it. Additionally: 3 spec-required tests absent from deep_inference.rs, 2 from cache.rs, 1 from imports.rs, and all 5 integration tests absent. propagate_all() method is not added to DeepTypeInferencer as specified. Core data structures (PropagationPipeline, FileAnalysis.propagation_complete, TypeBinding.is_propagated, detect_import_cycles, AnalysisCache.invalidate_propagation) are present and correct.",
+  "checklist_results": [
+    {
+      "item": "Code matches all spec requirements",
+      "passed": false,
+      "note": "FAIL: check_pipeline.rs does not exist (confirmed: Glob finds no file, pub mod check_pipeline absent from lib.rs). Requirements R4 (type_at returns propagated type), R5 (hover returns propagated type signature), R10 (check_paths benefits from cross-file types) are unimplemented — the propagation pipeline is never called from any analysis entry point. FAIL: propagate_all() method not added to DeepTypeInferencer (spec changes §1: 'Add propagate_all(&mut self, cache) method to DeepTypeInferencer'); the orchestration was instead placed in PropagationPipeline::run() which is architecturally valid but deviates from the spec change description. PASS for present items: PropagationPipeline (propagation.rs:87), PropagationResult/PropagationStats schemas match spec, FileAnalysis.propagation_complete (deep_inference.rs:457), TypeBinding.is_propagated (deep_inference.rs:57), detect_import_cycles (deep_inference.rs:862), AnalysisCache.invalidate_propagation (cache.rs:214), pub mod propagation in mod.rs (mod.rs:31), PropagationPipeline/PropagationResult re-exported (mod.rs:130-133), ImportGraph::topological_sort (deep_inference.rs:512), R7 stub preference logic (propagation.rs:161-165), R8 invalidate_and_repropagate (propagation.rs:219)."
+    },
+    {
+      "item": "If spec has Test Plan: diff contains at least one #[test] function",
+      "passed": false,
+      "note": "FAIL: propagation.rs (newly created by this spec, 347 lines) has zero #[test] functions — confirmed by grep and cargo test output (0 tests). The spec Test Plan assigns 9 unit tests to this file: test_propagate_from_import_y, test_propagate_import_module, test_propagation_topological_order, test_transitive_propagation, test_stub_file_preference, test_repropagate_after_invalidation, test_no_imports_no_propagation, test_propagation_stats, test_star_import_propagation — all absent. deep_inference.rs has 4 tests (test_type_context, test_type_var_info, test_import_graph_topological_sort, test_deep_inferencer) but spec-required test_circular_import_detection, test_circular_import_fallback, test_propagated_binding_flag are all absent. cache.rs has existing tests but spec-required test_cache_stores_propagated_types and test_invalidation_on_dependency_change are absent. imports.rs test_relative_import_resolution absent. All 5 integration tests absent: test_type_at_imported_symbol, test_hover_imported_symbol, test_check_with_propagation_diagnostics, test_pipeline_python_fixture, test_pipeline_no_reparse."
+    },
+    {
+      "item": "Existing tests still pass (no regressions)",
+      "passed": true,
+      "note": "cargo test -p cclab-sdd --lib type_inference::propagation: 0 tests run (module has no tests), 0 failed. No regressions introduced — the new propagation.rs module is additive-only and does not modify existing test infrastructure."
+    },
+    {
+      "item": "Code quality and readability",
+      "passed": true,
+      "note": "PASS: PropagationPipeline is well-structured with clear step comments. PropagatedType, PropagationResult, PropagationStats structs are clean and match schema spec. R7 stub detection logic (resolve_stub_or_source) is concise. Minor: resolve_import_sources (propagation.rs:286-316) uses approximate symbol-name matching by collecting all names from all import entries regardless of which dep they came from — this may produce incorrect symbol sets when a file imports different symbols from different modules."
+    },
+    {
+      "item": "Error handling completeness",
+      "passed": true,
+      "note": "PASS: file_analysis().is_none() handled with add_file fallback. cycle members skipped gracefully with propagation_complete=true. symbol lookup uses if-let. Minor: collect_transitive_importers is recursion without depth bound — could stack overflow on deep import trees."
+    },
+    {
+      "item": "Performance considerations",
+      "passed": true,
+      "note": "PASS: topological sort is DFS O(V+E). cycle detection is DFS O(V+E). work_set uses HashSet for O(1) lookup. No file re-reads (NF3 satisfied — reads from FileAnalysis cache only)."
+    },
+    {
+      "item": "Documentation where needed",
+      "passed": true,
+      "note": "PASS: propagation.rs has module-level doc comment referencing requirements. PropagationPipeline::run() has step-by-step doc comment. All public structs doc-commented."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "hard",
+      "description": "check_pipeline.rs MISSING",
+      "detail": "Spec changes section requires 'action: modify path: crates/cclab-sdd/src/check_pipeline.rs' to wire PropagationPipeline::run_propagation() into check_paths(). File does not exist (Glob returns nothing). pub mod check_pipeline is absent from crates/cclab-sdd/src/lib.rs (only pub mod type_inference is present at line 24). Requirements R4, R5, R10 are therefore unimplemented — cross-file type propagation is never called from any analysis path."
+    },
+    {
+      "severity": "hard",
+      "description": "propagation.rs has zero tests — 9 spec-required unit tests all absent",
+      "detail": "propagation.rs was created by this spec (action: create). It has 347 lines and zero #[test] or #[cfg(test)] blocks. Spec Test Plan assigns 9 tests to this file: test_propagate_from_import_y (R1/R6/S1), test_propagate_import_module (R6/S2), test_propagation_topological_order (R2), test_transitive_propagation (R1/R2/S3), test_stub_file_preference (R7/S5), test_repropagate_after_invalidation (R8/S6), test_no_imports_no_propagation (S7), test_propagation_stats (schema), test_star_import_propagation (R6). All absent. cargo test output: 0 tests run."
+    },
+    {
+      "severity": "hard",
+      "description": "3 spec-required deep_inference.rs tests absent",
+      "detail": "deep_inference.rs tests at lines 1078-1134 are: test_type_context, test_type_var_info, test_import_graph_topological_sort, test_deep_inferencer. Spec-required: test_circular_import_detection (R9/S4), test_circular_import_fallback (R9/S4), test_propagated_binding_flag (R3). None present. Note: imports.rs line 939 has a test named test_circular_import_detection but it tests ImportResolver.start_loading mechanism, not ImportGraph::detect_import_cycles."
+    },
+    {
+      "severity": "hard",
+      "description": "2 spec-required cache.rs tests absent",
+      "detail": "cache.rs has 8 existing tests (test_content_hash, test_cache_entry_creation, etc.) but spec-required test_cache_stores_propagated_types (R3 — FileAnalysis.symbols contains is_propagated=true after propagation) and test_invalidation_on_dependency_change (R8/S6 — changing source clears propagated bindings in importers) are both absent. The new invalidate_propagation method (cache.rs:214) is untested per spec."
+    },
+    {
+      "severity": "hard",
+      "description": "All 5 integration tests absent",
+      "detail": "Spec integration tests: test_type_at_imported_symbol (R4/S1), test_hover_imported_symbol (R5), test_check_with_propagation_diagnostics (R10), test_pipeline_python_fixture (R1-R6/NF4), test_pipeline_no_reparse (NF3). None found in any test file. These require check_pipeline.rs to exist first."
+    },
+    {
+      "severity": "hard",
+      "description": "propagate_all() method not added to DeepTypeInferencer",
+      "detail": "Spec changes §1 (deep_inference.rs): 'Add propagate_all(&mut self, cache: &mut HashMap<PathBuf, FileAnalysis>) method to DeepTypeInferencer. Iterates files in topological order, calls propagate_types() for each import edge.' Grep finds no fn propagate_all in deep_inference.rs. The orchestration logic was moved to PropagationPipeline::run() which is architecturally reasonable but diverges from the spec-specified API surface."
+    },
+    {
+      "severity": "soft",
+      "description": "resolve_import_sources has imprecise symbol-to-module mapping",
+      "detail": "propagation.rs:286-316: resolve_import_sources collects ALL symbol names from ALL imports in the file and assigns them to EACH dependency, rather than mapping each import to its specific dep. When file imports {X from a, Y from b}, both a and b receive [X, Y] instead of a→[X] and b→[Y]. This causes propagate_types to request wrong symbols from wrong source files. Affects correctness of R6 (from X import Y pattern)."
+    },
+    {
+      "severity": "soft",
+      "description": "collect_transitive_importers unbounded recursion depth",
+      "detail": "propagation.rs:334-346: collect_transitive_importers is recursive without a depth bound. For large import trees this could cause stack overflow. The visited HashSet prevents infinite loops on cycles but not deep linear chains. A BFS or iterative DFS with depth limit would be safer."
+    }
+  ]
+}

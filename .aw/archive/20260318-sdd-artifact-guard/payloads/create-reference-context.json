@@ -1,0 +1,20 @@
+{
+  "change_id": "sdd-artifact-guard",
+  "group_id": "artifact-guard",
+  "specs": [
+    {
+      "spec_id": "cclab-sdd/logic/executor-resolution.md",
+      "spec_group": "cclab-sdd",
+      "relevance": "high",
+      "key_requirements": ["Delegation protocol", "Verification after agent dispatch"]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "artifact-guard-spec",
+      "action": "create",
+      "main_spec_ref": "cclab-sdd/logic/executor-resolution.md",
+      "sections": ["overview", "logic", "changes"]
+    }
+  ]
+}

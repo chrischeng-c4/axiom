@@ -1,0 +1,31 @@
+// SPEC-MANAGED: projects/agentic-workflow/tech-design/semantic/agentic-workflow-packages-sdd.md#config
+// CODEGEN-BEGIN
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@sdd/core": ["../core/src/index.ts"],
+      "@sdd/ui": ["../ui/src/index.ts"],
+      "@sdd/ui/*": ["../ui/src/*"],
+      "@sdd/spec-viewer": ["../spec-viewer/src/index.ts"],
+      "@sdd/pipeline": ["../pipeline/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}
+// CODEGEN-END

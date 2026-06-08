@@ -1,0 +1,44 @@
+- spec_id: spec-structure-rules
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/spec-structure.md
+  sections:
+  - overview
+  - schema
+  - logic
+  - cli
+- spec_id: reference-context-update
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/reference-context.md
+  source: crates/cclab-sdd/logic/reference-context.md
+  sections:
+  - changes
+- spec_id: change-merge-update
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-merge.md
+  source: crates/cclab-sdd/logic/change-merge.md
+  sections:
+  - changes
+- spec_id: change-spec-update
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/change-spec.md
+  source: crates/cclab-sdd/logic/change-spec.md
+  sections:
+  - changes
+- spec_id: cli-commands-update
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/cli/commands.md
+  source: crates/cclab-sdd/interfaces/cli/commands.md
+  sections:
+  - changes
+- spec_id: artifact-tools-update
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/tools/artifact-tools.md
+  source: crates/cclab-sdd/interfaces/tools/artifact-tools.md
+  sections:
+  - changes
+- spec_id: scope-resolution-update
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/scope-resolution.md
+  source: crates/cclab-sdd/logic/scope-resolution.md
+  sections:
+  - changes

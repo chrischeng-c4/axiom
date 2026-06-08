@@ -1,0 +1,94 @@
+{
+  "group_id": "jit-refcount-audit",
+  "verdict": "REVIEWED",
+  "summary": "The reference context artifact is severely under-populated. It lists only 2 specs with no key requirements, no spec_plan, invalid group values ('?'), and wrong relevance scores. Three critical specs are missing (value-and-rc, cranelift-jit, symbols). The spec_plan is entirely absent, failing all 7 spec_plan checklist items.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Three critical specs are missing: (1) crates/cclab-mamba/runtime/value-and-rc.md — covers rc.rs (mb_retain, mb_release, MbObject), the primary file changed in phases 1+4. (2) crates/cclab-mamba/codegen/cranelift-jit.md — covers jit.rs, a primary modified file; its KI-1 is the root issue being fixed. (3) crates/cclab-mamba/runtime/symbols.md — covers symbols.rs, which is modified to register mb_retain_value/mb_release_value. All three are listed as in-scope in the create prompt."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "jit-refcount.md is marked 'medium' but is the primary change spec for this issue — it defines R1-R7 and the full 6-phase plan. It should be 'high'. gc.md is directly modified (set enabled: true) so 'high' is also justified. Both are underrated."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": false,
+      "note": "Both entries have '—' (empty). jit-refcount.md has R1-R7 with P0/P1/P2 priorities. gc.md has R1-R5 and KI-1 (the known issue directly fixed by this change). None are listed."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": true,
+      "note": "jit-refcount and gc are both genuinely relevant. No false positives."
+    },
+    {
+      "item": "spec_plan: every entry has main_spec_ref set (not null)",
+      "passed": false,
+      "note": "spec_plan section is entirely absent from the artifact. Schema requires minItems: 1."
+    },
+    {
+      "item": "spec_plan: sections are reasonable for the requirements",
+      "passed": false,
+      "note": "spec_plan section is entirely absent."
+    },
+    {
+      "item": "spec_plan: modify entries have valid source paths",
+      "passed": false,
+      "note": "spec_plan section is entirely absent."
+    },
+    {
+      "item": "spec_plan: main_spec_ref paths include a subfolder (not root-level under crate)",
+      "passed": false,
+      "note": "spec_plan section is entirely absent. Cannot verify path depth."
+    },
+    {
+      "item": "spec_plan: each spec file covers exactly one logical unit (not multiple unrelated concerns)",
+      "passed": false,
+      "note": "spec_plan section is entirely absent."
+    },
+    {
+      "item": "spec_plan: no spec file would require duplicate section types (split into separate files if needed)",
+      "passed": false,
+      "note": "spec_plan section is entirely absent."
+    },
+    {
+      "item": "spec_plan: spec paths mirror source structure (interfaces/, logic/, generate/)",
+      "passed": false,
+      "note": "spec_plan section is entirely absent."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "spec_plan is entirely missing. The artifact contains only a 2-row spec table with no spec_plan section. The schema requires spec_plan with minItems: 1. Without it, the system cannot prepare change spec files for the next phase.",
+      "recommendation": "Add a spec_plan with at least two entries: (1) action: modify, source: crates/cclab-mamba/codegen/jit-refcount.md, main_spec_ref: crates/cclab-mamba/codegen/jit-refcount.md, sections: [overview, logic, test-plan, changes]. (2) action: modify, source: crates/cclab-mamba/runtime/gc.md, main_spec_ref: crates/cclab-mamba/runtime/gc.md, sections: [overview, logic, changes]."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Three in-scope specs missing from the specs table: (1) crates/cclab-mamba/runtime/value-and-rc.md — covers rc.rs (mb_retain, mb_release, MbObject, IMMORTAL_REFCOUNT), the primary file modified in phases 1 and 4. Relevance should be 'high'. (2) crates/cclab-mamba/codegen/cranelift-jit.md — covers jit.rs (the JIT backend), a primary modified file; its KI-1 is the exact root cause being fixed. Relevance should be 'high'. (3) crates/cclab-mamba/runtime/symbols.md — covers runtime_symbols() in symbols.rs, which is modified to register mb_retain_value and mb_release_value. Relevance should be 'medium'.",
+      "recommendation": "Add all three to the specs array with correct relevance: value-and-rc (high), cranelift-jit (high), symbols (medium). Include key_requirements for each."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Key requirements are empty ('—') for both specs. jit-refcount.md has requirements R1 through R7 (R1: JIT-callable retain/release wrappers, R2: emit release at reassignment, R3: emit release at function return, R4: immortal refcount, R5: track compile-time allocations, R6: re-enable GC, R7: emit retain for function arguments). gc.md has R1-R5 and KI-1 (auto-collection disabled — directly fixed by this change).",
+      "recommendation": "Populate key_requirements arrays with the actual requirement IDs and brief summaries from each spec."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Relevance scores are both 'medium' but jit-refcount should be 'high'. jit-refcount.md is the primary change spec for this issue — it was written for issue #1129 (the exact issue being implemented) and contains the full 6-phase implementation plan with R1-R7.",
+      "recommendation": "Set jit-refcount relevance to 'high'. Set gc relevance to 'high' as well (gc.rs is directly modified to set enabled: true)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "spec_id values ('jit-refcount', 'gc') are short names, not paths relative to cclab/specs/. The schema description says spec_id should be the path relative to cclab/specs/. The correct values are 'crates/cclab-mamba/codegen/jit-refcount.md' and 'crates/cclab-mamba/runtime/gc.md'.",
+      "recommendation": "Use full relative paths as spec_id values."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "Group column contains '?' for both entries — not a valid spec group name. Should reflect the logical grouping, e.g. 'codegen' for jit-refcount and 'runtime' for gc.",
+      "recommendation": "Set group to 'codegen' for jit-refcount and 'runtime' for gc."
+    }
+  ]
+}

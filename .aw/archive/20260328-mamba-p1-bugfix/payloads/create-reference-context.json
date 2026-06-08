@@ -1,0 +1,49 @@
+{
+  "change_id": "mamba-p1-bugfix",
+  "group_id": "lambda-limitations",
+  "reference_context": "| Spec | Relevance | Key Requirements |\n|------|-----------|------------------|\n| crates/cclab-mamba/lower/hir-to-mir.md | high | Lambda lowering (hir_to_mir.rs:3798-3907): three bugs — (1) **nested lambda**: `sym_to_vreg` cleared at line 3825 when compiling inner lambda; `outer_syms` computed from now-empty map so `cell_override` (line 3848) is empty for inner lambda — inner lambda cannot LoadGlobal outer params; (2) **default arg capture**: `lambda_params` loop (lines 3854-3858) assigns fresh vregs to params but ignores `p.default` — defaults evaluated at call time, not definition time; (3) **unary minus**: `UnaryOp { ty: any_ty }` (line 3086-3090) emits `MirInst::UnaryOp` with `Ty::Any`; codegen dispatches via `mb_dispatch_unaryop`. No current requirement covers lambda lowering — new requirement needed. |\n| crates/cclab-mamba/runtime/closure.md | high | R3 (closure creation at function definition time — \"closures in loops get fresh captures per iteration\"), R4 (nested closure support — \"compiler chains cell variable references through multiple nesting levels\"), R5 (lambda as anonymous closure — \"lambda supports default argument values\"). Acceptance criteria scenario \"Closure in loop\" (`funcs = [lambda i=i: i for i in range(3)]`) and \"Nested closure\" directly correspond to two failing patterns. `mb_closure_new` called with `none_captures` in hir_to_mir.rs:3904 — no actual captured values stored, confirming closure environment is not being built. |\n| crates/cclab-mamba/testing/conformance.md | high | R2 (Lambda closure capture and codegen): \"lambda with default arg capture emits correct HIR; nested lambda captures enclosing scope; lambda passed to map/filter/iter does not SIGABRT; 3 xfail fixtures pass\". S5 (`[lambda x, i=i: x+i for i in range(3)]` → `[10,11,12]`), S6 (`lambda x: lambda y: x+y`). Blocked fixtures: `language/lambda_edge_cases.py` (nested lambda via `compose = lambda f,g: lambda x: f(g(x))`; map/filter with lambda), `iterators/callable_sentinel.py`, `iterators/composition_xfail.py`. Fix constraint: must not regress existing lambda tests. |\n| crates/cclab-mamba/lower/ast-to-hir.md | medium | Lambda lowering (ast_to_hir.rs:1453-1484): `hir_params` loop (lines 1460-1468) maps AST `Param` to `(SymbolId, TypeId)` but discards `p.default`. `HirExpr::Lambda { params, body, ty }` has no defaults field. Fix path: either (a) extend HIR Lambda to carry defaults `Vec<Option<Box<HirExpr>>>` lowered here, or (b) evaluate defaults at hir_to_mir time by storing their computed VRegs as closure captures. Design decision affects scope of hir.md changes. |\n| crates/cclab-mamba/hir/hir.md | medium | R1 (HirExpr::Lambda variant: `params: Vec<(SymbolId, TypeId)>, body: Box<HirExpr>, ty: TypeId`). Current tuple `(SymbolId, TypeId)` has no slot for default value. If defaults are handled in HIR, Lambda params must become `Vec<(SymbolId, TypeId, Option<Box<HirExpr>>)>` — change propagates to all HIR Lambda match arms. R3 (Name nodes carry Free/Cell classification) — inner lambda params need their own Local classification isolated from outer scope. |\n| crates/cclab-mamba/types/type-checker.md | medium | R2 (expression type inference — unary ops in lambda body): `UnaryOp::Neg` check (check_expr.rs:43-48) allows `Ty::Any` — should not produce false positive for unannotated lambda params. Lambda type checker (check_expr.rs:274-284) calls `resolve_type_expr(&p.ty)` where unannotated params produce `TypeExpr::Named(\"Any\")` → `Ty::Any`. Verify unary minus error is not type-checker-generated; if it is, fix is to ensure param type lookup returns `Ty::Any` before body is checked. R4 (scope management) — `symbols.pop_scope()` after body check must not lose lambda param bindings mid-inference. |\n\n## Source Code Key References\n\n### hir_to_mir.rs — Nested lambda bug (lower/hir_to_mir.rs:3807-3848)\n```rust\n// outer_syms: all live locals excluding lambda params\nlet outer_syms: Vec<(SymbolId, VReg)> = self.sym_to_vreg.iter()\n    .filter(|(sym, _)| !param_syms.contains(&sym.0))\n    .map(|(sym, vreg)| (*sym, *vreg))\n    .collect();\nfor &(sym, vreg) in &outer_syms {\n    self.current_stmts.push(MirInst::StoreGlobal { name: sym, value: boxed });\n}\n\n// State cleared — sym_to_vreg is EMPTY during inner lambda compilation\nlet saved_sym_to_vreg    = std::mem::take(&mut self.sym_to_vreg);    // line 3825\nlet saved_cell_override  = std::mem::take(&mut self.cell_override);  // line 3834\n\n// cell_override = outer_syms syms — but outer_syms is EMPTY for nested lambda\nself.cell_override = outer_syms.iter().map(|(sym, _)| sym.0).collect(); // line 3848\n// Fix: must also include symbols from saved_cell_override (outer lambda's globals)\n```\n\n### hir_to_mir.rs — Default arg capture bug (lower/hir_to_mir.rs:3853-3858)\n```rust\n// lambda params: fresh vregs only, no default evaluation\nlet lambda_params: Vec<(VReg, TypeId)> = params.iter().map(|(sym, par_ty)| {\n    let vreg = self.fresh_vreg();\n    self.sym_to_vreg.insert(*sym, vreg);\n    (vreg, *par_ty)   // p.default not accessible here (HIR Lambda has no defaults)\n}).collect();\n\n// Closure created with none_captures — outer vars not stored in closure\nlet none_captures = self.emit_none();\nself.current_stmts.push(MirInst::CallExtern {\n    name: \"mb_closure_new\".to_string(),\n    args: vec![name_vreg, fn_addr_vreg, none_captures],  // line 3904\n});\n// Fix: build captures list from outer_syms; for default args, evaluate default\n// expressions before entering inner compilation and pass as extra captures.\n```\n\n### ast_to_hir.rs — Default arg discarded (lower/ast_to_hir.rs:1460-1483)\n```rust\nlet hir_params: Vec<(SymbolId, TypeId)> = params.iter().map(|p| {\n    let pid = SymbolId(self.next_local_sym);\n    self.next_local_sym += 1;\n    self.local_names.insert(p.name.clone(), pid);\n    self.local_types.insert(pid, any_ty);\n    (pid, any_ty)   // p.default silently dropped\n}).collect();\nSome(HirExpr::Lambda { params: hir_params, body: Box::new(body_expr), ty })\n// Fix: either lower p.default here and carry in HIR, or add separate defaults pass\n```\n\n### types/check_expr.rs — Lambda type checking (types/check_expr.rs:274-284)\n```rust\nExpr::Lambda { params, body } => {\n    self.symbols.push_scope();\n    let param_types: Vec<TypeId> = params.iter().map(|p| {\n        let ty = self.resolve_type_expr(&p.ty); // \"Any\" -> Ty::Any for unannotated\n        let sym = self.symbols.define(p.name.clone(), SymbolKind::Parameter);\n        self.set_sym_type(sym.0, ty);  ty\n    }).collect();\n    let ret = self.check_expr(body);   // -x: Neg check allows Ty::Any\n    self.symbols.pop_scope();\n    self.tcx.intern(Ty::Fn { params: param_types, ret, variadic: false })\n}\n// Unary neg allows Any (check_expr.rs:43-48) so false-positive should not occur —\n// investigate actual error source if type-checker-generated vs codegen panic\n```\n\n### Failing fixtures\n- `tests/fixtures/conformance/language/lambda_edge_cases.py:4` — `compose = lambda f, g: lambda x: f(g(x))` (nested lambda)\n- `tests/fixtures/conformance/language/lambda_edge_cases.py:11` — `list(map(lambda x: x*2, [1,2,3]))` (lambda in map)\n- `tests/fixtures/conformance/data_structures/list_sort_lambda.py:12` — `c.sort(key=lambda x: -x)` (unary minus in lambda)\n- Default arg: no current fixture — new fixture needed for `[lambda x=i: x for i in range(3)]`",
+  "specs": [
+    {
+      "spec_id": "hir-to-mir",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/lower/hir-to-mir.md",
+      "source": "crates/cclab-mamba/lower/hir-to-mir.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "closure",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/runtime/closure.md",
+      "source": "crates/cclab-mamba/runtime/closure.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "conformance",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/testing/conformance.md",
+      "source": "crates/cclab-mamba/testing/conformance.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "ast-to-hir",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/lower/ast-to-hir.md",
+      "source": "crates/cclab-mamba/lower/ast-to-hir.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "hir",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/hir/hir.md",
+      "source": "crates/cclab-mamba/hir/hir.md",
+      "sections": ["overview", "changes"]
+    },
+    {
+      "spec_id": "type-checker",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-mamba/types/type-checker.md",
+      "source": "crates/cclab-mamba/types/type-checker.md",
+      "sections": ["overview", "changes"]
+    }
+  ]
+}

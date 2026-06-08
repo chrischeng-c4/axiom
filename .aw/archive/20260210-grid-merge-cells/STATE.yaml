@@ -1,0 +1,12 @@
+change_id: grid-merge-cells
+schema_version: '2.0'
+created_at: 2026-02-10T03:42:05.648947Z
+updated_at: 2026-02-10T04:07:53.558498Z
+phase: merge_approved
+iteration: 1
+last_action: begin_implementation
+session_id: null
+checksums: {}
+validations: []
+revision_counts: {}
+telemetry: null

@@ -1,0 +1,62 @@
+{
+  "group_id": "check-alignment-phase2",
+  "specs": [
+    {
+      "spec": "crates/cclab-sdd/logic/check-alignment.md",
+      "group": "spec-alignment",
+      "relevance": "high",
+      "key_requirements": "Phase 1 implementation that Phase 2 directly extends — defines spec_alignment module structure, violation model, CheckResult, CLI pattern. Data models SpecDocument, SpecSection, CodeBlock, Violation, ViolationKind, FileResult, CheckResult are the base types Phase 2 extends. Architecture: single spec_alignment::check() entry point, files under crates/cclab-sdd/src/spec_alignment/. CLI: cclab sdd check-alignment [path] --json, exit 0/1."
+    },
+    {
+      "spec": "crates/cclab-sdd/interfaces/cli/commands.md",
+      "group": "cli",
+      "relevance": "high",
+      "key_requirements": "CLI command tree — Phase 2 extends check-alignment with --coverage flag. CLI handler pattern: cclab-sdd-cli/src/check_alignment.rs delegates to spec_alignment::check(). CLI → logic mapping table needs new row for coverage sub-mode."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/rust-symbol-analysis.md",
+      "group": "symbol-analysis",
+      "relevance": "medium",
+      "key_requirements": "Defines symbol kinds (fn_item, struct_item, trait_item, impl_item) extracted by daemon's symbol index. Phase 2 queries the daemon's pre-built symbol index for these symbol types to perform coverage mapping."
+    },
+    {
+      "spec": "crates/cclab-sdd/interfaces/lens/lens-cli-subcommands.md",
+      "group": "daemon",
+      "relevance": "medium",
+      "key_requirements": "Defines DaemonClient::for_workspace(root), client.symbols(file), client.index_status() with is_ready flag. R1: ensure_daemon_ready pattern (DaemonClient::for_workspace(), index_status().is_ready, 30s timeout). Phase 2's daemon interaction requires querying DaemonClient::symbols(file)."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/lens-index-storage.md",
+      "group": "daemon",
+      "relevance": "low",
+      "key_requirements": "Storage path resolution: R1 ({project_root}/cclab/.index/ storage root), R2 (path canonicalization), R3 (SHA256 hashing), R4 (module index separation). Background context for where daemon stores its index."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/code-analysis-service-v2.md",
+      "group": "symbol-analysis",
+      "relevance": "low",
+      "key_requirements": "Multi-language tree-sitter support (R1) — background context that language parsers exist. Fast-path AST-only (R6) — pattern reference only."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/state-machine.md",
+      "group": "workflow",
+      "relevance": "low",
+      "key_requirements": "Workflow context: Phase 2 is a standalone library/CLI feature — workflow integration is Phase 3 (#1142)."
+    },
+    {
+      "spec": "crates/cclab-sdd/logic/scope-resolution.md",
+      "group": "config",
+      "relevance": "low",
+      "key_requirements": "resolve_spec_dir() used to canonicalize spec paths from @spec annotations against cclab/specs/ root."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "check-alignment-phase2",
+      "action": "modify",
+      "main_spec_ref": "crates/cclab-sdd/logic/check-alignment.md",
+      "source": "crates/cclab-sdd/logic/check-alignment.md",
+      "sections": ["overview", "schema", "logic", "dependency", "interaction", "cli", "test-plan", "changes"]
+    }
+  ]
+}

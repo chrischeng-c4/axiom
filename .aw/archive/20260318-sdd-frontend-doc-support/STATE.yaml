@@ -1,0 +1,88 @@
+change_id: sdd-frontend-doc-support
+schema_version: '2.0'
+created_at: 2026-03-17T10:16:02.657044Z
+updated_at: 2026-03-18T08:39:03.975101Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:sdd-frontend-doc-artifacts: 1
+current_task_id: sdd-frontend-doc-support-spec
+task_revisions:
+  sdd-frontend-doc-support-spec: 1
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.42
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 131498
+    timestamp: 2026-03-18T06:24:01.806443Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: gemini-3-flash-preview
+    tokens_in: 4259449
+    tokens_out: 17300
+    cost_usd: null
+    duration_ms: 785885
+    timestamp: 2026-03-18T06:55:28.976611Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: gpt-5.4
+    tokens_in: 2519874
+    tokens_out: 16744
+    cost_usd: null
+    duration_ms: 414747
+    timestamp: 2026-03-18T07:04:44.857399Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 205971
+    timestamp: 2026-03-18T07:45:33.598335Z
+  - step: review_impl_sdd-frontend-doc-support-spec
+    sdd_version: 0.3.41
+    model: gpt-5.4
+    tokens_in: 5022883
+    tokens_out: 19799
+    cost_usd: null
+    duration_ms: 442353
+    timestamp: 2026-03-18T07:53:09.174903Z
+  total_cost_usd: 0.0
+  total_tokens_in: 11802206
+  total_tokens_out: 53843
+dag:
+  issues:
+  - number: 897
+    title: 'feat(sdd): add wireframe YAML DSL for frontend interface specs'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 898
+    title: 'feat(sdd): support user-facing doc as change artifact'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  pre_clarifications:
+  - sdd-frontend-doc-artifacts
+  reference_context:
+  - sdd-frontend-doc-artifacts
+  change_implementation: []
+  post_clarifications:
+  - sdd-frontend-doc-artifacts
+  change_spec: []

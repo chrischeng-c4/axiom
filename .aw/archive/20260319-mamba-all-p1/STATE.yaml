@@ -1,0 +1,525 @@
+change_id: mamba-all-p1
+schema_version: '2.0'
+created_at: 2026-03-19T02:53:57.628054Z
+updated_at: 2026-03-19T07:53:05.436965Z
+phase: change_implementation_created
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+revision_counts:
+  ref_ctx:stdlib-system: 1
+  ref_ctx:class-features: 1
+  ref_ctx:compiler-infrastructure: 1
+  ref_ctx:syntax-features: 1
+  ref_ctx:async-generators: 1
+  ref_ctx:data-structures: 1
+  ref_ctx:stdlib-io-networking: 1
+  ref_ctx:stdlib-introspection: 1
+  ref_ctx:exception-handling: 1
+  ref_ctx:repl: 1
+current_task_id: mamba-all-p1-spec
+task_revisions: {}
+telemetry:
+  calls:
+  - step: restructure_input
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 302014
+    timestamp: 2026-03-19T02:59:23.994454Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 89876
+    timestamp: 2026-03-19T03:18:35.243045Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 214654
+    timestamp: 2026-03-19T03:22:31.750952Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 123532
+    timestamp: 2026-03-19T03:25:01.191266Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 123379
+    timestamp: 2026-03-19T03:27:35.217395Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 235652
+    timestamp: 2026-03-19T03:31:47.374078Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 117887
+    timestamp: 2026-03-19T03:35:36.302188Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 300616
+    timestamp: 2026-03-19T03:37:18.408273Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 210615
+    timestamp: 2026-03-19T03:41:15.475045Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 177502
+    timestamp: 2026-03-19T03:44:32.879795Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 80017
+    timestamp: 2026-03-19T03:46:08.195918Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 188057
+    timestamp: 2026-03-19T03:49:25.500865Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 75626
+    timestamp: 2026-03-19T03:52:32.321989Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 285954
+    timestamp: 2026-03-19T03:54:24.043553Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 197569
+    timestamp: 2026-03-19T03:57:50.968625Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 187245
+    timestamp: 2026-03-19T04:03:54.191523Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 454877
+    timestamp: 2026-03-19T04:05:43.855493Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 80396
+    timestamp: 2026-03-19T04:07:17.598616Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 192551
+    timestamp: 2026-03-19T04:10:39.947944Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 123588
+    timestamp: 2026-03-19T04:12:56.879529Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 101761
+    timestamp: 2026-03-19T04:14:54.891742Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 183231
+    timestamp: 2026-03-19T04:18:12.447542Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 118218
+    timestamp: 2026-03-19T04:20:24.610205Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 351970
+    timestamp: 2026-03-19T04:26:27.199600Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 492039
+    timestamp: 2026-03-19T04:34:56.160080Z
+  - step: review_reference_context
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 276981
+    timestamp: 2026-03-19T04:40:58.034818Z
+  - step: create_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 373076
+    timestamp: 2026-03-19T04:41:22.071167Z
+  - step: revise_reference_context
+    sdd_version: 0.3.41
+    model: claude-haiku-4-5
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 129541
+    timestamp: 2026-03-19T04:43:48.066048Z
+  - step: write_implementation_diff
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 188868
+    timestamp: 2026-03-19T05:10:46.986401Z
+  - step: begin_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 1257038
+    timestamp: 2026-03-19T05:11:16.257938Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 8784149
+    timestamp: 2026-03-19T07:40:16.533262Z
+  - step: revise_change_implementation
+    sdd_version: 0.3.41
+    model: claude-sonnet-4-6
+    tokens_in: null
+    tokens_out: null
+    cost_usd: null
+    duration_ms: 242648
+    timestamp: 2026-03-19T07:50:45.121749Z
+  total_cost_usd: 0.0
+  total_tokens_in: 0
+  total_tokens_out: 0
+dag:
+  issues:
+  - number: 652
+    title: 'Add native stdlib: atexit — exit handler registration'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 653
+    title: 'Add native stdlib: gc — garbage collector interface'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 654
+    title: 'Add native stdlib: types — dynamic type creation utilities'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 655
+    title: 'Add native stdlib: importlib — import machinery'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 656
+    title: 'Add native stdlib: codecs — codec registry and base classes'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 657
+    title: 'Add native stdlib: errno — standard errno system symbols'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 658
+    title: 'Add native stdlib: selectors — high-level I/O multiplexing'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 661
+    title: 'Add native stdlib: ssl — TLS/SSL wrapper for socket objects'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 662
+    title: 'Add native stdlib: urllib — URL handling modules'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 663
+    title: 'Add native stdlib: email — email handling package'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 664
+    title: 'Add native stdlib: multiprocessing — process-based parallelism'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 665
+    title: 'Add native stdlib: concurrent.futures — async execution'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 666
+    title: 'Add native stdlib: tracemalloc — trace memory allocations'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 667
+    title: 'Add native stdlib: dis — bytecode disassembler'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 668
+    title: 'Add native stdlib: ast — abstract syntax tree'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 669
+    title: 'Add native stdlib: tokenize — tokenizer for Python source'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 755
+    title: 'Py3.12 conformance: Exception hierarchy'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 756
+    title: 'Py3.12 conformance: Generator & iterator protocol'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 759
+    title: 'Py3.12 conformance: Data structure ops — list, dict, set, tuple, str, bytes'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 830
+    title: PEP 695 type parameter syntax — full generics support
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 831
+    title: 'Dict literal unpacking — {**d1, **d2, key: val} syntax'
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 832
+    title: Parenthesized with statements (PEP 617) — multi-context managers
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 834
+    title: Exception chaining — __cause__, __context__, suppress_context
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 835
+    title: List/tuple slicing with step — a[::2], a[::-1]
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 837
+    title: Incremental compilation and module caching
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 838
+    title: REPL — interactive Mamba shell
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 840
+    title: Error diagnostics quality — rich compiler messages with suggestions
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 845
+    title: Star expressions — *a, b = [1, 2, 3] extended unpacking
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 846
+    title: Global and nonlocal statements
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 847
+    title: Decorator arguments and chaining — @decorator(args) and stacked decorators
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 848
+    title: String escape sequences — full Unicode escapes, raw strings, byte strings
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 849
+    title: Class features — __slots__, __init_subclass__, properties, classmethods
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  - number: 850
+    title: Async features — async for, async with, async generators
+    depends: []
+    dependents: []
+    processed: false
+    blocked_by: []
+  current_index: 0
+  complete: false
+delegation_guard: null
+branch: null
+groups_progress:
+  change_implementation: []
+  pre_clarifications:
+  - async-generators
+  - class-features
+  - compiler-infrastructure
+  - data-structures
+  - exception-handling
+  - repl
+  - stdlib-introspection
+  - stdlib-io-networking
+  - stdlib-system
+  - syntax-features
+  post_clarifications:
+  - async-generators
+  - class-features
+  - compiler-infrastructure
+  - data-structures
+  - exception-handling
+  - repl
+  - stdlib-introspection
+  - stdlib-io-networking
+  - stdlib-system
+  - syntax-features
+  change_spec: []
+  reference_context:
+  - async-generators
+  - class-features
+  - compiler-infrastructure
+  - data-structures
+  - exception-handling
+  - repl
+  - stdlib-introspection
+  - stdlib-io-networking
+  - stdlib-system
+  - syntax-features

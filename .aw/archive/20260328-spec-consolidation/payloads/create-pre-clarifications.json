@@ -1,0 +1,26 @@
+{
+  "change_id": "spec-consolidation",
+  "group_id": "spec-consolidation-enforcement",
+  "answers": [
+    {
+      "question_id": "Q1",
+      "question": "Migration tool scope — include existing scattered specs migration?",
+      "answer": "Include all. Migration for all scattered crates (cclab-agent, cclab-runtime, cclab-jet, cclab-lens, cclab-qc, cclab-server, etc.) is in scope for this change, including the 4 loose root files in cclab-sdd."
+    },
+    {
+      "question_id": "Q2",
+      "question": "Validation failure mode — hard error or warning?",
+      "answer": "Hard error. validate-spec-structure, spec_plan path validation, and merge-time validation all block the pipeline on failure. No lenient mode."
+    },
+    {
+      "question_id": "Q3",
+      "question": "scaffold-spec output format?",
+      "answer": "Create directory structure + README.md at spec root. No .gitkeep or stub files."
+    },
+    {
+      "question_id": "Q4",
+      "question": "Spec directory listing format in reference_context prompt?",
+      "answer": "ASCII tree format (like `tree` output), paths only — no content summaries. Human and agent readable."
+    }
+  ]
+}

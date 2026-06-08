@@ -1,0 +1,66 @@
+{
+  "project_path": "/Users/chrischeng/projects/wt/sdd",
+  "change_id": "1141",
+  "spec_id": "check-alignment-phase2",
+  "verdict": "REVIEWED",
+  "summary": "All hard checklist items pass: 27 new #[test] functions in spec_alignment_phase2_tests.rs all pass; all 23 Phase 1 spec_alignment_tests still pass with no regressions; all high-priority requirements (R14, R15, R18, R19, R21) are fully implemented; R16 and R17 (medium priority, daemon-dependent) are implemented as explicit stubs with correct graceful-degradation path (warn + skip). Soft issues: (1) 8 Test Plan cases absent — 4 CLI integration tests for R21 not blocked by daemon, and 4 functional tests for R16/R17 stub; (2) _schema_violations from schema_struct::check() silently discarded in check.rs — will silently no-op when stub is wired up; (3) R20 applied to create_change_impl.rs (inline Rust prompt) while spec changes section references non-existent crates/cclab-sdd/src/tools/prompts/create_change_implementation.md; (4) check_daemon_ready() uses socket-file existence rather than IndexStatus.is_ready; (5) redundant file reads per spec in check_with_coverage (same file read by check_single_file, inline parse, and requirement_coverage::check()).",
+  "checklist_results": [
+    {
+      "item": "Code matches all spec requirements",
+      "passed": true,
+      "note": "R14 (annotation parsing) fully implemented in annotations.rs with all 5 comment syntaxes (// # -- <!-- /*). R15 (coverage analysis) fully implemented in coverage.rs. R16 (unspecced function detection) and R17 (schema→struct validation) are explicit stubs returning Vec::new() — spec-sanctioned: R16 says 'graceful degradation if daemon not ready', R17 says 'only active when daemon index is ready'. R18 (requirement↔scenario) fully implemented in requirement_coverage.rs. R19 (nested schema fix) fully implemented in logical_rules.rs with check_nested_schema_conflicts() covering result.schema and params[*].schema for required, field-name near-match, and property type conflicts. R20 (prompt update) implemented in create_change_impl.rs. R21 (--coverage, --source-dir CLI flags) fully implemented in check_alignment.rs and commands.rs."
+    },
+    {
+      "item": "If spec has Test Plan section: diff contains at least one #[test] function",
+      "passed": true,
+      "note": "Spec has ## Test Plan with 25 test cases. Implementation created crates/cclab-sdd/tests/spec_alignment_phase2_tests.rs with 27 #[test] functions. All 27 tests pass (cargo test -p cclab-sdd --test spec_alignment_phase2_tests: 27 passed; 0 failed)."
+    },
+    {
+      "item": "Existing tests still pass (no regressions introduced)",
+      "passed": true,
+      "note": "cclab-sdd-cli: 59 passed, 0 failed. cclab-sdd: 2120 passed, 4 failed — but all 4 failures are pre-existing from the project-conductor merge (1825b479): test_sdd_config_validate (models/change.rs not touched), test_watch_bridge_detects_changes (server/watch_bridge.rs not touched), test_cli_hints_absent_for_non_mainthread_executor (create_change_impl.rs was modified by adding ## Spec Annotations section which does not contain 'Code intelligence' — the failing assertion), test_artifact_writes_skipped (create_post_clarifications.rs not touched). None of these failures correlate with the 1141 diff."
+    },
+    {
+      "item": "Code quality and readability",
+      "passed": true,
+      "note": "New modules are clearly structured with inline doc comments and explicit Phase 2 stub markers. Minor issues: (1) check_nested_schema_conflicts uses &[(&str, Box<dyn Fn(...)>)] which triggers a compiler warning about unsized coercions — idiomatic Rust would use a closure array or a helper enum; (2) three separate file reads per spec document in requirement_coverage::check() (extract_requirements, extract_scenario_references, extract_test_plan_covers each re-read the file)."
+    },
+    {
+      "item": "Error handling completeness",
+      "passed": true,
+      "note": "File-read errors silently skipped via continue/empty return, consistent with Phase 1 style. Daemon-not-ready path emits a warning to stderr and skips daemon-dependent checks as specified."
+    },
+    {
+      "item": "Performance considerations",
+      "passed": true,
+      "note": "Minor: requirement_coverage::check() reads each spec file three times. At typical spec directory sizes this is negligible, but refactoring to read once and pass content to the three extraction functions would be cleaner."
+    },
+    {
+      "item": "Documentation where needed",
+      "passed": true,
+      "note": "All new public functions and modules have doc comments. Stubs clearly document their Phase 2 stub status and describe what will be implemented when daemon is available."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "MEDIUM",
+      "description": "8 test plan cases absent from test file. Missing: test_unspecced_function_detected and test_unspecced_private_fn_ignored (R16 — stub, no meaningful test possible without daemon); test_schema_struct_match and test_schema_struct_missing_field (R17 — stub, same reason); test_cli_coverage_flag_runs_phase2, test_cli_coverage_json_includes_report, test_cli_coverage_source_dir_flag, test_cli_coverage_daemon_not_ready (R21 — CLI integration tests). The CLI integration tests are not technically blocked by daemon requirements and should be added.",
+      "recommendation": "Add CLI integration tests for R21 that invoke check_with_coverage directly and verify: (a) coverage report section is present in output, (b) JSON output includes 'coverage' object, (c) --source-dir limits scan scope, (d) daemon-not-ready path emits warning and skips unspecced_functions/schema_struct checks. Tests for R16/R17 can be added as stubs marked #[ignore] until daemon is available."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "_schema_violations silently discarded in check.rs (line 309): let (_schema_violations, _schema_mismatches) = schema_struct::check(path, daemon_ready). Even when schema_struct::check() is eventually implemented to return real violations, they will be silently dropped and never appear in the file results.",
+      "recommendation": "Either integrate schema violations into the per-file results (extend the relevant FileResult with the violations), or explicitly document why they are dropped. Tracking: if schema mismatches are only surfaced in the coverage report rather than per-file violations, the orphan_requirements model for the coverage report should be extended with a schema_struct_mismatches field."
+    },
+    {
+      "severity": "LOW",
+      "description": "R20 file path mismatch. Spec changes section lists path: crates/cclab-sdd/src/tools/prompts/create_change_implementation.md (action: modify), but that file does not exist — the prompt is built inline in create_change_impl.rs. The change was correctly applied to the Rust source, but the spec's changes section references a non-existent file.",
+      "recommendation": "Update the spec changes section to list the correct file (crates/cclab-sdd/src/tools/create_change_impl.rs) or acknowledge the spec change listing was aspirational."
+    },
+    {
+      "severity": "LOW",
+      "description": "Triple (actually quadruple) file read per spec file in check_with_coverage. Each iteration of the file loop reads the same file via: (1) check_single_file() at check.rs:110, (2) inline read at check.rs:61 for parser::parse, (3) requirement_coverage::check() re-reads doc.path at requirement_coverage.rs:23 despite the content already being available in the caller, (4) coverage::analyze() calls extract_requirement_ids() which reads the file again. Only reads (1) and (2) are justifiable; (3) and (4) are redundant.",
+      "recommendation": "Pass the already-read content string into requirement_coverage::check() (e.g., check_with_content(doc, content)) to eliminate read #3. In coverage::analyze(), accept pre-computed requirement maps instead of re-reading each spec file. At typical spec directory sizes this is negligible but would clean up the I/O pattern."
+    }
+  ]
+}

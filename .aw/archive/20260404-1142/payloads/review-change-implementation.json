@@ -1,0 +1,29 @@
+{
+  "project_path": "/Users/chrischeng/projects/wt/sdd",
+  "change_id": "1142",
+  "spec_id": "artifact-tools-phase3",
+  "verdict": "REVIEWED",
+  "issues": [
+    {
+      "severity": "soft",
+      "location": "crates/cclab-sdd/src/tools/create_change_spec.rs:373-316",
+      "description": "Missing direct unit tests for the post-write alignment path in execute_artifact(). The `create_complete`-gated alignment check block (lines 373–316) has no #[test] covering: (a) format violation triggers revert+error, (b) coverage gaps produce alignment_warnings in response, (c) create_complete:false skips check. Tests exist for review_change_impl.rs/review_change_spec.rs build_alignment_report(), but those cover a different code path. The core artifact-tools-phase3 requirement (post-write validation) lacks direct test coverage."
+    },
+    {
+      "severity": "soft",
+      "location": "crates/cclab-sdd/src/tools/create_change_spec.rs:373",
+      "description": "Alignment check is gated on `common::is_create_complete(&final_content)` (i.e., only runs when create_complete:true is set in frontmatter). The spec says 'after writing section content to disk, call spec_alignment::check()' with no gating condition mentioned. While the rationale (avoiding false-positive TODO violations on incomplete specs) is valid and noted in a comment, this is an undocumented divergence from the spec description."
+    },
+    {
+      "severity": "soft",
+      "location": "crates/cclab-sdd/src/tools/revise_change_spec.rs",
+      "description": "The spec lists action:modify for revise_change_spec.rs (same pattern as create_change_spec), but the file was not directly changed. The requirement is satisfied via pre-existing delegation: execute_artifact() at line 118-119 delegates entirely to create::execute_artifact(), so Phase 3 alignment checks apply implicitly. However, handle_revise_sub_state() at line 185 performs a direct std::fs::write when all sections are re-filled without any alignment check — this path is the workflow tool (not artifact tool) so it is outside the spec scope, but worth noting as an unguarded write."
+    },
+    {
+      "severity": "soft",
+      "location": "crates/cclab-sdd/src/tools/create_change_impl.rs:1104",
+      "description": "Pre-existing test failure: test_cli_hints_absent_for_non_mainthread_executor (line 1104) was already failing before Phase 3. The test asserts the prompt does NOT contain 'Code intelligence' for non-mainthread executors. Phase 3 only added @spec annotation text to the prompt — it did not modify the cli_hints gating logic — so this failure predates this change. Three other pre-existing failures also exist (test_sdd_config_validate, test_watch_bridge_detects_changes, test_artifact_writes_skipped) in files not touched by Phase 3."
+    }
+  ],
+  "summary": "Phase 3 artifact-tools integration is functionally correct. create_change_spec.rs correctly implements post-write alignment validation: format violations (is_format_violation()==true) revert the file and return error; coverage warnings (OrphanRequirement, IoError, SchemaStructMismatch) are collected as alignment_warnings in the success response. The ViolationKind::is_format_violation() classifier in models.rs correctly categorises all Phase 1 kinds. The revise_change_spec requirement is satisfied via pre-existing delegation. Additional changes (workflow/mod.rs, helpers.rs, review_change_impl.rs, review_change_spec.rs, create_change_merge.rs) implement R22-R27 correctly. All tests in changed files pass (create_change_spec: 11, review_change_impl: 11, review_change_spec: 7). Four pre-existing failures exist but are unrelated to this change. Main gaps: no direct unit tests for the execute_artifact alignment path, and an undocumented create_complete gating condition."
+}

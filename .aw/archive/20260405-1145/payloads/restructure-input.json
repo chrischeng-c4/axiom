@@ -1,0 +1,16 @@
+{
+  "groups": [
+    {
+      "id": "sdd-docs-phase",
+      "title": "SDD docs generation phase — config, state machine, CRR",
+      "issues": [1145],
+      "crates": ["cclab-sdd", "cclab-sdd-cli"],
+      "requirements": "Add docs generation phase to SDD workflow: (1) Parse [sdd.docs] config with targets array from cclab/config.toml; (2) Extend state machine with DocsCheck/DocsCreated/DocsReviewed states between ChangeImplementationReviewed and ChangeMergeCreated; (3) Decision tree: config exists → crate match → run docs CRR, otherwise skip to merge; (4) Doc-writer agent creates/updates guide sections using change specs + CLI specs + config specs + scenarios as source material; (5) Doc-reviewer agent reviews for accuracy, completeness, audience fit; (6) Full CRR cycle same as implementation.",
+      "questions": [
+        "Should the doc-writer agent use a dedicated agent type (sdd-doc-writer) or reuse existing agent types?",
+        "For the review checklist: should doc accuracy be verified against actual CLI output (run commands), or just against spec content?",
+        "Should docs be committed as part of the change archive, or written directly to output_dir in the repo?"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "change_id": "sdd-codegen-testgen",
+  "group_id": "testgen-requirementplus",
+  "spec_plan": {
+    "sections": [
+      "overview",
+      "design-token",
+      "changes"
+    ],
+    "crates": [
+      "cclab-sdd",
+      "cclab-probe"
+    ]
+  },
+  "specs": [
+    {
+      "path": "specs/cclab-sdd/README.md",
+      "relevance": "high",
+      "reason": "Provides context on the SDD workflow phases and state machine, essential for understanding where test generation CLI fits in the overall SDD lifecycle"
+    },
+    {
+      "path": "specs/cclab-sdd/sdd-cli.md",
+      "relevance": "high",
+      "reason": "Defines the CLI command structure for SDD operations including generate subcommands; directly relevant to `cclab sdd gen test` command design"
+    },
+    {
+      "path": "specs/cclab-probe/README.md",
+      "relevance": "high",
+      "reason": "Overview of test framework including the `generate test` and `generate bench` features that testgen-requirementplus will extend for spec-based generation"
+    },
+    {
+      "path": "specs/cclab-probe/10-components.md",
+      "relevance": "high",
+      "reason": "Details the generator component (crates/cclab-probe/src/cli/generate.rs) which is the foundation for test scaffold generation"
+    },
+    {
+      "path": "specs/cclab-probe/00-architecture.md",
+      "relevance": "medium",
+      "reason": "Architecture overview of test framework showing Heavy Rust, Thin Python pattern and CLI module structure"
+    },
+    {
+      "path": "specs/cclab-probe/20-data-flows.md",
+      "relevance": "medium",
+      "reason": "Data flow diagrams showing how tests are generated, discovered, and executed - provides context for generation workflow"
+    },
+    {
+      "path": "specs/cclab-probe/30-implementation-details.md",
+      "relevance": "medium",
+      "reason": "Implementation patterns for template generation, file structure, and design patterns (Heavy Rust, Thin Python) applicable to testgen implementation"
+    },
+    {
+      "path": "specs/cclab-probe/40-state-machines.md",
+      "relevance": "medium",
+      "reason": "State machines for discovery and execution lifecycle - provides context on how generated tests fit into the overall execution pipeline"
+    },
+    {
+      "path": "specs/cclab-probe/state-machine.md",
+      "relevance": "medium",
+      "reason": "Test execution state machines defining the lifecycle that generated test scaffolds will follow"
+    },
+    {
+      "path": "specs/cclab-probe/expect-api-reference.md",
+      "relevance": "low",
+      "reason": "Background on assertion API - relevant for understanding what assertion methods generated tests should include in their scaffolds"
+    },
+    {
+      "path": "specs/cclab-probe/fixture-di-integration.md",
+      "relevance": "low",
+      "reason": "Background on fixture dependency injection - relevant for understanding how generated tests might include fixture injection patterns"
+    }
+  ]
+}

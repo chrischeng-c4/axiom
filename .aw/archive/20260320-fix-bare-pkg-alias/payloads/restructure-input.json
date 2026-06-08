@@ -1,0 +1,14 @@
+{
+  "groups": [
+    {
+      "id": "jet-resolver-bare-pkg-alias",
+      "issues": [957, 883],
+      "requirements": "Extend `crates/cclab-jet/src/pkg_manager/resolver.rs` to handle bare package names as implicit npm alias version specs. In package.json / package-lock.json, a version field like `\"@storybook/expect\": \"storybook-jest\"` is a valid npm pattern meaning 'install storybook-jest instead' (equivalent to `npm:storybook-jest@latest`). Jet's current resolver only handles the explicit `npm:pkg@version` form via `resolve_alias()`; it errors with 'Failed to parse version range' when encountering a bare name. The fix must: (1) detect when a version spec fails semver parsing AND is a syntactically valid npm package name, (2) treat it as `npm:{name}@latest`, (3) delegate to the existing alias resolution path. This change is additive on top of the resolver improvements already in #883 (parallel BFS, conflict resolution, `||` ranges, pre-release, space-separated ranges, transitive npm aliases, optional deps).",
+      "questions": [
+        "Is #883 already merged into the main branch, or does this change need to include those fixes as well? The issue says 'All fixes implemented and verified' but is still open — clarify whether #883 should be treated as landed context or as pending implementation.",
+        "What is the validation threshold for recognizing a bare version spec as a package name? Should we use a strict npm package name regex (e.g. `^(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*$`), or a looser heuristic (anything that fails semver parse and contains no spaces)?",
+        "When the bare name is resolved as `npm:{name}@latest`, should the lockfile store the resolved concrete version (e.g. `storybook-jest@1.2.3`) or preserve the alias form? What is the expected lockfile output?"
+      ]
+    }
+  ]
+}

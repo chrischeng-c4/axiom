@@ -1,0 +1,37 @@
+change_id: nucleus-pyo3-migration
+schema_version: '2.0'
+created_at: 2026-02-01T15:46:40.190073Z
+updated_at: 2026-02-02T03:14:10.969757Z
+phase: archived
+iteration: 1
+last_action: archive
+session_id: null
+checksums:
+  specs/nucleus-architecture.md:
+    hash: sha256:6708c30416acbe24e4836e54a3329f5f5274d037be11bbcdd23fb1a8400f3907
+    validated_at: 2026-02-02T02:20:27.156609Z
+  tasks.md:
+    hash: sha256:b861305fb6cea3f826e5ea9dc354f5f406f308bec6c8df7dab9f8d27d7c158f1
+    validated_at: 2026-02-02T02:20:27.155806Z
+  specs/cclab-nucleus/nucleus-architecture.md:
+    hash: sha256:24efc00fff72d36b99d2d8eba695581e9b0ac0d384d22b83876e8e62b8209afc
+    validated_at: 2026-02-02T02:20:27.156228Z
+  proposal.md:
+    hash: sha256:90bad794df79629ade5f86d8ad522d70640af94ad384b1914736d7c2a48fd0f2
+    validated_at: 2026-02-02T02:20:27.155625Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-02-02T02:20:27.155068Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

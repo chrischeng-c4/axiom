@@ -1,0 +1,348 @@
+# Per-section-type flag descriptions and guidance for CLI generators.
+#
+# Used by `sdd spec gen --type <type>` to provide context-aware hints
+# to the agent filling each section.
+#
+# Fields:
+#   flags:      CLI flags relevant to this section type
+#   guidance:   What the agent should write in this section
+#   lang:       Default content language (overrides SectionType default)
+#
+# All 17 section types are listed below in fill-order.
+
+sections:
+  # ─── Core Prose (Wave 1) ──────────────────────────────────────────────
+
+  overview:
+    flags:
+      - name: sdd-id
+        desc: "Change ID to contextualize this overview"
+      - name: sdd-refs
+        desc: "Comma-separated spec IDs to reference for context"
+    guidance: |
+      Write markdown prose describing:
+      1. What this spec covers (scope)
+      2. Why it exists (motivation / problem being solved)
+      3. High-level approach (not implementation details)
+      Minimum 50 characters. No code fences. Pure markdown.
+
+  changes:
+    flags:
+      - name: sdd-id
+        desc: "Change ID for the file list header comment"
+      - name: sdd-refs
+        desc: "Spec IDs this change depends on"
+    guidance: |
+      List all files that will be created, modified, or deleted.
+      Use YAML format inside a fenced code block:
+        ```yaml
+        files:
+          - path: crates/my-crate/src/foo.rs
+            action: CREATE  # CREATE | MODIFY | DELETE
+            desc: Short description of what changes
+        ```
+      Group related files together. Be specific about paths.
+
+  # ─── Behavioral (Wave 1) ──────────────────────────────────────────────
+
+  requirements:
+    flags:
+      - name: sdd-id
+        desc: "Change ID injected as <!-- sdd-id: ... --> comment"
+      - name: sdd-refs
+        desc: "Related spec IDs injected as <!-- sdd-refs: ... --> comment"
+    guidance: |
+      Write formal requirements using ### R1:, ### R2:, etc.
+      Each requirement should have:
+      - A clear title (### R1: Title)
+      - A description of what must be true
+      - **Priority**: high | medium | low
+
+  scenarios:
+    flags:
+      - name: sdd-id
+        desc: "Change ID injected as <!-- sdd-id: ... --> comment"
+      - name: sdd-refs
+        desc: "Related spec IDs injected as <!-- sdd-refs: ... --> comment"
+    guidance: |
+      Write BDD acceptance scenarios:
+        ### Scenario: Name
+        **GIVEN** precondition
+        **WHEN** action is taken
+        **THEN** expected outcome
+      Cover happy path, error paths, and edge cases.
+
+  test_plan:
+    flags:
+      - name: sdd-id
+        desc: "Change ID placed in Mermaid Plus frontmatter id field"
+      - name: sdd-refs
+        desc: "Requirement spec IDs placed in Mermaid Plus frontmatter refs"
+    guidance: |
+      Define test cases using Mermaid+ requirementDiagram.
+      Output format:
+        ```mermaid
+        ---
+        id: {sdd_id}
+        refs:
+          - $ref: "{ref}"
+        ---
+        requirementDiagram
+          requirement R1 { ... }
+          element TestCase1 { type: test }
+          TestCase1 - verifies -> R1
+        ```
+      Link tests to requirements via type="verifies".
+
+  # ─── Mermaid Diagrams (Wave 2) ────────────────────────────────────────
+
+  sequence:
+    flags:
+      - name: sdd-id
+        desc: "Change ID placed in Mermaid Plus frontmatter id field"
+      - name: sdd-refs
+        desc: "Related spec IDs placed in Mermaid Plus frontmatter refs"
+    guidance: |
+      Draw a Mermaid Plus sequenceDiagram showing interactions between
+      actors/components over time. Output format:
+        ```mermaid
+        ---
+        id: {sdd_id}
+        refs:
+          - $ref: "{ref}"
+        ---
+        sequenceDiagram
+          participant A as Actor
+          A->>B: Request
+          B-->>A: Response
+        ```
+      Focus on key request-response flows.
+
+  flowchart:
+    flags:
+      - name: sdd-id
+        desc: "Change ID placed in Mermaid Plus frontmatter id field"
+      - name: sdd-refs
+        desc: "Related spec IDs placed in Mermaid Plus frontmatter refs"
+    guidance: |
+      Draw a Mermaid Plus flowchart showing decision logic or data flow.
+      Output format:
+        ```mermaid
+        ---
+        id: {sdd_id}
+        ---
+        flowchart TD
+          A[Start] --> B{Decision?}
+          B -->|Yes| C[Action]
+        ```
+      Model conditional branches and decision nodes
+      (not states — use state for FSMs).
+
+  class:
+    flags:
+      - name: sdd-id
+        desc: "Change ID placed in Mermaid Plus frontmatter id field"
+      - name: sdd-refs
+        desc: "Related spec IDs placed in Mermaid Plus frontmatter refs"
+    guidance: |
+      Draw a Mermaid Plus classDiagram showing type hierarchy,
+      trait implementations, and composition/dependency relationships.
+      Output format:
+        ```mermaid
+        ---
+        id: {sdd_id}
+        ---
+        classDiagram
+          class ComponentA { +method_a() }
+          ComponentA --> ComponentB : depends
+        ```
+
+  state:
+    flags:
+      - name: sdd-id
+        desc: "Change ID placed in Mermaid Plus frontmatter id field"
+      - name: sdd-refs
+        desc: "Related spec IDs placed in Mermaid Plus frontmatter refs"
+    guidance: |
+      Draw a Mermaid Plus stateDiagram-v2 showing the finite state machine.
+      Output format:
+        ```mermaid
+        ---
+        id: {sdd_id}
+        ---
+        stateDiagram-v2
+          [*] --> Idle
+          Idle --> Processing : start
+          Processing --> Done : complete
+        ```
+      Use state/transition notation for lifecycle models.
+
+  erd:
+    flags:
+      - name: sdd-id
+        desc: "Change ID placed in Mermaid Plus frontmatter id field"
+      - name: sdd-refs
+        desc: "Related spec IDs placed in Mermaid Plus frontmatter refs"
+    guidance: |
+      Draw a Mermaid Plus erDiagram showing entities, fields, and
+      cardinality relationships (1:N, M:N, etc.). Output format:
+        ```mermaid
+        ---
+        id: {sdd_id}
+        ---
+        erDiagram
+          ENTITY_A { string id PK }
+          ENTITY_A ||--o{ ENTITY_B : has
+        ```
+
+  mindmap:
+    flags:
+      - name: sdd-id
+        desc: "Change ID placed in Mermaid Plus frontmatter id field"
+      - name: sdd-refs
+        desc: "Related spec IDs placed in Mermaid Plus frontmatter refs"
+    guidance: |
+      Draw a Mermaid Plus mindmap for hierarchical decomposition.
+      Output format:
+        ```mermaid
+        ---
+        id: {sdd_id}
+        ---
+        mindmap
+          root((Root Topic))
+            Branch A
+              Leaf A1
+        ```
+      Use for feature scope, taxonomy, or structural overview.
+
+  # ─── API Specs (Wave 3) ───────────────────────────────────────────────
+
+  openapi:
+    flags:
+      - name: sdd-id
+        desc: "Change ID injected as x-sdd.id in info section"
+      - name: sdd-refs
+        desc: "Related spec IDs injected as x-sdd.refs in info section"
+    guidance: |
+      Write an OpenAPI 3.1 specification in YAML inside a fenced
+      code block. Include x-sdd metadata:
+        ```yaml
+        openapi: "3.1.0"
+        info:
+          title: "API Title"
+          version: "1.0.0"
+          x-sdd:
+            id: "{sdd_id}"
+            refs:
+              - "{ref}"
+        paths:
+          /resource:
+            get: ...
+        ```
+      Focus on paths, components/schemas, and responses.
+
+  openrpc:
+    flags:
+      - name: sdd-id
+        desc: "Change ID injected as x-sdd.id in info section"
+      - name: sdd-refs
+        desc: "Related spec IDs injected as x-sdd.refs in info section"
+    guidance: |
+      Write an OpenRPC 1.3 specification in JSON inside a fenced
+      code block. Include x-sdd metadata:
+        ```json
+        {
+          "openrpc": "1.3.2",
+          "info": {
+            "x-sdd": { "id": "{sdd_id}", "refs": ["{ref}"] }
+          },
+          "methods": [...]
+        }
+        ```
+      Define methods, params, and result schemas.
+
+  asyncapi:
+    flags:
+      - name: sdd-id
+        desc: "Change ID injected as x-sdd.id in info section"
+      - name: sdd-refs
+        desc: "Related spec IDs injected as x-sdd.refs in info section"
+    guidance: |
+      Write an AsyncAPI 2.6 specification in YAML inside a fenced
+      code block. Include x-sdd metadata:
+        ```yaml
+        asyncapi: "2.6.0"
+        info:
+          x-sdd:
+            id: "{sdd_id}"
+            refs:
+              - "{ref}"
+        channels:
+          events/topic:
+            publish:
+              message:
+                payload: ...
+        ```
+      Define channels, messages, and schemas.
+
+  serverless_workflow:
+    flags:
+      - name: sdd-id
+        desc: "Change ID injected as x-sdd.id at top level"
+      - name: sdd-refs
+        desc: "Related spec IDs injected as x-sdd.refs at top level"
+    guidance: |
+      Write a Serverless Workflow 0.8 specification in YAML inside
+      a fenced code block. Include x-sdd metadata:
+        ```yaml
+        specVersion: "0.8"
+        x-sdd:
+          id: "{sdd_id}"
+          refs:
+            - "{ref}"
+        start: InitState
+        states:
+          - name: InitState
+            type: operation
+        ```
+      Define states, transitions, and actions.
+
+  # ─── Frontend / Doc (Wave 4) ──────────────────────────────────────────
+
+  frontend:
+    flags:
+      - name: sdd-id
+        desc: "Change ID injected as _sdd.id in wireframe YAML"
+      - name: sdd-refs
+        desc: "Backend API spec IDs injected as _sdd.refs"
+    guidance: |
+      Describe the UI layout using wireframe YAML DSL.
+      Include _sdd metadata:
+        ```yaml
+        _sdd:
+          id: "{sdd_id}"
+          refs:
+            - "{ref}"
+        page: "Page Name"
+        layout: flex-column
+        sections:
+          - name: header
+            type: navbar
+          - name: main
+            type: content
+        ```
+      Define page structure, layout, and component hierarchy.
+
+  doc:
+    flags:
+      - name: sdd-id
+        desc: "Change ID injected as <!-- sdd-id: ... --> comment"
+      - name: sdd-refs
+        desc: "Related spec IDs injected as <!-- sdd-refs: ... --> comment"
+    guidance: |
+      Write user-facing documentation in markdown.
+      This is the change artifact that end-users will read.
+      Include:
+      - ### What Changed — user-perspective description
+      - ### How to Use — usage instructions
+      - ### Examples — concrete usage examples

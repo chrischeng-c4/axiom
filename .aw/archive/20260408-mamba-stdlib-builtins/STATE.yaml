@@ -1,0 +1,31 @@
+change_id: mamba-stdlib-builtins
+schema_version: '2.0'
+created_at: 2026-04-08T21:51:29.140799Z
+updated_at: 2026-04-08T23:57:16.508305Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: null
+revision_counts:
+  ref_ctx:stdlib-builtins-module: 1
+current_task_id: mamba-stdlib-builtins-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+agent: mamba-developer
+groups_progress:
+  post_clarifications:
+  - stdlib-builtins-module
+  change_implementation: []
+  reference_context:
+  - stdlib-builtins-module
+  pre_clarifications:
+  - stdlib-builtins-module
+  change_spec:
+  - stdlib-builtins-module

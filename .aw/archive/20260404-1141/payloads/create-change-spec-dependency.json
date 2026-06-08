@@ -1,0 +1,10 @@
+{
+  "project_path": "/Users/chrischeng/projects/wt/sdd",
+  "change_id": "1141",
+  "spec_id": "check-alignment-phase2",
+  "group_id": "check-alignment-phase2",
+  "section": "dependency",
+  "section_type": "dependency",
+  "main_spec_ref": "crates/cclab-sdd/logic/check-alignment.md",
+  "content": "```mermaid\nflowchart TD\n    subgraph spec_alignment[\"spec_alignment module\"]\n        check[\"check.rs\\n(entry point)\"]\n        annotations[\"annotations.rs\\n(@spec parser)\"]\n        coverage[\"coverage.rs\\n(coverage analysis)\"]\n        req_cov[\"requirement_coverage.rs\\n(R↔S check)\"]\n        schema_struct[\"schema_struct.rs\\n(Schema↔Struct)\"]\n        logical[\"logical_rules.rs\\n(extended nested)\"]\n        format[\"format_rules.rs\\n(unchanged)\"]\n        parser[\"parser.rs\\n(SpecDocument)\"]\n        models[\"models.rs\\n(extended types)\"]\n    end\n\n    subgraph external[\"External Dependencies\"]\n        daemon[\"DaemonClient\\n(cclab/.index/daemon.sock)\"]\n        lens[\"Lens symbol index\\n(pre-built by daemon)\"]\n        fs[\"Filesystem\\n(source + spec files)\"]\n    end\n\n    check --> format\n    check --> logical\n    check --> coverage\n    check --> req_cov\n    check --> schema_struct\n    check --> parser\n\n    coverage --> annotations\n    coverage --> daemon\n    coverage --> parser\n    schema_struct --> daemon\n    schema_struct --> parser\n\n    annotations --> fs\n    parser --> fs\n    daemon --> lens\n\n    check --> models\n    annotations --> models\n    coverage --> models\n    req_cov --> models\n    schema_struct --> models\n    logical --> models\n    format --> models\n```"
+}

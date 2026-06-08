@@ -1,0 +1,1 @@
+{"spec_id":"jet-remaining-issues-spec","verdict":"APPROVED","summary":"Resolver rewrite (+588L) fixes OR ranges, pre-release, platform filtering. Nx standalone scanner replaces CLI dependency. 370 tests pass.","issues":[]}

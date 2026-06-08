@@ -1,0 +1,14 @@
+{
+  "group_id": "jit-memory",
+  "answers": [
+    {
+      "question": "ObjectModule vs direct emission?",
+      "answer": "ObjectModule + loader. Use cranelift ObjectModule to produce in-memory Mach-O/ELF object, parse with `object` crate, load code/data sections into mmap(MAP_JIT) pages. Relocations handled by cranelift-module at compile time; only load-time symbol fixups needed. This is the wasmtime approach and avoids manual relocation patching."
+    },
+    {
+      "question": "Where to put the platform-specific JIT memory code?",
+      "answer": "Inline in cclab-mamba: src/codegen/cranelift/jit_memory.rs alongside jit.rs."
+    }
+  ],
+  "updated_requirements": "Replace cranelift-jit with ObjectModule-based JIT. Architecture: (1) Use cranelift ObjectModule to compile all functions into an in-memory object file (Mach-O on macOS, ELF on Linux). (2) Parse the object with the `object` crate to extract .text, .rodata sections and symbol table. (3) Allocate executable pages via mmap(MAP_JIT | MAP_ANONYMOUS | MAP_PRIVATE) on macOS aarch64, standard mmap on Linux. (4) Copy code sections, resolve external symbols (mb_* runtime functions) by patching GOT/relocation entries. (5) Make pages executable: pthread_jit_write_protect_np(1) on macOS, mprotect(PROT_READ|PROT_EXEC) on Linux. (6) Return entry point function pointer. (7) On drop, munmap all pages. New file: src/codegen/cranelift/jit_memory.rs. Modify jit.rs to use new MambaJitModule instead of cranelift_jit::JITModule. Remove cranelift-jit from Cargo.toml."
+}

@@ -1,0 +1,78 @@
+{
+  "group_id": "structured-issue-format",
+  "specs": [
+    {
+      "path": "crates/sdd/logic/state-machine.md",
+      "group": "state-machine",
+      "relevance": "high",
+      "key_requirements": [
+        "init_change currently always routes to sdd_workflow_restructure_input after creation",
+        "Phase skip target is post_clarifications_created — must be set directly in STATE.yaml",
+        "No new StatePhase variants needed; skip is handled inline in init_change, not a new state",
+        "Understand current phase enum and transition rules before modifying init_change routing"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/restructure-input.md",
+      "group": "phases",
+      "relevance": "high",
+      "key_requirements": [
+        "Restructure-input phase (phase 2) is what gets skipped for structured issues",
+        "restructure_service.rs and group_service.rs are the service files that may need to handle pre-populated groups",
+        "Output schema: groups array with id, issues, requirements, questions",
+        "init_change must replicate group creation logic that restructure_input normally does"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/pre-clarifications.md",
+      "group": "phases",
+      "relevance": "high",
+      "key_requirements": [
+        "Pre-clarifications phase (phase 3) is skipped for structured issues",
+        "Pre-clarifications output format: pre_clarifications.md with status: answered",
+        "init_change must write pre_clarifications.md files with status: answered for each group",
+        "groups_progress.pre_clarifications must be populated for all groups"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/reference-context.md",
+      "group": "phases",
+      "relevance": "high",
+      "key_requirements": [
+        "Phase 7 (reference_context) is absorbed — structured issues include reference context inline",
+        "init_change must write reference_context.md artifacts and advance groups_progress.reference_context",
+        "Artifact must include written_by: artifact_cli marker for verification to pass",
+        "spec_plan entries must have main_spec_ref with subfolder path (min 4 components)"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/post-clarifications.md",
+      "group": "phases",
+      "relevance": "medium",
+      "key_requirements": [
+        "Phase skip target — init_change sets STATE.yaml phase to post_clarifications_created",
+        "Post-clarifications output format needed for any pre-population",
+        "groups_progress.post_clarifications may need to be populated"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/issues-backend.md",
+      "group": "issues",
+      "relevance": "medium",
+      "key_requirements": [
+        "score issues enrich command is a new subcommand on the existing issues CLI",
+        "Existing IssueBackend trait and issue file format (YAML frontmatter + markdown body)",
+        "Issue file body contains markdown sections — parser reads these sections",
+        "Pattern: existing issues CLI subcommands (list, show, sync, create, update, close, find)"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "structured-issue-format",
+      "action": "create",
+      "main_spec_ref": "crates/sdd/logic/structured-issue.md",
+      "sections": ["overview", "schema", "cli", "changes"]
+    }
+  ]
+}

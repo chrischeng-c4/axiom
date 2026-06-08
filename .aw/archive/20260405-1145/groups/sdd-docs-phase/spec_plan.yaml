@@ -1,0 +1,54 @@
+- spec_id: state-machine-docs-phase
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/state-machine.md
+  source: cclab/specs/crates/cclab-sdd/logic/state-machine.md
+  sections:
+  - overview
+  - state-machine
+  - changes
+- spec_id: config-docs-section
+  action: modify
+  main_spec_ref: crates/cclab-sdd/config/agents.md
+  source: cclab/specs/crates/cclab-sdd/config/agents.md
+  sections:
+  - overview
+  - config
+  - changes
+- spec_id: workflow-tools-docs-phase
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/tools/workflow-tools.md
+  source: cclab/specs/crates/cclab-sdd/interfaces/tools/workflow-tools.md
+  sections:
+  - overview
+  - rpc-api
+  - changes
+- spec_id: artifact-tools-docs-phase
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/tools/artifact-tools.md
+  source: cclab/specs/crates/cclab-sdd/interfaces/tools/artifact-tools.md
+  sections:
+  - overview
+  - rpc-api
+  - changes
+- spec_id: cli-commands-docs-phase
+  action: modify
+  main_spec_ref: crates/cclab-sdd/interfaces/cli/commands.md
+  source: cclab/specs/crates/cclab-sdd/interfaces/cli/commands.md
+  sections:
+  - overview
+  - cli
+  - changes
+- spec_id: docs-phase-logic
+  action: create
+  main_spec_ref: crates/cclab-sdd/logic/docs-phase.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - state-machine
+  - logic
+  - interaction
+  - schema
+  - config
+  - test-plan
+  - changes

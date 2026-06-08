@@ -1,0 +1,10 @@
+{
+  "change_id": "sdd-codegen-testgen",
+  "group_id": "testgen-requirementplus",
+  "answers": [
+    {"question_id": "Q1", "answer": "Standalone CLI: `cclab sdd gen test <spec-path>`. Can also be called internally during implement phase."},
+    {"question_id": "Q2", "answer": "Comments + todo!() only. Safe default: `// Then: <text>` + `todo!(\"implement\")`. No NLP heuristics."},
+    {"question_id": "Q3", "answer": "Warnings by default. Add `--strict` flag to make uncovered requirements (no Verifies relationship) into hard errors for CI gating."},
+    {"question_id": "Q4", "answer": "Defer cclab-probe integration to a follow-up issue. This change focuses on test scaffold generation + coverage validation only."}
+  ]
+}

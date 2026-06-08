@@ -1,0 +1,13 @@
+{
+  "group_id": "check-alignment-phase2",
+  "answers": [
+    {
+      "question": "Should the @spec annotation parser be a separate module or part of the existing spec_alignment module?",
+      "answer": "Part of spec_alignment as a submodule: spec_alignment/annotations.rs. Keeps it co-located with Phase 1 parser/rules."
+    },
+    {
+      "question": "For Lens integration, should we call Lens at runtime or pre-index symbols?",
+      "answer": "Pre-index via sdd daemon. Depends on the daemon's symbol index for faster lookups. check-alignment queries the pre-built index rather than running Lens analysis from scratch each time."
+    }
+  ]
+}

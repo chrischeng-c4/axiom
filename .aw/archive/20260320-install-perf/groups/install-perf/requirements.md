@@ -1,0 +1,9 @@
+---
+change: install-perf
+group: install-perf
+date: 2026-03-20
+---
+
+# Requirements
+
+Optimize jet install true-cold performance from 45.7s to <20s for 1886 packages. Three changes: (1) Replace sync std::fs disk cache I/O with tokio::fs to avoid blocking the async runtime during BFS metadata resolution. (2) Add speculative prefetch — start fetching metadata for common transitive deps (react, lodash, tslib) before BFS reaches that level. (3) Add spawn_blocking-based build timeout for large projects.

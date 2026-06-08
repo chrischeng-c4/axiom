@@ -1,0 +1,56 @@
+{
+  "project_path": "/Users/chris.cheng/cclab/cclab-jet",
+  "change_id": "jet-remaining",
+  "group_id": "production-build-pipeline",
+  "verdict": "REJECTED",
+  "summary": "tree-shaking, variable-mangling, and scope-hoisting are correctly identified and accurately mapped to the bundler optimization pipeline. Failures: (1) Q2 (CSS pipeline — @import resolution, PostCSS, lightningcss, Tailwind JIT) has zero spec coverage; aot-build R10 covers only example-level CSS module usage, not the pipeline implementation. (2) Q3 (asset hashing — [name].[hash].[ext] for all asset types) is entirely absent from all seven specs. (3) Q1 (oxc_minifier for Milestone 3) is not reflected in any spec; variable-mangling describes a custom mangle.rs, not oxc_minifier integration. (4) aot-build is over-rated at high — it is a test harness expansion spec, not a production build pipeline implementation. (5) jit-runner at medium is unjustified; task runner and JIT execution are unrelated to minification, CSS processing, or asset hashing.",
+  "checklist_results": [
+    {
+      "item": "All affected crates/areas from pre-clarifications are covered by at least one spec",
+      "passed": false,
+      "note": "Q2 (CSS pipeline: @import resolution, PostCSS, lightningcss, Tailwind JIT) has no spec coverage. Q3 (asset hashing: [name].[hash].[ext] for scripts, styles, and static assets) has no spec coverage. Q1 (oxc_minifier as preferred minifier) has no spec coverage; variable-mangling spec describes mangle.rs with a custom AST-based approach, not oxc_minifier integration."
+    },
+    {
+      "item": "Relevance scores are reasonable (high = directly implements, medium = related, low = background)",
+      "passed": false,
+      "note": "aot-build rated high is inflated: the spec expands the mini-react example to exercise JSX/TS patterns, which serves as a test harness for the pipeline — it does not implement production build pipeline features. A medium rating is more accurate. jit-runner at medium is over-ranked: JIT script execution and task caching (Milestones 1-4 in the spec) have no connection to Q1/Q2/Q3, which are about minifier choice, CSS processing, and asset hashing. pkg-manager and pkg-manager-pnpm-parity at low are marginally defensible as background context but add no coverage for the pre-clarification questions."
+    },
+    {
+      "item": "Key requirements listed per spec are accurate (match actual requirement IDs)",
+      "passed": true,
+      "note": "tree-shaking R1/R2/R3/R4, variable-mangling R1/R2/R3, and scope-hoisting R1/R2 all map to real requirement IDs with accurate descriptions. aot-build R1/R6/R10 exist in the spec; however, R1 (multi-file barrel exports) is about example code structure and is weakly tied to the production build pipeline. jit-runner and pkg-manager specs correctly list no key requirements."
+    },
+    {
+      "item": "No irrelevant specs included",
+      "passed": false,
+      "note": "jit-runner should not be included at medium relevance. Pre-clarifications Q1/Q2/Q3 address minifier choice, CSS strategy, and asset hashing — none of which are addressed by JIT execution or task runner orchestration. pkg-manager and pkg-manager-pnpm-parity are background context at best; they contain zero requirements related to the production build pipeline."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "HIGH",
+      "description": "Q2 (CSS pipeline) is entirely uncovered. pre_clarifications.md Q2 specifies: @import resolution, PostCSS integration (Rust-based preferred), lightningcss as the CSS processor, and Tailwind JIT engine integration. None of the seven listed specs contain a single requirement covering any of these features. aot-build R10 describes adding CSS module example files to the mini-react demo, which exercises the pipeline but does not specify the pipeline implementation.",
+      "recommendation": "Add a CSS pipeline spec (e.g., cclab-jet/css-pipeline.md) covering: @import resolution, PostCSS plugin system, lightningcss integration, CSS module local scoping, and Tailwind JIT support. Include it in the reference context at high relevance with relevant key requirements."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Q3 (asset hashing) is entirely uncovered. pre_clarifications.md Q3 specifies the [name].[hash].[ext] content-hash naming pattern as the default for scripts, styles, and static assets, with configuration override capability per asset type. No spec in the reference context contains any requirement, schema, or scenario related to content-addressed asset naming.",
+      "recommendation": "Add asset hashing requirements to the aot-build spec or create a dedicated production-output spec covering: content-hash computation, [name].[hash].[ext] output filename format, per-asset-type override configuration, and integration with the bundler output phase."
+    },
+    {
+      "severity": "HIGH",
+      "description": "Q1 (oxc_minifier) has no spec coverage. pre_clarifications.md Q1 designates oxc_minifier as the preferred minifier for Milestone 3 due to its Rust-native implementation. The variable-mangling spec describes a custom mangle.rs with a hand-written AST parser — not oxc_minifier. If the implementation will use oxc_minifier instead of mangle.rs, variable-mangling R1/R2/R3 may not apply, and a new or revised spec is needed.",
+      "recommendation": "Clarify whether oxc_minifier replaces the custom mangle.rs approach. If so, revise variable-mangling to reference oxc_minifier as the implementation, or add a new spec entry covering oxc_minifier integration (API, configuration, pipeline position)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "aot-build is rated high but it is a test harness expansion spec. Its scope is adding multi-file JSX/TS patterns to the mini-react example to exercise bundler edge cases. R1 (barrel exports), R6 (dynamic import code splitting), and R10 (CSS modules) test pipeline features rather than implement them. High relevance implies the spec directly implements a production build pipeline component, which it does not.",
+      "recommendation": "Downgrade aot-build to medium relevance. Retain R6 (code splitting boundary detection) and R10 (CSS module bundling) as the most directly relevant key requirements; remove R1 (multi-file example architecture is test coverage, not pipeline design)."
+    },
+    {
+      "severity": "MEDIUM",
+      "description": "jit-runner is included at medium relevance with no key requirements. The spec covers JIT script execution (Tree-sitter TS/JSX transform + Node.js child process) and task runner caching — neither of which addresses Q1 (minifier), Q2 (CSS pipeline), or Q3 (asset hashing). Its inclusion adds noise without covering any pre-clarification.",
+      "recommendation": "Remove jit-runner from the reference context for this group. It is not related to the production build pipeline as defined by the pre-clarifications."
+    }
+  ]
+}

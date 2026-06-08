@@ -1,0 +1,10 @@
+- spec_id: xfail-zero
+  action: modify
+  main_spec_ref: crates/cclab-mamba/testing/conformance.md
+  source: cclab/specs/crates/cclab-mamba/testing/conformance.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+  - test-plan

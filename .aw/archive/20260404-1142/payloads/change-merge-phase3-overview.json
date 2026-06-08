@@ -1,0 +1,9 @@
+{
+  "spec_id": "change-merge-phase3",
+  "group_id": "check-alignment-phase3",
+  "section": "overview",
+  "content": "Extend the merge workflow (`sdd_workflow_create_change_merge`) with post-merge, pre-git-commit alignment checking. After all specs are written to `cclab/specs/` and phase is set to `ChangeArchived`, but before post-archive git operations, run `spec_alignment::check()` on each merged spec target path. Violations are collected as warnings — they do NOT block the merge or prevent archiving.\n\nAlignment warnings are:\n1. Appended to `implementation.md` in the archive directory (review section)\n2. Included in the tool response JSON as `alignment_warnings` field (full violation list)\n3. Included in the audit log\n\n**Scope**: This spec covers only the merge workflow integration point. Same `check()` function, different strictness than artifact tools or CLI callers.\n\n| Caller | Format violations | Coverage gaps |\n|--------|-------------------|---------------|\n| Merge workflow (this spec) | Warning — allow merge | Warning — allow merge |\n| Artifact tools | Error — block write | Warning — allow write |\n| CLI post-hoc | Report all | Report all |",
+  "fill_sections": ["overview", "logic", "changes"],
+  "main_spec_ref": "crates/cclab-sdd/logic/change-merge.md",
+  "merge_strategy": "new"
+}

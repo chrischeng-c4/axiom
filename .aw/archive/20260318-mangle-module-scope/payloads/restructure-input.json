@@ -1,0 +1,16 @@
+{
+  "groups": [
+    {
+      "id": "mangle-module-scope",
+      "issues": [882, 903],
+      "requirements": "Fix the jet bundler to close the ~15KB bundle size gap (currently 215KB vs webpack 192KB) by enabling the minifier to rename variables that live inside per-module IIFE wrappers. Two tightly coupled changes are required: (1) Extend `mangle.rs` so the mangler descends into per-module `!function(module,exports,require){...}()` wrapper scopes and renames their top-level identifiers — identifiers like `workInProgress` appear 267× and alone account for ~3.5KB of savings. (2) Implement true module flattening in `scope_hoist.rs`: merge all per-module IIFE wrappers into a single flat function scope, rename each module's top-level variables with a collision-avoiding prefix (`_m0_foo`, `_m1_bar`), and replace `require(N)` calls with direct references to the renamed export variables. Skip flattening for modules that use `eval()`, `with`, or dynamic `arguments` access. Optionally include cross-module constant inlining (inline unreassigned `const` at import sites) and cross-module DCE (remove functions only reachable from already-eliminated dead code) as follow-on sub-phases. Success criteria: react-bench bundle ≤ 196KB, all 126 bundler tests pass, mini-react Playwright tests pass on both Vite and Jet builds.",
+      "questions": [
+        "The user input describes 'fix mangler to rename module-scope vars inside IIFE wrappers' — is the primary implementation path (a) extend the mangler to descend into existing IIFEs while keeping the per-module wrapper structure, or (b) remove IIFEs entirely via true module flattening and then re-run the mangler on the unified scope? Both achieve the savings but differ significantly in complexity and risk.",
+        "Should cross-module constant inlining (Phase 2b) and cross-module DCE (Phase 2c) from #903 be in scope for this change, or is the target just the mangler fix + Phase 2a flattening? If both, what is the expected additional KB savings beyond the mangler fix alone?",
+        "Should the flattening logic be added to the existing `scope_hoist.rs` as a new pass, or extracted into a new file (e.g. `flatten.rs`) to keep `scope_hoist.rs` under the 500-line limit?",
+        "What naming scheme should be used for renamed module variables after flattening — the `_m0_foo` / `_m1_bar` index-based prefix from #903, or a filename-derived prefix (e.g. `_react_workInProgress`)? Index-based is shorter; filename-based aids debugging.",
+        "Are there automated bundle-size regression tests that assert react-bench ≤ 196KB, or is size verification done manually? If manual, should a size-assertion test be added as part of this change?"
+      ]
+    }
+  ]
+}

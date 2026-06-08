@@ -1,0 +1,35 @@
+{%- if file_preamble != "" %}
+{{ file_preamble }}
+
+{%- endif %}
+{%- if has_module %}
+{%- for attr in module_attributes %}
+{{ attr }}
+{%- endfor %}
+mod {{ module_name }} {
+{%- endif %}
+{%- if preamble != "" %}
+{{ preamble }}
+{%- endif %}
+{%- for i in imports %}
+{{ member_indent }}{{ i }}
+{%- endfor %}
+
+{% for t in tests -%}
+{%- if t.leading != "" %}
+{{ t.leading }}
+{%- endif %}
+{%- for attr in t.attributes %}
+{{ member_indent }}{{ attr }}
+{%- endfor %}
+{{ member_indent }}{{ t.visibility }}{{ t.async_prefix }}fn {{ t.name }}(){{ t.return_type }} {
+{{ t.body }}
+{{ member_indent }}}
+
+{% endfor -%}
+{%- if postamble != "" %}
+{{ postamble }}
+{%- endif %}
+{%- if has_module %}
+}
+{%- endif %}

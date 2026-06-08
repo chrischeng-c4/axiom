@@ -1,0 +1,1 @@
+{"group_id":"codegen-extensions","skipped":true,"scope_summary":{"problem":"3 new SpecIR generators","success_criteria":"state-machine L3, FlowchartPlus L2, SequencePlus L2","boundary":{"in_scope":["3 generators"],"out_of_scope":[],"constraints":["implement SpecIRGenerator trait"]}}}

@@ -1,0 +1,8 @@
+- spec_id: native-import-resolution
+  action: create
+  main_spec_ref: crates/cclab-mamba/resolve/native-import-resolution.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes

@@ -1,0 +1,31 @@
+[package]
+name = "vat"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "vat — agent-native, GPU-native dev containers for macOS/Linux. No VM: workloads run as sandboxed host processes, so the Apple GPU just works."
+
+[lib]
+name = "vat"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vat"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true, features = ["derive", "color"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+walkdir = { workspace = true }
+url = { workspace = true }
+dirs = "5"
+toml = "0.8"
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

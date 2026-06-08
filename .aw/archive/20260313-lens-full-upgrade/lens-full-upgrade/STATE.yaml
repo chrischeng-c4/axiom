@@ -1,0 +1,44 @@
+change_id: lens-full-upgrade
+schema_version: '2.0'
+created_at: 2026-03-13T09:18:42.776276Z
+updated_at: 2026-03-13T09:51:47.060764Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: in_place
+branch: null
+revision_counts: {}
+current_task_id: lens-full-upgrade-spec
+task_revisions: {}
+telemetry: null
+dag: null
+groups_progress:
+  change_spec: []
+  post_clarifications:
+  - disk-cache
+  - lint-densification
+  - auto-fix
+  - go-type-inference
+  - new-languages
+  - cross-file-import-graph
+  - formatter
+  change_implementation: []
+  pre_clarifications:
+  - disk-cache
+  - lint-densification
+  - auto-fix
+  - go-type-inference
+  - new-languages
+  - cross-file-import-graph
+  - formatter
+  reference_context:
+  - disk-cache
+  - lint-densification
+  - auto-fix
+  - go-type-inference
+  - new-languages
+  - cross-file-import-graph
+  - formatter

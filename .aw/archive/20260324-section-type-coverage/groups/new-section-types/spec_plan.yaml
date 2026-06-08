@@ -1,0 +1,7 @@
+- spec_id: reference-context-types
+  action: modify
+  main_spec_ref: crates/cclab-sdd/logic/reference-context.md
+  source: crates/cclab-sdd/logic/reference-context.md
+  sections:
+  - overview
+  - changes

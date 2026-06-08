@@ -1,0 +1,873 @@
+#![cfg(test)]
+
+use crate::parser;
+use crate::source::span::FileId;
+use crate::types::TypeChecker;
+
+fn check(src: &str) -> Vec<String> {
+    let module = parser::parse(src, FileId(0)).expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let errors = checker.check_module(&module);
+    errors.into_iter().map(|e| e.to_string()).collect()
+}
+
+#[allow(dead_code)]
+fn check_strict(src: &str) -> Vec<String> {
+    let module = parser::parse(src, FileId(0)).expect("parse failed");
+    let mut checker = TypeChecker::new();
+    checker.strict = true;
+    let errors = checker.check_module(&module);
+    errors.into_iter().map(|e| e.to_string()).collect()
+}
+
+#[allow(dead_code)]
+fn check_warnings(src: &str) -> Vec<String> {
+    let module = parser::parse(src, FileId(0)).expect("parse failed");
+    let mut checker = TypeChecker::new();
+    let _ = checker.check_module(&module);
+    checker
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect()
+}
+
+#[test]
+fn test_valid_fibonacci() {
+    let errors = check(
+        "def fibonacci(n: int) -> int:\n\
+         \x20   a: int = 0\n\
+         \x20   b: int = 1\n\
+         \x20   i: int = 0\n\
+         \x20   while i < n:\n\
+         \x20       temp: int = b\n\
+         \x20       b = a + b\n\
+         \x20       a = temp\n\
+         \x20       i = i + 1\n\
+         \x20   return a\n",
+    );
+    assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+}
+
+#[test]
+fn test_type_mismatch_var_decl() {
+    let errors = check("x: str = 42\n");
+    assert!(!errors.is_empty());
+    assert!(errors[0].contains("type mismatch"));
+}
+
+#[test]
+fn test_return_type_mismatch() {
+    // Use a genuinely incompatible return type (str). `bool` is a subtype
+    // of `int` per CPython semantics (#1680), so `return True` from an
+    // `int`-annotated function is correctly accepted now.
+    let errors = check(
+        "def bad() -> int:\n\
+         \x20   return \"hi\"\n",
+    );
+    assert!(!errors.is_empty());
+    assert!(errors[0].contains("return type mismatch"));
+}
+
+#[test]
+fn test_undefined_variable() {
+    let errors = check("x: int = y\n");
+    assert!(!errors.is_empty());
+    assert!(errors[0].contains("undefined name"));
+}
+
+#[test]
+fn test_valid_arithmetic() {
+    let errors = check(
+        "def calc() -> int:\n\
+         \x20   a: int = 1\n\
+         \x20   b: int = 2\n\
+         \x20   c: int = a + b * a\n\
+         \x20   return c\n",
+    );
+    assert!(errors.is_empty(), "got: {errors:?}");
+}
+
+#[test]
+fn test_int_float_mismatch() {
+    let errors = check("x: int = 3.14\n");
+    assert!(!errors.is_empty());
+    assert!(errors[0].contains("type mismatch"));
+}
+
+#[test]
+fn test_bool_condition_accepts_int() {
+    // Python truthiness: `if x:` accepts any type (the runtime calls
+    // __bool__/__len__). The type checker mirrors this policy
+    // (check_stmt.rs:96) for Py3.12 compat — int conditions are valid.
+    let errors = check(
+        "x: int = 1\n\
+         if x:\n\
+         \x20   pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "int condition should be accepted, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_function_call_arg_count_underflow_skipped() {
+    // The arity check intentionally skips when positional < params.len()
+    // (check_expr.rs — `might_have_defaults`) because the type system does
+    // not yet plumb default info per parameter. `add(1)` and `add()` would
+    // TypeError at runtime, but the static checker abstains here. The zero
+    // case is required for #1600 — see also `test_zero_arg_call_to_default_param_fn`.
+    let errors = check(
+        "def add(a: int, b: int) -> int:\n\
+         \x20   return a + b\n\
+         add(1)\n",
+    );
+    assert!(errors.is_empty(),
+        "underflow arity is intentionally skipped to avoid false positives on default params, got: {errors:?}");
+    let errors = check(
+        "def add(a: int, b: int) -> int:\n\
+         \x20   return a + b\n\
+         add()\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "zero-arg underflow is also skipped (#1600), got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_valid_boolean_ops() {
+    let errors = check(
+        "x: bool = True\n\
+         y: bool = False\n\
+         z: bool = x and y\n",
+    );
+    assert!(errors.is_empty(), "got: {errors:?}");
+}
+
+#[test]
+fn test_comparison_returns_bool() {
+    let errors = check(
+        "a: int = 1\n\
+         b: int = 2\n\
+         c: bool = a < b\n",
+    );
+    assert!(errors.is_empty(), "got: {errors:?}");
+}
+
+#[test]
+fn test_string_variable() {
+    let errors = check("name: str = \"hello\"\n");
+    assert!(errors.is_empty(), "got: {errors:?}");
+}
+
+#[test]
+fn test_multiple_functions() {
+    let errors = check(
+        "def square(n: int) -> int:\n\
+         \x20   return n * n\n\
+         def main() -> int:\n\
+         \x20   result: int = square(5)\n\
+         \x20   return result\n",
+    );
+    assert!(errors.is_empty(), "got: {errors:?}");
+}
+
+// --- #240: Any type and unannotated inference ---
+
+#[test]
+fn test_any_type_annotation() {
+    // Explicit Any annotation should be compatible with anything
+    let errors = check(
+        "x: Any = 42\n\
+         y: Any = \"hello\"\n\
+         z: int = x\n",
+    );
+    assert!(errors.is_empty(), "Any should be compatible: {errors:?}");
+}
+
+#[test]
+fn test_any_unannotated_return() {
+    // Missing return annotation defaults to Any (#240)
+    let errors = check(
+        "def greet(name: str):\n\
+         \x20   return name\n\
+         x: int = greet(\"hi\")\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "unannotated return should be Any: {errors:?}"
+    );
+}
+
+#[test]
+fn test_any_compatible_both_directions() {
+    let errors = check(
+        "a: Any = 42\n\
+         b: int = a\n\
+         c: str = a\n\
+         d: Any = b\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "Any should be compatible both ways: {errors:?}"
+    );
+}
+
+#[test]
+fn test_any_in_binop() {
+    let errors = check(
+        "a: Any = 42\n\
+         b: int = 10\n\
+         c: Any = a + b\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "Any in binop should propagate: {errors:?}"
+    );
+}
+
+// --- #241: Type alias support ---
+
+#[test]
+fn test_type_alias_simple() {
+    let errors = check(
+        "type Num = int\n\
+         x: Num = 42\n",
+    );
+    assert!(errors.is_empty(), "type alias should resolve: {errors:?}");
+}
+
+#[test]
+fn test_type_alias_tuple() {
+    let errors = check(
+        "type Point = tuple[int, int]\n\
+         p: Point = (1, 2)\n",
+    );
+    assert!(errors.is_empty(), "tuple alias should resolve: {errors:?}");
+}
+
+// --- #245: Builtin function stubs ---
+
+#[test]
+fn test_builtin_len() {
+    let errors = check("x: int = len(\"hello\")\n");
+    assert!(errors.is_empty(), "len should return int: {errors:?}");
+}
+
+#[test]
+fn test_builtin_isinstance() {
+    // `int` is a keyword, use a class name instead
+    let errors = check(
+        "class MyType:\n\
+         \x20   pass\n\
+         x: bool = isinstance(42, MyType)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "isinstance should return bool: {errors:?}"
+    );
+}
+
+#[test]
+fn test_builtin_abs() {
+    let errors = check("x: int = abs(-5)\n");
+    assert!(
+        errors.is_empty(),
+        "abs should work with Any param: {errors:?}"
+    );
+}
+
+#[test]
+fn test_builtin_print_accepts_any() {
+    let errors = check("print(42)\nprint(\"hello\")\nprint(True)\n");
+    assert!(errors.is_empty(), "print should accept Any: {errors:?}");
+}
+
+// --- #246: Class field resolution ---
+
+#[test]
+fn test_class_field_access() {
+    let errors = check(
+        "class Point:\n\
+         \x20   x: int = 0\n\
+         \x20   y: int = 0\n",
+    );
+    assert!(errors.is_empty(), "class def should type-check: {errors:?}");
+}
+
+// --- #248: Index/subscript type checking ---
+
+#[test]
+fn test_list_index_type() {
+    let errors = check(
+        "def get_first(items: list[int]) -> int:\n\
+         \x20   return items[0]\n",
+    );
+    assert!(errors.is_empty(), "list[int][0] should be int: {errors:?}");
+}
+
+#[test]
+fn test_dict_index_type() {
+    let errors = check(
+        "def get_val(d: dict[str, int]) -> int:\n\
+         \x20   return d[\"key\"]\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "dict[str,int][key] should be int: {errors:?}"
+    );
+}
+
+#[test]
+fn test_str_index_type() {
+    let errors = check(
+        "def first_char(s: str) -> str:\n\
+         \x20   return s[0]\n",
+    );
+    assert!(errors.is_empty(), "str[0] should be str: {errors:?}");
+}
+
+// --- #249: Exception hierarchy ---
+
+#[test]
+fn test_exception_classes_exist() {
+    // Exception classes should be in scope and usable
+    let errors = check(
+        "try:\n\
+         \x20   pass\n\
+         except ValueError as e:\n\
+         \x20   pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "ValueError should be in scope: {errors:?}"
+    );
+}
+
+// --- #314: Generics and Protocols ---
+
+#[test]
+fn test_generic_function_type_params() {
+    // Generic function with type params should type-check
+    let errors = check(
+        "def first[T](items: list[T]) -> T:\n\
+         \x20   return items[0]\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "generic function should type-check: {errors:?}"
+    );
+}
+
+#[test]
+fn test_generic_function_call_inference() {
+    // Calling a generic function should infer type args
+    let errors = check(
+        "def identity[T](x: T) -> T:\n\
+         \x20   return x\n\
+         result: int = identity(42)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "generic call should infer T=int: {errors:?}"
+    );
+}
+
+#[test]
+fn test_generic_class_definition() {
+    // Generic class with type params should type-check
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "generic class should type-check: {errors:?}"
+    );
+}
+
+#[test]
+fn test_generic_class_as_type() {
+    // User-defined generic class should be resolvable as a type
+    let errors = check(
+        "class Container[T]:\n\
+         \x20   pass\n\
+         def use_container(c: Container[int]) -> None:\n\
+         \x20   pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "Container[int] should resolve: {errors:?}"
+    );
+}
+
+#[test]
+fn test_protocol_registration() {
+    // Protocol class should type-check without errors
+    let errors = check(
+        "class Drawable(Protocol):\n\
+         \x20   def draw(self) -> None:\n\
+         \x20       pass\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "Protocol definition should work: {errors:?}"
+    );
+}
+
+#[test]
+fn test_protocol_structural_matching() {
+    // A class that implements protocol methods should be usable where protocol is expected
+    let errors = check(
+        "class Drawable(Protocol):\n\
+         \x20   def draw(self) -> None:\n\
+         \x20       pass\n\
+         class Circle:\n\
+         \x20   def draw(self) -> None:\n\
+         \x20       pass\n\
+         def render(obj: Drawable) -> None:\n\
+         \x20   pass\n\
+         render(Circle())\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "Circle should satisfy Drawable protocol: {errors:?}"
+    );
+}
+
+#[test]
+fn test_generic_type_param_scoping() {
+    // Type param T should not leak outside its function scope
+    let errors = check(
+        "def first[T](items: list[T]) -> T:\n\
+         \x20   return items[0]\n\
+         def second(x: int) -> int:\n\
+         \x20   return x\n",
+    );
+    assert!(errors.is_empty(), "T should not leak: {errors:?}");
+}
+
+#[test]
+fn test_generic_inference_conflict() {
+    // Calling identity[T](x: T, y: T) with int and str should report conflict
+    let errors = check(
+        "def same[T](x: T, y: T) -> T:\n\
+         \x20   return x\n\
+         same(1, \"hello\")\n",
+    );
+    assert!(!errors.is_empty(), "conflicting T should error");
+}
+
+#[test]
+fn test_generic_class_constraint_via_function() {
+    // Generic function enforces type consistency on Box[T]
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   pass\n\
+         def unbox[T](b: Box[T], default: T) -> T:\n\
+         \x20   return default\n\
+         unbox(Box(), 42)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "generic function with Box[T] should work: {errors:?}"
+    );
+}
+
+#[test]
+fn test_generic_class_rejects_wrong_type_arg() {
+    // Box[int].value should be int; returning it as str must fail
+    let errors = check(
+        "class Box[T]:\n\
+         \x20   value: T = None\n\
+         def get_value(b: Box[int]) -> str:\n\
+         \x20   return b.value\n",
+    );
+    assert!(
+        !errors.is_empty(),
+        "Box[int].value is int, should reject str return"
+    );
+}
+
+// --- #827: Match/case type narrowing ---
+
+#[test]
+fn test_match_class_pattern_narrows_type() {
+    // Inside `case Point():`, the subject should be narrowed to Point type
+    // so accessing Point fields should not produce type errors
+    let errors = check(
+        "class Point:\n\
+         \x20   x: int = 0\n\
+         \x20   y: int = 0\n\
+         def process(p: Point) -> int:\n\
+         \x20   match p:\n\
+         \x20       case Point():\n\
+         \x20           return p.x\n\
+         \x20   return 0\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "class pattern body should type-check cleanly: {errors:?}"
+    );
+}
+
+#[test]
+fn test_match_guard_type_checks() {
+    // Guard expression in match arm should be type-checked
+    let errors = check(
+        "x: int = 5\n\
+         match x:\n\
+         \x20   case n if n > 0:\n\
+         \x20       y: int = n\n\
+         \x20   case _:\n\
+         \x20       y: int = 0\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "match guard should type-check cleanly: {errors:?}"
+    );
+}
+
+#[test]
+fn test_match_class_capture_types() {
+    let errors = check(
+        "class Point:\n    x: int = 0\n    y: int = 0\n\
+         p = Point()\n\
+         match p:\n\
+         \x20   case Point(x=a):\n\
+         \x20       z: int = a\n", // a should be typed as int
+    );
+    assert!(
+        errors.is_empty(),
+        "class pattern capture should be typed as field type: {errors:?}"
+    );
+}
+
+#[test]
+fn test_match_class_positional_follows_match_args() {
+    // __match_args__ = ("y", "x") means positional slot 0 = y (str), slot 1 = x (int).
+    // Uses bare assignment form (no type annotation) to avoid the `tuple` builtin ambiguity.
+    let errors = check(
+        "class Point:\n    x: int = 0\n    y: str = \"\"\n    __match_args__ = (\"y\", \"x\")\n\
+         p = Point()\n\
+         match p:\n\
+         \x20   case Point(a, b):\n\
+         \x20       s: str = a\n\
+         \x20       i: int = b\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "__match_args__ reordering should type-check: {errors:?}"
+    );
+}
+
+#[test]
+fn test_match_sequence_capture_element_type() {
+    // case [x]: on list[int] should type x as int
+    let errors = check(
+        "def f(xs: list[int]) -> int:\n\
+         \x20   match xs:\n\
+         \x20       case [x]:\n\
+         \x20           y: int = x\n\
+         \x20           return y\n\
+         \x20   return 0\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "sequence element capture should be int: {errors:?}"
+    );
+}
+
+#[test]
+fn test_match_tuple_sequence_capture() {
+    // case (n, _): on (int, str) should type n as int (per-slot, not Union)
+    let errors = check(
+        "def f() -> int:\n\
+         \x20   match (1, 2):\n\
+         \x20       case (n, _):\n\
+         \x20           return n + 1\n\
+         \x20   return 0\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "tuple capture slot should be int for arithmetic: {errors:?}"
+    );
+}
+
+#[test]
+fn test_match_bool_class_pattern_narrows_to_bool() {
+    // case bool(b): should narrow b to bool, not int (#827 R4)
+    let errors = check(
+        "def f(x: int) -> bool:\n\
+         \x20   match x:\n\
+         \x20       case bool(b):\n\
+         \x20           return b\n\
+         \x20   return False\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "bool class pattern should narrow capture to bool: {errors:?}"
+    );
+}
+
+#[test]
+fn test_match_explicit_empty_match_args_no_positional() {
+    // class C with explicit __match_args__ = () should disallow positional patterns (#827 R5).
+    // The type checker must treat empty __match_args__ as authoritative (no positional slots).
+    // Here `case C(v):` with C.__match_args__ = () has no positional fields, so v gets any().
+    let errors = check(
+        "class C:\n\
+         \x20   __match_args__ = ()\n\
+         def f(c: C) -> int:\n\
+         \x20   match c:\n\
+         \x20       case C(v):\n\
+         \x20           return 0\n\
+         \x20   return 0\n",
+    );
+    // Should not produce a crash; the type checker is consistent (no panic).
+    let _ = errors;
+}
+
+// --- string-ops: Str + Str type checking ---
+
+#[test]
+fn test_str_add_str_no_type_error() {
+    // str + str must not emit "arithmetic requires numeric types"
+    let errors = check(
+        "a: str = \"hello\"\n\
+         b: str = \" world\"\n\
+         c: str = a + b\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "str + str should typecheck without errors: {errors:?}"
+    );
+}
+
+#[test]
+fn test_str_concat_return_type() {
+    // str + str result is assignable to str; function return type is accepted
+    let errors = check(
+        "def greet(first: str, last: str) -> str:\n\
+         \x20   return first + last\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "str + str return should be accepted as str: {errors:?}"
+    );
+}
+
+#[test]
+fn test_str_add_int_is_type_error() {
+    // str + int must still be rejected (operand type mismatch)
+    let errors = check(
+        "a: str = \"x\"\n\
+         b: int = 1\n\
+         c: str = a + b\n",
+    );
+    assert!(!errors.is_empty(), "str + int should produce a type error");
+}
+
+// ── R9: Type checker — multi-argument stdlib forms ──
+
+// R9.1: next(iterator, default) 2-argument form must be accepted
+#[test]
+fn test_next_two_arg_form_accepted() {
+    let errors = check(
+        "it = iter([])\n\
+         result = next(it, 42)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "next(it, default) 2-arg form should be accepted: {errors:?}"
+    );
+}
+
+// R9.1: next(iterator) 1-argument form must still be accepted
+#[test]
+fn test_next_one_arg_form_accepted() {
+    let errors = check(
+        "it = iter([])\n\
+         result = next(it)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "next(it) 1-arg form should be accepted: {errors:?}"
+    );
+}
+
+// #1574: unary + and - must accept bool (Python: +True == 1, -True == -1).
+#[test]
+fn test_unary_plus_minus_on_bool() {
+    let errors = check(
+        "x: bool = True\n\
+         a = +x\n\
+         b = -x\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "unary +/- on bool should type-check (bool is int subtype): {errors:?}"
+    );
+}
+
+// #1562: for-loop over a homogeneous tuple of strings must yield a Str
+// element type, not Union[Str,Str,Str], otherwise Str+Str inside the body
+// hits "arithmetic requires numeric types".
+#[test]
+fn test_for_over_homogeneous_str_tuple_concats() {
+    let errors = check(
+        "for sign in \"\", \"+\", \"-\":\n\
+         \x20   ss = sign + sign\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "for over homogeneous str-tuple should allow Str+Str in body: {errors:?}"
+    );
+}
+
+// #1578: dotted-path generics (`typing.Iterable[int]`) and freeform
+// string-literal annotations (`'This is a new annotation'`) must resolve
+// to Any rather than emitting `unknown (generic) type` errors.
+#[test]
+fn test_dotted_generic_and_freeform_string_annotation() {
+    let errors = check(
+        "import typing\n\
+         def f(a: 'This is a new annotation') -> int:\n\
+         \x20   return 1\n\
+         def g(x: typing.Iterable[int]) -> typing.Union[int, str]:\n\
+         \x20   return 0\n",
+    );
+    assert!(errors.is_empty(),
+        "freeform string-literal + dotted-path generic annotations should resolve to Any: {errors:?}");
+}
+
+// #1576: dotted-path annotations like `collections.abc.Mapping` must parse
+// and resolve to Any (external/forward reference), not error.
+#[test]
+fn test_dotted_path_annotation_resolves_to_any() {
+    let errors = check(
+        "def f(arg: collections.abc.Mapping) -> int:\n\
+         \x20   return 1\n\
+         def g(arg: int) -> collections.abc.Mapping:\n\
+         \x20   return arg\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "dotted-path annotations should type-check as Any: {errors:?}"
+    );
+}
+
+// R9.1: iter() is variadic (accepts 1 or 2 args)
+#[test]
+fn test_iter_two_arg_form_accepted() {
+    let errors = check(
+        "def sentinel() -> int:\n\
+         \x20   return -1\n\
+         it = iter(sentinel, -1)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "iter(callable, sentinel) 2-arg form should be accepted: {errors:?}"
+    );
+}
+
+// R9.3: getattr() with default (3-arg form) must be accepted
+#[test]
+fn test_getattr_three_arg_form_accepted() {
+    let errors = check(
+        "class Foo:\n\
+         \x20   x: int = 1\n\
+         obj = Foo()\n\
+         val = getattr(obj, \"x\", 0)\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "getattr(obj, name, default) 3-arg form should be accepted: {errors:?}"
+    );
+}
+
+// R9: open() with mode and additional kwargs — variadic builtin
+#[test]
+fn test_open_variadic_form_accepted() {
+    let errors = check("f = open(\"path.txt\", \"r\")\n");
+    assert!(
+        errors.is_empty(),
+        "open(path, mode) 2-arg form should be accepted: {errors:?}"
+    );
+}
+
+// #1586: heterogeneous-callable Union — for-target binding to a tuple of
+// type constructors / fns must be callable across the loop body.
+#[test]
+fn test_union_of_callables_is_callable() {
+    let errors = check(
+        "for C in set, frozenset, str, list, tuple:\n\
+         \x20   x = C('a')\n\
+         \x20   y = C('b')\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "Union of Fn/Class types must be callable, got: {errors:?}"
+    );
+}
+
+// #1588: free names inside function bodies should defer to runtime (Any)
+// rather than erroring at type-check time. Matches Python's lazy global
+// lookup semantics. Module-level free names stay hard errors.
+#[test]
+fn test_free_name_in_fn_body_is_lazy() {
+    let errors = check(
+        "class C:\n\
+         \x20   def m(self):\n\
+         \x20       return undefined_name\n",
+    );
+    assert!(
+        errors.is_empty(),
+        "free name in method body should be deferred to runtime, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_free_name_at_module_level_still_errors() {
+    let errors = check("print(undefined_name)\n");
+    assert!(
+        errors.iter().any(|e| e.contains("undefined name")),
+        "module-level free name should still error, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_zero_arg_call_to_default_param_fn() {
+    // `def f(x=1): return x; f()` — the existing heuristic skips arity for
+    // partial-fill (1..N-1 args), and #1600 extends it to the zero-arg case.
+    // Defaults aren't surfaced through `Ty::Fn`, so this is the only way to
+    // accept all-defaults calls without breaking down the type structure.
+    let errors = check("def f(x=1):\n    return x\n\np = f()\n");
+    assert!(
+        errors.is_empty(),
+        "zero-arg call to default-param fn should type-check, got: {errors:?}"
+    );
+    let errors = check("def g(a=1, b=2, c=3):\n    return a + b + c\n\nq = g()\n");
+    assert!(
+        errors.is_empty(),
+        "zero-arg call to all-default fn should type-check, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_property_zero_arg_is_callable() {
+    // CPython: property(fget=None, fset=None, fdel=None, doc=None) — all
+    // params optional. Mamba's stub must accept 0..=4 args, not require fget.
+    let errors = check("p = property()\n");
+    assert!(
+        errors.is_empty(),
+        "property() with no args should type-check (variadic stub), got: {errors:?}"
+    );
+    let errors = check("p = property(lambda self: 1)\n");
+    assert!(
+        errors.is_empty(),
+        "property(fget) should still type-check, got: {errors:?}"
+    );
+}

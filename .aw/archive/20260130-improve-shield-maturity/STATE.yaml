@@ -1,0 +1,114 @@
+change_id: improve-shield-maturity
+schema_version: '2.0'
+created_at: 2026-01-28T07:39:16.669262Z
+updated_at: 2026-01-28T17:47:46.887742Z
+phase: exploring
+iteration: 1
+last_action: validate-proposal
+session_id: null
+checksums:
+  tasks.md:
+    hash: sha256:ac85172d7a5385876b4d86af43bcb9741a45335686f534bb2b1e79a88367c883
+    validated_at: 2026-01-28T17:47:46.887Z
+  specs/shield-basemodel-api-enhancement.md:
+    hash: sha256:b6869aad373e61b59375b2f64c3e3ba5f4d84428a4b2dd984cac66d59bed64ac
+    validated_at: 2026-01-28T17:47:46.887736Z
+  specs/shield-settings-management.md:
+    hash: sha256:56ea1c1526fa3db933e0ea0224aa297021e71a6fd63bd5da7390768da5b3be4d
+    validated_at: 2026-01-28T17:47:46.887513Z
+  specs/shield-ergonomic-validators.md:
+    hash: sha256:dcb100cee3a27c057e6e5000705783840e9eade4b384de72b1b8fec057d864fe
+    validated_at: 2026-01-28T17:47:46.887238Z
+  proposal.md:
+    hash: sha256:e5750206455f126d37f28653e2e4bd67a452de069c448a63e3763c3da8f9f333
+    validated_at: 2026-01-28T17:47:46.886807Z
+validations:
+- step: validate-proposal
+  timestamp: 2026-01-28T07:40:58.228938Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: false
+    high: 4
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors:
+  - '[specs/shield-ergonomic-validators.md] Scenario heading ''‘'' should start with ''Scenario:'''
+  - '[specs/shield-ergonomic-validators.md] Scenario heading ''before'' should start with ''Scenario:'''
+  - '[specs/shield-ergonomic-validators.md] Scenario heading ''’'' should start with ''Scenario:'''
+  - '[specs/shield-ergonomic-validators.md] Scenario heading '' validator'' should start with ''Scenario:'''
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T07:41:15.586693Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T07:42:22.735078Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T07:45:39.990474Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T17:46:46.402537Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: normal
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+- step: validate-proposal
+  timestamp: 2026-01-28T17:47:46.886629Z
+  rules_version: '2.0'
+  rules_hash: null
+  mode: strict
+  result:
+    valid: true
+    high: 0
+    medium: 0
+    low: 0
+    verdict: null
+    issues_parsed: null
+  errors: []
+  warnings: []
+telemetry: null

@@ -1,0 +1,11 @@
+change_id: improve-meteor-scheduler
+schema_version: '2.0'
+created_at: 2026-01-30T09:00:00.000000Z
+updated_at: 2026-01-30T10:00:00.000000Z
+phase: implemented
+iteration: 1
+last_action: impl-complete
+session_id: null
+checksums: {}
+validations: []
+telemetry: null

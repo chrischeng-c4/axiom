@@ -1,0 +1,36 @@
+{
+  "group_id": "agent-pyo3-bindings",
+  "specs": [
+    {
+      "spec_id": "cclab-agent/agents.md",
+      "spec_group": "agent-core",
+      "relevance": "high",
+      "key_requirements": ["Agent trait — wrap as PyAgent", "Builder pattern — PyBuilder with method chaining"]
+    },
+    {
+      "spec_id": "cclab-agent/llm-providers.md",
+      "spec_group": "llm",
+      "relevance": "high",
+      "key_requirements": ["LLMProvider trait — PyClaudeProvider, PyOpenAIProvider, PyGeminiProvider", "CompletionRequest/Response — Py* wrappers"]
+    },
+    {
+      "spec_id": "cclab-agent/architecture.md",
+      "spec_group": "system",
+      "relevance": "high",
+      "key_requirements": ["Module structure — pyo3_bindings/ layout"]
+    },
+    {
+      "spec_id": "cclab-agent/restructure-agent.md",
+      "spec_group": "agents",
+      "relevance": "high",
+      "key_requirements": ["RestructureAgent — PyRestructureAgent wrapper"]
+    },
+    {
+      "spec_id": "cclab-agent/review-agent.md",
+      "spec_group": "agents",
+      "relevance": "high",
+      "key_requirements": ["ReviewAgent, CRRCycle — Py* wrappers"]
+    }
+  ],
+  "notes": "PyO3 bindings wrap all existing types. No new agent logic. Follow CLAUDE.md PyO3 conventions: Py{Name}, _agent module, Arc<RwLock<T>> for stateful, pyo3_async_runtimes::tokio for async."
+}

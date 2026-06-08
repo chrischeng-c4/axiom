@@ -1,0 +1,29 @@
+change_id: mamba-stdlib-test
+schema_version: '2.0'
+created_at: 2026-04-09T00:51:28.416936Z
+updated_at: 2026-04-09T01:55:04.408006Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: null
+revision_counts: {}
+current_task_id: stdlib-test-module
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+agent: mamba-developer
+groups_progress:
+  pre_clarifications:
+  - mamba-stdlib-test
+  reference_context:
+  - mamba-stdlib-test
+  change_spec: []
+  post_clarifications:
+  - mamba-stdlib-test
+  change_implementation: []

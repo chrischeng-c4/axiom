@@ -1,0 +1,105 @@
+{
+  "group_id": "scheduler-runtime-complete",
+  "specs": [
+    {
+      "spec_id": "scheduler-backends",
+      "spec_group": "cclab-meteor",
+      "relevance": "high",
+      "key_requirements": [
+        "R1: SchedulerBackend trait — acquire_leader(ttl), renew_leader(ttl), release_leader(), get_task_state(name), set_task_state(name, state)",
+        "R2: IonSchedulerBackend — production backend using cclab-ion for distributed locking",
+        "R3: MemorySchedulerBackend — in-memory backend for testing",
+        "New K8sCronJobBackend must implement this same SchedulerBackend trait (not in current spec — will be added)"
+      ]
+    },
+    {
+      "spec_id": "cloud-scheduler-backend",
+      "spec_group": "cclab-meteor",
+      "relevance": "high",
+      "key_requirements": [
+        "CloudSchedulerConfig with target_base_url — the push receiver endpoint URL",
+        "OIDC token cache and authentication for GCP API calls",
+        "httpTarget in CloudSchedulerJob points to push receiver endpoint",
+        "Push receiver must validate OIDC tokens from Cloud Scheduler callbacks"
+      ]
+    },
+    {
+      "spec_id": "broker-traits",
+      "spec_group": "cclab-meteor",
+      "relevance": "high",
+      "key_requirements": [
+        "PushBroker trait: parse_push_request(headers, body), endpoint_path()",
+        "Broker trait: publish(queue, message) — the downstream path from push receiver",
+        "BrokerMessage: delivery_tag, payload (TaskMessage), headers, timestamp",
+        "Push receiver callback must construct TaskMessage and call broker.publish()"
+      ]
+    },
+    {
+      "spec_id": "cloudtasks-broker",
+      "spec_group": "cclab-meteor",
+      "relevance": "medium",
+      "key_requirements": [
+        "CloudTasksBroker already handles push request parsing — pattern to follow for scheduler push receiver",
+        "R5: Full JWT/OIDC token validation defined in spec (decode JWT, verify Google public keys, check audience/email)",
+        "endpoint_path returns /meteor/push/{queue} — push receiver needs similar path design"
+      ]
+    },
+    {
+      "spec_id": "scheduler-backends-gcp",
+      "spec_group": "cclab-meteor",
+      "relevance": "medium",
+      "key_requirements": [
+        "Shows exact pattern for registering a new SchedulerBackend variant via cfg(feature) in scheduler/mod.rs",
+        "R4: CloudSchedulerBackend registered under cloud-scheduler feature flag",
+        "K8sCronJobBackend must follow same registration pattern for k8s-scheduler feature flag"
+      ]
+    },
+    {
+      "spec_id": "scheduler-architecture",
+      "spec_group": "cclab-meteor",
+      "relevance": "medium",
+      "key_requirements": [
+        "R3: Pluggable backend architecture — SchedulerBackend is decoupled from PeriodicScheduler",
+        "Current leader election loop: acquire_leader → evaluate schedules → enqueue tasks → renew_leader",
+        "scheduler-mode-selection spec will extend this architecture with push receiver mode"
+      ]
+    },
+    {
+      "spec_id": "k8s-job-executor",
+      "spec_group": "cclab-meteor",
+      "relevance": "medium",
+      "key_requirements": [
+        "R2: kube-rs integration — K8sJobExecutor uses kube-rs to communicate with K8s API",
+        "R3: Rich resource configuration — configurable resource limits (CPU, memory), requests (GPU, TPU), nodeSelector, tolerations",
+        "R4: Non-blocking spawning — worker acks message once K8s Job is successfully created",
+        "K8sCronJobBackend should reuse kube-rs client setup and resource configuration patterns from this executor"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "push-receiver",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-fetch/scheduler/push-receiver.md",
+      "sections": ["overview", "schema", "rest-api", "changes"]
+    },
+    {
+      "spec_id": "k8s-cronjob-backend",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-fetch/scheduler/k8s-cronjob-backend.md",
+      "sections": ["overview", "schema", "changes"]
+    },
+    {
+      "spec_id": "schedule-monitor",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-fetch/scheduler/schedule-monitor.md",
+      "sections": ["overview", "schema", "changes"]
+    },
+    {
+      "spec_id": "scheduler-mode-selection",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-fetch/scheduler/scheduler-mode-selection.md",
+      "sections": ["overview", "schema", "changes"]
+    }
+  ]
+}

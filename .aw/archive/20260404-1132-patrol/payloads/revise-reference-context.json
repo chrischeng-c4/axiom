@@ -1,0 +1,28 @@
+{
+  "group_id": "wire-mamba-modules",
+  "specs": [
+    {
+      "spec_path": "crates/cclab-mamba/runtime/module.md",
+      "relevance": "high",
+      "key_requirements": "R2: Module caching via sys.modules, R4: import/from-import syntax. Import resolution pipeline that needs to integrate with MAMBA_MODULES"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/runtime/symbols.md",
+      "relevance": "medium",
+      "key_requirements": "Internal RuntimeSymbol struct (name, addr, params, return_type). JIT symbol registration — where FFI function pointers get wired"
+    },
+    {
+      "spec_path": "crates/cclab-mamba/codegen/cranelift-jit.md",
+      "relevance": "medium",
+      "key_requirements": "JIT codegen for function calls. Needs to emit correct call instructions for FFI function pointers resolved from MAMBA_MODULES"
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "native-import-resolution",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-mamba/resolve/native-import-resolution.md",
+      "sections": ["overview", "requirements", "scenarios", "changes"]
+    }
+  ]
+}

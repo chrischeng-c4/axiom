@@ -1,0 +1,51 @@
+{
+  "group_id": "jet-hmr-validation",
+  "specs": [
+    {
+      "path": "cclab/specs/crates/cclab-jet/dev-server.md",
+      "relevance": "high",
+      "summary": "Primary spec for the Jet dev server. Defines the WebSocket infrastructure (implicit in HMR endpoint `/__jet_hmr`), `serve_root_file()` where React Fast Refresh injection must integrate, and the CSS hot-replacement flow. The current `generate_hmr_client()` does full-page reload for all module updates — the HMR change replaces this with module-level hot swap via `import.meta.hot`. The transform pipeline (R2: `transform_tsx.rs`) is where $RefreshReg$ / $RefreshSig$ injection is added. Does NOT yet spec the `import.meta.hot` API or React Fast Refresh."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/postcss-tailwind.md",
+      "relevance": "medium",
+      "summary": "R9 defines CSS rebuild integration into the dev watcher and calls for 'HMR CSS update'. The HMR spec must define the `CssUpdate` message protocol that postcss-tailwind.md R9 relies on. CSS hot replacement is already implemented in code (`HmrMessage::CssUpdate`); this spec provides the cross-cutting context."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/jit-runner.md",
+      "relevance": "low",
+      "summary": "JIT runner shares `transform_tsx.rs` via the JIT transform pipeline. Background context for how AST transforms are structured — relevant since React Fast Refresh injection is an AST transform added to `transform_tsx.rs`."
+    },
+    {
+      "path": "cclab/specs/crates/cclab-jet/aot-build.md",
+      "relevance": "low",
+      "summary": "Production build pipeline. Background context only — HMR is a dev-mode-only feature. No direct dependency."
+    }
+  ],
+  "codebase_explored": [
+    {
+      "path": "crates/cclab-jet/src/dev_server/hmr.rs",
+      "summary": "HmrManager with tokio broadcast channel. HmrMessage enum: Update{path,timestamp}, CssUpdate{css,filename,timestamp}, FullReload{reason}, Connected, Error{message}. Missing: import.meta.hot runtime state (accept handlers, dispose callbacks, module data map). No module graph tracking."
+    },
+    {
+      "path": "crates/cclab-jet/src/dev_server/mod.rs",
+      "summary": "Dev server with WebSocket endpoint at `/__jet_hmr`. `generate_hmr_client()` injects HMR JS into bundle.js — currently does `window.location.reload()` for all module Update messages (no real hot swap). `serve_root_file()` applies `transform_tsx()` inline — integration point for React Fast Refresh injection. CSS rebuild via `rebuild_css()` already sends CssUpdate HMR message."
+    },
+    {
+      "path": "crates/cclab-jet/src/transform/transform_tsx.rs",
+      "summary": "AST-based TSX→JS transform using tree-sitter. Handles type stripping, JSX transform, satisfies/declare removal. Missing: React Fast Refresh injection ($RefreshReg$, $RefreshSig$, react-refresh/runtime setup). The pre-clarification answers confirm injection should be AST-based here, detecting React component declarations and hook usage."
+    },
+    {
+      "path": "crates/cclab-jet/src/dev_server/watcher.rs",
+      "summary": "FileWatcher using notify crate. Broadcasts changed PathBuf via tokio channel. Used in start_file_watcher() to detect file changes and emit HMR messages. Basis for the module invalidation trigger."
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "jet-hmr",
+      "action": "create",
+      "main_spec_ref": "crates/cclab-jet/hmr.md",
+      "sections": ["overview", "schema", "state-machine", "logic", "interaction", "e2e-scenario", "test-plan", "changes"]
+    }
+  ]
+}

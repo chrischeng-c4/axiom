@@ -1,0 +1,29 @@
+change_id: mamba-config-unify
+schema_version: '2.0'
+created_at: 2026-04-08T16:51:43.900932Z
+updated_at: 2026-04-08T18:54:39.142601Z
+phase: change_archived
+iteration: 1
+last_action: null
+session_id: null
+checksums: {}
+validations: []
+git_workflow: null
+revision_counts: {}
+current_task_id: mamba-config-unify-spec
+task_revisions: {}
+impl_spec_phase: {}
+telemetry: null
+dag: null
+delegation_guard: null
+branch: null
+agent: mamba-developer
+groups_progress:
+  reference_context:
+  - unify-mamba-config
+  change_implementation: []
+  change_spec: []
+  pre_clarifications:
+  - unify-mamba-config
+  post_clarifications:
+  - unify-mamba-config

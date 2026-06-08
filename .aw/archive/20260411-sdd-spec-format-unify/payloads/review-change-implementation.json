@@ -1,0 +1,7 @@
+{
+  "group_id": "sdd-spec-format-unify",
+  "spec_id": "sdd-spec-format-unification",
+  "verdict": "APPROVED",
+  "summary": "All requirements implemented. R1: fill_order top-down in spec_rules.rs. R2: default_lang yaml for schema/rpc-api/config/component/design-token. R3: requirements/test-plan use mermaid. R4: scenarios uses yaml GWT format. R5: format_rules.rs REQUIRED_CODE_BLOCK_TYPES updated, PROSE_ONLY_TYPES reduced to overview/doc only. R6: UNIVERSAL_SKELETON updated with Mermaid Plus stubs, correct lang annotations. R7: changes section example includes satisfies field. R8: Mermaid Plus generators wired via UNIVERSAL_SKELETON stubs and lang annotations. 1388 tests passing. All acceptance criteria from the original issue are met.",
+  "issues": []
+}

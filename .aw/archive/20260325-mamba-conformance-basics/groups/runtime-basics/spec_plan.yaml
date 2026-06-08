@@ -1,0 +1,36 @@
+- spec_id: cranelift
+  action: modify
+  main_spec_ref: codegen/cranelift
+  sections:
+  - Overview
+  - Changes
+- spec_id: cranelift-jit
+  action: modify
+  main_spec_ref: codegen/cranelift-jit
+  sections:
+  - Overview
+  - Changes
+- spec_id: string-ops
+  action: modify
+  main_spec_ref: runtime/string-ops
+  sections:
+  - Overview
+  - Changes
+- spec_id: builtins
+  action: modify
+  main_spec_ref: runtime/builtins
+  sections:
+  - Overview
+  - Changes
+- spec_id: type-checker
+  action: modify
+  main_spec_ref: types/type-checker
+  sections:
+  - Overview
+  - Changes
+- spec_id: repl
+  action: modify
+  main_spec_ref: driver/repl
+  sections:
+  - Overview
+  - Changes

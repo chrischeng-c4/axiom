@@ -1,0 +1,6 @@
+{
+  "change_id": "mamba-config-unify",
+  "group_id": "unify-mamba-config",
+  "verdict": "APPROVED",
+  "summary": "Reference context correctly identifies the two primary specs (config-schema and compiler-driver) at high relevance, and the crate-wiring spec at medium. Spec plan targets both for modification with overview and changes sections. All affected areas are covered."
+}

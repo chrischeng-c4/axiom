@@ -1,0 +1,9 @@
+- spec_id: mamba-all-support-spec
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/module.md
+  source: crates/cclab-mamba/runtime/module.md
+  sections:
+  - overview
+  - changes
+  - logic
+  - test-plan

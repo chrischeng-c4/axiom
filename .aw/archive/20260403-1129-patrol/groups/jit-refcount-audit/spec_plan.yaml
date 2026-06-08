@@ -1,0 +1,16 @@
+- spec_id: jit-refcount-audit
+  action: modify
+  main_spec_ref: crates/cclab-mamba/codegen/jit-refcount.md
+  source: crates/cclab-mamba/codegen/jit-refcount.md
+  sections:
+  - overview
+  - requirements
+  - scenarios
+  - changes
+- spec_id: gc-reenable
+  action: modify
+  main_spec_ref: crates/cclab-mamba/runtime/gc.md
+  source: crates/cclab-mamba/runtime/gc.md
+  sections:
+  - overview
+  - changes

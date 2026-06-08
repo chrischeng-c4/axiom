@@ -1,0 +1,1 @@
+Move compass generate/ (spec_ir + generators + engine) into sdd crate. Merge duplicate SpecIR types. Rename @score → @sdd. Part of P0 consolidation epic.

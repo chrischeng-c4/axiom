@@ -1,0 +1,6 @@
+{
+  "spec_id": "jit-refcount-audit",
+  "group_id": "jit-refcount-audit",
+  "section": "dependency",
+  "content": "```mermaid\nflowchart LR\n    subgraph done[\"Already Committed\"]\n        R1done[\"R1-R7 original\\nJIT wrappers, immortal,\\nrelease-before-overwrite,\\ncopy retain, return cleanup\"]\n    end\n\n    subgraph audit[\"This Change\"]\n        R1[\"R1: Classify all mb_*\\nreturn ownership\"]\n        R2[\"R2: Add retain_if_ptr\\nfor borrowed returns\"]\n        R3[\"R3: EMIT_REFCOUNT_CALLS=true\"]\n        R4[\"R4: Re-enable GC\"]\n        R5[\"R5: ASan validation\"]\n        R6[\"R6: Conformance regression\"]\n    end\n\n    R1done --> R1\n    R1 --> R2\n    R2 --> R3\n    R3 --> R5\n    R3 --> R6\n    R5 --> R4\n    R6 --> R4\n```"
+}

@@ -1,0 +1,229 @@
+# Cue backend loader bug fixture — closes #2939.
+# Pins the acceptance shape for "Cue backend cannot load under
+# mamba dev entrypoint." Cue's product target is mamba (the
+# `CUE_BACKEND_MODE=bridge` CPython fallback is for thin
+# product work only). This gate locks the GREEN definition:
+#
+#   - R1: `mamba run --config projects/cue/backend/mamba.toml`
+#     loads the Cue backend project entrypoint far enough to
+#     own the local dev backend at 127.0.0.1:43219, OR mamba
+#     emits a narrow unsupported-feature diagnostic with the
+#     exact Python/Mamba construct that must change.
+#   - R2: Each diagnostic carries kind, file path relative to
+#     the cue backend root, line, column, byte span, and a
+#     pointer to the construct name that must change. No
+#     "parse error" / "type error" without a construct.
+#   - R3: The api.py PEP-604/generic-syntax blocker
+#     (`type error at 2096..2111: unknown type: WorkstreamError`
+#     and `syntax error at 1107..1108: expected type, got [`)
+#     is either supported or each surfaces with a narrow
+#     diagnostic that names the construct.
+#   - R4: The Cue backend dev entrypoint binds 127.0.0.1:43219
+#     when load succeeds (canonical local dev address). Any
+#     other binding is a regression.
+#   - R5: When the bridge mode (`CUE_BACKEND_MODE=bridge`)
+#     fallback is consulted, the gate refuses to mark the
+#     mamba product target as GREEN. Bridge is fallback, not
+#     product.
+#
+# Out of scope: implementing the missing parser/type support;
+# the Cue product UX; the local dev TUI; CPython bridge
+# implementation.
+#
+# Shape locked by src/meta_gates/tests/cue_backend_loader_gate.rs.
+
+version = 1
+fixture = "cue_backend_loader_gate"
+issue = 2939
+profile = "conformance"
+family = "cue_backend_loader_gate"
+
+network = "offline"
+
+[isolation]
+forbid_writes_outside_project = true
+forbid_user_home_reads = true
+forbid_global_cache_reads = true
+forbid_global_cache_writes = true
+
+[python_target]
+python_major = 3
+python_minor = 12
+must_be_python_3_12 = true
+
+[surface]
+must_cover_mamba_run_loads_cue_backend_or_emits_narrow_diagnostic = true
+must_cover_narrow_diagnostic_carries_construct_and_location = true
+must_cover_api_py_generic_syntax_blocker_is_resolved_or_narrow_diagnostic = true
+must_cover_cue_backend_binds_canonical_local_dev_address = true
+must_cover_bridge_fallback_does_not_satisfy_mamba_product_target = true
+must_be_offline_or_loopback_only = true
+must_be_deterministic = true
+
+# R1 — mamba run loads Cue backend OR emits narrow diagnostic.
+[r1_mamba_run_loads_cue_backend_or_narrow_diagnostic_contract]
+case = "mamba_run_config_loads_cue_backend_or_emits_narrow_unsupported_feature_diagnostic"
+requirement_id = "R1"
+must_succeed_load_or_emit_narrow_diagnostic = true
+must_use_config_flag_for_mamba_toml = true
+forbid_silent_failure_without_diagnostic = true
+forbid_collapsing_diagnostic_into_generic_parse_error = true
+forbid_collapsing_diagnostic_into_generic_type_error = true
+cue_backend_root_relative_field_name = "cue_backend_root_relative"
+expected_cue_backend_root_relative = "projects/cue/backend"
+mamba_run_config_invocation_field_name = "mamba_run_config_invocation"
+expected_mamba_run_config_invocation = "mamba run --config projects/cue/backend/mamba.toml"
+load_outcome_field_name = "load_outcome"
+allowed_load_outcome_values = ["loaded", "narrow_unsupported_feature", "broad_parse_error", "broad_type_error", "silent_failure"]
+silent_failure_failure_kind = "mvp_cue_backend_loader_silent_failure"
+silent_failure_exit_code = 406
+broad_parse_error_failure_kind = "mvp_cue_backend_loader_broad_parse_error"
+broad_parse_error_exit_code = 407
+broad_type_error_failure_kind = "mvp_cue_backend_loader_broad_type_error"
+broad_type_error_exit_code = 408
+must_distinguish_silent_from_broad_parse_from_broad_type = true
+
+# R2 — narrow diagnostic schema.
+[r2_narrow_diagnostic_schema_contract]
+case = "narrow_diagnostic_carries_kind_file_line_column_byte_span_and_construct_name"
+requirement_id = "R2"
+must_include_diagnostic_kind = true
+must_include_file_relative_to_cue_backend_root = true
+must_include_line_number = true
+must_include_column_number = true
+must_include_byte_span = true
+must_include_construct_name = true
+forbid_omitting_construct_name = true
+forbid_using_absolute_path_in_diagnostic = true
+required_diagnostic_fields_field_name = "required_diagnostic_fields"
+required_diagnostic_fields = [
+    "diagnostic_kind",
+    "file_relative",
+    "line",
+    "column",
+    "byte_span",
+    "construct_name",
+]
+allowed_diagnostic_kind_values = ["unsupported_syntax", "unsupported_type", "unsupported_runtime_feature"]
+construct_name_missing_failure_kind = "mvp_cue_backend_loader_diagnostic_construct_name_missing"
+construct_name_missing_exit_code = 409
+absolute_path_in_diagnostic_failure_kind = "mvp_cue_backend_loader_diagnostic_absolute_path"
+absolute_path_in_diagnostic_exit_code = 410
+must_distinguish_construct_missing_from_absolute_path = true
+
+# R3 — concrete api.py + main.py blockers.
+[r3_concrete_api_and_main_blockers_resolved_or_narrow_contract]
+case = "api_py_generic_syntax_and_main_py_unknown_type_blockers_resolve_or_emit_narrow_diagnostic"
+requirement_id = "R3"
+must_resolve_api_py_generic_syntax_blocker_or_emit_narrow = true
+must_resolve_main_py_unknown_type_blocker_or_emit_narrow = true
+forbid_silently_skipping_api_py_blocker = true
+forbid_silently_skipping_main_py_blocker = true
+api_py_blocker_relative_path_field_name = "api_py_blocker_relative_path"
+expected_api_py_blocker_relative_path = "src/mambalibs/api.py"
+api_py_blocker_byte_span_field_name = "api_py_blocker_byte_span"
+expected_api_py_blocker_byte_span = "1107..1108"
+api_py_blocker_construct_field_name = "api_py_blocker_construct"
+expected_api_py_blocker_construct = "subscript_after_type_annotation"
+main_py_blocker_relative_path_field_name = "main_py_blocker_relative_path"
+expected_main_py_blocker_relative_path = "src/main.py"
+main_py_blocker_byte_span_field_name = "main_py_blocker_byte_span"
+expected_main_py_blocker_byte_span = "2096..2111"
+main_py_blocker_construct_field_name = "main_py_blocker_construct"
+expected_main_py_blocker_construct = "unknown_type_WorkstreamError"
+main_py_blocker_line_field_name = "main_py_blocker_line"
+expected_main_py_blocker_line = 81
+main_py_blocker_column_field_name = "main_py_blocker_column"
+expected_main_py_blocker_column = 19
+api_py_blocker_silently_skipped_failure_kind = "mvp_cue_backend_loader_api_py_blocker_silently_skipped"
+api_py_blocker_silently_skipped_exit_code = 411
+main_py_blocker_silently_skipped_failure_kind = "mvp_cue_backend_loader_main_py_blocker_silently_skipped"
+main_py_blocker_silently_skipped_exit_code = 412
+must_distinguish_api_py_skip_from_main_py_skip = true
+
+# R4 — canonical local dev address binding.
+[r4_canonical_local_dev_address_binding_contract]
+case = "cue_backend_dev_entrypoint_binds_127_0_0_1_43219"
+requirement_id = "R4"
+must_bind_loopback_address = true
+must_bind_canonical_dev_port = true
+forbid_binding_non_loopback_address_in_dev = true
+forbid_binding_alternate_port_silently = true
+canonical_dev_address_field_name = "canonical_dev_address"
+expected_canonical_dev_address = "127.0.0.1:43219"
+canonical_dev_host_field_name = "canonical_dev_host"
+expected_canonical_dev_host = "127.0.0.1"
+canonical_dev_port_field_name = "canonical_dev_port"
+expected_canonical_dev_port = 43219
+non_loopback_bind_failure_kind = "mvp_cue_backend_loader_non_loopback_bind_in_dev"
+non_loopback_bind_exit_code = 413
+alternate_port_silently_bound_failure_kind = "mvp_cue_backend_loader_alternate_port_silently_bound"
+alternate_port_silently_bound_exit_code = 414
+must_distinguish_non_loopback_from_alternate_port = true
+
+# R5 — bridge fallback does not satisfy product target.
+[r5_bridge_fallback_does_not_satisfy_product_target_contract]
+case = "cue_backend_mode_bridge_cpython_fallback_does_not_satisfy_mamba_product_target_gate"
+requirement_id = "R5"
+must_forbid_treating_bridge_mode_as_mamba_green = true
+must_record_bridge_mode_consultation_distinct_from_load = true
+forbid_silently_falling_back_to_bridge_in_product_target = true
+forbid_silently_swallowing_mamba_loader_error_via_bridge = true
+bridge_mode_env_var_field_name = "bridge_mode_env_var"
+expected_bridge_mode_env_var = "CUE_BACKEND_MODE"
+bridge_mode_env_value_field_name = "bridge_mode_env_value"
+expected_bridge_mode_env_value = "bridge"
+product_target_field_name = "product_target"
+allowed_product_target_values = ["mamba", "bridge"]
+expected_product_target = "mamba"
+bridge_marked_as_green_failure_kind = "mvp_cue_backend_loader_bridge_marked_as_green"
+bridge_marked_as_green_exit_code = 415
+silent_bridge_fallback_failure_kind = "mvp_cue_backend_loader_silent_bridge_fallback"
+silent_bridge_fallback_exit_code = 416
+must_distinguish_bridge_green_from_silent_bridge_fallback = true
+
+[runner_contract]
+keys = [
+    "outcome",
+    "case",
+    "requirement_id",
+    "cue_backend_root_relative",
+    "mamba_run_config_invocation",
+    "load_outcome",
+    "required_diagnostic_fields",
+    "api_py_blocker_relative_path",
+    "api_py_blocker_byte_span",
+    "api_py_blocker_construct",
+    "main_py_blocker_relative_path",
+    "main_py_blocker_byte_span",
+    "main_py_blocker_construct",
+    "main_py_blocker_line",
+    "main_py_blocker_column",
+    "canonical_dev_address",
+    "canonical_dev_host",
+    "canonical_dev_port",
+    "bridge_mode_env_var",
+    "bridge_mode_env_value",
+    "product_target",
+    "failure_kind",
+    "exit_code",
+]
+outcome_values = ["pass", "fail", "missing", "skip"]
+case_values = [
+    "mamba_run_config_loads_cue_backend_or_emits_narrow_unsupported_feature_diagnostic",
+    "narrow_diagnostic_carries_kind_file_line_column_byte_span_and_construct_name",
+    "api_py_generic_syntax_and_main_py_unknown_type_blockers_resolve_or_emit_narrow_diagnostic",
+    "cue_backend_dev_entrypoint_binds_127_0_0_1_43219",
+    "cue_backend_mode_bridge_cpython_fallback_does_not_satisfy_mamba_product_target_gate",
+]
+
+[out_of_scope]
+# Bug body: this gate locks acceptance for the loader bug; the
+# actual missing parser/type support, the Cue product UX, the
+# local dev TUI, and the CPython bridge impl are owned
+# elsewhere.
+implementation_of_missing_parser_or_type_support = true
+cue_product_ux = true
+local_dev_tui = true
+cpython_bridge_implementation = true
+c_extension_fast_paths = true

@@ -1,0 +1,36 @@
+{
+  "change_id": "issues-cli-crud",
+  "group_id": "issues-cli-crud",
+  "skipped": false,
+  "scope_summary": {
+    "problem": "score issues CLI has list/show/sync (read path) but no write path (create/update/close) and no search. Agents cannot fully manage the issue lifecycle without shelling out to gh directly, breaking the uniform backend abstraction.",
+    "success": "All IssueBackend verbs (create, update, close, search) implemented uniformly across Local + GitHub + GitLab backends. score issues CLI exposes all verbs with --json output. Cross-artifact references (related:/implements:) wired into frontmatter schema.",
+    "boundary": "In scope: create, update, close, find verbs + IssueBackend trait extension + GitLab backend (glab shell-out) + cross-reference fields. Out of scope: Jira backend, bidirectional sync conflict resolution, authoring agent (#1179 second half)."
+  },
+  "questions": [
+    {
+      "topic": "Create workflow",
+      "question": "Should score issues create always create a local draft first, then optionally push? Or should there be a direct-to-GitHub mode?",
+      "answer": "Support both. Default: local-first (creates .score/issues/ draft with state: draft). Add --remote flag for direct-to-GitHub (calls gh issue create, writes local file with id backfilled). Agent flexibility: draft offline, push later; OR create directly when online.",
+      "rationale": "Agent may be working offline (no gh access) or online (wants immediate tracking). Supporting both gives maximum flexibility without complexity — the difference is just whether gh issue create runs before or after local file write."
+    },
+    {
+      "topic": "Update scope",
+      "question": "For score issues update, should body editing be in-place (rewrite full body from --body-file) or patch-based?",
+      "answer": "Full body replacement via --body-file. Agent generates complete content, passes it in. No partial patching.",
+      "rationale": "Agents already produce complete content. Patch-based editing adds complexity (section detection, merge logic) with no real benefit since the agent rewrites the whole body anyway."
+    },
+    {
+      "topic": "Cross-reference validation",
+      "question": "Should related:/implements: references be validated at write-time or list-time?",
+      "answer": "Warn at list-time only. Write accepts any reference without validation.",
+      "rationale": "Write-time validation creates ordering dependencies — agent can't create an issue referencing a change that doesn't exist yet. List-time warnings let agents work in any order, then check consistency afterward."
+    },
+    {
+      "topic": "GitLab testing",
+      "question": "Is there a GitLab repo available for integration testing?",
+      "answer": "Unit tests only with mocked glab CLI output. No GitLab repo available for integration testing.",
+      "rationale": "Real GitLab integration testing requires a running GitLab instance. Mock the glab binary's JSON output to verify parsing and error handling. Add integration tests later when a GitLab repo is available."
+    }
+  ]
+}

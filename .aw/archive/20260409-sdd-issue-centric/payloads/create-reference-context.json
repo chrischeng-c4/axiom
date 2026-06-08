@@ -1,0 +1,41 @@
+{
+  "group_id": "issue-centric-workflow",
+  "specs": [
+    {
+      "path": "crates/sdd/logic/state-machine.md",
+      "group": "state-machine",
+      "relevance": "high",
+      "key_requirements": [
+        "Phase enum lives in STATE.yaml — must move to issue frontmatter",
+        "Phase transitions validated in phase_transition.rs — must read/write issue instead",
+        "run-change reads STATE.yaml phase to determine next action — must read issue frontmatter"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/structured-issue.md",
+      "group": "issue-format",
+      "relevance": "high",
+      "key_requirements": [
+        "issue_parser.rs already parses structured sections — extend to read/write phase field",
+        "Frontmatter schema needs phase, branch, git_workflow fields"
+      ]
+    },
+    {
+      "path": "crates/sdd/logic/issues-backend.md",
+      "group": "issues",
+      "relevance": "medium",
+      "key_requirements": [
+        "Issue CRUD operations — score issues list must show phase column",
+        "Issue frontmatter schema — add new fields"
+      ]
+    }
+  ],
+  "spec_plan": [
+    {
+      "spec_id": "sdd-issue-centric",
+      "action": "create",
+      "main_spec_ref": "crates/sdd/logic/issue-centric-workflow.md",
+      "sections": ["overview", "schema", "state-machine", "changes"]
+    }
+  ]
+}

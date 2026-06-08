@@ -1,0 +1,13 @@
+{
+  "group_id": "refcount-jit",
+  "skipped": true,
+  "scope_summary": {
+    "problem": "JIT codegen never emits mb_retain/mb_release — all heap objects leak. GC disabled because no root registration. #1129",
+    "success_criteria": "JIT-compiled code correctly retains/releases heap pointers. Compile-time constants use immortal refcount. GC re-enabled. All 149 conformance tests pass. ASan clean.",
+    "boundary": {
+      "in_scope": "rc.rs (immortal refcount), symbols.rs (register retain/release), jit.rs (emit retain/release at assignment/return), gc.rs (re-enable)",
+      "out_of_scope": "Container internal refcounting (list_ops, dict_ops already handle element ownership), stack maps, conservative GC scanning",
+      "constraints": "Must not break 149 conformance tests. Retain/release must be balanced — no double-free, no leak."
+    }
+  }
+}

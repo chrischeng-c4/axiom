@@ -1,0 +1,7 @@
+{
+  "spec_id": "enhancement-html-reporter-for-native-test-runner-spec",
+  "section": "overview",
+  "main_spec_ref": "crates/jet/testing/html-reporter.md",
+  "fill_sections": ["overview", "requirements", "scenarios", "interaction", "logic", "state-machine", "cli", "schema", "changes", "test-plan"],
+  "content": "Static HTML report generator for the jet native test runner. After `jet test` completes, `HtmlReporter` consumes the NDJSON wire protocol event stream and writes a self-contained `test-results/report/index.html` — all JS/CSS embedded in the jet binary via `include_bytes!`. The report shows aggregate stats (total/passed/failed/skipped/flaky/duration/shard info) and per-test rows with status badge, duration, source file:line, expandable stack trace drawer, and a \"View trace\" deep-link to `jet trace view`.\n\nKey subsystems:\n- `crates/jet/src/reporter/html.rs` — `HtmlReporter` implementing the `Reporter` trait; consumes `testEnd` events, renders deterministic HTML.\n- `crates/jet/src/reporter/merger.rs` — shard merge algorithm: deduplicates by `test_id`, concatenates per-shard NDJSON streams, emits unified report.\n- `crates/jet/assets/html-reporter/{index.html,report.js,report.css}` — embedded static assets.\n- `crates/cclab-jet/src/cli/report.rs` — `jet report view <dir>` and `jet report merge` subcommands.\n\nActivation: `--reporter=html` or `--reporter=list,html`; default output dir `test-results/report/`. Deterministic output: tests sorted by stable `test_id`, timestamps ISO-8601, optional `--mask-timestamps` for golden-diff CI."
+}
