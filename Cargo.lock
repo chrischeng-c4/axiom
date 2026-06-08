@@ -6393,7 +6393,7 @@ dependencies = [
 
 [[package]]
 name = "meter"
-version = "0.3.61"
+version = "0.3.62"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -6423,7 +6423,7 @@ dependencies = [
 
 [[package]]
 name = "meter-cli"
-version = "0.3.61"
+version = "0.3.62"
 dependencies = [
  "anyhow",
  "cclab-cli-registry",

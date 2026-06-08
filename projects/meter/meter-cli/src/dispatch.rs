@@ -20,6 +20,7 @@ use meter::report::{persist, schema};
 #[derive(Parser, Debug)]
 #[command(
     name = "meter",
+    version,
     about = "meter — local runtime resource measurement for agents (JSON on stdout by default)",
     disable_help_subcommand = true
 )]
