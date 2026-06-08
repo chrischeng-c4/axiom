@@ -62,7 +62,7 @@ if [[ "$MODE" == "debug" ]]; then
   exit 0
 fi
 
-CURRENT_VERSION="$(grep -m1 '^version = "' Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
+CURRENT_VERSION="$(grep -m1 '^version = "' projects/cap/Cargo.toml | sed 's/version = "\(.*\)"/\1/')"
 IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT_VERSION"
 
 NEW_PATCH=$((PATCH + 1))
@@ -79,14 +79,14 @@ fi
 NEW_VERSION="$NEW_MAJOR.$NEW_MINOR.$NEW_PATCH"
 
 echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
-sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
+sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" projects/cap/Cargo.toml
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
 cargo build --release -p cap
 install_cap release
 
 TAG="cap@${NEW_VERSION}"
-git add Cargo.toml Cargo.lock projects/cap
+git add Cargo.lock projects/cap
 git commit -m "release(cap): ${TAG}"
 git tag -a "$TAG" -m "Release ${TAG}"
 

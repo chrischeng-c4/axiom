@@ -1,6 +1,6 @@
 [package]
 name = "meter-cli"
-version.workspace = true
+version = "0.3.61"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
