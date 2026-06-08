@@ -96,7 +96,9 @@ mongodb = { version = "3.1" }
 bson = { version = "2.13", features = ["chrono-0_4"] }
 
 # HTTP (for cclab-http crate)
-reqwest = { version = "0.12", features = ["json", "cookies", "gzip", "brotli", "multipart", "stream"] }
+# rustls (not native-tls/openssl) so the workspace cross-compiles to aarch64-linux for release binaries.
+# rustls-tls-native-roots keeps OS cert-store behavior (parity with the previous default-tls).
+reqwest = { version = "0.12", default-features = false, features = ["charset", "http2", "system-proxy", "rustls-tls-native-roots", "json", "cookies", "gzip", "brotli", "multipart", "stream"] }
 http = "1.2"
 url = "2.5"
 bytes = "1.9"
