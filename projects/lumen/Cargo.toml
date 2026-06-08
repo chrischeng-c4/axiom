@@ -67,7 +67,6 @@ serde_yaml = { version = "0.9", optional = true }
 lz4_flex = "0.11"
 memmap2 = "0.9"
 moka = { version = "0.12", features = ["sync"] }
-reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json.workspace = true
 rustc-hash = "2.1"
@@ -92,9 +91,13 @@ proptest = "1"
 rand = "0.8"
 serde_json.workspace = true
 tempfile = "3"
+# HTTP client for the perf-gate / write-qps harness (drives lumen + OpenSearch).
+# DEV-ONLY on purpose: the serving binary speaks REST/OpenAPI and ships no Rust
+# client SDK, so it never links an HTTP client → no openssl → clean cross-compile.
+reqwest = { workspace = true }
 # Native pg driver for the competitive perf gate (tests/perf_gate.rs). Postgres
 # is driven over its own wire protocol so the lumen-vs-pg end-to-end comparison
-# is honest. lumen + OpenSearch are driven via reqwest (already a dependency).
+# is honest.
 tokio-postgres = "0.7"
 # Stage 2 Phase 2i scale proof (tests/disk_scale_proof.rs). `memory-stats` reads
 # cross-platform PHYSICAL resident set size (macOS task_info, Linux /proc/self/statm)
