@@ -779,21 +779,28 @@ monitoring, `/metrics` carries the same numbers as gauges.
 ## HTTP & clients
 
 The client API speaks **HTTP/1.1 and HTTP/2 cleartext (h2c) on the same
-port** (`auto`). For a REST/JSON API, **HTTP/1.1 needs nothing special**
-— `requests`, `httpx` (default), `fetch`, `curl`, and any REST client
-just work (lumen ships no client SDK — it's pure REST/OpenAPI; see `lumen llm`).
-HTTP/2 is an opt-in throughput optimization:
+port** (`auto`) — the server accepts both, no flag needed. **HTTP/2 is the
+recommended connection for serving**: one connection multiplexes many concurrent
+streams, which is how lumen sustains its high-QPS search/index throughput. The
+three setups, in order of preference:
 
-| Client | HTTP/1.1 (default) | h2c (cleartext) opt-in | h2 over TLS (prod) |
-|--------|--------------------|------------------------|--------------------|
+- **Production (behind TLS) — HTTP/2 by default, for free.** An ingress / mesh
+  terminating TLS negotiates h2 via ALPN, so every client gets it transparently.
+  This is the recommended deployment.
+- **Cleartext (dev / in-cluster) — h2c is opt-in.** h2c can't auto-negotiate (no
+  ALPN), so a client must enable prior-knowledge (see table). A lumen connection
+  *pool* over h2c is what the benchmark throughput numbers use.
+- **Zero-driver fallback — plain HTTP/1.1 always works**, no special client:
+  `requests`, `httpx`, `fetch`, `curl`, any REST client (lumen ships no client
+  SDK — it's pure REST/OpenAPI; see `lumen llm`).
+
+| Client | HTTP/1.1 | h2c (cleartext) opt-in | h2 over TLS (prod) |
+|--------|----------|------------------------|--------------------|
 | Python `requests` | ✅ | ✗ (no h2 support) | ✗ |
 | Python `httpx` | ✅ | `pip install "httpx[http2]"` + `Client(http2=True)` | ✅ ALPN |
 | `curl` | ✅ | `--http2-prior-knowledge` | `--http2` |
 | Go `net/http` | ✅ | needs `x/net/http2` h2c transport | ✅ ALPN |
 | browser (Swagger `/docs`) | ✅ | ✗ (browsers require TLS) | ✅ ALPN |
-
-In production behind TLS (ingress / mesh terminating TLS), HTTP/2 is
-negotiated transparently via ALPN — every client gets it for free.
 
 ## OpenAPI
 
