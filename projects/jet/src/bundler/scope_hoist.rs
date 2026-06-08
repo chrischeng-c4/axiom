@@ -58,7 +58,6 @@ pub fn generate_scope_hoisted_bundle(modules: &[CompiledModule]) -> String {
         return String::new();
     }
 
-    let n = modules.len();
     let mut out = String::with_capacity(estimate_output_size(modules));
 
     // Outer IIFE to avoid leaking module variables into global scope
@@ -67,30 +66,21 @@ pub fn generate_scope_hoisted_bundle(modules: &[CompiledModule]) -> String {
     // Pre-declare all module namespace objects.
     // Using `var` means they are hoisted to the function scope and
     // visible everywhere inside the IIFE.
-    for i in 0..n {
+    let module_slot_count = module_slot_count(modules);
+    for i in 0..module_slot_count {
         out.push_str(&format!("var _m{}={{exports:{{}}}};\n", i));
     }
     out.push('\n');
 
-    // Lightweight require: maps numeric module ID to module.exports.
-    // This is the only runtime overhead that cannot be eliminated by
-    // hoisting. A minifier (Terser/esbuild) can inline this for
-    // single-call-site modules.
-    out.push_str("function _r(id){\n");
-    out.push_str("  switch(id){\n");
-    for i in 0..n {
-        out.push_str(&format!("    case {}:return _m{}.exports;\n", i, i));
-    }
-    out.push_str("    default:return {};\n");
-    out.push_str("  }\n");
-    out.push_str("}\n\n");
+    emit_require_lookup(&mut out, module_slot_count);
 
     // Execute modules in reverse topological order so that each
     // dependency is fully initialised before its importer runs.
     // (modules[0] = entry point; modules[n-1] = deepest leaf)
-    for (original_idx, module) in modules.iter().enumerate().rev() {
+    for module in modules.iter().rev() {
+        let module_id = module.id;
         let module_path = module.path.to_string_lossy();
-        out.push_str(&format!("// Module {}: {}\n", original_idx, module_path));
+        out.push_str(&format!("// Module {}: {}\n", module_id, module_path));
         // Each module gets its own function scope so that local
         // `var` declarations don't collide across modules.  The
         // single IIFE wrapper means a minifier can still see all
@@ -98,7 +88,7 @@ pub fn generate_scope_hoisted_bundle(modules: &[CompiledModule]) -> String {
         out.push_str(&format!(
             "!function(module,exports,require){{\n{}}}(\
              _m{},_m{}.exports,_r);\n\n",
-            module.code, original_idx, original_idx
+            module.code, module_id, module_id
         ));
     }
 
@@ -128,24 +118,26 @@ pub fn is_scope_hoist_safe(modules: &[CompiledModule]) -> bool {
     true
 }
 
-/// Returns `true` when no module uses `eval()` or `with` statements, which
-/// would make it unsafe to inline the module body into a shared scope.
+/// Returns `true` when no module uses `eval()`, `with` statements, or dynamic
+/// `arguments[...]` access, which would make it unsafe to inline the module
+/// body into a shared scope.
 ///
 /// - `eval()` can reference ambient variables by name at runtime.
 /// - `with(obj)` creates dynamic scope that cannot be statically resolved.
-///
-/// Function-local `arguments[...]` access is safe: flattening only changes the
-/// module wrapper boundary, not the function activation record where
-/// `arguments` is read. Treating every `arguments[` substring as unsafe keeps
-/// React production packages on the larger Phase 1 wrapper path.
+/// - `arguments[dynamic_index]` relies on the current function's `arguments`
+///   object being stable, which renaming could violate.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn is_flatten_safe(modules: &[CompiledModule]) -> bool {
     for module in modules {
-        if module.code.contains("eval(") || module.code.contains("with(") {
+        if !is_module_flatten_safe(&module.code) {
             return false;
         }
     }
     true
+}
+
+fn is_module_flatten_safe(code: &str) -> bool {
+    !(code.contains("eval(") || code.contains("with(") || code.contains("arguments["))
 }
 
 /// Phase 2: Generate a truly flat bundle by inlining each module body
@@ -164,88 +156,97 @@ pub fn is_flatten_safe(modules: &[CompiledModule]) -> bool {
 /// - No IIFE call overhead per module.
 /// - Cross-module constant folding and DCE are more effective.
 ///
-/// Falls back to Phase 1 if `is_flatten_safe` returns `false`.
+/// Keeps a Phase 1 wrapper only around modules that are individually unsafe
+/// to flatten.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn generate_flattened_bundle(modules: &[CompiledModule]) -> String {
     if modules.is_empty() {
         return String::new();
     }
 
-    // Safety check: fall back to Phase 1 if any module uses eval/with
-    if !is_flatten_safe(modules) {
-        tracing::debug!("Falling back to Phase 1 scope hoisting (eval/with detected)");
-        return generate_scope_hoisted_bundle(modules);
-    }
-
-    let n = modules.len();
     let mut out = String::with_capacity(estimate_output_size(modules));
 
     out.push_str("(function(){\n'use strict';\n\n");
 
     // Pre-declare all module namespace objects using short names.
-    for i in 0..n {
+    let module_slot_count = module_slot_count(modules);
+    for i in 0..module_slot_count {
         out.push_str(&format!("var _m{}={{exports:{{}}}};\n", i));
     }
     out.push('\n');
 
     // Lightweight require function — still needed for patterns like
     // `var dep = require(1)` that reference modules by numeric ID.
-    out.push_str("function _r(id){\n");
-    out.push_str("  switch(id){\n");
-    for i in 0..n {
-        out.push_str(&format!("    case {}:return _m{}.exports;\n", i, i));
-    }
-    out.push_str("    default:return {};\n");
-    out.push_str("  }\n");
-    out.push_str("}\n\n");
+    emit_require_lookup(&mut out, module_slot_count);
 
     // Inline each module body in reverse topological order (deepest deps first).
     // R6: modules with side effects retain their IIFE wrapper for isolation.
-    for (original_idx, module) in modules.iter().enumerate().rev() {
+    for module in modules.iter().rev() {
+        let module_id = module.id;
         let module_path = module.path.to_string_lossy();
         // R6: Check package.json sideEffects field for node_modules packages.
-        // Project source files that passed is_flatten_safe are always eligible
+        // Project source files that passed the per-module flatten check are eligible
         // for inlining — CJS exports assignments are not "side effects" in this
         // context, they're the module's output mechanism.
+        let module_flatten_safe = is_module_flatten_safe(&module.code);
         let in_node_modules = module.path.to_string_lossy().contains("node_modules");
         let side_effect_free = if in_node_modules {
             is_side_effect_free(module)
         } else {
-            true // project source files are eligible if they passed is_flatten_safe
+            true
         };
-        out.push_str(&format!("// Module {}: {}\n", original_idx, module_path));
+        out.push_str(&format!("// Module {}: {}\n", module_id, module_path));
 
-        if side_effect_free && !has_top_level_decl_shadowed_by_function_param(&module.code) {
+        if module_flatten_safe && side_effect_free {
             // Side-effect-free: inline directly into flat scope.
             // Apply per-module prefix renaming (R3) + CJS substitutions (R2).
-            let inlined = inline_module_body_v2(&module.code, original_idx);
+            let inlined = inline_module_body_v2(&module.code, module_id);
             out.push_str("{\n");
-            out.push_str(&format!(
-                "var _m{idx}e=_m{idx}.exports;\n",
-                idx = original_idx
-            ));
+            out.push_str(&format!("var _m{idx}e=_m{idx}.exports;\n", idx = module_id));
             out.push_str(&inlined);
             out.push_str("\n}\n\n");
         } else {
-            // Side-effectful: keep IIFE wrapper to preserve execution order.
-            // Modules whose top-level names are shadowed by function parameters
-            // also keep the wrapper until the prefix-renamer becomes
-            // scope-aware. Direct inlining would rename the shadowing parameter
-            // and make later constant propagation unsafe.
+            // Side-effectful or flatten-unsafe: keep IIFE wrapper to preserve
+            // execution order and local dynamic-scope semantics.
             tracing::debug!(
-                "Module {} requires wrapper isolation, retaining wrapper",
-                original_idx
+                "Module {} retained wrapper (side_effect_free={}, flatten_safe={})",
+                module_id,
+                side_effect_free,
+                module_flatten_safe
             );
             out.push_str(&format!(
                 "!function(module,exports,require){{{}}}(_m{idx},_m{idx}.exports,_r);\n\n",
                 module.code,
-                idx = original_idx
+                idx = module_id
             ));
         }
     }
 
     out.push_str("})();\n");
     out
+}
+
+fn module_slot_count(modules: &[CompiledModule]) -> usize {
+    modules
+        .iter()
+        .map(|module| module.id)
+        .max()
+        .map(|id| id + 1)
+        .unwrap_or(0)
+}
+
+fn emit_require_lookup(out: &mut String, n: usize) {
+    // Store module objects, not the exports objects, because CommonJS modules
+    // may replace `module.exports` after this lookup table is initialized.
+    out.push_str("var _mods=[");
+    for i in 0..n {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&format!("_m{}", i));
+    }
+    out.push_str("];\n");
+    out.push_str("function _r(id){var m=_mods[id];return m?m.exports:{}}\n\n");
 }
 
 /// Substitute CJS module parameter names in a compiled module body.
@@ -723,384 +724,6 @@ fn collect_top_level_decls(code: &str) -> Vec<String> {
         .collect()
 }
 
-fn has_top_level_decl_shadowed_by_function_param(code: &str) -> bool {
-    let decls: std::collections::HashSet<String> =
-        collect_top_level_decls(code).into_iter().collect();
-    if decls.is_empty() {
-        return false;
-    }
-
-    let b = code.as_bytes();
-    let len = b.len();
-    let mut i = 0;
-
-    while i < len {
-        if matches!(b[i], b'"' | b'\'' | b'`') {
-            i = skip_js_literal_bytes(b, i);
-            continue;
-        }
-        if b[i] == b'/' && i + 1 < len {
-            if b[i + 1] == b'/' {
-                i += 2;
-                while i < len && b[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            if b[i + 1] == b'*' {
-                i += 2;
-                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
-                    i += 1;
-                }
-                i = (i + 2).min(len);
-                continue;
-            }
-        }
-
-        if i + 8 <= len
-            && &b[i..i + 8] == b"function"
-            && (i == 0 || !is_id_cont_byte(b[i - 1]))
-            && (i + 8 >= len || !is_id_cont_byte(b[i + 8]))
-        {
-            let mut j = i + 8;
-            while j < len && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r') {
-                j += 1;
-            }
-            if j < len && b[j] == b'*' {
-                j += 1;
-                while j < len && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r') {
-                    j += 1;
-                }
-            }
-            if j < len && is_id_start_byte(b[j]) {
-                while j < len && is_id_cont_byte(b[j]) {
-                    j += 1;
-                }
-                while j < len && matches!(b[j], b' ' | b'\t' | b'\n' | b'\r') {
-                    j += 1;
-                }
-            }
-            if j < len && b[j] == b'(' {
-                if let Some(close) = find_matching_paren_byte(code, j) {
-                    if function_params_intersect_top_level_decls(&code[j + 1..close], &decls) {
-                        return true;
-                    }
-                    i = close + 1;
-                    continue;
-                }
-            }
-        }
-
-        i += 1;
-    }
-
-    false
-}
-
-fn function_params_intersect_top_level_decls(
-    params: &str,
-    decls: &std::collections::HashSet<String>,
-) -> bool {
-    let b = params.as_bytes();
-    let mut i = 0;
-    while i < b.len() {
-        if matches!(b[i], b'"' | b'\'' | b'`') {
-            i = skip_js_literal_bytes(b, i);
-            continue;
-        }
-        if is_id_start_byte(b[i]) {
-            let start = i;
-            i += 1;
-            while i < b.len() && is_id_cont_byte(b[i]) {
-                i += 1;
-            }
-            let ident = &params[start..i];
-            if !is_js_decl_keyword(ident) && decls.contains(ident) {
-                return true;
-            }
-            continue;
-        }
-        i += 1;
-    }
-    false
-}
-
-fn find_matching_paren_byte(code: &str, open: usize) -> Option<usize> {
-    let b = code.as_bytes();
-    let mut depth = 0i32;
-    let mut i = open;
-    while i < b.len() {
-        if matches!(b[i], b'"' | b'\'' | b'`') {
-            i = skip_js_literal_bytes(b, i);
-            continue;
-        }
-        match b[i] {
-            b'(' => depth += 1,
-            b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    None
-}
-
-fn skip_js_literal_bytes(b: &[u8], start: usize) -> usize {
-    let q = b[start];
-    let mut i = start + 1;
-    while i < b.len() {
-        if b[i] == b'\\' {
-            i = (i + 2).min(b.len());
-            continue;
-        }
-        if b[i] == q {
-            return i + 1;
-        }
-        i += 1;
-    }
-    i
-}
-
-fn copy_template_literal_with_renamed_expressions(
-    code: &str,
-    start: usize,
-    out: &mut Vec<u8>,
-    renames: &HashMap<String, String>,
-) -> usize {
-    let b = code.as_bytes();
-    let mut i = start;
-    out.push(b[i]);
-    i += 1;
-
-    while i < b.len() {
-        if b[i] == b'\\' {
-            out.push(b[i]);
-            i += 1;
-            if i < b.len() {
-                out.push(b[i]);
-                i += 1;
-            }
-            continue;
-        }
-        if b[i] == b'`' {
-            out.push(b[i]);
-            return i + 1;
-        }
-        if b[i] == b'$' && i + 1 < b.len() && b[i + 1] == b'{' {
-            out.extend_from_slice(b"${");
-            i += 2;
-            let expr_start = i;
-            let mut depth = 1usize;
-            while i < b.len() {
-                if matches!(b[i], b'"' | b'\'' | b'`') {
-                    i = skip_js_literal_bytes(b, i);
-                    continue;
-                }
-                if b[i] == b'/' && i + 1 < b.len() {
-                    if b[i + 1] == b'/' {
-                        i += 2;
-                        while i < b.len() && b[i] != b'\n' {
-                            i += 1;
-                        }
-                        continue;
-                    }
-                    if b[i + 1] == b'*' {
-                        i += 2;
-                        while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
-                            i += 1;
-                        }
-                        i = (i + 2).min(b.len());
-                        continue;
-                    }
-                }
-                match b[i] {
-                    b'{' => depth += 1,
-                    b'}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            let renamed =
-                                apply_renames_in_module_body(&code[expr_start..i], renames);
-                            out.extend_from_slice(renamed.as_bytes());
-                            out.push(b'}');
-                            i += 1;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-            continue;
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-
-    i
-}
-
-fn previous_significant_output_byte(out: &[u8]) -> Option<u8> {
-    let mut p = out.len();
-    while p > 0 && matches!(out[p - 1], b' ' | b'\t' | b'\n' | b'\r') {
-        p -= 1;
-    }
-    if p > 0 {
-        Some(out[p - 1])
-    } else {
-        None
-    }
-}
-
-fn next_significant_source_byte(b: &[u8], mut i: usize) -> Option<u8> {
-    while i < b.len() && matches!(b[i], b' ' | b'\t' | b'\n' | b'\r') {
-        i += 1;
-    }
-    b.get(i).copied()
-}
-
-fn looks_like_object_property_position(out: &[u8], delimiter_stack: &[u8]) -> bool {
-    delimiter_stack.last().copied() == Some(b'{')
-        && matches!(
-            previous_significant_output_byte(out),
-            Some(b'{') | Some(b',')
-        )
-}
-
-/// Apply a rename map to a module body in a single byte-level pass.
-///
-/// Identifiers preceded by `.` (property accesses) are never renamed.
-/// String literals and comments are copied verbatim without substitution.
-fn apply_renames_in_module_body(code: &str, renames: &HashMap<String, String>) -> String {
-    let b = code.as_bytes();
-    let len = b.len();
-    let mut out = Vec::with_capacity(len + renames.len() * 4);
-    let mut i = 0;
-    let mut delimiter_stack: Vec<u8> = Vec::new();
-
-    while i < len {
-        if b[i] == b'`' {
-            i = copy_template_literal_with_renamed_expressions(code, i, &mut out, renames);
-            continue;
-        }
-        // Skip plain string literals
-        if matches!(b[i], b'"' | b'\'') {
-            let q = b[i];
-            out.push(b[i]);
-            i += 1;
-            while i < len {
-                if b[i] == b'\\' {
-                    out.push(b[i]);
-                    i += 1;
-                    if i < len {
-                        out.push(b[i]);
-                        i += 1;
-                    }
-                    continue;
-                }
-                out.push(b[i]);
-                if b[i] == q {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-        // Skip single-line comments
-        if b[i] == b'/' && i + 1 < len && b[i + 1] == b'/' {
-            while i < len && b[i] != b'\n' {
-                out.push(b[i]);
-                i += 1;
-            }
-            continue;
-        }
-        // Skip block comments
-        if b[i] == b'/' && i + 1 < len && b[i + 1] == b'*' {
-            out.push(b[i]);
-            i += 1;
-            out.push(b[i]);
-            i += 1;
-            while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
-                out.push(b[i]);
-                i += 1;
-            }
-            if i + 1 < len {
-                out.push(b[i]);
-                i += 1;
-                out.push(b[i]);
-                i += 1;
-            }
-            continue;
-        }
-        // Identifier: check for rename
-        if is_id_start_byte(b[i]) {
-            // Check if immediately preceded by '.' (property access — skip)
-            let prev_is_dot = {
-                let mut p = out.len();
-                while p > 0 && matches!(out[p - 1], b' ' | b'\t') {
-                    p -= 1;
-                }
-                p > 0 && out[p - 1] == b'.'
-            };
-            let start = i;
-            while i < len && is_id_cont_byte(b[i]) {
-                i += 1;
-            }
-            let ident = &code[start..i];
-            if !prev_is_dot {
-                if let Some(new_name) = renames.get(ident) {
-                    if looks_like_object_property_position(&out, &delimiter_stack) {
-                        match next_significant_source_byte(b, i) {
-                            Some(b':') => {
-                                out.extend_from_slice(ident.as_bytes());
-                                continue;
-                            }
-                            Some(b',') | Some(b'}') => {
-                                out.extend_from_slice(ident.as_bytes());
-                                out.extend_from_slice(b": ");
-                                out.extend_from_slice(new_name.as_bytes());
-                                continue;
-                            }
-                            _ => {}
-                        }
-                    }
-                    out.extend_from_slice(new_name.as_bytes());
-                    continue;
-                }
-            }
-            out.extend_from_slice(ident.as_bytes());
-            continue;
-        }
-        match b[i] {
-            b'{' | b'(' | b'[' => delimiter_stack.push(b[i]),
-            b'}' => {
-                if delimiter_stack.last().copied() == Some(b'{') {
-                    delimiter_stack.pop();
-                }
-            }
-            b')' => {
-                if delimiter_stack.last().copied() == Some(b'(') {
-                    delimiter_stack.pop();
-                }
-            }
-            b']' => {
-                if delimiter_stack.last().copied() == Some(b'[') {
-                    delimiter_stack.pop();
-                }
-            }
-            _ => {}
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-
-    String::from_utf8(out).unwrap_or_else(|_| code.to_string())
-}
-
 /// Extended module body inlining (Phase 2 / R2 + R3).
 ///
 /// Builds a combined rename map that:
@@ -1120,25 +743,30 @@ fn inline_module_body_v2(code: &str, idx: usize) -> String {
     // Collect top-level declarations that need collision-avoiding prefixes.
     let decls = collect_top_level_decls(code);
 
-    // Build the unified rename map.
-    let mut renames: HashMap<String, String> = HashMap::with_capacity(decls.len() + 3);
+    // Build separate scoped rename maps:
+    //
+    // - root_renames applies only to top-level declarations and references that
+    //   resolve to those declarations.
+    // - global_renames applies only to unresolved CJS globals.
+    //
+    // Keeping those paths separate is required for packages such as Stylis,
+    // where top-level globals like `line` are shadowed by function parameters
+    // and also used as object-literal keys.
+    let mut root_renames: HashMap<String, String> = HashMap::with_capacity(decls.len());
+    let mut global_renames: HashMap<String, String> = HashMap::with_capacity(3);
 
-    // CJS globals come first so the loop below can skip them if they appear
-    // as local vars (very unlikely but safe).
-    renames.insert("exports".to_string(), exports_alias);
-    renames.insert("module".to_string(), module_repl.clone());
-    renames.insert("require".to_string(), "_r".to_string());
+    global_renames.insert("exports".to_string(), exports_alias);
+    global_renames.insert("module".to_string(), module_repl);
+    global_renames.insert("require".to_string(), "_r".to_string());
 
     // Per-module prefix for top-level declarations.
     for decl in decls {
-        // Don't overwrite CJS globals (exports/module/require) with a prefixed
-        // version — the CJS substitution above takes priority.
-        renames
+        root_renames
             .entry(decl.clone())
             .or_insert_with(|| format!("_m{}_{}", idx, decl));
     }
 
-    apply_renames_in_module_body(code, &renames)
+    super::mangle::apply_scoped_module_renames(code, &root_renames, &global_renames)
 }
 
 #[cfg(test)]
@@ -1148,11 +776,31 @@ mod tests {
 
     fn make_module(path: &str, code: &str) -> CompiledModule {
         CompiledModule {
+            id: test_module_id(path),
             path: PathBuf::from(path),
             code: code.to_string(),
             source_map: None,
             dependencies: Vec::new(),
             hash: String::new(),
+        }
+    }
+
+    fn make_module_with_id(id: usize, path: &str, code: &str) -> CompiledModule {
+        CompiledModule {
+            id,
+            path: PathBuf::from(path),
+            code: code.to_string(),
+            source_map: None,
+            dependencies: Vec::new(),
+            hash: String::new(),
+        }
+    }
+
+    fn test_module_id(path: &str) -> usize {
+        match path {
+            "dep.js" | "b.js" | "safe.js" | "config.js" | "lib.js" => 1,
+            "debug.js" => 2,
+            _ => 0,
         }
     }
 
@@ -1196,9 +844,10 @@ mod tests {
         assert!(bundle.contains("var _m0="));
         assert!(bundle.contains("var _m1="));
 
-        // require switch has both cases
-        assert!(bundle.contains("case 0:return _m0.exports;"));
-        assert!(bundle.contains("case 1:return _m1.exports;"));
+        // require lookup maps ids to live module objects, not stale exports
+        // snapshots, so `module.exports = value` stays observable.
+        assert!(bundle.contains("var _mods=[_m0,_m1];"));
+        assert!(bundle.contains("return m?m.exports:{}"));
 
         // dep module (index 1) should appear BEFORE entry (index 0)
         // because we iterate in reverse
@@ -1208,6 +857,45 @@ mod tests {
             pos_dep < pos_entry,
             "dep (idx 1) should execute before entry (idx 0)"
         );
+    }
+
+    #[test]
+    fn test_require_lookup_tracks_module_exports_reassignment() {
+        let modules = vec![
+            make_module("entry.js", "var dep = require(1); exports.value = dep;"),
+            make_module("dep.js", "module.exports = function dep() {};"),
+        ];
+        let bundle = generate_flattened_bundle(&modules);
+
+        assert!(
+            bundle.contains("var _mods=[_m0,_m1];"),
+            "lookup must store live module objects, got: {}",
+            bundle
+        );
+        assert!(
+            !bundle.contains("var _mods=[_m0.exports,_m1.exports];"),
+            "lookup must not snapshot initial exports objects, got: {}",
+            bundle
+        );
+        assert!(
+            bundle.contains("return m?m.exports:{}"),
+            "require must read current module.exports, got: {}",
+            bundle
+        );
+    }
+
+    #[test]
+    fn test_scope_hoist_preserves_sparse_module_ids_after_tree_shaking() {
+        let modules = vec![
+            make_module_with_id(0, "entry.js", "var dep = require(2); dep.run();"),
+            make_module_with_id(2, "dep.js", "exports.run = function() {};"),
+        ];
+        let bundle = generate_scope_hoisted_bundle(&modules);
+
+        assert!(bundle.contains("var _m2={exports:{}};"), "{bundle}");
+        assert!(bundle.contains("var _mods=[_m0,_m1,_m2];"), "{bundle}");
+        assert!(bundle.contains("Module 2: dep.js"), "{bundle}");
+        assert!(bundle.contains("}(_m2,_m2.exports,_r);"), "{bundle}");
     }
 
     #[test]
@@ -1395,39 +1083,43 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_flattened_bundle_falls_back_on_eval() {
+    fn test_generate_flattened_bundle_wraps_only_eval_module() {
         let modules = vec![make_module("a.js", "eval('code');")];
         let flat = generate_flattened_bundle(&modules);
-        let phase1 = generate_scope_hoisted_bundle(&modules);
-        // Should fall back to Phase 1 (contains per-module wrapper)
-        assert_eq!(flat, phase1, "should fall back to Phase 1 on eval");
+        assert!(
+            flat.contains("!function(module,exports,require){eval('code');}"),
+            "eval module must retain wrapper, got: {}",
+            flat
+        );
+        assert!(
+            !flat.contains("var _m0e=_m0.exports"),
+            "eval module must not be flattened, got: {}",
+            flat
+        );
     }
 
     #[test]
-    fn test_generate_flattened_bundle_wraps_shadowed_top_level_decl_params() {
-        let modules = vec![make_module(
-            "stylis-like.js",
-            "var length=0;function node(value,length){return{length:length};}exports.node=node;",
-        )];
-
-        assert!(
-            has_top_level_decl_shadowed_by_function_param(&modules[0].code),
-            "shadowed top-level declaration should be detected"
-        );
-
+    fn test_generate_flattened_bundle_partially_flattens_safe_sibling() {
+        let modules = vec![
+            make_module("unsafe.js", "eval('code');"),
+            make_module("safe.js", "exports.used = 1; var local = 2;"),
+        ];
         let flat = generate_flattened_bundle(&modules);
 
         assert!(
-            flat.contains("!function(module,exports,require)"),
-            "module should retain wrapper isolation, got: {flat}"
+            flat.contains("!function(module,exports,require){eval('code');}"),
+            "unsafe module must retain wrapper, got: {}",
+            flat
         );
         assert!(
-            flat.contains("function node(value,length)"),
-            "shadowing parameter must not be prefixed, got: {flat}"
+            flat.contains("var _m1e=_m1.exports"),
+            "safe sibling should still be flattened, got: {}",
+            flat
         );
         assert!(
-            !flat.contains("function _m0_node(value,_m0_length)"),
-            "direct inline renaming would corrupt shadowing, got: {flat}"
+            flat.contains("_m1_local"),
+            "safe sibling locals should be prefixed in flattened body, got: {}",
+            flat
         );
     }
 
@@ -1449,15 +1141,15 @@ mod tests {
     }
 
     // ──────────────────────────────────────────────────────────────────
-    // R5 bailout: flatten safety checks
+    // R5 bailout: is_flatten_safe with arguments[ check
     // ──────────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_flatten_safe_with_function_local_dynamic_arguments() {
+    fn test_flatten_unsafe_with_dynamic_arguments() {
         let modules = vec![make_module("a.js", "function f() { return arguments[0]; }")];
         assert!(
-            is_flatten_safe(&modules),
-            "function-local dynamic arguments access should not block flattening"
+            !is_flatten_safe(&modules),
+            "dynamic arguments[ access should trigger bailout"
         );
     }
 
@@ -1620,56 +1312,6 @@ mod tests {
     }
 
     #[test]
-    fn test_inline_v2_expands_renamed_object_shorthand_values() {
-        let code = "const generateColorPalettes = () => 1; const generateNeutralColorPalettes = () => 2; const token = gen(seed, { generateColorPalettes, generateNeutralColorPalettes }); exports.token = token;";
-        let result = inline_module_body_v2(code, 4019);
-        assert!(
-            result.contains(
-                "{ generateColorPalettes: _m4019_generateColorPalettes, generateNeutralColorPalettes: _m4019_generateNeutralColorPalettes }"
-            ),
-            "object shorthand keys should stay public while values are renamed, got: {}",
-            result
-        );
-        assert!(
-            !result.contains("{ _m4019_generateColorPalettes"),
-            "renamed shorthand must not change the property key, got: {}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_inline_v2_preserves_object_property_keys_before_colon() {
-        let code = "const generateColorPalettes = () => 1; const token = { generateColorPalettes: generateColorPalettes }; exports.token = token;";
-        let result = inline_module_body_v2(code, 4019);
-        assert!(
-            result.contains("{ generateColorPalettes: _m4019_generateColorPalettes }"),
-            "object property key should stay stable while value is renamed, got: {}",
-            result
-        );
-        assert!(
-            !result.contains("{ _m4019_generateColorPalettes:"),
-            "property key must not be prefixed, got: {}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_inline_v2_does_not_rewrite_function_arguments_as_object_shorthand() {
-        let code = "const COMMENT = 1; const node = (value, kind) => kind; exports.value = node(value, COMMENT, root);";
-        let result = inline_module_body_v2(code, 3944);
-        assert!(
-            result.contains("_m3944_node(value, _m3944_COMMENT, root)"),
-            "function argument should be renamed as a value, got: {}",
-            result
-        );
-        assert!(
-            !result.contains("COMMENT:"),
-            "function argument must not be rewritten as object shorthand, got: {}",
-            result
-        );
-    }
-
-    #[test]
     fn test_inline_v2_string_content_preserved() {
         let code = r#"var s = "exports module require"; exports.x = s;"#;
         let result = inline_module_body_v2(code, 0);
@@ -1681,73 +1323,186 @@ mod tests {
     }
 
     #[test]
-    fn test_inline_v2_renames_template_literal_expressions() {
-        let code = "const defaultPrefixCls = 'ant'; const getPrefixCls = suffixCls => `${defaultPrefixCls}-${suffixCls}`; exports.getPrefixCls = getPrefixCls;";
-        let result = inline_module_body_v2(code, 3926);
+    fn test_inline_v2_template_expression_refs_are_scoped() {
+        let code = r#"var styledComponentId = "sc-a"; var selector = `style[${styledComponentId}]`; exports.selector = selector;"#;
+        let result = inline_module_body_v2(code, 4);
         assert!(
-            result.contains("${_m3926_defaultPrefixCls}-${suffixCls}"),
-            "template expression should rename top-level binding only, got: {}",
+            result.contains("var _m4_styledComponentId"),
+            "top-level template input should be scoped, got: {}",
             result
         );
         assert!(
-            !result.contains("${defaultPrefixCls}"),
-            "unprefixed top-level binding must not remain in template expression, got: {}",
-            result
-        );
-    }
-
-    #[test]
-    fn test_inline_v2_renames_static_property_assignment_receiver() {
-        let code = "const useFormItemStatus = () => {}; useFormItemStatus.Context = FormItemInputContext; exports.default = useFormItemStatus;";
-        let result = inline_module_body_v2(code, 97);
-        assert!(
-            result.contains("_m97_useFormItemStatus.Context"),
-            "static property assignment receiver should be renamed, got: {}",
+            result.contains("`style[${_m4_styledComponentId}]`"),
+            "template expression ref should follow the scoped rename, got: {}",
             result
         );
         assert!(
-            !result.contains(" useFormItemStatus.Context"),
-            "unprefixed receiver must not survive, got: {}",
+            !result.contains("${styledComponentId}"),
+            "template expression must not keep stale unscoped name, got: {}",
             result
         );
     }
 
     #[test]
-    fn test_inline_v2_renames_static_property_assignment_after_arrow_body() {
-        let code = r#"var React = require(4140);
-var devUseWarning = require(3765)["devUseWarning"];
-var FormItemInputContext = require(3266)["FormItemInputContext"];
-const useFormItemStatus = () => {
-  const {
-    status,
-    errors = [],
-    warnings = []
-  } = React.useContext(FormItemInputContext);
-  if ("production" !== 'production') {
-    const warning = devUseWarning('Form.Item');
-    "production" !== "production" ? warning(status !== undefined, 'usage', 'Form.Item.useStatus should be used under Form.Item component. For more information: https://u.ant.design/form-item-usestatus') : void 0;
-  }
-  return {
-    status,
-    errors,
-    warnings
-  };
-};
-// Only used for compatible package. Not promise this will work on future version.
-useFormItemStatus.Context = FormItemInputContext;
-exports.default = useFormItemStatus;"#;
-
-        let result = inline_module_body_v2(code, 97);
+    fn test_inline_v2_spread_expression_refs_are_scoped() {
+        let code = r#"const SPACINGS = [0, 1, 2]; const classes = [...SPACINGS.map((value) => `spacing-${value}`)]; exports.classes = classes;"#;
+        let result = inline_module_body_v2(code, 4);
         assert!(
-            result.contains("_m97_useFormItemStatus.Context"),
-            "static property assignment after arrow body should be renamed, got: {}",
+            result.contains("const _m4_SPACINGS"),
+            "top-level spread input should be scoped, got: {}",
             result
         );
         assert!(
-            !result.contains("\nuseFormItemStatus.Context")
-                && !result.contains(";useFormItemStatus.Context"),
-            "unprefixed receiver must not survive, got: {}",
+            result.contains("..._m4_SPACINGS.map"),
+            "spread expression ref should follow scoped rename, got: {}",
             result
+        );
+        assert!(
+            !result.contains("...SPACINGS"),
+            "spread expression must not keep stale unscoped name, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_v2_preserves_shadowed_params_and_object_keys() {
+        let code = concat!(
+            "var line = 1; var column = 1; var length = 0;",
+            "function read() { return line + column + length; }",
+            "function node(value, line, column, length) {",
+            "return {value: value, line: line, column: column, length: length};",
+            "}",
+            "exports.read = read; exports.node = node;"
+        );
+        let result = inline_module_body_v2(code, 16);
+
+        assert!(
+            result.contains("var _m16_line = 1"),
+            "top-level line should be prefixed, got: {}",
+            result
+        );
+        assert!(
+            result.contains("return _m16_line + _m16_column + _m16_length"),
+            "top-level reads should resolve to prefixed bindings, got: {}",
+            result
+        );
+        assert!(
+            result.contains("function _m16_node(value, line, column, length)"),
+            "shadowing params must not be prefixed, got: {}",
+            result
+        );
+        assert!(
+            result.contains("{value: value, line: line, column: column, length: length}"),
+            "object literal keys must be preserved, got: {}",
+            result
+        );
+        assert!(
+            result.contains("_m16e.node = _m16_node"),
+            "exports and top-level function refs should be scoped-renamed, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_v2_preserves_destructured_param_alias_shadowing() {
+        let code = concat!(
+            "var t = require(11);",
+            "var I = [];",
+            "function Je({ plugins: t = I } = {}) {",
+            "const c = t.slice();",
+            "return c;",
+            "}",
+            "exports.Je = Je;"
+        );
+        let result = inline_module_body_v2(code, 8);
+
+        assert!(
+            result.contains("var _m8_t = _r(11);"),
+            "top-level t should be prefixed, got: {}",
+            result
+        );
+        assert!(
+            result.contains("function _m8_Je({ plugins: t = _m8_I } = {})"),
+            "destructured alias param name must remain local t, got: {}",
+            result
+        );
+        assert!(
+            result.contains("const c = t.slice();"),
+            "function body must read the destructured param alias, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("_m8_t.slice()"),
+            "function body must not resolve destructured param alias to top-level t, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_v2_expands_renamed_object_shorthand_keys() {
+        let code = concat!(
+            "var grey = {100: '#f5f5f5'};",
+            "var dark = {text: {primary: '#fff'}};",
+            "var light = {text: {primary: '#000'}};",
+            "function createPalette(mode) {",
+            "const paletteOutput = {grey, dark, light, mode};",
+            "return paletteOutput;",
+            "}",
+            "exports.createPalette = createPalette;"
+        );
+        let result = inline_module_body_v2(code, 671);
+
+        assert!(
+            result.contains("grey: _m671_grey"),
+            "renamed shorthand value must preserve grey key, got: {}",
+            result
+        );
+        assert!(
+            result.contains("dark: _m671_dark"),
+            "renamed shorthand value must preserve dark key, got: {}",
+            result
+        );
+        assert!(
+            result.contains("light: _m671_light"),
+            "renamed shorthand value must preserve light key, got: {}",
+            result
+        );
+        assert!(
+            result.contains("mode}"),
+            "unrenamed local shorthand should stay shorthand, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_constant_inline_preserves_shadowed_params_after_flatten() {
+        let code = concat!(
+            "var line = 1; var column = 1; var length = 0;",
+            "function node(value, line, column, length) {",
+            "return {value: value, line: line, column: column, length: length};",
+            "}",
+            "function read() { return line + column + length; }",
+            "exports.node = node; exports.read = read;"
+        );
+        let modules = vec![make_module("stylis-like.js", code)];
+        let flat = generate_flattened_bundle(&modules);
+        let after_r4 = inline_cross_module_constants(&flat);
+
+        assert!(
+            after_r4.contains("function _m0_node(value, line, column, length)"),
+            "R4 must not inline constants into shadowing params, got: {}",
+            after_r4
+        );
+        assert!(
+            after_r4.contains("{value: value, line: line, column: column, length: length}"),
+            "R4 must preserve object literal keys and param refs, got: {}",
+            after_r4
+        );
+        assert!(
+            !after_r4.contains("function _m0_node(value, 1")
+                && !after_r4.contains("function _m0_node(value, 0"),
+            "function params must remain identifiers, got: {}",
+            after_r4
         );
     }
 
@@ -1851,23 +1606,24 @@ exports.default = useFormItemStatus;"#;
     #[test]
     fn test_flattened_then_eliminate_unused_exports() {
         // In the flattened bundle, module 0 accesses module 1's exports
-        // through `_r(1).exports.xxx`, not through `_m1e.xxx` directly.
-        // So R5 treats both `_m1e.used` and `_m1e.unused` as having zero
-        // direct reads and removes them both, reducing bundle size.
+        // through `_r(1).xxx`, not through `_m1e.xxx` directly. R5 must
+        // still treat that require read as a live read of `_m1e.used`.
         let modules = vec![
-            make_module("entry.js", "var lib = require(1); lib.exports.used();"),
+            make_module("entry.js", "require(1).used();"),
             make_module("lib.js", "exports.used = function() { return 1; };\nexports.unused = function() { return 2; };"),
         ];
         let flat = generate_flattened_bundle(&modules);
         let after_r5 = eliminate_unused_exports(&flat);
 
-        // Both exports have no direct _m1e.xxx reads (accessed via _r(1)),
-        // so R5 removes them, making the bundle smaller.
         assert!(
-            after_r5.len() < flat.len(),
-            "R5 should reduce bundle size: {} < {}",
-            after_r5.len(),
-            flat.len()
+            after_r5.contains("_m1e.used"),
+            "R5 should preserve export read through _r(1), got: {}",
+            after_r5
+        );
+        assert!(
+            !after_r5.contains("_m1e.unused"),
+            "R5 should still remove unread sibling export, got: {}",
+            after_r5
         );
     }
 

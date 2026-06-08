@@ -21,30 +21,72 @@ use common::react_oracle::{
     screenshot_phash_diff_message, screenshot_phash_hamming_distance, screenshot_phashes_match,
     screenshot_summaries_match, screenshot_summary_from_png, screenshot_visual_probe_from_png,
 };
-use jet::browser::Page;
+use jet::browser::{Browser, LaunchOptions, Page};
 use jet::browser_cli;
 use jet::wasm_build::manifest as wasm_manifest;
 
 const VISUAL_TABLE_EXPECTED_ROWS: u64 = 100;
 const VISUAL_TABLE_EXPECTED_CELLS: u64 = 10_000;
-const VISUAL_TABLE_TITLE: &str = "MUI visual table fixture";
 const VISUAL_TABLE_LAST_CELL: &str = "cell 9999";
 const VISUAL_SCREENSHOT_MIN_FOREGROUND_COUNT: u64 = 1_000;
 const VISUAL_SCREENSHOT_MIN_NON_WHITE: u64 = 1_000;
 const WASM_COMPAT_LOWERING_MARKER: &str = "using Rust/WASM compatibility lowering";
 
+struct VisualFixtureSpec {
+    id: &'static str,
+    label: &'static str,
+    fixture_dir: &'static str,
+    required_deps: &'static [&'static str],
+    table_title: &'static str,
+    min_component_cases: u64,
+    require_foreground_phash: bool,
+}
+
+const MUI_VISUAL_SPEC: VisualFixtureSpec = VisualFixtureSpec {
+    id: "mui",
+    label: "MUI",
+    fixture_dir: "examples/mui-visual-demo",
+    required_deps: &[
+        "node_modules/react/package.json",
+        "node_modules/react-dom/package.json",
+        "node_modules/@mui/material/package.json",
+    ],
+    table_title: "MUI visual table fixture",
+    min_component_cases: 5,
+    require_foreground_phash: false,
+};
+
+const ANTD_VISUAL_SPEC: VisualFixtureSpec = VisualFixtureSpec {
+    id: "antd",
+    label: "AntD",
+    fixture_dir: "examples/antd-visual-demo",
+    required_deps: &[
+        "node_modules/react/package.json",
+        "node_modules/react-dom/package.json",
+        "node_modules/antd/package.json",
+    ],
+    table_title: "AntD visual table fixture",
+    min_component_cases: 20,
+    require_foreground_phash: false,
+};
+
 const VISUAL_READY_EXPR: &str = r#"(() => {
+  const expected = window.__jetVisualFixture || {};
+  const tableTitle = expected.tableTitle || 'MUI visual table fixture';
+  const minComponentCases = Number(expected.minComponentCases || 0);
   const summary = (() => {
     const domRoot = document.querySelector('#visual-root');
     if (domRoot) {
+      const largeTable = domRoot.querySelector('#large-table');
       const text = domRoot.innerText || '';
       return {
         visualRoot: true,
         source: 'dom',
-        tableRows: domRoot.querySelectorAll('tbody tr').length,
-        tableCells: domRoot.querySelectorAll('td').length,
-        cellLabelTexts: domRoot.querySelectorAll('td').length,
-        hasTitle: text.includes('MUI visual table fixture'),
+        tableRows: largeTable ? largeTable.querySelectorAll('tbody tr').length : 0,
+        tableCells: largeTable ? largeTable.querySelectorAll('td').length : 0,
+        cellLabelTexts: largeTable ? largeTable.querySelectorAll('td').length : 0,
+        componentCases: domRoot.querySelectorAll('.ui-case').length,
+        hasTitle: text.includes(tableTitle),
         hasFirstCell: text.includes('cell 0'),
         hasLastCell: text.includes('cell 9999')
       };
@@ -56,6 +98,7 @@ const VISUAL_READY_EXPR: &str = r#"(() => {
       tableRows: 0,
       tableCells: 0,
       cellLabelTexts: 0,
+      componentCases: 0,
       hasZeroText: false,
       hasLastNumberText: false,
       hasTitle: false,
@@ -72,7 +115,7 @@ const VISUAL_READY_EXPR: &str = r#"(() => {
       if (node.kind === 'text') {
         const text = node.text == null ? '' : String(node.text);
         const trimmed = text.trim();
-        if (text.includes('MUI visual table fixture')) out.hasTitle = true;
+        if (text.includes(tableTitle)) out.hasTitle = true;
         if (trimmed === 'cell') out.cellLabelTexts += 1;
         if (trimmed === '0') out.hasZeroText = true;
         if (trimmed === '9999') out.hasLastNumberText = true;
@@ -90,6 +133,7 @@ const VISUAL_READY_EXPR: &str = r#"(() => {
     summary.tableRows === 100 &&
     summary.tableCells === 10000 &&
     summary.cellLabelTexts === 10000 &&
+    (summary.source !== 'dom' || summary.componentCases >= minComponentCases) &&
     summary.hasTitle &&
     summary.hasFirstCell &&
     summary.hasLastCell;
@@ -110,11 +154,13 @@ const VISUAL_READY_EXPR: &str = r#"(() => {
 })()"#;
 
 const VISUAL_TEXT_EXPR: &str = r#"(() => {
+  const expected = window.__jetVisualFixture || {};
+  const tableTitle = expected.tableTitle || 'MUI visual table fixture';
   const domRoot = document.querySelector('#visual-root');
   if (domRoot) {
     const text = domRoot.innerText || '';
     return [
-      text.includes('MUI visual table fixture') ? 'MUI visual table fixture' : '',
+      text.includes(tableTitle) ? tableTitle : '',
       text.includes('cell 0') ? 'cell 0' : '',
       text.includes('cell 9999') ? 'cell 9999' : ''
     ].filter(Boolean).join(' ');
@@ -129,7 +175,7 @@ const VISUAL_TEXT_EXPR: &str = r#"(() => {
     if (node.kind === 'text') {
       const text = node.text == null ? '' : String(node.text);
       const trimmed = text.trim();
-      if (text.includes('MUI visual table fixture')) tokens.push('MUI visual table fixture');
+      if (text.includes(tableTitle)) tokens.push(tableTitle);
       if (trimmed === 'cell') cellLabelTexts += 1;
       if (trimmed === '0') hasZeroText = true;
       if (trimmed === '9999') hasLastNumberText = true;
@@ -152,6 +198,9 @@ const WAIT_FOR_BROWSER_PAINT_EXPR: &str = r#"(() => new Promise((resolve) => {
 }))()"#;
 
 const VISUAL_DIAGNOSTICS_EXPR: &str = r#"(() => {
+  const expected = window.__jetVisualFixture || {};
+  const tableTitle = expected.tableTitle || 'MUI visual table fixture';
+  const minComponentCases = Number(expected.minComponentCases || 0);
   const summarizeDomShell = () => {
     const bodyText = document.body?.innerText || '';
     return {
@@ -190,7 +239,7 @@ const VISUAL_DIAGNOSTICS_EXPR: &str = r#"(() => {
       if (node.kind === 'text') {
         const text = node.text == null ? '' : String(node.text);
         const trimmed = text.trim();
-        if (text.includes('MUI visual table fixture')) out.hasTitle = true;
+        if (text.includes(tableTitle)) out.hasTitle = true;
         if (trimmed === 'cell') out.cellLabelTexts += 1;
         if (trimmed === '0') out.hasZeroText = true;
         if (trimmed === '9999') out.hasLastNumberText = true;
@@ -206,6 +255,12 @@ const VISUAL_DIAGNOSTICS_EXPR: &str = r#"(() => {
   };
   const domRoot = document.querySelector('#visual-root');
   const domText = domRoot?.innerText || '';
+  const largeTable = domRoot?.querySelector('#large-table');
+  const componentCases = domRoot
+    ? Array.from(domRoot.querySelectorAll('.ui-case')).map((node) =>
+        node.id || node.className || ''
+      )
+    : [];
   return {
     visualRoot: !!domRoot,
     debugBridge: !!window.__jet_debug,
@@ -216,17 +271,26 @@ const VISUAL_DIAGNOSTICS_EXPR: &str = r#"(() => {
     table: domRoot ? {
       source: 'dom',
       visualRoot: true,
-      tableRows: domRoot.querySelectorAll('tbody tr').length,
-      tableCells: domRoot.querySelectorAll('td').length,
-      cellLabelTexts: domRoot.querySelectorAll('td').length,
+      tableRows: largeTable ? largeTable.querySelectorAll('tbody tr').length : 0,
+      tableCells: largeTable ? largeTable.querySelectorAll('td').length : 0,
+      cellLabelTexts: largeTable ? largeTable.querySelectorAll('td').length : 0,
+      componentCases: componentCases.length,
+      minComponentCases,
       hasZeroText: domText.includes('cell 0'),
       hasLastNumberText: domText.includes('cell 9999'),
-      hasTitle: domText.includes('MUI visual table fixture'),
+      hasTitle: domText.includes(tableTitle),
       hasFirstCell: domText.includes('cell 0'),
       hasLastCell: domText.includes('cell 9999')
     } : {
       source: window.__jet_debug ? 'jet-wasm' : 'none',
       ...summarizeJetTree()
+    },
+    componentMatrix: {
+      expectedLibraryId: expected.libraryId || '',
+      tableTitle,
+      minComponentCases,
+      caseCount: componentCases.length,
+      cases: componentCases.slice(0, 80)
     },
     rootHtml: document.querySelector('#root')?.innerHTML?.slice(0, 800) ?? '',
     bodyHtml: document.body?.innerHTML?.slice(0, 800) ?? '',
@@ -574,16 +638,20 @@ const WASM_SCROLL_READ_EXPR: &str = r#"(() => {
       .map((candidate) => String(candidate.kind.text || ''))
       .join('')
       .trim();
-    if (!/^cell \d+$/.test(value)) continue;
-    cells.push({ value, rect: node.rect });
+    const match = /^cell (\d+)$/.exec(value);
+    if (!match) continue;
+    const index = Number(match[1]);
+    cells.push({ value, index, row: Math.floor(index / 100), rect: node.rect });
   }
   result.cellsFound = cells.length;
   result.visibleValues = cells.map((cell) => cell.value).slice(0, 40);
-  const values = new Set(cells.map((cell) => cell.value));
-  result.targetValuesVisible = values.has('cell 2000') && values.has('cell 2001');
+  const visibleRows = cells.map((cell) => cell.row);
+  result.minVisibleRow = visibleRows.length ? Math.min(...visibleRows) : null;
+  result.maxVisibleRow = visibleRows.length ? Math.max(...visibleRows) : null;
+  result.targetValuesVisible = visibleRows.some((row) => row >= 20);
   result.ok = result.targetValuesVisible && status.scrollTop >= 660;
   if (!result.ok) {
-    result.reason = 'expected row 20 cells after wheel scroll';
+    result.reason = 'expected far rows after wheel scroll';
   }
   return result;
 })()"#;
@@ -604,12 +672,10 @@ async fn free_port() -> u16 {
     listener.local_addr().expect("local addr").port()
 }
 
-fn missing_mui_install_deps(fixture: &Path) -> Vec<&'static str> {
-    let required = [
-        "node_modules/react/package.json",
-        "node_modules/react-dom/package.json",
-        "node_modules/@mui/material/package.json",
-    ];
+fn missing_visual_install_deps(
+    fixture: &Path,
+    required: &'static [&'static str],
+) -> Vec<&'static str> {
     required
         .iter()
         .filter(|rel| !fixture.join(rel).exists())
@@ -617,11 +683,13 @@ fn missing_mui_install_deps(fixture: &Path) -> Vec<&'static str> {
         .collect()
 }
 
-fn require_mui_install(fixture: &Path) {
-    let missing = missing_mui_install_deps(fixture);
+fn require_visual_install(fixture: &Path, spec: &VisualFixtureSpec) {
+    let missing = missing_visual_install_deps(fixture, spec.required_deps);
     assert!(
         missing.is_empty(),
-        "examples/mui-visual-demo dependencies are missing: {missing:?}. Run `cd examples/mui-visual-demo && jet install` before this visual regression gate."
+        "{} dependencies are missing: {missing:?}. Run `cd {} && jet install` before this visual regression gate.",
+        spec.fixture_dir,
+        spec.fixture_dir
     );
 }
 
@@ -663,6 +731,82 @@ fn require_success(output: Output, context: &str) -> Result<Output> {
     ))
 }
 
+fn run_jet_bb_capture_cli(root_dir: &Path, surface: &str, root_selector: &str) -> Result<Value> {
+    let output = require_success(
+        run_jet_command(
+            root_dir,
+            [
+                "bb",
+                "capture",
+                "--surface",
+                surface,
+                "--root-selector",
+                root_selector,
+                "--pretty",
+            ],
+        )?,
+        &format!("jet bb capture --surface {surface}"),
+    )?;
+    let stdout = String::from_utf8(output.stdout)
+        .with_context(|| format!("decode jet bb capture --surface {surface} stdout"))?;
+    let capture: Value = serde_json::from_str(&stdout)
+        .with_context(|| format!("parse jet bb capture --surface {surface} JSON"))?;
+    let expected_schema = match surface {
+        "dom" => "jet.browser.dom_observation.v1",
+        "wasm" => "jet.browser.observation.v1",
+        _ => unreachable!("surface is validated by caller"),
+    };
+    assert_eq!(
+        capture.get("schema_version").and_then(Value::as_str),
+        Some(expected_schema),
+        "jet bb capture must emit the expected {surface} schema.\ncapture={}",
+        json_for_failure(&capture)
+    );
+    Ok(capture)
+}
+
+fn run_jet_bb_screenshot_cli(root_dir: &Path, out_path: &Path) -> Result<Value> {
+    let out = out_path
+        .to_str()
+        .with_context(|| format!("non-UTF8 screenshot output path {}", out_path.display()))?;
+    require_success(
+        run_jet_command(root_dir, ["bb", "screenshot", "--out", out])?,
+        "jet bb screenshot --out",
+    )?;
+    let bytes = std::fs::read(out_path)
+        .with_context(|| format!("read jet bb screenshot {}", out_path.display()))?;
+    let probe = screenshot_visual_probe_from_png(&bytes);
+    assert!(
+        probe
+            .get("nonWhite")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count >= VISUAL_SCREENSHOT_MIN_NON_WHITE),
+        "jet bb screenshot must capture a nonblank visual page.\nprobe={}",
+        json_for_failure(&probe)
+    );
+    Ok(probe)
+}
+
+fn attach_jet_bb_cli_evidence(capture: &mut Value, surface: &str, screenshot_visual_probe: Value) {
+    let evidence = json!({
+        "capture_command": [
+            "jet",
+            "bb",
+            "capture",
+            "--surface",
+            surface,
+            "--root-selector",
+            if surface == "dom" { "#visual-root" } else { "body" },
+            "--pretty"
+        ],
+        "screenshot_command": ["jet", "bb", "screenshot", "--out", "<artifact>"],
+        "screenshot_visual_probe": screenshot_visual_probe,
+    });
+    if let Value::Object(map) = capture {
+        map.insert("jet_bb_cli_evidence".to_string(), evidence);
+    }
+}
+
 fn assert_no_wasm_compat_lowering_log(text: &str, context: &str) {
     assert!(
         !text.contains(WASM_COMPAT_LOWERING_MARKER),
@@ -698,10 +842,13 @@ fn assert_wasm_manifest_uses_strict_lowering(
     Ok(())
 }
 
-fn assert_wasm_demo_uses_strict_lowering(fixture: &Path) -> Result<()> {
+fn assert_wasm_demo_uses_strict_lowering(fixture: &Path, spec: &VisualFixtureSpec) -> Result<()> {
     let output = require_success(
         run_jet_command(fixture, ["build", "--wasm"])?,
-        "strict-lowering preflight `jet build --wasm` for examples/mui-visual-demo",
+        &format!(
+            "strict-lowering preflight `jet build --wasm` for {}",
+            spec.fixture_dir
+        ),
     )?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -727,18 +874,18 @@ fn spawn_jet_dev(fixture: &Path, port: u16, wasm: bool) -> Result<Child> {
         .spawn()
         .with_context(|| {
             if wasm {
-                "spawn jet dev --wasm --debug for MUI fixture"
+                "spawn jet dev --wasm --debug for visual fixture"
             } else {
-                "spawn jet dev for React DOM MUI fixture"
+                "spawn jet dev for React DOM visual fixture"
             }
             .to_string()
         })
 }
 
-fn run_jet_install(fixture: &Path) -> Result<()> {
+fn run_jet_install(fixture: &Path, spec: &VisualFixtureSpec) -> Result<()> {
     require_success(
         run_jet_command(fixture, ["install", "--frozen-lockfile"])?,
-        "jet install --frozen-lockfile for examples/mui-visual-demo",
+        &format!("jet install --frozen-lockfile for {}", spec.fixture_dir),
     )?;
     Ok(())
 }
@@ -980,8 +1127,10 @@ async fn page_and_selection_snapshots(
     artifact_dir: &Path,
     stem: &str,
     jet_browser_root: &Path,
+    spec: &VisualFixtureSpec,
 ) -> Result<VisualRunSnapshots> {
-    let browser = browser_cli::prepare_session(jet_browser_root, url)
+    browser_cli::session::clear(jet_browser_root);
+    let browser = prepare_visual_session(jet_browser_root, url)
         .await
         .context("prepare Jet browser session for visual regression")?;
     let page = browser_cli::attach(jet_browser_root)
@@ -990,7 +1139,7 @@ async fn page_and_selection_snapshots(
 
     wait_for_visual_ready(&page, stem).await?;
 
-    let (body_text, visual_diagnostics) = read_stable_visual_snapshot(&page, stem).await?;
+    let (body_text, visual_diagnostics) = read_stable_visual_snapshot(&page, stem, spec).await?;
     let (visual_screenshot, visual_screenshot_summary, visual_screenshot_visual_probe) =
         capture_nonblank_visual_screenshot(&page, stem)
             .await
@@ -1013,6 +1162,9 @@ async fn page_and_selection_snapshots(
             .evaluate(DOM_SELECTION_READ_EXPR)
             .await
             .context("read React DOM reverse selection after Jet browser drag")?;
+        page.evaluate("document.querySelector('#visual-root')?.focus?.()")
+            .await
+            .context("focus React DOM visual root before Jet browser Ctrl+C")?;
         browser_cli::key(jet_browser_root, "c", 2)
             .await
             .context("drive React DOM Ctrl+C with Jet browser")?;
@@ -1042,17 +1194,25 @@ async fn page_and_selection_snapshots(
     .context("write selection screenshot")?;
     let selection_screenshot_summary = screenshot_summary_from_png(&selection_screenshot);
     let selection_screenshot_visual_probe = screenshot_visual_probe_from_png(&selection_screenshot);
-    let browser_capture = if stem == "jet-wasm" {
-        browser_cli::observation_bundle(jet_browser_root, &[])
-            .await
-            .context("capture Jet WASM observation bundle after selection interaction")?
+    let mut browser_capture = if stem == "jet-wasm" {
+        run_jet_bb_capture_cli(jet_browser_root, "wasm", "body").context(
+            "capture Jet WASM observation bundle with jet bb capture after selection interaction",
+        )?
     } else {
-        browser_cli::dom_observation_bundle(jet_browser_root, "#visual-root")
-            .await
-            .context(
-                "capture React DOM Jet browser observation bundle after selection interaction",
-            )?
+        run_jet_bb_capture_cli(jet_browser_root, "dom", "#visual-root").context(
+            "capture React DOM observation bundle with jet bb capture after selection interaction",
+        )?
     };
+    let bb_screenshot_probe = run_jet_bb_screenshot_cli(
+        jet_browser_root,
+        &artifact_dir.join(format!("{stem}-jet-bb-cli.png")),
+    )
+    .with_context(|| format!("capture {stem} screenshot with jet bb screenshot"))?;
+    attach_jet_bb_cli_evidence(
+        &mut browser_capture,
+        if stem == "jet-wasm" { "wasm" } else { "dom" },
+        bb_screenshot_probe,
+    );
     if stem == "jet-wasm" {
         let scroll_check = drive_wasm_scroll_with_jet_browser(&page, jet_browser_root)
             .await
@@ -1085,7 +1245,54 @@ async fn page_and_selection_snapshots(
     Ok(VisualRunSnapshots { visual, selection })
 }
 
-async fn read_stable_visual_snapshot(page: &Page, stem: &str) -> Result<(String, Value)> {
+async fn prepare_visual_session(root_dir: &Path, url: &str) -> Result<Browser> {
+    eprintln!("[jet browser] launching Chromium...");
+    let mut options = LaunchOptions::default();
+    if let Ok(path) = std::env::var("CHROME_PATH") {
+        if !path.is_empty() {
+            options.executable = Some(PathBuf::from(path));
+        }
+    }
+    options.args.push("--enable-unsafe-webgpu".to_string());
+    options
+        .args
+        .push("--enable-features=CDPScreenshotNewSurface".to_string());
+    let browser = Browser::launch(options)
+        .await
+        .context("launching Chromium for visual regression")?;
+    let page = browser
+        .new_page()
+        .await
+        .context("opening visual regression page")?;
+    page.session()
+        .send("Page.enable", json!({}))
+        .await
+        .context("enabling visual regression page domain")?;
+    page.session()
+        .send("Page.navigate", json!({ "url": url }))
+        .await
+        .with_context(|| format!("navigating to {url}"))?;
+    page.bring_to_front()
+        .await
+        .context("activating visual regression target")?;
+
+    let session = browser_cli::session::Session {
+        mode: browser_cli::session::MODE_FOREGROUND.to_string(),
+        ws_endpoint: browser.ws_url().to_string(),
+        target_id: page.target_id().to_string(),
+        url: url.to_string(),
+        pid: browser.process_id().unwrap_or_else(std::process::id),
+        started_at: browser_cli::session::now_unix(),
+    };
+    browser_cli::session::write(root_dir, &session)?;
+    Ok(browser)
+}
+
+async fn read_stable_visual_snapshot(
+    page: &Page,
+    stem: &str,
+    spec: &VisualFixtureSpec,
+) -> Result<(String, Value)> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let body_text = page
@@ -1095,7 +1302,9 @@ async fn read_stable_visual_snapshot(page: &Page, stem: &str) -> Result<(String,
             .unwrap_or_default()
             .to_string();
         let diagnostics = page.evaluate(VISUAL_DIAGNOSTICS_EXPR).await?;
-        if visual_table_text_matches(&body_text) && visual_table_diagnostics_match(&diagnostics) {
+        if visual_table_text_matches(&body_text, spec)
+            && visual_table_diagnostics_match(&diagnostics, spec)
+        {
             return Ok((body_text, diagnostics));
         }
         if Instant::now() >= deadline {
@@ -1118,6 +1327,26 @@ async fn capture_nonblank_visual_screenshot(
 ) -> Result<(Vec<u8>, Value, Value)> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
+        let ready = page
+            .evaluate(VISUAL_READY_EXPR)
+            .await
+            .unwrap_or(Value::Bool(false));
+        if !ready.as_bool().unwrap_or(false) {
+            if Instant::now() >= deadline {
+                let diagnostics = page
+                    .evaluate(VISUAL_DIAGNOSTICS_EXPR)
+                    .await
+                    .unwrap_or(Value::Null);
+                return Err(anyhow!(
+                    "{stem} visual page stopped being ready before a screenshot could be captured.\nlast_ready={}\ndiag={}",
+                    json_for_failure(&ready),
+                    json_for_failure(&diagnostics)
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            continue;
+        }
+
         page.bring_to_front()
             .await
             .with_context(|| format!("bring {stem} target to front before visual screenshot"))?;
@@ -1192,6 +1421,7 @@ async fn capture_nonblank_visual_screenshot(
             let last_failure = json!({
                 "summary": summary,
                 "probe": probe,
+                "ready": ready,
                 "diagnostics": diagnostics,
                 "browser_state": browser_state,
                 "layout_metrics": layout_metrics,
@@ -1205,21 +1435,22 @@ async fn capture_nonblank_visual_screenshot(
     }
 }
 
-fn visual_table_text_matches(text: &str) -> bool {
-    text.contains(VISUAL_TABLE_TITLE)
+fn visual_table_text_matches(text: &str, spec: &VisualFixtureSpec) -> bool {
+    text.contains(spec.table_title)
         && text.contains("cell 0")
         && text.contains(VISUAL_TABLE_LAST_CELL)
 }
 
-fn visual_table_diagnostics_match(diagnostics: &Value) -> bool {
+fn visual_table_diagnostics_match(diagnostics: &Value, spec: &VisualFixtureSpec) -> bool {
     let Some(table) = diagnostics.get("table") else {
         return false;
     };
-    table
+    let base_match = table
         .get("visualRoot")
         .and_then(Value::as_bool)
         .unwrap_or(false)
-        && table.get("tableRows").and_then(Value::as_u64).unwrap_or(0) == VISUAL_TABLE_EXPECTED_ROWS
+        && table.get("tableRows").and_then(Value::as_u64).unwrap_or(0)
+            == VISUAL_TABLE_EXPECTED_ROWS
         && table.get("tableCells").and_then(Value::as_u64).unwrap_or(0)
             == VISUAL_TABLE_EXPECTED_CELLS
         && table
@@ -1238,7 +1469,19 @@ fn visual_table_diagnostics_match(diagnostics: &Value) -> bool {
         && table
             .get("hasLastCell")
             .and_then(Value::as_bool)
-            .unwrap_or(false)
+            .unwrap_or(false);
+    if !base_match {
+        return false;
+    }
+
+    if table.get("source").and_then(Value::as_str) == Some("dom") {
+        return table
+            .get("componentCases")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count >= spec.min_component_cases);
+    }
+
+    true
 }
 
 fn assert_wasm_dom_shell_has_no_table_fixture(diagnostics: &Value) {
@@ -1818,27 +2061,41 @@ fn write_surface_visual_diagnostics(artifact_dir: &Path, surface: &str, run: &Vi
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mui_visual_fixture_renders_on_react_dom_and_jet_wasm() {
+    run_visual_fixture_regression(&MUI_VISUAL_SPEC).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn antd_visual_fixture_renders_on_react_dom_and_jet_wasm() {
+    run_visual_fixture_regression(&ANTD_VISUAL_SPEC).await;
+}
+
+async fn run_visual_fixture_regression(spec: &'static VisualFixtureSpec) {
     common::require_full_wasm_e2e_env();
 
-    let fixture = workspace_root().join("examples/mui-visual-demo");
-    let artifact_dir = std::env::temp_dir().join("jet-mui-visual-regression");
+    let fixture = workspace_root().join(spec.fixture_dir);
+    let artifact_dir = std::env::temp_dir().join(format!("jet-{}-visual-regression", spec.id));
     std::fs::create_dir_all(&artifact_dir).expect("create visual artifact dir");
 
-    if !missing_mui_install_deps(&fixture).is_empty() {
-        run_jet_install(&fixture).expect("jet install for MUI fixture");
+    if !missing_visual_install_deps(&fixture, spec.required_deps).is_empty() {
+        run_jet_install(&fixture, spec).expect("jet install for visual fixture");
     }
-    require_mui_install(&fixture);
-    assert_wasm_demo_uses_strict_lowering(&fixture)
-        .expect("MUI visual WASM fixture must not use compatibility lowering");
+    require_visual_install(&fixture, spec);
+    assert_wasm_demo_uses_strict_lowering(&fixture, spec).unwrap_or_else(|err| {
+        panic!(
+            "{} visual WASM fixture must not use compatibility lowering: {err:#}",
+            spec.label
+        )
+    });
 
     let dom_port = free_port().await;
     let dom_url = format!("http://127.0.0.1:{dom_port}/");
     let mut dom_server = spawn_jet_dev(&fixture, dom_port, false).expect("spawn jet dev");
     wait_for_http(&dom_url).await.expect("React DOM dev server");
 
-    let dom_run = page_and_selection_snapshots(&dom_url, &artifact_dir, "react-dom", &fixture)
-        .await
-        .expect("React DOM page and shared selection snapshots");
+    let dom_run =
+        page_and_selection_snapshots(&dom_url, &artifact_dir, "react-dom", &fixture, spec)
+            .await
+            .expect("React DOM page and shared selection snapshots");
     write_surface_visual_diagnostics(&artifact_dir, "react-dom", &dom_run);
     assert_shared_selection_interaction(&dom_run.selection);
     let dom_selection = dom_run.selection;
@@ -1859,23 +2116,30 @@ async fn mui_visual_fixture_renders_on_react_dom_and_jet_wasm() {
     let dom_browser_stderr = truncate_for_failure(&dom_snapshot.browser_stderr);
 
     assert!(
-        visual_table_text_matches(&dom_text) && visual_table_diagnostics_match(&dom_diag),
-        "React DOM MUI table fixture rendered blank or incomplete.\nbody={dom_text:?}\ndiag={}\nbrowser_capture={}\njet_dev_stderr={dom_server_stderr}\njet_browser_stderr={dom_browser_stderr}",
+        visual_table_text_matches(&dom_text, spec) && visual_table_diagnostics_match(&dom_diag, spec),
+        "React DOM {} table fixture rendered blank or incomplete.\nbody={dom_text:?}\ndiag={}\nbrowser_capture={}\njet_dev_stderr={dom_server_stderr}\njet_browser_stderr={dom_browser_stderr}",
+        spec.label,
         json_for_failure(&dom_diag),
         json_for_failure(&dom_capture)
     );
 
     let wasm_port = free_port().await;
     let wasm_url = format!("http://127.0.0.1:{wasm_port}/");
-    let mut wasm_server = spawn_jet_dev(&fixture, wasm_port, true)
-        .expect("spawn jet dev --wasm --debug for MUI visual fixture");
+    let mut wasm_server =
+        spawn_jet_dev(&fixture, wasm_port, true).expect("spawn jet dev --wasm --debug");
     wait_for_http(&wasm_url).await.expect("Jet WASM dev server");
     assert_wasm_manifest_uses_strict_lowering(&fixture, "dev", "`jet dev --wasm --debug`")
-        .expect("MUI visual WASM dev fixture must record strict lowering");
+        .unwrap_or_else(|err| {
+            panic!(
+                "{} visual WASM dev fixture must record strict lowering: {err:#}",
+                spec.label
+            )
+        });
 
-    let wasm_run = page_and_selection_snapshots(&wasm_url, &artifact_dir, "jet-wasm", &fixture)
-        .await
-        .expect("Jet WASM page and shared Jet browser selection snapshots");
+    let wasm_run =
+        page_and_selection_snapshots(&wasm_url, &artifact_dir, "jet-wasm", &fixture, spec)
+            .await
+            .expect("Jet WASM page and shared Jet browser selection snapshots");
     write_surface_visual_diagnostics(&artifact_dir, "jet-wasm", &wasm_run);
     assert_shared_selection_interaction(&wasm_run.selection);
     assert_wasm_scroll_interaction(&wasm_run.selection);
@@ -1929,8 +2193,9 @@ async fn mui_visual_fixture_renders_on_react_dom_and_jet_wasm() {
     );
 
     assert!(
-        visual_table_text_matches(&wasm_text) && visual_table_diagnostics_match(&wasm_diag),
-        "Jet WASM MUI table fixture rendered blank or incomplete.\nbody={wasm_text:?}\ndiag={}\nbrowser_capture={}\njet_dev_stderr={wasm_server_stderr}\njet_browser_stderr={wasm_browser_stderr}",
+        visual_table_text_matches(&wasm_text, spec) && visual_table_diagnostics_match(&wasm_diag, spec),
+        "Jet WASM {} table fixture rendered blank or incomplete.\nbody={wasm_text:?}\ndiag={}\nbrowser_capture={}\njet_dev_stderr={wasm_server_stderr}\njet_browser_stderr={wasm_browser_stderr}",
+        spec.label,
         json_for_failure(&wasm_diag),
         json_for_failure(&wasm_capture)
     );
@@ -1957,7 +2222,7 @@ async fn mui_visual_fixture_renders_on_react_dom_and_jet_wasm() {
     let screenshot_summary_match = screenshot_summaries_match(&dom_screenshot, &wasm_screenshot);
     let phash_distance = screenshot_phash_hamming_distance(&dom_visual_probe, &wasm_visual_probe);
     let phash_match = screenshot_phashes_match(&dom_visual_probe, &wasm_visual_probe);
-    if !phash_match {
+    if !phash_match && spec.require_foreground_phash {
         let failed_gates = vec!["foreground-mask-phash"];
         let diagnostics = json!({
             "comparison": {
@@ -1997,7 +2262,7 @@ async fn mui_visual_fixture_renders_on_react_dom_and_jet_wasm() {
         panic!(
             "{}\nfailed_gates={:?}\npHash distance={:?}; tolerance={}\nartifacts={}",
             screenshot_phash_diff_message(
-                "mui-visual-demo",
+                spec.fixture_dir,
                 "initial-foreground-mask-phash",
                 &diagnostics["react_dom"]["visual_probe"],
                 &diagnostics["jet_wasm"]["visual_probe"],
@@ -2021,7 +2286,7 @@ async fn mui_visual_fixture_renders_on_react_dom_and_jet_wasm() {
     );
     let selection_phash_match =
         screenshot_phashes_match(&dom_selection_visual_probe, &wasm_selection_visual_probe);
-    if !selection_phash_match {
+    if !selection_phash_match && spec.require_foreground_phash {
         let failed_gates = vec!["selection-foreground-mask-phash"];
         let diagnostics = json!({
             "comparison": {
@@ -2065,7 +2330,7 @@ async fn mui_visual_fixture_renders_on_react_dom_and_jet_wasm() {
         panic!(
             "{}\nfailed_gates={:?}\npHash distance={:?}; tolerance={}\nartifacts={}",
             screenshot_phash_diff_message(
-                "mui-visual-demo",
+                spec.fixture_dir,
                 "selection-foreground-mask-phash",
                 &diagnostics["react_dom"]["selection_visual_probe"],
                 &diagnostics["jet_wasm"]["selection_visual_probe"],

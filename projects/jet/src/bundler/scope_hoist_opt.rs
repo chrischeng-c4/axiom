@@ -48,13 +48,19 @@ pub fn inline_cross_module_constants(code: &str) -> String {
     for cap in re.captures_iter(code) {
         let var_name = cap[1].to_string();
         let literal = cap[2].to_string();
+        let Some(decl_match) = cap.get(0) else {
+            continue;
+        };
 
         // Only inline if the binding has more than 0 read references in the code
         // (otherwise it's dead and will be cleaned up by R5 DCE)
         // Count occurrences of the var name as a standalone identifier
         let count = count_identifier_refs(code, &var_name);
         // count >= 2 means: 1 for the declaration + at least 1 read reference
-        if count >= 2 {
+        if count >= 2
+            && !has_mutating_identifier_ref(code, &var_name, decl_match.end())
+            && !template_literal_contains_identifier(code, &var_name)
+        {
             constants.push((var_name, literal));
         }
     }
@@ -87,24 +93,31 @@ pub fn inline_cross_module_constants(code: &str) -> String {
 /// Count standalone identifier references (not preceded by `.` or part of a
 /// longer identifier) in the given code.
 fn count_identifier_refs(code: &str, ident: &str) -> usize {
-    let b = code.as_bytes();
-    let ident_bytes = ident.as_bytes();
+    count_identifier_refs_in_range(code.as_bytes(), ident.as_bytes(), 0, code.len())
+}
+
+fn count_identifier_refs_in_range(b: &[u8], ident_bytes: &[u8], start: usize, end: usize) -> usize {
     let ident_len = ident_bytes.len();
-    let len = b.len();
+    let len = end.min(b.len());
     let mut count = 0;
-    let mut i = 0;
+    let mut i = start.min(len);
 
     while i < len {
-        if b[i] == b'`' {
-            let (refs, next) = count_identifier_refs_in_template(code, i, ident);
-            count += refs;
-            i = next;
+        // Skip plain string literals.
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
             continue;
         }
 
-        // Skip plain string literals
-        if matches!(b[i], b'"' | b'\'') {
-            i = skip_plain_string_bytes(b, i);
+        // Template raw text is inert, but `${...}` expressions contain real
+        // JS references. Scanning raw text as code lets quotes in CSS/theme
+        // snippets corrupt the lexical state for the rest of the bundle.
+        if b[i] == b'`' {
+            let (next, refs) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
+                count_identifier_refs_in_range(b, ident_bytes, expr_start, expr_end)
+            });
+            count += refs;
+            i = next.min(len);
             continue;
         }
 
@@ -154,53 +167,84 @@ fn count_identifier_refs(code: &str, ident: &str) -> usize {
     count
 }
 
-fn count_identifier_refs_in_template(code: &str, start: usize, ident: &str) -> (usize, usize) {
+fn template_literal_contains_identifier(code: &str, ident: &str) -> bool {
     let b = code.as_bytes();
-    let len = b.len();
-    let mut count = 0;
-    let mut i = start + 1;
+    let ident_bytes = ident.as_bytes();
+    let ident_len = ident_bytes.len();
+    let mut i = 0;
 
-    while i < len {
-        if b[i] == b'\\' {
-            i = (i + 2).min(len);
+    while i < b.len() {
+        if b[i] != b'`' {
+            i += 1;
             continue;
         }
-        if b[i] == b'`' {
-            return (count, i + 1);
-        }
-        if b[i] == b'$' && i + 1 < len && b[i + 1] == b'{' {
-            let expr_start = i + 2;
-            let Some(expr_end) = find_matching_template_expr_close(code, i + 1) else {
-                return (count, len);
-            };
-            count += count_identifier_refs(&code[expr_start..expr_end], ident);
-            i = expr_end + 1;
-            continue;
-        }
+
         i += 1;
+        while i < b.len() {
+            if b[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+            if b[i] == b'`' {
+                i += 1;
+                break;
+            }
+            if i + ident_len <= b.len() && &b[i..i + ident_len] == ident_bytes {
+                let prev_ok = i == 0 || !is_id_cont_byte(b[i - 1]);
+                let next_ok = i + ident_len >= b.len() || !is_id_cont_byte(b[i + ident_len]);
+                if prev_ok && next_ok {
+                    return true;
+                }
+            }
+            i += 1;
+        }
     }
 
-    (count, i)
+    false
 }
 
-fn find_matching_template_expr_close(code: &str, open_brace: usize) -> Option<usize> {
+fn has_mutating_identifier_ref(code: &str, ident: &str, scan_start: usize) -> bool {
     let b = code.as_bytes();
-    let len = b.len();
-    let mut depth = 1usize;
-    let mut i = open_brace + 1;
+    let ident_bytes = ident.as_bytes();
+    has_mutating_identifier_ref_in_range(b, ident_bytes, scan_start, b.len())
+}
+
+fn has_mutating_identifier_ref_in_range(
+    b: &[u8],
+    ident_bytes: &[u8],
+    start: usize,
+    end: usize,
+) -> bool {
+    let ident_len = ident_bytes.len();
+    let len = end.min(b.len());
+    let mut i = start.min(len);
 
     while i < len {
+        // Skip plain string literals.
         if matches!(b[i], b'"' | b'\'') {
-            i = skip_plain_string_bytes(b, i);
+            i = skip_quoted_literal(b, i).min(len);
             continue;
         }
+
         if b[i] == b'`' {
-            i = skip_template_literal_bytes(code, i);
+            let (next, found) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
+                usize::from(has_mutating_identifier_ref_in_range(
+                    b,
+                    ident_bytes,
+                    expr_start,
+                    expr_end,
+                ))
+            });
+            if found > 0 {
+                return true;
+            }
+            i = next.min(len);
             continue;
         }
+
+        // Skip comments
         if b[i] == b'/' && i + 1 < len {
             if b[i + 1] == b'/' {
-                i += 2;
                 while i < len && b[i] != b'\n' {
                     i += 1;
                 }
@@ -211,66 +255,73 @@ fn find_matching_template_expr_close(code: &str, open_brace: usize) -> Option<us
                 while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
                     i += 1;
                 }
-                i = (i + 2).min(len);
+                if i + 1 < len {
+                    i += 2;
+                }
                 continue;
             }
         }
-        match b[i] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
+
+        if i + ident_len <= len && &b[i..i + ident_len] == ident_bytes {
+            let prev_ok = i == 0 || !is_id_cont_byte(b[i - 1]);
+            let next_ok = i + ident_len >= len || !is_id_cont_byte(b[i + ident_len]);
+            let not_prop = {
+                let mut p = i;
+                while p > 0 && matches!(b[p - 1], b' ' | b'\t') {
+                    p -= 1;
                 }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-
-    None
-}
-
-fn skip_plain_string_bytes(b: &[u8], start: usize) -> usize {
-    let q = b[start];
-    let mut i = start + 1;
-    while i < b.len() {
-        if b[i] == b'\\' {
-            i = (i + 2).min(b.len());
-            continue;
-        }
-        if b[i] == q {
-            return i + 1;
-        }
-        i += 1;
-    }
-    i
-}
-
-fn skip_template_literal_bytes(code: &str, start: usize) -> usize {
-    let b = code.as_bytes();
-    let len = b.len();
-    let mut i = start + 1;
-
-    while i < len {
-        if b[i] == b'\\' {
-            i = (i + 2).min(len);
-            continue;
-        }
-        if b[i] == b'`' {
-            return i + 1;
-        }
-        if b[i] == b'$' && i + 1 < len && b[i + 1] == b'{' {
-            let Some(expr_end) = find_matching_template_expr_close(code, i + 1) else {
-                return len;
+                p == 0 || b[p - 1] != b'.'
             };
-            i = expr_end + 1;
-            continue;
+
+            if prev_ok && next_ok && not_prop {
+                let mut next = i + ident_len;
+                while next < len && matches!(b[next], b' ' | b'\t' | b'\r' | b'\n') {
+                    next += 1;
+                }
+                if next < len {
+                    if b[next] == b'=' && (next + 1 >= len || !matches!(b[next + 1], b'=' | b'>')) {
+                        return true;
+                    }
+                    if next + 1 < len && matches!(b[next], b'+' | b'-') && b[next + 1] == b[next] {
+                        return true;
+                    }
+                    if next + 1 < len
+                        && matches!(
+                            b[next],
+                            b'+' | b'-'
+                                | b'*'
+                                | b'/'
+                                | b'%'
+                                | b'&'
+                                | b'|'
+                                | b'^'
+                                | b'?'
+                                | b'<'
+                                | b'>'
+                        )
+                        && b[next + 1] == b'='
+                    {
+                        return true;
+                    }
+                }
+
+                let mut prev = i;
+                while prev > 0 && matches!(b[prev - 1], b' ' | b'\t' | b'\r' | b'\n') {
+                    prev -= 1;
+                }
+                if prev >= 2 && matches!(b[prev - 1], b'+' | b'-') && b[prev - 2] == b[prev - 1] {
+                    return true;
+                }
+
+                i += ident_len;
+                continue;
+            }
         }
+
         i += 1;
     }
 
-    i
+    false
 }
 
 /// Replace all standalone identifier references (not inside strings, comments,
@@ -284,19 +335,8 @@ fn replace_identifier(code: &str, ident: &str, replacement: &str) -> String {
     let mut i = 0;
 
     while i < len {
-        if b[i] == b'`' {
-            i = copy_template_literal_with_replaced_expressions(
-                code,
-                i,
-                &mut out,
-                ident,
-                replacement,
-            );
-            continue;
-        }
-
-        // Skip plain string literals
-        if matches!(b[i], b'"' | b'\'') {
+        // Skip string literals
+        if matches!(b[i], b'"' | b'\'' | b'`') {
             let q = b[i];
             out.push(b[i]);
             i += 1;
@@ -373,53 +413,6 @@ fn replace_identifier(code: &str, ident: &str, replacement: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| code.to_string())
 }
 
-fn copy_template_literal_with_replaced_expressions(
-    code: &str,
-    start: usize,
-    out: &mut Vec<u8>,
-    ident: &str,
-    replacement: &str,
-) -> usize {
-    let b = code.as_bytes();
-    let len = b.len();
-    let mut i = start;
-    out.push(b[i]);
-    i += 1;
-
-    while i < len {
-        if b[i] == b'\\' {
-            out.push(b[i]);
-            i += 1;
-            if i < len {
-                out.push(b[i]);
-                i += 1;
-            }
-            continue;
-        }
-        if b[i] == b'`' {
-            out.push(b[i]);
-            return i + 1;
-        }
-        if b[i] == b'$' && i + 1 < len && b[i + 1] == b'{' {
-            out.extend_from_slice(b"${");
-            let expr_start = i + 2;
-            let Some(expr_end) = find_matching_template_expr_close(code, i + 1) else {
-                i += 2;
-                continue;
-            };
-            let replaced = replace_identifier(&code[expr_start..expr_end], ident, replacement);
-            out.extend_from_slice(replaced.as_bytes());
-            out.push(b'}');
-            i = expr_end + 1;
-            continue;
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-
-    i
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // R5: Unified cross-module DCE
 // ──────────────────────────────────────────────────────────────────────────
@@ -472,6 +465,9 @@ pub fn eliminate_unused_exports(code: &str) -> String {
     // Collect candidates first from the current state
     for cap in prefixed_var_re.captures_iter(&result) {
         let var_name = cap[1].to_string();
+        if is_prefixed_require_binding(&result, &var_name) {
+            continue;
+        }
         // Count total references (including the declaration)
         let total_refs = count_identifier_refs(&result, &var_name);
         // If only 1 reference (the declaration itself), the var is unused
@@ -488,32 +484,76 @@ pub fn eliminate_unused_exports(code: &str) -> String {
     result
 }
 
+fn is_prefixed_require_binding(code: &str, var_name: &str) -> bool {
+    let pattern = format!(
+        r"\bvar\s+{}\s*=\s*(?:_r|require)\s*\(",
+        regex::escape(var_name)
+    );
+    Regex::new(&pattern)
+        .map(|re| re.is_match(code))
+        .unwrap_or(false)
+}
+
 /// Count read references to an export property like `_m0e.foo`, excluding
 /// assignment sites (where it's followed by `=` but not `==`).
 fn count_export_reads(code: &str, full_ref: &str) -> usize {
     let b = code.as_bytes();
     let ref_bytes = full_ref.as_bytes();
+    let (export_obj, export_name) = full_ref.rsplit_once('.').unwrap_or((full_ref, ""));
+    let obj_bytes = export_obj.as_bytes();
+    let module_id = module_id_from_export_obj(export_obj);
+    let require_aliases = module_id
+        .map(|id| require_aliases_for_module(code, id))
+        .unwrap_or_default();
+    count_export_reads_in_range(
+        b,
+        0,
+        b.len(),
+        ref_bytes,
+        export_name,
+        obj_bytes,
+        module_id,
+        &require_aliases,
+    )
+}
+
+fn count_export_reads_in_range(
+    b: &[u8],
+    start: usize,
+    end: usize,
+    ref_bytes: &[u8],
+    export_name: &str,
+    obj_bytes: &[u8],
+    module_id: Option<&str>,
+    require_aliases: &[String],
+) -> usize {
     let ref_len = ref_bytes.len();
-    let len = b.len();
+    let len = end.min(b.len());
     let mut count = 0;
-    let mut i = 0;
+    let mut i = start.min(len);
 
     while i < len {
-        // Skip string literals
-        if matches!(b[i], b'"' | b'\'' | b'`') {
-            let q = b[i];
-            i += 1;
-            while i < len {
-                if b[i] == b'\\' {
-                    i += 2;
-                    continue;
-                }
-                if b[i] == q {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
+        // Skip plain string literals.
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            continue;
+        }
+
+        if b[i] == b'`' {
+            let (next, refs) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
+                count_export_reads_in_range(
+                    b,
+                    expr_start,
+                    expr_end,
+                    ref_bytes,
+                    export_name,
+                    obj_bytes,
+                    module_id,
+                    require_aliases,
+                )
+            });
+            count += refs;
+            i = next.min(len);
             continue;
         }
 
@@ -537,7 +577,7 @@ fn count_export_reads(code: &str, full_ref: &str) -> usize {
             }
         }
 
-        // Try to match the export reference
+        // Try to match dot export reads: `_m0e.foo`.
         if i + ref_len <= len && &b[i..i + ref_len] == ref_bytes {
             // Check it's not part of a longer identifier
             let next_ok = i + ref_len >= len || !is_id_cont_byte(b[i + ref_len]);
@@ -557,21 +597,453 @@ fn count_export_reads(code: &str, full_ref: &str) -> usize {
             }
         }
 
+        // Try to match bracket export reads: `_m0e["foo"]` / `_m0e['foo']`.
+        if !export_name.is_empty()
+            && i + obj_bytes.len() <= len
+            && &b[i..i + obj_bytes.len()] == obj_bytes
+        {
+            let prev_ok = i == 0 || !is_id_cont_byte(b[i - 1]);
+            let next = i + obj_bytes.len();
+            let next_ok = next >= len || !is_id_cont_byte(b[next]);
+            if prev_ok && next_ok {
+                if let Some((end_ref, is_assignment)) =
+                    match_bracket_property_access(b, next, export_name)
+                {
+                    if !is_assignment {
+                        count += 1;
+                    }
+                    i = end_ref;
+                    continue;
+                }
+            }
+        }
+
+        // Try to match require export reads: `_r(672)["getContrastRatio"]`,
+        // `_r(672).getContrastRatio`, or aliases such as
+        // `var color = _r(672); color.getContrastRatio`.
+        if let Some(id) = module_id {
+            if let Some((end_ref, is_assignment)) =
+                match_require_export_access(b, i, id, export_name)
+            {
+                if !is_assignment {
+                    count += 1;
+                }
+                i = end_ref;
+                continue;
+            }
+            if let Some((end_ref, is_assignment)) =
+                match_require_alias_export_access(b, i, &require_aliases, export_name)
+            {
+                if !is_assignment {
+                    count += 1;
+                }
+                i = end_ref;
+                continue;
+            }
+        }
+
         i += 1;
     }
 
     count
 }
 
-/// Remove an export assignment statement like `_m0e.foo = <expr>;` from code.
-fn remove_export_assignment(code: &str, export_obj: &str, export_name: &str) -> String {
+fn module_id_from_export_obj(export_obj: &str) -> Option<&str> {
+    let id = export_obj.strip_prefix("_m")?.strip_suffix('e')?;
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(id)
+}
+
+fn require_aliases_for_module(code: &str, module_id: &str) -> Vec<String> {
     let pattern = format!(
-        r"{}\.{}\s*=[^=][^;]*;",
-        regex::escape(export_obj),
-        regex::escape(export_name)
+        r"(?:^|[;{{}}\n])\s*(?:var|let|const)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*_r\s*\(\s*{}\s*\)\s*;",
+        regex::escape(module_id)
     );
     let re = Regex::new(&pattern).unwrap();
-    re.replace_all(code, "").to_string()
+    re.captures_iter(code)
+        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+        .collect()
+}
+
+fn match_bracket_property_access(
+    b: &[u8],
+    after_obj: usize,
+    export_name: &str,
+) -> Option<(usize, bool)> {
+    let mut i = after_obj;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= b.len() || b[i] != b'[' {
+        return None;
+    }
+    i += 1;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= b.len() || !matches!(b[i], b'"' | b'\'') {
+        return None;
+    }
+    let quote = b[i];
+    i += 1;
+    let name_start = i;
+    while i < b.len() {
+        if b[i] == b'\\' {
+            return None;
+        }
+        if b[i] == quote {
+            break;
+        }
+        i += 1;
+    }
+    if i >= b.len() || &b[name_start..i] != export_name.as_bytes() {
+        return None;
+    }
+    i += 1;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= b.len() || b[i] != b']' {
+        return None;
+    }
+    i += 1;
+
+    let mut j = i;
+    while j < b.len() && b[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    let is_assignment = j < b.len() && b[j] == b'=' && (j + 1 >= b.len() || b[j + 1] != b'=');
+    Some((i, is_assignment))
+}
+
+fn match_require_export_access(
+    b: &[u8],
+    start: usize,
+    module_id: &str,
+    export_name: &str,
+) -> Option<(usize, bool)> {
+    let after_require = match_require_call_for_module(b, start, module_id)?;
+    match_property_access_after_base(b, after_require, export_name)
+}
+
+fn match_require_alias_export_access(
+    b: &[u8],
+    start: usize,
+    aliases: &[String],
+    export_name: &str,
+) -> Option<(usize, bool)> {
+    for alias in aliases {
+        let alias_bytes = alias.as_bytes();
+        if start + alias_bytes.len() > b.len()
+            || &b[start..start + alias_bytes.len()] != alias_bytes
+        {
+            continue;
+        }
+        let prev_ok = start == 0 || !is_id_cont_byte(b[start - 1]);
+        let next = start + alias_bytes.len();
+        let next_ok = next >= b.len() || !is_id_cont_byte(b[next]);
+        if prev_ok && next_ok {
+            if let Some(access) = match_property_access_after_base(b, next, export_name) {
+                return Some(access);
+            }
+        }
+    }
+    None
+}
+
+fn match_require_call_for_module(b: &[u8], start: usize, module_id: &str) -> Option<usize> {
+    let req = b"_r";
+    if start + req.len() > b.len() || &b[start..start + req.len()] != req {
+        return None;
+    }
+    if start > 0 && is_id_cont_byte(b[start - 1]) {
+        return None;
+    }
+    let mut i = start + req.len();
+    if i < b.len() && is_id_cont_byte(b[i]) {
+        return None;
+    }
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= b.len() || b[i] != b'(' {
+        return None;
+    }
+    i += 1;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let id_bytes = module_id.as_bytes();
+    if i + id_bytes.len() > b.len() || &b[i..i + id_bytes.len()] != id_bytes {
+        return None;
+    }
+    i += id_bytes.len();
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= b.len() || b[i] != b')' {
+        return None;
+    }
+    Some(i + 1)
+}
+
+fn match_property_access_after_base(
+    b: &[u8],
+    after_base: usize,
+    export_name: &str,
+) -> Option<(usize, bool)> {
+    let mut i = after_base;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+
+    if let Some(end_exports) = match_dot_property(b, i, "exports") {
+        i = end_exports;
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+    }
+
+    if let Some(end_ref) = match_dot_property(b, i, export_name) {
+        return Some((end_ref, is_assignment_after_ref(b, end_ref)));
+    }
+
+    match_bracket_property_access(b, i, export_name)
+}
+
+fn match_dot_property(b: &[u8], start: usize, property: &str) -> Option<usize> {
+    if start >= b.len() || b[start] != b'.' {
+        return None;
+    }
+    let mut i = start + 1;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let prop_bytes = property.as_bytes();
+    if i + prop_bytes.len() > b.len() || &b[i..i + prop_bytes.len()] != prop_bytes {
+        return None;
+    }
+    let end = i + prop_bytes.len();
+    if end < b.len() && is_id_cont_byte(b[end]) {
+        return None;
+    }
+    Some(end)
+}
+
+fn is_assignment_after_ref(b: &[u8], end_ref: usize) -> bool {
+    let mut j = end_ref;
+    while j < b.len() && b[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    j < b.len() && b[j] == b'=' && (j + 1 >= b.len() || b[j + 1] != b'=')
+}
+
+/// Remove an export assignment statement like `_m0e.foo = <expr>;` from code.
+fn remove_export_assignment(code: &str, export_obj: &str, export_name: &str) -> String {
+    let full_ref = format!("{}.{}", export_obj, export_name);
+    let full_ref_bytes = full_ref.as_bytes();
+    let b = code.as_bytes();
+    let mut result = String::with_capacity(code.len());
+    let mut cursor = 0;
+    let mut i = 0;
+
+    while let Some(relative_start) = code[i..].find(&full_ref) {
+        let start = i + relative_start;
+        let end_ref = start + full_ref_bytes.len();
+
+        if !is_export_assignment_match(b, start, end_ref) {
+            i = end_ref;
+            continue;
+        }
+
+        let Some(statement_end) = find_assignment_statement_end(b, end_ref) else {
+            i = end_ref;
+            continue;
+        };
+
+        result.push_str(&code[cursor..start]);
+        cursor = statement_end;
+        i = statement_end;
+    }
+
+    result.push_str(&code[cursor..]);
+    result
+}
+
+fn is_export_assignment_match(b: &[u8], start: usize, end_ref: usize) -> bool {
+    if start > 0 && is_id_cont_byte(b[start - 1]) {
+        return false;
+    }
+    let previous = previous_non_ws_byte(b, start);
+    if !matches!(previous, None | Some(b';') | Some(b'{') | Some(b'}')) {
+        return false;
+    }
+
+    let mut i = end_ref;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+
+    i < b.len() && b[i] == b'=' && (i + 1 >= b.len() || b[i + 1] != b'=')
+}
+
+fn previous_non_ws_byte(b: &[u8], before: usize) -> Option<u8> {
+    let mut i = before;
+    while i > 0 {
+        i -= 1;
+        if !b[i].is_ascii_whitespace() {
+            return Some(b[i]);
+        }
+    }
+    None
+}
+
+fn find_assignment_statement_end(b: &[u8], after_ref: usize) -> Option<usize> {
+    let mut i = after_ref;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= b.len() || b[i] != b'=' || (i + 1 < b.len() && b[i + 1] == b'=') {
+        return None;
+    }
+    i += 1;
+
+    let mut paren_depth = 0i32;
+    let mut bracket_depth = 0i32;
+    let mut brace_depth = 0i32;
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' | b'`' => {
+                i = skip_quoted_literal(b, i);
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                i += 2;
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                continue;
+            }
+            b'(' => paren_depth += 1,
+            b')' if paren_depth > 0 => paren_depth -= 1,
+            b'[' => bracket_depth += 1,
+            b']' if bracket_depth > 0 => bracket_depth -= 1,
+            b'{' => brace_depth += 1,
+            b'}' if brace_depth > 0 => brace_depth -= 1,
+            b';' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => {
+                return Some(i + 1);
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    Some(b.len())
+}
+
+fn skip_quoted_literal(b: &[u8], start: usize) -> usize {
+    let quote = b[start];
+    let mut i = start + 1;
+    while i < b.len() {
+        if b[i] == b'\\' {
+            i += 2;
+            continue;
+        }
+        if b[i] == quote {
+            return i + 1;
+        }
+        i += 1;
+    }
+    i
+}
+
+fn scan_template_literal_expr_ranges<F>(b: &[u8], start: usize, mut on_expr: F) -> (usize, usize)
+where
+    F: FnMut(usize, usize) -> usize,
+{
+    debug_assert!(start < b.len() && b[start] == b'`');
+    let mut count = 0;
+    let mut i = start + 1;
+
+    while i < b.len() {
+        match b[i] {
+            b'\\' => {
+                i = (i + 2).min(b.len());
+            }
+            b'`' => {
+                return (i + 1, count);
+            }
+            b'$' if i + 1 < b.len() && b[i + 1] == b'{' => {
+                let expr_start = i + 2;
+                let expr_end = find_template_expression_end(b, expr_start);
+                count += on_expr(expr_start, expr_end);
+                i = (expr_end + 1).min(b.len());
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    (b.len(), count)
+}
+
+fn find_template_expression_end(b: &[u8], start: usize) -> usize {
+    let mut i = start;
+    let mut brace_depth = 0usize;
+
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' => {
+                i = skip_quoted_literal(b, i);
+                continue;
+            }
+            b'`' => {
+                i = scan_template_literal_expr_ranges(b, i, |_, _| 0).0;
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                i += 2;
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                if i + 1 < b.len() {
+                    i += 2;
+                }
+                continue;
+            }
+            b'{' => {
+                brace_depth += 1;
+            }
+            b'}' => {
+                if brace_depth == 0 {
+                    return i;
+                }
+                brace_depth -= 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    b.len()
 }
 
 /// Remove a `var _m{i}_NAME = <expr>;` or `var _m{i}_NAME;` declaration
@@ -658,6 +1130,7 @@ mod tests {
 
     fn make_module(path: &str, code: &str) -> CompiledModule {
         CompiledModule {
+            id: 0,
             path: PathBuf::from(path),
             code: code.to_string(),
             source_map: None,
@@ -716,6 +1189,42 @@ console.log(_m1_MODE);"#;
         assert!(
             result.contains("new Array(1024)"),
             "number literal should be propagated, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_cross_module_constants_skips_reassigned_binding() {
+        let code = "var _m0_position = 0;\nfunction next(){ _m0_position = _m0_position + 1; return _m0_position; }";
+
+        let result = inline_cross_module_constants(code);
+
+        assert!(
+            result.contains("_m0_position = _m0_position + 1"),
+            "mutable binding must not be inlined into assignment targets, got: {}",
+            result
+        );
+        assert!(
+            result.contains("var _m0_position = 0"),
+            "mutable binding declaration must remain, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_inline_cross_module_constants_skips_incremented_binding() {
+        let code = "var _m0_line = 1;\nfunction prev(){ _m0_line--; --_m0_line; return _m0_line; }";
+
+        let result = inline_cross_module_constants(code);
+
+        assert!(
+            result.contains("_m0_line--") && result.contains("--_m0_line"),
+            "increment/decrement targets must stay identifiers, got: {}",
+            result
+        );
+        assert!(
+            result.contains("var _m0_line = 1"),
+            "incremented binding declaration must remain, got: {}",
             result
         );
     }
@@ -793,6 +1302,26 @@ var _m0_msg = "the value of _m0_NAME is " + _m0_NAME;"#;
     }
 
     #[test]
+    fn test_inline_cross_module_constants_skips_template_literal_refs() {
+        let code = r#"var _m0_prefix = "Mui";
+const _m0_className = `${_m0_prefix}-Button`;"#;
+
+        let result = inline_cross_module_constants(code);
+
+        assert!(
+            result.contains("var _m0_prefix = \"Mui\";")
+                || result.contains("var _m0_prefix=\"Mui\";"),
+            "template literal ref should keep the declaration, got: {}",
+            result
+        );
+        assert!(
+            result.contains("${_m0_prefix}-Button"),
+            "template literal expression should stay intact, got: {}",
+            result
+        );
+    }
+
+    #[test]
     fn test_inline_cross_module_constants_null_undefined() {
         let code = "var _m0_val = null;\nif (_m0_val) { doSomething(); }\nvar _m0_x = _m0_val;";
 
@@ -840,6 +1369,65 @@ var _m1_result = _m0e.usedFn();"#;
     }
 
     #[test]
+    fn test_eliminate_unused_exports_removes_whole_function_assignment() {
+        // Function-valued exports contain semicolons in their body. The export
+        // remover must delete the whole assignment, not only up to the first
+        // `return ...;` inside the function.
+        let code = r#"var _m0e = _m0.exports;
+_m0e.usedFn = function() { return 42; };
+_m0e.unusedFn = function(value) {
+  if (value) {
+    return "yes";
+  }
+  return "no";
+};
+var _m1_result = _m0e.usedFn();"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m0e.usedFn"),
+            "used export should survive, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("unusedFn"),
+            "unused export name should be removed, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("return \"no\";\n};"),
+            "unused function tail must not be left behind, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_preserves_chained_assignment_initializer() {
+        // MUI emits `const local = exports.name = createTheme();`. The export
+        // write can be unused, but the initializer is still the local binding's
+        // value and must not be removed as a standalone export assignment.
+        let code = r#"const _m0_systemDefaultTheme = _m0e.systemDefaultTheme = _m0_createTheme();
+function _m0_readTheme() { return _m0_systemDefaultTheme; }
+_m0_readTheme();"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains(
+                "const _m0_systemDefaultTheme = _m0e.systemDefaultTheme = _m0_createTheme();"
+            ),
+            "chained assignment initializer must survive, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("const _m0_systemDefaultTheme =\n"),
+            "initializer must not be blanked, got: {}",
+            result
+        );
+    }
+
+    #[test]
     fn test_eliminate_unused_exports_keeps_read_refs() {
         // Both exports are read — neither should be removed.
         let code = r#"_m0e.foo = 1;
@@ -856,6 +1444,78 @@ var _m1_x = _m0e.foo + _m0e.bar;"#;
         assert!(
             result.contains("_m0e.bar = 2"),
             "bar export should survive (has read ref), got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_keeps_bracket_read_refs() {
+        // MUI CJS consumers read named exports through bracket property access
+        // after require lowering: `require(672)["getContrastRatio"]`. That is
+        // a live export read and must keep the assignment.
+        let code = r##"_m0e.getContrastRatio = function getContrastRatio(a, b) { return 7; };
+_m0e.darken = function darken(color) { return color; };
+var _m1_getContrastRatio = _m0e["getContrastRatio"];
+console.log(_m1_getContrastRatio("#000", "#fff"));"##;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m0e.getContrastRatio"),
+            "bracket-read export should survive, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("_m0e.darken"),
+            "unread sibling export should still be removed, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_keeps_direct_require_bracket_refs() {
+        let code = r##"_m672e.getContrastRatio = function getContrastRatio(a, b) { return 7; };
+_m672e.darken = function darken(color) { return color; };
+var _m0_getContrastRatio = _r(672)["getContrastRatio"];
+console.log(_m0_getContrastRatio("#000", "#fff"));"##;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m672e.getContrastRatio"),
+            "direct _r(id)[name] read should keep export, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("_m672e.darken"),
+            "unread sibling export should still be removed, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_keeps_require_alias_refs() {
+        let code = r##"_m1e.used = function used() { return 1; };
+_m1e.alsoUsed = function alsoUsed() { return 2; };
+_m1e.unused = function unused() { return 3; };
+var _m0_lib = _r(1);
+console.log(_m0_lib.used(), _m0_lib["alsoUsed"]());"##;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m1e.used"),
+            "alias dot read should keep export, got: {}",
+            result
+        );
+        assert!(
+            result.contains("_m1e.alsoUsed"),
+            "alias bracket read should keep export, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("_m1e.unused"),
+            "unread sibling export should still be removed, got: {}",
             result
         );
     }
@@ -885,6 +1545,120 @@ console.log(_m0_used);"#;
     }
 
     #[test]
+    fn test_eliminate_unused_prefixed_vars_counts_template_literal_refs() {
+        // MUI generateUtilityClass reads ClassNameGenerator inside a template
+        // literal expression. That is a live JS reference, not inert string
+        // content, so DCE must keep the local require binding.
+        let code = r#"var _m736_ClassNameGenerator = _r(737)["default"] || _r(737);
+var _m736_globalStateClasses = { active: "active" };
+_m736e.default = function(componentName, slot) {
+  return _m736_globalStateClasses[slot]
+    ? `Mui-${slot}`
+    : `${_m736_ClassNameGenerator.generate(componentName)}-${slot}`;
+};
+var _m1_read = _m736e.default;"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("_m736_ClassNameGenerator"),
+            "template literal ref should keep ClassNameGenerator binding, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_prefixed_vars_keeps_tagged_template_bindings() {
+        let code = r##"var _m0_createGlobalStyle = _r(8)["createGlobalStyle"];
+var _m0_styled = _r(8)["default"] || _r(8);
+var _m0_css = _r(8)["css"];
+const _m0_GlobalStyle = _m0_createGlobalStyle`
+  body { margin: 0; }
+`;
+const _m0_Matrix = _m0_styled.main`
+  min-height: 100vh;
+`;
+const _m0_Button = _m0_styled.button`
+  ${(props) => _m0_css`
+    background: ${props.$accent || "#2563eb"};
+  `}
+`;
+console.log(_m0_GlobalStyle, _m0_Matrix, _m0_Button);"##;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("var _m0_createGlobalStyle"),
+            "tagged template function binding must survive, got: {}",
+            result
+        );
+        assert!(
+            result.contains("var _m0_styled"),
+            "tagged template member base binding must survive, got: {}",
+            result
+        );
+        assert!(
+            result.contains("var _m0_css"),
+            "nested tagged template binding must survive, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_prefixed_vars_keeps_require_import_bindings() {
+        let code = r##"var _m0_jsx = _r(1)["jsx"];
+var _m0_createGlobalStyle = _r(8)["createGlobalStyle"];
+var _m0_styled = _r(8)["default"] || _r(8);
+const _m0_GlobalStyle = _m0_createGlobalStyle`
+  body { margin: 0; }
+`;
+const _m0_Button = _m0_styled.button`
+  color: red;
+`;
+function _m0_App() {
+  return _m0_jsx(_m0_Button, { children: "ok" });
+}"##;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("var _m0_jsx"),
+            "require import binding used after templates must survive, got: {}",
+            result
+        );
+        assert!(
+            result.contains("var _m0_createGlobalStyle"),
+            "tagged require import binding must survive, got: {}",
+            result
+        );
+        assert!(
+            result.contains("var _m0_styled"),
+            "member tagged require import binding must survive, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_prefixed_vars_ignores_template_raw_quotes() {
+        // Theme/CSS template raw text can contain quotes. Those quotes must
+        // not corrupt the scanner and hide later live references.
+        let code = r#"const _m1_css = `modeStorageKey: 'mui-mode';
+color: "${not_a_reference}";
+`;
+var _m87_experimental_extendTheme = _r(90)["default"] || _r(90);
+const _m87_defaultTheme = _m87_experimental_extendTheme();
+console.log(_m87_defaultTheme);"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            result.contains("var _m87_experimental_extendTheme"),
+            "template raw quotes must not hide live binding refs, got: {}",
+            result
+        );
+    }
+
+    #[test]
     fn test_eliminate_unused_prefixed_vars_with_refs() {
         // A prefixed var that IS referenced should NOT be removed.
         let code = r#"var _m0_count = 0;
@@ -901,42 +1675,114 @@ console.log(_m0_count);"#;
     }
 
     #[test]
-    fn test_eliminate_unused_prefixed_vars_keeps_template_expression_refs() {
-        let code = r#"var _m3242_defaultPrefixCls = _r(3926)["defaultPrefixCls"];
-const _m3242_TARGET_CLS = `${_m3242_defaultPrefixCls}-wave-target`;
-_m3242e.TARGET_CLS = _m3242_TARGET_CLS;"#;
+    fn test_eliminate_unused_prefixed_vars_keeps_mui_default_import_bindings() {
+        // MUI CssVarsProvider lowers ESM imports into prefixed require
+        // bindings. They are not exports, but they are live module-local reads.
+        let code = r#"var _m87_experimental_extendTheme = _r(90)["default"] || _r(90);
+var _m87_createCssVarsProvider = _r(321)["unstable_createCssVarsProvider"];
+var _m87_defaultConfig = _r(88)["defaultConfig"];
+const _m87_defaultTheme = _m87_experimental_extendTheme();
+const { CssVarsProvider } = _m87_createCssVarsProvider({
+  theme: _m87_defaultTheme,
+  attribute: _m87_defaultConfig.attribute
+});
+_m87e.Experimental_CssVarsProvider = CssVarsProvider;"#;
 
         let result = eliminate_unused_exports(code);
 
         assert!(
-            result.contains("var _m3242_defaultPrefixCls"),
-            "template expression read should keep imported binding, got: {}",
+            result.contains("var _m87_experimental_extendTheme"),
+            "live default import binding must survive, got: {}",
             result
         );
         assert!(
-            result.contains("${_m3242_defaultPrefixCls}"),
-            "template expression should remain intact, got: {}",
+            result.contains("var _m87_createCssVarsProvider"),
+            "live named import binding must survive, got: {}",
+            result
+        );
+        assert!(
+            result.contains("var _m87_defaultConfig"),
+            "live config import binding must survive property reads, got: {}",
             result
         );
     }
 
     #[test]
-    fn test_inline_cross_module_constants_rewrites_template_expression_refs() {
-        let code = r#"var _m0_prefix = "ant";
-const _m0_cls = `${_m0_prefix}-button`;"#;
+    fn test_eliminate_unused_prefixed_vars_keeps_mui_after_r4_module_shape() {
+        let code = r#"'use client';
 
-        let result = inline_cross_module_constants(code);
+// do not remove the following import (https://github.com/microsoft/TypeScript/issues/29808#issuecomment-1320713018)
+/* eslint-disable @typescript-eslint/no-unused-vars */
+// @ts-ignore
+var _m87__extends = _r(699)["default"] || _r(699);
+var _m87_createCssVarsProvider = _r(321)["unstable_createCssVarsProvider"];
+var _m87_styleFunctionSx = _r(643)["default"] || _r(643);
+var _m87_experimental_extendTheme = _r(90)["default"] || _r(90);
+var _m87_createTypography = _r(686)["default"] || _r(686);
+var _m87_excludeVariablesFromRoot = _r(92)["default"] || _r(92);
+var _m87_THEME_ID = _r(694)["default"] || _r(694);
+var _m87_defaultConfig = _r(88)["defaultConfig"];
+const _m87_defaultTheme = _m87_experimental_extendTheme();
+const {
+  CssVarsProvider,
+  useColorScheme,
+  getInitColorSchemeScript: getInitColorSchemeScriptSystem
+} = _m87_createCssVarsProvider({
+  themeId: _m87_THEME_ID,
+  theme: _m87_defaultTheme,
+  attribute: _m87_defaultConfig.attribute,
+  colorSchemeStorageKey: _m87_defaultConfig.colorSchemeStorageKey,
+  modeStorageKey: _m87_defaultConfig.modeStorageKey,
+  defaultColorScheme: {
+    light: _m87_defaultConfig.defaultLightColorScheme,
+    dark: _m87_defaultConfig.defaultDarkColorScheme
+  },
+  resolveTheme: theme => {
+    const newTheme = _m87__extends({}, theme, {
+      typography: _m87_createTypography(theme.palette, theme.typography)
+    });
+    newTheme.unstable_sx = function sx(props) {
+      return _m87_styleFunctionSx({
+        sx: props,
+        theme: this
+      });
+    };
+    return newTheme;
+  },
+  _m87_excludeVariablesFromRoot
+});
 
-        assert!(
-            !result.contains("var _m0_prefix"),
-            "constant declaration should be removed after inlining, got: {}",
-            result
-        );
-        assert!(
-            result.contains("${\"ant\"}-button"),
-            "template expression should receive replacement, got: {}",
-            result
-        );
+/**
+ * @deprecated Use `InitColorSchemeScript` instead
+ * ```diff
+ * - import { getInitColorSchemeScript } from '@mui/material/styles';
+ * + import InitColorSchemeScript from '@mui/material/InitColorSchemeScript';
+ *
+ * - getInitColorSchemeScript();
+ * + <InitColorSchemeScript />;
+ * ```
+ */
+const _m87_getInitColorSchemeScript = getInitColorSchemeScriptSystem;; _m87.exports["getInitColorSchemeScript"] = _m87_getInitColorSchemeScript;
+_m87.exports["useColorScheme"] = useColorScheme; _m87.exports["Experimental_CssVarsProvider"] = CssVarsProvider;"#;
+
+        let result = eliminate_unused_exports(code);
+
+        for binding in [
+            "_m87__extends",
+            "_m87_createCssVarsProvider",
+            "_m87_styleFunctionSx",
+            "_m87_experimental_extendTheme",
+            "_m87_createTypography",
+            "_m87_excludeVariablesFromRoot",
+            "_m87_THEME_ID",
+            "_m87_defaultConfig",
+        ] {
+            assert!(
+                result.contains(&format!("var {binding}")),
+                "live MUI binding {binding} must survive R5, got: {}",
+                result
+            );
+        }
     }
 
     #[test]
@@ -1093,6 +1939,24 @@ if (_m0e.foo === "bar") { doSomething(); }"#;
     fn test_count_identifier_refs_skips_comments() {
         let code = "var _m0_x = 1; // _m0_x is defined here\nreturn _m0_x;";
         // Comment reference is skipped
+        assert_eq!(count_identifier_refs(code, "_m0_x"), 2);
+    }
+
+    #[test]
+    fn test_count_identifier_refs_ignores_template_raw_quotes() {
+        let code = r#"const css = `modeStorageKey: 'mui-mode';
+content: "_m0_x";
+`;
+var _m0_x = 1;
+return _m0_x;"#;
+        assert_eq!(count_identifier_refs(code, "_m0_x"), 2);
+    }
+
+    #[test]
+    fn test_count_identifier_refs_counts_template_expression_refs() {
+        let code = r#"var _m0_x = 1;
+const label = `${_m0_x}`;
+const raw = `_m0_x`;"#;
         assert_eq!(count_identifier_refs(code, "_m0_x"), 2);
     }
 }

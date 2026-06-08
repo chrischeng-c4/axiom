@@ -1733,7 +1733,12 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // in production. esbuild errors out on missing `=`; mirror
             // that behaviour by bailing with a tagged message so CI
             // catches the typo.
-            let mut defines = production_build_defines(&root_dir);
+            let mut defines = crate::bundler::define::production_defines();
+            let env_vars = crate::runner::env::scan_env_files(&root_dir, "production");
+            defines.extend(crate::runner::env::import_meta_env_defines(
+                &env_vars,
+                "production",
+            ));
             if let Some(defs) = m.get_many::<String>("define") {
                 for def in defs {
                     let (key, value) = parse_define_arg(def).map_err(|msg| anyhow!("{}", msg))?;
@@ -1770,7 +1775,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     crate::task_runner::config::JetConfig::default()
                 }
             };
-            let mut resolve_options = crate::resolver::ResolveOptions::default();
+            let mut resolve_options = crate::resolver::ResolveOptions::for_browser_production();
             if let Some(conds) = build_config.resolve_conditions() {
                 resolve_options.conditions = conds.to_vec();
             }
@@ -1785,32 +1790,60 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 // Web app production builds must emit a browser-bootable bundle,
                 // not a "build complete" shell with bare React/MUI externals.
                 externalize_all_packages: false,
-                css_bundle: true,
                 transform_options: crate::transform::TransformOptions {
                     dev_mode: false,
                     ..Default::default()
                 },
+                defines: defines.clone(),
                 ..Default::default()
             };
 
             let bundler =
                 crate::bundler::Bundler::new(bundle_opts).context("Failed to create bundler")?;
-            let result = bundler
+            let mut result = bundler
                 .bundle(frontend.entry_path.clone())
                 .await
                 .context("Bundle failed")?;
+            append_css_side_effect_assets(
+                &root_dir,
+                &frontend.entry_path,
+                &frontend.css_side_effect_imports,
+                minify,
+                &mut result.assets,
+            )
+            .context("Failed to process CSS side-effect imports")?;
 
-            // Post-process: define replacement
+            // Post-process: define replacement + syntax-aware static branch DCE.
             let mut code = crate::bundler::define::replace_defines(&result.code, &defines);
-
-            // @spec .aw/tech-design/crates/jet/validate/add-production-jet-build-regression-coverage.md#changes
-            // The current brace-scanning DCE and root-scope optimizer are not
-            // safe for large third-party bundles. Keep production output
-            // browser-bootable until those passes become syntax-aware.
+            code = crate::bundler::dce::eliminate_static_conditionals_syntax(&code);
 
             // Post-process: minify
             if minify {
-                code = minify_build_js_internal(&code, &drops);
+                code = crate::bundler::minify::minify_js(&code, &drops);
+                code = crate::bundler::minify::replace_bool_literals(&code);
+                let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
+                if crate::bundler::dce::js_parses_without_errors(&mangled) {
+                    code = mangled;
+                } else {
+                    tracing::warn!(
+                        "Skipping variable mangling because the optimized bundle did not parse"
+                    );
+                }
+                let folded = crate::bundler::fold::fold_constants(&code);
+                if crate::bundler::dce::js_parses_without_errors(&folded) {
+                    code = folded;
+                } else {
+                    tracing::warn!(
+                        "Skipping constant folding because the optimized bundle did not parse"
+                    );
+                }
+                let compacted =
+                    crate::bundler::minify::remove_semicolons_before_block_close_candidate(&code);
+                if compacted.len() < code.len()
+                    && crate::bundler::dce::js_parses_without_errors(&compacted)
+                {
+                    code = compacted;
+                }
             }
 
             // Content hash for filename
@@ -2671,8 +2704,7 @@ async fn run_nx_build(
             &result.code,
             &crate::bundler::define::production_defines(),
         );
-        // See the production app build path above: skip unsafe JS minification
-        // for workspace builds until the optimizer is syntax-aware.
+        let code = crate::bundler::dce::eliminate_static_conditionals_syntax(&code);
 
         // Content hash for output filename.
         let hash = content_hash_prefix(&code);
@@ -3306,11 +3338,89 @@ fn write_bundle_assets(
         std::fs::write(&output_path, &asset.content)?;
 
         if asset.asset_type == crate::bundler::types::AssetType::Css {
-            css_filenames.push(asset.filename.clone());
+            if !css_filenames.contains(&asset.filename) {
+                css_filenames.push(asset.filename.clone());
+            }
         }
     }
 
     Ok(css_filenames)
+}
+
+fn append_css_side_effect_assets(
+    root_dir: &Path,
+    entry_path: &Path,
+    specifiers: &[String],
+    minify: bool,
+    assets: &mut Vec<crate::bundler::types::Asset>,
+) -> Result<()> {
+    if specifiers.is_empty() {
+        return Ok(());
+    }
+
+    let config = match crate::css::TailwindConfig::load(root_dir) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("[jet build] Failed to parse Tailwind config: {e:#}");
+            eprintln!("[jet build] Continuing with built-in Tailwind defaults; your tailwind.config.js / [css.tailwind] settings will NOT take effect until the parse error is fixed.");
+            crate::css::TailwindConfig::default()
+        }
+    };
+    let pipeline = crate::css::CssPipeline::new(root_dir.to_path_buf(), config, minify);
+    let mut seen_paths = std::collections::HashSet::new();
+
+    for specifier in specifiers {
+        let css_path = resolve_css_side_effect_import_path(root_dir, entry_path, specifier)?;
+        let css_path = std::fs::canonicalize(&css_path)
+            .with_context(|| format!("resolving CSS side-effect import `{specifier}`"))?;
+        if !seen_paths.insert(css_path.clone()) {
+            continue;
+        }
+
+        let output = pipeline
+            .process(&css_path)
+            .with_context(|| format!("processing CSS side-effect import `{specifier}`"))?;
+        let stem = css_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("style");
+        let filename = format!("{}.{}.css", stem, output.hash);
+        if assets.iter().any(|asset| asset.filename == filename) {
+            continue;
+        }
+        assets.push(crate::bundler::types::Asset {
+            filename,
+            content: output.css.into_bytes(),
+            asset_type: crate::bundler::types::AssetType::Css,
+        });
+    }
+
+    Ok(())
+}
+
+fn resolve_css_side_effect_import_path(
+    root_dir: &Path,
+    entry_path: &Path,
+    specifier: &str,
+) -> Result<PathBuf> {
+    let path = if let Some(root_relative) = specifier.strip_prefix('/') {
+        root_dir.join(root_relative)
+    } else if specifier.starts_with("./") || specifier.starts_with("../") {
+        entry_path.parent().unwrap_or(root_dir).join(specifier)
+    } else {
+        anyhow::bail!(
+            "CSS side-effect import `{specifier}` is not yet supported by jet build; use a relative or root-relative CSS path"
+        );
+    };
+
+    if path.is_file() {
+        return Ok(path);
+    }
+
+    anyhow::bail!(
+        "CSS side-effect import `{specifier}` from {} could not be resolved",
+        entry_path.display()
+    )
 }
 
 fn copy_public_dir(root_dir: &Path, output_dir: &Path) -> Result<()> {
@@ -3392,27 +3502,6 @@ fn build_flag_snapshot_from_matches(m: &ArgMatches) -> crate::build_target::Flag
 
 fn build_minify_enabled_from_matches(m: &ArgMatches) -> bool {
     !m.get_flag("no-minify")
-}
-
-fn production_build_defines(root_dir: &Path) -> std::collections::HashMap<String, String> {
-    let mut defines = crate::bundler::define::production_defines();
-    let env_vars = crate::runner::env::scan_env_files(root_dir, "production");
-    defines.extend(crate::runner::env::import_meta_env_defines(
-        &env_vars,
-        "production",
-    ));
-    defines
-}
-
-fn minify_build_js_internal(code: &str, drops: &[crate::bundler::minify::DropStatement]) -> String {
-    let mut code = crate::bundler::minify::minify_js(code, drops);
-    code = crate::bundler::minify::replace_bool_literals(&code);
-    if !code.contains('`') {
-        code = crate::bundler::dce::eliminate_dead_code(&code);
-        code = crate::bundler::mangle::mangle_variables(&code);
-        code = crate::bundler::fold::fold_constants(&code);
-    }
-    code
 }
 
 /// Produce the typed error returned by `jet check` until TypeScript
@@ -3552,6 +3641,38 @@ mod build_index_html_tests {
 
         assert!(html.contains(r#"<link rel="stylesheet" href="./main.deadbeef.css" />"#));
         assert!(html.find("./main.deadbeef.css").unwrap() < html.find("</head>").unwrap());
+    }
+
+    #[test]
+    fn css_side_effect_imports_emit_build_assets_once() {
+        let root = TempDir::new().unwrap();
+        let src = root.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let entry = src.join("main.tsx");
+        let css = src.join("main.css");
+        std::fs::write(&entry, "import './main.css';\n").unwrap();
+        std::fs::write(&css, ".status { color: rgb(20, 80, 120); }\n").unwrap();
+        let mut assets = Vec::new();
+
+        append_css_side_effect_assets(
+            root.path(),
+            &entry,
+            &["./main.css".to_string(), "./main.css".to_string()],
+            false,
+            &mut assets,
+        )
+        .unwrap();
+
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].asset_type, crate::bundler::types::AssetType::Css);
+        assert!(assets[0].filename.starts_with("main."));
+        assert!(assets[0].filename.ends_with(".css"));
+
+        let out = root.path().join("dist");
+        let css_filenames = write_bundle_assets(&out, &assets).unwrap();
+        assert_eq!(css_filenames, vec![assets[0].filename.clone()]);
+        let written = std::fs::read_to_string(out.join(&assets[0].filename)).unwrap();
+        assert!(written.contains("status"));
     }
 
     #[test]
@@ -4092,88 +4213,6 @@ mod build_target_validation_table_tests {
         assert!(
             !build_minify_enabled_from_matches(&explicit_then_disabled),
             "--no-minify must win when both flags are present"
-        );
-    }
-
-    #[test]
-    fn build_minifier_uses_jet_internal_pipeline() {
-        let out = minify_build_js_internal(
-            "const enabled = true;\nconsole.log(enabled);\n",
-            &[crate::bundler::minify::DropStatement::Console],
-        );
-
-        assert!(
-            !out.contains("console.log"),
-            "drop console should be handled internally, got: {out}"
-        );
-        assert!(
-            out.contains("!0") || !out.contains("true"),
-            "boolean replacement should be handled internally, got: {out}"
-        );
-    }
-
-    #[test]
-    fn build_minifier_eliminates_production_dead_else_branch() {
-        let out = minify_build_js_internal(
-            r#"if ("production" === "production") { module.exports = require(1); } else { module.exports = require("./dev.js"); }"#,
-            &[],
-        );
-
-        assert!(
-            !out.contains("./dev.js"),
-            "dead development branch should be removed internally, got: {out}"
-        );
-        assert!(
-            out.contains("require(1)"),
-            "live production branch should remain, got: {out}"
-        );
-    }
-
-    #[test]
-    fn build_minifier_preserves_default_export_function_expression_branch() {
-        let out = minify_build_js_internal(
-            r#"module.exports["default"] = "production" !== 'production' ? useRenderTimes : function () {};"#,
-            &[],
-        );
-
-        assert!(
-            out.contains(r#"module.exports["default"]=function()"#),
-            "production ternary false branch should keep function expression, got: {out}"
-        );
-        assert!(
-            !out.contains(r#"module.exports["default"]=;"#),
-            "minifier must not empty default export expression, got: {out}"
-        );
-    }
-
-    #[test]
-    fn production_build_defines_include_import_meta_env() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(
-            tmp.path().join(".env.production"),
-            "VITE_PUBLIC_TITLE=Jet DOM\n",
-        )
-        .unwrap();
-
-        let defines = production_build_defines(tmp.path());
-
-        assert_eq!(
-            defines.get("import.meta.env.MODE").map(String::as_str),
-            Some("\"production\"")
-        );
-        assert_eq!(
-            defines.get("import.meta.env.DEV").map(String::as_str),
-            Some("false")
-        );
-        assert_eq!(
-            defines.get("import.meta.env.PROD").map(String::as_str),
-            Some("true")
-        );
-        assert_eq!(
-            defines
-                .get("import.meta.env.VITE_PUBLIC_TITLE")
-                .map(String::as_str),
-            Some("\"Jet DOM\"")
         );
     }
 

@@ -129,12 +129,6 @@ if phase_enabled build; then
   cargo test -p jet --lib asset -- --nocapture
   node projects/jet/scripts/compare-basic-builds.mjs \
     --self-test \
-    --fixture projects/jet/tests/fixtures/dom-production-build/dom-production-assets \
-    --dependency-root projects/jet/tests/fixtures/dom-production-build/react-bench \
-    --tool-root projects/jet/tests/fixtures/dom-production-build/react-bench \
-    --fixture-name dom-production-assets-self-test \
-    --tools jet,vite,webpack \
-    --runtime-case dom-production-assets \
     --runtime-smoke "$runtime_smoke" \
     --require-css \
     --require-public brand.svg \

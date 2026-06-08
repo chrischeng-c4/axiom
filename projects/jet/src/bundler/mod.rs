@@ -3,8 +3,8 @@
 use anyhow::Result;
 use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
-use std::collections::HashMap;
-use std::path::{Component, PathBuf};
+use std::collections::{HashMap, HashSet};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use crate::css::{CssPipeline, TailwindConfig};
@@ -30,35 +30,6 @@ pub use graph::{EdgeKind, ModuleGraph, ModuleNode};
 pub use imports::{ImportDeclaration, ImportKind, ModuleImports};
 pub use splitting::SplitResult;
 pub use types::{BundleOptions, BundleOutput, ModuleId, PreloadHint};
-
-const SCOPE_HOIST_POST_OPT_MAX_BYTES: usize = 1_000_000;
-const CSS_PROJECT_ROOT_MARKERS: &[&str] = &[
-    "tailwind.config.js",
-    "jet.config.toml",
-    "package.json",
-    "index.html",
-];
-
-fn should_run_scope_hoist_post_opts(raw_len: usize) -> bool {
-    raw_len <= SCOPE_HOIST_POST_OPT_MAX_BYTES
-}
-
-fn infer_css_project_root(js_entry: &std::path::Path) -> PathBuf {
-    let start = js_entry
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-
-    for dir in start.ancestors() {
-        if CSS_PROJECT_ROOT_MARKERS
-            .iter()
-            .any(|marker| dir.join(marker).exists())
-        {
-            return dir.to_path_buf();
-        }
-    }
-
-    start.to_path_buf()
-}
 
 /// Determine module kind from file extension
 /// GH #3821 — fallback extension string used when a resolved-module
@@ -149,6 +120,22 @@ fn determine_module_kind(path: &PathBuf) -> graph::ModuleKind {
     }
 }
 
+fn normalize_bundler_path_lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() && !out.has_root() {
+                    out.push("..");
+                }
+            }
+            _ => out.push(component.as_os_str()),
+        }
+    }
+    out
+}
+
 /// Calculate simple hash of content
 fn calculate_hash(content: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
@@ -157,32 +144,6 @@ fn calculate_hash(content: &str) -> String {
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
     format!("{:x}", hasher.finish())
-}
-
-fn normalize_lexical_path(path: PathBuf) -> PathBuf {
-    let mut normalized = PathBuf::new();
-
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                let can_pop = matches!(
-                    normalized.components().next_back(),
-                    Some(Component::Normal(_))
-                );
-                if can_pop {
-                    normalized.pop();
-                } else if !path.is_absolute() {
-                    normalized.push(component.as_os_str());
-                }
-            }
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-        }
-    }
-
-    normalized
 }
 
 /// Generate WASM glue code that fetches and instantiates a .wasm module
@@ -315,6 +276,35 @@ pub fn inject_preload_hints(html: &str, hints: &[PreloadHint]) -> String {
     }
 }
 
+fn collect_side_effect_free_module_indices(
+    graph: &ModuleGraph,
+    sorted_ids: &[ModuleId],
+) -> HashSet<usize> {
+    let mut package_side_effects_cache: HashMap<
+        (PathBuf, String),
+        crate::bundler::tree_shake::SideEffectsDecl,
+    > = HashMap::new();
+
+    sorted_ids
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, &id)| {
+            let node = graph.get_node(id)?;
+            if node.kind != graph::ModuleKind::Script {
+                return None;
+            }
+            let source = std::fs::read_to_string(&node.path).ok()?;
+            let has_side_effects =
+                crate::bundler::tree_shake::module_has_side_effects_with_package_json(
+                    &source,
+                    &node.path,
+                    &mut package_side_effects_cache,
+                );
+            (!has_side_effects).then_some(idx)
+        })
+        .collect()
+}
+
 /// A bare-specifier import that the resolver could not find on disk
 /// and that the user did not explicitly mark as external.
 ///
@@ -351,9 +341,6 @@ pub struct Bundler {
     /// prefixed names to 1-2 byte identifiers, yielding Webpack-level bundle
     /// size (≤ 196 KB for react-bench vs 215 KB with Phase 1 IIFE wrappers).
     minify: bool,
-    /// When true, CSS modules are represented by linked CSS assets instead of
-    /// runtime `<style>` injection inside the JavaScript bundle.
-    css_bundle: bool,
     /// Compile-time define map applied to every transformed module.
     ///
     /// Entries map expression strings to their replacement values, e.g.
@@ -373,6 +360,7 @@ pub struct CompilationCache {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 #[derive(Debug, Clone)]
 pub struct CompiledModule {
+    pub id: usize,
     pub path: PathBuf,
     pub code: String,
     pub source_map: Option<String>,
@@ -385,7 +373,6 @@ impl Bundler {
     /// Create a new bundler instance
     pub fn new(options: BundleOptions) -> Result<Self> {
         let minify = options.minify;
-        let css_bundle = options.css_bundle;
         let defines = options.defines.clone();
         let mut resolve_options = options.resolve_options;
         // Forward externalize_all_packages to the resolver
@@ -405,7 +392,6 @@ impl Bundler {
             graph: Arc::new(RwLock::new(ModuleGraph::new())),
             cache: Arc::new(CompilationCache::new()),
             minify,
-            css_bundle,
             defines,
             unresolved_deps: Mutex::new(Vec::new()),
         })
@@ -438,10 +424,8 @@ impl Bundler {
 
         // Detect sibling CSS entry file and run it through the CSS pipeline.
         // Convention: if entry is `src/index.tsx`, look for `src/index.css`.
-        if self.css_bundle {
-            if let Some(css_asset) = self.try_process_css_entry(&entry) {
-                output.assets.push(css_asset);
-            }
+        if let Some(css_asset) = self.try_process_css_entry(&entry) {
+            output.assets.push(css_asset);
         }
 
         Ok(output)
@@ -462,7 +446,7 @@ impl Bundler {
 
         tracing::info!("CSS entry detected: {:?}", css_entry);
 
-        let root = infer_css_project_root(js_entry);
+        let root = dir.to_path_buf();
         // GH #3086 — surface tailwind.config.js / [css.tailwind] parse errors
         // instead of silently falling back to defaults during production builds.
         let config = match TailwindConfig::load(&root) {
@@ -705,7 +689,7 @@ impl Bundler {
             std::env::current_dir()?.join(&resolved.path)
         };
 
-        Ok(normalize_lexical_path(abs))
+        Ok(normalize_bundler_path_lexical(&abs))
     }
 
     async fn transform_modules(&self) -> Result<(Vec<CompiledModule>, bool)> {
@@ -739,12 +723,17 @@ impl Bundler {
             .collect();
 
         tracing::debug!("Built module map with {} entries", module_map.len());
+        let resolution_index =
+            crate::transform::modules::ModuleResolutionIndex::from_module_map(&module_map);
+        let side_effect_free_module_ids =
+            collect_side_effect_free_module_indices(&graph, &sorted_ids);
 
         use rayon::prelude::*;
 
         let modules: Vec<CompiledModule> = sorted_ids
             .par_iter()
-            .filter_map(|&id| {
+            .enumerate()
+            .filter_map(|(module_id, &id)| {
                 let node = graph.get_node(id)?;
 
                 // GH #3136 — IO failures must surface, not get silently
@@ -779,7 +768,8 @@ impl Bundler {
                     }
                 };
 
-                if let Some(cached) = self.cache.get(&node.path, mtime) {
+                if let Some(mut cached) = self.cache.get(&node.path, mtime) {
+                    cached.id = module_id;
                     tracing::debug!("Using cached module: {:?}", node.path);
                     return Some(Ok(cached));
                 }
@@ -795,17 +785,18 @@ impl Bundler {
                 };
 
                 let result = match node.kind {
-                    graph::ModuleKind::Script => {
-                        self.transformer
-                            .transform_js_with_context(&source, &node.path, &module_map)
-                    }
-                    graph::ModuleKind::Css if self.css_bundle => {
-                        Ok(crate::transform::TransformResult {
-                            code: String::new(),
-                            source_map: None,
-                        })
-                    }
-                    graph::ModuleKind::Css => self.transformer.transform_css(&source),
+                    graph::ModuleKind::Script => self
+                        .transformer
+                        .transform_js_with_context_and_resolution_index(
+                            &source,
+                            &node.path,
+                            &module_map,
+                            Some(&resolution_index),
+                        ),
+                    graph::ModuleKind::Css => Ok(crate::transform::TransformResult {
+                        code: String::new(),
+                        source_map: None,
+                    }),
                     graph::ModuleKind::Wasm => {
                         let wasm_path = node.path.to_string_lossy();
                         let glue = generate_wasm_glue(&wasm_path);
@@ -826,17 +817,24 @@ impl Bundler {
                         // after transformation so the define replacements are applied to the
                         // already-transpiled output.  This is a no-op when `self.defines` is empty.
                         //
-                        // When defines are present, also run DCE to eliminate dead branches
-                        // created by the replacements (e.g. `if ("production" !== "production")`).
+                        // When defines are present, also run syntax-aware DCE to eliminate dead
+                        // branches created by the replacements (e.g. `if ("production" !==
+                        // "production")`) without corrupting third-party nested if/else shapes.
                         let final_code = if self.defines.is_empty() {
                             transform_result.code.clone()
                         } else {
                             let after_define =
                                 define::replace_defines(&transform_result.code, &self.defines);
-                            dce::eliminate_dead_code(&after_define)
+                            let after_dce =
+                                dce::eliminate_static_conditionals_syntax(&after_define);
+                            dce::eliminate_unused_side_effect_free_require_bindings(
+                                &after_dce,
+                                &side_effect_free_module_ids,
+                            )
                         };
 
                         let compiled = CompiledModule {
+                            id: module_id,
                             path: node.path.clone(),
                             code: final_code.clone(),
                             source_map: transform_result.source_map.clone(),
@@ -871,7 +869,10 @@ impl Bundler {
     fn apply_tree_shaking(&self, modules: Vec<CompiledModule>) -> Vec<CompiledModule> {
         let module_pairs: Vec<(PathBuf, String)> = modules
             .iter()
-            .map(|m| (m.path.clone(), m.code.clone()))
+            .map(|m| {
+                let source = std::fs::read_to_string(&m.path).unwrap_or_else(|_| m.code.clone());
+                (m.path.clone(), source)
+            })
             .collect();
 
         let analysis = match tree_shake::analyze_used_exports(&module_pairs) {
@@ -890,9 +891,68 @@ impl Bundler {
             );
         }
 
+        let mut eliminated_modules: HashSet<PathBuf> =
+            analysis.eliminated_modules.iter().cloned().collect();
+        let initial_eliminated_module_ids: HashSet<usize> = modules
+            .iter()
+            .filter_map(|module| {
+                eliminated_modules
+                    .contains(&module.path)
+                    .then_some(module.id)
+            })
+            .collect();
+        let retained_require_ids: HashSet<usize> = modules
+            .iter()
+            .filter(|module| !eliminated_modules.contains(&module.path))
+            .flat_map(|module| dce::numeric_require_ids(&module.code))
+            .collect();
+        let mut rescued_ids: HashSet<usize> = retained_require_ids
+            .intersection(&initial_eliminated_module_ids)
+            .copied()
+            .collect();
+        loop {
+            let mut changed = false;
+            for module in &modules {
+                if !rescued_ids.contains(&module.id) {
+                    continue;
+                }
+                for required_id in dce::numeric_require_ids(&module.code) {
+                    if initial_eliminated_module_ids.contains(&required_id)
+                        && rescued_ids.insert(required_id)
+                    {
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        if !rescued_ids.is_empty() {
+            tracing::debug!(
+                "Tree shaking: preserving {} modules still required by retained transformed code",
+                rescued_ids.len()
+            );
+            eliminated_modules.retain(|path| {
+                modules
+                    .iter()
+                    .find(|module| &module.path == path)
+                    .map(|module| !rescued_ids.contains(&module.id))
+                    .unwrap_or(true)
+            });
+        }
+        let eliminated_module_ids: HashSet<usize> = modules
+            .iter()
+            .filter_map(|module| {
+                eliminated_modules
+                    .contains(&module.path)
+                    .then_some(module.id)
+            })
+            .collect();
+
         modules
             .into_iter()
-            .filter(|m| !analysis.eliminated_modules.contains(&m.path))
+            .filter(|m| !eliminated_modules.contains(&m.path))
             .map(|m| {
                 let used = analysis
                     .used_exports
@@ -900,9 +960,17 @@ impl Bundler {
                     .cloned()
                     .unwrap_or_default();
                 if used.is_empty() {
-                    return m;
+                    let code = dce::eliminate_require_reexports_to_eliminated_modules(
+                        &m.code,
+                        &eliminated_module_ids,
+                    );
+                    return CompiledModule { code, ..m };
                 }
                 let shaken = tree_shake::shake_module(&m.code, &m.path, &used);
+                let shaken = dce::eliminate_require_reexports_to_eliminated_modules(
+                    &shaken,
+                    &eliminated_module_ids,
+                );
                 CompiledModule { code: shaken, ..m }
             })
             .collect()
@@ -950,24 +1018,16 @@ impl Bundler {
             tracing::debug!("Using runtime module system (circular dependencies present)");
             generate_bundle_with_runtime(&modules)
         } else if scope_hoist::is_scope_hoist_safe(&modules) {
-            if self.minify && scope_hoist::is_flatten_safe(&modules) {
+            if self.minify {
                 tracing::debug!(
                     "Using Phase 2 true module flattening \
-                     (minify=true, no eval/with/arguments[)"
+                     (minify=true; unsafe modules keep wrapper boundaries)"
                 );
                 let raw = scope_hoist::generate_flattened_bundle(&modules);
-                if should_run_scope_hoist_post_opts(raw.len()) {
-                    // R4: Cross-module constant inlining → R5: DCE.
-                    let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
-                    scope_hoist::eliminate_unused_exports(&after_r4)
-                } else {
-                    tracing::debug!(
-                        raw_bytes = raw.len(),
-                        max_bytes = SCOPE_HOIST_POST_OPT_MAX_BYTES,
-                        "Skipping quadratic scope-hoist post-opts for large bundle"
-                    );
-                    raw
-                }
+                // R4: Cross-module constant inlining → R5: DCE
+                let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
+                let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
+                dce::eliminate_unread_es_module_markers(&after_r5)
             } else {
                 tracing::debug!("Using Phase 1 scope hoisting (no dynamic imports)");
                 scope_hoist::generate_scope_hoisted_bundle(&modules)
@@ -995,12 +1055,12 @@ fn generate_bundle_with_runtime(modules: &[CompiledModule]) -> String {
     bundle.push_str(&generate_runtime());
     bundle.push_str("\n\n");
 
-    for (idx, module) in modules.iter().enumerate() {
+    for module in modules {
         let module_path = module.path.to_string_lossy();
-        bundle.push_str(&format!("// Module {}: {}\n", idx, module_path));
+        bundle.push_str(&format!("// Module {}: {}\n", module.id, module_path));
         bundle.push_str(&format!(
             "__jet__.define({}, function(require, module, exports) {{\n",
-            idx
+            module.id
         ));
         bundle.push_str(&module.code);
         bundle.push_str("\n});\n\n");
@@ -1086,40 +1146,6 @@ mod tests {
         assert_eq!(cache.module_cache.len(), 0);
     }
 
-    #[test]
-    fn lexical_path_normalization_collapses_dot_and_parent_segments() {
-        let raw =
-            PathBuf::from("/fixture/node_modules/antd/es/alert/./style/../../theme/internal.js");
-
-        assert_eq!(
-            normalize_lexical_path(raw),
-            PathBuf::from("/fixture/node_modules/antd/es/theme/internal.js")
-        );
-    }
-
-    #[tokio::test]
-    async fn build_graph_deduplicates_lexical_path_variants() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let src = tmp.path().join("src");
-        std::fs::create_dir_all(src.join("nested")).unwrap();
-        let entry = src.join("main.js");
-        std::fs::write(
-            &entry,
-            "import './shared.js';\nimport './nested/../shared.js';\n",
-        )
-        .unwrap();
-        std::fs::write(src.join("shared.js"), "export const shared = 1;\n").unwrap();
-
-        let bundler = Bundler::new(BundleOptions::default()).unwrap();
-        bundler.build_graph(&entry).await.unwrap();
-
-        assert_eq!(
-            bundler.graph.read().module_count(),
-            2,
-            "entry plus one shared module; ./nested/../shared.js must not duplicate shared.js"
-        );
-    }
-
     // ──────────────────────────────────────────────────────────────────
     // Preload hints tests (R8 / T12)
     // ──────────────────────────────────────────────────────────────────
@@ -1187,28 +1213,178 @@ mod tests {
         assert_eq!(result, html, "Empty hints should not modify HTML");
     }
 
-    #[test]
-    fn test_scope_hoist_post_opts_size_gate() {
-        assert!(should_run_scope_hoist_post_opts(
-            SCOPE_HOIST_POST_OPT_MAX_BYTES
-        ));
-        assert!(!should_run_scope_hoist_post_opts(
-            SCOPE_HOIST_POST_OPT_MAX_BYTES + 1
-        ));
-    }
-
     // ──────────────────────────────────────────────────────────────────
     // Phase 2 flattening + mangling pipeline tests (#882, #903)
     // ──────────────────────────────────────────────────────────────────
 
     fn make_compiled(path: &str, code: &str) -> CompiledModule {
         CompiledModule {
+            id: test_module_id(path),
             path: std::path::PathBuf::from(path),
             code: code.to_string(),
             source_map: None,
             dependencies: Vec::new(),
             hash: String::new(),
         }
+    }
+
+    fn make_compiled_with_id(id: usize, path: &str, code: &str) -> CompiledModule {
+        CompiledModule {
+            id,
+            path: std::path::PathBuf::from(path),
+            code: code.to_string(),
+            source_map: None,
+            dependencies: Vec::new(),
+            hash: String::new(),
+        }
+    }
+
+    fn test_module_id(path: &str) -> usize {
+        match path {
+            "dep.js" | "config.js" | "lib.js" => 1,
+            "debug.js" => 2,
+            _ => 0,
+        }
+    }
+
+    fn js_parses_without_errors(source: &str) -> bool {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_javascript::LANGUAGE.into())
+            .unwrap();
+        parser
+            .parse(source, None)
+            .map(|tree| !tree.root_node().has_error())
+            .unwrap_or(false)
+    }
+
+    fn first_js_parse_error(source: &str) -> Option<String> {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&tree_sitter_javascript::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(source, None)?;
+        let node = first_error_node(tree.root_node())?;
+        let start = node.start_byte().saturating_sub(160);
+        let end = (node.end_byte() + 160).min(source.len());
+        let pos = node.start_position();
+        Some(format!(
+            "row={} column={} byte={} kind={} snippet={}",
+            pos.row,
+            pos.column,
+            node.start_byte(),
+            node.kind(),
+            source[start..end].replace('\n', "\\n")
+        ))
+    }
+
+    fn first_error_node(node: tree_sitter::Node<'_>) -> Option<tree_sitter::Node<'_>> {
+        if node.is_error() || node.is_missing() {
+            return Some(node);
+        }
+        if !node.has_error() {
+            return None;
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if let Some(found) = first_error_node(child) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn test_tree_shaking_rescues_modules_required_by_retained_transformed_code() {
+        let bundler = Bundler::new(BundleOptions::default()).unwrap();
+        let modules = vec![
+            make_compiled_with_id(
+                0,
+                "entry.js",
+                r#"var live = require(2)["default"] || require(2); live();"#,
+            ),
+            make_compiled_with_id(1, "unused.js", r#"exports.default = function unused() {};"#),
+            make_compiled_with_id(
+                2,
+                "live-index.js",
+                r#"module.exports["default"] = require(3)["default"]; var __re = require(3);"#,
+            ),
+            make_compiled_with_id(3, "live.js", r#"exports.default = function live() {};"#),
+        ];
+
+        let shaken = bundler.apply_tree_shaking(modules);
+        let ids: HashSet<usize> = shaken.iter().map(|module| module.id).collect();
+
+        assert!(ids.contains(&0), "{ids:?}");
+        assert!(
+            ids.contains(&2),
+            "retained transformed require(2) must rescue module 2: {ids:?}"
+        );
+        assert!(
+            ids.contains(&3),
+            "rescued module 2's transformed require(3) must also rescue module 3: {ids:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_per_module_defines_use_syntax_safe_dce() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let entry = tmp.path().join("entry.js");
+        std::fs::write(
+            &entry,
+            r#"
+if (process.env.NODE_ENV !== "production") {
+  if (window.__JET_DEV_FLAG__) {
+    console.log("dev branch");
+  } else {
+    console.log("inner dev else");
+  }
+} else {
+  console.log("prod branch");
+}
+export const value = 1;
+"#,
+        )
+        .unwrap();
+
+        let bundler = Bundler::new(BundleOptions {
+            entry: entry.clone(),
+            output_dir: tmp.path().join("dist"),
+            minify: true,
+            source_maps: false,
+            externalize_all_packages: false,
+            transform_options: crate::transform::TransformOptions {
+                dev_mode: false,
+                ..Default::default()
+            },
+            defines: crate::bundler::define::production_defines(),
+            ..Default::default()
+        })
+        .unwrap();
+
+        bundler.build_graph(&entry).await.unwrap();
+        let (modules, _has_cycle) = bundler.transform_modules().await.unwrap();
+        let canonical_entry = std::fs::canonicalize(&entry).unwrap();
+        let compiled = modules
+            .iter()
+            .find(|module| {
+                module.path == entry
+                    || module.path == canonical_entry
+                    || module.path.ends_with(std::path::Path::new("entry.js"))
+            })
+            .expect("entry module should be transformed");
+
+        assert!(
+            js_parses_without_errors(&compiled.code),
+            "per-module define+DCE output must remain valid JS:\n{}",
+            compiled.code
+        );
+        assert!(compiled.code.contains("prod branch"), "{}", compiled.code);
+        assert!(
+            !compiled.code.contains("dev branch"),
+            "production define+DCE should remove dev-only branch:\n{}",
+            compiled.code
+        );
     }
 
     /// Simulate the full production pipeline:
@@ -1246,6 +1422,179 @@ mod tests {
             bundle.contains("(function()"),
             "Phase 2 must have outer IIFE, got: {}",
             bundle
+        );
+    }
+
+    #[test]
+    fn test_phase2_dce_keeps_styled_components_entry_import_bindings() {
+        let source = r##"import React, { useState } from "react";
+import { createRoot } from "react-dom/client";
+import styled, { createGlobalStyle, css } from "styled-components";
+
+const GlobalStyle = createGlobalStyle`
+  body { margin: 0; }
+`;
+const Matrix = styled.main`
+  min-height: 100vh;
+`;
+const Button = styled.button`
+  ${(props) => css`
+    background: ${props.$accent || "#2563eb"};
+  `}
+`;
+
+function App() {
+  const [active] = useState(0);
+  return <Matrix><GlobalStyle /><Button $accent="#2563eb">{active}</Button></Matrix>;
+}
+
+createRoot(document.getElementById("root")!).render(<App />);"##;
+        let transformer =
+            crate::transform::Transformer::new(crate::transform::TransformOptions::default());
+        let entry = transformer
+            .transform_js_with_context(source, std::path::Path::new("entry.tsx"), &HashMap::new())
+            .unwrap();
+        let modules = vec![make_compiled("entry.tsx", &entry.code)];
+        let raw = scope_hoist::generate_flattened_bundle(&modules);
+        let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
+        let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
+
+        for name in [
+            "_m0_jsx",
+            "_m0_jsxs",
+            "_m0_useState",
+            "_m0_createRoot",
+            "_m0_styled",
+            "_m0_createGlobalStyle",
+            "_m0_css",
+        ] {
+            assert!(
+                after_r5.contains(name),
+                "R5 must keep live styled-components entry binding {name}: {after_r5}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_phase2_real_styled_components_fixture_keeps_entry_import_bindings() {
+        let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/dom-production-build/styled-components-visual");
+        let entry = fixture_root.join("src/main.tsx");
+        assert!(
+            entry.exists(),
+            "styled-components visual fixture entry must exist at {}",
+            entry.display()
+        );
+
+        let mut resolve_options = crate::resolver::ResolveOptions::for_browser_production();
+        resolve_options.base_dirs = vec![fixture_root.clone()];
+
+        let bundler = Bundler::new(BundleOptions {
+            entry: entry.clone(),
+            output_dir: fixture_root.join("dist-test"),
+            minify: true,
+            source_maps: false,
+            resolve_options,
+            externalize_all_packages: false,
+            transform_options: crate::transform::TransformOptions {
+                dev_mode: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .unwrap();
+
+        bundler.build_graph(&entry).await.unwrap();
+        bundler.check_unresolved_deps().unwrap();
+        let (modules, has_cycle) = bundler.transform_modules().await.unwrap();
+        assert!(!has_cycle, "fixture should stay on Phase 2 flattening path");
+        let modules = bundler.apply_tree_shaking(modules);
+        let raw = scope_hoist::generate_flattened_bundle(&modules);
+        let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
+        let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
+        let defines = crate::bundler::define::production_defines();
+        let mut post_processed = crate::bundler::define::replace_defines(&after_r5, &defines);
+        post_processed = crate::bundler::minify::minify_js(&post_processed, &[]);
+        post_processed = crate::bundler::minify::replace_bool_literals(&post_processed);
+        post_processed = crate::bundler::mangle::mangle_variables(&post_processed);
+        post_processed = crate::bundler::fold::fold_constants(&post_processed);
+
+        for (stage, code) in [
+            ("raw", &raw),
+            ("after_r4", &after_r4),
+            ("after_r5", &after_r5),
+            ("post_processed", &post_processed),
+        ] {
+            for name in [
+                "_m0_jsx",
+                "_m0_jsxs",
+                "_m0_useState",
+                "_m0_createRoot",
+                "_m0_styled",
+                "_m0_createGlobalStyle",
+                "_m0_css",
+            ] {
+                let declaration = format!("var {name}");
+                assert!(
+                    code.contains(&declaration),
+                    "{stage} must keep live styled-components fixture entry binding declaration {declaration}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_phase2_real_mui_fixture_mangle_candidate_parses_and_compresses() {
+        let fixture_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/dom-production-build/mui-visual");
+        let entry = fixture_root.join("src/main.tsx");
+        assert!(
+            entry.exists(),
+            "MUI visual fixture entry must exist at {}",
+            entry.display()
+        );
+
+        let mut resolve_options = crate::resolver::ResolveOptions::for_browser_production();
+        resolve_options.base_dirs = vec![fixture_root.clone()];
+
+        let bundler = Bundler::new(BundleOptions {
+            entry: entry.clone(),
+            output_dir: fixture_root.join("dist-test"),
+            minify: true,
+            source_maps: false,
+            resolve_options,
+            externalize_all_packages: false,
+            transform_options: crate::transform::TransformOptions {
+                dev_mode: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .unwrap();
+
+        bundler.build_graph(&entry).await.unwrap();
+        bundler.check_unresolved_deps().unwrap();
+        let (modules, has_cycle) = bundler.transform_modules().await.unwrap();
+        assert!(!has_cycle, "fixture should stay on Phase 2 flattening path");
+        let modules = bundler.apply_tree_shaking(modules);
+        let raw = scope_hoist::generate_flattened_bundle(&modules);
+        let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
+        let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
+        let defines = crate::bundler::define::production_defines();
+        let mut post_processed = crate::bundler::define::replace_defines(&after_r5, &defines);
+        post_processed = crate::bundler::dce::eliminate_static_conditionals_syntax(&post_processed);
+        post_processed = crate::bundler::minify::minify_js(&post_processed, &[]);
+        post_processed = crate::bundler::minify::replace_bool_literals(&post_processed);
+        let mangled = crate::bundler::mangle::mangle_variables(&post_processed);
+
+        assert!(
+            js_parses_without_errors(&mangled),
+            "MUI fixture mangle candidate must parse so CLI does not fall back to unmangled output: {}",
+            first_js_parse_error(&mangled).unwrap_or_else(|| "unknown parse error".to_string())
+        );
+        assert!(
+            !mangled.contains("var _m0={exports"),
+            "MUI fixture module slot names must be compressed, not emitted unmangled"
         );
     }
 
@@ -1300,6 +1649,97 @@ mod tests {
             !result.contains("_m1_count"),
             "prefixed _m1_count must be mangled away, got: {}",
             result
+        );
+    }
+
+    #[test]
+    fn test_phase2_pipeline_keeps_mui_css_vars_provider_import_bindings() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let package_dir = tmp.path().join("node_modules/@mui/material");
+        std::fs::create_dir_all(package_dir.join("styles")).unwrap();
+        std::fs::write(package_dir.join("package.json"), r#"{"sideEffects":false}"#).unwrap();
+        let css_vars_provider = package_dir.join("styles/CssVarsProvider.js");
+        let styles_index = package_dir.join("styles/index.js");
+        let modules = vec![
+            CompiledModule {
+                id: 0,
+                path: styles_index,
+                code: r#"
+Object.defineProperty(module.exports, "__esModule", { value: true });
+var _CssVarsProvider = require(1);
+Object.keys(_CssVarsProvider).forEach(function (key) {
+  if (key !== "default") module.exports[key] = _CssVarsProvider[key];
+});
+"#
+                .to_string(),
+                source_map: None,
+                dependencies: Vec::new(),
+                hash: String::new(),
+            },
+            CompiledModule {
+                id: 1,
+                path: css_vars_provider,
+                code: r#"
+Object.defineProperty(module.exports, "__esModule", { value: true });
+'use client';
+// do not remove the following import
+/* eslint-disable @typescript-eslint/no-unused-vars */
+// @ts-ignore
+var _extends = require(699)["default"] || require(699);
+var createCssVarsProvider = require(321)["unstable_createCssVarsProvider"];
+var styleFunctionSx = require(643)["default"] || require(643);
+var experimental_extendTheme = require(90)["default"] || require(90);
+var createTypography = require(686)["default"] || require(686);
+var excludeVariablesFromRoot = require(92)["default"] || require(92);
+var THEME_ID = require(694)["default"] || require(694);
+var defaultConfig = require(88)["defaultConfig"];
+const defaultTheme = experimental_extendTheme();
+const {
+  CssVarsProvider,
+  useColorScheme,
+  getInitColorSchemeScript: getInitColorSchemeScriptSystem
+} = createCssVarsProvider({
+  themeId: THEME_ID,
+  theme: defaultTheme,
+  attribute: defaultConfig.attribute,
+  resolveTheme: theme => {
+    const newTheme = _extends({}, theme, {
+      typography: createTypography(theme.palette, theme.typography)
+    });
+    newTheme.unstable_sx = function sx(props) {
+      return styleFunctionSx({ sx: props, theme: this });
+    };
+    return newTheme;
+  },
+  excludeVariablesFromRoot
+});
+const getInitColorSchemeScript = getInitColorSchemeScriptSystem;
+module.exports["getInitColorSchemeScript"] = getInitColorSchemeScript;
+module.exports["useColorScheme"] = useColorScheme;
+module.exports["Experimental_CssVarsProvider"] = CssVarsProvider;
+"#
+                .to_string(),
+                source_map: None,
+                dependencies: Vec::new(),
+                hash: String::new(),
+            },
+            make_compiled("dep.js", "exports.default = function dep() { return {}; };"),
+        ];
+
+        let raw = scope_hoist::generate_flattened_bundle(&modules);
+        let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
+        let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
+        let minified = crate::bundler::minify::minify_js(&after_r5, &[]);
+
+        assert!(
+            minified.contains("var _m1_experimental_extendTheme"),
+            "live MUI default import declaration must survive Phase2 pipeline, got: {}",
+            minified
+        );
+        assert!(
+            minified.contains("_m1_experimental_extendTheme()"),
+            "live MUI default import read must stay tied to declaration, got: {}",
+            minified
         );
     }
 
@@ -1381,6 +1821,39 @@ exports.render = function() {
     }
 }
 
+#[cfg(test)]
+mod resolved_path_tests {
+    use super::*;
+    use crate::bundler::types::BundleOptions;
+
+    #[test]
+    fn normalize_bundler_path_lexical_collapses_parent_components() {
+        assert_eq!(
+            normalize_bundler_path_lexical(Path::new("/app/node_modules/pkg/../dep/index.js")),
+            PathBuf::from("/app/node_modules/dep/index.js")
+        );
+    }
+
+    #[test]
+    fn resolve_dependency_returns_lexically_normalized_path() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(src.join("nested")).unwrap();
+        let importer = src.join("importer.js");
+        let target = src.join("target.js");
+        std::fs::write(&importer, "import './nested/../target';").unwrap();
+        std::fs::write(&target, "export {};").unwrap();
+
+        let bundler = Bundler::new(BundleOptions::default()).unwrap();
+        let resolved = bundler
+            .resolve_dependency(&importer, "./nested/../target")
+            .unwrap();
+
+        assert_eq!(resolved, normalize_bundler_path_lexical(&target));
+        assert!(!resolved.to_string_lossy().contains("/../"));
+    }
+}
+
 /// Pins the #1317 behaviour: `jet build` must fail loudly when a bare
 /// specifier can neither be resolved on disk nor was opted into being
 /// external, and must continue to silently skip when the user did opt in.
@@ -1435,128 +1908,6 @@ mod unresolved_deps_tests {
             msg.contains("`react`"),
             "diagnostic should name the unresolved specifier, got: {msg}"
         );
-    }
-
-    #[tokio::test]
-    async fn css_bundle_extracts_css_without_js_injection() {
-        let tmp = tempfile::tempdir().unwrap();
-        let entry = write_fixture(
-            tmp.path(),
-            &[
-                (
-                    "entry.js",
-                    "import './entry.css';\nwindow.__jet_css_ready = true;\n",
-                ),
-                ("entry.css", ".shell { color: red; }\n"),
-            ],
-        );
-
-        let opts = BundleOptions {
-            entry: entry.clone(),
-            output_dir: tmp.path().to_path_buf(),
-            css_bundle: true,
-            ..Default::default()
-        };
-        let bundler = Bundler::new(opts).unwrap();
-        let output = bundler.bundle(entry).await.unwrap();
-
-        assert!(
-            output
-                .assets
-                .iter()
-                .any(|asset| asset.asset_type == types::AssetType::Css
-                    && String::from_utf8_lossy(&asset.content).contains(".shell")),
-            "css_bundle should emit the stylesheet as an asset"
-        );
-        assert!(
-            !output.code.contains("CSS Module Injection"),
-            "css_bundle must not duplicate CSS through runtime injection"
-        );
-        assert!(
-            !output.code.contains("color: red"),
-            "css_bundle must keep stylesheet bytes out of JS"
-        );
-    }
-
-    #[test]
-    fn css_bundle_tailwind_scans_content_from_project_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        let entry = write_fixture(
-            tmp.path(),
-            &[
-                (
-                    "src/main.tsx",
-                    r#"export function App() {
-  return <section className="component-matrix grid">ready</section>;
-}
-"#,
-                ),
-                ("src/main.css", "@tailwind utilities;\n"),
-                (
-                    "tailwind.config.js",
-                    r#"module.exports = {
-  content: ["./src/**/*.{ts,tsx,js,jsx}"],
-  plugins: [],
-};
-"#,
-                ),
-            ],
-        );
-
-        let opts = BundleOptions {
-            entry: entry.clone(),
-            output_dir: tmp.path().join("dist"),
-            css_bundle: true,
-            ..Default::default()
-        };
-        let bundler = Bundler::new(opts).unwrap();
-        let asset = bundler
-            .try_process_css_entry(&entry)
-            .expect("sibling Tailwind CSS entry should be emitted");
-        let css = String::from_utf8(asset.content).unwrap();
-
-        assert!(
-            css.contains(".grid"),
-            "Tailwind utilities from src/main.tsx should be emitted, got: {css}"
-        );
-        assert!(
-            css.contains("display: grid") || css.contains("display:grid"),
-            "grid utility should set display:grid, got: {css}"
-        );
-    }
-
-    #[tokio::test]
-    async fn css_imports_inject_styles_when_css_bundle_disabled() {
-        let tmp = tempfile::tempdir().unwrap();
-        let entry = write_fixture(
-            tmp.path(),
-            &[
-                (
-                    "entry.js",
-                    "import './entry.css';\nwindow.__jet_css_ready = true;\n",
-                ),
-                ("entry.css", ".shell { color: red; }\n"),
-            ],
-        );
-
-        let opts = BundleOptions {
-            entry: entry.clone(),
-            output_dir: tmp.path().to_path_buf(),
-            css_bundle: false,
-            ..Default::default()
-        };
-        let bundler = Bundler::new(opts).unwrap();
-        let output = bundler.bundle(entry).await.unwrap();
-
-        assert!(
-            !output
-                .assets
-                .iter()
-                .any(|asset| asset.asset_type == types::AssetType::Css),
-            "non-extract CSS imports should stay in JS"
-        );
-        assert!(output.code.contains("CSS Module Injection"));
-        assert!(output.code.contains("color: red"));
     }
 
     #[tokio::test]

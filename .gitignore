@@ -69,6 +69,7 @@ target/
 # Frontend build artifacts
 dist/
 node_modules/
+.jet/
 .vite/
 projects/cue/fe/.jet/
 projects/cue/artifact-studio/.jet/

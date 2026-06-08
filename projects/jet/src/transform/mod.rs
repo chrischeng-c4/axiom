@@ -179,6 +179,16 @@ impl Transformer {
         filename: &Path,
         module_map: &HashMap<PathBuf, usize>,
     ) -> Result<TransformResult> {
+        self.transform_js_with_context_and_resolution_index(source, filename, module_map, None)
+    }
+
+    pub fn transform_js_with_context_and_resolution_index(
+        &self,
+        source: &str,
+        filename: &Path,
+        module_map: &HashMap<PathBuf, usize>,
+        resolution_index: Option<&modules::ModuleResolutionIndex>,
+    ) -> Result<TransformResult> {
         let ext = filename.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         // 1. First, apply TypeScript/JSX transformation
@@ -195,7 +205,12 @@ impl Transformer {
 
         // 2. Apply ES6 module transformation (pass current module dir for relative resolution)
         let current_dir = filename.parent();
-        modules::transform_modules_with_dir(&transformed.code, module_map, current_dir)
+        modules::transform_modules_with_dir_and_index(
+            &transformed.code,
+            module_map,
+            resolution_index,
+            current_dir,
+        )
     }
 
     /// Transform CSS file
@@ -245,6 +260,72 @@ export default App;"#;
         assert!(
             result.code.contains("var useStateAlias") && result.code.contains("[\"useState\"]"),
             "import alias must be preserved through full TSX pipeline: {:?}",
+            result.code
+        );
+    }
+
+    #[test]
+    fn test_transform_tsx_with_context_preserves_styled_components_import_bindings() {
+        let source = r##"import React, { useState } from "react";
+import { createRoot } from "react-dom/client";
+import styled, { createGlobalStyle, css } from "styled-components";
+
+const GlobalStyle = createGlobalStyle`
+  body { margin: 0; }
+`;
+const Matrix = styled.main`
+  min-height: 100vh;
+`;
+const Button = styled.button`
+  ${(props) => css`
+    background: ${props.$accent || "#2563eb"};
+  `}
+`;
+
+function App() {
+  const [active] = useState(0);
+  return <Matrix><GlobalStyle /><Button $accent="#2563eb">{active}</Button></Matrix>;
+}
+
+createRoot(document.getElementById("root")!).render(<App />);"##;
+        let transformer = Transformer::new(TransformOptions::default());
+        let result = transformer
+            .transform_js_with_context(source, Path::new("main.tsx"), &HashMap::new())
+            .unwrap();
+
+        assert!(
+            result
+                .code
+                .contains("var useState = require('react')[\"useState\"]"),
+            "React named import binding must survive full transform: {}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("var createRoot = require('react-dom/client')[\"createRoot\"]"),
+            "createRoot named import binding must survive full transform: {}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("var styled = require('styled-components')[\"default\"]"),
+            "styled default import binding must survive full transform: {}",
+            result.code
+        );
+        assert!(
+            result.code.contains(
+                "var createGlobalStyle = require('styled-components')[\"createGlobalStyle\"]"
+            ),
+            "createGlobalStyle named import binding must survive full transform: {}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("var css = require('styled-components')[\"css\"]"),
+            "css named import binding must survive full transform: {}",
             result.code
         );
     }

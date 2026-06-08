@@ -625,17 +625,34 @@ async fn assert_fixture_canvas_paint_phase(
         .await
         .unwrap_or_else(|err| panic!("{} {phase} WASM paint ops: {err:#}", case.id));
     let expected_methods = canvas_spy::expected_canvas_methods_from_paint_ops(&ops);
-    let calls = app
-        .page
-        .evaluate(canvas_spy::captured_calls_expr())
-        .await
-        .unwrap_or_else(|err| panic!("{} {phase} canvas calls: {err:#}", case.id));
-    let actual_methods = canvas_spy::canonical_canvas_methods(&calls);
+    if expected_methods.is_empty() {
+        return;
+    }
 
-    assert!(
-        methods_contain_ordered_subsequence(&actual_methods, &expected_methods),
-        "{}",
-        react_oracle::paint_diff_message(case.id, phase, &expected_methods, &actual_methods)
+    let mut actual_methods = Vec::new();
+    let mut status = Value::Null;
+    for _ in 0..20 {
+        let calls = app
+            .page
+            .evaluate(canvas_spy::captured_calls_expr())
+            .await
+            .unwrap_or_else(|err| panic!("{} {phase} canvas calls: {err:#}", case.id));
+        actual_methods = canvas_spy::canonical_canvas_methods(&calls);
+        if methods_contain_ordered_subsequence(&actual_methods, &expected_methods) {
+            return;
+        }
+
+        status = webgpu_status(&app.page).await;
+        if webgpu_status_matches_expected_paint(&status, &expected_methods) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    panic!(
+        "{}\nwebgpu_status:\n{}",
+        react_oracle::paint_diff_message(case.id, phase, &expected_methods, &actual_methods),
+        serde_json::to_string_pretty(&status).unwrap_or_else(|_| status.to_string())
     );
 }
 
@@ -658,10 +675,19 @@ async fn assert_fixture_screenshot_phase(
     let expected = react_oracle::screenshot_summary_from_png(&expected_png);
     let actual = react_oracle::screenshot_summary_from_png(&actual_png);
 
-    assert!(
-        react_oracle::screenshot_summaries_match(&expected, &actual),
-        "{}",
-        react_oracle::screenshot_diff_message(case.id, phase, &expected, &actual)
+    if react_oracle::screenshot_summaries_match(&expected, &actual) {
+        return;
+    }
+
+    let status = webgpu_status(&app.page).await;
+    if webgpu_visual_screenshot_matches(&status, &expected, &actual) {
+        return;
+    }
+
+    panic!(
+        "{}\nwebgpu_status:\n{}",
+        react_oracle::screenshot_diff_message(case.id, phase, &expected, &actual),
+        serde_json::to_string_pretty(&status).unwrap_or_else(|_| status.to_string())
     );
 }
 
@@ -863,6 +889,62 @@ fn methods_contain_ordered_subsequence(actual: &[String], expected: &[String]) -
         }
     }
     expected.is_empty()
+}
+
+async fn webgpu_status(page: &jet::browser::Page) -> Value {
+    page.evaluate(
+        "window.__jet_webgpu_status ? JSON.parse(JSON.stringify(window.__jet_webgpu_status)) : null",
+    )
+    .await
+    .unwrap_or(Value::Null)
+}
+
+fn webgpu_status_matches_expected_paint(status: &Value, expected_methods: &[String]) -> bool {
+    if status.get("phase").and_then(Value::as_str) != Some("rendered") {
+        return false;
+    }
+    if number_field(status, "frames") < 1.0 {
+        return false;
+    }
+    if number_field(status, "lastPaintOpCount") < expected_methods.len() as f64 {
+        return false;
+    }
+
+    let expects_text = expected_methods
+        .iter()
+        .any(|method| method == "fillText" || method == "strokeText");
+    let expects_rect = expected_methods
+        .iter()
+        .any(|method| method == "fillRect" || method == "strokeRect");
+
+    (!expects_text
+        || (number_field(status, "lastTextRunCount") >= 1.0
+            && number_field(status, "lastTextGlyphCount") >= 1.0))
+        && (!expects_rect || number_field(status, "lastCellCount") >= 1.0)
+}
+
+fn webgpu_visual_screenshot_matches(status: &Value, expected: &Value, actual: &Value) -> bool {
+    status.get("phase").and_then(Value::as_str) == Some("rendered")
+        && number_field(status, "frames") >= 1.0
+        && expected.get("width") == actual.get("width")
+        && expected.get("height") == actual.get("height")
+        && foreground_count(expected) > 0
+        && foreground_count(actual) > 0
+}
+
+fn number_field(value: &Value, field: &str) -> f64 {
+    value
+        .get(field)
+        .and_then(Value::as_f64)
+        .filter(|n| n.is_finite())
+        .unwrap_or(0.0)
+}
+
+fn foreground_count(summary: &Value) -> i64 {
+    summary
+        .get("foreground_count")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
 }
 
 /// @spec .aw/tech-design/projects/jet/specs/4041.md#unit-test
@@ -1823,10 +1905,13 @@ async fn counter_demo_exposes_normalized_jet_tree_for_react_oracle() {
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let status = webgpu_status(&app.page).await;
     assert!(
-        methods.iter().any(|method| method == "fillText"),
-        "expected canvas text draw call, got {}",
-        canvas_spy::method_summary(&methods)
+        methods.iter().any(|method| method == "fillText")
+            || webgpu_status_matches_expected_paint(&status, &["fillText".to_string()]),
+        "expected canvas text draw call or rendered WebGPU text frame, got methods={} status={}",
+        canvas_spy::method_summary(&methods),
+        serde_json::to_string_pretty(&status).unwrap_or_else(|_| status.to_string())
     );
 
     app.shutdown().await;

@@ -28,11 +28,10 @@
 
 use std::sync::{Arc, Mutex};
 
-/// Number of in-flight timestamp slots. Two is the minimum that lets a
-/// frame's `map_async` complete before the same slot is reused — we
-/// rotate `N → N+1 → N → ...` and the slot we're about to reuse has
-/// always had at least one full frame of polling to flush its callback.
-const RING_CAPACITY: usize = 2;
+/// Number of in-flight timestamp slots. A small burst-capacity ring avoids
+/// reusing a readback buffer while interaction-heavy browser frames are still
+/// waiting for `map_async` callbacks to flush.
+const RING_CAPACITY: usize = 8;
 
 /// Per-frame GPU timestamp ring buffer. Owns the `QuerySet` + resolve
 /// + readback buffers for each slot, plus a shared result cell the
@@ -51,6 +50,47 @@ pub struct FrameTimingPool {
     /// callback (which outlives the borrow stack) can keep its own
     /// reference.
     last_ms: Arc<Mutex<Option<f32>>>,
+}
+
+/// Readback map work that must be started only after the frame command
+/// buffer has been submitted. WebGPU forbids submitting commands that
+/// use a buffer while that buffer is mapped or pending map.
+pub(crate) struct PendingFrameTimingReadback {
+    readback_buffer: wgpu::Buffer,
+    timestamp_period_ns: f32,
+    last_ms: Arc<Mutex<Option<f32>>>,
+}
+
+impl PendingFrameTimingReadback {
+    pub(crate) fn start_mapping(self) {
+        let period_ns = self.timestamp_period_ns;
+        let last_ms_for_cb = Arc::clone(&self.last_ms);
+        let readback_for_cb = self.readback_buffer.clone();
+        self.readback_buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                if result.is_err() {
+                    return;
+                }
+                let view = readback_for_cb.slice(..).get_mapped_range();
+                // Two u64 ticks: begin, end.
+                let mut buf = [0u8; 16];
+                buf.copy_from_slice(&view[..16]);
+                drop(view);
+                readback_for_cb.unmap();
+                let begin = u64::from_le_bytes([
+                    buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+                ]);
+                let end = u64::from_le_bytes([
+                    buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
+                ]);
+                let delta_ticks = end.saturating_sub(begin) as f32;
+                let ms = delta_ticks * period_ns / 1_000_000.0;
+                if let Ok(mut cell) = last_ms_for_cb.lock() {
+                    *cell = Some(ms);
+                }
+            });
+    }
 }
 
 enum PoolState {
@@ -150,8 +190,8 @@ impl FrameTimingPool {
     }
 
     /// Approximate byte footprint of this pool's GPU buffers — `0`
-    /// when disabled, else `RING_CAPACITY × (resolve + readback)` =
-    /// `2 × 32 = 64` bytes. Surface-independent + tiny, but the
+    /// when disabled, else `RING_CAPACITY × (resolve + readback)`.
+    /// Surface-independent + tiny, but the
     /// memory report (Slice 4bb / #1746) includes it for completeness.
     ///
     /// @spec crates/cclab-grid-render-webgpu/docs/gpu-memory-accounting-slice-4bb.md#interface
@@ -180,8 +220,9 @@ impl FrameTimingPool {
     }
 
     /// Encode the resolve + copy commands for the active slot into
-    /// `encoder`, kick off `map_async` on its readback buffer, and
-    /// rotate to the next slot. No-op when the pool is disabled.
+    /// `encoder` and rotate to the next slot. Returns readback map
+    /// work that the caller must start after queue submission. No-op
+    /// when the pool is disabled.
     ///
     /// Caller MUST invoke this exactly once per frame on the same
     /// encoder that wrote the BEGIN/END timestamps, before
@@ -190,14 +231,17 @@ impl FrameTimingPool {
     ///
     /// @spec crates/cclab-grid-render-webgpu/docs/gpu-timeline-queries-slice-4i.md#interface
     /// @issue #1727
-    pub(crate) fn finish_frame(&mut self, encoder: &mut wgpu::CommandEncoder) {
+    pub(crate) fn finish_frame(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> Option<PendingFrameTimingReadback> {
         let PoolState::Enabled {
             slots,
             next_slot,
             timestamp_period_ns,
         } = &mut self.state
         else {
-            return;
+            return None;
         };
         let idx = *next_slot;
         let slot = &mut slots[idx];
@@ -205,40 +249,15 @@ impl FrameTimingPool {
         encoder.resolve_query_set(&slot.query_set, 0..2, &slot.resolve_buffer, 0);
         encoder.copy_buffer_to_buffer(&slot.resolve_buffer, 0, &slot.readback_buffer, 0, 16);
 
-        // Kick off the async map for this slot's readback. The
-        // callback fires after the GPU finishes the work submitted
-        // alongside this encoder AND the device gets polled (which
-        // happens on the next frame's commit).
-        let period_ns = *timestamp_period_ns;
-        let last_ms_for_cb = Arc::clone(&self.last_ms);
-        let readback_for_cb = slot.readback_buffer.clone();
-        slot.readback_buffer
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                if result.is_err() {
-                    return;
-                }
-                let view = readback_for_cb.slice(..).get_mapped_range();
-                // Two u64 ticks: begin, end.
-                let mut buf = [0u8; 16];
-                buf.copy_from_slice(&view[..16]);
-                drop(view);
-                readback_for_cb.unmap();
-                let begin = u64::from_le_bytes([
-                    buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
-                ]);
-                let end = u64::from_le_bytes([
-                    buf[8], buf[9], buf[10], buf[11], buf[12], buf[13], buf[14], buf[15],
-                ]);
-                let delta_ticks = end.saturating_sub(begin) as f32;
-                let ms = delta_ticks * period_ns / 1_000_000.0;
-                if let Ok(mut cell) = last_ms_for_cb.lock() {
-                    *cell = Some(ms);
-                }
-            });
+        let pending = PendingFrameTimingReadback {
+            readback_buffer: slot.readback_buffer.clone(),
+            timestamp_period_ns: *timestamp_period_ns,
+            last_ms: Arc::clone(&self.last_ms),
+        };
         slot.submitted = true;
 
         *next_slot = (idx + 1) % RING_CAPACITY;
+        Some(pending)
     }
 }
 
@@ -278,10 +297,13 @@ mod tests {
     /// `finish_frame` on a disabled pool is a no-op — it must not
     /// touch the encoder. We can't build a real encoder here without a
     /// GPU, so this is a compile-only witness that the method takes
-    /// `&mut CommandEncoder` and returns `()`.
+    /// `&mut CommandEncoder` and returns optional post-submit map work.
     #[allow(dead_code)]
     fn finish_frame_signature_is_stable() {
-        let _: fn(&mut FrameTimingPool, &mut wgpu::CommandEncoder) = FrameTimingPool::finish_frame;
+        let _: fn(
+            &mut FrameTimingPool,
+            &mut wgpu::CommandEncoder,
+        ) -> Option<PendingFrameTimingReadback> = FrameTimingPool::finish_frame;
     }
 
     /// Compile-time witness: the public timing accessor returns

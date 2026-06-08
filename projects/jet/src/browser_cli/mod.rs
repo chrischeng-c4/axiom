@@ -539,6 +539,9 @@ pub async fn mouse(
     click_count: Option<u64>,
 ) -> Result<()> {
     let page = attach(root_dir).await?;
+    page.bring_to_front()
+        .await
+        .context("bringing page to front before CDP mouse input")?;
     dispatch_mouse_event(&page, event_type, x, y, button, buttons, click_count).await?;
     println!(
         "{}",
@@ -560,6 +563,9 @@ pub async fn mouse(
 /// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
 pub async fn wheel(root_dir: &Path, x: f64, y: f64, delta_x: f64, delta_y: f64) -> Result<()> {
     let page = attach(root_dir).await?;
+    page.bring_to_front()
+        .await
+        .context("bringing page to front before CDP wheel input")?;
     let params = serde_json::json!({
         "type": "mouseWheel",
         "x": x,
@@ -596,6 +602,9 @@ pub async fn drag(
     steps: u64,
 ) -> Result<()> {
     let page = attach(root_dir).await?;
+    page.bring_to_front()
+        .await
+        .context("bringing page to front before CDP drag input")?;
     let steps = steps.max(1);
     dispatch_mouse_event(&page, "mouseMoved", from_x, from_y, None, Some(0), None).await?;
     dispatch_mouse_event(
@@ -612,7 +621,7 @@ pub async fn drag(
         let t = step as f64 / steps as f64;
         let x = from_x + (to_x - from_x) * t;
         let y = from_y + (to_y - from_y) * t;
-        dispatch_mouse_event(&page, "mouseMoved", x, y, Some("left"), Some(1), None).await?;
+        dispatch_mouse_event(&page, "mouseMoved", x, y, None, Some(1), None).await?;
         tokio::time::sleep(Duration::from_millis(16)).await;
     }
     dispatch_mouse_event(
@@ -717,6 +726,9 @@ async fn dispatch_key_event(
 /// @spec .aw/tech-design/projects/jet/semantic/jet-browser-cli.md#schema
 pub async fn key(root_dir: &Path, key: &str, modifiers: u64) -> Result<()> {
     let page = attach(root_dir).await?;
+    page.bring_to_front()
+        .await
+        .context("bringing page to front before CDP key input")?;
     dispatch_key_event(&page, "keyDown", key, modifiers).await?;
     dispatch_key_event(&page, "keyUp", key, modifiers).await?;
     println!(

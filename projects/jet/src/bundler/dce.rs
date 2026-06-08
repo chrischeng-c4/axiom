@@ -11,6 +11,9 @@
 //! When slicing the original `&str` we must convert through `byte_offsets` to
 //! avoid panics on multi-byte UTF-8 characters (e.g. `✓`, emoji).
 
+use std::collections::HashSet;
+use tree_sitter::{Node, Parser};
+
 /// Build a lookup table: byte_offsets[char_idx] = byte offset in `source`.
 /// byte_offsets[chars.len()] = source.len() (one past the end).
 fn build_byte_offsets(source: &str) -> Vec<usize> {
@@ -45,6 +48,687 @@ pub fn eliminate_dead_code(source: &str) -> String {
     }
 
     result
+}
+
+/// Syntax-aware static conditional elimination for production bundles.
+///
+/// This deliberately handles only conditionals whose condition is already a
+/// literal boolean or string comparison after define replacement. It does not
+/// try to prove general variable liveness, so it is safe to run on large third
+/// party bundles where the older brace-scanning optimizer is too broad.
+pub fn eliminate_static_conditionals_syntax(source: &str) -> String {
+    let mut result = source.to_string();
+
+    for _ in 0..8 {
+        let next = eliminate_static_conditionals_syntax_once(&result);
+        if next == result {
+            break;
+        }
+        result = next;
+    }
+
+    result
+}
+
+/// Remove unused transformed import bindings only when every required module id
+/// is known side-effect-free. This is intentionally narrower than general DCE:
+/// it handles the production pattern left after libraries such as MUI erase
+/// dev-only `propTypes` branches but keep an unused `var PropTypes = require(..)`.
+pub fn eliminate_unused_side_effect_free_require_bindings(
+    source: &str,
+    side_effect_free_module_ids: &HashSet<usize>,
+) -> String {
+    if side_effect_free_module_ids.is_empty() {
+        return source.to_string();
+    }
+    let Some(tree) = parse_js(source) else {
+        return source.to_string();
+    };
+    let root = tree.root_node();
+    if root.has_error() {
+        return source.to_string();
+    }
+
+    let mut edits = Vec::new();
+    collect_unused_require_binding_edits(
+        source,
+        root,
+        root,
+        side_effect_free_module_ids,
+        &mut edits,
+    );
+    if edits.is_empty() {
+        return source.to_string();
+    }
+
+    edits.sort_by_key(|edit| edit.start);
+    let mut filtered: Vec<StaticEdit> = Vec::new();
+    let mut last_end = 0usize;
+    for edit in edits {
+        if edit.start >= last_end {
+            last_end = edit.end;
+            filtered.push(edit);
+        }
+    }
+
+    let mut out = source.to_string();
+    for edit in filtered.into_iter().rev() {
+        out.replace_range(edit.start..edit.end, "");
+    }
+
+    if parse_js(&out)
+        .map(|tree| tree.root_node().has_error())
+        .unwrap_or(true)
+    {
+        return source.to_string();
+    }
+
+    out
+}
+
+/// Remove transformed CJS re-export glue that points at modules already proven
+/// unused by the source-level tree-shake pass.
+pub fn eliminate_require_reexports_to_eliminated_modules(
+    source: &str,
+    eliminated_module_ids: &HashSet<usize>,
+) -> String {
+    if eliminated_module_ids.is_empty() {
+        return source.to_string();
+    }
+    let Some(tree) = parse_js(source) else {
+        return source.to_string();
+    };
+    let root = tree.root_node();
+    if root.has_error() {
+        return source.to_string();
+    }
+
+    let mut reexport_bindings = HashSet::new();
+    collect_eliminated_reexport_bindings(
+        source,
+        root,
+        eliminated_module_ids,
+        &mut reexport_bindings,
+    );
+
+    let mut edits = Vec::new();
+    collect_eliminated_require_reexport_edits(
+        source,
+        root,
+        eliminated_module_ids,
+        &reexport_bindings,
+        &mut edits,
+    );
+    if edits.is_empty() {
+        return source.to_string();
+    }
+
+    edits.sort_by_key(|edit| edit.start);
+    let mut filtered: Vec<StaticEdit> = Vec::new();
+    let mut last_end = 0usize;
+    for edit in edits {
+        if edit.start >= last_end {
+            last_end = edit.end;
+            filtered.push(edit);
+        }
+    }
+
+    let mut out = source.to_string();
+    for edit in filtered.into_iter().rev() {
+        out.replace_range(edit.start..edit.end, "");
+    }
+
+    if parse_js(&out)
+        .map(|tree| tree.root_node().has_error())
+        .unwrap_or(true)
+    {
+        return source.to_string();
+    }
+
+    out
+}
+
+/// Remove ESM marker definitions only when the final bundle never reads them.
+///
+/// The ESM-to-CJS transform marks every source module with
+/// `Object.defineProperty(module.exports, "__esModule", { value: true })` for
+/// Babel-style interop. Large ESM libraries can carry thousands of those
+/// markers even when no helper reads `.__esModule`. This pass removes marker
+/// statements only if deleting all candidate markers leaves no `__esModule`
+/// literal anywhere else in the bundle.
+pub fn eliminate_unread_es_module_markers(source: &str) -> String {
+    if !source.contains("__esModule") {
+        return source.to_string();
+    }
+    let Some(tree) = parse_js(source) else {
+        return source.to_string();
+    };
+    let root = tree.root_node();
+    if root.has_error() {
+        return source.to_string();
+    }
+
+    let mut edits = Vec::new();
+    collect_es_module_marker_edits(source, root, &mut edits);
+    if edits.is_empty() {
+        return source.to_string();
+    }
+
+    edits.sort_by_key(|edit| edit.start);
+    let mut filtered: Vec<StaticEdit> = Vec::new();
+    let mut last_end = 0usize;
+    for edit in edits {
+        if edit.start >= last_end {
+            last_end = edit.end;
+            filtered.push(edit);
+        }
+    }
+
+    let mut out = source.to_string();
+    for edit in filtered.into_iter().rev() {
+        out.replace_range(edit.start..edit.end, "");
+    }
+
+    if out.contains("__esModule") {
+        return source.to_string();
+    }
+
+    if parse_js(&out)
+        .map(|tree| tree.root_node().has_error())
+        .unwrap_or(true)
+    {
+        return source.to_string();
+    }
+
+    out
+}
+
+pub fn js_parses_without_errors(source: &str) -> bool {
+    parse_js(source)
+        .map(|tree| !tree.root_node().has_error())
+        .unwrap_or(false)
+}
+
+pub(crate) fn numeric_require_ids(source: &str) -> HashSet<usize> {
+    let Some(tree) = parse_js(source) else {
+        return HashSet::new();
+    };
+    let root = tree.root_node();
+    if root.has_error() {
+        return HashSet::new();
+    }
+
+    let mut ids = Vec::new();
+    collect_numeric_require_ids(source, root, &mut ids);
+    ids.into_iter().collect()
+}
+
+fn eliminate_static_conditionals_syntax_once(source: &str) -> String {
+    let Some(tree) = parse_js(source) else {
+        return source.to_string();
+    };
+    let root = tree.root_node();
+    if root.has_error() {
+        return source.to_string();
+    }
+
+    let mut edits = Vec::new();
+    collect_static_condition_edits(source, root, &mut edits);
+    if edits.is_empty() {
+        return source.to_string();
+    }
+
+    edits.sort_by_key(|edit| edit.start);
+    let mut filtered: Vec<StaticEdit> = Vec::new();
+    let mut last_end = 0usize;
+    for edit in edits {
+        if edit.start >= last_end {
+            last_end = edit.end;
+            filtered.push(edit);
+        }
+    }
+
+    let mut out = source.to_string();
+    for edit in filtered.into_iter().rev() {
+        out.replace_range(edit.start..edit.end, &edit.replacement);
+    }
+
+    if parse_js(&out)
+        .map(|tree| tree.root_node().has_error())
+        .unwrap_or(true)
+    {
+        return source.to_string();
+    }
+
+    out
+}
+
+fn collect_unused_require_binding_edits(
+    source: &str,
+    root: Node<'_>,
+    node: Node<'_>,
+    side_effect_free_module_ids: &HashSet<usize>,
+    edits: &mut Vec<StaticEdit>,
+) {
+    match node.kind() {
+        "variable_declaration" | "lexical_declaration" => {
+            if let Some(edit) =
+                unused_require_binding_edit(source, root, node, side_effect_free_module_ids)
+            {
+                edits.push(edit);
+                return;
+            }
+        }
+        "template_string" | "string" | "comment" | "regex" | "regex_pattern" => return,
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_unused_require_binding_edits(
+            source,
+            root,
+            child,
+            side_effect_free_module_ids,
+            edits,
+        );
+    }
+}
+
+fn collect_eliminated_reexport_bindings(
+    source: &str,
+    node: Node<'_>,
+    eliminated_module_ids: &HashSet<usize>,
+    bindings: &mut HashSet<String>,
+) {
+    if matches!(
+        node.kind(),
+        "template_string" | "string" | "comment" | "regex" | "regex_pattern"
+    ) {
+        return;
+    }
+
+    if matches!(node.kind(), "variable_declaration" | "lexical_declaration") {
+        if let Some((ident, ids)) = single_require_declarator(source, node) {
+            if ident.starts_with("__re")
+                && !ids.is_empty()
+                && ids.iter().all(|id| eliminated_module_ids.contains(id))
+            {
+                bindings.insert(ident.to_string());
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_eliminated_reexport_bindings(source, child, eliminated_module_ids, bindings);
+    }
+}
+
+fn collect_eliminated_require_reexport_edits(
+    source: &str,
+    node: Node<'_>,
+    eliminated_module_ids: &HashSet<usize>,
+    reexport_bindings: &HashSet<String>,
+    edits: &mut Vec<StaticEdit>,
+) {
+    if matches!(
+        node.kind(),
+        "template_string" | "string" | "comment" | "regex" | "regex_pattern"
+    ) {
+        return;
+    }
+
+    match node.kind() {
+        "variable_declaration" | "lexical_declaration" => {
+            if let Some((ident, ids)) = single_require_declarator(source, node) {
+                if reexport_bindings.contains(ident)
+                    && !ids.is_empty()
+                    && ids.iter().all(|id| eliminated_module_ids.contains(id))
+                {
+                    edits.push(StaticEdit {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        replacement: String::new(),
+                    });
+                    return;
+                }
+            }
+        }
+        "expression_statement" => {
+            let text = source[node.byte_range()].trim();
+            let mut ids = Vec::new();
+            collect_numeric_require_ids(source, node, &mut ids);
+            if !ids.is_empty() && ids.iter().all(|id| eliminated_module_ids.contains(id)) {
+                if is_module_exports_require_assignment(text)
+                    || is_bare_require_statement(text)
+                    || reexport_bindings
+                        .iter()
+                        .any(|ident| is_object_keys_reexport_statement(text, ident))
+                {
+                    edits.push(StaticEdit {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        replacement: String::new(),
+                    });
+                    return;
+                }
+            }
+            if reexport_bindings
+                .iter()
+                .any(|ident| is_object_keys_reexport_statement(text, ident))
+            {
+                edits.push(StaticEdit {
+                    start: node.start_byte(),
+                    end: node.end_byte(),
+                    replacement: String::new(),
+                });
+                return;
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_eliminated_require_reexport_edits(
+            source,
+            child,
+            eliminated_module_ids,
+            reexport_bindings,
+            edits,
+        );
+    }
+}
+
+fn collect_es_module_marker_edits(source: &str, node: Node<'_>, edits: &mut Vec<StaticEdit>) {
+    if matches!(
+        node.kind(),
+        "template_string" | "string" | "comment" | "regex" | "regex_pattern"
+    ) {
+        return;
+    }
+
+    if node.kind() == "expression_statement" {
+        let text = source[node.byte_range()].trim();
+        if text.starts_with("Object.defineProperty(")
+            && (text.contains("\"__esModule\"") || text.contains("'__esModule'"))
+        {
+            edits.push(StaticEdit {
+                start: node.start_byte(),
+                end: node.end_byte(),
+                replacement: String::new(),
+            });
+            return;
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_es_module_marker_edits(source, child, edits);
+    }
+}
+
+fn single_require_declarator<'a>(
+    source: &'a str,
+    declaration: Node<'_>,
+) -> Option<(&'a str, Vec<usize>)> {
+    let mut cursor = declaration.walk();
+    let declarators: Vec<Node<'_>> = declaration
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "variable_declarator")
+        .collect();
+    if declarators.len() != 1 {
+        return None;
+    }
+    let declarator = declarators[0];
+    let name = declarator.child_by_field_name("name")?;
+    if name.kind() != "identifier" {
+        return None;
+    }
+    let value = declarator.child_by_field_name("value")?;
+    let mut ids = Vec::new();
+    collect_numeric_require_ids(source, value, &mut ids);
+    Some((&source[name.byte_range()], ids))
+}
+
+fn is_module_exports_require_assignment(text: &str) -> bool {
+    text.starts_with("module.exports") && (text.contains("require(") || text.contains("_r("))
+}
+
+fn is_bare_require_statement(text: &str) -> bool {
+    let trimmed = text.trim_end_matches(';').trim();
+    (trimmed.starts_with("require(") || trimmed.starts_with("_r("))
+        && (trimmed.ends_with(')') || trimmed.contains(")"))
+}
+
+fn is_object_keys_reexport_statement(text: &str, ident: &str) -> bool {
+    text.starts_with(&format!("Object.keys({ident})"))
+        && text.contains("forEach")
+        && text.contains("module.exports")
+}
+
+fn unused_require_binding_edit(
+    source: &str,
+    root: Node<'_>,
+    declaration: Node<'_>,
+    side_effect_free_module_ids: &HashSet<usize>,
+) -> Option<StaticEdit> {
+    let mut cursor = declaration.walk();
+    let declarators: Vec<Node<'_>> = declaration
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() == "variable_declarator")
+        .collect();
+    if declarators.len() != 1 {
+        return None;
+    }
+
+    let declarator = declarators[0];
+    let name = declarator.child_by_field_name("name")?;
+    if name.kind() != "identifier" {
+        return None;
+    }
+    let ident = &source[name.byte_range()];
+    let value = declarator.child_by_field_name("value")?;
+    let mut require_ids = Vec::new();
+    collect_numeric_require_ids(source, value, &mut require_ids);
+    if require_ids.is_empty()
+        || !require_ids
+            .iter()
+            .all(|id| side_effect_free_module_ids.contains(id))
+    {
+        return None;
+    }
+
+    if identifier_has_reference_outside(source, root, ident, declaration.byte_range()) {
+        return None;
+    }
+
+    Some(StaticEdit {
+        start: declaration.start_byte(),
+        end: declaration.end_byte(),
+        replacement: String::new(),
+    })
+}
+
+fn collect_numeric_require_ids(source: &str, node: Node<'_>, ids: &mut Vec<usize>) {
+    if node.kind() == "call_expression" {
+        if let Some(function) = node.child_by_field_name("function") {
+            let function_text = &source[function.byte_range()];
+            if function_text == "require" || function_text == "_r" {
+                if let Some(arguments) = node.child_by_field_name("arguments") {
+                    if let Some(first) = arguments.named_child(0) {
+                        if first.kind() == "number" {
+                            if let Ok(id) = source[first.byte_range()].parse::<usize>() {
+                                ids.push(id);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_numeric_require_ids(source, child, ids);
+    }
+}
+
+fn identifier_has_reference_outside(
+    source: &str,
+    node: Node<'_>,
+    ident: &str,
+    excluded: std::ops::Range<usize>,
+) -> bool {
+    if matches!(node.kind(), "identifier" | "shorthand_property_identifier")
+        && &source[node.byte_range()] == ident
+        && (node.start_byte() < excluded.start || node.end_byte() > excluded.end)
+    {
+        return true;
+    }
+
+    if matches!(
+        node.kind(),
+        "string" | "comment" | "regex" | "regex_pattern"
+    ) {
+        return false;
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if identifier_has_reference_outside(source, child, ident, excluded.clone()) {
+            return true;
+        }
+    }
+    false
+}
+
+fn parse_js(source: &str) -> Option<tree_sitter::Tree> {
+    let mut parser = Parser::new();
+    if parser
+        .set_language(&tree_sitter_javascript::LANGUAGE.into())
+        .is_err()
+    {
+        return None;
+    }
+    parser.parse(source, None)
+}
+
+#[derive(Debug)]
+struct StaticEdit {
+    start: usize,
+    end: usize,
+    replacement: String,
+}
+
+fn collect_static_condition_edits(source: &str, node: Node<'_>, edits: &mut Vec<StaticEdit>) {
+    if matches!(
+        node.kind(),
+        "template_string" | "string" | "comment" | "regex" | "regex_pattern"
+    ) {
+        return;
+    }
+
+    match node.kind() {
+        "if_statement" => {
+            if let Some(edit) = static_if_edit(source, node) {
+                edits.push(edit);
+                return;
+            }
+        }
+        "ternary_expression" => {
+            if let Some(edit) = static_ternary_edit(source, node) {
+                edits.push(edit);
+                return;
+            }
+        }
+        _ => {}
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_static_condition_edits(source, child, edits);
+    }
+}
+
+fn static_if_edit(source: &str, node: Node<'_>) -> Option<StaticEdit> {
+    if node.parent().map(|parent| parent.kind()) == Some("if_statement") {
+        return None;
+    }
+
+    let condition = node.child_by_field_name("condition")?;
+    let condition = normalize_condition_text(&source[condition.byte_range()]);
+    let value = eval_condition(condition)?;
+
+    let replacement = if value {
+        branch_replacement(source, node.child_by_field_name("consequence")?)
+    } else if let Some(alternative) = node.child_by_field_name("alternative") {
+        branch_replacement(source, alternative)
+    } else {
+        "{}".to_string()
+    };
+
+    Some(StaticEdit {
+        start: node.start_byte(),
+        end: node.end_byte(),
+        replacement,
+    })
+}
+
+fn static_ternary_edit(source: &str, node: Node<'_>) -> Option<StaticEdit> {
+    let condition = node.child_by_field_name("condition")?;
+    let condition = normalize_condition_text(&source[condition.byte_range()]);
+    let value = eval_condition(condition)?;
+    let selected = if value {
+        node.child_by_field_name("consequence")?
+    } else {
+        node.child_by_field_name("alternative")?
+    };
+
+    Some(StaticEdit {
+        start: node.start_byte(),
+        end: node.end_byte(),
+        replacement: source[selected.byte_range()].to_string(),
+    })
+}
+
+fn branch_replacement(source: &str, node: Node<'_>) -> String {
+    let branch = if node.kind() == "else_clause" {
+        node.named_child(0).unwrap_or(node)
+    } else {
+        node
+    };
+    source[branch.byte_range()].to_string()
+}
+
+fn normalize_condition_text(raw: &str) -> &str {
+    let mut s = raw.trim();
+    loop {
+        let stripped = strip_outer_parens(s);
+        if stripped == s {
+            return s;
+        }
+        s = stripped.trim();
+    }
+}
+
+fn strip_outer_parens(s: &str) -> &str {
+    let s = s.trim();
+    if !(s.starts_with('(') && s.ends_with(')')) {
+        return s;
+    }
+
+    let chars: Vec<char> = s.chars().collect();
+    let Some(close) = find_matching_paren(&chars, 0) else {
+        return s;
+    };
+    if close + 1 != chars.len() {
+        return s;
+    }
+
+    let bo = build_byte_offsets(s);
+    slice_source(s, &bo, 1, close)
 }
 
 /// Evaluate a simple string comparison expression.
@@ -571,6 +1255,155 @@ mod tests {
         assert!(!output.contains("dead()"));
         assert!(output.contains("✓ done"));
         assert!(output.contains("✓ ok"));
+    }
+
+    #[test]
+    fn test_syntax_static_if_false_removes_template_branch() {
+        let input =
+            r#"before();if("production"!=="production"){console.error(`dead ${value}`);}after();"#;
+        let output = eliminate_static_conditionals_syntax(input);
+        assert!(output.contains("before()"));
+        assert!(output.contains("after()"));
+        assert!(!output.contains("console.error"));
+        assert!(!output.contains("dead ${value}"));
+    }
+
+    #[test]
+    fn test_syntax_static_if_else_keeps_production_branch() {
+        let input = r#"if("production"==="production"){module.exports=require("./prod.js");}else{module.exports=require("./dev.js");}"#;
+        let output = eliminate_static_conditionals_syntax(input);
+        assert!(output.contains("./prod.js"));
+        assert!(!output.contains("./dev.js"));
+    }
+
+    #[test]
+    fn test_syntax_static_ternary_keeps_selected_branch() {
+        let input = r#"var mode="production"!=="production"?devMode():prodMode();"#;
+        let output = eliminate_static_conditionals_syntax(input);
+        assert!(output.contains("prodMode()"));
+        assert!(!output.contains("devMode()"));
+    }
+
+    #[test]
+    fn test_syntax_static_if_false_preserves_dangling_else_shape() {
+        let input = r#"if (outer) if ("production" !== "production") { dead(); } else { inner(); } else { outerElse(); }"#;
+        let output = eliminate_static_conditionals_syntax(input);
+        assert_eq!(output, input, "nested if/else ambiguity must be skipped");
+
+        let safe = r#"if (outer) { if ("production" !== "production") { dead(); } } else { outerElse(); }"#;
+        let safe_output = eliminate_static_conditionals_syntax(safe);
+        assert!(safe_output.contains("if (outer) { {} }"));
+        assert!(safe_output.contains("else { outerElse(); }"));
+        assert!(!safe_output.contains("dead()"));
+    }
+
+    #[test]
+    fn test_syntax_static_if_else_handles_transformed_module_prefix() {
+        let input = r#"Object.defineProperty(module.exports, "__esModule", { value: true });
+if ("production" !== "production") {
+  if (window.__JET_DEV_FLAG__) {
+    console.log("dev branch");
+  } else {
+    console.log("inner dev else");
+  }
+} else {
+  console.log("prod branch");
+}
+const value = 1;; module.exports["value"] = value;"#;
+        let output = eliminate_static_conditionals_syntax(input);
+        assert!(output.contains("prod branch"), "{}", output);
+        assert!(!output.contains("dev branch"), "{}", output);
+    }
+
+    #[test]
+    fn test_unused_side_effect_free_require_binding_is_removed() {
+        let input = r#"var PropTypes = require(7)["default"] || require(7);
+const value = 1;
+module.exports["value"] = value;"#;
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
+        assert!(!output.contains("PropTypes"), "{}", output);
+        assert!(!output.contains("require(7)"), "{}", output);
+        assert!(output.contains("module.exports"), "{}", output);
+    }
+
+    #[test]
+    fn test_used_require_binding_is_kept() {
+        let input = r#"var PropTypes = require(7)["default"] || require(7);
+const value = PropTypes.string;
+module.exports["value"] = value;"#;
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
+        assert!(output.contains("PropTypes"), "{}", output);
+        assert!(output.contains("require(7)"), "{}", output);
+    }
+
+    #[test]
+    fn test_require_binding_used_inside_template_expression_is_kept() {
+        let input = r#"var ClassNameGenerator = require(7)["default"] || require(7);
+function className(componentName, slot) {
+  return `${ClassNameGenerator.generate(componentName)}-${slot}`;
+}
+module.exports["default"] = className;"#;
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
+        assert!(output.contains("ClassNameGenerator"), "{}", output);
+        assert!(output.contains("require(7)"), "{}", output);
+    }
+
+    #[test]
+    fn test_require_binding_used_as_object_shorthand_is_kept() {
+        let input = r#"var grey = require(7)["default"] || require(7);
+const palette = {
+  common: {},
+  grey,
+  contrastThreshold: 3,
+};
+module.exports["default"] = palette;"#;
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([7usize]));
+        assert!(output.contains("grey = require(7)"), "{}", output);
+        assert!(output.contains("grey,"), "{}", output);
+    }
+
+    #[test]
+    fn test_unused_require_binding_for_unknown_side_effect_target_is_kept() {
+        let input = r#"var init = require(7);
+const value = 1;"#;
+        let output =
+            eliminate_unused_side_effect_free_require_bindings(input, &HashSet::from([8usize]));
+        assert!(output.contains("init"), "{}", output);
+        assert!(output.contains("require(7)"), "{}", output);
+    }
+
+    #[test]
+    fn test_unread_es_module_markers_are_removed() {
+        let input = r#"Object.defineProperty(module.exports, "__esModule", { value: true });
+const value = 1;
+module.exports["value"] = value;
+Object.defineProperty(_m1.exports, "__esModule", { value: true });
+_m1.exports["other"] = 2;"#;
+        let output = eliminate_unread_es_module_markers(input);
+        assert!(!output.contains("__esModule"), "{}", output);
+        assert!(output.contains("module.exports"), "{}", output);
+        assert!(output.contains("_m1.exports"), "{}", output);
+    }
+
+    #[test]
+    fn test_es_module_markers_are_kept_when_interop_reads_marker() {
+        let input = r#"Object.defineProperty(module.exports, "__esModule", { value: true });
+function _interopRequireDefault(obj) {
+  return obj && obj.__esModule ? obj : { default: obj };
+}
+module.exports["value"] = 1;"#;
+        let output = eliminate_unread_es_module_markers(input);
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn test_js_parses_without_errors_reports_syntax_errors() {
+        assert!(js_parses_without_errors("const value = `${name}`;"));
+        assert!(!js_parses_without_errors("const value = ;"));
     }
 }
 // CODEGEN-END

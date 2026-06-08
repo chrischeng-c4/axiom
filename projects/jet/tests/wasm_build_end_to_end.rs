@@ -171,31 +171,6 @@ const WEBGPU_SETTLE_TWO_RAF_JS: &str = r#"new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve(null)));
 })"#;
 
-const DEBUG_TREE_SUMMARY_JS: &str = r#"(() => {
-    const status = window.__jet_webgpu_status ?? null;
-    const debug = window.__jet_debug;
-    if (!debug) {
-        return { ok: false, reason: 'missing __jet_debug', status };
-    }
-    const root = debug.elementTree();
-    const layout = debug.layoutTree();
-    const paintOps = debug.paintOps();
-    const texts = [];
-    const walk = (node) => {
-        if (!node || typeof node !== 'object') return;
-        if (node.kind === 'text') texts.push(String(node.text ?? ''));
-        for (const child of node.children || []) walk(child);
-    };
-    walk(root);
-    return {
-        ok: true,
-        text: texts.join(' '),
-        layoutNodeCount: Array.isArray(layout?.nodes) ? layout.nodes.length : 0,
-        paintOpCount: Array.isArray(paintOps) ? paintOps.length : 0,
-        status
-    };
-})()"#;
-
 fn webgpu_launch_options() -> LaunchOptions {
     let mut options = LaunchOptions::default();
     if let Ok(p) = std::env::var("CHROME_PATH") {
@@ -281,87 +256,64 @@ async fn dispatch_cdp_click(page: &jet::browser::Page, x: f64, y: f64) {
     }
 }
 
-fn debug_button_center_expr(label: &str) -> String {
-    let label = serde_json::to_string(label).expect("button label serializes");
+fn dom_text_summary_expr(expected: &str) -> String {
+    let expected = serde_json::to_string(expected).expect("expected text serializes");
     format!(
         r#"
 (() => {{
-  const label = {label};
-  const debug = window.__jet_debug;
-  if (!debug) return {{ ok: false, reason: 'missing __jet_debug' }};
-  const layout = debug.layoutTree();
-  const nodes = Array.isArray(layout?.nodes) ? layout.nodes : [];
-  const contains = (outer, inner) => {{
-    const cx = inner.x + inner.w / 2;
-    const cy = inner.y + inner.h / 2;
-    return cx >= outer.x && cx <= outer.x + outer.w && cy >= outer.y && cy <= outer.y + outer.h;
+  const text = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+  return {{
+    ok: text.includes({expected}),
+    text,
+    buttonCount: document.querySelectorAll('button').length,
+    canvasCount: document.querySelectorAll('canvas#jet-canvas').length,
+    status: window.__jet_webgpu_status ?? null
   }};
-  const textNodes = nodes.filter((node) =>
-    node?.kind?.kind === 'text' && String(node.kind.text || '').includes(label)
-  );
-  const buttons = nodes.filter((node) =>
-    node?.kind?.kind === 'intrinsic' &&
-    node.kind.tag === 'button' &&
-    node.kind.has_on_click
-  );
-  for (const text of textNodes) {{
-    const hit = buttons
-      .filter((button) => contains(button.rect, text.rect))
-      .sort((a, b) => (a.rect.w * a.rect.h) - (b.rect.w * b.rect.h))[0];
-    if (hit) {{
-      return {{
-        ok: true,
-        x: hit.rect.x + hit.rect.w / 2,
-        y: hit.rect.y + hit.rect.h / 2,
-        rect: hit.rect
-      }};
-    }}
-  }}
-  return {{ ok: false, reason: `missing clickable button for ${{label}}`, textNodes, buttonCount: buttons.length }};
 }})()
 "#
     )
 }
 
-fn debug_pick_expr(x: f64, y: f64) -> String {
-    format!(
-        r#"
-(() => {{
-  const debug = window.__jet_debug;
-  if (!debug) return {{ ok: false, reason: 'missing __jet_debug' }};
-  const pick = debug.pickAt({x}, {y});
-  return {{ ok: !!pick, pick }};
-}})()
-"#
-    )
-}
-
-async fn wait_for_debug_tree_text(
-    page: &jet::browser::Page,
-    expected: &str,
-    context: &str,
-) -> Value {
+async fn wait_for_dom_text(page: &jet::browser::Page, expected: &str, context: &str) -> Value {
+    let expr = dom_text_summary_expr(expected);
     let mut summary = Value::Null;
     for _ in 0..80 {
         summary = page
-            .evaluate(DEBUG_TREE_SUMMARY_JS)
+            .evaluate(&expr)
             .await
-            .unwrap_or_else(|err| panic!("{context}: debug tree summary failed: {err}"));
-        let text = summary.get("text").and_then(|v| v.as_str()).unwrap_or("");
-        let rendered = summary
-            .get("status")
-            .and_then(|v| v.get("phase"))
-            .and_then(|v| v.as_str())
-            == Some("rendered");
-        if summary.get("ok").and_then(|v| v.as_bool()) == Some(true)
-            && rendered
-            && text.contains(expected)
-        {
+            .unwrap_or_else(|err| panic!("{context}: DOM summary failed: {err}"));
+        if summary.get("ok").and_then(|v| v.as_bool()) == Some(true) {
             return summary;
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
-    panic!("{context}: debug tree never contained {expected:?}: {summary:?}");
+    panic!("{context}: DOM never contained {expected:?}: {summary:?}");
+}
+
+fn dom_click_button_expr(label: &str) -> String {
+    let label = serde_json::to_string(label).expect("button label serializes");
+    format!(
+        r#"
+(() => {{
+  const button = Array.from(document.querySelectorAll('button'))
+    .find((candidate) => (candidate.textContent || '').includes({label}));
+  if (!button) return {{ ok: false, reason: 'missing button', label: {label} }};
+  button.click();
+  return {{ ok: true, text: button.textContent || '' }};
+}})()
+"#
+    )
+}
+
+async fn click_dom_button(page: &jet::browser::Page, label: &str, context: &str) {
+    let clicked = page
+        .evaluate(&dom_click_button_expr(label))
+        .await
+        .unwrap_or_else(|err| panic!("{context}: DOM click failed: {err}"));
+    assert!(
+        clicked.get("ok").and_then(|v| v.as_bool()) == Some(true),
+        "{context}: DOM button click failed: {clicked:?}"
+    );
 }
 
 #[tokio::test]
@@ -618,8 +570,8 @@ fn wasm_build_compat_lowers_antd_runtime_imports() {
             .unwrap();
     assert_eq!(
         manifest["build"]["tsx_lowering"].as_str(),
-        Some(wasm_manifest::TSX_LOWERING_COMPATIBILITY),
-        "Ant Design compat fixture must record compatibility lowering in jet-target.json: {manifest}"
+        Some(wasm_manifest::TSX_LOWERING_STRICT),
+        "Ant Design runtime fixture must record strict lowering in jet-target.json: {manifest}"
     );
     let generated = fs::read_to_string(root.join(".jet/wasm-build/src/lib.rs")).unwrap();
     assert!(generated.contains("Element::intrinsic(\"button\""));
@@ -705,12 +657,7 @@ async fn cue_artifact_studio_dom_wasm_loads_api_and_posts() {
         .expect("install console capture");
     page.goto(&url).await.expect("navigate to Cue wasm app");
 
-    let Some(_) = wait_for_webgpu_rendered(&page, "Cue Artifact Studio").await else {
-        eprintln!("skipping: Chromium launched without navigator.gpu");
-        let _ = browser.close().await;
-        return;
-    };
-    let initial_summary = wait_for_debug_tree_text(
+    let initial_summary = wait_for_dom_text(
         &page,
         "Team Request Tracker",
         "Cue Artifact Studio initial fetch repaint",
@@ -733,39 +680,23 @@ async fn cue_artifact_studio_dom_wasm_loads_api_and_posts() {
         "debug tree text: {initial_text}"
     );
 
-    let button = page
-        .evaluate(&debug_button_center_expr("New Project"))
-        .await
-        .expect("find New Project button in WASM debug layout");
     assert!(
-        button.get("ok").and_then(|v| v.as_bool()) == Some(true),
-        "New Project button must be found in WASM debug layout: {button:?}"
+        initial_summary
+            .get("buttonCount")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            >= 1,
+        "Cue DOM renderer should expose clickable buttons: {initial_summary:?}"
     );
-    let button_x = button.get("x").and_then(|v| v.as_f64()).unwrap();
-    let button_y = button.get("y").and_then(|v| v.as_f64()).unwrap();
-    let picked = page
-        .evaluate(&debug_pick_expr(button_x, button_y))
-        .await
-        .expect("pick New Project button coordinate in WASM debug layout");
-    let picked_kind = picked
-        .get("pick")
-        .and_then(|v| v.get("node"))
-        .and_then(|v| v.get("kind"));
-    assert!(
-        picked_kind
-            .and_then(|v| v.get("kind"))
-            .and_then(|v| v.as_str())
-            == Some("text")
-            && picked_kind
-                .and_then(|v| v.get("text"))
-                .and_then(|v| v.as_str())
-                == Some("New Project"),
-        "New Project coordinate must pick the visible button label surface: button={button:?} picked={picked:?}"
+    assert_eq!(
+        initial_summary.get("canvasCount").and_then(|v| v.as_u64()),
+        Some(0),
+        "Cue DOM renderer should not mount the WebGPU canvas: {initial_summary:?}"
     );
-    dispatch_cdp_click(&page, button_x, button_y).await;
+    click_dom_button(&page, "New Project", "Cue Artifact Studio").await;
     wait_for_counter(post_projects.clone(), "POST /api/projects").await;
 
-    let summary = wait_for_debug_tree_text(
+    let summary = wait_for_dom_text(
         &page,
         "Team Request Tracker",
         "Cue Artifact Studio refreshed",
@@ -783,19 +714,11 @@ async fn cue_artifact_studio_dom_wasm_loads_api_and_posts() {
     );
     assert!(
         summary
-            .get("layoutNodeCount")
+            .get("buttonCount")
             .and_then(|v| v.as_u64())
             .unwrap_or(0)
-            > 8,
-        "Cue WASM debug layout should contain rendered nodes: {summary:?}"
-    );
-    assert!(
-        summary
-            .get("paintOpCount")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0)
-            > 8,
-        "Cue WASM debug paint ops should contain rendered output: {summary:?}"
+            >= 1,
+        "Cue DOM renderer should remain interactive after POST: {summary:?}"
     );
 
     let _ = browser.close().await;

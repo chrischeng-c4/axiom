@@ -162,6 +162,84 @@ pub fn minify_js(source: &str, drops: &[DropStatement]) -> String {
     result.trim().to_string()
 }
 
+/// Remove statement terminators immediately before a block close.
+///
+/// The caller must parse-guard the result before shipping it. Semicolons can be
+/// meaningful as empty statement bodies (`while(x);}`), so this helper is a
+/// candidate shrink pass rather than an unconditional minifier rule.
+pub(crate) fn remove_semicolons_before_block_close_candidate(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut result = String::with_capacity(source.len());
+    let mut prev_non_ws = '\0';
+    let mut in_string = false;
+    let mut string_char = '\0';
+    let mut in_regex = false;
+    let mut idx = 0usize;
+
+    while idx < chars.len() {
+        let ch = chars[idx];
+
+        if !in_string && !in_regex && ch == '`' {
+            idx = push_template_literal(&chars, idx, &mut result);
+            prev_non_ws = '`';
+            continue;
+        }
+
+        if !in_string && !in_regex && (ch == '"' || ch == '\'') {
+            in_string = true;
+            string_char = ch;
+            result.push(ch);
+            prev_non_ws = ch;
+            idx += 1;
+            continue;
+        }
+        if in_string {
+            result.push(ch);
+            if ch == string_char && !is_escaped(&chars, idx) {
+                in_string = false;
+            }
+            if !ch.is_whitespace() {
+                prev_non_ws = ch;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if !in_regex && ch == '/' && is_regex_start(prev_non_ws) {
+            in_regex = true;
+            result.push(ch);
+            prev_non_ws = ch;
+            idx += 1;
+            continue;
+        }
+        if in_regex {
+            result.push(ch);
+            if ch == '/' && !is_escaped(&chars, idx) {
+                in_regex = false;
+            }
+            if !ch.is_whitespace() {
+                prev_non_ws = ch;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if ch == ';' && chars.get(idx + 1).copied() == Some('}') {
+            prev_non_ws = ';';
+            idx += 1;
+            continue;
+        }
+
+        result.push(ch);
+        if !ch.is_whitespace() {
+            prev_non_ws = ch;
+        }
+        idx += 1;
+    }
+
+    result
+}
+
 /// Minify CSS source code.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn minify_css(source: &str) -> String {
@@ -655,6 +733,9 @@ fn should_insert_asi_semicolon(
     if previous_token_continues_expression(chars, next_idx) {
         return false;
     }
+    if previous_token_starts_variable_declaration(chars, next_idx) {
+        return false;
+    }
 
     true
 }
@@ -744,17 +825,25 @@ fn previous_token_continues_expression(chars: &[char], before_idx: usize) -> boo
     let keyword: String = chars[keyword_start..=keyword_end].iter().collect();
     matches!(
         keyword.as_str(),
-        "in" | "instanceof"
-            | "typeof"
-            | "void"
-            | "delete"
-            | "new"
-            | "await"
-            | "yield"
-            | "var"
-            | "let"
-            | "const"
+        "in" | "instanceof" | "typeof" | "void" | "delete" | "new" | "await" | "yield"
     )
+}
+
+fn previous_token_starts_variable_declaration(chars: &[char], before_idx: usize) -> bool {
+    let Some(keyword_end) = previous_non_ws_index(chars, before_idx) else {
+        return false;
+    };
+    if !is_identifier_char(chars[keyword_end]) {
+        return false;
+    }
+
+    let mut keyword_start = keyword_end;
+    while keyword_start > 0 && is_identifier_char(chars[keyword_start - 1]) {
+        keyword_start -= 1;
+    }
+
+    let keyword: String = chars[keyword_start..=keyword_end].iter().collect();
+    matches!(keyword.as_str(), "var" | "let" | "const")
 }
 
 fn previous_token_is_postfix_update(chars: &[char], before_idx: usize) -> bool {
@@ -1143,6 +1232,32 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_semicolon_before_block_close_candidate_keeps_parseable_return() {
+        let source = "function f(){if(ok){return;}}";
+        let result = remove_semicolons_before_block_close_candidate(source);
+        assert_eq!(result, "function f(){if(ok){return}}");
+        assert!(crate::bundler::dce::js_parses_without_errors(&result));
+    }
+
+    #[test]
+    fn test_remove_semicolon_before_block_close_candidate_preserves_literals() {
+        let source = "function f(){const s=\";}\";const r=/;}/;const t=`;}`;return s+r+t;}";
+        let result = remove_semicolons_before_block_close_candidate(source);
+        assert!(result.contains("\";}\""), "got: {}", result);
+        assert!(result.contains("/;}/"), "got: {}", result);
+        assert!(result.contains("`;}`"), "got: {}", result);
+        assert!(crate::bundler::dce::js_parses_without_errors(&result));
+    }
+
+    #[test]
+    fn test_remove_semicolon_before_block_close_candidate_requires_parse_guard() {
+        let source = "function f(){while(x);}";
+        let result = remove_semicolons_before_block_close_candidate(source);
+        assert_eq!(result, "function f(){while(x)}");
+        assert!(!crate::bundler::dce::js_parses_without_errors(&result));
+    }
+
+    #[test]
     fn test_minify_inserts_semicolon_between_asi_statements() {
         let source = "const x = 1\nconst y = 2";
         let result = minify_js(source, &[]);
@@ -1207,9 +1322,9 @@ if (typeof
     }
 
     #[test]
-    fn test_minify_preserves_declaration_continuation_after_comment() {
+    fn test_minify_preserves_variable_declaration_after_stripped_comment() {
         let source = r#"
-function convertDataToEntities() {
+function convertDataToEntities(dataNodes) {
   var /** @deprecated Use config.externalGetKey instead */
   legacyExternalGetKey = arguments.length > 2 ? arguments[2] : undefined;
   return legacyExternalGetKey;
@@ -1217,13 +1332,13 @@ function convertDataToEntities() {
 "#;
         let result = minify_js(source, &[]);
         assert!(
-            !result.contains("var;legacyExternalGetKey"),
-            "got: {}",
+            result.contains("var legacyExternalGetKey="),
+            "declaration head must survive comment stripping: {}",
             result
         );
         assert!(
-            result.contains("var legacyExternalGetKey="),
-            "got: {}",
+            !result.contains("var;legacyExternalGetKey"),
+            "ASI must not split variable declaration: {}",
             result
         );
     }

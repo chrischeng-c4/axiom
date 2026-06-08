@@ -769,11 +769,10 @@ resolution:
         }
         std::fs::create_dir_all(&pkg_dir).unwrap();
         std::fs::write(
-            pkg_dir.join("package.json"),
-            format!(r#"{{"name":"{}","version":"{}"}}"#, name, version),
+            pkg_dir.join(".jet-integrity"),
+            crate::pkg_manager::store::integrity_marker_value(shasum),
         )
         .unwrap();
-        std::fs::write(pkg_dir.join(".jet-integrity"), shasum).unwrap();
         pkg_dir
     }
 

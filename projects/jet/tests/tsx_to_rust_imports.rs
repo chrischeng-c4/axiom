@@ -11,6 +11,8 @@ use jet::tsx_to_rust::{transpile, transpile_compat_with_source};
 
 const MUI_VISUAL_FIXTURE_TSX: &str =
     include_str!("../../../examples/mui-visual-demo/src/MuiVisualFixture.tsx");
+const ANTD_VISUAL_FIXTURE_TSX: &str =
+    include_str!("../../../examples/antd-visual-demo/src/AntdVisualFixture.tsx");
 
 #[test]
 fn react_imports_do_not_block_transpile() {
@@ -144,24 +146,48 @@ export function App() {
 #[test]
 fn mui_visual_fixture_strict_lowering_preserves_form_controls() {
     let out = transpile(MUI_VISUAL_FIXTURE_TSX)
-        .expect("strict lowering should preserve the visible MUI form-control fixture");
+        .expect("strict lowering should preserve the visible MUI visual fixture");
 
     let rust = out;
     assert!(rust.contains("Element::intrinsic(\"main\""));
-    assert!(rust.contains("Element::intrinsic(\"h1\""));
-    assert!(rust.contains("Element::intrinsic(\"label\""));
+    assert!(rust.contains("Element::intrinsic(\"table\""));
+    assert!(rust.contains("Element::intrinsic(\"tr\""));
+    assert!(rust.contains("Element::intrinsic(\"td\""));
     assert!(rust.contains("Element::intrinsic(\"input\""));
     assert!(rust.contains("Element::intrinsic(\"button\""));
-    assert!(rust.contains("Element::intrinsic(\"p\""));
     assert!(rust.contains("id: Some(\"visual-root\".to_string())"));
+    assert!(rust.contains("id: Some(\"large-table\".to_string())"));
+    assert!(rust.contains("MUI visual table fixture"));
     assert!(rust.contains("id: Some(\"mui-name\".to_string())"));
     assert!(rust.contains("id: Some(\"mui-accept\".to_string())"));
-    assert!(rust.contains("border-radius: 8px"));
+    assert!(rust.contains("class_name: Some(\"ui-case mui-card\".to_string())"));
     assert!(rust.contains("use_state::<String>(\"Ada\".to_string())"));
     assert!(rust.contains("use_state::<bool>(true)"));
-    assert!(rust.contains("html_for: Some(\"mui-accept\".to_string())"));
     assert!(rust.contains("on_checked_change: Some"));
     assert!(!rust.contains("@mui/material"));
+}
+
+#[test]
+fn antd_visual_fixture_strict_lowering_preserves_form_controls() {
+    let out = transpile(ANTD_VISUAL_FIXTURE_TSX)
+        .expect("strict lowering should preserve the visible AntD visual fixture");
+
+    let rust = out;
+    assert!(rust.contains("Element::intrinsic(\"main\""));
+    assert!(rust.contains("Element::intrinsic(\"table\""));
+    assert!(rust.contains("Element::intrinsic(\"tr\""));
+    assert!(rust.contains("Element::intrinsic(\"td\""));
+    assert!(rust.contains("Element::intrinsic(\"input\""));
+    assert!(rust.contains("Element::intrinsic(\"button\""));
+    assert!(rust.contains("id: Some(\"visual-root\".to_string())"));
+    assert!(rust.contains("id: Some(\"large-table\".to_string())"));
+    assert!(rust.contains("AntD visual table fixture"));
+    assert!(rust.contains("id: Some(\"antd-name\".to_string())"));
+    assert!(rust.contains("id: Some(\"antd-accept\".to_string())"));
+    assert!(rust.contains("class_name: Some(\"ui-case antd-card\".to_string())"));
+    assert!(rust.contains("use_state::<String>(\"Ada\".to_string())"));
+    assert!(rust.contains("use_state::<bool>(true)"));
+    assert!(rust.contains("on_checked_change: Some"));
 }
 
 #[test]
