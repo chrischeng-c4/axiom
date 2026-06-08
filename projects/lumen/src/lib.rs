@@ -20,7 +20,6 @@ pub mod aof;
 pub mod api;
 pub mod auth;
 pub mod backup_sink;
-pub mod client;
 pub mod config;
 pub mod consumer;
 pub mod coordinator;
