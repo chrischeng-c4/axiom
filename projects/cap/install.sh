@@ -4,12 +4,12 @@
 # Releases and drops it on your PATH.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/cclab/main/projects/cap/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/chrischeng-c4/axiom/main/projects/cap/install.sh | sh
 #
 # Env overrides:
 #   CAP_VERSION   tag to install (default: latest cap@* release, e.g. cap@1.0)
 #   CAP_INSTALL   install dir (default: $HOME/.local/bin)
-#   CAP_REPO      gh repo (default: chrischeng-c4/cclab)
+#   CAP_REPO      gh repo (default: chrischeng-c4/axiom)
 #   GH_TOKEN      GitHub token for private-repo fetch (also: GITHUB_TOKEN)
 #                 If unset and `gh` is logged in, `gh auth token` is used.
 #
@@ -20,7 +20,7 @@
 #   3  missing curl / tar
 set -eu
 
-REPO="${CAP_REPO:-chrischeng-c4/cclab}"
+REPO="${CAP_REPO:-chrischeng-c4/axiom}"
 INSTALL_DIR="${CAP_INSTALL:-$HOME/.local/bin}"
 VERSION="${CAP_VERSION:-latest}"
 TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
