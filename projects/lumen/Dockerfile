@@ -1,33 +1,39 @@
-# Minimal production-style image for lumen. Multi-stage so the runtime
-# image carries only the binary + a non-root user, not the toolchain.
+# syntax=docker/dockerfile:1
+# From-source build for dev / CI. For production prefer `Dockerfile.release`,
+# which downloads a published binary (far faster, no Rust toolchain, no big build
+# context). Multi-stage: the distroless runtime carries only the binaries + a
+# non-root user, not the toolchain.
+#
+# Note: this is a cargo-workspace build, so the build context must be the repo
+# root (cargo needs every workspace member's Cargo.toml). A .dockerignore that
+# excludes target/ and .git keeps that context sane.
 
-# Match the host toolchain (1.92): the resolved lockfile pulls deps that
-# require the edition2024 Cargo feature (stabilized in 1.85), so an older
-# builder fails to parse their manifests.
+# Match the host toolchain (1.92): the resolved lockfile pulls deps that require
+# the edition2024 Cargo feature (stabilized in 1.85), so an older builder fails.
 FROM rust:1.92-slim-bookworm AS builder
 WORKDIR /src
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      pkg-config libssl-dev ca-certificates \
+# Only ca-certificates needed — lumen links no openssl (reqwest is dev-only), so
+# no pkg-config / libssl-dev.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY . .
-RUN cargo build --release -p lumen --bin lumen
-# The K8s Operator ships in the same image but is a separate build so the
-# serving `lumen` binary stays free of the kube-rs tree (feature-gated).
-RUN cargo build --release -p lumen --features operator --bin lumen-operator
+# BuildKit cache mounts keep the cargo registry + target dir warm across builds,
+# so a source edit doesn't rebuild every dependency. target/ is a cache mount
+# (not persisted into the image layer), so copy the binaries out in the same RUN.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo build --release -p lumen --bin lumen \
+ && cargo build --release -p lumen --features operator --bin lumen-operator \
+ && cp target/release/lumen target/release/lumen-operator /usr/local/bin/
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates tini \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 1000 lumen \
-    && useradd  --system --uid 1000 --gid 1000 --home-dir /var/lib/lumen lumen \
-    && mkdir -p /var/lib/lumen/data \
-    && chown -R lumen:lumen /var/lib/lumen
-COPY --from=builder /src/target/release/lumen /usr/local/bin/lumen
-COPY --from=builder /src/target/release/lumen-operator /usr/local/bin/lumen-operator
-USER lumen
-WORKDIR /var/lib/lumen
+# distroless runtime: glibc + libgcc + CA certs + nonroot (uid 65532, matching
+# the k8s securityContext). No openssl, no shell, no init shim — a single tokio
+# binary handles SIGTERM (graceful drain) and spawns no children.
+FROM gcr.io/distroless/cc-debian12:nonroot
+COPY --from=builder /usr/local/bin/lumen          /usr/local/bin/lumen
+COPY --from=builder /usr/local/bin/lumen-operator /usr/local/bin/lumen-operator
 # 7373 = client API. The write log lives in NATS, not in this container.
 EXPOSE 7373
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/lumen"]
+ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]
