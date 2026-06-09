@@ -1136,7 +1136,8 @@ pub fn mb_base64_b16encode(data: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_bytes(b16_encode_bytes(&bytes)))
 }
 
-/// base64.b16decode(data) -> bytes (case-insensitive hex).
+/// base64.b16decode(data) -> bytes (strict uppercase hex, like CPython's
+/// default `casefold=False`).
 pub fn mb_base64_b16decode(data: MbValue) -> MbValue {
     let bytes = match unsafe { decode_data_bytes(&data) } {
         Ok(b) => b,
@@ -1144,6 +1145,15 @@ pub fn mb_base64_b16decode(data: MbValue) -> MbValue {
             return raise_value_error("string argument should contain only ASCII characters");
         }
     };
+    // CPython 3.12: b16decode is strict — odd-length input or any byte
+    // outside the uppercase hex alphabet raises binascii.Error.
+    if bytes.len() % 2 != 0
+        || bytes
+            .iter()
+            .any(|b| !(b.is_ascii_digit() || (b'A'..=b'F').contains(b)))
+    {
+        return raise_binascii_error("Non-base16 digit found");
+    }
     MbValue::from_ptr(MbObject::new_bytes(b16_decode_bytes(&bytes)))
 }
 
