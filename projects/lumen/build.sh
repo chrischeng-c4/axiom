@@ -90,7 +90,7 @@ echo "Bumping version: $CURRENT_VERSION -> $NEW_VERSION"
 sed -i '' "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
 
 cargo update -w 2>/dev/null || cargo generate-lockfile
-cargo build --release -p lumen --bin lumen
+cargo build --release -p lumen --bin lumen --features otel
 install_lumen release
 
 TAG="lumen@${NEW_VERSION}"
