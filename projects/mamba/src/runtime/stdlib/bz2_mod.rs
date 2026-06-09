@@ -85,6 +85,20 @@ fn kwargs_index(args: &[MbValue], name: &str) -> Option<i64> {
 }
 
 /// True iff the trailing kwargs dict contains `name` (any value).
+/// String-valued kwarg from the trailing kwargs dict, if present.
+fn kwargs_str(args: &[MbValue], name: &str) -> Option<String> {
+    args.last()
+        .and_then(|v| v.as_ptr())
+        .and_then(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                lock.read().unwrap().get(name).copied()
+            } else {
+                None
+            }
+        })
+        .and_then(as_str)
+}
+
 fn kwargs_has(args: &[MbValue], name: &str) -> bool {
     args.last()
         .and_then(|v| v.as_ptr())
@@ -181,11 +195,13 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
             }
         }
     }
-    super::compressed_file::make_file(
+    super::compressed_file::make_file_opts(
         "BZ2File",
         super::compressed_file::Codec::Bz2,
         args.first().copied().unwrap_or_else(MbValue::none),
         &mode,
+        kwargs_str(args, "encoding"),
+        kwargs_str(args, "errors"),
     )
 }
 

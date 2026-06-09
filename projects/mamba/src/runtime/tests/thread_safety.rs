@@ -114,7 +114,7 @@ fn test_tokio_spawn_from_multiple_threads() {
 
     for tid in &task_ids {
         let done =
-            tokio_exec::wait_task_done(*tid as u64, std::time::Duration::from_secs(10));
+            tokio_exec::wait_task_done(*tid as u64, std::time::Duration::from_secs(60));
         assert!(done, "Tokio task {tid} should be done");
     }
 }

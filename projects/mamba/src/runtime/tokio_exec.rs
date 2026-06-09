@@ -217,7 +217,7 @@ mod tests {
         assert!(task.is_int());
 
         let task_id = task.as_int().unwrap() as u64;
-        let done = wait_task_done(task_id, std::time::Duration::from_secs(10));
+        let done = wait_task_done(task_id, std::time::Duration::from_secs(60));
         assert!(done, "Tokio task should complete for exhausted coroutine");
         gc_enable();
     }

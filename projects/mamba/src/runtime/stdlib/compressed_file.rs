@@ -186,6 +186,22 @@ fn call_fileobj(fileobj: MbValue, method: &str, args: Vec<MbValue>) -> MbValue {
 /// object or a path string) in `mode` (r/w/a/x with optional `b`/`t`
 /// suffix). Raises ValueError on a malformed mode.
 pub fn make_file(class_name: &str, codec: Codec, source: MbValue, mode: &str) -> MbValue {
+    make_file_opts(class_name, codec, source, mode, None, None)
+}
+
+/// `make_file` with the text-layer options the `open()` wrappers accept:
+/// a `t` mode (or an explicit encoding) makes read return str and write
+/// accept str, with `errors` controlling decode failures
+/// (strict/ignore/replace).
+pub fn make_file_opts(
+    class_name: &str,
+    codec: Codec,
+    source: MbValue,
+    mode: &str,
+    encoding: Option<String>,
+    errors: Option<String>,
+) -> MbValue {
+    let is_text = mode.contains('t') || encoding.is_some();
     let base = mode.trim_end_matches(['b', 't']);
     if !matches!(base, "r" | "w" | "x" | "a" | "") {
         return raise("ValueError", &format!("Invalid mode: {mode:?}"));
@@ -227,6 +243,27 @@ pub fn make_file(class_name: &str, codec: Codec, source: MbValue, mode: &str) ->
     fields.insert("closed".to_string(), MbValue::from_bool(false));
     fields.insert("_wbuf".to_string(), bytes_val(Vec::new()));
     fields.insert("_pos".to_string(), MbValue::from_int(0));
+    fields.insert("_text".to_string(), MbValue::from_bool(is_text));
+    fields.insert(
+        "_encoding".to_string(),
+        MbValue::from_ptr(MbObject::new_str(
+            encoding.unwrap_or_else(|| "utf-8".to_string()),
+        )),
+    );
+    fields.insert(
+        "_errors".to_string(),
+        MbValue::from_ptr(MbObject::new_str(
+            errors.unwrap_or_else(|| "strict".to_string()),
+        )),
+    );
+    // GzipFile exposes the underlying filename as `.name` ('' for
+    // in-memory file objects).
+    fields.insert(
+        "name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(
+            as_str(source).unwrap_or_default(),
+        )),
+    );
 
     let obj = Box::new(MbObject {
         header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
@@ -280,6 +317,73 @@ fn pos_of(slf: MbValue) -> usize {
     inst_field(slf, "_pos").and_then(|v| v.as_int()).unwrap_or(0).max(0) as usize
 }
 
+fn is_text(slf: MbValue) -> bool {
+    inst_field(slf, "_text").and_then(|v| v.as_bool()) == Some(true)
+}
+
+fn encoding_of(slf: MbValue) -> String {
+    inst_field(slf, "_encoding")
+        .and_then(as_str)
+        .unwrap_or_else(|| "utf-8".to_string())
+        .to_ascii_lowercase()
+        .replace('_', "-")
+}
+
+/// Encode a text payload with the file's declared encoding (utf-8 default,
+/// utf-16 with BOM like CPython's TextIOWrapper).
+fn encode_text(slf: MbValue, s: &str) -> Vec<u8> {
+    match encoding_of(slf).as_str() {
+        "utf-16" => {
+            let mut out = vec![0xFF, 0xFE]; // BOM, little-endian
+            for unit in s.encode_utf16() {
+                out.extend_from_slice(&unit.to_le_bytes());
+            }
+            out
+        }
+        "latin-1" | "iso-8859-1" | "ascii" => s.chars().map(|c| c as u8).collect(),
+        _ => s.as_bytes().to_vec(),
+    }
+}
+
+/// Decode bytes with the file's declared encoding, honoring the `errors`
+/// handler (strict raises UnicodeDecodeError; ignore/replace recover).
+fn decode_text(slf: MbValue, data: &[u8]) -> Option<String> {
+    let errors = inst_field(slf, "_errors")
+        .and_then(as_str)
+        .unwrap_or_else(|| "strict".to_string());
+    match encoding_of(slf).as_str() {
+        "utf-16" => {
+            let body = if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xFE {
+                &data[2..]
+            } else {
+                data
+            };
+            let units: Vec<u16> = body
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            Some(String::from_utf16_lossy(&units))
+        }
+        "latin-1" | "iso-8859-1" => Some(data.iter().map(|&b| b as char).collect()),
+        _ => match std::str::from_utf8(data) {
+            Ok(s) => Some(s.to_string()),
+            Err(_) => match errors.as_str() {
+                "ignore" => Some(
+                    String::from_utf8_lossy(data).replace('\u{FFFD}', ""),
+                ),
+                "replace" => Some(String::from_utf8_lossy(data).into_owned()),
+                _ => {
+                    raise(
+                        "UnicodeDecodeError",
+                        "'utf-8' codec can't decode byte",
+                    );
+                    None
+                }
+            },
+        },
+    }
+}
+
 // ── methods (variadic (self, args_list) ABI) ──────────────────────
 
 unsafe extern "C" fn m_write(slf: MbValue, args: MbValue) -> MbValue {
@@ -291,8 +395,26 @@ unsafe extern "C" fn m_write(slf: MbValue, args: MbValue) -> MbValue {
         return raise("UnsupportedOperation", "File not open for writing");
     }
     let items = list_items(args);
-    let Some(data) = items.first().copied().and_then(as_bytes) else {
-        return raise("TypeError", "a bytes-like object is required");
+    let arg = items.first().copied().unwrap_or_else(MbValue::none);
+    let data = if is_text(slf) {
+        match as_str(arg) {
+            Some(s) => {
+                // Text mode reports characters written, not bytes.
+                let n = s.chars().count() as i64;
+                let encoded = encode_text(slf, &s);
+                let mut buf =
+                    inst_field(slf, "_wbuf").and_then(as_bytes).unwrap_or_default();
+                buf.extend_from_slice(&encoded);
+                inst_set(slf, "_wbuf", bytes_val(buf));
+                return MbValue::from_int(n);
+            }
+            None => return raise("TypeError", "write() argument must be str"),
+        }
+    } else {
+        match as_bytes(arg) {
+            Some(b) => b,
+            None => return raise("TypeError", "a bytes-like object is required"),
+        }
     };
     let mut buf = inst_field(slf, "_wbuf").and_then(as_bytes).unwrap_or_default();
     buf.extend_from_slice(&data);
@@ -339,6 +461,12 @@ unsafe extern "C" fn m_read(slf: MbValue, args: MbValue) -> MbValue {
         .unwrap_or(plain.len() - pos);
     let end = (pos + n).min(plain.len());
     inst_set(slf, "_pos", MbValue::from_int(end as i64));
+    if is_text(slf) {
+        return match decode_text(slf, &plain[pos..end]) {
+            Some(s) => MbValue::from_ptr(MbObject::new_str(s)),
+            None => MbValue::none(),
+        };
+    }
     bytes_val(plain[pos..end].to_vec())
 }
 
@@ -357,6 +485,12 @@ unsafe extern "C" fn m_readline(slf: MbValue, _args: MbValue) -> MbValue {
     let Some(plain) = ensure_plain(slf) else { return MbValue::none() };
     let (line, new_pos) = readline_slice(&plain, pos_of(slf));
     inst_set(slf, "_pos", MbValue::from_int(new_pos as i64));
+    if is_text(slf) {
+        return match decode_text(slf, &line) {
+            Some(s) => MbValue::from_ptr(MbObject::new_str(s)),
+            None => MbValue::none(),
+        };
+    }
     bytes_val(line)
 }
 
@@ -513,6 +647,12 @@ unsafe extern "C" fn m_next(slf: MbValue, _args: MbValue) -> MbValue {
     }
     let (line, new_pos) = readline_slice(&plain, pos);
     inst_set(slf, "_pos", MbValue::from_int(new_pos as i64));
+    if is_text(slf) {
+        return match decode_text(slf, &line) {
+            Some(s) => MbValue::from_ptr(MbObject::new_str(s)),
+            None => MbValue::none(),
+        };
+    }
     bytes_val(line)
 }
 
