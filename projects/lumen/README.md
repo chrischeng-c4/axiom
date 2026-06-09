@@ -400,12 +400,14 @@ self-onboards an agent with no docs site and no running server.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| observability | - | auditing | Prometheus text-format `/metrics` on the API port, a kustomize ServiceMonitor + PrometheusRule SLO alert bundle, and structured json/pretty logs. | smoke | projects/lumen/tests/api_e2e.rs (/metrics); projects/lumen/k8s/components/observability |
+| observability | - | auditing | Prometheus text-format `/metrics` on the API port, a kustomize ServiceMonitor + PrometheusRule SLO alert bundle, structured json/pretty logs, and **opt-in OTLP export** (traces + metrics PUSHED to an OpenTelemetry collector via `LUMEN_OTLP_ENDPOINT`; the collector fans out to Prometheus/Jaeger, so a stateless replica fleet reports without per-pod scraping). `/metrics` pull stays for direct debug. | smoke, conformance | projects/lumen/tests/api_e2e.rs (/metrics); projects/lumen/k8s/components/observability; projects/lumen/compose.yaml (OTLP stack) |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Prometheus `/metrics` endpoint | epic | - | implemented | passing | smoke | projects/lumen/tests/api_e2e.rs |
 | ServiceMonitor + PrometheusRule | epic | - | implemented | passing | smoke | projects/lumen/k8s/components/observability |
+| OTLP trace export (tower-http TraceLayer → tracing-opentelemetry → batch OTLP, opt-in; `otel` feature on in release builds) | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs (build_otel_tracer); projects/lumen/compose.yaml (Jaeger e2e: 13 traces, `request` spans) |
+| OTLP metrics push (observable instruments bridge the engine's atomic counters → PeriodicReader, no hot-path cost) | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs (init_otel_meter); projects/lumen/compose.yaml (Prometheus e2e: 11 metrics/replica) |
 
 ### Schema & Ops Lifecycle
 

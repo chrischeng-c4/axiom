@@ -28,15 +28,15 @@ services:
       - "8889:8889" # Prometheus exporter (what Prometheus scrapes)
     depends_on: [jaeger]
 
-  # Serving replica A. Builds the distroless download image from the published
-  # 0.3.63 release (which is built --features otel), then runs it against NATS.
+  # Serving replica A. Builds the distroless download image from the published 0.4.0 release
+  # 0.4.0 release (which is built --features otel), then runs it against NATS.
   lumen-0:
     build:
       context: .
       dockerfile: Dockerfile.release
       args:
-        LUMEN_VERSION: lumen@0.3.63
-    image: lumen:0.3.63
+        LUMEN_VERSION: lumen@0.4.0
+    image: lumen:0.4.0
     hostname: lumen-0
     depends_on: [nats, otel-collector]
     environment:
@@ -50,7 +50,7 @@ services:
 
   # Serving replica B. Same image; tails the same NATS log → same index.
   lumen-1:
-    image: lumen:0.3.63
+    image: lumen:0.4.0
     hostname: lumen-1
     depends_on: [nats, otel-collector, lumen-0]
     environment:
