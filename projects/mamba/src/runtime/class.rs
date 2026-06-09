@@ -7370,6 +7370,42 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         return super::stdlib::collections_mod::mb_counter_most_common(receiver, n);
                     }
                 }
+                if class_name == "ContextVar" || class_name == "Context" {
+                    let arg_items: Vec<MbValue> = args.as_ptr()
+                        .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                            Some(lk.read().unwrap().to_vec())
+                        } else { None })
+                        .unwrap_or_default();
+                    let _ = &fields;
+                    match (class_name.as_str(), name.as_str()) {
+                        ("ContextVar", "get") => {
+                            return super::stdlib::contextvars_mod::mb_contextvar_get(
+                                receiver,
+                                arg_items.first().copied(),
+                            );
+                        }
+                        ("ContextVar", "set") => {
+                            let value = arg_items.first().copied().unwrap_or(MbValue::none());
+                            return super::stdlib::contextvars_mod::mb_contextvar_set(receiver, value);
+                        }
+                        ("ContextVar", "reset") => {
+                            let token = arg_items.first().copied().unwrap_or(MbValue::none());
+                            return super::stdlib::contextvars_mod::mb_contextvar_reset(receiver, token);
+                        }
+                        ("Context", "run") => {
+                            let func = arg_items.first().copied().unwrap_or(MbValue::none());
+                            let rest: Vec<MbValue> = arg_items.iter().skip(1).copied().collect();
+                            return super::stdlib::contextvars_mod::mb_context_run(receiver, func, rest);
+                        }
+                        ("Context", "copy") => {
+                            // ctx.copy() — a snapshot of the snapshot; reuse
+                            // run-free field cloning by returning a fresh
+                            // Context built from this one's fields.
+                            return super::stdlib::contextvars_mod::mb_context_copy(receiver);
+                        }
+                        _ => {}
+                    }
+                }
                 if class_name == "re.Pattern" {
                     // re.Pattern dispatches its match/search/findall/sub/split
                     // methods through the existing module-level helpers, using
