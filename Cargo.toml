@@ -22,7 +22,7 @@ members = [
     "projects/jet",
     "projects/jet/wasm",
     "projects/agentic-workflow",
-    "projects/compass",
+    "libs/compass",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",
