@@ -7,7 +7,7 @@
 #   `baseline.json`               — the canonical perf source of truth
 #                                   (name + timings + tier, owned by
 #                                   the bench harness).
-#   `tests/cpython/fixtures/core/bench/*.py`   — the Python fixtures the cross-runtime
+#   `tests/cpython/_regression/core/bench/*.py`   — the Python fixtures the cross-runtime
 #                                   bench actually executes.
 #
 # Without this manifest the harness has no machine-readable way to say
@@ -55,8 +55,8 @@ issue = 2567
 
 # Resolved relative to this manifest's directory
 # (`projects/mamba/validation/`). The actual fixture root is
-# `projects/mamba/tests/cpython/fixtures/core/bench/`.
-fixture_root = "../tests/cpython/fixtures/core/bench"
+# `projects/mamba/tests/cpython/_regression/core/bench/`.
+fixture_root = "../tests/cpython/_regression/core/bench"
 
 # Permitted category values. Mirrors the `kind` field used by
 # `baseline.json` entries so release-summary output stays consistent.
@@ -123,12 +123,12 @@ timing_mode = "process_wall"
 location = "projects/mamba/validation/perf_benchmark_manifest.toml"
 command = "python3 projects/mamba/scripts/perf_benchmark_manifest_check.py"
 # Step-by-step: edit this manifest to add or remove benchmarks, drop the
-# matching fixture under `tests/cpython/fixtures/core/bench/`, then run the command
+# matching fixture under `tests/cpython/_regression/core/bench/`, then run the command
 # above. The checker prints one line per validated entry; non-zero exit
 # means a required fixture is missing.
 docs = """
 To add a benchmark:
-  1. Drop the fixture at projects/mamba/tests/cpython/fixtures/core/bench/<id>.py.
+  1. Drop the fixture at projects/mamba/tests/cpython/_regression/core/bench/<id>.py.
   2. Add a [[benchmarks]] entry to this file with id, fixture, category, tier.
   3. Run: python3 projects/mamba/scripts/perf_benchmark_manifest_check.py
   4. If the entry is `tier = "required"`, add a matching entry to

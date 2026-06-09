@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 fn manifest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
+        .join("governance")
         .join("gates")
         .join("package_manager")
         .join("init_add_install_sync_run_e2e")

@@ -198,6 +198,20 @@ fn run_fixture(path: &std::path::Path) -> datatest_stable::Result<()> {
     }
 
     let src = std::fs::read_to_string(path)?;
+
+    // Dimension-first migration: record-based conformance fixtures (the
+    // `[tool.mamba]` tree) live directly under tests/cpython and are owned
+    // by the live-CPython-oracle runner. Only `# RUN:`-directive fixtures
+    // (today: `_regression/core/grammar/`) belong to this pipeline harness;
+    // everything else is skipped, mirroring the runner's inverse
+    // `[pipeline-skip]` rule.
+    if !src
+        .lines()
+        .any(|line| line.trim_start().starts_with("# RUN:"))
+    {
+        return Ok(());
+    }
+
     let directives = parse_directives(&src);
 
     match directives.run.as_str() {

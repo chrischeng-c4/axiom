@@ -220,8 +220,14 @@ pub fn tracemalloc_record_free(size: usize) {
 mod tests {
     use super::*;
 
+    // TRACING / NFRAME are process-global; tests mutating them must not
+    // interleave under the parallel test runner.
+    static TRACE_TEST_LOCK: std::sync::LazyLock<std::sync::Mutex<()>> =
+        std::sync::LazyLock::new(|| std::sync::Mutex::new(()));
+
     #[test]
     fn test_start_stop() {
+        let _lock = TRACE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         mb_tracemalloc_stop();
         assert_eq!(mb_tracemalloc_is_tracing().as_bool(), Some(false));
         mb_tracemalloc_start(MbValue::from_int(1));
@@ -238,12 +244,18 @@ mod tests {
 
     #[test]
     fn test_take_snapshot() {
+        // CPython 3.12: take_snapshot() raises RuntimeError unless tracing,
+        // so the test must start tracing first.
+        let _lock = TRACE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        mb_tracemalloc_start(MbValue::none());
         let snap = mb_tracemalloc_take_snapshot();
         assert!(snap.as_ptr().is_some());
+        mb_tracemalloc_stop();
     }
 
     #[test]
     fn test_traceback_limit() {
+        let _lock = TRACE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         mb_tracemalloc_start(MbValue::from_int(5));
         assert_eq!(mb_tracemalloc_get_traceback_limit().as_int(), Some(5));
         mb_tracemalloc_stop();

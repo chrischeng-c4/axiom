@@ -5386,7 +5386,9 @@ mod tests {
 
     #[test]
     fn test_lower_generator_expr_desugared_to_list_comp() {
-        // GeneratorExpr is desugared to ListComp in HIR
+        // GeneratorExpr is desugared to mb_iter(<ListComp>): the eager list
+        // comprehension is wrapped in an iterator so the genexpr keeps
+        // single-use iterator identity (next() works, no len()/indexing).
         let gen = Comprehension {
             targets: vec!["g".to_string()],
             iter: sp(Expr::ListLit(vec![])),
@@ -5397,10 +5399,16 @@ mod tests {
             element: Box::new(sp(Expr::IntLit(0))),
             generators: vec![gen],
         })))]);
-        assert!(matches!(
-            &hir.top_level[0],
-            HirStmt::Expr { expr: HirExpr::ListComp { .. }, .. }
-        ));
+        match &hir.top_level[0] {
+            HirStmt::Expr { expr: HirExpr::Call { func, args, .. }, .. } => {
+                assert!(
+                    matches!(&**func, HirExpr::StrLit(name, _) if name == "mb_iter"),
+                    "genexpr must lower to an mb_iter call"
+                );
+                assert!(matches!(args.first(), Some(HirExpr::ListComp { .. })));
+            }
+            other => panic!("expected mb_iter(ListComp) call, got {other:?}"),
+        }
     }
 
     #[test]

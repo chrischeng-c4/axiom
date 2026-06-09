@@ -112,7 +112,7 @@ fn manifest_declares_fixture_root_pointing_at_bench_fixtures() {
         .and_then(|v| v.as_str())
         .expect("fixture_root is a string");
     assert!(
-        root.contains("tests/cpython/fixtures/core/bench"),
+        root.contains("tests/cpython/_regression/core/bench"),
         "fixture_root must resolve to the bench fixture directory; got {root}"
     );
 }

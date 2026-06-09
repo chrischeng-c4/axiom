@@ -1109,8 +1109,10 @@ mod tests {
     #[test]
     fn test_getnode_multicast_bit() {
         // CPython convention: synthetic node has multicast bit set.
-        let n = mb_uuid_getnode().as_int().unwrap();
-        assert_ne!(n & (1i64 << 40), 0);
+        // getnode() returns a BigInt when the 48-bit node exceeds the
+        // 47-bit inline range, so extract through the BigInt-aware path.
+        let n = int_arg_bigint(mb_uuid_getnode()).expect("getnode yields an int");
+        assert_ne!(n & BigInt::from(1u64 << 40), BigInt::from(0));
     }
 
     #[test]

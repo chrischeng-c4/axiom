@@ -839,7 +839,8 @@ mod tests {
 
     #[test]
     fn normpath_preserves_drive() {
-        assert_eq!(nt_normpath("C:"), "C:.");
+        // CPython 3.12: ntpath.normpath('C:') == 'C:' (bare drive stays bare).
+        assert_eq!(nt_normpath("C:"), "C:");
     }
 
     #[test]

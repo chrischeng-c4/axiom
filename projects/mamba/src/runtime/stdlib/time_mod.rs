@@ -1029,9 +1029,15 @@ mod tests {
     }
 
     #[test]
-    fn test_strptime_parse_failure_returns_sentinel() {
-        let st = mb_time_strptime(s("not a date"), s("%Y-%m-%d"));
-        assert_eq!(get_field(st, "tm_isdst").as_int(), Some(-1));
+    fn test_strptime_parse_failure_raises_valueerror() {
+        // CPython 3.12: time.strptime raises ValueError when the input does
+        // not match the format (the old sentinel struct_time is retired).
+        let _ = mb_time_strptime(s("not a date"), s("%Y-%m-%d"));
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("ValueError"),
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]

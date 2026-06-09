@@ -1215,7 +1215,9 @@ mod tests {
 
     #[test]
     fn test_formatter_parse_basic() {
+        // CPython 3.12: list(Formatter().parse('foo{0}{1}-{1}')) yields
+        // [('foo','0','',None), ('','1','',None), ('-','1','',None)] — 3 tuples.
         let parsed = formatter_parse("foo{0}{1}-{1}").unwrap();
-        assert_eq!(parsed.len(), 4);
+        assert_eq!(parsed.len(), 3);
     }
 }

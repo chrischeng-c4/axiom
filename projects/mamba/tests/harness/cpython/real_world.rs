@@ -49,8 +49,7 @@ enum ExpectedOutcome {
 fn fixtures_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
-        .join("fixtures")
-        .join("conformance")
+        .join("cpython")
 }
 
 fn manifest_path() -> PathBuf {

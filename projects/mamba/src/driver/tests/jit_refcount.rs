@@ -17,7 +17,7 @@ use crate::runtime::rc::{self, MbObject, IMMORTAL_REFCOUNT, mb_refcount};
 
 /// Compile and execute Mamba source via JIT, returning the i64 result.
 fn jit_run(src: &str) -> i64 {
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     let module = parser::parse(src, FileId(0)).expect("parse failed");
     let mut checker = TypeChecker::new();
@@ -44,7 +44,7 @@ fn test_jit_string_literal_immortal() {
     // S3: Compile code with string literals — they use IMMORTAL_REFCOUNT.
     // Verify the JIT can compile and run code using string constants
     // without crashing (release on immortals is a no-op).
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     let src = r#"
 x: str = "hello"
@@ -154,7 +154,7 @@ def f() -> int:
 fn test_jit_compile_time_cleanup() {
     // S5: Create and drop a backend that compiled string literals.
     // Verify compile_time_objects are freed on Drop (no leak).
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     let src = r#"
 x: str = "alpha"
@@ -180,7 +180,7 @@ z: str = "gamma"
 fn test_jit_compile_time_many_literals() {
     // S5: Compile code with many string literals to exercise the
     // compile_time_objects tracking and cleanup.
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     // Build a source with many string variable assignments
     let mut src = String::new();
@@ -259,7 +259,7 @@ def f() -> int:
 fn test_jit_repeated_compilation_no_leak() {
     // S7: Multiple compile-and-drop cycles should not leak memory.
     // Each backend drop frees its compile_time_objects.
-    let _jit_guard = JIT_LOCK.lock().unwrap();
+    let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
     for i in 0..20 {
         let src = format!(

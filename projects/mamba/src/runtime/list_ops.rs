@@ -721,39 +721,36 @@ pub fn mb_list_sort(list: MbValue) {
 
 /// list.sort(key=None, reverse=False) — kwargs-aware in-place sort.
 pub fn mb_list_sort_kwargs(list: MbValue, key: MbValue, reverse: MbValue) {
-    use super::builtins::{resolve_callable_pub, call_named_callable_pub, mb_value_cmp_pub};
+    use super::builtins::{call_named_callable_pub, mb_value_cmp_pub};
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
                 let do_reverse = reverse.as_bool() == Some(true) || reverse.as_int() == Some(1);
                 let has_key = !key.is_none();
                 if has_key {
-                    let key_fn_addr = resolve_callable_pub(key);
-                    let named_key = if key_fn_addr.is_none() {
-                        key.as_ptr().and_then(|p| {
-                            if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
-                        })
-                    } else {
-                        None
-                    };
-                    let mut items = lock.write().unwrap();
-                    let mut indexed: Vec<(MbValue, MbValue)> = items.iter().map(|&item| {
-                        let k = if let Some(addr) = key_fn_addr {
-                            // REQ: JIT-compiled functions use SystemV/C calling convention.
-                            let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(addr);
-                            f(item)
-                        } else if let Some(ref name) = named_key {
+                    let named_key = key.as_ptr().and_then(|p| {
+                        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+                    });
+                    // Snapshot the elements, then release the lock while the
+                    // key callable runs: mb_call1_val can re-enter the runtime
+                    // (and even this list) arbitrarily.
+                    let snapshot: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                    let mut indexed: Vec<(MbValue, MbValue)> = snapshot.into_iter().map(|item| {
+                        let k = if let Some(ref name) = named_key {
                             call_named_callable_pub(name, item).unwrap_or(item)
                         } else {
-                            item
+                            // Dynamic 1-arg dispatch: handles JIT functions,
+                            // closures, and native extern builtins like `len`
+                            // whose `(argv, argc)` ABI a raw transmute to
+                            // `fn(MbValue)` would violate (#1132).
+                            super::class::mb_call1_val(key, item)
                         };
                         (item, k)
                     }).collect();
                     indexed.sort_by(|a, b| mb_value_cmp_pub(a.1, b.1));
                     if do_reverse { indexed.reverse(); }
-                    for (i, (v, _)) in indexed.into_iter().enumerate() {
-                        items[i] = v;
-                    }
+                    let mut items = lock.write().unwrap();
+                    *items = indexed.into_iter().map(|(v, _)| v).collect();
                 } else {
                     let mut items = lock.write().unwrap();
                     // Type-specialized sort for no-key case.

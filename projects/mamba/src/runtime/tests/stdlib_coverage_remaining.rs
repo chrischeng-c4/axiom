@@ -508,12 +508,24 @@ fn test_threading_event_lifecycle() {
 
 // ── sqlite3 ───────────────────────────────────────────────────────────────────
 
+// Class name of an `ObjData::Instance` value (sqlite3 returns real class
+// instances since the isinstance-dispatch rework, not dict-backed shims).
+fn instance_class(v: MbValue) -> Option<String> {
+    v.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })
+}
+
 #[test]
 fn test_sqlite3_full_workflow() {
     use crate::runtime::stdlib::sqlite3_mod::*;
 
     let conn = mb_sqlite3_connect(s(":memory:"));
-    assert_eq!(dict_str(conn, "__class__").as_deref(), Some("Connection"));
+    assert_eq!(instance_class(conn).as_deref(), Some("Connection"));
 
     // Create table
     mb_sqlite3_execute(conn, s("CREATE TABLE users (id INT, name TEXT)"));
@@ -542,12 +554,16 @@ fn test_sqlite3_create_table_if_not_exists_integration() {
 }
 
 #[test]
-fn test_sqlite3_cursor_returns_same_conn() {
+fn test_sqlite3_cursor_returns_distinct_cursor_instance() {
     use crate::runtime::stdlib::sqlite3_mod::{mb_sqlite3_connect, mb_sqlite3_cursor};
 
+    // CPython 3.12: conn.cursor() returns a Cursor object, not the
+    // connection itself; mamba mirrors that with a `Cursor` instance
+    // sharing the connection's in-memory state.
     let conn = mb_sqlite3_connect(s(":memory:"));
     let cursor = mb_sqlite3_cursor(conn);
-    assert_eq!(conn, cursor);
+    assert_ne!(conn, cursor);
+    assert_eq!(instance_class(cursor).as_deref(), Some("Cursor"));
 }
 
 // ── unittest ──────────────────────────────────────────────────────────────────

@@ -472,10 +472,17 @@ mod tests {
     }
 
     #[test]
-    fn test_coroutine_is_identity() {
+    fn test_coroutine_rejects_non_callable() {
+        // CPython 3.12: types.coroutine() raises TypeError for a
+        // non-callable argument (identity passthrough applies to callables).
         let f = MbValue::from_int(42);
         let r = mb_types_coroutine(f);
-        assert_eq!(r.as_int(), Some(42));
+        assert!(r.is_none());
+        assert_eq!(
+            crate::runtime::exception::current_exception_type().as_deref(),
+            Some("TypeError"),
+        );
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]

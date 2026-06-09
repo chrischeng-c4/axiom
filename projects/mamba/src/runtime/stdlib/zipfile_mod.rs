@@ -658,13 +658,16 @@ mod tests {
         let zf = mb_zipfile_new(buf, s("w"));
         unsafe { method_writestr(zf, list(vec![s("a.txt"), s("hi")])); }
         unsafe { method_close(zf, list(vec![])); }
-        for call in [
-            unsafe { method_read(zf, list(vec![s("a.txt")])) },
-            unsafe { method_open(zf, list(vec![s("a.txt")])) },
-            unsafe { method_testzip(zf, list(vec![])) },
-            unsafe { method_writestr(zf, list(vec![s("b.txt"), s("x")])) },
-        ] {
-            let _ = call;
+        // One closure per op: an array literal would evaluate every call up
+        // front, so only the first iteration would still see its exception.
+        let calls: Vec<Box<dyn Fn() -> MbValue>> = vec![
+            Box::new(move || unsafe { method_read(zf, list(vec![s("a.txt")])) }),
+            Box::new(move || unsafe { method_open(zf, list(vec![s("a.txt")])) }),
+            Box::new(move || unsafe { method_testzip(zf, list(vec![])) }),
+            Box::new(move || unsafe { method_writestr(zf, list(vec![s("b.txt"), s("x")])) }),
+        ];
+        for call in calls {
+            let _ = call();
             assert_eq!(
                 super::super::super::exception::current_exception_type().as_deref(),
                 Some("ValueError"),

@@ -87,6 +87,12 @@ fn test_concurrent_coroutine_creation() {
 
 #[test]
 fn test_tokio_spawn_from_multiple_threads() {
+    // Hold the shared Tokio test lock: tokio_exec's tests clear the global
+    // TASKS map (reset_async_for_test), which would race with this test.
+    let _lock = tokio_exec::TOKIO_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
     // Spawn Tokio tasks from multiple threads
     let mut handles = Vec::new();
     for i in 0..4 {
@@ -106,12 +112,9 @@ fn test_tokio_spawn_from_multiple_threads() {
         .map(|h| h.join().unwrap())
         .collect();
 
-    // Give Tokio time to complete
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
     for tid in &task_ids {
-        let done = async_rt::TASKS.read().unwrap()
-            .get(&(*tid as u64)).map(|t| t.done).unwrap_or(false);
+        let done =
+            tokio_exec::wait_task_done(*tid as u64, std::time::Duration::from_secs(10));
         assert!(done, "Tokio task {tid} should be done");
     }
 }
