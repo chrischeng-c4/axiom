@@ -23,7 +23,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release -p lumen --bin lumen \
+    cargo build --release -p lumen --bin lumen --features otel \
  && cargo build --release -p lumen --features operator --bin lumen-operator \
  && cp target/release/lumen target/release/lumen-operator /usr/local/bin/
 

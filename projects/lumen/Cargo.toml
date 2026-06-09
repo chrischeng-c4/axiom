@@ -77,12 +77,23 @@ tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "request-id", "util"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+# OpenTelemetry (feature `otel`): OTLP trace export, opt-in at RUNTIME via
+# LUMEN_OTLP_ENDPOINT. Versions match queue/queuekit so the workspace lock stays
+# single-versioned. tonic gRPC is plaintext → no openssl, keeps cross-compile clean.
+opentelemetry = { version = "0.21", optional = true }
+opentelemetry-otlp = { version = "0.14", features = ["tonic", "metrics"], optional = true }
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"], optional = true }
+tracing-opentelemetry = { version = "0.22", optional = true }
 utoipa = { workspace = true, features = ["axum_extras"] }
 
 [features]
 default = []
 jieba = ["dep:jieba-rs"]
 operator = ["dep:kube", "dep:k8s-openapi", "dep:schemars", "dep:serde_yaml"]
+# OTLP trace export. Compiled into the release binary (lumen-release.yml / build.sh
+# pass --features otel); off in plain dev builds so they don't pay the OTLP build
+# cost. At runtime it stays dormant unless LUMEN_OTLP_ENDPOINT is set.
+otel = ["dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry"]
 
 [dev-dependencies]
 axum-test = "17"
