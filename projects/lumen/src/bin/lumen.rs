@@ -183,6 +183,12 @@ struct ServeArgs {
     /// Graceful drain window on SIGTERM.
     #[arg(long, env = "LUMEN_GRACE_SECS", default_value_t = 30)]
     grace_secs: u64,
+    /// OTLP gRPC endpoint for trace export, e.g. `http://otel-collector:4317`.
+    /// Opt-in: traces export only when this is set (unset = plain logs, no OTLP,
+    /// no collector connection). Requires the `otel` build feature (on in release
+    /// builds); a plain dev build ignores it with a warning.
+    #[arg(long, env = "LUMEN_OTLP_ENDPOINT")]
+    otlp_endpoint: Option<String>,
 }
 
 #[tokio::main]
@@ -235,9 +241,19 @@ async fn main() -> Result<()> {
 }
 
 async fn serve(args: ServeArgs) -> Result<()> {
-    init_tracing(&args.log_level, args.log_format);
+    init_tracing(&args.log_level, args.log_format, args.otlp_endpoint.as_deref());
 
     let engine = Arc::new(Engine::new());
+
+    // OTLP metrics push (opt-in, same endpoint as traces): observable
+    // instruments read the engine's atomic counters and push to the collector.
+    #[cfg(feature = "otel")]
+    if let Some(endpoint) = args.otlp_endpoint.as_deref() {
+        match init_otel_meter(endpoint, engine.clone()) {
+            Ok(()) => tracing::info!(otlp_endpoint = endpoint, "OTLP metrics push enabled"),
+            Err(e) => tracing::error!(error = %e, "OTLP metrics init failed; /metrics pull still works"),
+        }
+    }
 
     // Select the write log.
     let wal: SharedWal = match args.wal {
@@ -447,6 +463,9 @@ async fn serve(args: ServeArgs) -> Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(engine.clone(), grace))
         .await?;
+    // Flush any batched spans before exit (no-op when OTLP was never enabled).
+    #[cfg(feature = "otel")]
+    opentelemetry::global::shutdown_tracer_provider();
     Ok(())
 }
 
@@ -567,14 +586,143 @@ async fn shutdown_signal(engine: Arc<Engine>, grace: Duration) {
     tracing::info!("grace expired — shutting down");
 }
 
-fn init_tracing(level: &str, format: LogFormat) {
+fn init_tracing(level: &str, format: LogFormat, otlp_endpoint: Option<&str>) {
+    use tracing_subscriber::prelude::*;
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(format!("info,lumen={level}")));
-    match format {
-        LogFormat::Pretty => tracing_subscriber::fmt().with_env_filter(filter).init(),
-        LogFormat::Json => tracing_subscriber::fmt()
-            .json()
-            .with_env_filter(filter)
-            .init(),
+    let fmt_layer = match format {
+        LogFormat::Pretty => tracing_subscriber::fmt::layer().boxed(),
+        LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
+    };
+    let registry = tracing_subscriber::registry().with(filter).with(fmt_layer);
+
+    #[cfg(feature = "otel")]
+    {
+        if let Some(endpoint) = otlp_endpoint {
+            match build_otel_tracer(endpoint) {
+                Ok(tracer) => {
+                    registry
+                        .with(tracing_opentelemetry::layer().with_tracer(tracer))
+                        .init();
+                    tracing::info!(otlp_endpoint = endpoint, "OTLP trace export enabled");
+                }
+                Err(e) => {
+                    registry.init();
+                    tracing::error!(error = %e, "OTLP init failed; continuing without trace export");
+                }
+            }
+        } else {
+            registry.init();
+        }
+        return;
     }
+
+    #[cfg(not(feature = "otel"))]
+    {
+        if otlp_endpoint.is_some() {
+            registry.init();
+            tracing::warn!(
+                "LUMEN_OTLP_ENDPOINT is set but this binary was built without the `otel` \
+                 feature — no trace export (rebuild with --features otel)"
+            );
+        } else {
+            registry.init();
+        }
+    }
+}
+
+/// Build a batch OTLP (tonic/gRPC, plaintext) tracer exporting to `endpoint`.
+/// Runs inside the tokio runtime (`serve` is `#[tokio::main]`-driven).
+#[cfg(feature = "otel")]
+fn build_otel_tracer(
+    endpoint: &str,
+) -> std::result::Result<opentelemetry_sdk::trace::Tracer, Box<dyn std::error::Error>> {
+    use opentelemetry_otlp::WithExportConfig;
+    let exporter = opentelemetry_otlp::new_exporter()
+        .tonic()
+        .with_endpoint(endpoint.to_string());
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(exporter)
+        .with_trace_config(
+            opentelemetry_sdk::trace::Config::default().with_resource(
+                opentelemetry_sdk::Resource::new(vec![
+                    opentelemetry::KeyValue::new("service.name", "lumen"),
+                    opentelemetry::KeyValue::new(
+                        "service.version",
+                        env!("CARGO_PKG_VERSION").to_string(),
+                    ),
+                ]),
+            ),
+        )
+        .install_batch(opentelemetry_sdk::runtime::Tokio)?;
+    Ok(tracer)
+}
+
+/// Build + install a global OTLP (tonic) meter provider that PUSHES lumen's
+/// counters to `endpoint` every 60s. The observable instruments read the
+/// engine's existing atomic counters, so the OTLP push and the `/metrics` pull
+/// share one source of truth (no double counting). This is what lets a fleet of
+/// stateless replicas report without anyone scraping each pod — the collector
+/// aggregates and Prometheus scrapes only the collector.
+#[cfg(feature = "otel")]
+fn init_otel_meter(
+    endpoint: &str,
+    engine: Arc<Engine>,
+) -> std::result::Result<(), Box<dyn std::error::Error>> {
+    use opentelemetry::metrics::MeterProvider as _;
+    use opentelemetry_otlp::WithExportConfig;
+    use std::sync::atomic::Ordering;
+
+    let provider = opentelemetry_otlp::new_pipeline()
+        .metrics(opentelemetry_sdk::runtime::Tokio)
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint(endpoint.to_string()),
+        )
+        .with_resource(opentelemetry_sdk::Resource::new(vec![
+            opentelemetry::KeyValue::new("service.name", "lumen"),
+            opentelemetry::KeyValue::new("service.version", env!("CARGO_PKG_VERSION").to_string()),
+        ]))
+        .with_period(Duration::from_secs(60))
+        .build()?;
+
+    let meter = provider.meter("lumen");
+
+    // Each atomic counter → an observable instrument whose callback reads the
+    // live value at every collection interval. Closures own an Arc<Engine>.
+    macro_rules! obs_counter {
+        ($name:literal, $field:ident, $desc:literal) => {{
+            let eng = engine.clone();
+            let _ = meter
+                .u64_observable_counter($name)
+                .with_description($desc)
+                .with_callback(move |o| o.observe(eng.metrics().$field.load(Ordering::Relaxed), &[]))
+                .init();
+        }};
+    }
+    obs_counter!("lumen_index_writes_total", index_writes_total, "Total index writes");
+    obs_counter!("lumen_index_bytes_total", index_bytes_total, "Total bytes indexed");
+    obs_counter!("lumen_search_requests_total", search_requests_total, "Total search requests");
+    obs_counter!("lumen_search_latency_ms_sum", search_latency_ms_sum, "Search latency ms sum");
+    obs_counter!("lumen_search_latency_ms_count", search_latency_ms_count, "Search latency count");
+    obs_counter!("lumen_duplicates_requests_total", duplicates_requests_total, "Total duplicates requests");
+    obs_counter!("lumen_collections_created_total", collections_created_total, "Total collections created");
+    obs_counter!("lumen_schema_fields_total", schema_fields_total, "Total schema fields");
+    obs_counter!("lumen_posting_cache_hits_total", posting_cache_hits_total, "Posting cache hits");
+    obs_counter!("lumen_posting_cache_misses_total", posting_cache_misses_total, "Posting cache misses");
+
+    // storage_bytes is a gauge (can decrease).
+    {
+        let eng = engine.clone();
+        let _ = meter
+            .u64_observable_gauge("lumen_storage_bytes")
+            .with_description("Current storage bytes")
+            .with_callback(move |o| o.observe(eng.metrics().storage_bytes.load(Ordering::Relaxed), &[]))
+            .init();
+    }
+
+    opentelemetry::global::set_meter_provider(provider);
+    Ok(())
 }
