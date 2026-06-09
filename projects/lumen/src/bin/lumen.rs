@@ -32,6 +32,7 @@ use lumen::wal_nats::NatsWal;
 #[derive(Parser)]
 #[command(
     name = "lumen",
+    version,
     about = "lumen — search specialist (serving node + CLI)"
 )]
 struct Cli {
