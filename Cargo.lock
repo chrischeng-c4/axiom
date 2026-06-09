@@ -6399,6 +6399,7 @@ dependencies = [
  "axum 0.8.9",
  "blake3",
  "bytecheck",
+ "cclab-compass",
  "chrono",
  "criterion",
  "futures",
