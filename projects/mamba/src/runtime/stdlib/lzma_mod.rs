@@ -177,7 +177,12 @@ unsafe extern "C" fn dispatch_lzmafile(args_ptr: *const MbValue, nargs: usize) -
     if !matches!(base, "r" | "w" | "x" | "a") {
         return raise_value_error(&format!("Invalid mode: {mode:?}"));
     }
-    MbValue::none()
+    super::compressed_file::make_file(
+        "LZMAFile",
+        super::compressed_file::Codec::Xz,
+        args.first().copied().unwrap_or_else(MbValue::none),
+        &mode,
+    )
 }
 
 /// Surface-only callable stubs. The streaming file/compressor/decompressor
@@ -216,7 +221,7 @@ pub fn register() {
         ("compress",          dispatch_compress          as usize),
         ("decompress",        dispatch_decompress        as usize),
         ("LZMAFile",          dispatch_lzmafile          as usize),
-        ("open",              dispatch_stub              as usize),
+        ("open",              dispatch_lzmafile          as usize),
         ("LZMACompressor",    dispatch_stub              as usize),
         ("LZMADecompressor",  dispatch_stub              as usize),
         ("is_check_supported", dispatch_is_check_supported as usize),
@@ -278,6 +283,9 @@ pub fn register() {
     attrs.insert("FILTER_IA64".into(), MbValue::from_int(6));
     attrs.insert("FILTER_POWERPC".into(), MbValue::from_int(5));
     attrs.insert("FILTER_SPARC".into(), MbValue::from_int(9));
+    // Streaming method table shared with bz2.BZ2File / gzip.GzipFile.
+    super::compressed_file::register_class("LZMAFile");
+
     super::register_module("lzma", attrs);
 }
 

@@ -74,6 +74,7 @@ pub mod statistics_mod;
 pub mod numbers_mod;
 pub mod unicodedata_mod;
 pub mod zlib_mod;
+pub mod compressed_file;
 pub mod bz2_mod;
 pub mod lzma_mod;
 pub mod queue_mod;

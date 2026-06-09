@@ -6552,6 +6552,12 @@ impl<'a> HirToMir<'a> {
                 let saved_is_gen         = self.is_gen_body;
                 let saved_try_stack      = std::mem::take(&mut self.try_handler_stack);
                 let saved_finally_stack  = std::mem::take(&mut self.finally_body_stack);
+                // The enclosing `with` exit blocks belong to the OUTER body's
+                // block-id space; leaving them on the stack would make the
+                // lambda body's exception edges Goto blocks that don't exist
+                // in its own MirBody (codegen "no entry found for key").
+                let saved_with_exit      = std::mem::take(&mut self.with_exit_stack);
+                let saved_with_ctx       = std::mem::take(&mut self.with_ctx_stack);
                 let saved_return_ty      = self.current_return_ty;
                 let saved_cell_override  = std::mem::take(&mut self.cell_override);
 
@@ -6607,6 +6613,8 @@ impl<'a> HirToMir<'a> {
                 self.is_gen_body     = saved_is_gen;
                 self.try_handler_stack = saved_try_stack;
                 self.finally_body_stack = saved_finally_stack;
+                self.with_exit_stack = saved_with_exit;
+                self.with_ctx_stack  = saved_with_ctx;
                 self.current_return_ty = saved_return_ty;
                 self.cell_override   = saved_cell_override;
 

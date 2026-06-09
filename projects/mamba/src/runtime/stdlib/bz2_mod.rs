@@ -181,7 +181,12 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
             }
         }
     }
-    mb_bz2_open(args.first().copied().unwrap_or_else(MbValue::none))
+    super::compressed_file::make_file(
+        "BZ2File",
+        super::compressed_file::Codec::Bz2,
+        args.first().copied().unwrap_or_else(MbValue::none),
+        &mode,
+    )
 }
 
 /// bz2.BZ2File(filename, mode="r", *, compresslevel=9) constructor.
@@ -208,7 +213,12 @@ unsafe extern "C" fn dispatch_bz2file(args_ptr: *const MbValue, nargs: usize) ->
     if !(1..=9).contains(&level) {
         return raise_value_error("compresslevel must be between 1 and 9");
     }
-    class_shell("BZ2File", &["read", "write", "close", "peek", "readline"])
+    super::compressed_file::make_file(
+        "BZ2File",
+        super::compressed_file::Codec::Bz2,
+        args.first().copied().unwrap_or_else(MbValue::none),
+        &mode,
+    )
 }
 
 /// bz2.BZ2Decompressor() constructor — returns a stateful Instance whose
@@ -367,14 +377,8 @@ pub fn register() {
     super::super::module::NATIVE_TYPE_NAMES.with(|m| {
         m.borrow_mut().insert(bz2file_addr as u64, "BZ2File".to_string());
     });
-    {
-        let stub = MbValue::from_func(bz2file_addr);
-        let mut methods: HashMap<String, MbValue> = HashMap::new();
-        for name in ["read", "write", "close", "peek", "readline"] {
-            methods.insert(name.to_string(), stub);
-        }
-        super::super::class::mb_class_register("BZ2File", vec![], methods);
-    }
+    // Streaming method table shared with lzma.LZMAFile / gzip.GzipFile.
+    super::compressed_file::register_class("BZ2File");
 
     let bz2dec_addr = dispatch_bz2decompressor as usize;
     attrs.insert("BZ2Decompressor".to_string(), MbValue::from_func(bz2dec_addr));
@@ -467,7 +471,9 @@ pub fn mb_bz2_decompress(data: MbValue) -> MbValue {
         if b.is_empty() {
             return Ok(Vec::new());
         }
-        let mut dec = BzDecoder::new(b);
+        // CPython decodes concatenated streams (multi-stream payloads
+        // decompress to the joined plaintext).
+        let mut dec = bzip2::read::MultiBzDecoder::new(b);
         let mut buf = Vec::with_capacity(b.len() * 4);
         dec.read_to_end(&mut buf).map(|_| buf)
     });
