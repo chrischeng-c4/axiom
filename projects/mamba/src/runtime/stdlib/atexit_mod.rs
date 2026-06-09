@@ -101,6 +101,23 @@ fn same_callable(a: MbValue, b: MbValue) -> bool {
 /// can be used as a decorator (CPython contract).
 pub fn mb_atexit_register(args: &[MbValue]) -> MbValue {
     let func = args.first().copied().unwrap_or_else(MbValue::none);
+    // CPython 3.12: atexit.register raises TypeError for a non-callable.
+    // Strings stay accepted — the registry's named-callable convention
+    // resolves them through call_named_callable at exit time.
+    let is_named = func.as_ptr().is_some_and(|p| unsafe {
+        matches!((*p).data, super::super::rc::ObjData::Str(_))
+    });
+    if !is_named && super::super::builtins::mb_callable(func).as_bool() != Some(true) {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(super::super::rc::MbObject::new_str(
+                "TypeError".to_string(),
+            )),
+            MbValue::from_ptr(super::super::rc::MbObject::new_str(
+                "the first argument must be callable".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     let (pos, kwargs) = split_kwargs(&args[1.min(args.len())..]);
 
     // Keep the callable and its forwarded arguments alive for as long as the
