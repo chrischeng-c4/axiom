@@ -157,10 +157,23 @@ pub fn register() {
     // instance's `class_name`. `wait` is variadic — its packed positional
     // list (`[timeout]`) is accepted and ignored.
     {
-        let wait_addr = popen_wait as *const () as usize;
-        super::super::module::register_variadic_func(wait_addr as u64);
         let mut methods: HashMap<String, MbValue> = HashMap::new();
-        methods.insert("wait".to_string(), MbValue::from_func(wait_addr));
+        for (name, addr) in [
+            ("wait", popen_wait as *const () as usize),
+            ("communicate", popen_communicate as *const () as usize),
+            ("poll", popen_poll as *const () as usize),
+            ("kill", popen_kill as *const () as usize),
+            ("terminate", popen_kill as *const () as usize),
+            ("send_signal", popen_kill as *const () as usize),
+            ("__enter__", popen_enter as *const () as usize),
+            ("__exit__", popen_exit as *const () as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                s.borrow_mut().insert(addr as u64);
+            });
+            methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
         super::super::class::mb_class_register("Popen", Vec::new(), methods);
     }
 
@@ -774,6 +787,16 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
             let code = returncode_of(&output.status);
             fields.insert("returncode".into(), MbValue::from_int(code as i64));
             fields.insert("pid".into(), MbValue::from_int(0));
+            // Captured child streams for `communicate()` — the carve-out
+            // runs the child synchronously, so they are fully available.
+            fields.insert(
+                "_captured_stdout".into(),
+                MbValue::from_ptr(MbObject::new_bytes(output.stdout)),
+            );
+            fields.insert(
+                "_captured_stderr".into(),
+                MbValue::from_ptr(MbObject::new_bytes(output.stderr)),
+            );
         }
         // A missing/unexecutable command raises the OSError family, matching
         // CPython's behaviour at construction time.
@@ -782,6 +805,49 @@ pub fn mb_subprocess_popen_impl(a: &[MbValue]) -> MbValue {
         }
     }
     new_instance_with_fields("Popen", fields)
+}
+
+/// `Popen.communicate(input=None, timeout=None)` -> `(stdout, stderr)`.
+/// The child already ran to completion at construction, so this returns
+/// the captured streams; a post-hoc `input` cannot be delivered and is
+/// ignored.
+unsafe extern "C" fn popen_communicate(self_v: MbValue, _args: MbValue) -> MbValue {
+    let field = |name: &str| -> MbValue {
+        if let Some(ptr) = self_v.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    if let Some(v) = fields.read().unwrap().get(name).copied() {
+                        return v;
+                    }
+                }
+            }
+        }
+        MbValue::from_ptr(MbObject::new_bytes(Vec::new()))
+    };
+    let out = field("_captured_stdout");
+    let err = field("_captured_stderr");
+    MbValue::from_ptr(MbObject::new_tuple(vec![out, err]))
+}
+
+/// `Popen.poll()` -> returncode (child already exited in the carve-out).
+unsafe extern "C" fn popen_poll(self_v: MbValue, args: MbValue) -> MbValue {
+    unsafe { popen_wait(self_v, args) }
+}
+
+/// `Popen.kill()` / `terminate()` / `send_signal(sig)` — the child already
+/// exited; CPython tolerates signaling an exited child, so these no-op.
+unsafe extern "C" fn popen_kill(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::none()
+}
+
+/// `with Popen(...) as p:` — enter returns self; exit closes the
+/// (already-drained) pipes and never suppresses exceptions.
+unsafe extern "C" fn popen_enter(self_v: MbValue, _args: MbValue) -> MbValue {
+    self_v
+}
+
+unsafe extern "C" fn popen_exit(_self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_bool(false)
 }
 
 /// `Popen.wait(timeout=None)` -> returncode (int).

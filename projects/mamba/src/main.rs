@@ -168,6 +168,28 @@ fn main() -> Result<()> {
     // inside user code.
     pkg_builder::assert_all_registered();
 
+    // Python-style direct invocation, intercepted before clap parses
+    // subcommands:
+    //   mamba -c "<code>"   — run an inline program (CPython `python -c`)
+    //   mamba <file>.py     — run a script (CPython `python file.py`)
+    // `sys.executable` points at this binary, so CPython-conformance
+    // fixtures spawn `[sys.executable, "-c", ...]` and expect both forms.
+    {
+        let argv: Vec<String> = std::env::args().collect();
+        if argv.len() >= 2 {
+            if argv[1] == "-c" {
+                let Some(code) = argv.get(2) else {
+                    eprintln!("Argument expected for the -c option");
+                    std::process::exit(2);
+                };
+                return run_inline_source(code, "<string>");
+            }
+            if argv[1].ends_with(".py") && std::path::Path::new(&argv[1]).exists() {
+                return run_script_path(&argv[1]);
+            }
+        }
+    }
+
     let matches = cli().get_matches();
 
     match matches.subcommand() {
@@ -495,6 +517,56 @@ fn cmd_check(sub: &ArgMatches) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Map a failed program run to a CPython-style process exit. `SystemExit`
+/// carries the exit status (no argument → 0, int → that code, anything
+/// else → message on stderr + 1); every other uncaught exception renders
+/// and exits 1.
+fn exit_like_cpython(session: &CompilerSession, err: &mamba::error::MambaError) -> ! {
+    let rendered = session.render_error(err);
+    let stripped = rendered.strip_prefix("error: ").unwrap_or(&rendered);
+    if let Some(rest) = stripped.strip_prefix("SystemExit") {
+        let payload = rest.trim_start_matches(':').trim();
+        if payload.is_empty() || payload == "None" {
+            std::process::exit(0);
+        }
+        if let Ok(code) = payload.parse::<i32>() {
+            std::process::exit(code);
+        }
+        eprintln!("{payload}");
+        std::process::exit(1);
+    }
+    eprintln!("{rendered}");
+    std::process::exit(1);
+}
+
+/// `mamba -c "<code>"` — compile and run an inline program, mirroring
+/// CPython's `python -c`. Exit code follows the program (SystemExit /
+/// uncaught exception → non-zero), no package-manager preflight.
+fn run_inline_source(code: &str, name: &str) -> Result<()> {
+    let config = CompilerConfig {
+        backend: Backend::CraneliftJit,
+        ..Default::default()
+    };
+    let mut session = CompilerSession::new(config);
+    match session.run_source(code, name) {
+        Ok(()) => Ok(()),
+        Err(e) => exit_like_cpython(&session, &e),
+    }
+}
+
+/// `mamba <file>.py` — run a script directly, mirroring `python file.py`.
+fn run_script_path(path: &str) -> Result<()> {
+    let config = CompilerConfig {
+        backend: Backend::CraneliftJit,
+        ..Default::default()
+    };
+    let mut session = CompilerSession::new(config);
+    match session.run(path) {
+        Ok(()) => Ok(()),
+        Err(e) => exit_like_cpython(&session, &e),
+    }
 }
 
 fn cmd_run(sub: &ArgMatches) -> Result<()> {
