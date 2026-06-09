@@ -363,6 +363,14 @@ pub fn router(state: AppState) -> Router {
         .route("/openapi.json", get(openapi_spec))
         .route("/docs", get(docs_swagger))
         .merge(data_plane)
+        // One tracing span per HTTP request — structured request logs always, and
+        // the source spans the OTLP layer exports as traces when LUMEN_OTLP_ENDPOINT
+        // is set. INFO level so the default `info` EnvFilter keeps it.
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http().make_span_with(
+                tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO),
+            ),
+        )
         .with_state(state)
 }
 
