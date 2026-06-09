@@ -7373,10 +7373,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 if class_name == "re.Pattern" {
                     // re.Pattern dispatches its match/search/findall/sub/split
                     // methods through the existing module-level helpers, using
-                    // the stored pattern string as the first argument.
+                    // the stored pattern string (with the compile-time flags
+                    // folded in as an inline prefix) as the first argument.
                     let pat = {
                         let guard = fields.read().unwrap();
-                        guard.get("pattern").copied().unwrap_or(MbValue::none())
+                        let raw = guard.get("pattern").copied().unwrap_or(MbValue::none());
+                        let flags = guard.get("flags").copied().unwrap_or(MbValue::none());
+                        super::stdlib::re_mod::with_flags(raw, flags)
                     };
                     let arg_items: Vec<MbValue> = args.as_ptr()
                         .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
@@ -7385,17 +7388,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         .unwrap_or_default();
                     let a0 = arg_items.first().copied().unwrap_or(MbValue::none());
                     let a1 = arg_items.get(1).copied().unwrap_or(MbValue::none());
+                    let a2 = arg_items.get(2).copied().unwrap_or(MbValue::none());
                     match name.as_str() {
                         "match" | "match_" =>
                             return super::stdlib::re_mod::mb_re_match(pat, a0),
+                        "fullmatch" =>
+                            return super::stdlib::re_mod::mb_re_fullmatch(pat, a0),
                         "search" =>
                             return super::stdlib::re_mod::mb_re_search(pat, a0),
                         "findall" =>
                             return super::stdlib::re_mod::mb_re_findall(pat, a0),
                         "sub" =>
-                            return super::stdlib::re_mod::mb_re_sub(pat, a0, a1),
+                            return super::stdlib::re_mod::mb_re_sub_count(pat, a0, a1, a2),
                         "subn" =>
-                            return super::stdlib::re_mod::mb_re_subn(pat, a0, a1),
+                            return super::stdlib::re_mod::mb_re_subn_count(pat, a0, a1, a2),
                         "split" =>
                             return super::stdlib::re_mod::mb_re_split(pat, a0),
                         "finditer" =>
