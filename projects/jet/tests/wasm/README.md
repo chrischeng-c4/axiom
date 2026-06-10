@@ -7,8 +7,15 @@ divergence is a Jet bug (DOM-oracle-first rule).
 
 ## Gates
 
+**The block owner is `wasm_dom_parity_gate.rs`**: run
+`cargo test -p jet --test wasm_dom_parity_gate -- --nocapture` to verify the
+"`jet build --wasm` behaves like `jet build`" claim. It drives
+`scripts/verify-advanced-wasm-gates.sh`, aggregating the build, runtime,
+renderer, lowering, and the MUI/AntD DOM-vs-WASM visual parity gates below.
+
 | Gate | Command | Covers |
 |---|---|---|
+| Block owner | `cargo test -p jet --test wasm_dom_parity_gate -- --nocapture` | aggregate DOM/WASM behavior parity |
 | WASM build e2e | `cargo test -p jet --test wasm_build_end_to_end` | `jet build --wasm`, WebGPU scaffold default, runtime status/visual probe |
 | DOM oracle conformance | `cargo test -p jet --test react_dom_oracle_conformance` | React-DOM-vs-WASM observable oracle |
 | MUI visual regression | `cargo test -p jet --test mui_visual_regression` | real MUI DOM/WASM visual parity |

@@ -247,6 +247,9 @@ path = "tests/test-runner/worker_pool_tests.rs"
 
 # tests/wasm/ — FE-on-WASM runtime matches the FE-on-DOM oracle
 [[test]]
+name = "wasm_dom_parity_gate"
+path = "tests/wasm/wasm_dom_parity_gate.rs"
+[[test]]
 name = "big_list_debug"
 path = "tests/wasm/big_list_debug.rs"
 [[test]]
