@@ -1,4 +1,4 @@
-# cclab (Chris Cheng Lab)
+# axiom
 
 A monorepo of high-performance, Rust-built developer infrastructure. Each
 project below is self-contained and ships its own README — follow the links for
@@ -14,6 +14,7 @@ details.
 | [lumen](projects/lumen/README.md) | K8s-native, log-replicated search specialist — exact, lexical (BM25), semantic (HNSW/GPU kNN), perceptual, and duplicate search in one engine. |
 | [vat](projects/vat/README.md) | Agent-native, GPU-native dev containers — a sandboxed host-process runtime (no VM) where the GPU just works on Apple Silicon, with a single JSON state surface for agents. |
 | [cap](projects/cap/README.md) | Resource-protection wrapper — throttles heavy local commands (and the Bash an agent fires) by watching free memory and pausing/resuming/killing, so nothing OOMs the box. |
+| [meter](projects/meter/README.md) | Local resource measurement for agent-driven Rust development — CPU hot spots, phase/boundary cost, benchmark regression folding, and delegated test-failure packaging as deterministic JSON. |
 
 ## License
 
