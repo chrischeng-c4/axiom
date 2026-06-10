@@ -211,9 +211,12 @@ fn repair_generated_module_slot_local_decl_collisions(source: &str) -> String {
     }
 
     let mut slot_names = HashSet::new();
+    let mut slot_decl_name_tokens: HashSet<usize> = HashSet::new();
     for i in 0..tokens.len() {
         if let Some((_, slot_name)) = match_generated_module_slot_decl(source, &tokens, i) {
             slot_names.insert(slot_name);
+            // `var <name>={exports:{}}` — the name ident is token i+1.
+            slot_decl_name_tokens.insert(i + 1);
         }
     }
     if slot_names.is_empty() {
@@ -227,6 +230,16 @@ fn repair_generated_module_slot_local_decl_collisions(source: &str) -> String {
         }
     }
 
+    // Rename by binding, not by nearest block: `var` hoists, so a
+    // colliding local declared inside a tiny `else{...}` is referenced
+    // throughout the whole enclosing function. Renaming only the
+    // declaration's block left the hoisted references resolving to the
+    // top-level module wrapper (`TypeError: xa is not a function` on
+    // react-dom event dispatch). Resolve every identifier occurrence
+    // through the scope model and rename exactly the tokens bound to
+    // the colliding declaration.
+    let si = build_scopes(source, &tokens);
+    let mut repaired: HashSet<(String, usize)> = HashSet::new();
     let mut repls = Vec::new();
     let mut i = 0usize;
     while i < tokens.len() {
@@ -247,26 +260,39 @@ fn repair_generated_module_slot_local_decl_collisions(source: &str) -> String {
             if !slot_names.contains(name) {
                 continue;
             }
-            let Some(block_open) = nearest_unclosed_opening_punct_index(source, &tokens, decl_ti)
+            let Some(decl_scope) =
+                resolve_decl_scope(name, si.token_scope[decl_ti], &si.scopes)
             else {
                 continue;
             };
-            if !matches_punct(source, &tokens, block_open, "{") {
+            // Top-level binding IS the wrapper slot itself; nothing to do.
+            if decl_scope == 0 {
                 continue;
             }
-            let Some(block_close) = matching_punct_token(source, &tokens, block_open, "{", "}")
-            else {
+            if !repaired.insert((name.to_string(), decl_scope)) {
                 continue;
-            };
+            }
             let replacement = fresh_repair_identifier(name, &mut used_names);
-            for ti in (block_open + 1)..block_close {
+            for ti in 0..tokens.len() {
                 if tokens[ti].kind != TK::Ident || txt(source, &tokens[ti]) != name {
                     continue;
                 }
                 if should_skip_identifier_rename(source, &tokens, ti) {
                     continue;
                 }
-                repls.push((tokens[ti].start, tokens[ti].end, replacement.clone()));
+                // Wrapper-slot usages keep the slot name even when the
+                // flattener merged the wrapper and the local into one
+                // scope: the slot declaration itself and `<name>.exports`
+                // accesses address the module wrapper, not the local.
+                if slot_decl_name_tokens.contains(&ti)
+                    || (matches_punct(source, &tokens, ti + 1, ".")
+                        && matches_ident(source, &tokens, ti + 2, "exports"))
+                {
+                    continue;
+                }
+                if resolve_decl_scope(name, si.token_scope[ti], &si.scopes) == Some(decl_scope) {
+                    repls.push((tokens[ti].start, tokens[ti].end, replacement.clone()));
+                }
             }
         }
 
@@ -1576,6 +1602,8 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                                                 // would lose the outer `in_decl` when the inner `var` resets it.
     let mut decl_state_stack: Vec<(bool, bool, bool, i32, i32, i32, i32)> = Vec::new();
     let mut expect_fn_params = false;
+    let mut pending_class = false; // between `class` and its body `{`
+    let mut expect_class_name = false; // expecting the class name ident
     let mut pending_fn_name: Option<String> = None;
     let mut pending_fn_name_token: Option<usize> = None;
     let mut pending_fn_is_declaration = false;
@@ -1624,7 +1652,36 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                     decl_object_pattern_depth = 0;
                     continue;
                 }
+                "class" => {
+                    // Not the keyword when used as an object-literal key
+                    // (`{class: ...}`); a `:` follows in that case.
+                    if !matches_punct(source, tokens, i + 1, ":") {
+                        // The class body `{` must open a real scope. Without
+                        // this, a class expression inside a declaration
+                        // initializer was absorbed into decl_brace_depth, a
+                        // `let`/`var` inside a method body reset that counter,
+                        // and the class's closing braces popped real scopes —
+                        // collapsing the model to the program root and letting
+                        // NameGen mint names that collided with later `class`
+                        // declarations (duplicate-declaration SyntaxError in
+                        // styled-components bundles).
+                        pending_class = true;
+                        expect_class_name = true;
+                        continue;
+                    }
+                }
+                "extends" if pending_class => {
+                    // Anonymous `class extends Base {` — no name to record.
+                    expect_class_name = false;
+                    continue;
+                }
                 _ => {}
+            }
+            if expect_class_name {
+                // Class names are block-scoped declarations like `let`.
+                scopes[cur].decls.insert(name.to_string());
+                expect_class_name = false;
+                continue;
             }
             if in_decl && decl_object_pattern_depth > 0 {
                 if is_object_pattern_binding_identifier(source, tokens, i) {
@@ -1797,6 +1854,38 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                         param_depth += 1;
                         continue;
                     }
+                    if pending_class {
+                        // Class body: open a real scope and save the decl
+                        // state exactly like a function body, so methods'
+                        // `var`/`let` declarations cannot corrupt an
+                        // enclosing declaration's brace bookkeeping.
+                        pending_class = false;
+                        expect_class_name = false; // anonymous `class {`
+                        decl_state_stack.push((
+                            in_decl,
+                            expect_decl_name,
+                            decl_is_var,
+                            decl_paren_depth,
+                            decl_brace_depth,
+                            decl_bracket_depth,
+                            decl_object_pattern_depth,
+                        ));
+                        in_decl = false;
+                        expect_decl_name = false;
+                        decl_paren_depth = 0;
+                        decl_brace_depth = 0;
+                        decl_bracket_depth = 0;
+                        decl_object_pattern_depth = 0;
+                        let new_id = scopes.len();
+                        scopes.push(Scope {
+                            parent: Some(cur),
+                            is_function: true,
+                            decls: HashSet::new(),
+                        });
+                        stack.push(new_id);
+                        ts[i] = new_id;
+                        continue;
+                    }
                     if let Some(fn_id) = pending_fn.take() {
                         // Entering a function scope: save current decl state.
                         // Inner `var` declarations will reset in_decl, and we
@@ -1855,6 +1944,15 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                         }
                         decl_brace_depth -= 1;
                         continue;
+                    }
+                    if in_decl {
+                        // A block-closing `}` with no open decl braces ends
+                        // the declaration implicitly (`{var na=1}` — ASI at
+                        // block close). Leaving in_decl set made the next
+                        // block's `{` get swallowed into decl_brace_depth,
+                        // and its `}` then popped a real scope.
+                        in_decl = false;
+                        expect_decl_name = false;
                     }
                     if stack.len() > 1 {
                         let leaving_scope = stack.pop().unwrap();
@@ -3022,6 +3120,70 @@ mod tests {
         }
     }
 
+    /// Regression: a colliding `var` declared inside a nested block hoists
+    /// to the whole function — the repair must rename the references that
+    /// live OUTSIDE that block too, or they resolve to the module wrapper
+    /// at runtime (`TypeError: xa is not a function` on react-dom event
+    /// dispatch in the tailwind corpus case).
+    #[test]
+    fn test_slot_collision_repair_covers_hoisted_refs_outside_block() {
+        let src = r#"(function(){var xa={exports:{}};!function(module,exports){function dispatch(d){if(d){var na=1}else{na=2;var xa=getTargetInst(d)}xa&&xa(d);xa=d?win(d):window;return na}module.exports=dispatch}(xa,xa.exports);})()"#;
+        let out = repair_generated_module_slot_local_decl_collisions(src);
+        assert!(
+            out.contains("var __jet_local_xa=getTargetInst"),
+            "colliding var decl must be renamed: {out}"
+        );
+        assert!(
+            out.contains("__jet_local_xa&&__jet_local_xa(d)"),
+            "hoisted references outside the else-block must be renamed: {out}"
+        );
+        assert!(
+            out.contains("}(xa,xa.exports)"),
+            "wrapper call args must keep the slot name: {out}"
+        );
+        assert!(
+            out.contains("var xa={exports:{}}"),
+            "the slot declaration must keep its name: {out}"
+        );
+    }
+
+    /// Regression: a class expression in a declaration initializer must not
+    /// corrupt scope bookkeeping. Previously the class body was absorbed
+    /// into decl_brace_depth, a `let` in a method reset that counter, the
+    /// closing braces popped real scopes, and NameGen later minted a name
+    /// colliding with a sibling `class` declaration (duplicate-declaration
+    /// SyntaxError in styled-components bundles).
+    #[test]
+    fn test_class_expression_in_decl_keeps_scope_stack_intact() {
+        let src = "(function(){var hoisted=1;const a=class{m(){let x=1;return x}},b=2;\
+                   class _e{static go(){return 1}}var _m8_renameme=3;use(a,b,_e,_m8_renameme,hoisted);})()";
+        let tokens = tokenize(src);
+        let si = build_scopes(src, &tokens);
+        // `b`, `_e`, and the trailing var must all live in the IIFE scope
+        // (non-root); scope collapse put them at root.
+        for name in ["b", "_e", "_m8_renameme"] {
+            let scope = si
+                .scopes
+                .iter()
+                .position(|s| s.decls.contains(name))
+                .unwrap_or_else(|| panic!("{name} not declared anywhere"));
+            assert_ne!(scope, 0, "{name} collapsed to the root scope");
+        }
+        // And a full mangle round-trip must not create duplicate
+        // declarations with existing class names.
+        let out = mangle_variables_with_root(src);
+        let class_pos = out.find("class ").expect("class survives");
+        let class_name: String = out[class_pos + 6..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+            .collect();
+        let var_dup = format!("var {class_name},");
+        assert!(
+            !out.contains(&var_dup),
+            "mangle minted a var colliding with class {class_name}: {out}"
+        );
+    }
+
     /// Regression: a `for (var k in obj) { ... var inner = ...; ... }` body
     /// must stay a real scope. The for-head `)` previously left `in_decl`
     /// set, the body `{` was swallowed into decl_brace_depth, the inner
@@ -3112,6 +3274,18 @@ mod tests {
                     );
                 }
             }
+        }
+        if let Ok(out_path) = std::env::var("JET_MANGLE_DEBUG_OUT") {
+            let mangled = if std::env::var("JET_MANGLE_DEBUG_MODE").as_deref() == Ok("noroot") {
+                mangle_variables(&src)
+            } else {
+                mangle_variables_with_root(&src)
+            };
+            std::fs::write(&out_path, &mangled).unwrap();
+            println!(
+                "wrote mangled output to {out_path}; tree_sitter_parses={}",
+                crate::bundler::dce::js_parses_without_errors(&mangled)
+            );
         }
         let probes = ["_r", "_m0_jsx", "_m0_jsxs", "_m0_React", "_m0e"];
         for (sid, scope) in si.scopes.iter().enumerate() {

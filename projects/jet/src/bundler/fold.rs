@@ -164,8 +164,14 @@ fn is_id(c: u8) -> bool {
 }
 
 /// Push a string literal into `out`, return index past closing quote.
+/// Template literals are copied verbatim with full `${...}` awareness.
 fn push_string(b: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
     let q = b[start];
+    if q == b'`' {
+        let end = skip_template(b, start);
+        out.extend_from_slice(&b[start..end]);
+        return end;
+    }
     out.push(q);
     let mut i = start + 1;
     while i < b.len() {
@@ -264,6 +270,9 @@ fn push_regex(b: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
 /// Skip a string literal, return index past closing quote.
 fn skip_string(b: &[u8], start: usize) -> usize {
     let q = b[start];
+    if q == b'`' {
+        return skip_template(b, start);
+    }
     let mut i = start + 1;
     while i < b.len() {
         if b[i] == b'\\' {
@@ -274,6 +283,43 @@ fn skip_string(b: &[u8], start: usize) -> usize {
             return i + 1;
         }
         i += 1;
+    }
+    i
+}
+
+/// Skip a template literal, honoring `${...}` interpolations whose
+/// expressions may contain quotes and NESTED template literals
+/// (styled-components: `` `<style ${le([t && `nonce="${t}"`])}>` ``).
+/// Stopping at the first inner backtick desynchronized the scanner and
+/// later fold passes rewrote real string content as code.
+fn skip_template(b: &[u8], start: usize) -> usize {
+    debug_assert_eq!(b[start], b'`');
+    let mut i = start + 1;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 2,
+            b'`' => return i + 1,
+            b'$' if i + 1 < b.len() && b[i + 1] == b'{' => {
+                i += 2;
+                let mut depth = 1usize;
+                while i < b.len() && depth > 0 {
+                    match b[i] {
+                        b'{' => {
+                            depth += 1;
+                            i += 1;
+                        }
+                        b'}' => {
+                            depth -= 1;
+                            i += 1;
+                        }
+                        b'"' | b'\'' | b'`' => i = skip_string(b, i),
+                        b'\\' => i += 2,
+                        _ => i += 1,
+                    }
+                }
+            }
+            _ => i += 1,
+        }
     }
     i
 }
@@ -385,6 +431,16 @@ fn fold_string_concat(source: &str) -> String {
             i = push_string(b, i, &mut out);
             continue;
         }
+        // Regex literals may contain quotes and backticks inside character
+        // classes (styled-components: /[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~-]+/g).
+        // Without this skip, the scanner started a fake string at the
+        // in-class quote, every later quote paired off-by-one, and the
+        // merge branch deleted real string content (`"+"` vanished from
+        // e.indexOf("+") and concat chains).
+        if b[i] == b'/' && is_regex_ctx(out.last().copied().unwrap_or(0)) {
+            i = push_regex(b, i, &mut out);
+            continue;
+        }
 
         out.push(b[i]);
         i += 1;
@@ -403,6 +459,12 @@ fn fold_numeric_bitwise(source: &str) -> String {
     while i < len {
         if matches!(b[i], b'"' | b'\'' | b'`') {
             i = push_string(b, i, &mut out);
+            continue;
+        }
+        // Same regex-literal hazard as fold_string_concat: character
+        // classes may contain quotes/backticks/digits.
+        if b[i] == b'/' && is_regex_ctx(out.last().copied().unwrap_or(0)) {
+            i = push_regex(b, i, &mut out);
             continue;
         }
 
@@ -509,11 +571,69 @@ mod tests {
         assert_eq!(fold_constants("typeof x"), "typeof x");
     }
 
+    /// Env-gated probe: JET_FOLD_DEBUG_INPUT=<file> [JET_FOLD_DEBUG_OUT=<file>]
+    /// runs fold_constants over a real bundle for corruption bisection.
+    #[test]
+    fn debug_fold_input() {
+        let Ok(p) = std::env::var("JET_FOLD_DEBUG_INPUT") else {
+            return;
+        };
+        let src = std::fs::read_to_string(p).unwrap();
+        let out = fold_constants(&src);
+        if let Ok(out_path) = std::env::var("JET_FOLD_DEBUG_OUT") {
+            std::fs::write(&out_path, &out).unwrap();
+            println!("wrote fold output to {out_path}");
+        }
+    }
+
     // ---- R4: string concat ----
 
     #[test]
     fn test_fold_string_concat() {
         assert_eq!(fold_constants(r#""hello "+"world""#), r#""hello world""#);
+    }
+
+    /// Regression: regex literals whose character classes contain quotes
+    /// and backticks must be skipped, not scanned as strings. The styled-
+    /// components escape regex desynchronized quote pairing for the rest
+    /// of the file and the concat-merge branch then deleted real string
+    /// content (`"+"` vanished from `e.indexOf("+")`).
+    #[test]
+    fn test_fold_skips_regex_with_quotes_in_character_class() {
+        let src = r##"const j=/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~-]+/g,x=/(^-|-$)/g;function T(e){return e.replace(j,"-").replace(x,"")}if(-1===e.indexOf("+"))return;t.push(n+"+"+jt+"+"+o);"##;
+        let out = fold_constants(src);
+        assert!(
+            out.contains(r##"/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~-]+/g"##),
+            "regex literal must survive verbatim: {out}"
+        );
+        assert!(
+            out.contains(r#"e.indexOf("+")"#),
+            "string args after the regex must stay intact: {out}"
+        );
+        assert!(
+            out.contains(r#"n+"+"+jt+"+"+o"#),
+            "concat chains with plus-sign strings must stay intact: {out}"
+        );
+    }
+
+    /// Regression: template literals with nested templates inside `${...}`
+    /// must be copied verbatim. The scanner used to stop at the first inner
+    /// backtick, desynchronizing string state for the rest of the file, and
+    /// later fold passes rewrote real string content as code
+    /// (styled-components ServerStyleSheet/stylisPluginRSC corruption).
+    #[test]
+    fn test_fold_preserves_nested_template_literals() {
+        let src = r#"const css=()=>`<style ${le([t&&`nonce="${t}"`,`${c}="!0"`].filter(Boolean)," ")}>${e}</style>`;t.push(n+`${jt}+`+o);t.push("a"+"b");"#;
+        let out = fold_constants(src);
+        assert!(
+            out.contains(r#"`<style ${le([t&&`nonce="${t}"`,`${c}="!0"`].filter(Boolean)," ")}>${e}</style>`"#),
+            "nested templates must survive verbatim: {out}"
+        );
+        assert!(
+            out.contains(r#"t.push(n+`${jt}+`+o)"#),
+            "template content after a nested template must stay intact: {out}"
+        );
+        assert!(out.contains(r#""ab""#), "plain concat still folds: {out}");
     }
 
     #[test]

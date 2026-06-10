@@ -1513,18 +1513,26 @@ createRoot(document.getElementById("root")!).render(<App />);"##;
         let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
         let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
         let defines = crate::bundler::define::production_defines();
+        let dump = |stage: &str, code: &str| {
+            if let Ok(dir) = std::env::var("JET_TEST_DUMP_STAGES") {
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::write(format!("{dir}/{stage}.js"), code);
+            }
+        };
         let mut post_processed = crate::bundler::define::replace_defines(&after_r5, &defines);
+        dump("a-defines", &post_processed);
         post_processed = crate::bundler::minify::minify_js(&post_processed, &[]);
+        dump("b-minify", &post_processed);
         post_processed = crate::bundler::minify::replace_bool_literals(&post_processed);
+        dump("c-bool", &post_processed);
         post_processed = crate::bundler::mangle::mangle_variables(&post_processed);
+        dump("d-mangle", &post_processed);
         post_processed = crate::bundler::fold::fold_constants(&post_processed);
+        dump("e-fold", &post_processed);
 
-        for (stage, code) in [
-            ("raw", &raw),
-            ("after_r4", &after_r4),
-            ("after_r5", &after_r5),
-            ("post_processed", &post_processed),
-        ] {
+        // Pre-mangle stages must keep the entry bindings under their
+        // generated names (R4/R5 must not eliminate live bindings).
+        for (stage, code) in [("raw", &raw), ("after_r4", &after_r4), ("after_r5", &after_r5)] {
             for name in [
                 "_m0_jsx",
                 "_m0_jsxs",
@@ -1541,6 +1549,16 @@ createRoot(document.getElementById("root")!).render(<App />);"##;
                 );
             }
         }
+        // After mangling the bindings may be legitimately renamed (the
+        // scope model attributes IIFE-body declarations correctly now);
+        // what must hold is that the optimized bundle still parses.
+        if let Ok(dump) = std::env::var("JET_TEST_DUMP_POST") {
+            let _ = std::fs::write(&dump, &post_processed);
+        }
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&post_processed),
+            "post_processed bundle must parse"
+        );
     }
 
     #[tokio::test]
