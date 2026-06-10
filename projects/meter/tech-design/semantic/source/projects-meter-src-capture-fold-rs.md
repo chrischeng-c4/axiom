@@ -57,6 +57,7 @@ use super::sampler::FoldedStack;
 /// Per-symbol aggregated hot-spot metrics (the raw numbers behind a `Hotspot`
 /// finding's evidence).
 #[derive(Debug, Clone, PartialEq)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
 pub struct Hotspot {
     /// The symbol (function) name.
     pub symbol: String,
@@ -80,6 +81,7 @@ pub struct Hotspot {
 /// `effective_hz` maps samples -> ns (`ns = samples * 1e9 / hz`). Returns an
 /// empty vec for empty input. Ordering is deterministic: primary key `self_ns`
 /// desc, ties broken by `symbol` asc so equal-weight symbols rank stably.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
 pub fn aggregate(stacks: &[FoldedStack], effective_hz: f64) -> Vec<Hotspot> {
     let total_samples_overall: u64 = stacks.iter().map(|s| s.count).sum();
     if total_samples_overall == 0 {
@@ -154,15 +156,69 @@ pub fn aggregate(stacks: &[FoldedStack], effective_hz: f64) -> Vec<Hotspot> {
 /// This is the DEFAULT stdout of `meter profile`. The findings carry
 /// `evidence = {symbol, self_ns, total_ns, pct, samples, rank}` — the C1
 /// contract. `module_for` (optional) supplies a source symbol/location hint.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
 pub fn fold_hotspots(
     stacks: &[FoldedStack],
     effective_hz: f64,
     fail_hot: Option<f64>,
 ) -> Vec<Finding> {
-    aggregate(stacks, effective_hz)
+    let hotspots = aggregate(stacks, effective_hz);
+    let total_self: u64 = hotspots.iter().map(|h| h.self_samples).sum();
+    let unsym_self: u64 = hotspots
+        .iter()
+        .filter(|h| h.symbol == UNSYMBOLICATED_SYMBOL)
+        .map(|h| h.self_samples)
+        .sum();
+    let unsym_dominant =
+        total_self > 0 && unsym_self as f64 / total_self as f64 > UNSYMBOLICATED_WARN_SHARE;
+    hotspots
         .into_iter()
-        .map(|h| hotspot_finding(&h, fail_hot))
+        .map(|h| {
+            if unsym_dominant && h.symbol == UNSYMBOLICATED_SYMBOL {
+                unsymbolicated_finding(&h, fail_hot)
+            } else {
+                hotspot_finding(&h, fail_hot)
+            }
+        })
         .collect()
+}
+
+/// The leaf symbol the platform sampler emits for a frame it could not
+/// symbolicate (stripped binary / missing debug info).
+const UNSYMBOLICATED_SYMBOL: &str = "???";
+
+/// Self-sample share above which unsymbolicated leaves mean the MEASUREMENT is
+/// broken (the target binary has no symbols), not that the workload is hot in
+/// unknown code. Past this share the `???` hot spot is escalated to a warning
+/// so the report is non-clean and carries a rebuild-with-symbols remediation.
+const UNSYMBOLICATED_WARN_SHARE: f64 = 0.5;
+
+/// The `???` hot spot when it DOMINATES self time: a `Medium` (at least)
+/// finding telling the agent the profile is unusable until the target is
+/// rebuilt with symbols, instead of a "clean" report ranking `???` as the
+/// thing to optimize.
+fn unsymbolicated_finding(h: &Hotspot, fail_hot: Option<f64>) -> Finding {
+    let mut f = hotspot_finding(h, fail_hot);
+    // Escalate to at least Medium (a `--fail-hot` High stays High).
+    if matches!(f.severity, Severity::Low | Severity::Info) {
+        f.severity = Severity::Medium;
+    }
+    let pct_display = h.pct * 100.0;
+    f.title = format!(
+        "unsymbolicated frames dominate sampling ({pct_display:.1}% self) — target has no symbols"
+    );
+    f.detail = format!(
+        "{:.1}% of self samples fold to `???` leaves, so the ranked hot spots cannot name the \
+         code that is actually hot. The sampled binary was most likely built without symbols \
+         (e.g. a release profile with `strip = true`).",
+        pct_display,
+    );
+    f.remediation = "Rebuild the target with symbols and re-profile: \
+                     `CARGO_PROFILE_RELEASE_STRIP=false CARGO_PROFILE_RELEASE_DEBUG=true \
+                     cargo build --release`, or add a dedicated `[profile.profiling]` that \
+                     inherits release with `strip = false, debug = true`."
+        .to_string();
+    f
 }
 
 /// Convert one aggregated [`Hotspot`] into a `Finding{kind:Hotspot}`.
@@ -217,6 +273,7 @@ fn hotspot_finding(h: &Hotspot, fail_hot: Option<f64>) -> Finding {
 ///
 /// Returns a [`FlamegraphData`] ready for
 /// [`generate_flamegraph_svg`](crate::performance::profiler::generate_flamegraph_svg).
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-fold-rs.md#source
 pub fn to_flamegraph(stacks: &[FoldedStack]) -> FlamegraphData {
     let mut data = FlamegraphData::new();
     for stack in stacks {
@@ -246,6 +303,42 @@ mod tests {
 
     // 1000 Hz => 1ms per sample => 1_000_000 ns/sample (round number for asserts).
     const HZ: f64 = 1000.0;
+
+    #[test]
+    fn unsymbolicated_dominant_escalates_to_medium_warning() {
+        // 70% of self samples fold to `???` — the measurement is broken.
+        let stacks = vec![
+            FoldedStack::new(vec!["main".into(), "???".into()], 70),
+            FoldedStack::new(vec!["main".into(), "hot".into()], 30),
+        ];
+        let findings = fold_hotspots(&stacks, HZ, None);
+        let unsym = findings
+            .iter()
+            .find(|f| f.id == "hotspot:???")
+            .expect("??? finding present");
+        assert_eq!(unsym.severity, Severity::Medium);
+        assert!(unsym.title.contains("unsymbolicated"), "{}", unsym.title);
+        assert!(
+            unsym.remediation.contains("CARGO_PROFILE_RELEASE_STRIP"),
+            "{}",
+            unsym.remediation
+        );
+        // The symbolized hotspot stays informational.
+        let hot = findings.iter().find(|f| f.id == "hotspot:hot").unwrap();
+        assert_eq!(hot.severity, Severity::Info);
+    }
+
+    #[test]
+    fn unsymbolicated_minority_stays_informational() {
+        // 20% `???` is normal (JIT frames, dyld stubs) — no escalation.
+        let stacks = vec![
+            FoldedStack::new(vec!["main".into(), "???".into()], 20),
+            FoldedStack::new(vec!["main".into(), "hot".into()], 80),
+        ];
+        let findings = fold_hotspots(&stacks, HZ, None);
+        assert!(findings.iter().all(|f| f.severity == Severity::Info));
+        assert!(findings.iter().all(|f| !f.title.contains("unsymbolicated")));
+    }
 
     #[test]
     fn aggregate_splits_self_and_total() {
