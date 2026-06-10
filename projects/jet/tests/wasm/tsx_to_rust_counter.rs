@@ -11,7 +11,7 @@
 
 use jet::tsx_to_rust::transpile;
 
-const COUNTER_TSX: &str = include_str!("fixtures/tsx_to_rust_counter.tsx");
+const COUNTER_TSX: &str = include_str!("../fixtures/tsx_to_rust_counter.tsx");
 
 #[test]
 fn counter_transpiles_without_error() {

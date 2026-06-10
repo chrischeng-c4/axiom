@@ -12,6 +12,7 @@
 //! for non-Copy captured state) and on non-Copy prop fields feeding
 //! `use_state`.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

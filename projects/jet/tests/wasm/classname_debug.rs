@@ -7,6 +7,7 @@
 //! that value flows all the way to the serialized element tree the
 //! debug bridge exposes.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

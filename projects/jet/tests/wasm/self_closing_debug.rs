@@ -7,6 +7,7 @@
 //! `elementTree` as intrinsic nodes with an empty children array,
 //! correctly positioned as siblings (before + after a button).
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

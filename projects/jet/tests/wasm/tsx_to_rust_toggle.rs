@@ -9,7 +9,7 @@
 
 use jet::tsx_to_rust::transpile;
 
-const TOGGLE_TSX: &str = include_str!("fixtures/tsx_to_rust_toggle.tsx");
+const TOGGLE_TSX: &str = include_str!("../fixtures/tsx_to_rust_toggle.tsx");
 
 #[test]
 fn toggle_transpiles_without_error() {

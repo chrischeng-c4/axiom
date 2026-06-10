@@ -7,6 +7,7 @@
 //! comes out actually behaves when mounted + clicked + flushed in a
 //! real browser.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

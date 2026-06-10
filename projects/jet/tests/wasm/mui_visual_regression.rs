@@ -7,6 +7,7 @@
 //! by `jet install`, render non-blank content in Chromium, and give Jet WASM a
 //! comparable external page surface.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use anyhow::{anyhow, Context, Result};

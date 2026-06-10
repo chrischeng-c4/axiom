@@ -10,14 +10,14 @@ capability_refs:
     rationale: "Traceability repair: this existing Jet TD/source edge supports the aggregate production replacement capability."
 ---
 
-# Standardized projects/jet/tests/tree_shaking.rs
+# Standardized projects/jet/tests/build/tree_shaking.rs
 
 ## Changes
 <!-- type: changes lang: yaml -->
 
 ```yaml
 changes:
-  - path: projects/jet/tests/tree_shaking.rs
+  - path: projects/jet/tests/build/tree_shaking.rs
     action: modify
     section: unit-test
     impl_mode: hand-written

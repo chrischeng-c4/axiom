@@ -10,9 +10,9 @@
 use jet::tsx_to_rust::{transpile, transpile_compat_with_source};
 
 const MUI_VISUAL_FIXTURE_TSX: &str =
-    include_str!("../../../examples/mui-visual-demo/src/MuiVisualFixture.tsx");
+    include_str!("../../../../examples/mui-visual-demo/src/MuiVisualFixture.tsx");
 const ANTD_VISUAL_FIXTURE_TSX: &str =
-    include_str!("../../../examples/antd-visual-demo/src/AntdVisualFixture.tsx");
+    include_str!("../../../../examples/antd-visual-demo/src/AntdVisualFixture.tsx");
 
 #[test]
 fn react_imports_do_not_block_transpile() {

@@ -10,6 +10,7 @@
 //! Chinese + emoji (4-byte UTF-8) + Cyrillic covers 3-, 4-, and
 //! 2-byte sequences in one test.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

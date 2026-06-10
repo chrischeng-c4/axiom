@@ -11,7 +11,7 @@
 
 use jet::tsx_to_rust::transpile;
 
-const FIXTURE: &str = include_str!("fixtures/tsx_to_rust_i18n_copy_constants.tsx");
+const FIXTURE: &str = include_str!("../fixtures/tsx_to_rust_i18n_copy_constants.tsx");
 
 #[test]
 fn top_level_string_const_passes_through() {

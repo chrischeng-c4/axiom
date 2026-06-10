@@ -11,6 +11,7 @@
 //! is reserved for the one targeted fiber-hook-count check, which
 //! is a React-specific concern.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

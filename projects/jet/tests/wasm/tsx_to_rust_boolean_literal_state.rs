@@ -9,7 +9,7 @@
 
 use jet::tsx_to_rust::transpile;
 
-const FIXTURE: &str = include_str!("fixtures/tsx_to_rust_boolean_literal_state.tsx");
+const FIXTURE: &str = include_str!("../fixtures/tsx_to_rust_boolean_literal_state.tsx");
 
 #[test]
 fn boolean_literal_initializer_yields_bool_turbofish() {

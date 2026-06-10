@@ -581,7 +581,7 @@ changes:
     section: "logic"
     impl_mode: "hand-written"
     rationale: "Collect runtime metadata, debug trees, hook values, and paint ops from the live WASM debug bridge."
-  - path: "projects/jet/tests/browser_cli_smoke.rs"
+  - path: "projects/jet/tests/browser-bridge/browser_cli_smoke.rs"
     action: "modify"
     section: "e2e-test"
     impl_mode: "hand-written"

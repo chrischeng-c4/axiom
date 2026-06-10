@@ -9,6 +9,7 @@
 //!   vertical stack handles 100 intrinsic children without
 //!   collapsing or dropping.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

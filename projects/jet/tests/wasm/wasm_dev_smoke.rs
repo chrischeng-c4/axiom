@@ -7,6 +7,7 @@
 //! Requires `wasm-pack`. Missing prerequisites fail so wasm dev-server
 //! readiness cannot be claimed by skipped tests.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use jet::wasm_dev::{self, DevOptions};

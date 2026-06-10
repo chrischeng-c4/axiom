@@ -9,6 +9,7 @@
 //!   `[...Array(N)].map((_, idx) => body)` and emits
 //!   `Element::Fragment((0..N).map(|idx| body).collect())`.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

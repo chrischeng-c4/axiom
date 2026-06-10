@@ -7,6 +7,7 @@
 //! anything in the commit loop assumes at least one hook, this
 //! test surfaces it.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

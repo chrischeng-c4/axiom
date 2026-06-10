@@ -6,7 +6,7 @@
 
 use tree_sitter::{Node, Parser};
 
-const COUNTER_TSX: &str = include_str!("fixtures/tsx_to_rust_counter.tsx");
+const COUNTER_TSX: &str = include_str!("../fixtures/tsx_to_rust_counter.tsx");
 
 fn print_tree(node: Node, source: &str, depth: usize) {
     let prefix = "  ".repeat(depth);

@@ -5,6 +5,7 @@
 //! Confirms the transpiler's recursive element emission + the
 //! renderer's layout over multiple tag layers.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

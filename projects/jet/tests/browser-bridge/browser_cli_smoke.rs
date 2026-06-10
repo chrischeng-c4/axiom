@@ -18,6 +18,7 @@
 //! Requires `wasm-pack` + Chromium. Missing prerequisites fail so
 //! browser/WASM readiness cannot be claimed by skipped tests.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use jet::browser_cli;

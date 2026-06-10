@@ -1,5 +1,6 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-tests.md#tests
 // CODEGEN-BEGIN
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::{canvas_spy, react_oracle};

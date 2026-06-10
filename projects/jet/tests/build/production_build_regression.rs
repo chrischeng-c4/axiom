@@ -7,6 +7,7 @@
 //! the emitted `dist/index.html` over local HTTP. A plain build-complete line is not enough:
 //! the built page must boot visibly and without browser console failures.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use anyhow::{anyhow, Context, Result};

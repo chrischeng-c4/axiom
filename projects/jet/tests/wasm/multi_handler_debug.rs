@@ -3,6 +3,7 @@
 //! Runtime verification for multiple `onClick` handlers within one
 //! component — each handler must only mutate its own state slot.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

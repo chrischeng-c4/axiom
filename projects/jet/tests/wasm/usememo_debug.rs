@@ -7,6 +7,7 @@
 //! hook count, both slot kinds, and that the derived value tracks
 //! the state value across a click.
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;

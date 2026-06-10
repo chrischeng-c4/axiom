@@ -21,6 +21,7 @@
 //! behaviour above 2^53 is documented in `conformance.md` as an
 //! intentional divergence (JS interop, not a runtime bug).
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::JetTestApp;
