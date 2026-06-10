@@ -147,6 +147,7 @@ pub fn eliminate_unused_side_effect_free_require_bindings(
 pub(crate) fn eliminate_unused_reexport_assignments(
     source: &str,
     used: &HashSet<String>,
+    star_leaf_exports: Option<&dyn Fn(usize) -> Option<Vec<String>>>,
 ) -> String {
     // "*" marks whole-namespace consumption (import * as ns, namespace-style
     // CJS requires, dynamic import) — every export may be read at runtime,
@@ -165,7 +166,7 @@ pub(crate) fn eliminate_unused_reexport_assignments(
     });
     let star = STAR.get_or_init(|| {
         regex::Regex::new(
-            r#"var __re = require\(\d+\); Object\.keys\(__re\)\.forEach\(function\(k\) \{ if \(k !== "default"\) module\.exports\[k\] = __re\[k\]; \}\);\s?"#,
+            r#"var __re = require\((\d+)\); Object\.keys\(__re\)\.forEach\(function\(k\) \{ if \(k !== "default"\) module\.exports\[k\] = __re\[k\]; \}\);\s?"#,
         )
         .unwrap()
     });
@@ -174,36 +175,83 @@ pub(crate) fn eliminate_unused_reexport_assignments(
         .captures_iter(source)
         .map(|cap| cap.get(1).map(|m| m.as_str()).unwrap_or(""))
         .collect();
-    let star_needed = used
-        .iter()
-        .any(|name| name != "default" && !explicit_names.contains(name.as_str()));
 
-    let mut removals: Vec<(usize, usize)> = Vec::new();
+    // Names that must flow through the star copies: used on this barrel but
+    // not provided by an explicit assignment.
+    let mut star_needed_names: HashSet<&str> = used
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|name| *name != "default" && !explicit_names.contains(*name))
+        .collect();
+
+    // Edits: removals plus star materializations (replacement text).
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
     for cap in explicit.captures_iter(source) {
         let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
         if !used.contains(name) {
             let whole = cap.get(0).unwrap();
-            removals.push((whole.start(), whole.end()));
+            edits.push((whole.start(), whole.end(), String::new()));
         }
     }
-    if !star_needed {
+
+    // Star loops: materialize the needed names as explicit assignments so
+    // the dynamic Object.keys copy (which retains the WHOLE target module
+    // graph) disappears. Without leaf-export knowledge the loop is kept
+    // only when names still need it.
+    let mut stars_resolvable = star_leaf_exports.is_some();
+    if stars_resolvable {
+        for cap in star.captures_iter(source) {
+            let id_ok = cap
+                .get(1)
+                .and_then(|m| m.as_str().parse::<usize>().ok())
+                .and_then(|id| star_leaf_exports.and_then(|f| f(id)))
+                .is_some();
+            if !id_ok {
+                stars_resolvable = false;
+                break;
+            }
+        }
+    }
+    if stars_resolvable {
+        let lookup = star_leaf_exports.unwrap();
+        for cap in star.captures_iter(source) {
+            let whole = cap.get(0).unwrap();
+            let id: usize = cap[1].parse().unwrap_or(usize::MAX);
+            let leaf = lookup(id).unwrap_or_default();
+            let claimed: Vec<&str> = leaf
+                .iter()
+                .map(|s| s.as_str())
+                .filter(|n| star_needed_names.contains(*n))
+                .collect();
+            let mut replacement = String::new();
+            for name in &claimed {
+                replacement.push_str(&format!(
+                    "module.exports[\"{name}\"] = require({id})[\"{name}\"]; "
+                ));
+                star_needed_names.remove(*name);
+            }
+            edits.push((whole.start(), whole.end(), replacement));
+        }
+    } else if star_needed_names.is_empty() {
         for m in star.find_iter(source) {
-            removals.push((m.start(), m.end()));
+            edits.push((m.start(), m.end(), String::new()));
         }
     }
-    if removals.is_empty() {
+
+    if edits.is_empty() {
         return source.to_string();
     }
-    removals.sort_unstable();
+    edits.sort_by_key(|(start, _, _)| *start);
 
     let b = source.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut pos = 0usize;
-    for (start, end) in removals {
+    for (start, end, replacement) in edits {
         if start < pos {
             continue;
         }
         out.extend_from_slice(&b[pos..start]);
+        out.extend_from_slice(replacement.as_bytes());
         pos = end;
     }
     out.extend_from_slice(&b[pos..]);

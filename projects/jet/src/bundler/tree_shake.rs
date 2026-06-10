@@ -84,6 +84,9 @@ pub(crate) fn tree_shake_module_path_matches_any_glob(
 pub struct TreeShakeResult {
     /// Module path → set of used export names.
     pub used_exports: HashMap<PathBuf, HashSet<String>>,
+    /// Module path → every export name the module declares (ESM + CJS).
+    /// Star re-export materialization needs the leaf's full surface.
+    pub all_exports: HashMap<PathBuf, Vec<String>>,
     /// Modules entirely eliminated (no used exports, no side effects).
     pub eliminated_modules: Vec<PathBuf>,
     /// Estimated bytes eliminated.
@@ -333,6 +336,7 @@ pub fn analyze_used_exports_from(
 
     Ok(TreeShakeResult {
         used_exports: used,
+        all_exports,
         eliminated_modules: eliminated,
         eliminated_bytes,
     })

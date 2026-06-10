@@ -970,14 +970,24 @@ impl Bundler {
         // rescue criterion ("any retained module's code contains _r(id)")
         // resurrected every barrel re-export target — unconditional barrel
         // glue re-imported ~170KB of eliminated MUI code.
+        let id_to_path: HashMap<usize, &PathBuf> =
+            modules.iter().map(|m| (m.id, &m.path)).collect();
+        let star_leaf_exports = |id: usize| -> Option<Vec<String>> {
+            id_to_path
+                .get(&id)
+                .and_then(|path| analysis.all_exports.get(*path))
+                .cloned()
+        };
         let mut pruned_codes: HashMap<usize, String> = modules
             .iter()
             .filter(|m| !eliminated_paths.contains(&m.path))
             .map(|m| {
                 let code = match analysis.used_exports.get(&m.path) {
-                    Some(used) if !used.is_empty() => {
-                        dce::eliminate_unused_reexport_assignments(&m.code, used)
-                    }
+                    Some(used) if !used.is_empty() => dce::eliminate_unused_reexport_assignments(
+                        &m.code,
+                        used,
+                        Some(&star_leaf_exports),
+                    ),
                     _ => m.code.clone(),
                 };
                 (m.id, code)

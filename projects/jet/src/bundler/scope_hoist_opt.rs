@@ -325,7 +325,204 @@ pub fn eliminate_unused_exports(code: &str) -> String {
         result = remove_var_declaration(&result, var_name);
     }
 
+    // Phase 3: orphan-collect function declarations. Phase 1 removed the
+    // `_mNe.name = _mN_name;` export assignments of unused exports, but the
+    // backing `function _mN_name(...){...}` bodies stayed in the flattened
+    // module block — colorManipulator ships every color helper when only
+    // `alpha` is used. Dead helpers reference each other (emphasize ->
+    // darken -> decomposeColor), so iterate to a fixpoint.
+    for _ in 0..8 {
+        let removed = remove_orphan_prefixed_functions(&result);
+        match removed {
+            Some(next) => result = next,
+            None => break,
+        }
+    }
+
     result
+}
+
+/// Remove `function _mN_name(...){...}` declarations whose name has no
+/// remaining references beyond the declaration itself. Returns None when
+/// nothing was removable.
+fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
+    use std::sync::OnceLock;
+    static FUNC: OnceLock<Regex> = OnceLock::new();
+    let func = FUNC.get_or_init(|| {
+        Regex::new(r"function\s+(_m\d+_[a-zA-Z0-9_$]+)\s*\(").unwrap()
+    });
+
+    let counts = count_all_prefixed_identifier_refs(code);
+    let b = code.as_bytes();
+    let mut removals: Vec<(usize, usize)> = Vec::new();
+
+    for cap in func.captures_iter(code) {
+        let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        if counts.get(name).copied().unwrap_or(0) > 1 {
+            continue;
+        }
+        let whole = cap.get(0)?;
+        let start = whole.start();
+        // Declaration position only: the previous significant byte must end
+        // a statement. `= function`, `(function`, `return function` etc.
+        // are expressions and stay.
+        let mut p = start;
+        while p > 0 && matches!(b[p - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            p -= 1;
+        }
+        if p > 0 && !matches!(b[p - 1], b';' | b'{' | b'}') {
+            continue;
+        }
+        // Walk: params (...) then body {...}, honoring nested literals.
+        let params_open = whole.end() - 1;
+        let Some(params_close) = skip_code_balanced(b, params_open, b'(', b')') else {
+            continue;
+        };
+        let mut q = params_close;
+        while q < b.len() && matches!(b[q], b' ' | b'\t' | b'\r' | b'\n') {
+            q += 1;
+        }
+        if q >= b.len() || b[q] != b'{' {
+            continue;
+        }
+        let Some(body_close) = skip_code_balanced(b, q, b'{', b'}') else {
+            continue;
+        };
+        let mut end = body_close;
+        // Optional trailing `;` and one newline.
+        if end < b.len() && b[end] == b';' {
+            end += 1;
+        }
+        while end < b.len() && matches!(b[end], b' ' | b'\t') {
+            end += 1;
+        }
+        if end < b.len() && b[end] == b'\n' {
+            end += 1;
+        }
+        removals.push((start, end));
+    }
+
+    if removals.is_empty() {
+        return None;
+    }
+    removals.sort_unstable();
+
+    let mut out = Vec::with_capacity(b.len());
+    let mut pos = 0usize;
+    for (start, end) in removals {
+        if start < pos {
+            continue;
+        }
+        out.extend_from_slice(&b[pos..start]);
+        pos = end;
+    }
+    out.extend_from_slice(&b[pos..]);
+    String::from_utf8(out).ok()
+}
+
+/// Balanced-bracket skip that honors strings, templates, comments, and
+/// regex literals inside the span.
+fn skip_code_balanced(b: &[u8], start: usize, open: u8, close: u8) -> Option<usize> {
+    debug_assert_eq!(b[start], open);
+    let mut depth = 0usize;
+    let mut i = start;
+    let mut prev = b'(';
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' => {
+                i = skip_quoted_literal(b, i);
+                prev = b'"';
+                continue;
+            }
+            b'`' => {
+                let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+                i = next;
+                prev = b'`';
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                continue;
+            }
+            b'/' if regex_context_byte(prev) => {
+                i = skip_regex_literal(b, i);
+                prev = b'/';
+                continue;
+            }
+            c if c == open => depth += 1,
+            c if c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `/` starts a regex (not division) after these context bytes.
+fn regex_context_byte(prev: u8) -> bool {
+    matches!(
+        prev,
+        b'=' | b'('
+            | b','
+            | b'['
+            | b'!'
+            | b'&'
+            | b'|'
+            | b'?'
+            | b':'
+            | b';'
+            | b'{'
+            | b'}'
+            | b'<'
+            | b'>'
+            | b'+'
+            | b'-'
+            | b'*'
+            | b'%'
+            | b'^'
+            | b'~'
+    )
+}
+
+/// Skip a regex literal including character classes and flags.
+fn skip_regex_literal(b: &[u8], start: usize) -> usize {
+    let mut i = start + 1;
+    let mut in_class = false;
+    while i < b.len() {
+        match b[i] {
+            b'\\' => i += 1,
+            b'[' => in_class = true,
+            b']' => in_class = false,
+            b'/' if !in_class => {
+                i += 1;
+                while i < b.len() && b[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                return i;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    i
 }
 
 /// Count every `_m`-prefixed identifier occurrence in one lexical sweep
@@ -373,12 +570,15 @@ fn collect_prefixed_ident_stats_in_range(
     let mut i = start.min(len);
     // Previous significant ident was `var` (decl-initializer detection).
     let mut prev_was_var = false;
+    // Last significant byte for regex-vs-division disambiguation.
+    let mut stats_prev = b'(';
 
     while i < len {
         match b[i] {
             b'"' | b'\'' => {
                 i = skip_quoted_literal(b, i).min(len);
                 prev_was_var = false;
+                stats_prev = b'"';
                 continue;
             }
             b'`' => {
@@ -392,6 +592,7 @@ fn collect_prefixed_ident_stats_in_range(
                 mark_template_raw_idents(b, tpl_start, next.min(len), stats);
                 i = next.min(len);
                 prev_was_var = false;
+                stats_prev = b'`';
                 continue;
             }
             b'/' if i + 1 < len && (b[i + 1] == b'/' || b[i + 1] == b'*') => {
@@ -406,6 +607,11 @@ fn collect_prefixed_ident_stats_in_range(
                     }
                     i = (i + 2).min(len);
                 }
+                continue;
+            }
+            b'/' if regex_context_byte(stats_prev) => {
+                i = skip_regex_literal(b, i).min(len);
+                stats_prev = b'/';
                 continue;
             }
             _ => {}
@@ -470,10 +676,12 @@ fn collect_prefixed_ident_stats_in_range(
                 }
             }
             prev_was_var = was_var_kw;
+            stats_prev = b'a';
             continue;
         }
         if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
             prev_was_var = false;
+            stats_prev = b[i];
         }
         i += 1;
     }
@@ -518,10 +726,23 @@ fn collect_prefixed_refs_in_range(
 ) {
     let len = end.min(b.len());
     let mut i = start.min(len);
+    // Last significant byte, for regex-vs-division disambiguation. Regex
+    // literals may contain quotes inside character classes; scanning them
+    // as strings desynchronized quote pairing and undercounted every
+    // reference after the regex (orphan collection then deleted live
+    // helpers in styled-components).
+    let mut prev = b'(';
 
     while i < len {
         if matches!(b[i], b'"' | b'\'') {
             i = skip_quoted_literal(b, i).min(len);
+            prev = b'"';
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len && !matches!(b[i + 1], b'/' | b'*') && regex_context_byte(prev)
+        {
+            i = skip_regex_literal(b, i).min(len);
+            prev = b'/';
             continue;
         }
         if b[i] == b'`' {
@@ -561,7 +782,11 @@ fn collect_prefixed_refs_in_range(
                     *counts.entry(name.to_string()).or_insert(0) += 1;
                 }
             }
+            prev = b'a';
             continue;
+        }
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
         }
         i += 1;
     }
@@ -1415,6 +1640,32 @@ const _m0_className = `${_m0_prefix}-Button`;"#;
     // ──────────────────────────────────────────────────────────────────
     // R5: eliminate_unused_exports
     // ──────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_orphan_function_collection_iterates_to_fixpoint() {
+        // emphasize -> darken -> decompose: once the export assignment of
+        // `emphasize` is pruned, the whole helper chain must fall out;
+        // `alpha` stays because its export survives.
+        let code = "var _m0e = _m0.exports;\n\
+            function _m0_decompose(c){ return c; };\n\
+            function _m0_darken(c){ return _m0_decompose(c); };\n\
+            function _m0_emphasize(c){ return _m0_darken(c); };\n\
+            function _m0_alpha(c){ return _m0_decompose(c); };\n\
+            _m0e.alpha = _m0_alpha;\n\
+            var _m1_x = _m0e.alpha(1);";
+        let result = eliminate_unused_exports(code);
+        assert!(result.contains("_m0_alpha"), "{result}");
+        assert!(
+            result.contains("_m0_decompose"),
+            "shared dep of live alpha must stay: {result}"
+        );
+        assert!(!result.contains("_m0_emphasize"), "{result}");
+        assert!(!result.contains("_m0_darken"), "{result}");
+        // Function expressions are never collected (only declarations).
+        let expr =
+            "var _m0e=_m0.exports;_m0e.k = function _m0_keep(){}; var _m1_y=_m0e.k();";
+        assert!(eliminate_unused_exports(expr).contains("_m0_keep"));
+    }
 
     #[test]
     fn test_eliminate_unused_exports() {
