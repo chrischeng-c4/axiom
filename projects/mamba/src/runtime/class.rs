@@ -3265,6 +3265,27 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
             // Check Instance first before trying the Str/class-attr path, since instance
             // setattr is by far the hottest path during object construction.
             if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
+                // zipfile: the archive comment must be bytes.
+                if class_name == "ZipFile" {
+                    if let Some(kp) = attr.as_ptr() {
+                        if let ObjData::Str(ref attr_s) = (*kp).data {
+                            if attr_s == "comment" {
+                                let is_bytes = value.as_ptr().map(|vp| {
+                                    matches!((*vp).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+                                }).unwrap_or(false);
+                                if !is_bytes {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "comment: expected bytes, got str".to_string(),
+                                        )),
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
                 // tracemalloc Filter/DomainFilter fields are read-only.
                 if class_name == "tracemalloc.Filter" || class_name == "tracemalloc.DomainFilter" {
                     super::exception::mb_raise(
@@ -5059,6 +5080,24 @@ pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
 /// Runtime-dispatched __getitem__: list, tuple, dict, str, or dunder.
 /// Also handles slice tuples: if key is a Tuple(start, stop, step), dispatches to slice.
 pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
+    // re.Match subscript is group lookup: m[0] / m['name'].
+    if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "re.Match" {
+                    let guard = fields.read().unwrap();
+                    if let Some(i) = key.as_int() {
+                        return guard.get(&format!("group_{i}")).copied()
+                            .unwrap_or_else(MbValue::none);
+                    }
+                    if let Some(nm) = extract_str(key) {
+                        return guard.get(&format!("group_name_{nm}")).copied()
+                            .unwrap_or_else(MbValue::none);
+                    }
+                }
+            }
+        }
+    }
     // bool is a subclass of int in Python (#1680) — `xs[True]` ≡ `xs[1]`.
     // Coerce a bool key to an int before any container dispatch so the
     // built-in indexing paths don't hit the strict `as_int()` rejection.
@@ -6316,7 +6355,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             if matches!(
                 nt.as_str(),
                 "date" | "datetime" | "datetime.time" | "StackSummary" | "TracebackException"
-                    | "patch"
+                    | "patch" | "zipfile.ZipInfo"
             ) {
                 let m = lookup_method(&nt, &name);
                 if let Some(maddr) = m.as_func() {
@@ -7989,8 +8028,13 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             return super::stdlib::re_mod::mb_re_subn_count(pat, a0, a1, a2),
                         "split" =>
                             return super::stdlib::re_mod::mb_re_split(pat, a0),
-                        "finditer" =>
-                            return super::stdlib::re_mod::mb_re_finditer(pat, a0),
+                        "finditer" => {
+                            let pos = arg_items.get(1).copied().unwrap_or_else(MbValue::none);
+                            let endpos = arg_items.get(2).copied().unwrap_or_else(MbValue::none);
+                            return super::stdlib::re_mod::mb_re_finditer_window(
+                                pat, a0, pos, endpos,
+                            );
+                        }
                         _ => {}
                     }
                 }
@@ -7999,22 +8043,51 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     // .group([idx_or_name]) — returns the matched substring for
                     // the given group (0 = full match), or the full match when
                     // called with no args.
-                    if name == "group" {
+                    if name == "group" || name == "__getitem__" {
                         let arg_items: Vec<MbValue> = args.as_ptr()
                             .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
                                 Some(lk.read().unwrap().to_vec())
                             } else { None })
                             .unwrap_or_default();
+                        let count = guard.get("_group_count")
+                            .and_then(|v| v.as_int()).unwrap_or(0);
+                        let lookup = |key: MbValue| -> MbValue {
+                            if let Some(i) = key.as_int() {
+                                // An index beyond the pattern's group count is
+                                // IndexError; an unmatched group is None.
+                                if i < 0 || i > count {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                                        MbValue::from_ptr(MbObject::new_str("no such group".to_string())),
+                                    );
+                                    return MbValue::none();
+                                }
+                                let k = format!("group_{}", i);
+                                return guard.get(&k).copied().unwrap_or(MbValue::none());
+                            }
+                            if let Some(nm) = extract_str(key) {
+                                let k = format!("group_name_{}", nm);
+                                return match guard.get(&k).copied() {
+                                    Some(v) => v,
+                                    None => {
+                                        super::exception::mb_raise(
+                                            MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                                            MbValue::from_ptr(MbObject::new_str("no such group".to_string())),
+                                        );
+                                        MbValue::none()
+                                    }
+                                };
+                            }
+                            MbValue::none()
+                        };
+                        // group(i, j, ...) with 2+ selectors returns a tuple.
+                        if arg_items.len() >= 2 {
+                            let vals: Vec<MbValue> =
+                                arg_items.iter().map(|k| lookup(*k)).collect();
+                            return MbValue::from_ptr(MbObject::new_tuple(vals));
+                        }
                         let key = arg_items.first().copied().unwrap_or(MbValue::from_int(0));
-                        if let Some(i) = key.as_int() {
-                            let k = format!("group_{}", i);
-                            return guard.get(&k).copied().unwrap_or(MbValue::none());
-                        }
-                        if let Some(nm) = extract_str(key) {
-                            let k = format!("group_name_{}", nm);
-                            return guard.get(&k).copied().unwrap_or(MbValue::none());
-                        }
-                        return MbValue::none();
+                        return lookup(key);
                     }
                     if name == "start" || name == "end" {
                         let arg_items: Vec<MbValue> = args.as_ptr()

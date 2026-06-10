@@ -2107,6 +2107,14 @@ pub fn mb_str_format_map(s: MbValue, mapping: MbValue) -> MbValue {
                 let k = super::dict_ops::DictKey::Str(name.to_string());
                 return guard.get(&k).copied();
             }
+            // Mapping-protocol objects (e.g. re.Match) look up via
+            // __getitem__ semantics.
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "re.Match" {
+                    return fields.read().unwrap()
+                        .get(&format!("group_name_{name}")).copied();
+                }
+            }
         }
         None
     };

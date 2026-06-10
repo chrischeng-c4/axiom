@@ -237,7 +237,33 @@ macro_rules! dispatch_sub_like {
 
 dispatch_sub_like!(dispatch_sub, mb_re_sub_count);
 dispatch_sub_like!(dispatch_subn, mb_re_subn_count);
-dispatch_binary!(dispatch_split, mb_re_split);
+unsafe extern "C" fn dispatch_split(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() { &[] } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let mut maxsplit = a.get(2).copied().unwrap_or_else(MbValue::none);
+    // kwargs dict may carry maxsplit=.
+    if let Some(last) = a.last() {
+        if let Some(p) = last.as_ptr() {
+            if matches!(unsafe { &(*p).data }, ObjData::Dict(_)) {
+                let sentinel = MbValue::from_bits(u64::MAX);
+                let v = super::super::dict_ops::mb_dict_get(
+                    *last,
+                    MbValue::from_ptr(MbObject::new_str("maxsplit".to_string())),
+                    sentinel,
+                );
+                if v.to_bits() != u64::MAX {
+                    maxsplit = v;
+                }
+            }
+        }
+    }
+    mb_re_split_max(
+        a.first().copied().unwrap_or_else(MbValue::none),
+        a.get(1).copied().unwrap_or_else(MbValue::none),
+        maxsplit,
+    )
+}
 dispatch_unary!(dispatch_escape, mb_re_escape);
 
 unsafe extern "C" fn dispatch_purge(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
@@ -723,7 +749,44 @@ pub fn mb_re_search(pattern: MbValue, string: MbValue) -> MbValue {
 }
 
 /// re.match_(pattern, string) -> Match instance or None (anchored at start)
+/// Validate the (pattern, subject) argument types like CPython.
+/// Returns true when a TypeError was raised.
+fn reject_bad_re_args(pattern: MbValue, string: MbValue) -> bool {
+    let is_bytes = |v: MbValue| -> bool {
+        v.as_ptr().map(|p| unsafe {
+            matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+        }).unwrap_or(false)
+    };
+    let is_str = |v: MbValue| -> bool {
+        v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) }).unwrap_or(false)
+    };
+    let raise_te = |msg: &str| {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+        );
+    };
+    let pat_str = is_str(pattern);
+    let pat_bytes = is_bytes(pattern);
+    if !pat_str && !pat_bytes {
+        raise_te("first argument must be string or compiled pattern");
+        return true;
+    }
+    if pat_str && is_bytes(string) {
+        raise_te("cannot use a string pattern on a bytes-like object");
+        return true;
+    }
+    if pat_bytes && is_str(string) {
+        raise_te("cannot use a bytes pattern on a string-like object");
+        return true;
+    }
+    false
+}
+
 pub fn mb_re_match(pattern: MbValue, string: MbValue) -> MbValue {
+    if reject_bad_re_args(pattern, string) {
+        return MbValue::none();
+    }
     let pat = match extract_str(pattern) { Some(s) => s, None => return MbValue::none() };
     let text = match extract_str(string) { Some(s) => s, None => return MbValue::none() };
 
@@ -1056,8 +1119,35 @@ pub fn mb_re_finditer(pattern: MbValue, string: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_list(matches))
 }
 
+/// finditer with the optional pos/endpos window (character indices); match
+/// objects are built against the windowed slice, which is what `.group()`
+/// consumers observe.
+pub fn mb_re_finditer_window(
+    pattern: MbValue,
+    string: MbValue,
+    pos: MbValue,
+    endpos: MbValue,
+) -> MbValue {
+    if pos.is_none() && endpos.is_none() {
+        return mb_re_finditer(pattern, string);
+    }
+    let text = extract_str(string).unwrap_or_default();
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len() as i64;
+    let start = pos.as_int().unwrap_or(0).clamp(0, n) as usize;
+    let stop = endpos.as_int().unwrap_or(n).clamp(0, n) as usize;
+    let window: String = chars[start..stop.max(start)].iter().collect();
+    mb_re_finditer(pattern, MbValue::from_ptr(MbObject::new_str(window)))
+}
+
 /// re.split(pattern, string) -> list of substrings
 pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
+    mb_re_split_max(pattern, string, MbValue::none())
+}
+
+/// re.split with maxsplit; captured separator groups are kept in the result
+/// (CPython semantics).
+pub fn mb_re_split_max(pattern: MbValue, string: MbValue, maxsplit: MbValue) -> MbValue {
     let pat = match extract_str(pattern) {
         Some(s) => s,
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
@@ -1066,12 +1156,34 @@ pub fn mb_re_split(pattern: MbValue, string: MbValue) -> MbValue {
         Some(s) => s,
         None => return MbValue::from_ptr(MbObject::new_list(vec![])),
     };
+    let limit = maxsplit.as_int().unwrap_or(0);
 
     match regex::Regex::new(&py_pattern_to_rust(&pat)) {
         Ok(re) => {
-            let parts: Vec<MbValue> = re.split(&text)
-                .map(|s| MbValue::from_ptr(MbObject::new_str(s.to_string())))
-                .collect();
+            let has_groups = re.captures_len() > 1;
+            let mut parts: Vec<MbValue> = Vec::new();
+            let mut last = 0usize;
+            let mut splits = 0i64;
+            for caps in re.captures_iter(&text) {
+                if limit > 0 && splits >= limit {
+                    break;
+                }
+                let m = caps.get(0).unwrap();
+                parts.push(MbValue::from_ptr(MbObject::new_str(
+                    text[last..m.start()].to_string())));
+                if has_groups {
+                    for i in 1..re.captures_len() {
+                        match caps.get(i) {
+                            Some(g) => parts.push(MbValue::from_ptr(
+                                MbObject::new_str(g.as_str().to_string()))),
+                            None => parts.push(MbValue::none()),
+                        }
+                    }
+                }
+                last = m.end();
+                splits += 1;
+            }
+            parts.push(MbValue::from_ptr(MbObject::new_str(text[last..].to_string())));
             MbValue::from_ptr(MbObject::new_list(parts))
         }
         Err(e) => { raise_re_error(&e.to_string()); MbValue::from_ptr(MbObject::new_list(vec![])) }

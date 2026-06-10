@@ -5151,7 +5151,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     if matches!(
                         type_name.as_str(),
                         "date" | "datetime" | "datetime.time" | "StackSummary" | "TracebackException"
-                            | "patch"
+                            | "patch" | "zipfile.ZipInfo"
                     ) {
                         let method_str = method_name.as_ptr()
                             .and_then(|p| match &(*p).data {
