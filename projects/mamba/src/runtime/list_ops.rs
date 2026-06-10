@@ -607,16 +607,25 @@ pub fn mb_list_remove(list: MbValue, value: MbValue) {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let mut items = lock.write().unwrap();
+                // Scan a snapshot WITHOUT holding the lock: mb_eq can
+                // re-enter user __eq__ that mutates this list (reentrancy
+                // hardening — holding the write lock across it deadlocks).
+                let snapshot: Vec<MbValue> =
+                    lock.read().unwrap().iter().copied().collect();
                 let mut found_pos: Option<usize> = None;
-                for (i, v) in items.iter().enumerate() {
+                for (i, v) in snapshot.iter().enumerate() {
                     if super::builtins::mb_eq(*v, value).as_bool() == Some(true) {
                         found_pos = Some(i);
                         break;
                     }
                 }
                 if let Some(pos) = found_pos {
-                    items.remove(pos);
+                    let mut items = lock.write().unwrap();
+                    // The __eq__ may have mutated the list; only remove when
+                    // the found slot still holds the same element.
+                    if pos < items.len() && items[pos] == snapshot[pos] {
+                        items.remove(pos);
+                    }
                     return;
                 }
                 super::exception::mb_raise(
@@ -794,7 +803,10 @@ pub fn mb_list_index_range(list: MbValue, value: MbValue, start: MbValue, stop: 
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
+                // Snapshot, then release the lock: mb_eq can re-enter user
+                // __eq__ that mutates this very list (reentrancy hardening —
+                // holding the read lock across it deadlocks against clear()).
+                let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
                 let len = items.len() as i64;
                 // Resolve start: default 0; negatives count from the end and
                 // clamp to 0; positives clamp to len.
@@ -804,8 +816,8 @@ pub fn mb_list_index_range(list: MbValue, value: MbValue, start: MbValue, stop: 
                 let mut e = stop.as_int().unwrap_or(len);
                 if e < 0 { e = (e + len).max(0); } else if e > len { e = len; }
                 if s < e {
-                    for i in (s as usize)..(e as usize) {
-                        if super::builtins::mb_eq(items[i], value).as_bool() == Some(true) {
+                    for (i, item) in items.iter().enumerate().take(e as usize).skip(s as usize) {
+                        if super::builtins::mb_eq(*item, value).as_bool() == Some(true) {
                             return MbValue::from_int(i as i64);
                         }
                     }
@@ -832,7 +844,9 @@ pub fn mb_list_count(list: MbValue, value: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                let items = lock.read().unwrap();
+                // Snapshot then release: mb_eq may re-enter user __eq__ that
+                // mutates this list (see mb_list_index_range).
+                let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
                 let n = items.iter().filter(|v| {
                     super::builtins::mb_eq(**v, value).as_bool() == Some(true)
                 }).count();
@@ -869,7 +883,10 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
         if let Some(ptr) = container.as_ptr() {
             match &(*ptr).data {
                 ObjData::List(ref lock) => {
-                    let items = lock.read().unwrap();
+                    // Snapshot then release: mb_eq may re-enter user __eq__
+                    // that mutates this list (see mb_list_index_range).
+                    let items: Vec<MbValue> =
+                        lock.read().unwrap().iter().copied().collect();
                     for item in items.iter() {
                         if super::builtins::mb_eq(value, *item).as_bool() == Some(true) {
                             return MbValue::from_bool(true);
