@@ -335,8 +335,36 @@ impl PackageManager {
                 }
             }
 
+            // Frozen warm path: when the store, root node_modules links,
+            // and the GH #3211 marker all still match the verified
+            // lockfile, relinking every package is pure waste — npm/pnpm
+            // warm installs no-op here and the basic.install.replacement
+            // performance gate measures exactly this run. Same hydration
+            // contract as the non-frozen ultra-fast path (GH #1930,
+            // GH #1941): a stale marker must never hide a wiped store or
+            // a broken root symlink.
+            let nm_marker = node_modules.join(".jet-marker");
+            if lockfile.verify_hydrated(&self.store, &node_modules).is_ok()
+                && lockfile.is_valid(&self.store)
+                && nm_marker.exists()
+            {
+                if let Ok(stored) = std::fs::read_to_string(&nm_marker) {
+                    if stored.trim() == current_hash
+                        && lockfile_root_links_valid(&node_modules, &lockfile)
+                    {
+                        tracing::info!("Already up to date");
+                        println!("Already up to date");
+                        return Ok(());
+                    }
+                }
+            }
+
             let resolved = lockfile.to_resolved();
             self.install_resolved(&resolved).await?;
+            // GH #3211 — marker write so the next frozen run can take the
+            // warm path above; warn-only on failure, install already
+            // succeeded.
+            write_jet_marker(&node_modules, &nm_marker, &current_hash);
             tracing::info!("Dependencies installed (frozen lockfile)");
             return Ok(());
         }
