@@ -411,16 +411,30 @@ impl Bundler {
     pub async fn bundle(&self, entry: PathBuf) -> Result<BundleOutput> {
         tracing::info!("Starting bundle from entry: {:?}", entry);
 
+        // JET_BUNDLE_TIMING=1 prints per-phase wall-clock to stderr.
+        let timing = std::env::var_os("JET_BUNDLE_TIMING").is_some();
+        let mut last = std::time::Instant::now();
+        let mut lap = |stage: &str| {
+            if timing {
+                eprintln!("[bundle-timing] {stage}: {:?}", last.elapsed());
+                last = std::time::Instant::now();
+            }
+        };
+
         self.build_graph(&entry).await?;
+        lap("build_graph");
         self.check_unresolved_deps()?;
         let (modules, has_cycle) = self.transform_modules().await?;
+        lap("transform_modules");
 
         // Tree shaking: analyze used exports across the module graph, then
         // remove unused export declarations from each module.  Modules with
         // no used exports and no side effects are eliminated entirely.
         let modules = self.apply_tree_shaking(modules);
+        lap("tree_shaking");
 
         let mut output = self.generate_bundle(modules, has_cycle)?;
+        lap("generate_bundle");
 
         // Detect sibling CSS entry file and run it through the CSS pipeline.
         // Convention: if entry is `src/index.tsx`, look for `src/index.css`.

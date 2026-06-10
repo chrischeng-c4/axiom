@@ -72,21 +72,37 @@ pub(crate) fn apply_scoped_module_renames(
 }
 
 fn mangle_variables_inner(source: &str, mangle_root: bool) -> String {
+    let timing = std::env::var_os("JET_MANGLE_TIMING").is_some();
+    let mut last = std::time::Instant::now();
+    let mut lap = |stage: &str| {
+        if timing {
+            eprintln!("[mangle-timing] {stage}: {:?}", last.elapsed());
+            last = std::time::Instant::now();
+        }
+    };
     let tokens = tokenize(source);
     if tokens.is_empty() {
         return source.to_string();
     }
+    lap("tokenize");
     let si = build_scopes(source, &tokens);
+    lap("build_scopes");
     let renames = compute_renames(source, &tokens, &si, mangle_root);
+    lap("compute_renames");
     let mangled = apply_renames(source, &tokens, &si.token_scope, &si.scopes, &renames);
+    lap("apply_renames");
     let mangled = repair_generated_module_slot_references(&mangled);
+    lap("repair_slot_refs");
     let mangled = repair_generated_module_slot_local_decl_collisions(&mangled);
+    lap("repair_slot_collisions");
     let mangled = repair_generated_require_helper_references(&mangled);
     let mangled = repair_retained_wrapper_cjs_param_references(&mangled);
     let mangled = repair_react_dom_event_helper_aliases(&mangled);
     let mangled = repair_react_symbol_constant_references(&mangled);
     let mangled = repair_react_dom_client_stale_references(&mangled);
-    repair_react_event_transition_alias_shadow(&mangled)
+    let out = repair_react_event_transition_alias_shadow(&mangled);
+    lap("repairs_rest");
+    out
 }
 
 fn repair_generated_module_slot_references(source: &str) -> String {
@@ -2364,9 +2380,24 @@ fn apply_renames(
     scopes: &[Scope],
     renames: &[HashMap<String, String>],
 ) -> String {
+    let timing = std::env::var_os("JET_MANGLE_TIMING").is_some();
+    let mut last = std::time::Instant::now();
+    let mut lap = |stage: &str| {
+        if timing {
+            eprintln!("[mangle-timing]   apply_renames/{stage}: {:?}", last.elapsed());
+            last = std::time::Instant::now();
+        }
+    };
     let mut repls: Vec<(usize, usize, String)> = Vec::new();
     let physical_scopes =
         physical_function_scope_context(source, tokens, token_scope, renames.len());
+    lap("physical_ctx");
+
+    // (start scope, name) -> declaring scope. Resolution walks the scope
+    // chain per identifier token; bundles have hundreds of thousands of
+    // tokens but few distinct (scope, name) pairs, so memoize the walk
+    // (~1.3s -> negligible on the antd corpus bundle).
+    let mut decl_scope_memo: HashMap<(usize, &str), Option<usize>> = HashMap::new();
 
     for (ti, tok) in tokens.iter().enumerate() {
         if tok.kind != TK::Ident {
@@ -2377,10 +2408,11 @@ fn apply_renames(
             continue;
         }
         let mut replaced = false;
-        let mut resolved_decl = None;
+        let resolved_decl = *decl_scope_memo
+            .entry((token_scope[ti], name))
+            .or_insert_with(|| resolve_decl_scope(name, token_scope[ti], scopes));
         // Resolve through scope chain
-        if let Some(mut sid) = resolve_decl_scope(name, token_scope[ti], scopes) {
-            resolved_decl = Some(sid);
+        if let Some(mut sid) = resolved_decl {
             loop {
                 if let Some(new_name) = renames[sid].get(name) {
                     repls.push((
@@ -2430,8 +2462,11 @@ fn apply_renames(
             sid = physical_scopes.parent_by_scope[candidate_sid].or(scopes[candidate_sid].parent);
         }
     }
+    lap("token_loop");
 
-    apply_replacements(source, repls)
+    let out = apply_replacements(source, repls);
+    lap("apply_replacements");
+    out
 }
 
 struct PhysicalScopeContext {
@@ -2903,14 +2938,24 @@ fn resolve_decl_scope(name: &str, start_scope: usize, scopes: &[Scope]) -> Optio
 }
 
 fn apply_replacements(source: &str, mut repls: Vec<(usize, usize, String)>) -> String {
-    // Apply in reverse order
-    repls.sort_by(|a, b| b.0.cmp(&a.0));
-    let mut result = source.as_bytes().to_vec();
+    // Single forward pass. Reverse-order Vec::splice shifted the whole
+    // tail per replacement — O(replacements x bundle size), ~1.6s on the
+    // antd corpus bundle with hundreds of thousands of renames.
+    repls.sort_by(|a, b| a.0.cmp(&b.0));
+    let src = source.as_bytes();
+    let mut out = Vec::with_capacity(src.len());
+    let mut pos = 0usize;
     for (start, end, new_name) in &repls {
-        let nb = new_name.as_bytes();
-        result.splice(start..end, nb.iter().cloned());
+        if *start < pos {
+            // Overlapping/duplicate replacement — first one wins.
+            continue;
+        }
+        out.extend_from_slice(&src[pos..*start]);
+        out.extend_from_slice(new_name.as_bytes());
+        pos = *end;
     }
-    String::from_utf8(result).unwrap_or_else(|_| source.to_string())
+    out.extend_from_slice(&src[pos..]);
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
 }
 
 // === Name Generator ===
