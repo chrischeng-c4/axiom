@@ -2044,43 +2044,50 @@ fn compute_renames(
     si: &ScopeInfo,
     mangle_root: bool,
 ) -> Vec<HashMap<String, String>> {
-    let mut renames: Vec<HashMap<String, String>> = vec![HashMap::new(); si.scopes.len()];
+    let scope_count = si.scopes.len();
+    let mut renames: Vec<HashMap<String, String>> = vec![HashMap::new(); scope_count];
+    // Short names actually recorded per scope, kept parallel to `renames`
+    // so descendant probes don't rebuild value sets.
+    let mut recorded_shorts: Vec<HashSet<String>> = vec![HashSet::new(); scope_count];
     let physical_body_decls = collect_physical_function_body_decl_names(source, tokens, si);
     let physical_scopes =
-        physical_function_scope_context(source, tokens, &si.token_scope, si.scopes.len());
+        physical_function_scope_context(source, tokens, &si.token_scope, scope_count);
 
-    // Pre-compute: for each scope, collect all ident names referenced in it and descendants
-    let mut scope_refs: Vec<HashSet<String>> = vec![HashSet::new(); si.scopes.len()];
+    // Pre-compute: for each scope, all ident names referenced in it and its
+    // descendants. Borrowed &str throughout — materializing owned per-scope
+    // skip sets was O(scopes x total_decls) string clones (68M on the antd
+    // bundle, ~7s of a 16s build).
+    let mut scope_refs: Vec<HashSet<&str>> = vec![HashSet::new(); scope_count];
     for (ti, tok) in tokens.iter().enumerate() {
         if tok.kind == TK::Ident {
-            scope_refs[si.token_scope[ti]].insert(txt(source, tok).to_string());
+            scope_refs[si.token_scope[ti]].insert(txt(source, tok));
         }
     }
-    // Propagate child refs up to parent scopes
-    for sid in (0..si.scopes.len()).rev() {
+    // Propagate child refs up to parent scopes (parents have smaller ids).
+    for sid in (1..scope_count).rev() {
         if let Some(pid) = si.scopes[sid].parent {
-            let child_refs: Vec<String> = scope_refs[sid].iter().cloned().collect();
-            for name in child_refs {
+            let child = std::mem::take(&mut scope_refs[sid]);
+            for &name in &child {
                 scope_refs[pid].insert(name);
             }
+            scope_refs[sid] = child;
         }
     }
-    let mut scope_decl_ref_counts: Vec<HashMap<String, usize>> =
-        vec![HashMap::new(); si.scopes.len()];
+    let mut scope_decl_ref_counts: Vec<HashMap<&str, usize>> =
+        vec![HashMap::new(); scope_count];
     for (ti, tok) in tokens.iter().enumerate() {
         if tok.kind != TK::Ident || should_skip_identifier_rename(source, tokens, ti) {
             continue;
         }
         let name = txt(source, tok);
         if let Some(scope_id) = resolve_decl_scope(name, si.token_scope[ti], &si.scopes) {
-            *scope_decl_ref_counts[scope_id]
-                .entry(name.to_string())
-                .or_insert(0) += 1;
+            *scope_decl_ref_counts[scope_id].entry(name).or_insert(0) += 1;
         }
     }
 
     // Process scopes in order (parents before children)
-    for (sid, scope) in si.scopes.iter().enumerate() {
+    for sid in 0..scope_count {
+        let scope = &si.scopes[sid];
         if !scope.is_function {
             continue;
         }
@@ -2089,35 +2096,31 @@ fn compute_renames(
         if sid == 0 && !mangle_root {
             continue;
         }
-        let mut free_vars: HashSet<String> = HashSet::new();
-        // Names referenced here but not declared → free vars (globals etc.)
-        for name in &scope_refs[sid] {
-            if !scope.decls.contains(name.as_str()) {
-                free_vars.insert(name.clone());
-            }
-        }
         // Child scopes avoid every alias already assigned by ancestors. That is
         // slightly more conservative than JavaScript strictly requires, but it
         // keeps output correct when this lightweight parser underestimates a
         // function body's end inside complex declaration initializers.
-        for aid in
-            scope_and_physical_ancestor_ids(sid, &si.scopes, &physical_scopes.parent_by_scope)
-        {
-            free_vars.extend(si.scopes[aid].decls.iter().cloned());
-            free_vars.extend(physical_body_decls[aid].iter().cloned());
-            for (orig_name, short_name) in &renames[aid] {
-                free_vars.insert(short_name.clone());
-                if scope_refs[sid].contains(orig_name) {
-                    free_vars.insert(short_name.clone());
-                }
-            }
-        }
+        //
+        // Instead of materializing the union as an owned set per scope, probe
+        // candidates against the constituent sets directly: subtree refs
+        // (covers free vars and referenced own decls), own decls + physical
+        // body decls, and each ancestor's decls/physical decls/recorded
+        // short names. Candidates are generated monotonically, so the total
+        // probe count per scope is O(decls + rejected candidates).
+        let ancestors =
+            scope_and_physical_ancestor_ids(sid, &si.scopes, &physical_scopes.parent_by_scope);
+        let candidate_taken = |cand: &str| -> bool {
+            scope_refs[sid].contains(cand)
+                || si.scopes[sid].decls.contains(cand)
+                || physical_body_decls[sid].contains(cand)
+                || ancestors.iter().any(|&aid| {
+                    si.scopes[aid].decls.contains(cand)
+                        || physical_body_decls[aid].contains(cand)
+                        || recorded_shorts[aid].contains(cand)
+                })
+        };
 
-        let mut skip_names = free_vars;
-        skip_names.extend(scope.decls.iter().cloned());
-        skip_names.extend(physical_body_decls[sid].iter().cloned());
-        let mut gen = NameGen::new(&skip_names);
-        let mut decls: Vec<&String> = scope.decls.iter().collect();
+        let mut decls: Vec<&String> = si.scopes[sid].decls.iter().collect();
         decls.sort_by(|a, b| {
             let a_count = scope_decl_ref_counts[sid]
                 .get(a.as_str())
@@ -2129,15 +2132,27 @@ fn compute_renames(
                 .unwrap_or(0);
             b_count.cmp(&a_count).then_with(|| a.cmp(b))
         });
+        let mut counter = 0usize;
+        let mut scope_renames = HashMap::new();
+        let mut scope_shorts = HashSet::new();
         for name in decls {
             if is_reserved(name) {
                 continue;
             }
-            let short = gen.next_name();
+            let short = loop {
+                let cand = gen_name(counter);
+                counter += 1;
+                if !is_reserved(&cand) && !candidate_taken(&cand) {
+                    break cand;
+                }
+            };
             if short.len() < name.len() {
-                renames[sid].insert(name.clone(), short);
+                scope_shorts.insert(short.clone());
+                scope_renames.insert(name.clone(), short);
             }
         }
+        renames[sid] = scope_renames;
+        recorded_shorts[sid] = scope_shorts;
     }
 
     renames

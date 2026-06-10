@@ -462,16 +462,28 @@ pub fn eliminate_unused_exports(code: &str) -> String {
 
     let mut vars_to_remove: Vec<String> = Vec::new();
 
+    // Single-pass precomputation. Per-candidate full-bundle scans (a fresh
+    // Regex::new in is_prefixed_require_binding plus a count_identifier_refs
+    // sweep, per candidate) made this O(candidates x bundle size) — ~3s of
+    // pure scanning on the antd corpus bundle with 2,226 candidates.
+    let require_binding_re =
+        Regex::new(r"\bvar\s+(_m\d+_[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:_r|require)\s*\(")
+            .unwrap();
+    let require_bindings: std::collections::HashSet<String> = require_binding_re
+        .captures_iter(&result)
+        .map(|cap| cap[1].to_string())
+        .collect();
+    let prefixed_ref_counts = count_all_prefixed_identifier_refs(&result);
+
     // Collect candidates first from the current state
     for cap in prefixed_var_re.captures_iter(&result) {
         let var_name = cap[1].to_string();
-        if is_prefixed_require_binding(&result, &var_name) {
+        if require_bindings.contains(&var_name) {
             continue;
         }
-        // Count total references (including the declaration)
-        let total_refs = count_identifier_refs(&result, &var_name);
-        // If only 1 reference (the declaration itself), the var is unused
-        if total_refs <= 1 {
+        // Total references include the declaration itself; a count of 1
+        // means the var is unused.
+        if prefixed_ref_counts.get(&var_name).copied().unwrap_or(0) <= 1 {
             vars_to_remove.push(var_name);
         }
     }
@@ -484,14 +496,70 @@ pub fn eliminate_unused_exports(code: &str) -> String {
     result
 }
 
-fn is_prefixed_require_binding(code: &str, var_name: &str) -> bool {
-    let pattern = format!(
-        r"\bvar\s+{}\s*=\s*(?:_r|require)\s*\(",
-        regex::escape(var_name)
-    );
-    Regex::new(&pattern)
-        .map(|re| re.is_match(code))
-        .unwrap_or(false)
+/// Count every `_m`-prefixed identifier occurrence in one lexical sweep
+/// (same string/template/comment skipping as count_identifier_refs_in_range,
+/// generalized to collect all candidates instead of matching one name).
+fn count_all_prefixed_identifier_refs(code: &str) -> std::collections::HashMap<String, usize> {
+    let mut counts = std::collections::HashMap::new();
+    collect_prefixed_refs_in_range(code.as_bytes(), 0, code.len(), &mut counts);
+    counts
+}
+
+fn collect_prefixed_refs_in_range(
+    b: &[u8],
+    start: usize,
+    end: usize,
+    counts: &mut std::collections::HashMap<String, usize>,
+) {
+    let len = end.min(b.len());
+    let mut i = start.min(len);
+
+    while i < len {
+        if matches!(b[i], b'"' | b'\'') {
+            i = skip_quoted_literal(b, i).min(len);
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
+                collect_prefixed_refs_in_range(b, expr_start, expr_end, counts);
+                0
+            });
+            i = next.min(len);
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len {
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            if b[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                if i + 1 < len {
+                    i += 2;
+                }
+                continue;
+            }
+        }
+        if is_id_cont_byte(b[i]) && !b[i].is_ascii_digit() {
+            let ident_start = i;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let ident = &b[ident_start..i];
+            if ident.len() > 2 && ident.starts_with(b"_m") {
+                if let Ok(name) = std::str::from_utf8(ident) {
+                    *counts.entry(name.to_string()).or_insert(0) += 1;
+                }
+            }
+            continue;
+        }
+        i += 1;
+    }
 }
 
 /// Count read references to an export property like `_m0e.foo`, excluding
