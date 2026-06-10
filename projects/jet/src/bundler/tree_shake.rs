@@ -468,9 +468,9 @@ fn extract_import_bindings(
 
         if let Some((target_path, _)) = target {
             let names = extract_imported_names(trimmed);
-            if !names.is_empty() {
-                results.push((target_path.clone(), names));
-            }
+            // Bare side-effect imports (`import './x'`) carry no names but
+            // must still pull the target live so its own imports are walked.
+            results.push((target_path.clone(), names));
         }
     }
 
@@ -776,26 +776,34 @@ fn extract_cjs_require_bindings(
     for line in source.lines() {
         let trimmed = line.trim();
 
-        // Pattern 1: const { a, b } = require('mod')
-        if let Some(req_source) = extract_require_specifier(trimmed) {
-            if let Some(target) = lookup.find(&req_source, importer) {
-                let names = extract_destructured_names(trimmed);
-                if !names.is_empty() {
-                    results.push((target.0.clone(), names));
-                }
-            }
-        }
+        let Some(req_source) = extract_require_specifier(trimmed) else {
+            continue;
+        };
+        let Some(target) = lookup.find(&req_source, importer) else {
+            continue;
+        };
 
-        // Pattern 2: const mod = require('mod'); later mod.prop
-        // This is harder to track across lines — we handle the simple
-        // single-line property access pattern: require('mod').prop
-        if let Some(req_source) = extract_require_specifier(trimmed) {
-            if let Some(target) = lookup.find(&req_source, importer) {
-                let names = extract_require_property_access(trimmed);
-                if !names.is_empty() {
-                    results.push((target.0.clone(), names));
-                }
-            }
+        // Pattern 1: const { a, b } = require('mod')
+        let destructured = extract_destructured_names(trimmed);
+        // Pattern 2: require('mod').prop (single-line property access)
+        let accessed = extract_require_property_access(trimmed);
+
+        if destructured.is_empty() && accessed.is_empty() {
+            // Namespace-style require (`var m = require('mod')`,
+            // `module.exports = require('mod')` interop wrappers). Whole-
+            // module usage cannot be narrowed line-wise, so keep every
+            // export of the target. Dropping this edge entirely left CJS
+            // package wrappers' ESM twins dead in the liveness walk and
+            // the glue pruner deleted their genuinely-used exports
+            // (internal_processStyles vanished from @mui/styled-engine).
+            results.push((target.0.clone(), vec!["*".to_string()]));
+            continue;
+        }
+        if !destructured.is_empty() {
+            results.push((target.0.clone(), destructured));
+        }
+        if !accessed.is_empty() {
+            results.push((target.0.clone(), accessed));
         }
     }
 

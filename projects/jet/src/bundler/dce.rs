@@ -148,6 +148,12 @@ pub(crate) fn eliminate_unused_reexport_assignments(
     source: &str,
     used: &HashSet<String>,
 ) -> String {
+    // "*" marks whole-namespace consumption (import * as ns, namespace-style
+    // CJS requires, dynamic import) — every export may be read at runtime,
+    // so nothing is prunable.
+    if used.contains("*") {
+        return source.to_string();
+    }
     use std::sync::OnceLock;
     static EXPLICIT: OnceLock<regex::Regex> = OnceLock::new();
     static STAR: OnceLock<regex::Regex> = OnceLock::new();
