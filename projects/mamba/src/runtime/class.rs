@@ -2219,6 +2219,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     return v;
                 }
             }
+            // `unittest.mock.call.<name>` builds a named-call factory for ANY
+            // attribute name.
+            if nt == "_mock_call_factory" {
+                return super::stdlib::unittest_mock_mod::make_call_namebuilder(&attr_name);
+            }
             // `datetime.timezone.utc/.min/.max` are singleton class-attribute
             // values; `datetime.UTC is timezone.utc` needs the same pointer.
             if nt == "datetime.timezone" {
@@ -2458,6 +2463,17 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                     }
                 }
                 ObjData::Instance { class_name, ref fields } => {
+                    // unittest.mock: fields, return_value, and supported magic
+                    // names resolve to (autovivified) child mocks before the
+                    // class method table can shadow them.
+                    if super::stdlib::unittest_mock_mod::is_mock_class(class_name) {
+                        if let Some(v) =
+                            super::stdlib::unittest_mock_mod::mock_getattr_hook(obj, &attr_name)
+                        {
+                            super::rc::retain_if_ptr(v);
+                            return v;
+                        }
+                    }
                     // io in-memory streams: `.closed` reflects the _closed flag.
                     if matches!(class_name.as_str(),
                         "StringIO" | "BytesIO" | "BufferedReader" | "BufferedWriter" | "TextIOWrapper")
@@ -3217,6 +3233,17 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
             // Check Instance first before trying the Str/class-attr path, since instance
             // setattr is by far the hottest path during object construction.
             if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
+                // unittest.mock spec_set: writes to undeclared attributes on a
+                // spec_set mock raise AttributeError.
+                if super::stdlib::unittest_mock_mod::is_mock_class(class_name) {
+                    if let Some(kp) = attr.as_ptr() {
+                        if let ObjData::Str(ref attr_s) = (*kp).data {
+                            if super::stdlib::unittest_mock_mod::mock_setattr_blocked(obj, attr_s) {
+                                return;
+                            }
+                        }
+                    }
+                }
                 // weakref.ref.__callback__ is a read-only attribute in CPython:
                 // `r.__callback__ = ...` raises AttributeError.
                 if class_name == "ReferenceType" {
@@ -3629,6 +3656,26 @@ fn type_object_name(obj: MbValue) -> Option<String> {
 /// Checks methods first, then class_attrs, for each class in the MRO.
 /// This supports the descriptor protocol (P2-R3) where descriptors are
 /// stored as class attributes (e.g., `attr = Verbose()` in class body).
+/// Replace (or remove, when `value` is None) a registered class's method
+/// entry, returning nothing. Used by unittest.mock patch.object to swap a
+/// method for a mock and restore it. Invalidates the method cache.
+pub(crate) fn class_replace_method(class_name: &str, method_name: &str, value: MbValue) {
+    CLASS_REGISTRY.with(|reg| {
+        let mut reg = reg.borrow_mut();
+        if let Some(cls) = reg.get_mut(class_name) {
+            if value.is_none() {
+                cls.methods.remove(method_name);
+            } else {
+                unsafe { super::rc::retain_if_ptr(value); }
+                if let Some(prev) = cls.methods.insert(method_name.to_string(), value) {
+                    unsafe { super::rc::release_if_ptr(prev); }
+                }
+            }
+        }
+    });
+    METHOD_CACHE_GEN.with(|g| g.set(g.get().wrapping_add(1)));
+}
+
 pub(crate) fn lookup_method(class_name: &str, method_name: &str) -> MbValue {
     let class_hash = hash_str(class_name);
     let method_hash = hash_str(method_name);
@@ -6177,9 +6224,15 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     }
                 }
             }
+            // `call.a(1)` — a method call on the call factory builds a named
+            // call object for ANY method name.
+            if nt == "_mock_call_factory" {
+                return super::stdlib::unittest_mock_mod::make_named_call(&name, args);
+            }
             if matches!(
                 nt.as_str(),
                 "date" | "datetime" | "datetime.time" | "StackSummary" | "TracebackException"
+                    | "patch"
             ) {
                 let m = lookup_method(&nt, &name);
                 if let Some(maddr) = m.as_func() {
@@ -6213,6 +6266,25 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         ));
                         return f(MbValue::none(), arg_list);
                     }
+                }
+            }
+        }
+    }
+
+    // unittest.mock: a method call on a mock instance autovivifies the child
+    // mock and records the call — unless the name is a real registered helper
+    // (assert_*, reset_mock, ...), which dispatches normally below.
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if super::stdlib::unittest_mock_mod::is_mock_class(class_name)
+                    && lookup_method(class_name, &name).is_none()
+                {
+                    let child = super::stdlib::unittest_mock_mod::mock_attr_child(receiver, &name);
+                    if child.is_none() {
+                        return MbValue::none();
+                    }
+                    return super::stdlib::unittest_mock_mod::mock_record_call(child, args);
                 }
             }
         }

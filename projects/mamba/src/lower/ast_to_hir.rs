@@ -3356,6 +3356,11 @@ impl<'a> AstLowerer<'a> {
                     ast::Expr::Ident(name) if matches!(
                         name.as_str(),
                         "Counter" | "OrderedDict" | "deque" | "defaultdict" | "dict"
+                            // unittest.mock factories take config kwargs
+                            // (return_value= / side_effect= / spec=).
+                            | "MagicMock" | "Mock" | "AsyncMock" | "PropertyMock"
+                            | "NonCallableMock" | "NonCallableMagicMock"
+                            | "patch" | "mock_open" | "call"
                     )
                 );
                 let pack_trailing_kwargs = (is_method_call && has_any_kwargs)

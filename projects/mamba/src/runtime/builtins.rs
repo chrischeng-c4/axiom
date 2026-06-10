@@ -963,6 +963,17 @@ pub fn mb_len(val: MbValue) -> MbValue {
                             }
                         }
                     }
+                    // Plain Mock / AsyncMock have no __len__ (only MagicMock
+                    // registers the magic table): len() raises TypeError.
+                    if matches!(class_name.as_str(), "Mock" | "AsyncMock" | "NonCallableMock") {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "object of type '{class_name}' has no len()"
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
                     // types.SimpleNamespace has no __len__ and is not a sized
                     // container: len() raises TypeError, matching CPython. (#654)
                     if class_name == "SimpleNamespace" {
@@ -5067,6 +5078,7 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     if matches!(
                         type_name.as_str(),
                         "date" | "datetime" | "datetime.time" | "StackSummary" | "TracebackException"
+                            | "patch"
                     ) {
                         let method_str = method_name.as_ptr()
                             .and_then(|p| match &(*p).data {
