@@ -3233,6 +3233,14 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
             // Check Instance first before trying the Str/class-attr path, since instance
             // setattr is by far the hottest path during object construction.
             if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
+                // tracemalloc Filter/DomainFilter fields are read-only.
+                if class_name == "tracemalloc.Filter" || class_name == "tracemalloc.DomainFilter" {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str("readonly attribute".to_string())),
+                    );
+                    return;
+                }
                 // threading: daemonizing a running thread is a RuntimeError.
                 if class_name == "Thread" {
                     if let Some(kp) = attr.as_ptr() {
@@ -7170,7 +7178,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             let a2 = || arg_items.get(2).copied().unwrap_or(MbValue::none());
             match name.as_str() {
                 "random" => return super::stdlib::random_mod::mb_random_method_random(receiver),
-                "seed" => return super::stdlib::random_mod::mb_random_method_seed(receiver, a0()),
+                "seed" => {
+                    if arg_items.len() > 2 {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "seed() takes from 1 to 3 positional arguments but {} were given",
+                                arg_items.len() + 1
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
+                    return super::stdlib::random_mod::mb_random_method_seed(receiver, a0());
+                }
                 "randint" => return super::stdlib::random_mod::mb_random_method_randint(receiver, a0(), a1()),
                 "randrange" => return super::stdlib::random_mod::mb_random_method_randrange(
                     receiver, a0(), a1(),
@@ -7183,10 +7203,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 "choice" => return super::stdlib::random_mod::mb_random_method_choice(receiver, a0()),
                 "shuffle" => return super::stdlib::random_mod::mb_random_method_shuffle(receiver, a0()),
                 "sample" => return super::stdlib::random_mod::mb_random_method_sample(receiver, a0(), a1()),
-                "choices" => return super::stdlib::random_mod::mb_random_method_choices(
-                    receiver, a0(),
-                    arg_items.get(1).copied().unwrap_or_else(|| MbValue::from_int(1)),
-                ),
+                "choices" => {
+                    // Full routing (weights / cum_weights / k) like the
+                    // module-level dispatcher.
+                    let (w, cw, k) = super::stdlib::random_mod::parse_choices_kwargs(&arg_items);
+                    return super::stdlib::random_mod::mb_random_method_choices_full(
+                        receiver, a0(), w, cw, k,
+                    );
+                }
                 "gauss" => return super::stdlib::random_mod::mb_random_method_gauss(
                     receiver,
                     arg_items.first().copied().unwrap_or_else(|| MbValue::from_float(0.0)),

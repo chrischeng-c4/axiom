@@ -228,6 +228,16 @@ unsafe extern "C" fn structseq_gt(self_v: MbValue, args: MbValue) -> MbValue {
 /// (__len__ / __getitem__ with slice support / __eq__ / __lt__ / __gt__ over
 /// the ordered `_entries` field). Reused by urllib.parse result types.
 pub(crate) fn register_struct_seq_class(cls: &str) {
+    register_struct_seq_class_with(cls, std::collections::HashMap::new());
+}
+
+/// Like `register_struct_seq_class` but with extra class methods merged in
+/// (extras win on name collisions) — one mb_class_register call so every
+/// method lands in CALLABLE_REGISTRY.
+pub(crate) fn register_struct_seq_class_with(
+    cls: &str,
+    extras: std::collections::HashMap<String, MbValue>,
+) {
     use std::collections::HashMap as Map;
     for addr in [
         structseq_len as *const () as usize,
@@ -243,6 +253,9 @@ pub(crate) fn register_struct_seq_class(cls: &str) {
     m.insert("__eq__".into(), MbValue::from_func(structseq_eq as *const () as usize));
     m.insert("__lt__".into(), MbValue::from_func(structseq_lt as *const () as usize));
     m.insert("__gt__".into(), MbValue::from_func(structseq_gt as *const () as usize));
+    for (k, v) in extras {
+        m.insert(k, v);
+    }
     super::super::class::mb_class_register(cls, vec![], m);
 }
 

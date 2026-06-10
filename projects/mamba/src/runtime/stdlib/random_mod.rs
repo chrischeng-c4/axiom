@@ -457,9 +457,32 @@ pub fn mb_random_method_sample(receiver: MbValue, pop: MbValue, k: MbValue) -> M
     let items = match extract_list(pop) {
         Some(v) => v,
         None => {
-            return raise_type_error(
-                "Population must be a sequence.  For dicts or sets, use sorted(d).",
-            );
+            // range objects are sequences in CPython — materialize a handle.
+            let drained = if pop.as_int().is_some() {
+                let handle = super::super::iter::mb_iter(pop);
+                if handle.is_none() {
+                    None
+                } else {
+                    let mut out = Vec::new();
+                    loop {
+                        if super::super::iter::mb_has_next(handle).as_bool() != Some(true) {
+                            break;
+                        }
+                        out.push(super::super::iter::mb_next(handle));
+                    }
+                    Some(out)
+                }
+            } else {
+                None
+            };
+            match drained {
+                Some(v) => v,
+                None => {
+                    return raise_type_error(
+                        "Population must be a sequence.  For dicts or sets, use sorted(d).",
+                    );
+                }
+            }
         }
     };
 
@@ -582,6 +605,16 @@ pub fn mb_random_method_choices_full(
     receiver: MbValue, pop: MbValue, weights: MbValue, cum_weights: MbValue, k: MbValue,
 ) -> MbValue {
     let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
+    // CPython: weights and cum_weights are mutually exclusive, and each must
+    // be a sequence (a scalar is a TypeError).
+    if !weights.is_none() && !cum_weights.is_none() {
+        return raise_type_error("Cannot specify both weights and cumulative weights");
+    }
+    for w in [weights, cum_weights] {
+        if !w.is_none() && weight_seq_len(w).is_none() {
+            return raise_type_error("weights must be a sequence");
+        }
+    }
     let raw_k = extract_i64(k, 1);
 
     // Population length (str / list / tuple). Needed for the weight-length
@@ -945,13 +978,51 @@ pub fn mb_random_method_randbytes(receiver: MbValue, n: MbValue) -> MbValue {
 
 /// `getstate()` → `(handle_id,)` 1-tuple — opaque token. Restore via
 /// `setstate`, valid for the lifetime of the handle.
-pub fn mb_random_method_getstate(receiver: MbValue) -> MbValue {
-    let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
-    MbValue::from_ptr(MbObject::new_list(vec![MbValue::from_int(id as i64)]))
+thread_local! {
+    /// getstate() snapshots: cloned generator states keyed by snapshot id.
+    static SAVED_STATES: std::cell::RefCell<HashMap<u64, Mt>> =
+        std::cell::RefCell::new(HashMap::new());
+    static NEXT_STATE_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
 }
 
-/// `setstate(state)` — no-op since state is just the handle id.
-pub fn mb_random_method_setstate(_receiver: MbValue, _state: MbValue) -> MbValue {
+pub fn mb_random_method_getstate(receiver: MbValue) -> MbValue {
+    let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
+    // Snapshot the live generator so setstate() can rewind exactly.
+    let snapshot = RANDOMS.with(|m| m.borrow().get(&id).cloned());
+    let state_id = NEXT_STATE_ID.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    });
+    if let Some(rng) = snapshot {
+        SAVED_STATES.with(|m| {
+            m.borrow_mut().insert(state_id, rng);
+        });
+    }
+    MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_int(3),
+        MbValue::from_int(state_id as i64),
+    ]))
+}
+
+/// `setstate(state)` — restore the generator snapshotted by getstate().
+pub fn mb_random_method_setstate(receiver: MbValue, state: MbValue) -> MbValue {
+    let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
+    let state_id = state.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::Tuple(items) => items.get(1).and_then(|v| v.as_int()),
+            ObjData::List(lock) => lock.read().ok().and_then(|g| g.get(1).and_then(|v| v.as_int())),
+            _ => None,
+        }
+    });
+    if let Some(sid) = state_id {
+        let saved = SAVED_STATES.with(|m| m.borrow().get(&(sid as u64)).cloned());
+        if let Some(rng) = saved {
+            RANDOMS.with(|m| {
+                m.borrow_mut().insert(id, rng);
+            });
+        }
+    }
     MbValue::none()
 }
 
@@ -962,6 +1033,14 @@ unsafe extern "C" fn dispatch_random(_args_ptr: *const MbValue, _nargs: usize) -
 }
 unsafe extern "C" fn dispatch_seed(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    // seed(a=None, version=2): more than two positionals is a TypeError.
+    let positional = a.iter().filter(|v| !is_dict_value(**v)).count();
+    if positional > 2 {
+        return raise_type_error(&format!(
+            "seed() takes from 1 to 3 positional arguments but {} were given",
+            positional + 1
+        ));
+    }
     mb_random_method_seed(MbValue::none(), a.first().copied().unwrap_or_else(MbValue::none))
 }
 unsafe extern "C" fn dispatch_randint(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -1032,7 +1111,7 @@ unsafe extern "C" fn dispatch_choices(args_ptr: *const MbValue, nargs: usize) ->
 /// `choices(pop, weights_seq)` supplies the weight sequence positionally at
 /// index 1. Returns `(weights, cum_weights, k)` with `none()` for absent
 /// optionals.
-fn parse_choices_kwargs(a: &[MbValue]) -> (MbValue, MbValue, MbValue) {
+pub(crate) fn parse_choices_kwargs(a: &[MbValue]) -> (MbValue, MbValue, MbValue) {
     let mut weights = MbValue::none();
     let mut cum_weights = MbValue::none();
     let mut k = MbValue::from_int(1);
@@ -1046,16 +1125,11 @@ fn parse_choices_kwargs(a: &[MbValue]) -> (MbValue, MbValue, MbValue) {
         }
     }
 
-    // Positional weights at index 1 (only when it isn't the trailing dict).
+    // Positional index 1 is `weights` in the CPython signature — including a
+    // scalar, which the validation downstream rejects with TypeError.
     if let Some(&pos1) = a.get(1) {
         if !is_dict_value(pos1) && weights.is_none() && cum_weights.is_none() {
-            // Distinguish positional `weights` from a positional `k`:
-            // a weight sequence is a list/tuple; a bare int is `k`.
-            if weight_seq_len(pos1).is_some() {
-                weights = pos1;
-            } else if pos1.as_int().is_some() {
-                k = pos1;
-            }
+            weights = pos1;
         }
     }
 
