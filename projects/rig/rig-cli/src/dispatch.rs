@@ -126,6 +126,21 @@ fn run_run(args: RunArgs) -> RigReport {
         return b.finalize();
     }
 
+    // Pins + baseline store (cwd-scoped, like .rig/last-report.json).
+    let pins = match &args.pins {
+        Some(dir) => match rig::pins::load_pins(std::path::Path::new(dir)) {
+            Ok(p) => p,
+            Err(e) => {
+                b.tool_error(5, e);
+                return b.finalize();
+            }
+        },
+        None => Vec::new(),
+    };
+    let mut baselines = rig::pins::BaselineStore::load(std::path::Path::new("."));
+    let strict = std::env::var("RIG_STRICT").is_ok_and(|v| v == "1");
+    let mut baselines_dirty = false;
+
     let mut executed = 0usize;
     for d in discovered {
         let rel = d.path.display().to_string();
@@ -153,14 +168,88 @@ fn run_run(args: RunArgs) -> RigReport {
             b.scenarios_mut().skip += 1;
             continue;
         }
-        if scenario.record.kind == ScenarioKind::Load {
-            b.add_missing(format!("{rel}: load engine lands in Phase 5"));
-            b.scenarios_mut().skip += 1;
-            continue;
+
+        let run = if scenario.record.kind == ScenarioKind::Load {
+            run_load_scenario(&scenario, &rel)
+        } else {
+            rig::engine::run_scenario(&scenario)
+        };
+        executed += 1;
+
+        // Pins gate metrics captured by a scenario whose steps held.
+        if run.raw_passed {
+            for pin in pins.iter().filter(|p| p.matches(&run.scenario_id)) {
+                let Some(value) = run.vars.get_f64(&pin.metric) else {
+                    b.add_finding(Finding {
+                        id: finding_id(Kind::ScenarioError, &format!("pin/{}/{}", run.scenario_id, pin.metric)),
+                        severity: Severity::High,
+                        kind: Kind::ScenarioError,
+                        title: format!("pin metric `{}` not captured by `{}`", pin.metric, run.scenario_id),
+                        detail: "The pin references a metric the scenario never captured/emitted.".into(),
+                        remediation: "Capture the metric in the scenario (sample/load emit it) or fix the pin's metric name.".into(),
+                        invoke: Invoke::command(format!("rig run --scenario {rel}")),
+                        evidence: serde_json::json!({ "pin": pin.issue, "metric": pin.metric }),
+                    });
+                    continue;
+                };
+                if args.update_baselines {
+                    baselines.record(&run.scenario_id, &pin.metric, value);
+                    baselines_dirty = true;
+                    b.add_finding(Finding {
+                        id: finding_id(Kind::PinMissingBaseline, &format!("recorded/{}/{}", run.scenario_id, pin.metric)),
+                        severity: Severity::Info,
+                        kind: Kind::PinMissingBaseline,
+                        title: format!("baseline recorded: {} {} = {value:.3}", run.scenario_id, pin.metric),
+                        detail: "Recorded via --update-baselines; future runs gate against it.".into(),
+                        remediation: "None — informational.".into(),
+                        invoke: Invoke::command(format!("rig run --scenario {rel} --pins {}", args.pins.as_deref().unwrap_or("."))),
+                        evidence: serde_json::json!({ "value": value }),
+                    });
+                    continue;
+                }
+                use rig::pins::GateOutcome;
+                match rig::pins::gate(pin, &run.scenario_id, value, &baselines) {
+                    GateOutcome::Pass => {}
+                    GateOutcome::FloorBreach { value, floor } => {
+                        b.add_finding(Finding {
+                            id: finding_id(Kind::PinRegression, &format!("{}/{}", run.scenario_id, pin.metric)),
+                            severity: Severity::High,
+                            kind: Kind::PinRegression,
+                            title: format!("{} {} = {value:.3} breaches floor {floor:.3}", run.scenario_id, pin.metric),
+                            detail: format!("Absolute ceiling breached (pin {}).", pin.issue),
+                            remediation: "Investigate the regression; the floor is the promised envelope.".into(),
+                            invoke: Invoke::command(format!("rig run --scenario {rel} --pins {}", args.pins.as_deref().unwrap_or("."))),
+                            evidence: serde_json::json!({ "value": value, "floor": floor, "pin": pin.issue }),
+                        });
+                    }
+                    GateOutcome::RatchetBreach { value, baseline, limit } => {
+                        b.add_finding(Finding {
+                            id: finding_id(Kind::PinRegression, &format!("{}/{}", run.scenario_id, pin.metric)),
+                            severity: Severity::High,
+                            kind: Kind::PinRegression,
+                            title: format!("{} {} = {value:.3} regressed past ratchet limit {limit:.3}", run.scenario_id, pin.metric),
+                            detail: format!("Baseline {baseline:.3} (pin {}); ratchet allows up to {limit:.3}.", pin.issue),
+                            remediation: "Investigate the regression, or re-record baselines deliberately with --update-baselines.".into(),
+                            invoke: Invoke::command(format!("rig run --scenario {rel} --pins {}", args.pins.as_deref().unwrap_or("."))),
+                            evidence: serde_json::json!({ "value": value, "baseline": baseline, "limit": limit, "pin": pin.issue }),
+                        });
+                    }
+                    GateOutcome::NoBaseline { value } => {
+                        b.add_finding(Finding {
+                            id: finding_id(Kind::PinMissingBaseline, &format!("{}/{}", run.scenario_id, pin.metric)),
+                            severity: if strict { Severity::High } else { Severity::Info },
+                            kind: Kind::PinMissingBaseline,
+                            title: format!("no baseline for {} {} (measured {value:.3})", run.scenario_id, pin.metric),
+                            detail: "The pin has a ratchet but no recorded baseline on this host.".into(),
+                            remediation: "Record one: re-run with --update-baselines.".into(),
+                            invoke: Invoke::command(format!("rig run --scenario {rel} --pins {} --update-baselines", args.pins.as_deref().unwrap_or("."))),
+                            evidence: serde_json::json!({ "value": value, "strict": strict }),
+                        });
+                    }
+                }
+            }
         }
 
-        let run = rig::engine::run_scenario(&scenario);
-        executed += 1;
         match bucket(scenario.record.expected, run.raw_passed) {
             Verdict::Pass => b.scenarios_mut().pass += 1,
             Verdict::Red => {
@@ -202,9 +291,87 @@ fn run_run(args: RunArgs) -> RigReport {
     }
 
     let _ = executed;
+    if baselines_dirty {
+        if let Err(e) = baselines.save() {
+            b.add_missing(format!("baseline store not saved: {e}"));
+        }
+    }
     let report = b.finalize();
     rig::report::persist(&report, std::path::Path::new("."));
     report
+}
+
+/// Drive a `kind = "load"` scenario through the open-loop generator and
+/// shape the result like an engine run (metrics land in vars).
+fn run_load_scenario(
+    scenario: &rig::scenario::Scenario,
+    rel: &str,
+) -> rig::engine::ScenarioRun {
+    use rig::report::{finding_id, Finding, Invoke, Kind, Severity};
+    use rig::scenario::load::ACHIEVED_QPS_HONESTY_RATIO;
+    use rig::scenario::{scenario_id, VarStore};
+
+    let id = scenario_id(&scenario.record);
+    let mut vars = VarStore::seed(&scenario.env);
+    let mut findings = Vec::new();
+    let profile = scenario.load.as_ref().expect("lint guarantees [load]");
+
+    let stats = rig::engine::loadgen::run(profile, &vars);
+    if let Some(abort) = &stats.abort {
+        findings.push(Finding {
+            id: finding_id(Kind::ScenarioError, &id),
+            severity: Severity::High,
+            kind: Kind::ScenarioError,
+            title: format!("load scenario `{id}` aborted"),
+            detail: abort.clone(),
+            remediation: "Fix the load request template/vars and re-run.".into(),
+            invoke: Invoke::command(format!("rig run --scenario {rel}")),
+            evidence: serde_json::json!({}),
+        });
+    } else {
+        for (key, value) in [
+            ("p50_ms", stats.p50_ms),
+            ("p99_ms", stats.p99_ms),
+            ("error_rate", stats.error_rate),
+            ("achieved_qps", stats.achieved_qps),
+        ] {
+            vars.set(key, serde_json::json!(value));
+        }
+        let honesty_floor = profile.target_qps as f64 * ACHIEVED_QPS_HONESTY_RATIO;
+        if stats.achieved_qps < honesty_floor {
+            findings.push(Finding {
+                id: finding_id(Kind::LoadHonesty, &id),
+                severity: Severity::Medium,
+                kind: Kind::LoadHonesty,
+                title: format!(
+                    "achieved {:.1} qps < {:.0}% of offered {} qps — percentiles are not trustworthy",
+                    stats.achieved_qps,
+                    ACHIEVED_QPS_HONESTY_RATIO * 100.0,
+                    profile.target_qps
+                ),
+                detail: format!(
+                    "{} of {} measured requests failed; an under-achieved schedule means the system (or the generator) saturated below the offered load.",
+                    stats.failed, stats.total
+                ),
+                remediation: "Lower target_qps, raise workers, or treat this as the saturation finding it is.".into(),
+                invoke: Invoke::command(format!("rig run --scenario {rel}")),
+                evidence: serde_json::json!({
+                    "achieved_qps": stats.achieved_qps,
+                    "target_qps": profile.target_qps,
+                    "failed": stats.failed,
+                    "total": stats.total,
+                }),
+            });
+        }
+    }
+
+    rig::engine::ScenarioRun {
+        raw_passed: findings.is_empty(),
+        scenario_id: id,
+        findings,
+        vars,
+        steps_run: 1,
+    }
 }
 
 fn run_lint(args: LintArgs) -> RigReport {

@@ -1,0 +1,37 @@
+# Open-loop search load: fixed offered schedule at target_qps; queueing
+# delay lands in the percentiles (coordinated-omission honest), and
+# achieved_qps is reported alongside. Gated by config/pins/search_p99.toml.
+#
+# Requires: lumen serving on {{upstream}} with the `users` collection
+# seeded (any prior resilience/endurance scenario run leaves it seeded).
+[record]
+suite = "lumen"
+dimension = "load"
+case = "search_qps"
+subject = "search p99/error_rate at a fixed offered 200 qps"
+kind = "load"
+expected = "pass"
+required = true
+
+[env]
+upstream = "127.0.0.1:7373"
+collection = "users"
+
+[vat]
+runner = "rig-load"
+services = ["lumen"]
+
+[limits]
+timeout_secs = 120
+
+[load]
+target_qps = 200
+workers = 8
+duration_secs = 30
+warmup_secs = 5
+
+[load.request]
+method = "POST"
+url = "http://{{upstream}}/collections/{{collection}}/search"
+body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
+expect = { status = 200, timeout_ms = 2000 }
