@@ -121,12 +121,16 @@ pub fn fixture_sha256_opt(path: &Path) -> Option<String> {
 // `Command::new("python3")` re-resolves through $PATH on every spawn; on
 // pyenv machines that lands on the bash shim, which costs ~470ms/exec vs
 // ~25ms for the real binary (measured ~65% of a full conformance run).
-// Resolve the interpreter ONCE per harness process: honor
-// `MAMBA_ORACLE_PYTHON` when set, else ask the PATH-resolved `python3` for
-// its `sys.executable` (from the temp dir, so pyenv version selection
-// matches the sandboxed fixture spawns, which also run under $TMPDIR), and
-// fall back to plain "python3" (original PATH semantics) if resolution
-// fails. Same interpreter as before — just reached without the shim tax.
+// Resolve the interpreter ONCE per harness process, in preference order:
+//
+//   1. `MAMBA_ORACLE_PYTHON` — explicit override, always wins.
+//   2. `tests/cpython/.cache/oracle-env/bin/python3` — the uv-materialized
+//      oracle environment (CPython 3.12 + the pinned 3p packages from
+//      tests/harness/cpython/config/oracle-env/requirements.txt), so
+//      3rd-libs fixtures can satisfy the "exits 0 under CPython" contract.
+//   3. The PATH-resolved `python3`'s own `sys.executable` (asked from the
+//      temp dir, matching the sandboxed fixture spawn context), falling
+//      back to plain "python3" (original PATH semantics) on any failure.
 pub fn python3_bin() -> &'static Path {
     static PYTHON3: OnceLock<PathBuf> = OnceLock::new();
     PYTHON3
@@ -136,6 +140,11 @@ pub fn python3_bin() -> &'static Path {
                 if !overridden.is_empty() {
                     return PathBuf::from(overridden);
                 }
+            }
+            let oracle_env = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/cpython/.cache/oracle-env/bin/python3");
+            if oracle_env.is_file() {
+                return oracle_env;
             }
             let resolved = Command::new("python3")
                 .args(["-c", "import sys; print(sys.executable)"])
