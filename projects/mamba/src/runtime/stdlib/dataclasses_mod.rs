@@ -230,6 +230,91 @@ fn parse_options(dict: MbValue) -> DcOptions {
 /// ClassVar / InitVar / KW_ONLY, unpack `field(...)` markers, publish plain
 /// defaults as class attributes, set `__match_args__` / `__slots__`, and
 /// store the processed `DcClass`.
+/// dataclass() over a dynamically created class (type 3-arg form): fields
+/// come from `__annotations__` and class-attr defaults. Enforces CPython's
+/// error contract — mutable defaults are ValueError, a non-callable
+/// default_factory is TypeError, and a required field after a defaulted one
+/// is TypeError. Err(()) means an exception is pending.
+fn decorate_dynamic_class(class_name: &str) -> Result<(), ()> {
+    // type-3-arg classes may store the namespace dict entries in either the
+    // class-attrs map or the methods table.
+    let lookup = |attr: &str| -> Option<MbValue> {
+        super::super::class::class_attr_lookup(class_name, attr).or_else(|| {
+            let m = super::super::class::lookup_method(class_name, attr);
+            if m.is_none() { None } else { Some(m) }
+        })
+    };
+    let anns = lookup("__annotations__");
+    let names: Vec<String> = anns
+        .map(|d| {
+            super::super::builtins::extract_items(super::super::dict_ops::mb_dict_keys(d))
+                .into_iter()
+                .filter_map(extract_str)
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut seen_default = false;
+    for name in &names {
+        let default = lookup(name);
+        match default {
+            Some(d) if !d.is_none() => {
+                // Mutable containers as class-level defaults are rejected.
+                let mutable = d.as_ptr().is_some_and(|p| unsafe {
+                    matches!(
+                        (*p).data,
+                        ObjData::List(_) | ObjData::Dict(_) | ObjData::Set(_)
+                    )
+                });
+                if mutable && !is_field_marker(d) {
+                    let kind = d.as_ptr().map(|p| unsafe {
+                        match (*p).data {
+                            ObjData::List(_) => "list",
+                            ObjData::Dict(_) => "dict",
+                            _ => "set",
+                        }
+                    }).unwrap_or("list");
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "mutable default <class '{kind}'> for field {name} is not allowed: use default_factory"
+                        ))),
+                    );
+                    return Err(());
+                }
+                if is_field_marker(d) {
+                    if let Some(factory) = marker_get(d, "default_factory") {
+                        if !factory.is_none()
+                            && super::super::builtins::mb_callable(factory).as_bool()
+                                != Some(true)
+                        {
+                            super::super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "default_factory must be callable".to_string(),
+                                )),
+                            );
+                            return Err(());
+                        }
+                    }
+                }
+                seen_default = true;
+            }
+            _ => {
+                if seen_default {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "non-default argument '{name}' follows default argument"
+                        ))),
+                    );
+                    return Err(());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn decorate_class(class_name: &str, opts: DcOptions) {
     let raw = PENDING_FIELDS.with(|reg| reg.borrow_mut().remove(class_name))
         .unwrap_or_default();
@@ -614,7 +699,11 @@ pub(crate) fn dc_run_synth_init(class_name: &str, instance: MbValue, args_list: 
 /// dispatcher itself, which the decorator machinery then calls with the
 /// class name.
 unsafe extern "C" fn dispatch_dataclass(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let a = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
     // Decoration mode: a string naming a registered class.
     for v in a {
         if let Some(s) = extract_str(*v) {
@@ -622,6 +711,24 @@ unsafe extern "C" fn dispatch_dataclass(args_ptr: *const MbValue, nargs: usize) 
                 let opts = PENDING_OPTIONS.with(|c| c.borrow_mut().take())
                     .unwrap_or_default();
                 decorate_class(&s, opts);
+                unsafe { retain_if_ptr(*v); }
+                return *v;
+            }
+        }
+    }
+    // Dynamic-class mode: dataclass(type('X', (), {...})) — pull fields from
+    // the type object's __annotations__ + class-attr defaults, validating the
+    // CPython error contract.
+    for v in a {
+        let is_dict = v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) });
+        if is_dict {
+            continue;
+        }
+        if let Some(cn) = super::super::class::resolve_class_name(*v) {
+            if super::super::class::class_is_registered(&cn) {
+                if decorate_dynamic_class(&cn).is_err() {
+                    return MbValue::none();
+                }
                 unsafe { retain_if_ptr(*v); }
                 return *v;
             }

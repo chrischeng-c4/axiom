@@ -3609,6 +3609,16 @@ pub fn mb_delattr(obj: MbValue, attr: MbValue) {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
+                // PEP 557: frozen dataclasses reject attribute deletion too.
+                if super::stdlib::dataclasses_mod::is_frozen_dataclass(class_name) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("FrozenInstanceError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "cannot delete field '{attr_name}'"
+                        ))),
+                    );
+                    return;
+                }
                 // Descriptor protocol: data descriptor __delete__ takes priority
                 let class_attr = lookup_method(class_name, &attr_name);
                 if !class_attr.is_none() && is_data_descriptor(class_attr) {
@@ -3857,6 +3867,10 @@ pub(crate) fn lookup_method(class_name: &str, method_name: &str) -> MbValue {
 
 /// Walk the MRO to find a class-level attribute (not a method).
 /// Returns `Some(value)` if found in any class along the MRO.
+pub(crate) fn class_attr_lookup(class_name: &str, attr: &str) -> Option<MbValue> {
+    mro_lookup_class_attr(class_name, attr)
+}
+
 fn mro_lookup_class_attr(class_name: &str, attr: &str) -> Option<MbValue> {
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
