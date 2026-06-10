@@ -285,6 +285,18 @@ pub fn register() {
     // canonical UTC timezone singleton (alias of timezone.utc).
     attrs.insert("MINYEAR".to_string(), MbValue::from_int(1));
     attrs.insert("MAXYEAR".to_string(), MbValue::from_int(9999));
+    // CPython 3.12 datetime.__all__ — iterable module attribute.
+    let all_names: Vec<MbValue> = [
+        "date", "datetime", "time", "timedelta", "timezone", "tzinfo",
+        "MINYEAR", "MAXYEAR", "UTC",
+    ]
+    .iter()
+    .map(|n| MbValue::from_ptr(MbObject::new_str(n.to_string())))
+    .collect();
+    attrs.insert(
+        "__all__".to_string(),
+        MbValue::from_ptr(MbObject::new_list(all_names)),
+    );
     attrs.insert("UTC".to_string(), build_timezone_instance(0, Some("UTC".to_string())));
 
     // Bridge the `date` / `datetime` constructor funcs -> their class name so

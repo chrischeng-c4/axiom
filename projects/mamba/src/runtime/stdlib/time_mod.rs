@@ -189,6 +189,15 @@ pub fn register() {
         });
     }
 
+    // isinstance(tt, time.struct_time): bind the factory func addr to the
+    // class name the instance builder stamps.
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut().insert(
+            d_struct_time as *const () as usize as u64,
+            "struct_time".to_string(),
+        );
+    });
+
     // Integer clock-id constants.
     attrs.insert("CLOCK_REALTIME".to_string(), MbValue::from_int(CLOCK_REALTIME));
     attrs.insert("CLOCK_MONOTONIC".to_string(), MbValue::from_int(CLOCK_MONOTONIC));

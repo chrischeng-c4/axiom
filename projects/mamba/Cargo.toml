@@ -171,6 +171,9 @@ target-lexicon = "0.13"
 
 # Unicode general-category + numeric properties (CPython parity for str.isdigit / isdecimal / isnumeric)
 unicode-properties = "0.1"
+# Real NFC/NFD/NFKC/NFKD engine for the unicodedata module (already in the
+# workspace lockfile via other deps).
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 datatest-stable = "0.2"
