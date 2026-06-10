@@ -985,7 +985,13 @@ fn resolve_generator_throw_args(exc_type: MbValue, exc_msg: MbValue) -> Result<(
                     extract_str(exc_msg).unwrap_or_default()
                 } else {
                     fields_guard.get("message")
-                        .and_then(|v| extract_str(*v))
+                        .and_then(|v| exception_message_str(*v))
+                        .or_else(|| {
+                            fields_guard
+                                .get("args")
+                                .and_then(|t| first_tuple_element(*t))
+                                .and_then(exception_message_str)
+                        })
                         .unwrap_or_default()
                 };
                 return Ok((class_name.clone(), msg));
@@ -1458,6 +1464,28 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
     instance
 }
 
+/// The `message` field of an exception instance as display text. CPython's
+/// `str(exc)` stringifies a non-str single arg (`str(ValueError(3)) == "3"`,
+/// and `SystemExit(3)` carries its exit status here), so int/float args
+/// must not vanish.
+/// First element of an `args` tuple field, if any.
+fn first_tuple_element(t: MbValue) -> Option<MbValue> {
+    let ptr = t.as_ptr()?;
+    unsafe {
+        if let ObjData::Tuple(ref items) = (*ptr).data {
+            items.first().copied()
+        } else {
+            None
+        }
+    }
+}
+
+fn exception_message_str(v: MbValue) -> Option<String> {
+    extract_str(v)
+        .or_else(|| v.as_int().map(|i| i.to_string()))
+        .or_else(|| v.as_float().map(|f| f.to_string()))
+}
+
 /// Raise an exception from an instance value directly.
 /// Used for user-defined exception classes: the instance already has
 /// the correct class_name, message, and custom fields.
@@ -1467,7 +1495,13 @@ pub fn mb_raise_instance(instance: MbValue) {
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 let fields_guard = fields.read().unwrap();
                 let msg = fields_guard.get("message")
-                    .and_then(|v| extract_str(*v))
+                    .and_then(|v| exception_message_str(*v))
+                    .or_else(|| {
+                        fields_guard
+                            .get("args")
+                            .and_then(|t| first_tuple_element(*t))
+                            .and_then(exception_message_str)
+                    })
                     .unwrap_or_default();
                 let exc = super::exception::MbException::new(class_name, &msg);
                 drop(fields_guard);
@@ -1505,7 +1539,13 @@ pub fn mb_raise_instance_with_context(instance: MbValue, context: MbValue) {
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 let fields_guard = fields.read().unwrap();
                 let msg = fields_guard.get("message")
-                    .and_then(|v| extract_str(*v))
+                    .and_then(|v| exception_message_str(*v))
+                    .or_else(|| {
+                        fields_guard
+                            .get("args")
+                            .and_then(|t| first_tuple_element(*t))
+                            .and_then(exception_message_str)
+                    })
                     .unwrap_or_default();
                 let mut exc = super::exception::MbException::new(class_name, &msg);
                 if !context.is_none() {
@@ -1542,7 +1582,13 @@ pub fn mb_raise_instance_from(instance: MbValue, cause: MbValue) {
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 let fields_guard = fields.read().unwrap();
                 let msg = fields_guard.get("message")
-                    .and_then(|v| extract_str(*v))
+                    .and_then(|v| exception_message_str(*v))
+                    .or_else(|| {
+                        fields_guard
+                            .get("args")
+                            .and_then(|t| first_tuple_element(*t))
+                            .and_then(exception_message_str)
+                    })
                     .unwrap_or_default();
                 let mut exc = super::exception::MbException::new(class_name, &msg);
                 exc.suppress_context = true;
@@ -1579,7 +1625,13 @@ pub fn mb_raise_instance_from_with_context(instance: MbValue, cause: MbValue, co
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 let fields_guard = fields.read().unwrap();
                 let msg = fields_guard.get("message")
-                    .and_then(|v| extract_str(*v))
+                    .and_then(|v| exception_message_str(*v))
+                    .or_else(|| {
+                        fields_guard
+                            .get("args")
+                            .and_then(|t| first_tuple_element(*t))
+                            .and_then(exception_message_str)
+                    })
                     .unwrap_or_default();
                 let mut exc = super::exception::MbException::new(class_name, &msg);
                 exc.suppress_context = true;

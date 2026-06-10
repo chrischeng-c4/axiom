@@ -212,17 +212,123 @@ fn build_hash_info() -> MbValue {
     MbValue::from_ptr(dict)
 }
 
-/// Build a stub stream object (dict with a name)
-fn build_stream_stub(name: &str) -> MbValue {
-    let dict = MbObject::new_dict();
-    unsafe {
-        if let ObjData::Dict(ref lock) = (*dict).data {
-            let mut map = lock.write().unwrap();
-            map.insert("name".into(),
-                MbValue::from_ptr(MbObject::new_str(format!("<{}>", name))));
+// ── std stream objects ────────────────────────────────────────────
+//
+// `sys.stdin` reads the real process stdin (read/readline); `sys.stdout`
+// and `sys.stderr` write through the runtime output layer so capture and
+// redirect stay coherent with `print`. The three attributes share one
+// `sys._Stream` Instance class with a variadic `(self, args_list)` table.
+
+unsafe extern "C" fn stream_read(_self_v: MbValue, _args: MbValue) -> MbValue {
+    use std::io::Read as _;
+    let mut buf = String::new();
+    let _ = std::io::stdin().read_to_string(&mut buf);
+    MbValue::from_ptr(MbObject::new_str(buf))
+}
+
+unsafe extern "C" fn stream_readline(_self_v: MbValue, _args: MbValue) -> MbValue {
+    use std::io::BufRead as _;
+    let mut line = String::new();
+    let _ = std::io::stdin().lock().read_line(&mut line);
+    MbValue::from_ptr(MbObject::new_str(line))
+}
+
+unsafe extern "C" fn stream_write(self_v: MbValue, args: MbValue) -> MbValue {
+    use std::io::Write as _;
+    let text = args
+        .as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                lock.read().unwrap().first().copied()
+            } else {
+                None
+            }
+        })
+        .and_then(|v| {
+            v.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_default();
+    let is_stderr = self_v.as_ptr().is_some_and(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields
+                .read()
+                .unwrap()
+                .get("name")
+                .and_then(|v| {
+                    v.as_ptr().and_then(|sp| {
+                        if let ObjData::Str(ref s) = (*sp).data {
+                            Some(s == "<stderr>")
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .unwrap_or(false)
+        } else {
+            false
         }
+    });
+    let n = text.chars().count() as i64;
+    if is_stderr {
+        if !super::super::output::try_write_stderr_redirect(&text) {
+            let _ = std::io::stderr().write_all(text.as_bytes());
+        }
+    } else if !super::super::output::write_captured(&text) {
+        let _ = std::io::stdout().write_all(text.as_bytes());
     }
-    MbValue::from_ptr(dict)
+    MbValue::from_int(n)
+}
+
+unsafe extern "C" fn stream_flush(_self_v: MbValue, _args: MbValue) -> MbValue {
+    use std::io::Write as _;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    MbValue::none()
+}
+
+/// Register the shared `sys._Stream` method table.
+fn register_stream_class() {
+    let mut methods: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("read", stream_read as *const () as usize),
+        ("readline", stream_readline as *const () as usize),
+        ("write", stream_write as *const () as usize),
+        ("flush", stream_flush as *const () as usize),
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+        methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register("sys._Stream", Vec::new(), methods);
+}
+
+/// Build a std-stream object (an Instance carrying its display name).
+fn build_stream_stub(name: &str) -> MbValue {
+    use super::super::rc::{InstanceFields, MbObjectHeader, MbRwLock, ObjKind};
+    let mut fields = InstanceFields::default();
+    fields.insert(
+        "name".to_string(),
+        MbValue::from_ptr(MbObject::new_str(format!("<{}>", name))),
+    );
+    let obj = Box::new(MbObject {
+        header: MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "sys._Stream".to_string(),
+            fields: MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
 }
 
 /// Register the sys module.
@@ -283,6 +389,7 @@ pub fn register() {
     attrs.insert("int_info".into(), build_int_info());
 
     // sys.stdin, sys.stdout, sys.stderr (stub stream objects)
+    register_stream_class();
     attrs.insert("stdin".into(), build_stream_stub("stdin"));
     attrs.insert("stdout".into(), build_stream_stub("stdout"));
     attrs.insert("stderr".into(), build_stream_stub("stderr"));

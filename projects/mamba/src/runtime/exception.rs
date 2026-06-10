@@ -81,7 +81,7 @@ struct ExceptionHandler {
 /// Create a new exception of the given type.
 pub fn mb_exception_new(exc_type: MbValue, message: MbValue) -> MbValue {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     let exc = MbException::new(&type_name, &msg);
     store_exception_as_value(exc)
 }
@@ -202,12 +202,22 @@ fn extract_str(val: MbValue) -> Option<String> {
     })
 }
 
+/// Display text for a raise-site message operand: CPython stringifies a
+/// non-str single arg (`str(ValueError(3)) == "3"`; `SystemExit(3)`
+/// carries its exit status here), so int/float operands must not vanish.
+fn message_display(message: MbValue) -> String {
+    extract_str(message)
+        .or_else(|| message.as_int().map(|i| i.to_string()))
+        .or_else(|| message.as_float().map(|f| f.to_string()))
+        .unwrap_or_default()
+}
+
 // ── Raise / Catch ──
 
 /// Raise an exception. Sets the thread-local exception state.
 pub fn mb_raise(exc_type: MbValue, message: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     // Also signal StopIteration via the iterator flag for user-defined __next__
     if type_name == "StopIteration" {
         super::iter::signal_stop_iteration();
@@ -223,7 +233,7 @@ pub fn mb_raise(exc_type: MbValue, message: MbValue) {
 /// If cause is None, __cause__ remains None.
 pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     let mut exc = MbException::new(&type_name, &msg);
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
@@ -242,7 +252,7 @@ pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
 /// Called when a raise occurs inside an except handler body.
 pub fn mb_raise_with_context(exc_type: MbValue, message: MbValue, context: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     let mut exc = MbException::new(&type_name, &msg);
     if !context.is_none() {
         let ctx_type = get_exception_type(context).unwrap_or_else(|| "Exception".to_string());
@@ -258,7 +268,7 @@ pub fn mb_raise_with_context(exc_type: MbValue, message: MbValue, context: MbVal
 /// Always sets __suppress_context__ = True (per Python `raise from` semantics).
 pub fn mb_raise_from_with_context(exc_type: MbValue, message: MbValue, cause: MbValue, context: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     let mut exc = MbException::new(&type_name, &msg);
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
@@ -413,7 +423,14 @@ fn get_exception_message(exc: MbValue) -> Option<String> {
     exc.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::Instance { ref fields, .. } = (*ptr).data {
             let fields = fields.read().unwrap();
-            fields.get("message").and_then(|v| extract_str(*v))
+            fields.get("message").and_then(|v| {
+                // CPython str(ValueError(3)) == "3": a non-str single arg
+                // stringifies rather than vanishing (SystemExit(3) carries
+                // its exit status here).
+                extract_str(*v)
+                    .or_else(|| v.as_int().map(|i| i.to_string()))
+                    .or_else(|| v.as_float().map(|f| f.to_string()))
+            })
         } else {
             None
         }
@@ -687,7 +704,7 @@ pub fn mb_import_error(msg: &str) -> MbValue {
 /// Create an ExceptionGroup: ExceptionGroup(message, [exc1, exc2, ...])
 /// The `exceptions` field is always stored as a tuple (matching CPython).
 pub fn mb_exception_group_new(message: MbValue, exceptions: MbValue) -> MbValue {
-    let msg = extract_str(message).unwrap_or_default();
+    let msg = message_display(message);
     // Convert exceptions list to tuple (CPython stores as tuple)
     let exc_tuple = if let Some(ptr) = exceptions.as_ptr() {
         unsafe {

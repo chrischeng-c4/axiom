@@ -526,6 +526,11 @@ fn cmd_check(sub: &ArgMatches) -> Result<()> {
 fn exit_like_cpython(session: &CompilerSession, err: &mamba::error::MambaError) -> ! {
     let rendered = session.render_error(err);
     let stripped = rendered.strip_prefix("error: ").unwrap_or(&rendered);
+    // A program with no executable top-level statements (`pass`, comments
+    // only) produces no JIT entry point; CPython exits 0 on such input.
+    if stripped.contains("no entry point found") {
+        std::process::exit(0);
+    }
     if let Some(rest) = stripped.strip_prefix("SystemExit") {
         let payload = rest.trim_start_matches(':').trim();
         if payload.is_empty() || payload == "None" {
