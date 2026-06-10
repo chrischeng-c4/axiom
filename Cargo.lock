@@ -1308,7 +1308,7 @@ checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
 
 [[package]]
 name = "cap"
-version = "0.4.0"
+version = "0.3.61"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6397,7 +6397,7 @@ dependencies = [
 
 [[package]]
 name = "meter"
-version = "0.4.0"
+version = "0.3.62"
 dependencies = [
  "anyhow",
  "axum 0.8.9",
@@ -6428,7 +6428,7 @@ dependencies = [
 
 [[package]]
 name = "meter-cli"
-version = "0.4.0"
+version = "0.3.62"
 dependencies = [
  "anyhow",
  "cclab-cli-registry",
@@ -8207,7 +8207,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -8228,7 +8228,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tinyvec",
  "tracing",
- "web-time",
+ "web-time 1.1.0",
 ]
 
 [[package]]
@@ -9029,7 +9029,7 @@ version = "1.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "30a7197ae7eb376e574fe940d068c30fe0462554a3ddbe4eca7838e049c937a9"
 dependencies = [
- "web-time",
+ "web-time 1.1.0",
  "zeroize",
 ]
 
@@ -11635,7 +11635,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vat"
-version = "0.4.0"
+version = "0.3.61"
 dependencies = [
  "anyhow",
  "chrono",
