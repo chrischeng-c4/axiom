@@ -3926,7 +3926,17 @@ pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
     match (base.as_int(), exp.as_int()) {
         (Some(b), Some(e)) => {
             if e >= 0 {
-                MbValue::from_int(b.wrapping_pow(e as u32))
+                // Promote out-of-payload results to BigInt (2**64 must not
+                // wrap to 0 in the 48-bit NaN-boxed int payload).
+                use num_bigint::BigInt;
+                let big = BigInt::from(b).pow(e as u32);
+                let fits = big >= BigInt::from(-(1i64 << 47)) && big < BigInt::from(1i64 << 47);
+                if fits {
+                    use num_traits::ToPrimitive;
+                    MbValue::from_int(big.to_i64().unwrap_or(0))
+                } else {
+                    super::bigint_ops::bigint_from_big(big)
+                }
             } else {
                 MbValue::from_float((b as f64).powi(e as i32))
             }
