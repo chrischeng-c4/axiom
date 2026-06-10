@@ -826,6 +826,11 @@ struct KeywordIndex {
     /// term → docs (RoaringBitmap so AND/OR is compressed-SIMD, not random
     /// per-doc forward lookups — the difference at 1M-doc filter intersection).
     terms: BTreeMap<String, RoaringBitmap>,
+    /// Side-index of LIVE-tail terms whose posting holds >= 2 docs, maintained
+    /// O(log n) at index/delete time so `duplicates` iterates only candidate
+    /// groups instead of scanning every distinct term. Tail-only state: cleared
+    /// at seal (the sealed path enumerates the segment dict instead).
+    dup_values: BTreeSet<String>,
     /// Dense live-tail forward cache for hot per-doc predicates and snapshots.
     /// `forward` remains a sparse compatibility/fallback map for restored older
     /// snapshots, while new writes avoid a per-doc HashMap insert.
@@ -1031,6 +1036,16 @@ impl KeywordIndex {
     }
 }
 
+/// Values whose live posting holds >= 2 docs — seeds the duplicates side-index
+/// (`dup_values`) when an inverted map is rebuilt wholesale (snapshot restore);
+/// the write/delete paths maintain it incrementally afterwards.
+fn dup_values_of<K: Ord + Clone>(map: &BTreeMap<K, RoaringBitmap>) -> BTreeSet<K> {
+    map.iter()
+        .filter(|(_, set)| set.len() >= 2)
+        .map(|(k, _)| k.clone())
+        .collect()
+}
+
 /// Order-statistic snapshot of the live `values` tree: distinct value bits
 /// ascending plus cumulative doc counts. Built lazily the first time a range
 /// ESTIMATE walks past [`RANGE_STATS_BUILD_THRESHOLD`] distinct keys; dropped
@@ -1098,6 +1113,10 @@ impl NumberRangeStats {
 #[derive(Debug, Default)]
 struct NumberIndex {
     values: BTreeMap<SortableF64, RoaringBitmap>,
+    /// Side-index of LIVE-tail values whose posting holds >= 2 docs (see
+    /// `KeywordIndex::dup_values`); drives `duplicates` without a full
+    /// `values` scan. Cleared at seal.
+    dup_values: BTreeSet<SortableF64>,
     forward: FastHashMap<u32, SortableF64>,
     /// Dense live-tail forward cache for hot per-doc predicates. `forward`
     /// remains the sparse ownership/snapshot map; this avoids HashMap lookup in
@@ -1928,6 +1947,10 @@ impl NumberIndex {
 #[derive(Debug, Default)]
 struct SetIndex {
     elements: BTreeMap<String, RoaringBitmap>,
+    /// Side-index of LIVE-tail elements whose posting holds >= 2 docs (see
+    /// `KeywordIndex::dup_values`); drives `duplicates` without a full
+    /// `elements` scan. Cleared at seal.
+    dup_values: BTreeSet<String>,
     forward: FastHashMap<u32, BTreeSet<String>>,
     bytes: u64,
     /// Stage 2 disk-tier (Phase 2e-A): a sealed columnar mmap segment covering
@@ -2435,6 +2458,9 @@ impl FieldIndex {
                     if set.remove(id) {
                         freed = (value.len() + eid.len()) as u64;
                     }
+                    if set.len() < 2 {
+                        k.dup_values.remove(&value);
+                    }
                     if set.is_empty() {
                         k.terms.remove(&value);
                     }
@@ -2483,6 +2509,9 @@ impl FieldIndex {
                     if set.remove(id) {
                         freed = (8 + eid.len()) as u64;
                     }
+                    if set.len() < 2 {
+                        n.dup_values.remove(&key);
+                    }
                     if set.is_empty() {
                         n.values.remove(&key);
                     }
@@ -2530,6 +2559,9 @@ impl FieldIndex {
                     if let Some(set) = s.elements.get_mut(el) {
                         if set.remove(id) {
                             freed += (el.len() + eid.len()) as u64;
+                        }
+                        if set.len() < 2 {
+                            s.dup_values.remove(el);
                         }
                         if set.is_empty() {
                             s.elements.remove(el);
@@ -3631,7 +3663,12 @@ impl Engine {
 
         let min = req.min_group_size.max(2) as usize;
         let interner = &coll.interner;
-        let mut groups: Vec<DuplicateGroup> = match fi {
+        // Phase 1: collect candidate groups as (value, posting) WITHOUT
+        // materializing external ids. At high duplicate density the id strings
+        // dominate the cost, and only one `limit` page of them is returned —
+        // so resolution is deferred until after sort + paging (phase 2).
+        use std::borrow::Cow;
+        let mut cands: Vec<(serde_json::Value, Cow<'_, RoaringBitmap>)> = match fi {
             FieldIndex::Text { .. } => {
                 return Err(StorageError::DuplicatesOnText(req.field.clone()).into());
             }
@@ -3652,100 +3689,101 @@ impl Engine {
                 // `terms` driver, so iterating it directly would miss every
                 // on-disk term (and report deleted docs for the tail-only
                 // case). Drive from the segment-aware `live_terms` — segment
-                // dict minus tombstones + live tail. Segment OFF: iterate the
-                // live `terms` map borrowed — `live_terms` would deep-clone the
-                // whole inverted index (every term + posting bitmap) just to
-                // read it, which dominated duplicates latency.
-                let live = if k.segment.is_some() {
-                    Some(k.live_terms())
+                // dict minus tombstones + live tail. Segment OFF: the
+                // `dup_values` side-index already names every term with >= 2
+                // docs, so only candidate groups are visited — not every
+                // distinct term, and no whole-index clone.
+                if k.segment.is_some() {
+                    k.live_terms()
+                        .into_iter()
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| (serde_json::Value::String(v), Cow::Owned(set)))
+                        .collect()
                 } else {
-                    None
-                };
-                let source = live.as_ref().unwrap_or(&k.terms);
-                source
-                    .iter()
-                    .filter(|(_, set)| (set.len() as usize) >= min)
-                    .map(|(v, set)| DuplicateGroup {
-                        value: serde_json::Value::String(v.clone()),
-                        external_ids: set
-                            .iter()
-                            .map(|id| interner.resolve(id).to_string())
-                            .collect(),
-                    })
-                    .collect()
+                    k.dup_values
+                        .iter()
+                        .filter_map(|v| k.terms.get(v).map(|set| (v, set)))
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| {
+                            (serde_json::Value::String(v.clone()), Cow::Borrowed(set))
+                        })
+                        .collect()
+                }
             }
             FieldIndex::Number(n) => {
                 // Phase 2h-3 FIX: a SEALED Number field dropped its in-RAM
                 // `values` driver, so iterating it directly would miss every
                 // on-disk value (and report deleted docs for the tail-only
                 // case). Drive from the segment-aware `live_values` — segment
-                // sorted-value column minus tombstones + live tail. Segment OFF:
-                // `live_values` returns the live `values` clone, so the groups
-                // are identical to the old direct iteration (default build
-                // unchanged). Segment OFF: borrow the live `values` map — the
-                // clone of every value + posting bitmap dominated latency.
-                let live = if n.segment.is_some() {
-                    Some(n.live_values())
-                } else {
-                    None
+                // sorted-value column minus tombstones + live tail. Segment
+                // OFF: the `dup_values` side-index names every value with
+                // >= 2 docs — no full scan, no whole-index clone.
+                let num = |v: SortableF64| {
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(v.to_f64())
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    )
                 };
-                let source = live.as_ref().unwrap_or(&n.values);
-                source
-                    .iter()
-                    .filter(|(_, set)| (set.len() as usize) >= min)
-                    .map(|(v, set)| DuplicateGroup {
-                        value: serde_json::Value::Number(
-                            serde_json::Number::from_f64(v.to_f64())
-                                .unwrap_or_else(|| serde_json::Number::from(0)),
-                        ),
-                        external_ids: set
-                            .iter()
-                            .map(|id| interner.resolve(id).to_string())
-                            .collect(),
-                    })
-                    .collect()
+                if n.segment.is_some() {
+                    n.live_values()
+                        .into_iter()
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| (num(v), Cow::Owned(set)))
+                        .collect()
+                } else {
+                    n.dup_values
+                        .iter()
+                        .filter_map(|v| n.values.get(v).map(|set| (*v, set)))
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| (num(v), Cow::Borrowed(set)))
+                        .collect()
+                }
             }
             FieldIndex::Set(s) => {
                 // Phase 2h-2 FIX: a SEALED Set field dropped its in-RAM `elements`
                 // driver, so iterating it directly would miss every on-disk element
                 // (and report deleted docs for the tail-only case). Drive from the
                 // segment-aware `live_elements` — segment dict minus tombstones +
-                // live tail. Segment OFF: `live_elements` returns the live `elements`
-                // clone, so the groups are identical to the old direct iteration
-                // (default build unchanged). Segment OFF: borrow the live
-                // `elements` map — the clone of every element + posting bitmap
-                // dominated latency.
-                let live = if s.segment.is_some() {
-                    Some(s.live_elements())
+                // live tail. Segment OFF: the `dup_values` side-index names every
+                // element with >= 2 docs — no full scan, no whole-index clone.
+                if s.segment.is_some() {
+                    s.live_elements()
+                        .into_iter()
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| (serde_json::Value::String(v), Cow::Owned(set)))
+                        .collect()
                 } else {
-                    None
-                };
-                let source = live.as_ref().unwrap_or(&s.elements);
-                source
-                    .iter()
-                    .filter(|(_, set)| (set.len() as usize) >= min)
-                    .map(|(v, set)| DuplicateGroup {
-                        value: serde_json::Value::String(v.clone()),
-                        external_ids: set
-                            .iter()
-                            .map(|id| interner.resolve(id).to_string())
-                            .collect(),
-                    })
-                    .collect()
+                    s.dup_values
+                        .iter()
+                        .filter_map(|v| s.elements.get(v).map(|set| (v, set)))
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| {
+                            (serde_json::Value::String(v.clone()), Cow::Borrowed(set))
+                        })
+                        .collect()
+                }
             }
         };
-        // Stable: largest groups first, ties broken by value.
-        groups.sort_by(|a, b| {
-            b.external_ids
-                .len()
-                .cmp(&a.external_ids.len())
-                .then_with(|| a.value.to_string().cmp(&b.value.to_string()))
-        });
+        // Stable: largest groups first, ties broken by value (JSON form) — the
+        // same order the materialized sort produced before paging moved here.
+        cands.sort_by_cached_key(|(v, set)| (std::cmp::Reverse(set.len()), v.to_string()));
 
         let offset = req.offset as usize;
         let limit = req.limit.max(1) as usize;
-        let total = groups.len();
-        let page: Vec<DuplicateGroup> = groups.into_iter().skip(offset).take(limit).collect();
+        let total = cands.len();
+        // Phase 2: resolve external ids for the requested page ONLY.
+        let page: Vec<DuplicateGroup> = cands
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|(value, set)| DuplicateGroup {
+                value,
+                external_ids: set
+                    .iter()
+                    .map(|id| interner.resolve(id).to_string())
+                    .collect(),
+            })
+            .collect();
         let truncated = offset + page.len() < total;
 
         self.metrics.incr_duplicates();
@@ -3991,6 +4029,9 @@ fn apply_value(
             let bytes = (s.len() + eid.len()) as u64;
             if let Some(posting) = k.terms.get_mut(s) {
                 posting.insert(id);
+                if posting.len() == 2 {
+                    k.dup_values.insert(s.clone());
+                }
             } else {
                 let mut posting = RoaringBitmap::new();
                 posting.insert(id);
@@ -4004,7 +4045,11 @@ fn apply_value(
             let key =
                 SortableF64::new(*x).map_err(|e| StorageError::InvalidNumber(e.to_string()))?;
             let bytes = (8 + eid.len()) as u64;
-            n.values.entry(key).or_default().insert(id);
+            let posting = n.values.entry(key).or_default();
+            posting.insert(id);
+            if posting.len() == 2 {
+                n.dup_values.insert(key);
+            }
             n.set_number(id, key);
             n.bytes += bytes;
             Ok(bytes)
@@ -4017,6 +4062,9 @@ fn apply_value(
                     bytes += (el.len() + eid.len()) as u64;
                     if let Some(posting) = s.elements.get_mut(el) {
                         posting.insert(id);
+                        if posting.len() == 2 {
+                            s.dup_values.insert(el.clone());
+                        }
                     } else {
                         let mut posting = RoaringBitmap::new();
                         posting.insert(id);
@@ -7549,6 +7597,7 @@ impl FieldIndex {
                     fwd.insert(interner.intern(&eid), v);
                 }
                 FieldIndex::Keyword(KeywordIndex {
+                    dup_values: dup_values_of(&t),
                     terms: t,
                     dense_forward: Vec::new(),
                     forward: fwd,
@@ -7570,6 +7619,7 @@ impl FieldIndex {
                     idx.values.entry(key).or_default().insert(id);
                     idx.set_number(id, key);
                 }
+                idx.dup_values = dup_values_of(&idx.values);
                 FieldIndex::Number(idx)
             }
             FieldIndexSnapshot::Set {
@@ -7586,6 +7636,7 @@ impl FieldIndex {
                     fwd.insert(interner.intern(&eid), set);
                 }
                 FieldIndex::Set(SetIndex {
+                    dup_values: dup_values_of(&e),
                     elements: e,
                     forward: fwd,
                     bytes,
@@ -7726,6 +7777,7 @@ impl FieldIndex {
                 n.forward = FastHashMap::default();
                 n.dense_forward = Vec::new();
                 n.values = BTreeMap::new();
+                n.dup_values = BTreeSet::new();
                 n.clear_keyword_range_cache();
                 // The new segment's live(id) gather already EXCLUDED every
                 // tombstoned base docid (deleted-since-last-seal), so the deletions
@@ -7780,6 +7832,7 @@ impl FieldIndex {
                 k.forward = FastHashMap::default();
                 k.dense_forward = Vec::new();
                 k.terms = BTreeMap::new();
+                k.dup_values = BTreeSet::new();
                 // The new segment's live(id) gather already EXCLUDED every
                 // tombstoned base docid (deleted-since-last-seal), so the
                 // deletions are now baked in as absent — reset the query-time
@@ -7826,6 +7879,7 @@ impl FieldIndex {
                 s.segment = Some(std::sync::Arc::new(reader));
                 s.forward = FastHashMap::default();
                 s.elements = BTreeMap::new();
+                s.dup_values = BTreeSet::new();
                 // The new segment's live(id) gather already EXCLUDED every
                 // tombstoned base docid, so deletions are baked in — reset the
                 // query-time tombstone to empty (Phase 2h-2).
@@ -7921,6 +7975,7 @@ impl FieldIndex {
                 // on the mmap for per-doc predicate reads (`number_at`).
                 Ok(FieldIndex::Number(NumberIndex {
                     values: BTreeMap::new(),
+                    dup_values: BTreeSet::new(),
                     forward: FastHashMap::default(), // payload stays on the mmap
                     dense_forward: Vec::new(),
                     keyword_range_cache: RwLock::new(FastHashMap::default()),
@@ -7948,6 +8003,7 @@ impl FieldIndex {
                 // stays demand-paged on the mmap for per-doc predicate reads.
                 Ok(FieldIndex::Keyword(KeywordIndex {
                     terms: BTreeMap::new(),
+                    dup_values: BTreeSet::new(),
                     dense_forward: Vec::new(),
                     forward: FastHashMap::default(),
                     bytes: 0,
@@ -7967,6 +8023,7 @@ impl FieldIndex {
                 // columns stay demand-paged on the mmap for per-doc predicate reads.
                 Ok(FieldIndex::Set(SetIndex {
                     elements: BTreeMap::new(),
+                    dup_values: BTreeSet::new(),
                     forward: FastHashMap::default(),
                     bytes: 0,
                     segment: Some(reader),
@@ -8456,6 +8513,7 @@ impl Engine {
         n.forward = FastHashMap::default();
         n.dense_forward = Vec::new();
         n.values = BTreeMap::new();
+        n.dup_values = BTreeSet::new();
         n.clear_keyword_range_cache();
         // First-time seal from the live `forward`: no prior tombstone exists, but
         // reset for symmetry with the production re-seal path (Phase 2h-3).
@@ -8520,6 +8578,7 @@ impl Engine {
         k.forward = FastHashMap::default();
         k.dense_forward = Vec::new();
         k.terms = BTreeMap::new();
+        k.dup_values = BTreeSet::new();
         // First-time seal from the live `forward`: no prior tombstone exists, but
         // reset for symmetry with the production re-seal path (Phase 2h-1 FIX).
         k.tombstones = RoaringBitmap::new();
@@ -8590,6 +8649,7 @@ impl Engine {
         // disk now (Phase 2h-2). Queries drive from the mmap segment.
         s.forward = FastHashMap::default();
         s.elements = BTreeMap::new();
+        s.dup_values = BTreeSet::new();
         // First-time seal from the live `forward`: no prior tombstone exists, but
         // reset for symmetry with the production re-seal path (Phase 2h-2).
         s.tombstones = RoaringBitmap::new();
@@ -12528,6 +12588,57 @@ mod tests {
             field: field.into(),
             value,
         }
+    }
+
+    #[test]
+    fn duplicates_side_index_tracks_inserts_and_deletes() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u2", "email", FieldValue::String("a@x.com".into())),
+                    item("u3", "email", FieldValue::String("b@y.com".into())),
+                    item("u4", "email", FieldValue::String("b@y.com".into())),
+                    item("u5", "email", FieldValue::String("solo@z.com".into())),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        let groups = |min: u32| {
+            e.duplicates(
+                "users",
+                DuplicatesRequest {
+                    field: "email".into(),
+                    min_group_size: min,
+                    limit: 10,
+                    offset: 0,
+                },
+            )
+            .unwrap()
+            .groups
+        };
+        let g = groups(2);
+        assert_eq!(g.len(), 2);
+        // Delete one of the `a@x.com` pair — the group must drop out, and the
+        // side-index must not leak a stale candidate.
+        e.delete("users", "u2", None).unwrap();
+        let g = groups(2);
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].value, serde_json::Value::String("b@y.com".into()));
+        // Re-index the deleted doc back into the pair — group returns.
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![item("u2", "email", FieldValue::String("a@x.com".into()))],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(groups(2).len(), 2);
     }
 
     #[test]
