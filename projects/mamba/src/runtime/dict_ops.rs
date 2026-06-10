@@ -238,6 +238,22 @@ impl DictKey {
 pub fn to_dict_key(val: MbValue) -> DictKey {
     // Check tagged types first (int, bool, none)
     if let Some(i) = val.as_int() {
+        // Decimal/Fraction integer handles key by numeric value so
+        // `{Fraction(6, 3): "a", 2: "b"}` collapses like CPython (#2129).
+        // The range guard keeps plain-int keys to one compare.
+        if (i as u64) >= super::integer_handle_registry::HANDLE_MIN_ID
+            && (super::stdlib::decimal_mod::is_decimal_handle(i as u64)
+                || super::stdlib::fractions_mod::is_fraction_handle(i as u64))
+        {
+            if let Some(iv) =
+                super::stdlib::decimal_mod::mb_numeric_handle_integral_i64(val)
+            {
+                return DictKey::Int(iv);
+            }
+            if let Some(f) = super::stdlib::decimal_mod::mb_numeric_handle_exact_f64(val) {
+                return to_dict_key(MbValue::from_float(f));
+            }
+        }
         return DictKey::Int(i);
     }
     if val.is_bool() {

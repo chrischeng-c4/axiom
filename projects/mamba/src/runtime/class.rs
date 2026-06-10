@@ -4061,6 +4061,14 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
         if super::stdlib::uuid_mod::is_uuid_handle(id) {
             return MbValue::from_bool(matches!(target.as_str(), "UUID" | "object"));
         }
+        // decimal/fractions handles: `isinstance(d, Decimal)` /
+        // `isinstance(f, Fraction)` — targets resolve via NATIVE_TYPE_NAMES.
+        if super::stdlib::decimal_mod::is_decimal_handle(id) {
+            return MbValue::from_bool(matches!(target.as_str(), "Decimal" | "object"));
+        }
+        if super::stdlib::fractions_mod::is_fraction_handle(id) {
+            return MbValue::from_bool(matches!(target.as_str(), "Fraction" | "object"));
+        }
     }
     // __class__-tagged dict stubs (e.g. ET.Element): match the stub class
     // name against the target (resolved via NATIVE_TYPE_NAMES for native
@@ -4837,6 +4845,30 @@ const UNARYOP_DUNDERS: &[&str] = &["pos", "neg", "not", "invert"];
 /// (e.g., lambda parameters) where the codegen cannot specialise at compile time.
 pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
     // ── Primitive fast path ──
+    // Decimal / Fraction integer handles must be intercepted before the
+    // `as_int` arms below negate/copy raw handle ids (#2129).
+    if super::builtins::is_decimal_handle_value(obj) {
+        match op_code {
+            0 => return super::stdlib::decimal_mod::mb_decimal_pos(obj),
+            1 => return super::stdlib::decimal_mod::mb_decimal_neg(obj),
+            2 => {
+                let truthy = super::stdlib::decimal_mod::mb_decimal_bool(obj);
+                return MbValue::from_bool(truthy.as_bool() != Some(true));
+            }
+            _ => {}
+        }
+    }
+    if super::builtins::is_fraction_handle_value(obj) {
+        match op_code {
+            0 => return super::stdlib::fractions_mod::mb_fraction_pos(obj),
+            1 => return super::stdlib::fractions_mod::mb_fraction_neg(obj),
+            2 => {
+                let truthy = super::stdlib::fractions_mod::mb_fraction_bool(obj);
+                return MbValue::from_bool(truthy.as_bool() != Some(true));
+            }
+            _ => {}
+        }
+    }
     match op_code {
         0 => { // pos (+x)
             if let Some(i) = obj.as_int()  { return MbValue::from_int(i); }
@@ -6822,10 +6854,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         }
     }
 
-    // Decimal handle protocol: same shape as hashlib/hmac. Methods
-    // `add`/`sub`/`mul`/`truediv`/`str_`/`is_zero` route to mb_decimal_*
-    // free functions. Task #24 — cross-family native-shim (rust_decimal vs
-    // CPython libmpdec).
+    // Decimal handle protocol: same shape as hashlib/hmac/fractions. All
+    // method names (arith dunders, comparisons, predicates, quantize,
+    // sqrt, as_tuple, ... plus the legacy `add`/`sub`/`mul`/`truediv`/
+    // `str_`/`is_zero` bench entry points) route through
+    // `decimal_mod::dispatch_method`.
     if receiver.is_int() {
         let id = receiver.as_int().unwrap_or(0) as u64;
         if super::stdlib::decimal_mod::is_decimal_handle(id) {
@@ -6836,26 +6869,12 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     } else { None }
                 })
                 .unwrap_or_default();
-            match name.as_str() {
-                "add" => {
-                    let other = arg_items.first().copied().unwrap_or(MbValue::none());
-                    return super::stdlib::decimal_mod::mb_decimal_add(receiver, other);
-                }
-                "sub" => {
-                    let other = arg_items.first().copied().unwrap_or(MbValue::none());
-                    return super::stdlib::decimal_mod::mb_decimal_sub(receiver, other);
-                }
-                "mul" => {
-                    let other = arg_items.first().copied().unwrap_or(MbValue::none());
-                    return super::stdlib::decimal_mod::mb_decimal_mul(receiver, other);
-                }
-                "truediv" => {
-                    let other = arg_items.first().copied().unwrap_or(MbValue::none());
-                    return super::stdlib::decimal_mod::mb_decimal_truediv(receiver, other);
-                }
-                "str_" => return super::stdlib::decimal_mod::mb_decimal_str(receiver),
-                "is_zero" => return super::stdlib::decimal_mod::mb_decimal_is_zero(receiver),
-                _ => {}
+            if let Some(result) = super::stdlib::decimal_mod::dispatch_method(
+                receiver,
+                name.as_str(),
+                &arg_items,
+            ) {
+                return result;
             }
         }
     }

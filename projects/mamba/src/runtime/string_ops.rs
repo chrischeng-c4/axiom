@@ -1279,6 +1279,11 @@ pub fn mb_format_value(val: MbValue, spec: MbValue) -> MbValue {
             }
         }
         let spec_str = as_str(spec).unwrap_or("");
+        // Decimal / Fraction integer handles carry their own __format__
+        // pipeline (#2129) — without this, the raw handle id is formatted.
+        if let Some(out) = super::stdlib::decimal_mod::mb_numeric_handle_format(val, spec_str) {
+            return out;
+        }
         let formatted = format_with_spec(val, spec_str);
         new_str(formatted)
     }

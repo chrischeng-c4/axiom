@@ -1019,6 +1019,12 @@ fn strip_float_underscores(s: &str) -> Option<String> {
 
 /// int(value) — convert to integer.
 pub fn mb_int(val: MbValue) -> MbValue {
+    if is_decimal_handle_value(val) {
+        return super::stdlib::decimal_mod::mb_decimal_int(val);
+    }
+    if is_fraction_handle_value(val) {
+        return super::stdlib::fractions_mod::mb_fraction_int(val);
+    }
     if val.is_int() {
         val
     } else if let Some(f) = val.as_float() {
@@ -1074,6 +1080,12 @@ pub fn mb_int(val: MbValue) -> MbValue {
 
 /// float(value) — convert to float.
 pub fn mb_float(val: MbValue) -> MbValue {
+    if is_decimal_handle_value(val) {
+        return super::stdlib::decimal_mod::mb_decimal_float(val);
+    }
+    if is_fraction_handle_value(val) {
+        return super::stdlib::fractions_mod::mb_fraction_float(val);
+    }
     if val.is_float() {
         val
     } else if let Some(i) = val.as_int() {
@@ -1125,6 +1137,12 @@ pub fn mb_float(val: MbValue) -> MbValue {
 
 /// bool(value) — truthiness check.
 pub fn mb_bool(val: MbValue) -> MbValue {
+    if is_decimal_handle_value(val) {
+        return super::stdlib::decimal_mod::mb_decimal_bool(val);
+    }
+    if is_fraction_handle_value(val) {
+        return super::stdlib::fractions_mod::mb_fraction_bool(val);
+    }
     let truthy = if val.is_none() {
         false
     } else if let Some(i) = val.as_int() {
@@ -1216,6 +1234,13 @@ pub fn mb_str(val: MbValue) -> MbValue {
         if super::stdlib::uuid_mod::is_uuid_handle(i as u64) {
             return super::stdlib::uuid_mod::mb_uuid_str(val);
         }
+        // Decimal / Fraction handles render their numeric value (#2129).
+        if super::stdlib::decimal_mod::is_decimal_handle(i as u64) {
+            return super::stdlib::decimal_mod::mb_decimal_str(val);
+        }
+        if super::stdlib::fractions_mod::is_fraction_handle(i as u64) {
+            return super::stdlib::fractions_mod::mb_fraction_str(val);
+        }
         format!("{i}")
     } else if let Some(f) = val.as_float() {
         super::string_ops::python_float_repr(f)
@@ -1245,6 +1270,12 @@ pub fn mb_str(val: MbValue) -> MbValue {
 
 /// abs(value) — absolute value.
 pub fn mb_abs(val: MbValue) -> MbValue {
+    if is_decimal_handle_value(val) {
+        return super::stdlib::decimal_mod::mb_decimal_abs(val);
+    }
+    if is_fraction_handle_value(val) {
+        return super::stdlib::fractions_mod::mb_fraction_abs(val);
+    }
     if let Some(i) = val.as_int() {
         MbValue::from_int(i.abs())
     } else if let Some(f) = val.as_float() {
@@ -1868,9 +1899,97 @@ fn is_array_handle_value(v: MbValue) -> bool {
         .is_some_and(|id| super::stdlib::array_mod::is_array_handle(id as u64))
 }
 
+/// #2129 carve-out: `decimal.Decimal` and `fractions.Fraction` values are
+/// integer HANDLES (NaN-boxed ints ≥ 2^40), so the dynamic binary-op
+/// entry points must intercept them before their int fast paths —
+/// otherwise `Decimal('0.1') + Decimal('0.2')` adds raw handle ids
+/// (aborting on the 48-bit `from_int` range) and `==` compares ids.
+/// The range guard inside each module's `is_*_handle` keeps primitive
+/// int hot paths to a single compare before any table probe.
+pub(crate) fn is_decimal_handle_value(v: MbValue) -> bool {
+    v.as_int()
+        .is_some_and(|id| super::stdlib::decimal_mod::is_decimal_handle(id as u64))
+}
+
+pub(crate) fn is_fraction_handle_value(v: MbValue) -> bool {
+    v.as_int()
+        .is_some_and(|id| super::stdlib::fractions_mod::is_fraction_handle(id as u64))
+}
+
+/// Approximate f64 readback of a Fraction handle (CPython coerces the
+/// Fraction to float when the other operand is a float).
+fn fraction_as_f64(v: MbValue) -> Option<f64> {
+    let id = v.as_int()? as u64;
+    let (n, d) = super::stdlib::fractions_mod::handle_num_den(id)?;
+    Some(n as f64 / d as f64)
+}
+
+/// Route a binary arithmetic op through the Decimal/Fraction handle
+/// protocol when either operand is such a handle. Returns `None` when
+/// neither side is a numeric handle (caller falls through to its
+/// regular paths).
+fn numeric_handle_binop(op: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
+    use super::stdlib::{decimal_mod, fractions_mod};
+    if is_decimal_handle_value(a) || is_decimal_handle_value(b) {
+        return Some(match op {
+            "+" => decimal_mod::mb_decimal_add(a, b),
+            "-" => decimal_mod::mb_decimal_sub(a, b),
+            "*" => decimal_mod::mb_decimal_mul(a, b),
+            "/" => decimal_mod::mb_decimal_truediv(a, b),
+            "//" => decimal_mod::mb_decimal_floordiv(a, b),
+            "%" => decimal_mod::mb_decimal_rem(a, b),
+            "**" => decimal_mod::mb_decimal_pow(a, b),
+            "divmod" => decimal_mod::mb_decimal_divmod(a, b),
+            _ => return None,
+        });
+    }
+    let a_frac = is_fraction_handle_value(a);
+    let b_frac = is_fraction_handle_value(b);
+    if !(a_frac || b_frac) {
+        return None;
+    }
+    // Fraction ⊕ float → float (CPython converts the Fraction).
+    if a.is_float() || b.is_float() {
+        let to_f = |v: MbValue, frac: bool| if frac { fraction_as_f64(v) } else { v.as_float() };
+        if let (Some(af), Some(bf)) = (to_f(a, a_frac), to_f(b, b_frac)) {
+            return Some(match op {
+                "+" => MbValue::from_float(af + bf),
+                "-" => MbValue::from_float(af - bf),
+                "*" => MbValue::from_float(af * bf),
+                "/" => MbValue::from_float(af / bf),
+                "//" => MbValue::from_float((af / bf).floor()),
+                "%" => {
+                    let r = af % bf;
+                    MbValue::from_float(if r != 0.0 && r.signum() != bf.signum() {
+                        r + bf
+                    } else {
+                        r
+                    })
+                }
+                "**" => MbValue::from_float(af.powf(bf)),
+                _ => return None,
+            });
+        }
+    }
+    Some(match op {
+        "+" => fractions_mod::mb_fraction_add(a, b),
+        "-" => fractions_mod::mb_fraction_sub(a, b),
+        "*" => fractions_mod::mb_fraction_mul(a, b),
+        "/" => fractions_mod::mb_fraction_truediv(a, b),
+        "//" => fractions_mod::mb_fraction_floordiv(a, b),
+        "%" => fractions_mod::mb_fraction_mod(a, b),
+        "**" => fractions_mod::mb_fraction_pow(a, b),
+        "divmod" => fractions_mod::mb_fraction_divmod(a, b),
+        _ => return None,
+    })
+}
+
 pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
     if is_array_handle_value(a) || is_array_handle_value(b) {
         return super::stdlib::array_mod::mb_array_concat(a, b);
+    }
+    if let Some(r) = numeric_handle_binop("+", a, b) {
+        return r;
     }
 
     // bool is an int subclass in Python (True + 1.0 == 2.0), so coerce bool→int
@@ -2003,6 +2122,9 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
+    if let Some(r) = numeric_handle_binop("-", a, b) {
+        return r;
+    }
     // Int fast path first — matches mb_add's ordering. fib_recursive and
     // every other int-arith hot loop runs `n - 1` through here on every
     // iteration; the set-difference dispatch was paying two as_ptr()
@@ -2348,6 +2470,9 @@ pub fn mb_rshift(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
+    if let Some(r) = numeric_handle_binop("*", a, b) {
+        return r;
+    }
     // timedelta * int/float (either order) — exact microsecond scaling.
     if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(a) {
         if let Some(k) = b.as_int() {
@@ -2488,6 +2613,9 @@ fn floor_divmod_i128(a: i128, b: i128) -> (i128, i128) {
 }
 
 pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
+    if let Some(r) = numeric_handle_binop("/", a, b) {
+        return r;
+    }
     // timedelta / timedelta -> float ratio; timedelta / number -> scaled timedelta.
     if let Some(ua) = super::stdlib::datetime_mod::timedelta_total_us(a) {
         if let Some(ub) = super::stdlib::datetime_mod::timedelta_total_us(b) {
@@ -2557,6 +2685,9 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
+    if let Some(r) = numeric_handle_binop("%", a, b) {
+        return r;
+    }
     // timedelta % timedelta -> timedelta remainder (floor semantics).
     if let (Some(ua), Some(ub)) = (
         super::stdlib::datetime_mod::timedelta_total_us(a),
@@ -2619,6 +2750,12 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_neg(a: MbValue) -> MbValue {
+    if is_decimal_handle_value(a) {
+        return super::stdlib::decimal_mod::mb_decimal_neg(a);
+    }
+    if is_fraction_handle_value(a) {
+        return super::stdlib::fractions_mod::mb_fraction_neg(a);
+    }
     if let Some(i) = a.as_int() {
         MbValue::from_int(-i)
     } else if let Some(f) = a.as_float() {
@@ -2771,6 +2908,13 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     }
     if is_array_handle_value(a) || is_array_handle_value(b) {
         return super::stdlib::array_mod::mb_array_eq_bool(a, b).unwrap_or(false);
+    }
+    // Decimal / Fraction handles compare by exact numeric value (#2129);
+    // non-numeric counterparts are simply unequal (CPython False).
+    if is_decimal_handle_value(a) || is_decimal_handle_value(b)
+        || is_fraction_handle_value(a) || is_fraction_handle_value(b)
+    {
+        return super::stdlib::decimal_mod::mb_numeric_handle_eq(a, b).unwrap_or(false);
     }
     // NaN check: Python float NaN != NaN (IEEE 754). Must check before bit comparison.
     if let (Some(fa), Some(fb)) = (a.as_float(), b.as_float()) {
@@ -3084,6 +3228,12 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
     }
     if is_array_handle_value(a) || is_array_handle_value(b) {
         return super::stdlib::array_mod::mb_array_lt_bool(a, b).unwrap_or(false);
+    }
+    // Decimal / Fraction handles order by exact numeric value (#2129).
+    if is_decimal_handle_value(a) || is_decimal_handle_value(b)
+        || is_fraction_handle_value(a) || is_fraction_handle_value(b)
+    {
+        return super::stdlib::decimal_mod::mb_numeric_handle_lt(a, b).unwrap_or(false);
     }
     // Int comparison
     if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
@@ -3430,6 +3580,13 @@ pub fn mb_repr(val: MbValue) -> MbValue {
             } else { String::new() };
             return MbValue::from_ptr(MbObject::new_str(format!("UUID('{canon}')")));
         }
+        // Decimal / Fraction handles render as their constructor reprs (#2129).
+        if super::stdlib::decimal_mod::is_decimal_handle(i as u64) {
+            return super::stdlib::decimal_mod::mb_decimal_repr(val);
+        }
+        if super::stdlib::fractions_mod::is_fraction_handle(i as u64) {
+            return super::stdlib::fractions_mod::mb_fraction_repr(val);
+        }
         format!("{i}")
     } else if let Some(f) = val.as_float() {
         super::string_ops::python_float_repr(f)
@@ -3717,6 +3874,19 @@ fn frozenset_hash(items: &[MbValue]) -> i64 {
 
 /// hash(value) — return hash of a value.
 pub fn mb_hash(val: MbValue) -> MbValue {
+    if is_decimal_handle_value(val) || is_fraction_handle_value(val) {
+        // Hash must agree with `==` across numeric types: integral values
+        // hash like the int, float-exact values hash like the float.
+        if let Some(i) = super::stdlib::decimal_mod::mb_numeric_handle_integral_i64(val)
+            .filter(|i| (-(1i64 << 47)..(1i64 << 47)).contains(i))
+        {
+            return MbValue::from_int(if i == -1 { -2 } else { i });
+        }
+        if let Some(f) = super::stdlib::decimal_mod::mb_numeric_handle_exact_f64(val) {
+            return mb_hash(MbValue::from_float(f));
+        }
+        return super::string_ops::mb_str_hash(mb_str(val));
+    }
     if let Some(i) = val.as_int() {
         // CPython remaps hash(-1) to -2 because -1 is used internally
         // as an error sentinel in the C API.
@@ -3883,6 +4053,9 @@ pub fn mb_bin(val: MbValue) -> MbValue {
 
 /// pow(base, exp) — power operator.
 pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
+    if let Some(r) = numeric_handle_binop("**", base, exp) {
+        return r;
+    }
     // Complex base: route through complex pow so `complex(3,4) ** 2` works.
     // Either operand being `ObjData::Complex` promotes the whole op to
     // complex. (#1256 sub-priority 3 — complex arithmetic)
@@ -4434,6 +4607,12 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
     // `MbValue::none()` when ndigits was omitted, which is how we tell the
     // two forms apart.
     let ndigits_given = !ndigits.is_none();
+    if is_decimal_handle_value(val) {
+        return super::stdlib::decimal_mod::mb_decimal_round(val, ndigits, ndigits_given);
+    }
+    if is_fraction_handle_value(val) {
+        return super::stdlib::fractions_mod::mb_fraction_round(val, ndigits);
+    }
     let n = ndigits.as_int().unwrap_or(0);
     if let Some(f) = val.as_float() {
         if !ndigits_given {
@@ -4472,6 +4651,9 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
 /// Python: q = floor(a/b), r = a - q*b  — remainder has same sign as divisor.
 /// Either operand may be float; if so, both result components are floats.
 pub fn mb_divmod(a: MbValue, b: MbValue) -> MbValue {
+    if let Some(r) = numeric_handle_binop("divmod", a, b) {
+        return r;
+    }
     // divmod(timedelta, timedelta) -> (int, timedelta); int divisor raises TypeError.
     if let Some(ua) = super::stdlib::datetime_mod::timedelta_total_us(a) {
         if let Some(ub) = super::stdlib::datetime_mod::timedelta_total_us(b) {
@@ -5372,6 +5554,9 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
 
 /// floor division: a // b
 pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
+    if let Some(r) = numeric_handle_binop("//", a, b) {
+        return r;
+    }
     // timedelta // timedelta -> int; timedelta // int -> timedelta.
     if let Some(ua) = super::stdlib::datetime_mod::timedelta_total_us(a) {
         if let Some(ub) = super::stdlib::datetime_mod::timedelta_total_us(b) {
@@ -5515,7 +5700,12 @@ pub fn mb_ne(a: MbValue, b: MbValue) -> MbValue {
 pub fn mb_is_truthy(val: MbValue) -> i64 {
     if val.is_none() { return 0; }
     if val.is_bool() { return if val.as_bool() == Some(true) { 1 } else { 0 }; }
-    if val.is_int() { return if val.as_int().unwrap_or(0) != 0 { 1 } else { 0 }; }
+    if val.is_int() {
+        if is_decimal_handle_value(val) || is_fraction_handle_value(val) {
+            return if mb_bool(val).as_bool() == Some(true) { 1 } else { 0 };
+        }
+        return if val.as_int().unwrap_or(0) != 0 { 1 } else { 0 };
+    }
     if val.is_float() { return if val.as_float().unwrap_or(0.0) != 0.0 { 1 } else { 0 }; }
     if let Some(ptr) = val.as_ptr() {
         unsafe {
@@ -5740,6 +5930,33 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
                 prev = next;
             }
             MbValue::from_bool(true)
+        }
+        Expr::Call { func, args } => {
+            // Narrow constructor support so `eval(repr(x))` round-trips for
+            // the stdlib numeric handle types (Decimal('0.3'),
+            // Fraction(3, 4)). Only positional literal-ish args evaluate.
+            if let Expr::Ident(name) = &func.node {
+                let vals: Vec<MbValue> = args
+                    .iter()
+                    .filter_map(|a| match a {
+                        crate::parser::ast::CallArg::Positional(e) => Some(eval_expr(&e.node)),
+                        _ => None,
+                    })
+                    .collect();
+                match name.as_str() {
+                    "Decimal" if vals.len() == 1 => {
+                        return super::stdlib::decimal_mod::mb_decimal_new(vals[0]);
+                    }
+                    "Fraction" if (1..=2).contains(&vals.len()) => {
+                        return super::stdlib::fractions_mod::mb_fraction_new(
+                            vals[0],
+                            vals.get(1).copied().unwrap_or_else(MbValue::none),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            MbValue::none()
         }
         _ => MbValue::none(),
     }
