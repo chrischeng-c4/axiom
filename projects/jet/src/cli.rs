@@ -1997,6 +1997,12 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     code = squeezed;
                 }
                 code = crate::bundler::dce::remove_redundant_empty_statements(&code);
+                let dotted = crate::bundler::minify::bracket_to_dot_properties(&code);
+                if dotted.len() < code.len()
+                    && crate::bundler::dce::js_parses_without_errors(&dotted)
+                {
+                    code = dotted;
+                }
                 dump_stage("5-squeeze", &code);
             }
 

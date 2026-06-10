@@ -1771,3 +1771,57 @@ pub fn squeeze_residual_spaces(source: &str) -> String {
     }
     String::from_utf8(out).unwrap_or_else(|_| source.to_string())
 }
+
+/// Convert bracket property access/assignment with identifier-safe string
+/// keys to dot form: `x["default"]` -> `x.default`, `exports["name"] =` ->
+/// `exports.name =`. Reserved-word keys are fine as properties in ES5.1+.
+pub fn bracket_to_dot_properties(source: &str) -> String {
+    use crate::bundler::fold::{is_id, is_regex_ctx, push_regex, push_string};
+    let b = source.as_bytes();
+    let len = b.len();
+    let mut out: Vec<u8> = Vec::with_capacity(len);
+    let mut i = 0usize;
+
+    while i < len {
+        match b[i] {
+            b'"' | b'\'' | b'`' => {
+                i = push_string(b, i, &mut out);
+                continue;
+            }
+            b'/' if is_regex_ctx(out.last().copied().unwrap_or(0)) => {
+                i = push_regex(b, i, &mut out);
+                continue;
+            }
+            b'[' if i + 3 < len && matches!(b[i + 1], b'"' | b'\'') => {
+                // Property bracket only when attached to a value (previous
+                // significant byte ends an expression).
+                let prev = out.last().copied().unwrap_or(b'\n');
+                let attached = is_id(prev) || matches!(prev, b')' | b']');
+                if attached {
+                    let quote = b[i + 1];
+                    let key_start = i + 2;
+                    let mut k = key_start;
+                    while k < len && b[k] != quote && is_id(b[k]) {
+                        k += 1;
+                    }
+                    let valid_key = k > key_start
+                        && k < len
+                        && b[k] == quote
+                        && k + 1 < len
+                        && b[k + 1] == b']'
+                        && !b[key_start].is_ascii_digit();
+                    if valid_key {
+                        out.push(b'.');
+                        out.extend_from_slice(&b[key_start..k]);
+                        i = k + 2;
+                        continue;
+                    }
+                }
+            }
+            _ => {}
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
