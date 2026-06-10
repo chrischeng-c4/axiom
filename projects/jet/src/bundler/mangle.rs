@@ -100,9 +100,103 @@ fn mangle_variables_inner(source: &str, mangle_root: bool) -> String {
     let mangled = repair_react_dom_event_helper_aliases(&mangled);
     let mangled = repair_react_symbol_constant_references(&mangled);
     let mangled = repair_react_dom_client_stale_references(&mangled);
-    let out = repair_react_event_transition_alias_shadow(&mangled);
+    let mangled = repair_react_event_transition_alias_shadow(&mangled);
     lap("repairs_rest");
+    let out = compress_generated_prefixed_names(&mangled);
+    lap("prefixed_names");
     out
+}
+
+/// Compress leftover `_m<N>_name` identifiers to short names.
+///
+/// The flattener's `_m<N>_` prefix makes these names bundle-unique by
+/// construction, so any occurrence is the same binding regardless of
+/// scope. compute_renames only renames declarations its scope model
+/// attributes to function scopes; block-scoped `function`/`const`/`let`
+/// declarations inside the generated module blocks slipped through —
+/// 1,927 long identifiers (~35KB) survived in the MUI corpus bundle.
+/// Rename them all here with a single token-level pass.
+fn compress_generated_prefixed_names(source: &str) -> String {
+    let tokens = tokenize(source);
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    let mut used_names: HashSet<&str> = HashSet::new();
+    for (ti, tok) in tokens.iter().enumerate() {
+        if tok.kind != TK::Ident {
+            continue;
+        }
+        let name = txt(source, tok);
+        used_names.insert(name);
+        if generated_prefixed_name_suffix(name).is_none() {
+            continue;
+        }
+        if should_skip_identifier_rename(source, &tokens, ti) {
+            continue;
+        }
+        *counts.entry(name).or_insert(0) += 1;
+    }
+    if counts.is_empty() {
+        return source.to_string();
+    }
+
+    // Most-referenced names get the shortest aliases.
+    let mut names: Vec<(&str, usize)> = counts.into_iter().collect();
+    names.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    let mut renames: HashMap<&str, String> = HashMap::new();
+    let mut assigned: HashSet<String> = HashSet::new();
+    let mut counter = 0usize;
+    for (name, _) in names {
+        let short = loop {
+            let cand = gen_name(counter);
+            counter += 1;
+            if !is_reserved(&cand) && !used_names.contains(cand.as_str()) && !assigned.contains(&cand)
+            {
+                break cand;
+            }
+        };
+        if short.len() < name.len() {
+            assigned.insert(short.clone());
+            renames.insert(name, short);
+        }
+    }
+    if renames.is_empty() {
+        return source.to_string();
+    }
+
+    let mut repls: Vec<(usize, usize, String)> = Vec::new();
+    for (ti, tok) in tokens.iter().enumerate() {
+        if tok.kind != TK::Ident {
+            continue;
+        }
+        let name = txt(source, tok);
+        let Some(short) = renames.get(name) else {
+            continue;
+        };
+        if should_skip_identifier_rename(source, &tokens, ti) {
+            continue;
+        }
+        repls.push((
+            tok.start,
+            tok.end,
+            rename_replacement(source, &tokens, ti, name, short),
+        ));
+    }
+    let out = apply_replacements(source, repls);
+    if crate::bundler::dce::js_parses_without_errors(&out) {
+        out
+    } else {
+        source.to_string()
+    }
+}
+
+/// `_m<digits>_<suffix>` — the flattener's bundle-unique namespace.
+fn generated_prefixed_name_suffix(name: &str) -> Option<&str> {
+    let rest = name.strip_prefix("_m")?;
+    let digits_end = rest.find(|c: char| !c.is_ascii_digit())?;
+    if digits_end == 0 {
+        return None;
+    }
+    let after = &rest[digits_end..];
+    after.strip_prefix('_').filter(|s| !s.is_empty())
 }
 
 fn repair_generated_module_slot_references(source: &str) -> String {

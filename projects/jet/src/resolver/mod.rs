@@ -1,6 +1,7 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 // CODEGEN-BEGIN
 use anyhow::Result;
+use dashmap::DashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,12 @@ pub mod package;
 /// @spec .aw/tech-design/projects/jet/semantic/jet-resolver.md#schema
 pub struct ModuleResolver {
     options: ResolveOptions,
+    /// (importer directory, specifier) -> resolution. Resolution is a pure
+    /// function of these two inputs for the lifetime of one build; without
+    /// the memo the antd corpus re-resolved `react` 481 times and
+    /// `@babel/runtime/*` 628 times, re-reading and re-parsing the same
+    /// package.json files (~85MB of JSON) serially — ~70% of build_graph.
+    resolution_cache: DashMap<(PathBuf, String), ResolvedModule>,
 }
 
 /// Module resolution options
@@ -104,6 +111,34 @@ fn is_singleton_package(package_name: &str) -> bool {
     matches!(package_name, "react" | "react-dom")
 }
 
+/// The nearest enclosing package root for bare-specifier resolution:
+/// the path up to and including the last `node_modules/<pkg>` (or
+/// `node_modules/@scope/<pkg>`) segment, or the directory itself when the
+/// importer is project code outside node_modules.
+fn bare_specifier_cache_root(dir: &Path) -> PathBuf {
+    let components: Vec<&std::ffi::OsStr> = dir.iter().collect();
+    let mut last_nm: Option<usize> = None;
+    for (i, c) in components.iter().enumerate() {
+        if *c == "node_modules" {
+            last_nm = Some(i);
+        }
+    }
+    let Some(nm) = last_nm else {
+        return dir.to_path_buf();
+    };
+    let mut end = nm + 1;
+    if let Some(first) = components.get(end) {
+        if first.to_string_lossy().starts_with('@') {
+            end += 1;
+        }
+    }
+    end += 1;
+    if end > components.len() {
+        return dir.to_path_buf();
+    }
+    components[..end].iter().collect()
+}
+
 fn package_version(package_dir: &Path) -> Option<String> {
     package::read_package_json(&package_dir.join("package.json"))
         .ok()
@@ -114,12 +149,38 @@ fn package_version(package_dir: &Path) -> Option<String> {
 impl ModuleResolver {
     /// Create a new module resolver
     pub fn new(options: ResolveOptions) -> Result<Self> {
-        Ok(Self { options })
+        Ok(Self {
+            options,
+            resolution_cache: DashMap::new(),
+        })
     }
 
     /// Resolve a module specifier
     pub fn resolve(&self, specifier: &str, from: &Path) -> Result<ResolvedModule> {
         tracing::debug!("Resolving '{}' from {:?}", specifier, from);
+
+        // Only bare package specifiers are worth memoizing, and their
+        // resolution depends on the importer's nearest node_modules
+        // package root, not its exact directory — every file inside one
+        // package resolves `react` identically. Keying by importer dir
+        // gave 481 distinct keys for `react` alone on the antd corpus.
+        if specifier.starts_with('.') || specifier.starts_with('/') || self.is_alias(specifier) {
+            return self.resolve_uncached(specifier, from);
+        }
+        let cache_key = (
+            bare_specifier_cache_root(from.parent().unwrap_or(from)),
+            specifier.to_string(),
+        );
+        if let Some(hit) = self.resolution_cache.get(&cache_key) {
+            return Ok(hit.clone());
+        }
+        let resolved = self.resolve_uncached(specifier, from)?;
+        self.resolution_cache
+            .insert(cache_key, resolved.clone());
+        Ok(resolved)
+    }
+
+    fn resolve_uncached(&self, specifier: &str, from: &Path) -> Result<ResolvedModule> {
 
         if self.is_external(specifier) {
             return Ok(ResolvedModule {

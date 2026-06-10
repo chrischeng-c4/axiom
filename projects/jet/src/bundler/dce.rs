@@ -284,46 +284,113 @@ pub fn eliminate_unread_es_module_markers(source: &str) -> String {
     if !source.contains("__esModule") {
         return source.to_string();
     }
-    let Some(tree) = parse_js(source) else {
-        return source.to_string();
-    };
-    let root = tree.root_node();
-    if root.has_error() {
-        return source.to_string();
-    }
 
-    let mut edits = Vec::new();
-    collect_es_module_marker_edits(source, root, &mut edits);
-    if edits.is_empty() {
-        return source.to_string();
-    }
+    // The markers have a FIXED generated shape — transform/modules.rs emits
+    // `Object.defineProperty(module.exports, "__esModule", { value: true });`
+    // and the only later rewrite renames the receiver to `_mN`. Two full
+    // tree-sitter parses of a multi-MB bundle (~0.6s on the antd corpus)
+    // are unnecessary: match every `__esModule` occurrence lexically and
+    // bail to the original source if ANY occurrence is not a removable
+    // marker in statement position. That bail subsumes the old
+    // `out.contains("__esModule")` revert (library code that genuinely
+    // reads the flag keeps every marker), so the markers are only dropped
+    // when nothing can observe them.
+    const KEY_DQ: &str = "\"__esModule\"";
+    const KEY_SQ: &str = "'__esModule'";
+    const PREFIX: &str = "Object.defineProperty(";
 
-    edits.sort_by_key(|edit| edit.start);
-    let mut filtered: Vec<StaticEdit> = Vec::new();
-    let mut last_end = 0usize;
-    for edit in edits {
-        if edit.start >= last_end {
-            last_end = edit.end;
-            filtered.push(edit);
+    let b = source.as_bytes();
+    let mut removals: Vec<(usize, usize)> = Vec::new();
+    let mut search = 0usize;
+    while let Some(rel) = source[search..].find("__esModule") {
+        let key_at = search + rel;
+        search = key_at + "__esModule".len();
+
+        // The occurrence must be the quoted property key of the marker.
+        let quoted_start = key_at.checked_sub(1);
+        let is_quoted = quoted_start
+            .map(|q| {
+                (source[q..].starts_with(&KEY_DQ[..1]) && source[q..].starts_with(KEY_DQ))
+                    || (source[q..].starts_with(&KEY_SQ[..1]) && source[q..].starts_with(KEY_SQ))
+            })
+            .unwrap_or(false);
+        if !is_quoted {
+            return source.to_string();
         }
+        let key_start = key_at - 1;
+        let key_end = key_at + "__esModule".len() + 1;
+
+        // Backward: `Object.defineProperty(` + receiver (`module.exports`
+        // or `_mN.exports` or a bare identifier) + `, `.
+        let before = &source[..key_start];
+        let Some(prefix_at) = before.rfind(PREFIX) else {
+            return source.to_string();
+        };
+        let receiver = &source[prefix_at + PREFIX.len()..key_start];
+        let receiver_trim = receiver.trim_end_matches(|c: char| c == ' ' || c == ',');
+        let receiver_ok = !receiver_trim.is_empty()
+            && receiver.trim_end().ends_with(',')
+            && receiver_trim
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '$' || c == '.')
+            && !receiver_trim.contains("..");
+        if !receiver_ok {
+            return source.to_string();
+        }
+
+        // Forward: `, { value: true });` (whitespace-flexible, `!0` accepted).
+        let after = &source[key_end..];
+        let after_trim = after.trim_start();
+        let mut consumed = after.len() - after_trim.len();
+        let Some(rest) = after_trim.strip_prefix(',') else {
+            return source.to_string();
+        };
+        consumed += 1;
+        let rest_trim = rest.trim_start();
+        consumed += rest.len() - rest_trim.len();
+        let body = ["{ value: true });", "{value:true});", "{value:!0});"]
+            .iter()
+            .find(|p| rest_trim.starts_with(**p));
+        let Some(body) = body else {
+            return source.to_string();
+        };
+        let stmt_end = key_end + consumed + body.len();
+
+        // Statement position: the previous significant byte before the
+        // prefix must open or end a statement.
+        let mut p = prefix_at;
+        while p > 0 && matches!(b[p - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            p -= 1;
+        }
+        if p > 0 && !matches!(b[p - 1], b'{' | b'}' | b';') {
+            return source.to_string();
+        }
+
+        // Include trailing whitespace up to and including one newline.
+        let mut e = stmt_end;
+        while e < b.len() && matches!(b[e], b' ' | b'\t') {
+            e += 1;
+        }
+        if e < b.len() && b[e] == b'\n' {
+            e += 1;
+        }
+        removals.push((prefix_at, e));
     }
 
-    let mut out = source.to_string();
-    for edit in filtered.into_iter().rev() {
-        out.replace_range(edit.start..edit.end, "");
-    }
-
-    if out.contains("__esModule") {
+    if removals.is_empty() {
         return source.to_string();
     }
 
-    if parse_js(&out)
-        .map(|tree| tree.root_node().has_error())
-        .unwrap_or(true)
-    {
-        return source.to_string();
+    let mut out = String::with_capacity(source.len());
+    let mut pos = 0usize;
+    for (start, end) in removals {
+        if start < pos {
+            return source.to_string();
+        }
+        out.push_str(&source[pos..start]);
+        pos = end;
     }
-
+    out.push_str(&source[pos..]);
     out
 }
 
