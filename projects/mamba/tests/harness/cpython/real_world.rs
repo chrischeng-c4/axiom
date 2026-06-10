@@ -177,7 +177,7 @@ fn real_world_fixtures_pass_under_both_interpreters() {
         let category = if is_required { "required" } else { "optional" };
 
         if has_python3 {
-            let out = Command::new("python3")
+            let out = Command::new(common::python3_bin())
                 .arg(script)
                 .output()
                 .expect("failed to spawn python3");

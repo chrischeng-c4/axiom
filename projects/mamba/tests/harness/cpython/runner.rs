@@ -310,7 +310,7 @@ fn spawn_mamba(path: &Path) -> Result<Output, String> {
 fn spawn_python(path: &Path) -> Result<Output, String> {
     let fixture = absolute_fixture_path(path);
     let sandbox = temp_sandbox(path)?;
-    let mut command = Command::new("python3");
+    let mut command = Command::new(common::python3_bin());
     command
         .arg(&fixture)
         .current_dir(sandbox.path())

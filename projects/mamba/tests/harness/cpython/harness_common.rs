@@ -42,6 +42,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 // ── mamba binary location ─────────────────────────────────────────
@@ -115,20 +116,60 @@ pub fn fixture_sha256_opt(path: &Path) -> Option<String> {
     fixture_sha256(path).ok()
 }
 
+// ── oracle interpreter location ───────────────────────────────────
+//
+// `Command::new("python3")` re-resolves through $PATH on every spawn; on
+// pyenv machines that lands on the bash shim, which costs ~470ms/exec vs
+// ~25ms for the real binary (measured ~65% of a full conformance run).
+// Resolve the interpreter ONCE per harness process: honor
+// `MAMBA_ORACLE_PYTHON` when set, else ask the PATH-resolved `python3` for
+// its `sys.executable` (from the temp dir, so pyenv version selection
+// matches the sandboxed fixture spawns, which also run under $TMPDIR), and
+// fall back to plain "python3" (original PATH semantics) if resolution
+// fails. Same interpreter as before — just reached without the shim tax.
+pub fn python3_bin() -> &'static Path {
+    static PYTHON3: OnceLock<PathBuf> = OnceLock::new();
+    PYTHON3
+        .get_or_init(|| {
+            if let Ok(overridden) = std::env::var("MAMBA_ORACLE_PYTHON") {
+                let overridden = overridden.trim();
+                if !overridden.is_empty() {
+                    return PathBuf::from(overridden);
+                }
+            }
+            let resolved = Command::new("python3")
+                .args(["-c", "import sys; print(sys.executable)"])
+                .current_dir(std::env::temp_dir())
+                .output();
+            match resolved {
+                Ok(out) if out.status.success() => {
+                    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if path.is_empty() {
+                        PathBuf::from("python3")
+                    } else {
+                        PathBuf::from(path)
+                    }
+                }
+                _ => PathBuf::from("python3"),
+            }
+        })
+        .as_path()
+}
+
 // ── python3 availability probes ───────────────────────────────────
 
-/// True iff `python3 --version` runs and exits 0.
+/// True iff the resolved oracle interpreter runs `--version` with exit 0.
 pub fn python3_available() -> bool {
-    Command::new("python3")
+    Command::new(python3_bin())
         .arg("--version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
-/// True iff `python3 -c "import <module>"` exits 0.
+/// True iff `<oracle python3> -c "import <module>"` exits 0.
 pub fn python3_can_import(module: &str) -> bool {
-    Command::new("python3")
+    Command::new(python3_bin())
         .args(["-c", &format!("import {module}")])
         .output()
         .map(|o| o.status.success())

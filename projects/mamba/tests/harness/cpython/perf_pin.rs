@@ -289,7 +289,7 @@ fn load_cpython_baseline(toml_path: &Path) -> Option<CpythonPerfBaseline> {
         return None;
     }
 
-    let output = Command::new("python3")
+    let output = Command::new(common::python3_bin())
         .arg(baseline_tool())
         .arg("--db")
         .arg(&db)
