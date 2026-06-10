@@ -565,12 +565,13 @@ unsafe extern "C" fn m_seek(slf: MbValue, args: MbValue) -> MbValue {
     let offset = items.first().and_then(|v| v.as_int()).unwrap_or(0);
     let whence = items.get(1).and_then(|v| v.as_int()).unwrap_or(0);
     let Some(plain) = ensure_plain(slf) else { return MbValue::none() };
-    let new_pos = match whence {
+    // CPython clamps a seek past the end to the decompressed length.
+    let new_pos = (match whence {
         1 => pos_of(slf) as i64 + offset,
         2 => plain.len() as i64 + offset,
         _ => offset,
-    }
-    .max(0) as usize;
+    })
+    .clamp(0, plain.len() as i64) as usize;
     inst_set(slf, "_pos", MbValue::from_int(new_pos as i64));
     MbValue::from_int(new_pos as i64)
 }

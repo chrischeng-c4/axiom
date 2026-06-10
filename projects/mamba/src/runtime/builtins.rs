@@ -3943,17 +3943,27 @@ pub fn mb_print_kwargs(args_list: MbValue, sep: MbValue, end: MbValue) -> MbValu
     MbValue::none()
 }
 
-/// True if `file` is the `sys.stderr` stub (a dict `{'name': '<stderr>'}`).
+/// True if `file` is `sys.stderr` — either the legacy dict stub
+/// (`{'name': '<stderr>'}`) or the current `sys._Stream` Instance carrying
+/// `name == "<stderr>"`.
 fn is_stderr_file(file: MbValue) -> bool {
     if let Some(ptr) = file.as_ptr() {
         unsafe {
-            if let ObjData::Dict(ref lock) = (*ptr).data {
-                let map = lock.read().unwrap();
-                if let Some(v) = map.get(&super::dict_ops::DictKey::Str("name".to_string())) {
-                    if let Some(sp) = v.as_ptr() {
-                        if let ObjData::Str(ref s) = (*sp).data {
-                            return s == "<stderr>";
-                        }
+            let name_val = match &(*ptr).data {
+                ObjData::Dict(ref lock) => lock
+                    .read()
+                    .unwrap()
+                    .get(&super::dict_ops::DictKey::Str("name".to_string()))
+                    .copied(),
+                ObjData::Instance { ref fields, .. } => {
+                    fields.read().unwrap().get("name").copied()
+                }
+                _ => None,
+            };
+            if let Some(v) = name_val {
+                if let Some(sp) = v.as_ptr() {
+                    if let ObjData::Str(ref s) = (*sp).data {
+                        return s == "<stderr>";
                     }
                 }
             }

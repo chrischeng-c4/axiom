@@ -241,11 +241,22 @@ pub fn mb_atexit_run_exitfuncs() -> MbValue {
     for handler in handlers.iter().rev() {
         call_handler(handler);
         // Isolate a raising callback: report it, clear the pending exception,
-        // and keep running the remaining handlers.
+        // and keep running the remaining handlers. The report goes through
+        // the redirect-aware stderr writer so `contextlib.redirect_stderr`
+        // captures it (raw eprintln! bypasses sys.stderr redirection).
         if super::super::exception::mb_has_exception().as_bool() == Some(true) {
-            if let Some(tb) = super::super::exception::mb_take_uncaught_traceback() {
-                eprintln!("Error in atexit._run_exitfuncs:");
-                eprintln!("{}", tb);
+            let detail = super::super::exception::mb_take_uncaught_traceback()
+                .unwrap_or_else(|| {
+                    let exc = super::super::exception::mb_catch_exception();
+                    let ty = super::super::exception::get_exception_type_pub(exc)
+                        .unwrap_or_else(|| "Exception".to_string());
+                    let msg = super::super::exception::get_exception_message_pub(exc)
+                        .unwrap_or_default();
+                    if msg.is_empty() { ty } else { format!("{ty}: {msg}") }
+                });
+            let report = format!("Error in atexit._run_exitfuncs:\n{detail}\n");
+            if !super::super::output::try_write_stderr_redirect(&report) {
+                eprint!("{report}");
             }
             super::super::exception::mb_clear_exception();
         }
