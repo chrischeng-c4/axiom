@@ -265,7 +265,19 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                     }
                     return MbValue::from_ptr(MbObject::new_list(Vec::new()));
                 }
-                ObjData::Instance { .. } => {
+                ObjData::Instance { ref fields, .. } => {
+                    // Struct-sequence-shaped instances (sys.version_info,
+                    // urllib ParseResult) iterate over their ordered
+                    // `_entries` backing list.
+                    if let Some(entries) = fields.read().unwrap().get("_entries").copied() {
+                        if let Some(ep) = entries.as_ptr() {
+                            if let ObjData::List(ref lock) = (*ep).data {
+                                return MbValue::from_ptr(MbObject::new_list(
+                                    lock.read().unwrap().to_vec(),
+                                ));
+                            }
+                        }
+                    }
                     // User-defined iterable: go through the iterator protocol
                     // via mb_iter → mb_has_next/mb_next loop. mb_iter dispatches
                     // to __iter__ for Instance values.

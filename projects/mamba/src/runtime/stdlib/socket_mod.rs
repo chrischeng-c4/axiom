@@ -296,9 +296,9 @@ pub fn register() {
     let stub_funcs: &[&str] = &[
         "CMSG_LEN", "CMSG_SPACE", "close", "dup", "fromfd",
         "getdefaulttimeout", "getfqdn", "gethostbyaddr", "gethostbyname_ex",
-        "getnameinfo", "getprotobyname", "getservbyname", "getservbyport",
+        "getnameinfo", "getprotobyname", "getservbyport",
         "has_dualstack_ipv6", "if_indextoname", "if_nameindex",
-        "if_nametoindex", "inet_aton", "inet_ntoa", "inet_ntop", "inet_pton",
+        "if_nametoindex", "inet_ntop", "inet_pton",
         "recv_fds", "send_fds", "setdefaulttimeout", "sethostname",
         "socketpair",
     ];
@@ -308,6 +308,17 @@ pub fn register() {
     super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
         s.borrow_mut().insert(stub_addr as u64);
     });
+    // Real implementations replace the former stubs.
+    for (name, addr) in [
+        ("inet_aton", dispatch_inet_aton as *const () as usize),
+        ("inet_ntoa", dispatch_inet_ntoa as *const () as usize),
+        ("getservbyname", dispatch_getservbyname as *const () as usize),
+    ] {
+        attrs.insert(name.to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
 
     // ── surface: missing CPython type/enum/flag class names ──
     // Registered as callable type stubs (via NATIVE_TYPE_NAMES) so `hasattr`,
@@ -487,9 +498,84 @@ pub fn mb_socket_gethostname() -> MbValue {
     MbValue::from_ptr(MbObject::new_str(name))
 }
 
-/// socket.gethostbyname(name) -> IP string (stub: returns "127.0.0.1")
-pub fn mb_socket_gethostbyname(_name: MbValue) -> MbValue {
+/// socket.gethostbyname(name) -> IP string. A literal IPv4 address resolves
+/// to itself; other names fall back to loopback (no DNS in the stub model).
+pub fn mb_socket_gethostbyname(name: MbValue) -> MbValue {
+    if let Some(n) = extract_str(name) {
+        if n.parse::<std::net::Ipv4Addr>().is_ok() {
+            return MbValue::from_ptr(MbObject::new_str(n));
+        }
+    }
     MbValue::from_ptr(MbObject::new_str("127.0.0.1".to_string()))
+}
+
+/// socket.inet_aton(ip) -> 4 packed bytes.
+unsafe extern "C" fn dispatch_inet_aton(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() { &[] } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let s = a.first().copied().and_then(extract_str).unwrap_or_default();
+    match s.parse::<std::net::Ipv4Addr>() {
+        Ok(ip) => MbValue::from_ptr(MbObject::new_bytes(ip.octets().to_vec())),
+        Err(_) => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "illegal IP address string passed to inet_aton".to_string(),
+                )),
+            );
+            MbValue::none()
+        }
+    }
+}
+
+/// socket.inet_ntoa(packed) -> dotted-quad string.
+unsafe extern "C" fn dispatch_inet_ntoa(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() { &[] } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let bytes = a.first().copied().and_then(|v| v.as_ptr()).and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::Bytes(b) => Some(b.clone()),
+            ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
+            _ => None,
+        }
+    });
+    match bytes {
+        Some(b) if b.len() == 4 => MbValue::from_ptr(MbObject::new_str(
+            format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3]),
+        )),
+        _ => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "packed IP wrong length for inet_ntoa".to_string(),
+                )),
+            );
+            MbValue::none()
+        }
+    }
+}
+
+/// socket.getservbyname(name[, proto]) -> well-known IANA port.
+unsafe extern "C" fn dispatch_getservbyname(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = if nargs == 0 || args_ptr.is_null() { &[] } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let port: i64 = match name.as_str() {
+        "ftp" => 21, "ssh" => 22, "telnet" => 23, "smtp" => 25,
+        "domain" => 53, "http" => 80, "pop3" => 110, "imap" | "imap2" => 143,
+        "https" => 443, "smtps" => 465, "imaps" => 993, "pop3s" => 995,
+        _ => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("service/proto not found".to_string())),
+            );
+            return MbValue::none();
+        }
+    };
+    MbValue::from_int(port)
 }
 
 /// socket.getaddrinfo(host, port) -> list of (family, type, proto, canonname, sockaddr)

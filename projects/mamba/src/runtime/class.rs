@@ -3233,6 +3233,26 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
             // Check Instance first before trying the Str/class-attr path, since instance
             // setattr is by far the hottest path during object construction.
             if let ObjData::Instance { ref class_name, ref fields, .. } = (*ptr).data {
+                // threading: daemonizing a running thread is a RuntimeError.
+                if class_name == "Thread" {
+                    if let Some(kp) = attr.as_ptr() {
+                        if let ObjData::Str(ref attr_s) = (*kp).data {
+                            if attr_s == "daemon" {
+                                let alive = fields.read().unwrap()
+                                    .get("alive").and_then(|v| v.as_bool()).unwrap_or(false);
+                                if alive {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "cannot set daemon status of active thread".to_string(),
+                                        )),
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
                 // unittest.mock spec_set: writes to undeclared attributes on a
                 // spec_set mock raise AttributeError.
                 if super::stdlib::unittest_mock_mod::is_mock_class(class_name) {
@@ -3369,7 +3389,13 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
             // the dict getattr fast path. Plain dicts (no stub tag) keep the
             // current fall-through (silent no-op) semantics.
             if let ObjData::Dict(ref lock) = (*ptr).data {
-                let is_stub = lock.read().unwrap().contains_key("__class__");
+                // Module namespaces (dicts carrying __name__) accept attribute
+                // writes too: `threading.excepthook = hook` must rebind the
+                // module attr like CPython.
+                let is_stub = {
+                    let g = lock.read().unwrap();
+                    g.contains_key("__class__") || g.contains_key("__name__")
+                };
                 if is_stub {
                     let attr_name = extract_str(attr).unwrap_or_default();
                     super::rc::retain_if_ptr(value);
@@ -6545,6 +6571,63 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             return MbValue::from_bool(false);
                         }
                         "notify" | "notify_all" | "wait" | "wait_for" => {
+                            // CPython requires the condition's lock to be held.
+                            let held = if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                                fields.read().unwrap()
+                                    .get("locked").and_then(|v| v.as_bool()).unwrap_or(false)
+                            } else { false };
+                            if !held {
+                                let verb = if name.starts_with("notify") { "notify on" } else { "wait on" };
+                                super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str("RuntimeError".to_string())),
+                                    MbValue::from_ptr(MbObject::new_str(format!(
+                                        "cannot {verb} un-acquired lock"
+                                    ))),
+                                );
+                                return MbValue::none();
+                            }
+                            return MbValue::none();
+                        }
+                        _ => {}
+                    }
+                }
+                if class_name == "Semaphore" || class_name == "BoundedSemaphore" {
+                    match name.as_str() {
+                        "acquire" | "__enter__" => {
+                            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                                let mut f = fields.write().unwrap();
+                                let v = f.get("value").and_then(|x| x.as_int()).unwrap_or(0);
+                                if v > 0 {
+                                    f.insert("value".into(), MbValue::from_int(v - 1));
+                                    return MbValue::from_bool(true);
+                                }
+                                // Sync stub: a zero semaphore cannot block.
+                                return MbValue::from_bool(false);
+                            }
+                            return MbValue::from_bool(false);
+                        }
+                        "release" | "__exit__" => {
+                            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                                let mut f = fields.write().unwrap();
+                                let v = f.get("value").and_then(|x| x.as_int()).unwrap_or(0);
+                                let bound = f.get("bound").and_then(|x| x.as_int());
+                                if let Some(b) = bound {
+                                    if v + 1 > b {
+                                        drop(f);
+                                        super::exception::mb_raise(
+                                            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                                            MbValue::from_ptr(MbObject::new_str(
+                                                "Semaphore released too many times".to_string(),
+                                            )),
+                                        );
+                                        return MbValue::none();
+                                    }
+                                }
+                                f.insert("value".into(), MbValue::from_int(v + 1));
+                            }
+                            if name == "__exit__" {
+                                return MbValue::from_bool(false);
+                            }
                             return MbValue::none();
                         }
                         _ => {}

@@ -96,6 +96,7 @@ unsafe extern "C" fn d_thread(args_ptr: *const MbValue, nargs: usize) -> MbValue
     // identical across every thread).
     let mut args_v = MbValue::none();
     let mut kwargs_v = MbValue::none();
+    let mut daemon_v: Option<MbValue> = None;
     // Trailing dict = kwargs lowering. Inspect for target/name keys.
     let trailing_kwargs = a.last().and_then(|v| v.as_ptr()).and_then(|p| unsafe {
         if let ObjData::Dict(ref lock) = (*p).data {
@@ -113,6 +114,7 @@ unsafe extern "C" fn d_thread(args_ptr: *const MbValue, nargs: usize) -> MbValue
                     "name"   => name = *v,
                     "args"   => args_v = *v,
                     "kwargs" => kwargs_v = *v,
+                    "daemon" => daemon_v = Some(*v),
                     _ => {}
                 }
             }
@@ -132,6 +134,10 @@ unsafe extern "C" fn d_thread(args_ptr: *const MbValue, nargs: usize) -> MbValue
                 let mut f = fields.write().unwrap();
                 f.insert("args".into(), args_v);
                 f.insert("kwargs".into(), kwargs_v);
+                if let Some(d) = daemon_v {
+                    f.insert("daemon".into(),
+                        MbValue::from_bool(d.as_bool().unwrap_or(false)));
+                }
             }
         }
     }
@@ -170,6 +176,14 @@ disp_unary!(d_excepthook, mb_threading_excepthook);
 const TIMEOUT_MAX: f64 = 9_223_372_036.854_776;
 
 pub fn register() {
+    // Thread.__repr__ shows the CPython lifecycle markers.
+    {
+        let addr = thread_method_repr as *const () as usize;
+        super::super::module::register_variadic_func(addr as u64);
+        let mut m: HashMap<String, MbValue> = HashMap::new();
+        m.insert("__repr__".into(), MbValue::from_func(addr));
+        super::super::class::mb_class_register("Thread", vec![], m);
+    }
     let mut attrs = HashMap::new();
 
     let dispatchers: Vec<(&str, usize)> = vec![
@@ -203,6 +217,7 @@ pub fn register() {
         ("gettrace",               d_gettrace               as usize),
         ("stack_size",             d_stack_size             as usize),
         ("excepthook",             d_excepthook             as usize),
+        ("__excepthook__",         d_excepthook             as usize),
     ];
     for (name, addr) in &dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(*addr));
@@ -342,6 +357,133 @@ thread_local! {
 static NEXT_THREAD_IDENT: AtomicI64 = AtomicI64::new(2);
 
 /// Allocate the next distinct Thread ident (>= 2).
+thread_local! {
+    /// Threads between start() and join() — what enumerate() reports beyond
+    /// the main thread (synchronous stub model).
+    static LIVE_THREADS: std::cell::RefCell<Vec<u64>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+thread_local! {
+    /// The Thread instance whose target is currently running (sync model);
+    /// what current_thread() reports inside a worker.
+    static CURRENT_THREAD_OBJ: std::cell::Cell<u64> =
+        std::cell::Cell::new(MbValue::none().to_bits());
+}
+
+fn live_threads_add(t: MbValue) {
+    unsafe { super::super::rc::retain_if_ptr(t); }
+    LIVE_THREADS.with(|l| l.borrow_mut().push(t.to_bits()));
+}
+
+fn live_threads_remove(t: MbValue) {
+    LIVE_THREADS.with(|l| l.borrow_mut().retain(|b| *b != t.to_bits()));
+}
+
+/// A pending exception left by the (synchronously run) target is delivered to
+/// the CURRENT threading.excepthook with an args object carrying
+/// exc_type (a type object) / exc_value / thread, then cleared.
+fn deliver_to_excepthook(thread: MbValue) {
+    if super::super::exception::mb_has_exception().as_bool() != Some(true) {
+        return;
+    }
+    let value = super::super::class::mb_catch_exception_instance();
+    let type_name = value.as_ptr().map(|p| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*p).data {
+            class_name.clone()
+        } else {
+            "Exception".to_string()
+        }
+    }).unwrap_or_else(|| "Exception".to_string());
+    // exc_type as a type object (has __name__).
+    let type_obj = {
+        let inst = MbObject::new_instance("type".to_string());
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*inst).data {
+                fields.write().unwrap().insert(
+                    "__name__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(type_name.clone())),
+                );
+            }
+        }
+        MbValue::from_ptr(inst)
+    };
+    let args_inst = {
+        let inst = MbObject::new_instance("_thread._ExceptHookArgs".to_string());
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*inst).data {
+                let mut f = fields.write().unwrap();
+                f.insert("exc_type".to_string(), type_obj);
+                f.insert("exc_value".to_string(), value);
+                f.insert("exc_traceback".to_string(), MbValue::none());
+                f.insert("thread".to_string(), thread);
+            }
+        }
+        MbValue::from_ptr(inst)
+    };
+    // The hook is whatever threading.excepthook currently is (assignable).
+    let hook = {
+        let module = super::super::module::mb_import(
+            MbValue::from_ptr(MbObject::new_str("threading".to_string())));
+        let sentinel = MbValue::from_bits(u64::MAX);
+        let h = super::super::dict_ops::mb_dict_get(
+            module,
+            MbValue::from_ptr(MbObject::new_str("excepthook".to_string())),
+            sentinel,
+        );
+        if h.to_bits() == u64::MAX { MbValue::none() } else { h }
+    };
+    if !hook.is_none() {
+        let call_args = MbValue::from_ptr(MbObject::new_list(vec![args_inst]));
+        let _ = super::super::builtins::mb_call_spread(hook, call_args);
+        // A raising hook must not leak into the joiner either.
+        if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+            super::super::exception::mb_clear_exception();
+        }
+    } else {
+        let msg = extract_str(super::super::builtins::mb_str(args_inst)).unwrap_or_default();
+        let _ = msg;
+        eprintln!("Exception in thread: {type_name}");
+    }
+}
+
+/// CPython-style Thread repr with lifecycle marker.
+pub fn thread_repr(t: MbValue) -> String {
+    let (name, started, alive, ident) = t.as_ptr().map(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            let g = fields.read().unwrap();
+            (
+                g.get("name").copied().and_then(extract_str).unwrap_or_else(|| "Thread".to_string()),
+                g.get("started").and_then(|v| v.as_bool()).unwrap_or(false),
+                g.get("alive").and_then(|v| v.as_bool()).unwrap_or(false),
+                g.get("ident").and_then(|v| v.as_int()),
+            )
+        } else {
+            ("Thread".to_string(), false, false, None)
+        }
+    }).unwrap_or(("Thread".to_string(), false, false, None));
+    let daemon = t.as_ptr().map(|p| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*p).data {
+            fields.read().unwrap().get("daemon").and_then(|v| v.as_bool()).unwrap_or(false)
+        } else { false }
+    }).unwrap_or(false);
+    let mut state = if !started {
+        "initial".to_string()
+    } else if alive {
+        format!("started {}", ident.unwrap_or(0))
+    } else {
+        format!("stopped {}", ident.unwrap_or(0))
+    };
+    if daemon {
+        state.push_str(" daemon");
+    }
+    format!("<Thread({name}, {state})>")
+}
+
+unsafe extern "C" fn thread_method_repr(self_v: MbValue, _args: MbValue) -> MbValue {
+    MbValue::from_ptr(MbObject::new_str(thread_repr(self_v)))
+}
+
 fn next_thread_ident() -> i64 {
     NEXT_THREAD_IDENT.fetch_add(1, Ordering::Relaxed)
 }
@@ -356,19 +498,36 @@ fn next_thread_ident() -> i64 {
 /// attribute-access path. The constructor accepts `target` and `name`
 /// positionally; if `name` is None/missing it defaults to "Thread".
 pub fn mb_threading_thread(target: MbValue, name: MbValue) -> MbValue {
-    let n = extract_str(name).unwrap_or_else(|| "Thread".to_string());
+    // CPython: an unnamed Thread is auto-named "Thread-N"; a non-str name is
+    // str()-coerced ("123").
+    let n = if name.is_none() {
+        // CPython 3.10+: auto names append the target's name — "Thread-N (worker)".
+        let tname = if target.is_none() {
+            None
+        } else {
+            let key = MbValue::from_ptr(MbObject::new_str("__name__".to_string()));
+            extract_str(super::super::class::mb_getattr(target, key))
+        };
+        if super::super::exception::mb_has_exception().as_bool() == Some(true) {
+            super::super::exception::mb_clear_exception();
+        }
+        match tname {
+            Some(t) if !t.is_empty() => format!("Thread-{} ({t})", next_thread_ident() - 1),
+            _ => format!("Thread-{}", next_thread_ident() - 1),
+        }
+    } else {
+        extract_str(name).unwrap_or_else(|| {
+            extract_str(super::super::builtins::mb_str(name)).unwrap_or_else(|| "Thread".to_string())
+        })
+    };
     let mut f = FxHashMap::default();
     f.insert("name".into(), MbValue::from_ptr(MbObject::new_str(n)));
     f.insert("target".into(), target);
     f.insert("started".into(), MbValue::from_bool(false));
     f.insert("alive".into(), MbValue::from_bool(false));
     f.insert("daemon".into(), MbValue::from_bool(false));
-    // Each Thread gets a distinct ident so `threading.get_ident()` observed
-    // inside its (synchronously-run) target differs from sibling threads and from
-    // the main thread (ident 1). CPython assigns the ident at start(); assigning
-    // at construction is equivalent here because each Thread is started at most
-    // once in the single-threaded stub model.
-    f.insert("ident".into(), MbValue::from_int(next_thread_ident()));
+    // CPython assigns the ident at start(); until then it is None.
+    f.insert("ident".into(), MbValue::none());
     make_instance("Thread", f)
 }
 
@@ -413,35 +572,50 @@ pub fn mb_threading_thread_start(thread: MbValue) -> MbValue {
                 if already_started {
                     return raise_runtime_error("threads can only be started once");
                 }
-                let (target, args, kwargs, ident) = {
+                let (target, args, kwargs) = {
                     let g = fields.read().unwrap();
                     (
                         g.get("target").copied().unwrap_or_else(MbValue::none),
                         g.get("args").copied().unwrap_or_else(MbValue::none),
                         g.get("kwargs").copied().unwrap_or_else(MbValue::none),
-                        g.get("ident").and_then(|v| v.as_int()),
                     )
                 };
+                // CPython assigns the ident at start().
+                let ident = {
+                    let g = fields.read().unwrap();
+                    g.get("ident").and_then(|v| v.as_int())
+                }.unwrap_or_else(|| {
+                    let id = next_thread_ident();
+                    fields.write().unwrap().insert("ident".into(), MbValue::from_int(id));
+                    id
+                });
                 let snapshot = snapshot_locals();
                 // Make `threading.get_ident()` inside the target observe THIS
                 // thread's distinct ident, then restore the caller's ident so
                 // nested/sequential starts each see their own (sync model).
                 let prev_ident = CURRENT_IDENT.with(|c| c.get());
-                if let Some(id) = ident {
-                    CURRENT_IDENT.with(|c| c.set(id));
-                }
+                CURRENT_IDENT.with(|c| c.set(ident));
+                let prev_obj = CURRENT_THREAD_OBJ.with(|c| c.get());
+                CURRENT_THREAD_OBJ.with(|c| c.set(thread.to_bits()));
                 if !target.is_none() {
                     // Deliver target(*args, **kwargs) — NOT mb_call0, which left
                     // declared parameters reading uninitialized arg slots.
                     let _ = super::super::builtins::mb_call_spread(target, build_call_args(args, kwargs));
                 }
+                CURRENT_THREAD_OBJ.with(|c| c.set(prev_obj));
                 CURRENT_IDENT.with(|c| c.set(prev_ident));
                 restore_locals(snapshot);
-                let mut f = fields.write().unwrap();
-                f.insert("started".into(), MbValue::from_bool(true));
-                // Alive from start() until join() (CPython Thread.is_alive()
-                // lifecycle); the synchronous stub still flips it false in join().
-                f.insert("alive".into(), MbValue::from_bool(true));
+                // An exception escaping run() is delivered to
+                // threading.excepthook, NOT re-raised in the starter/joiner.
+                deliver_to_excepthook(thread);
+                {
+                    let mut f = fields.write().unwrap();
+                    f.insert("started".into(), MbValue::from_bool(true));
+                    // Alive from start() until join() (CPython Thread.is_alive()
+                    // lifecycle); the synchronous stub still flips it false in join().
+                    f.insert("alive".into(), MbValue::from_bool(true));
+                }
+                live_threads_add(thread);
             } else if let ObjData::Dict(ref lock) = (*ptr).data {
                 let (target, args, kwargs, ident) = {
                     let g = lock.read().unwrap();
@@ -488,6 +662,8 @@ pub fn mb_threading_thread_join(thread: MbValue) -> MbValue {
                 }
                 let mut f = fields.write().unwrap();
                 f.insert("alive".into(), MbValue::from_bool(false));
+                drop(f);
+                live_threads_remove(thread);
             } else if let ObjData::Dict(ref lock) = (*ptr).data {
                 let mut map = lock.write().unwrap();
                 map.insert("alive".into(), MbValue::from_bool(false));
@@ -814,6 +990,11 @@ fn main_thread_singleton() -> MbValue {
 /// the running thread's name, so current_thread() reflects THAT thread; outside
 /// any worker it is the MainThread singleton.
 pub fn mb_threading_current_thread() -> MbValue {
+    // Inside a worker target the running Thread instance itself is current.
+    let cur = CURRENT_THREAD_OBJ.with(|c| MbValue::from_bits(c.get()));
+    if !cur.is_none() {
+        return cur;
+    }
     let running = THREAD_NAME.with(|n| {
         let v = n.take();
         n.set(v.clone());
@@ -845,7 +1026,13 @@ pub fn mb_threading_active_count() -> MbValue {
 /// threading.enumerate() -> list (containing the fake main thread).
 pub fn mb_threading_enumerate() -> MbValue {
     let main = mb_threading_main_thread();
-    MbValue::from_ptr(MbObject::new_list(vec![main]))
+    let mut items = vec![main];
+    LIVE_THREADS.with(|l| {
+        for b in l.borrow().iter() {
+            items.push(MbValue::from_bits(*b));
+        }
+    });
+    MbValue::from_ptr(MbObject::new_list(items))
 }
 
 /// threading.get_ident() -> int.
@@ -977,8 +1164,9 @@ mod tests {
 
     #[test]
     fn test_thread_with_non_str_name_defaults() {
+        // CPython str()-coerces a non-string name: Thread(name=0) → "0".
         let t = mb_threading_thread(MbValue::none(), MbValue::from_int(0));
-        assert_eq!(get_str(instance_field(t, "name").unwrap()), Some("Thread".to_string()));
+        assert_eq!(get_str(instance_field(t, "name").unwrap()), Some("0".to_string()));
     }
 
     #[test]
@@ -1227,8 +1415,12 @@ mod tests {
 
     #[test]
     fn test_thread_constructor_assigns_distinct_idents() {
+        // CPython: ident is None before start() and distinct after.
         let a = mb_threading_thread(MbValue::none(), MbValue::none());
         let b = mb_threading_thread(MbValue::none(), MbValue::none());
+        assert!(instance_field(a, "ident").unwrap().is_none(), "unstarted ident is None");
+        mb_threading_thread_start(a);
+        mb_threading_thread_start(b);
         let ia = instance_field(a, "ident").unwrap().as_int().unwrap();
         let ib = instance_field(b, "ident").unwrap().as_int().unwrap();
         assert_ne!(ia, ib, "each Thread must get a distinct ident");

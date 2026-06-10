@@ -3361,6 +3361,8 @@ impl<'a> AstLowerer<'a> {
                             | "MagicMock" | "Mock" | "AsyncMock" | "PropertyMock"
                             | "NonCallableMock" | "NonCallableMagicMock"
                             | "patch" | "mock_open" | "call"
+                            // urllib.parse functions with behavioral kwargs
+                            | "parse_qs" | "parse_qsl" | "urlencode"
                     )
                 );
                 let pack_trailing_kwargs = (is_method_call && has_any_kwargs)

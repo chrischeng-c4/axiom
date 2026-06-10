@@ -224,8 +224,10 @@ unsafe extern "C" fn structseq_gt(self_v: MbValue, args: MbValue) -> MbValue {
     super::super::builtins::mb_gt(struct_seq_tuple(self_v), cmp_operand(ss_args_first(args)))
 }
 
-/// Register the shared struct-seq method table under each class name.
-fn register_struct_seq_classes() {
+/// Register ONE class name with the shared struct-seq method table
+/// (__len__ / __getitem__ with slice support / __eq__ / __lt__ / __gt__ over
+/// the ordered `_entries` field). Reused by urllib.parse result types.
+pub(crate) fn register_struct_seq_class(cls: &str) {
     use std::collections::HashMap as Map;
     for addr in [
         structseq_len as *const () as usize,
@@ -235,17 +237,22 @@ fn register_struct_seq_classes() {
     ] {
         super::super::module::register_variadic_func(addr as u64);
     }
+    let mut m: Map<String, MbValue> = Map::new();
+    m.insert("__len__".into(), MbValue::from_func(structseq_len as *const () as usize));
+    m.insert("__getitem__".into(), MbValue::from_func(structseq_getitem as *const () as usize));
+    m.insert("__eq__".into(), MbValue::from_func(structseq_eq as *const () as usize));
+    m.insert("__lt__".into(), MbValue::from_func(structseq_lt as *const () as usize));
+    m.insert("__gt__".into(), MbValue::from_func(structseq_gt as *const () as usize));
+    super::super::class::mb_class_register(cls, vec![], m);
+}
+
+/// Register the shared struct-seq method table under each sys class name.
+fn register_struct_seq_classes() {
     for cls in [
         "sys.version_info", "sys.float_info", "sys.int_info", "sys.hash_info",
         "sys.implementation.version", "sys.asyncgen_hooks",
     ] {
-        let mut m: Map<String, MbValue> = Map::new();
-        m.insert("__len__".into(), MbValue::from_func(structseq_len as *const () as usize));
-        m.insert("__getitem__".into(), MbValue::from_func(structseq_getitem as *const () as usize));
-        m.insert("__eq__".into(), MbValue::from_func(structseq_eq as *const () as usize));
-        m.insert("__lt__".into(), MbValue::from_func(structseq_lt as *const () as usize));
-        m.insert("__gt__".into(), MbValue::from_func(structseq_gt as *const () as usize));
-        super::super::class::mb_class_register(cls, vec![], m);
+        register_struct_seq_class(cls);
     }
 }
 
