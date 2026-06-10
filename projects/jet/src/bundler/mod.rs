@@ -881,6 +881,13 @@ impl Bundler {
     /// before generate_bundle).  Modules whose exports are entirely unused and
     /// have no side effects are eliminated.
     fn apply_tree_shaking(&self, modules: Vec<CompiledModule>, entry: &Path) -> Vec<CompiledModule> {
+        // JET_NO_TREESHAKE=1 bypasses shaking entirely — the A/B knob for
+        // bisecting runtime breakage to this phase (pair with
+        // JET_TREESHAKE_DEBUG=<file> for per-module used-export dumps).
+        if std::env::var_os("JET_NO_TREESHAKE").is_some() {
+            tracing::warn!("JET_NO_TREESHAKE set: skipping tree shaking");
+            return modules;
+        }
         let module_pairs: Vec<(PathBuf, String)> = modules
             .iter()
             .map(|m| {
