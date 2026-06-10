@@ -1265,6 +1265,19 @@ pub fn mb_str_removesuffix(s: MbValue, suffix: MbValue) -> MbValue {
 /// Supports: fill, align (<>^), width, precision, type (d,f,s,e,x,o,b).
 pub fn mb_format_value(val: MbValue, spec: MbValue) -> MbValue {
     unsafe {
+        // An Instance whose class registers __format__ formats itself
+        // (ipaddress addresses, user classes); everything else goes through
+        // the built-in spec formatter.
+        if let Some(ptr) = val.as_ptr() {
+            if let super::rc::ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let method = super::class::lookup_method(class_name, "__format__");
+                if !method.is_none() {
+                    let name = new_str("__format__".to_string());
+                    let args = MbValue::from_ptr(super::rc::MbObject::new_list(vec![spec]));
+                    return super::class::mb_call_method(val, name, args);
+                }
+            }
+        }
         let spec_str = as_str(spec).unwrap_or("");
         let formatted = format_with_spec(val, spec_str);
         new_str(formatted)

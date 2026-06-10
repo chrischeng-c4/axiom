@@ -803,8 +803,20 @@ pub fn mb_random_method_vonmisesvariate(receiver: MbValue, mu: MbValue, kappa: M
 
 pub fn mb_random_method_gammavariate(receiver: MbValue, alpha: MbValue, beta: MbValue) -> MbValue {
     let id = receiver.as_int().map(|i| i as u64).unwrap_or_else(default_handle);
-    let a = extract_f64(alpha, 1.0).max(f64::EPSILON);
-    let b = extract_f64(beta, 1.0);
+    // CPython: gammavariate requires alpha > 0 and beta > 0.
+    let raw_a = extract_f64(alpha, 1.0);
+    let raw_b = extract_f64(beta, 1.0);
+    if raw_a <= 0.0 || raw_b <= 0.0 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "gammavariate: alpha and beta must be > 0.0".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
+    let a = raw_a.max(f64::EPSILON);
+    let b = raw_b;
     // Marsaglia–Tsang 2000, with α<1 handled via boost trick.
     let val = if a < 1.0 {
         let g = sample_gamma(id, a + 1.0);

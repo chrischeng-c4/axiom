@@ -2180,7 +2180,8 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 | "gauss" | "normalvariate" | "expovariate" | "lognormvariate"
                 | "vonmisesvariate" | "gammavariate" | "betavariate"
                 | "paretovariate" | "weibullvariate" | "getrandbits"
-                | "randbytes" | "getstate" | "setstate" => return obj,
+                | "randbytes" | "getstate" | "setstate"
+                | "binomialvariate" => return obj,
                 _ => {}
             }
         }
@@ -6825,6 +6826,9 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 ),
                 "randbytes" => return super::stdlib::random_mod::mb_random_method_randbytes(
                     receiver, arg_items.first().copied().unwrap_or_else(|| MbValue::from_int(0)),
+                ),
+                "binomialvariate" => return super::stdlib::random_mod::mb_random_method_binomialvariate(
+                    receiver, a0(), a1(),
                 ),
                 "getstate" => return super::stdlib::random_mod::mb_random_method_getstate(receiver),
                 "setstate" => return super::stdlib::random_mod::mb_random_method_setstate(receiver, a0()),

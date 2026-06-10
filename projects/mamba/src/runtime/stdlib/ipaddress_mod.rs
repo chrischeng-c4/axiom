@@ -797,6 +797,75 @@ unsafe extern "C" fn ip_dunder_int(self_v: MbValue, _args: MbValue) -> MbValue {
     }
 }
 
+unsafe extern "C" fn ip_dunder_format(self_v: MbValue, args: MbValue) -> MbValue {
+    let spec = extract_str(args_first(args)).unwrap_or_default();
+    // '' and 's' are the textual forms.
+    if spec.is_empty() || spec == "s" {
+        return estr(&inst_str_field(self_v, "compressed").unwrap_or_default());
+    }
+    // Parse [#][_](b|n|x|X): alternate prefix, 4-digit grouping, base.
+    let mut alternate = false;
+    let mut grouping = false;
+    let mut kind = ' ';
+    for c in spec.chars() {
+        match c {
+            '#' => alternate = true,
+            '_' => grouping = true,
+            'b' | 'n' | 'x' | 'X' => kind = c,
+            _ => {
+                return raise(
+                    "ValueError",
+                    &format!("Unknown format code '{spec}' for object of type 'IPv4Address'"),
+                );
+            }
+        }
+    }
+    let (value_bits, total_digits): (u128, usize) = match load(self_v) {
+        Some(IpState::V4(a)) => (a as u128, if matches!(kind, 'b' | 'n') { 32 } else { 8 }),
+        Some(IpState::V6(b)) => (
+            u128::from_be_bytes(b),
+            if matches!(kind, 'b' | 'n') { 128 } else { 32 },
+        ),
+        _ => (0, 8),
+    };
+    let digits = match kind {
+        'b' | 'n' => format!("{value_bits:0width$b}", width = total_digits),
+        'x' => format!("{value_bits:0width$x}", width = total_digits),
+        'X' => format!("{value_bits:0width$X}", width = total_digits),
+        _ => {
+            return raise(
+                "ValueError",
+                &format!("Unknown format code '{spec}' for object of type 'IPv4Address'"),
+            );
+        }
+    };
+    let grouped = if grouping {
+        // Group every 4 digits from the right with underscores.
+        let chars: Vec<char> = digits.chars().collect();
+        let mut out = String::new();
+        for (i, c) in chars.iter().enumerate() {
+            if i > 0 && (chars.len() - i) % 4 == 0 {
+                out.push('_');
+            }
+            out.push(*c);
+        }
+        out
+    } else {
+        digits
+    };
+    let prefixed = if alternate {
+        match kind {
+            'b' | 'n' => format!("0b{grouped}"),
+            'x' => format!("0x{grouped}"),
+            'X' => format!("0X{grouped}"),
+            _ => grouped,
+        }
+    } else {
+        grouped
+    };
+    estr(&prefixed)
+}
+
 /// Register the IP classes' shared dunder tables.
 fn register_ip_classes() {
     for class in ["IPv4Address", "IPv6Address", "IPv4Network"] {
@@ -811,6 +880,7 @@ fn register_ip_classes() {
             ("__ge__", ip_dunder_ge as *const () as usize),
             ("__hash__", ip_dunder_hash as *const () as usize),
             ("__int__", ip_dunder_int as *const () as usize),
+            ("__format__", ip_dunder_format as *const () as usize),
         ] {
             super::super::module::register_variadic_func(addr as u64);
             super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
