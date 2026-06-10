@@ -2694,6 +2694,12 @@ pub fn value_to_string(val: MbValue) -> String {
                     if class_name == "datetime.timedelta" {
                         return super::stdlib::datetime_mod::timedelta_str(val);
                     }
+                    if class_name == "datetime.time" {
+                        return super::stdlib::datetime_mod::time_str(val);
+                    }
+                    if class_name == "datetime.timezone" {
+                        return super::stdlib::datetime_mod::timezone_str(val);
+                    }
                     // namedtuple: dynamic class_name → marker-field dispatch. (#1648)
                     if let Some(s) = super::stdlib::collections_mod::namedtuple_repr(val) {
                         return s;

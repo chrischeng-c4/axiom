@@ -67,6 +67,110 @@ fn build_time_instance(h: i64, m: i64, s: i64, us: i64) -> MbValue {
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+thread_local! {
+    /// Singletons for `timezone.utc` / `.min` / `.max` — `datetime.UTC is
+    /// datetime.timezone.utc` requires pointer identity, not just equality.
+    static TZ_CLASS_ATTRS: std::cell::RefCell<FxHashMap<String, MbValue>> =
+        std::cell::RefCell::new(FxHashMap::default());
+}
+
+/// Class attributes surfaced on `datetime.timezone` itself.
+pub(crate) fn timezone_class_attr(name: &str) -> Option<MbValue> {
+    let offset: i64 = match name {
+        "utc" => 0,
+        "min" => -(23 * 3600 + 59 * 60),
+        "max" => 23 * 3600 + 59 * 60,
+        _ => return None,
+    };
+    Some(TZ_CLASS_ATTRS.with(|m| {
+        *m.borrow_mut()
+            .entry(name.to_string())
+            .or_insert_with(|| build_timezone_instance(offset, None))
+    }))
+}
+
+/// CPython fixed-offset display name: "UTC", "UTC+09:30", "UTC-05:00",
+/// with a seconds component only when the offset is not whole minutes.
+fn tz_offset_display(offset_seconds: i64) -> String {
+    if offset_seconds == 0 {
+        return "UTC".to_string();
+    }
+    let sign = if offset_seconds < 0 { '-' } else { '+' };
+    let abs = offset_seconds.abs();
+    let (h, m, sec) = (abs / 3600, (abs % 3600) / 60, abs % 60);
+    if sec != 0 {
+        format!("UTC{sign}{h:02}:{m:02}:{sec:02}")
+    } else {
+        format!("UTC{sign}{h:02}:{m:02}")
+    }
+}
+
+/// "+HH:MM[:SS]" isoformat offset suffix.
+fn iso_offset_suffix(offset_seconds: i64) -> String {
+    let sign = if offset_seconds < 0 { '-' } else { '+' };
+    let abs = offset_seconds.abs();
+    let (h, m, sec) = (abs / 3600, (abs % 3600) / 60, abs % 60);
+    if sec != 0 {
+        format!("{sign}{h:02}:{m:02}:{sec:02}")
+    } else {
+        format!("{sign}{h:02}:{m:02}")
+    }
+}
+
+/// The `tzinfo` field of a datetime/time instance, when set and non-None.
+fn tzinfo_field(val: MbValue) -> Option<MbValue> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            let tz = fields.read().ok()?.get("tzinfo").copied()?;
+            if tz.is_none() { return None; }
+            return Some(tz);
+        }
+    }
+    None
+}
+
+/// utcoffset of a tzinfo value in whole seconds. Fixed `datetime.timezone`
+/// instances read their stored offset; user tzinfo subclasses are asked via
+/// their `utcoffset(None)` method (returning a timedelta).
+pub(crate) fn tz_utcoffset_seconds(tz: MbValue) -> Option<i64> {
+    if let Some(ptr) = tz.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "datetime.timezone" {
+                    return fields.read().ok()?
+                        .get("_offset_seconds").and_then(|v| v.as_int());
+                }
+            }
+        }
+        let method = MbValue::from_ptr(MbObject::new_str("utcoffset".to_string()));
+        let args = MbValue::from_ptr(MbObject::new_list(vec![MbValue::none()]));
+        let td = super::super::class::mb_call_method(tz, method, args);
+        if let Some(us) = timedelta_total_us(td) {
+            return Some((us / 1_000_000) as i64);
+        }
+    }
+    None
+}
+
+/// Resolved utcoffset of a datetime/time instance, validated to CPython's
+/// strictly-under-24h formatting range. `Err` means a ValueError was raised.
+fn inst_offset_checked(val: MbValue) -> Result<Option<i64>, ()> {
+    let Some(tz) = tzinfo_field(val) else { return Ok(None) };
+    let Some(off) = tz_utcoffset_seconds(tz) else { return Ok(None) };
+    if off.abs() >= 86_400 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24)"
+                    .to_string(),
+            )),
+        );
+        return Err(());
+    }
+    Ok(Some(off))
+}
+
 /// Build a `datetime.timezone` Instance carrying an offset (seconds) and name.
 fn build_timezone_instance(offset_seconds: i64, name: Option<String>) -> MbValue {
     let mut fields = FxHashMap::default();
@@ -101,7 +205,19 @@ unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbV
 }
 
 unsafe extern "C" fn dispatch_today(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    mb_date_today()
+    let today = Utc::now().naive_utc().date();
+    let val = today
+        .and_hms_opt(0, 0, 0)
+        .map(build_datetime_dict)
+        .unwrap_or_else(MbValue::none);
+    if let Some(ptr) = val.as_ptr() {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            if let Ok(mut f) = fields.write() {
+                f.insert("_is_date".into(), MbValue::from_bool(true));
+            }
+        }
+    }
+    val
 }
 
 unsafe extern "C" fn dispatch_timedelta(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -167,10 +283,22 @@ unsafe extern "C" fn dispatch_time(args_ptr: *const MbValue, nargs: usize) -> Mb
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // Read positional ints, skipping any trailing kwargs dict.
     let pos: Vec<i64> = a.iter().filter_map(|v| v.as_int()).collect();
-    let hour = *pos.first().unwrap_or(&0);
-    let minute = *pos.get(1).unwrap_or(&0);
-    let second = *pos.get(2).unwrap_or(&0);
-    let micro = *pos.get(3).unwrap_or(&0);
+    let mut hour = *pos.first().unwrap_or(&0);
+    let mut minute = *pos.get(1).unwrap_or(&0);
+    let mut second = *pos.get(2).unwrap_or(&0);
+    let mut micro = *pos.get(3).unwrap_or(&0);
+    let mut fold = 0i64;
+    let mut tzinfo = MbValue::none();
+    if let Some(dict) = a.iter().copied().find(|v| is_dict(*v)) {
+        if let Some(v) = kwarg_get(dict, "hour").and_then(|v| v.as_int()) { hour = v; }
+        if let Some(v) = kwarg_get(dict, "minute").and_then(|v| v.as_int()) { minute = v; }
+        if let Some(v) = kwarg_get(dict, "second").and_then(|v| v.as_int()) { second = v; }
+        if let Some(v) = kwarg_get(dict, "microsecond").and_then(|v| v.as_int()) { micro = v; }
+        if let Some(v) = kwarg_get(dict, "fold").and_then(|v| v.as_int()) { fold = v; }
+        if let Some(v) = kwarg_get(dict, "tzinfo") {
+            if !v.is_none() { tzinfo = v; }
+        }
+    }
     if !(0..=23).contains(&hour) {
         return raise_value_error(&format!("hour must be in 0..23, not {hour}"));
     }
@@ -183,7 +311,20 @@ unsafe extern "C" fn dispatch_time(args_ptr: *const MbValue, nargs: usize) -> Mb
     if !(0..=999_999).contains(&micro) {
         return raise_value_error(&format!("microsecond must be in 0..999999, not {micro}"));
     }
-    build_time_instance(hour, minute, second, micro)
+    let val = build_time_instance_fold(hour, minute, second, micro, fold);
+    if !tzinfo.is_none() {
+        if let Some(ptr) = val.as_ptr() {
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    if let Ok(mut f) = fields.write() {
+                        super::super::rc::retain_if_ptr(tzinfo);
+                        f.insert("tzinfo".into(), tzinfo);
+                    }
+                }
+            }
+        }
+    }
+    val
 }
 
 /// `datetime.timezone(offset, name=None)` where `offset` is a `timedelta`.
@@ -250,6 +391,272 @@ unsafe extern "C" fn tzinfo_method_dst(_self_: MbValue, _dt: MbValue) -> MbValue
 }
 
 /// Register the datetime module.
+// ── timedelta instance methods (variadic (self, args-list) ABI) ────
+
+fn td_args_first(args: MbValue) -> MbValue {
+    if let Some(p) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                return lock.read().unwrap().first().copied().unwrap_or_else(MbValue::none);
+            }
+        }
+    }
+    args
+}
+
+unsafe extern "C" fn td_total_seconds(self_v: MbValue, _args: MbValue) -> MbValue {
+    match timedelta_total_us(self_v) {
+        Some(us) => MbValue::from_float(us as f64 / 1_000_000.0),
+        None => MbValue::none(),
+    }
+}
+
+fn td_cmp(self_v: MbValue, other: MbValue) -> Option<std::cmp::Ordering> {
+    Some(timedelta_total_us(self_v)?.cmp(&timedelta_total_us(other)?))
+}
+
+unsafe extern "C" fn td_eq(self_v: MbValue, args: MbValue) -> MbValue {
+    MbValue::from_bool(td_cmp(self_v, td_args_first(args)) == Some(std::cmp::Ordering::Equal))
+}
+
+unsafe extern "C" fn td_lt(self_v: MbValue, args: MbValue) -> MbValue {
+    match td_cmp(self_v, td_args_first(args)) {
+        Some(o) => MbValue::from_bool(o == std::cmp::Ordering::Less),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn td_le(self_v: MbValue, args: MbValue) -> MbValue {
+    match td_cmp(self_v, td_args_first(args)) {
+        Some(o) => MbValue::from_bool(o != std::cmp::Ordering::Greater),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn td_gt(self_v: MbValue, args: MbValue) -> MbValue {
+    match td_cmp(self_v, td_args_first(args)) {
+        Some(o) => MbValue::from_bool(o == std::cmp::Ordering::Greater),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn td_ge(self_v: MbValue, args: MbValue) -> MbValue {
+    match td_cmp(self_v, td_args_first(args)) {
+        Some(o) => MbValue::from_bool(o != std::cmp::Ordering::Less),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn td_add(self_v: MbValue, args: MbValue) -> MbValue {
+    super::super::builtins::mb_add(self_v, td_args_first(args))
+}
+
+unsafe extern "C" fn td_sub(self_v: MbValue, args: MbValue) -> MbValue {
+    super::super::builtins::mb_sub(self_v, td_args_first(args))
+}
+
+unsafe extern "C" fn td_mul(self_v: MbValue, args: MbValue) -> MbValue {
+    super::super::builtins::mb_mul(self_v, td_args_first(args))
+}
+
+unsafe extern "C" fn td_div(self_v: MbValue, args: MbValue) -> MbValue {
+    super::super::builtins::mb_div(self_v, td_args_first(args))
+}
+
+unsafe extern "C" fn td_floordiv(self_v: MbValue, args: MbValue) -> MbValue {
+    super::super::builtins::mb_floordiv(self_v, td_args_first(args))
+}
+
+unsafe extern "C" fn td_mod(self_v: MbValue, args: MbValue) -> MbValue {
+    super::super::builtins::mb_mod(self_v, td_args_first(args))
+}
+
+unsafe extern "C" fn td_neg(self_v: MbValue, _args: MbValue) -> MbValue {
+    match timedelta_total_us(self_v) {
+        Some(us) => timedelta_from_us(-us),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn td_abs(self_v: MbValue, _args: MbValue) -> MbValue {
+    match timedelta_total_us(self_v) {
+        Some(us) => timedelta_from_us(us.abs()),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn td_hash(self_v: MbValue, _args: MbValue) -> MbValue {
+    let us = timedelta_total_us(self_v).unwrap_or(0);
+    MbValue::from_int((us as i64) & 0x0000_7FFF_FFFF_FFFF)
+}
+
+/// Validate the dt argument of timezone.utcoffset/tzname/dst: must be a
+/// datetime instance or None.
+unsafe fn tz_dt_arg_ok(dt: MbValue) -> bool {
+    if dt.is_none() { return true; }
+    dt.as_ptr().map(|ptr| {
+        matches!(&(*ptr).data, ObjData::Instance { class_name, .. }
+            if class_name == "datetime.datetime")
+    }).unwrap_or(false)
+}
+
+fn raise_tz_arg_type_error(method: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "{method}(dt) argument must be a datetime instance or None"
+        ))),
+    );
+    MbValue::none()
+}
+
+unsafe extern "C" fn tz_method_utcoffset(self_: MbValue, dt: MbValue) -> MbValue {
+    if !tz_dt_arg_ok(dt) { return raise_tz_arg_type_error("utcoffset"); }
+    timedelta_from_us(inst_int(self_, "_offset_seconds", 0) as i128 * 1_000_000)
+}
+
+unsafe extern "C" fn tz_method_tzname(self_: MbValue, dt: MbValue) -> MbValue {
+    if !tz_dt_arg_ok(dt) { return raise_tz_arg_type_error("tzname"); }
+    MbValue::from_ptr(MbObject::new_str(timezone_str(self_)))
+}
+
+unsafe extern "C" fn tz_method_dst(self_: MbValue, dt: MbValue) -> MbValue {
+    let _ = self_;
+    if !tz_dt_arg_ok(dt) { return raise_tz_arg_type_error("dst"); }
+    MbValue::none()
+}
+
+unsafe extern "C" fn tz_method_eq(self_: MbValue, other: MbValue) -> MbValue {
+    let other_is_tz = other.as_ptr().map(|ptr| {
+        matches!(&(*ptr).data, ObjData::Instance { class_name, .. }
+            if class_name == "datetime.timezone")
+    }).unwrap_or(false);
+    if !other_is_tz {
+        return MbValue::not_implemented();
+    }
+    MbValue::from_bool(
+        inst_int(self_, "_offset_seconds", 0) == inst_int(other, "_offset_seconds", 0),
+    )
+}
+
+unsafe extern "C" fn tz_method_hash(self_: MbValue) -> MbValue {
+    MbValue::from_int(inst_int(self_, "_offset_seconds", 0))
+}
+
+/// `datetime.date()` — project the date part as a date instance.
+unsafe extern "C" fn dt_method_date(self_: MbValue) -> MbValue {
+    let y = inst_int(self_, "year", 1970);
+    let mo = inst_int(self_, "month", 1);
+    let d = inst_int(self_, "day", 1);
+    let val = NaiveDate::from_ymd_opt(y as i32, mo as u32, d as u32)
+        .and_then(|nd| nd.and_hms_opt(0, 0, 0))
+        .map(build_datetime_dict)
+        .unwrap_or_else(MbValue::none);
+    if let Some(ptr) = val.as_ptr() {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            if let Ok(mut f) = fields.write() {
+                f.insert("_is_date".into(), MbValue::from_bool(true));
+            }
+        }
+    }
+    val
+}
+
+/// Total microseconds since the epoch adjusted by utcoffset, plus awareness.
+/// Used for cross-instance comparison.
+fn dt_cmp_key(val: MbValue) -> Option<(i128, bool)> {
+    let naive = instance_to_naive(val)?;
+    let us = naive.and_utc().timestamp_micros() as i128;
+    match tzinfo_field(val).and_then(tz_utcoffset_seconds) {
+        Some(off) => Some((us - off as i128 * 1_000_000, true)),
+        None => Some((us, false)),
+    }
+}
+
+/// Ordering between two datetime instances; raises TypeError when mixing
+/// naive and aware (CPython refuses to order across that boundary).
+fn dt_cmp(a: MbValue, b: MbValue) -> Option<std::cmp::Ordering> {
+    let (ka, aa) = dt_cmp_key(a)?;
+    let (kb, ab) = dt_cmp_key(b)?;
+    if aa != ab {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "can't compare offset-naive and offset-aware datetimes".to_string(),
+            )),
+        );
+        return None;
+    }
+    Some(ka.cmp(&kb))
+}
+
+unsafe extern "C" fn dt_lt(self_v: MbValue, args: MbValue) -> MbValue {
+    match dt_cmp(self_v, td_args_first(args)) {
+        Some(o) => MbValue::from_bool(o == std::cmp::Ordering::Less),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn dt_le(self_v: MbValue, args: MbValue) -> MbValue {
+    match dt_cmp(self_v, td_args_first(args)) {
+        Some(o) => MbValue::from_bool(o != std::cmp::Ordering::Greater),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn dt_gt(self_v: MbValue, args: MbValue) -> MbValue {
+    match dt_cmp(self_v, td_args_first(args)) {
+        Some(o) => MbValue::from_bool(o == std::cmp::Ordering::Greater),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn dt_ge(self_v: MbValue, args: MbValue) -> MbValue {
+    match dt_cmp(self_v, td_args_first(args)) {
+        Some(o) => MbValue::from_bool(o != std::cmp::Ordering::Less),
+        None => MbValue::none(),
+    }
+}
+
+/// `datetime.time.fromisoformat("HH:MM[:SS[.ffffff]]")` classmethod.
+unsafe extern "C" fn dispatch_time_fromisoformat(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let raw = a.first().copied().and_then(extract_str).unwrap_or_default();
+    match parse_iso_time(&raw) {
+        Some((h, m, sec, us)) => build_time_instance(h, m, sec, us),
+        None => raise_value_error(&format!("Invalid isoformat string: '{raw}'")),
+    }
+}
+
+/// Strict "HH:MM[:SS[.f{1,6}]]" parser (no offset suffix).
+fn parse_iso_time(s: &str) -> Option<(i64, i64, i64, i64)> {
+    let b = s.as_bytes();
+    let all_digits = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
+    if b.len() < 5 || b[2] != b':' || !all_digits(0..2) || !all_digits(3..5) {
+        return None;
+    }
+    let h: i64 = s[0..2].parse().ok()?;
+    let m: i64 = s[3..5].parse().ok()?;
+    let (mut sec, mut us) = (0i64, 0i64);
+    if b.len() > 5 {
+        if b[5] != b':' || b.len() < 8 || !all_digits(6..8) {
+            return None;
+        }
+        sec = s[6..8].parse().ok()?;
+        if b.len() > 8 {
+            if b[8] != b'.' || b.len() == 9 || b.len() > 15 || !all_digits(9..b.len()) {
+                return None;
+            }
+            let frac = &s[9..];
+            us = frac.parse::<i64>().ok()? * 10i64.pow(6 - frac.len() as u32);
+        }
+    }
+    if !(0..=23).contains(&h) || !(0..=59).contains(&m) || !(0..=59).contains(&sec) {
+        return None;
+    }
+    Some((h, m, sec, us))
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
     // Python: `from datetime import datetime` → `datetime` is a class that
@@ -297,7 +704,10 @@ pub fn register() {
         "__all__".to_string(),
         MbValue::from_ptr(MbObject::new_list(all_names)),
     );
-    attrs.insert("UTC".to_string(), build_timezone_instance(0, Some("UTC".to_string())));
+    attrs.insert(
+        "UTC".to_string(),
+        timezone_class_attr("utc").unwrap_or_else(MbValue::none),
+    );
 
     // Bridge the `date` / `datetime` constructor funcs -> their class name so
     // accessing a registered classmethod on the class object
@@ -313,6 +723,10 @@ pub fn register() {
         let mut map = m.borrow_mut();
         map.insert(dispatch_date as *const () as usize as u64, "date".to_string());
         map.insert(dispatch_new as *const () as usize as u64, "datetime".to_string());
+        map.insert(dispatch_timedelta as *const () as usize as u64, "datetime.timedelta".to_string());
+        map.insert(dispatch_time as *const () as usize as u64, "datetime.time".to_string());
+        map.insert(dispatch_timezone as *const () as usize as u64, "datetime.timezone".to_string());
+        map.insert(dispatch_tzinfo as *const () as usize as u64, "datetime.tzinfo".to_string());
     });
     // `date` classmethods: today(), fromisoformat(), fromtimestamp(),
     // fromordinal(). `datetime` inherits date's plus now()/combine()/strptime().
@@ -323,10 +737,15 @@ pub fn register() {
         date_methods.insert("fromtimestamp".to_string(), MbValue::from_func(dispatch_fromtimestamp as *const () as usize));
         date_methods.insert("isoformat".to_string(), MbValue::from_func(dispatch_date_isoformat as *const () as usize));
         date_methods.insert("strftime".to_string(), MbValue::from_func(dispatch_strftime as *const () as usize));
+        date_methods.insert("fromordinal".to_string(), MbValue::from_func(dispatch_fromordinal as *const () as usize));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(dispatch_fromordinal as *const () as usize as u64);
+        });
         super::super::class::mb_class_register("date", vec![], date_methods);
 
         let mut dt_methods: HashMap<String, MbValue> = HashMap::new();
         dt_methods.insert("now".to_string(), MbValue::from_func(dispatch_now as *const () as usize));
+        dt_methods.insert("utcnow".to_string(), MbValue::from_func(dispatch_now as *const () as usize));
         dt_methods.insert("today".to_string(), MbValue::from_func(dispatch_today as *const () as usize));
         dt_methods.insert("combine".to_string(), MbValue::from_func(dispatch_combine as *const () as usize));
         dt_methods.insert("strptime".to_string(), MbValue::from_func(dispatch_strptime as *const () as usize));
@@ -335,6 +754,7 @@ pub fn register() {
         dt_methods.insert("isoformat".to_string(), MbValue::from_func(dispatch_isoformat as *const () as usize));
         dt_methods.insert("strftime".to_string(), MbValue::from_func(dispatch_strftime as *const () as usize));
         dt_methods.insert("timestamp".to_string(), MbValue::from_func(dispatch_timestamp as *const () as usize));
+        dt_methods.insert("fromordinal".to_string(), MbValue::from_func(dispatch_fromordinal as *const () as usize));
         super::super::class::mb_class_register("datetime", vec![], dt_methods);
     }
 
@@ -352,14 +772,24 @@ pub fn register() {
         dt_inst.insert("ctime".into(),        MbValue::from_func(dt_method_ctime as *const () as usize));
         dt_inst.insert("weekday".into(),      MbValue::from_func(dt_method_weekday as *const () as usize));
         dt_inst.insert("isoweekday".into(),   MbValue::from_func(dt_method_isoweekday as *const () as usize));
+        dt_inst.insert("toordinal".into(),    MbValue::from_func(dt_method_toordinal as *const () as usize));
         dt_inst.insert("isocalendar".into(),  MbValue::from_func(dt_method_isocalendar as *const () as usize));
         dt_inst.insert("timetuple".into(),    MbValue::from_func(dt_method_timetuple as *const () as usize));
         dt_inst.insert("replace".into(),      MbValue::from_func(dt_method_replace as *const () as usize));
         dt_inst.insert("time".into(),         MbValue::from_func(dt_method_time as *const () as usize));
         dt_inst.insert("timetz".into(),       MbValue::from_func(dt_method_timetz as *const () as usize));
+        dt_inst.insert("date".into(),         MbValue::from_func(dt_method_date as *const () as usize));
+        dt_inst.insert("__lt__".into(),       MbValue::from_func(dt_lt as *const () as usize));
+        dt_inst.insert("__le__".into(),       MbValue::from_func(dt_le as *const () as usize));
+        dt_inst.insert("__gt__".into(),       MbValue::from_func(dt_gt as *const () as usize));
+        dt_inst.insert("__ge__".into(),       MbValue::from_func(dt_ge as *const () as usize));
         dt_inst.insert("__eq__".into(),       MbValue::from_func(dt_method_eq as *const () as usize));
         dt_inst.insert("__hash__".into(),     MbValue::from_func(dt_method_hash as *const () as usize));
-        super::super::class::mb_class_register("datetime.datetime", vec![], dt_inst);
+        super::super::class::mb_class_register(
+            "datetime.datetime",
+            vec!["datetime".to_string(), "date".to_string()],
+            dt_inst,
+        );
 
         // datetime.time instances.
         let mut time_inst: HashMap<String, MbValue> = HashMap::new();
@@ -367,6 +797,10 @@ pub fn register() {
         time_inst.insert("replace".into(),    MbValue::from_func(time_method_replace as *const () as usize));
         time_inst.insert("__eq__".into(),     MbValue::from_func(time_method_eq as *const () as usize));
         time_inst.insert("__hash__".into(),   MbValue::from_func(time_method_hash as *const () as usize));
+        time_inst.insert("fromisoformat".into(), MbValue::from_func(dispatch_time_fromisoformat as *const () as usize));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(dispatch_time_fromisoformat as *const () as usize as u64);
+        });
         super::super::class::mb_class_register("datetime.time", vec![], time_inst);
 
         // datetime.tzinfo (abstract base) instances. The query methods are
@@ -378,6 +812,20 @@ pub fn register() {
         tzinfo_inst.insert("dst".into(),       MbValue::from_func(tzinfo_method_dst as *const () as usize));
         super::super::class::mb_class_register("datetime.tzinfo", vec![], tzinfo_inst);
 
+        // datetime.timezone (fixed-offset tzinfo) instances. utcoffset/tzname/
+        // dst keep the fixed `(self, dt)` arity; __eq__/__hash__ likewise.
+        let mut tz_inst: HashMap<String, MbValue> = HashMap::new();
+        tz_inst.insert("utcoffset".into(), MbValue::from_func(tz_method_utcoffset as *const () as usize));
+        tz_inst.insert("tzname".into(),    MbValue::from_func(tz_method_tzname as *const () as usize));
+        tz_inst.insert("dst".into(),       MbValue::from_func(tz_method_dst as *const () as usize));
+        tz_inst.insert("__eq__".into(),    MbValue::from_func(tz_method_eq as *const () as usize));
+        tz_inst.insert("__hash__".into(),  MbValue::from_func(tz_method_hash as *const () as usize));
+        super::super::class::mb_class_register(
+            "datetime.timezone",
+            vec!["datetime.tzinfo".to_string(), "tzinfo".to_string()],
+            tz_inst,
+        );
+
         // Methods that accept optional positional/keyword args must run with the
         // variadic `(self, args_list)` shape. `__eq__` (self, other) and
         // `__hash__` (self) keep their fixed arity and are NOT variadic.
@@ -386,9 +834,43 @@ pub fn register() {
             dt_method_replace as *const () as usize,
             time_method_isoformat as *const () as usize,
             time_method_replace as *const () as usize,
+            dt_lt as *const () as usize,
+            dt_le as *const () as usize,
+            dt_gt as *const () as usize,
+            dt_ge as *const () as usize,
         ] {
             super::super::module::register_variadic_func(addr as u64);
         }
+    }
+
+    // datetime.timedelta method table: total_seconds + rich comparison +
+    // hash, dispatched variadically on the registered class.
+    {
+        let mut methods: HashMap<String, MbValue> = HashMap::new();
+        for (name, addr) in [
+            ("total_seconds", td_total_seconds as *const () as usize),
+            ("__add__", td_add as *const () as usize),
+            ("__sub__", td_sub as *const () as usize),
+            ("__mul__", td_mul as *const () as usize),
+            ("__truediv__", td_div as *const () as usize),
+            ("__floordiv__", td_floordiv as *const () as usize),
+            ("__mod__", td_mod as *const () as usize),
+            ("__neg__", td_neg as *const () as usize),
+            ("__abs__", td_abs as *const () as usize),
+            ("__eq__", td_eq as *const () as usize),
+            ("__lt__", td_lt as *const () as usize),
+            ("__le__", td_le as *const () as usize),
+            ("__gt__", td_gt as *const () as usize),
+            ("__ge__", td_ge as *const () as usize),
+            ("__hash__", td_hash as *const () as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                s.borrow_mut().insert(addr as u64);
+            });
+            methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
+        super::super::class::mb_class_register("datetime.timedelta", vec![], methods);
     }
 
     super::register_module("datetime", attrs);
@@ -534,7 +1016,14 @@ unsafe extern "C" fn dt_method_isoformat(self_: MbValue, args_list: MbValue) -> 
         }
     }
     let time_part = format_time_timespec(h, mi, s, us, timespec.as_deref());
-    MbValue::from_ptr(MbObject::new_str(format!("{y:04}-{mo:02}-{d:02}{sep}{time_part}")))
+    let offset_part = match inst_offset_checked(self_) {
+        Ok(Some(off)) => iso_offset_suffix(off),
+        Ok(None) => String::new(),
+        Err(()) => return MbValue::none(),
+    };
+    MbValue::from_ptr(MbObject::new_str(format!(
+        "{y:04}-{mo:02}-{d:02}{sep}{time_part}{offset_part}"
+    )))
 }
 
 /// `time.isoformat([timespec])`. Variadic: `(self, args_list)`.
@@ -627,6 +1116,36 @@ unsafe extern "C" fn dt_method_weekday(self_: MbValue) -> MbValue {
         Some(nd) => MbValue::from_int(nd.weekday().num_days_from_monday() as i64),
         None => MbValue::from_int(0),
     }
+}
+
+/// `date.toordinal()` / `datetime.toordinal()` → proleptic Gregorian ordinal
+/// (0001-01-01 is day 1). chrono's internal epoch differs, so anchor on it.
+unsafe extern "C" fn dt_method_toordinal(self_: MbValue) -> MbValue {
+    let y = inst_int(self_, "year", 1970);
+    let mo = inst_int(self_, "month", 1);
+    let d = inst_int(self_, "day", 1);
+    let (Some(nd), Some(day1)) = (
+        NaiveDate::from_ymd_opt(y as i32, mo as u32, d as u32),
+        NaiveDate::from_ymd_opt(1, 1, 1),
+    ) else {
+        return MbValue::from_int(0);
+    };
+    MbValue::from_int(nd.signed_duration_since(day1).num_days() + 1)
+}
+
+/// `date.fromordinal(n)` / `datetime.fromordinal(n)` classmethod.
+unsafe extern "C" fn dispatch_fromordinal(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let n = a.get(0).and_then(|v| v.as_int()).unwrap_or(1);
+    let Some(day1) = NaiveDate::from_ymd_opt(1, 1, 1) else { return MbValue::none() };
+    let Some(nd) = day1.checked_add_signed(chrono::Duration::days(n - 1)) else {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!("ordinal must be >= 1, got {n}"))),
+        );
+        return MbValue::none();
+    };
+    build_datetime_dict(nd.and_hms_opt(0, 0, 0).unwrap_or_default())
 }
 
 /// `date.isoweekday()` / `datetime.isoweekday()` → Monday=1 .. Sunday=7.
@@ -851,6 +1370,10 @@ pub(crate) fn build_datetime_dict(dt: NaiveDateTime) -> MbValue {
     fields.insert("hour".into(), MbValue::from_int(dt.hour() as i64));
     fields.insert("minute".into(), MbValue::from_int(dt.minute() as i64));
     fields.insert("second".into(), MbValue::from_int(dt.second() as i64));
+    fields.insert(
+        "microsecond".into(),
+        MbValue::from_int((chrono::Timelike::nanosecond(&dt) / 1000) as i64),
+    );
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -893,8 +1416,9 @@ pub(crate) fn instance_to_naive(val: MbValue) -> Option<NaiveDateTime> {
                 let hour = get("hour").unwrap_or(0) as u32;
                 let minute = get("minute").unwrap_or(0) as u32;
                 let second = get("second").unwrap_or(0) as u32;
+                let micro = get("microsecond").unwrap_or(0) as u32;
                 NaiveDate::from_ymd_opt(year, month, day)
-                    .and_then(|d| d.and_hms_opt(hour, minute, second))
+                    .and_then(|d| d.and_hms_micro_opt(hour, minute, second, micro))
             }
             ObjData::Dict(ref lock) => {
                 let map = lock.read().unwrap();
@@ -950,16 +1474,23 @@ pub fn mb_datetime_new(args: MbValue) -> MbValue {
     let minute = match get(4, 0, "minute") { Ok(n) => n as u32, Err(e) => return e };
     let second = match get(5, 0, "second") { Ok(n) => n as u32, Err(e) => return e };
 
-    // `fold=` (and `microsecond=`) may arrive in the trailing kwargs dict.
-    // Capture them so `.fold`/`.microsecond` reads and `.time()`/`.timetz()`
-    // projections see the constructed value (CPython stores fold on the
-    // datetime; it never affects equality or hashing).
+    // `fold=` / `microsecond=` / `tzinfo=` may arrive positionally (micro at
+    // index 6, tzinfo at index 7) or in the trailing kwargs dict. Capture them
+    // so `.fold`/`.microsecond`/`.tzinfo` reads and projections see the
+    // constructed value (CPython stores fold on the datetime; it never
+    // affects equality or hashing).
     let mut fold = 0i64;
-    let mut micro = 0i64;
+    let mut micro = match get(6, 0, "microsecond") { Ok(n) => n, Err(e) => return e };
+    let mut tzinfo = items.get(7).copied()
+        .filter(|v| !v.is_none() && !is_dict(*v))
+        .unwrap_or_else(MbValue::none);
     for v in &items {
         if is_dict(*v) {
             if let Some(f) = kwarg_get(*v, "fold").and_then(|x| x.as_int()) { fold = f; }
             if let Some(m) = kwarg_get(*v, "microsecond").and_then(|x| x.as_int()) { micro = m; }
+            if let Some(tz) = kwarg_get(*v, "tzinfo") {
+                if !tz.is_none() { tzinfo = tz; }
+            }
         }
     }
 
@@ -968,13 +1499,16 @@ pub fn mb_datetime_new(args: MbValue) -> MbValue {
     {
         Some(dt) => {
             let val = build_datetime_dict(dt);
-            if (fold != 0 || micro != 0) && val.as_ptr().is_some() {
-                let ptr = val.as_ptr().unwrap();
+            if let Some(ptr) = val.as_ptr() {
                 unsafe {
                     if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                         if let Ok(mut f) = fields.write() {
                             if fold != 0 { f.insert("fold".into(), MbValue::from_int(fold)); }
                             if micro != 0 { f.insert("microsecond".into(), MbValue::from_int(micro)); }
+                            if !tzinfo.is_none() {
+                                super::super::rc::retain_if_ptr(tzinfo);
+                                f.insert("tzinfo".into(), tzinfo);
+                            }
                         }
                     }
                 }
@@ -1008,60 +1542,98 @@ pub fn mb_date_today() -> MbValue {
     MbValue::from_ptr(dict)
 }
 
-/// timedelta.new(args) -> datetime.timedelta Instance with days + seconds.
+/// timedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0,
+/// hours=0, weeks=0) -> normalized datetime.timedelta Instance.
+///
+/// Accepts ints or floats for every component (kwargs arrive as a trailing
+/// dict positional); accumulates exactly in i128 microseconds and
+/// normalizes to CPython's canonical (days, 0<=seconds<86400,
+/// 0<=microseconds<1000000) triple.
 pub fn mb_timedelta_new(args: MbValue) -> MbValue {
     let items = match args.as_ptr() {
         Some(ptr) => unsafe {
             if let ObjData::List(ref lock) = (*ptr).data {
-                lock.read().unwrap().clone()
+                lock.read().unwrap().iter().copied().collect::<Vec<_>>()
             } else { return MbValue::none(); }
         },
         None => return MbValue::none(),
     };
 
-    // The mamba call lowering folds keyword arguments into a trailing dict
-    // positional. `timedelta(days=7)` arrives here as
-    // `[{"days": 7}]` rather than `[7]`, so a positional-only read would
-    // see no int and fall back to 0. Probe each positional slot for either
-    // a raw int or a kwargs dict containing the corresponding name.
-    let pull_int = |idx: usize, name: &str| -> i64 {
-        if let Some(v) = items.get(idx) {
-            if let Some(n) = v.as_int() { return n; }
-            if let Some(ptr) = v.as_ptr() {
-                unsafe {
-                    if let ObjData::Dict(ref lock) = (*ptr).data {
-                        let guard = lock.read().unwrap();
-                        let key = super::super::dict_ops::DictKey::Str(name.to_string());
-                        if let Some(found) = guard.get(&key) {
-                            if let Some(n) = found.as_int() { return n; }
-                        }
-                    }
-                }
-            }
-        }
-        // Also scan all slots for a kwargs dict — the dict may not be at the
-        // exact positional index when mixed positional/keyword forms are used.
-        for v in items.iter() {
-            if let Some(ptr) = v.as_ptr() {
-                unsafe {
-                    if let ObjData::Dict(ref lock) = (*ptr).data {
-                        let guard = lock.read().unwrap();
-                        let key = super::super::dict_ops::DictKey::Str(name.to_string());
-                        if let Some(found) = guard.get(&key) {
-                            if let Some(n) = found.as_int() { return n; }
-                        }
-                    }
-                }
-            }
-        }
-        0
+    // Component order matches CPython's positional signature.
+    const NAMES: [&str; 7] = [
+        "days", "seconds", "microseconds", "milliseconds", "minutes", "hours", "weeks",
+    ];
+    const US_PER: [f64; 7] = [
+        86_400_000_000.0, // days
+        1_000_000.0,      // seconds
+        1.0,              // microseconds
+        1_000.0,          // milliseconds
+        60_000_000.0,     // minutes
+        3_600_000_000.0,  // hours
+        604_800_000_000.0, // weeks
+    ];
+
+    let as_num = |v: MbValue| -> Option<f64> {
+        v.as_int().map(|i| i as f64).or_else(|| v.as_float())
     };
-    let days = pull_int(0, "days");
-    let seconds = pull_int(1, "seconds");
+
+    let mut total_us: i128 = 0;
+    // Positional slots (a trailing kwargs dict is not a number, so as_num
+    // filters it out naturally).
+    for (i, name) in NAMES.iter().enumerate() {
+        let mut component: Option<f64> = None;
+        if let Some(v) = items.get(i) {
+            if let Some(n) = as_num(*v) {
+                component = Some(n);
+            }
+        }
+        if component.is_none() {
+            // Keyword form: scan for a kwargs dict carrying this name.
+            for v in items.iter() {
+                if let Some(ptr) = v.as_ptr() {
+                    unsafe {
+                        if let ObjData::Dict(ref lock) = (*ptr).data {
+                            let guard = lock.read().unwrap();
+                            let key = super::super::dict_ops::DictKey::Str(name.to_string());
+                            if let Some(found) = guard.get(&key) {
+                                component = as_num(*found);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(n) = component {
+            // CPython rounds float contributions half-to-even.
+            let us = (n * US_PER[i]).round_ties_even() as i128;
+            total_us += us;
+        }
+    }
+
+    timedelta_from_us(total_us)
+}
+
+/// Build a normalized datetime.timedelta Instance from total microseconds.
+pub(crate) fn timedelta_from_us(total_us: i128) -> MbValue {
+    if !(TD_MIN_US..=TD_MAX_US).contains(&total_us) {
+        let days = total_us.div_euclid(86_400_000_000);
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "days={days}; must have magnitude <= 999999999"
+            ))),
+        );
+        return MbValue::none();
+    }
+    let days = total_us.div_euclid(86_400_000_000);
+    let rem = total_us.rem_euclid(86_400_000_000);
+    let seconds = rem.div_euclid(1_000_000);
+    let microseconds = rem.rem_euclid(1_000_000);
 
     let mut fields = FxHashMap::default();
-    fields.insert("days".into(), MbValue::from_int(days));
-    fields.insert("seconds".into(), MbValue::from_int(seconds));
+    fields.insert("days".into(), MbValue::from_int(days as i64));
+    fields.insert("seconds".into(), MbValue::from_int(seconds as i64));
+    fields.insert("microseconds".into(), MbValue::from_int(microseconds as i64));
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -1075,6 +1647,39 @@ pub fn mb_timedelta_new(args: MbValue) -> MbValue {
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+/// Total microseconds of a timedelta Instance (None for other values).
+/// CPython timedelta bounds: max = timedelta(days=999999999, 23:59:59.999999)
+/// (one microsecond shy of 10^9 days), min = timedelta(days=-999999999).
+pub(crate) const TD_MAX_US: i128 = 86_400_000_000i128 * 1_000_000_000 - 1;
+pub(crate) const TD_MIN_US: i128 = -86_400_000_000i128 * 999_999_999;
+
+/// Class attributes surfaced on `datetime.timedelta` itself.
+pub(crate) fn timedelta_class_attr(name: &str) -> Option<MbValue> {
+    match name {
+        "min" => Some(timedelta_from_us(TD_MIN_US)),
+        "max" => Some(timedelta_from_us(TD_MAX_US)),
+        "resolution" => Some(timedelta_from_us(1)),
+        _ => None,
+    }
+}
+
+pub(crate) fn timedelta_total_us(val: MbValue) -> Option<i128> {
+    let ptr = val.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            if class_name != "datetime.timedelta" {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    }
+    let days = read_int_field(val, "days") as i128;
+    let seconds = read_int_field(val, "seconds") as i128;
+    let us = read_int_field(val, "microseconds") as i128;
+    Some(days * 86_400_000_000 + seconds * 1_000_000 + us)
+}
+
 /// Add a timedelta to a datetime. Returns a new datetime.datetime Instance
 /// with the shifted date. Called by `mb_add` when both operands are
 /// datetime/timedelta Instances.
@@ -1083,22 +1688,18 @@ pub fn mb_datetime_add_timedelta(dt: MbValue, td: MbValue) -> MbValue {
         Some(n) => n,
         None => return MbValue::none(),
     };
-    let (days, seconds) = match td.as_ptr() {
-        Some(ptr) => unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
-                let f = fields.read().unwrap();
-                (
-                    f.get("days").and_then(|v| v.as_int()).unwrap_or(0),
-                    f.get("seconds").and_then(|v| v.as_int()).unwrap_or(0),
-                )
-            } else {
-                return MbValue::none();
-            }
-        },
-        None => return MbValue::none(),
-    };
-    let shifted = naive + chrono::Duration::days(days) + chrono::Duration::seconds(seconds);
+    let Some(us) = timedelta_total_us(td) else { return MbValue::none() };
+    let shifted = naive + chrono::Duration::microseconds(us as i64);
     build_datetime_dict(shifted)
+}
+
+/// datetime - datetime -> timedelta (microsecond-exact difference).
+pub fn mb_datetime_sub_datetime(a: MbValue, b: MbValue) -> MbValue {
+    let (Some(na), Some(nb)) = (instance_to_naive(a), instance_to_naive(b)) else {
+        return MbValue::none();
+    };
+    let diff = na.signed_duration_since(nb);
+    timedelta_from_us(diff.num_microseconds().unwrap_or(0) as i128)
 }
 
 /// datetime.strftime(dt, fmt) -> formatted string
@@ -1168,8 +1769,11 @@ pub fn mb_datetime_combine(date: MbValue, time: MbValue) -> MbValue {
 pub fn mb_datetime_timestamp(dt: MbValue) -> MbValue {
     match instance_to_naive(dt) {
         Some(naive) => {
-            let ts = naive.and_utc().timestamp() as f64;
-            MbValue::from_float(ts)
+            // Aware datetimes subtract their utcoffset; naive ones are
+            // interpreted as UTC (mamba has no local-zone model yet).
+            let offset = tzinfo_field(dt).and_then(tz_utcoffset_seconds).unwrap_or(0);
+            let us = naive.and_utc().timestamp_micros() - offset * 1_000_000;
+            MbValue::from_float(us as f64 / 1e6)
         }
         None => MbValue::none(),
     }
@@ -1201,19 +1805,88 @@ pub fn mb_datetime_fromisoformat(s: MbValue) -> MbValue {
             return MbValue::none();
         }
     };
-    // Try full datetime first, then date-only at midnight.
-    if let Ok(dt) = NaiveDateTime::parse_from_str(&raw, "%Y-%m-%dT%H:%M:%S") {
-        return build_datetime_dict(dt);
+    match parse_iso_datetime(&raw) {
+        Some((naive, offset)) => {
+            let val = build_datetime_dict(naive);
+            if let Some(off) = offset {
+                if let Some(ptr) = val.as_ptr() {
+                    unsafe {
+                        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                            if let Ok(mut f) = fields.write() {
+                                let tz = if off == 0 {
+                                    timezone_class_attr("utc").unwrap_or_else(MbValue::none)
+                                } else {
+                                    build_timezone_instance(off, None)
+                                };
+                                f.insert("tzinfo".into(), tz);
+                            }
+                        }
+                    }
+                }
+            }
+            val
+        }
+        None => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "Invalid isoformat string: '{raw}'"
+                ))),
+            );
+            MbValue::none()
+        }
     }
-    if let Ok(d) = NaiveDate::parse_from_str(&raw, "%Y-%m-%d") {
-        let dt = d.and_hms_opt(0, 0, 0).unwrap();
-        return build_datetime_dict(dt);
+}
+
+/// Strict CPython-style ISO-8601 parser: "YYYY-MM-DD[<sep>HH:MM[:SS[.f{1,6}]]
+/// [+HH:MM[:SS]|Z]]". Returns the naive components plus the explicit offset
+/// in seconds when one is present.
+fn parse_iso_datetime(raw: &str) -> Option<(NaiveDateTime, Option<i64>)> {
+    let b = raw.as_bytes();
+    if b.len() < 10 {
+        return None;
     }
-    super::super::exception::mb_raise(
-        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
-        MbValue::from_ptr(MbObject::new_str("Invalid isoformat string".to_string())),
-    );
-    MbValue::none()
+    let digits = |bs: &[u8]| bs.iter().all(u8::is_ascii_digit);
+    if !(digits(&b[0..4]) && b[4] == b'-' && digits(&b[5..7]) && b[7] == b'-' && digits(&b[8..10])) {
+        return None;
+    }
+    let date = NaiveDate::from_ymd_opt(
+        raw[0..4].parse().ok()?,
+        raw[5..7].parse().ok()?,
+        raw[8..10].parse().ok()?,
+    )?;
+    if b.len() == 10 {
+        return Some((date.and_hms_opt(0, 0, 0)?, None));
+    }
+    // Any single-char separator (CPython 3.11+); time part follows.
+    let rest = &raw[11..];
+    // Split a trailing offset: 'Z', or +/-HH:MM[:SS] (scan from position 1 so
+    // a leading sign in the time itself is impossible — times are unsigned).
+    let (time_s, offset) = if let Some(stripped) = rest.strip_suffix('Z') {
+        (stripped, Some(0i64))
+    } else if let Some(pos) = rest[1..].find(['+', '-']).map(|i| i + 1) {
+        let off_s = &rest[pos + 1..];
+        let ob = off_s.as_bytes();
+        let off_ok = (ob.len() == 5 && ob[2] == b':' && digits(&ob[0..2]) && digits(&ob[3..5]))
+            || (ob.len() == 8 && ob[2] == b':' && ob[5] == b':'
+                && digits(&ob[0..2]) && digits(&ob[3..5]) && digits(&ob[6..8]));
+        if !off_ok {
+            return None;
+        }
+        let oh: i64 = off_s[0..2].parse().ok()?;
+        let om: i64 = off_s[3..5].parse().ok()?;
+        let osec: i64 = if ob.len() == 8 { off_s[6..8].parse().ok()? } else { 0 };
+        let mut total = oh * 3600 + om * 60 + osec;
+        if rest.as_bytes()[pos] == b'-' {
+            total = -total;
+        }
+        (&rest[..pos], Some(total))
+    } else {
+        (rest, None)
+    };
+    let (h, m, sec, us) = parse_iso_time(time_s)?;
+    let naive = date.and_hms_micro_opt(h as u32, m as u32, sec as u32, us as u32)?;
+    Some((naive, offset))
 }
 
 /// date.isoformat(d) -> "YYYY-MM-DD"
@@ -1262,14 +1935,116 @@ pub fn datetime_repr(val: MbValue) -> String {
     let y = read_int_field(val, "year");
     let mo = read_int_field(val, "month");
     let d = read_int_field(val, "day");
+    if inst_is_date(val) {
+        return format!("datetime.date({y}, {mo}, {d})");
+    }
     let h = read_int_field(val, "hour");
     let mi = read_int_field(val, "minute");
     let s = read_int_field(val, "second");
-    if s != 0 {
-        format!("datetime.datetime({y}, {mo}, {d}, {h}, {mi}, {s})")
-    } else {
-        format!("datetime.datetime({y}, {mo}, {d}, {h}, {mi})")
+    let us = read_int_field(val, "microsecond");
+    let fold = read_int_field(val, "fold");
+    let mut parts = vec![
+        y.to_string(), mo.to_string(), d.to_string(), h.to_string(), mi.to_string(),
+    ];
+    if s != 0 || us != 0 { parts.push(s.to_string()); }
+    if us != 0 { parts.push(us.to_string()); }
+    if let Some(tz) = tzinfo_field(val) {
+        parts.push(format!("tzinfo={}", tzinfo_repr_for_embed(tz)));
     }
+    if fold == 1 { parts.push("fold=1".to_string()); }
+    format!("datetime.datetime({})", parts.join(", "))
+}
+
+/// repr of a tzinfo value as embedded in datetime/time reprs.
+fn tzinfo_repr_for_embed(tz: MbValue) -> String {
+    if let Some(ptr) = tz.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "datetime.timezone" {
+                    return timezone_repr(tz);
+                }
+                return format!("<{class_name} object>");
+            }
+        }
+    }
+    "None".to_string()
+}
+
+/// CPython-style `repr(datetime.timezone(...))`; the utc singleton reprs as
+/// `datetime.timezone.utc`.
+pub fn timezone_repr(val: MbValue) -> String {
+    let off = read_int_field(val, "_offset_seconds");
+    let has_name = val.as_ptr().map(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().ok().map(|f| f.contains_key("_name")).unwrap_or(false)
+        } else { false }
+    }).unwrap_or(false);
+    if off == 0 && !has_name {
+        return "datetime.timezone.utc".to_string();
+    }
+    let td = timedelta_from_us(off as i128 * 1_000_000);
+    let td_repr = timedelta_repr(td);
+    if has_name {
+        let name = val.as_ptr().and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.read().ok().and_then(|f| f.get("_name").copied()).and_then(extract_str)
+            } else { None }
+        }).unwrap_or_default();
+        format!("datetime.timezone({td_repr}, '{name}')")
+    } else {
+        format!("datetime.timezone({td_repr})")
+    }
+}
+
+/// CPython-style `str(timezone)` — the custom name when given, else the
+/// fixed-offset display name ("UTC", "UTC+09:30").
+pub fn timezone_str(val: MbValue) -> String {
+    let name = val.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().ok().and_then(|f| f.get("_name").copied()).and_then(extract_str)
+        } else { None }
+    });
+    if let Some(n) = name {
+        return n;
+    }
+    tz_offset_display(read_int_field(val, "_offset_seconds"))
+}
+
+/// CPython-style `repr(datetime.time(...))`. Hour and minute always show;
+/// second only when second/microsecond nonzero; fold/tzinfo as keywords.
+pub fn time_repr(val: MbValue) -> String {
+    let h = read_int_field(val, "hour");
+    let mi = read_int_field(val, "minute");
+    let s = read_int_field(val, "second");
+    let us = read_int_field(val, "microsecond");
+    let fold = read_int_field(val, "fold");
+    let mut parts = vec![h.to_string(), mi.to_string()];
+    if s != 0 || us != 0 { parts.push(s.to_string()); }
+    if us != 0 { parts.push(us.to_string()); }
+    if let Some(tz) = tzinfo_field(val) {
+        parts.push(format!("tzinfo={}", tzinfo_repr_for_embed(tz)));
+    }
+    if fold == 1 { parts.push("fold=1".to_string()); }
+    format!("datetime.time({})", parts.join(", "))
+}
+
+/// CPython-style `str(datetime.time(...))` == isoformat (with offset suffix
+/// for aware times). Raises ValueError for offsets at/over 24 hours.
+pub fn time_str(val: MbValue) -> String {
+    let h = read_int_field(val, "hour");
+    let mi = read_int_field(val, "minute");
+    let s = read_int_field(val, "second");
+    let us = read_int_field(val, "microsecond");
+    let mut out = format!("{h:02}:{mi:02}:{s:02}");
+    if us != 0 {
+        out.push_str(&format!(".{us:06}"));
+    }
+    match inst_offset_checked(val) {
+        Ok(Some(off)) => out.push_str(&iso_offset_suffix(off)),
+        Ok(None) => {}
+        Err(()) => return String::new(),
+    }
+    out
 }
 
 /// CPython-style `str(datetime.datetime(...))` → `YYYY-MM-DD HH:MM:SS`.
@@ -1277,10 +2052,23 @@ pub fn datetime_str(val: MbValue) -> String {
     let y = read_int_field(val, "year");
     let mo = read_int_field(val, "month");
     let d = read_int_field(val, "day");
+    if inst_is_date(val) {
+        return format!("{y:04}-{mo:02}-{d:02}");
+    }
     let h = read_int_field(val, "hour");
     let mi = read_int_field(val, "minute");
     let s = read_int_field(val, "second");
-    format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
+    let us = read_int_field(val, "microsecond");
+    let mut out = format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}");
+    if us != 0 {
+        out.push_str(&format!(".{us:06}"));
+    }
+    match inst_offset_checked(val) {
+        Ok(Some(off)) => out.push_str(&iso_offset_suffix(off)),
+        Ok(None) => {}
+        Err(()) => return String::new(),
+    }
+    out
 }
 
 /// CPython-style `repr(datetime.timedelta(...))`. Drops zero components;
@@ -1288,12 +2076,14 @@ pub fn datetime_str(val: MbValue) -> String {
 pub fn timedelta_repr(val: MbValue) -> String {
     let days = read_int_field(val, "days");
     let secs = read_int_field(val, "seconds");
-    if days == 0 && secs == 0 {
+    let us = read_int_field(val, "microseconds");
+    if days == 0 && secs == 0 && us == 0 {
         return "datetime.timedelta(0)".to_string();
     }
     let mut parts: Vec<String> = Vec::new();
     if days != 0 { parts.push(format!("days={days}")); }
     if secs != 0 { parts.push(format!("seconds={secs}")); }
+    if us != 0 { parts.push(format!("microseconds={us}")); }
     format!("datetime.timedelta({})", parts.join(", "))
 }
 
@@ -1314,12 +2104,14 @@ pub fn timedelta_str(val: MbValue) -> String {
     let h = s / 3600;
     let mi = (s % 3600) / 60;
     let sec = s % 60;
+    let us = read_int_field(val, "microseconds");
+    let frac = if us != 0 { format!(".{us:06}") } else { String::new() };
     if d == 0 {
-        format!("{h}:{mi:02}:{sec:02}")
+        format!("{h}:{mi:02}:{sec:02}{frac}")
     } else if d == 1 || d == -1 {
-        format!("{d} day, {h}:{mi:02}:{sec:02}")
+        format!("{d} day, {h}:{mi:02}:{sec:02}{frac}")
     } else {
-        format!("{d} days, {h}:{mi:02}:{sec:02}")
+        format!("{d} days, {h}:{mi:02}:{sec:02}{frac}")
     }
 }
 

@@ -392,6 +392,12 @@ pub fn mb_print(val: MbValue) -> MbValue {
                         // print(td) emits CPython str form. (#1644)
                         drop(f);
                         mb_outln!("{}", super::stdlib::datetime_mod::timedelta_str(val));
+                    } else if class_name == "datetime.time" {
+                        drop(f);
+                        mb_outln!("{}", super::stdlib::datetime_mod::time_str(val));
+                    } else if class_name == "datetime.timezone" {
+                        drop(f);
+                        mb_outln!("{}", super::stdlib::datetime_mod::timezone_str(val));
                     } else {
                         drop(f);
                         // __str__ dunder dispatch for print(); CPython falls back
@@ -561,7 +567,11 @@ fn print_value_str(val: MbValue) {
                         mb_out!("{}", super::stdlib::datetime_mod::datetime_str(val));
                         return;
                     }
-                    if class_name == "datetime.timedelta" {
+                    if class_name == "datetime.time" {
+                        mb_out!("{}", super::stdlib::datetime_mod::time_str(val));
+                    } else if class_name == "datetime.timezone" {
+                        mb_out!("{}", super::stdlib::datetime_mod::timezone_str(val));
+                    } else if class_name == "datetime.timedelta" {
                         mb_out!("{}", super::stdlib::datetime_mod::timedelta_str(val));
                         return;
                     }
@@ -778,7 +788,11 @@ fn print_repr(val: MbValue) {
                         mb_out!("{}", super::stdlib::datetime_mod::datetime_repr(val));
                         return;
                     }
-                    if class_name == "datetime.timedelta" {
+                    if class_name == "datetime.time" {
+                        mb_out!("{}", super::stdlib::datetime_mod::time_repr(val));
+                    } else if class_name == "datetime.timezone" {
+                        mb_out!("{}", super::stdlib::datetime_mod::timezone_repr(val));
+                    } else if class_name == "datetime.timedelta" {
                         mb_out!("{}", super::stdlib::datetime_mod::timedelta_repr(val));
                         return;
                     }
@@ -1235,6 +1249,12 @@ pub fn mb_abs(val: MbValue) -> MbValue {
                     return super::bigint_ops::bigint_from_big(big.abs());
                 }
                 ObjData::Instance { class_name, .. } => {
+                    // abs(timedelta) — exact microsecond magnitude.
+                    if class_name == "datetime.timedelta" {
+                        if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(val) {
+                            return super::stdlib::datetime_mod::timedelta_from_us(us.abs());
+                        }
+                    }
                     let abs_method = super::class::lookup_method(class_name, "__abs__");
                     if !abs_method.is_none() {
                         let method_name = MbValue::from_ptr(MbObject::new_str("__abs__".to_string()));
@@ -1902,6 +1922,14 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                                 if ca == "datetime.timedelta" && cb == "datetime.datetime" {
                                     return super::stdlib::datetime_mod::mb_datetime_add_timedelta(b, a);
                                 }
+                                if ca == "datetime.timedelta" && cb == "datetime.timedelta" {
+                                    if let (Some(ua), Some(ub)) = (
+                                        super::stdlib::datetime_mod::timedelta_total_us(a),
+                                        super::stdlib::datetime_mod::timedelta_total_us(b),
+                                    ) {
+                                        return super::stdlib::datetime_mod::timedelta_from_us(ua + ub);
+                                    }
+                                }
                                 // Counter + Counter — CPython multiset add. (#1636)
                                 if ca == "collections.Counter" && cb == "collections.Counter" {
                                     return super::stdlib::collections_mod::mb_counter_add(a, b);
@@ -1950,6 +1978,9 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                             );
                         }
                     }
+                    if raise_datetime_op_type_error("+", a, b) {
+                        return MbValue::none();
+                    }
                     MbValue::none()
                 },
             }
@@ -1988,6 +2019,26 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
                 if ca == "collections.Counter" && cb == "collections.Counter" {
                     return super::stdlib::collections_mod::mb_counter_sub(a, b);
                 }
+                // datetime - datetime -> timedelta (microsecond-exact).
+                if ca == "datetime.datetime" && cb == "datetime.datetime" {
+                    return super::stdlib::datetime_mod::mb_datetime_sub_datetime(a, b);
+                }
+                // datetime - timedelta -> shifted datetime.
+                if ca == "datetime.datetime" && cb == "datetime.timedelta" {
+                    if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(b) {
+                        let neg = super::stdlib::datetime_mod::timedelta_from_us(-us);
+                        return super::stdlib::datetime_mod::mb_datetime_add_timedelta(a, neg);
+                    }
+                }
+                // timedelta - timedelta.
+                if ca == "datetime.timedelta" && cb == "datetime.timedelta" {
+                    if let (Some(ua), Some(ub)) = (
+                        super::stdlib::datetime_mod::timedelta_total_us(a),
+                        super::stdlib::datetime_mod::timedelta_total_us(b),
+                    ) {
+                        return super::stdlib::datetime_mod::timedelta_from_us(ua - ub);
+                    }
+                }
             }
         }
     }
@@ -1999,6 +2050,9 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
         {
             return MbValue::from_ptr(MbObject::new_complex(ar - br, ai - bi));
         }
+    }
+    if raise_datetime_op_type_error("-", a, b) {
+        return MbValue::none();
     }
     MbValue::none()
 }
@@ -2280,6 +2334,27 @@ pub fn mb_rshift(a: MbValue, b: MbValue) -> MbValue {
 }
 
 pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
+    // timedelta * int/float (either order) — exact microsecond scaling.
+    if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(a) {
+        if let Some(k) = b.as_int() {
+            return super::stdlib::datetime_mod::timedelta_from_us(us * k as i128);
+        }
+        if let Some(f) = b.as_float() {
+            return super::stdlib::datetime_mod::timedelta_from_us(
+                ((us as f64) * f).round_ties_even() as i128,
+            );
+        }
+    }
+    if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(b) {
+        if let Some(k) = a.as_int() {
+            return super::stdlib::datetime_mod::timedelta_from_us(us * k as i128);
+        }
+        if let Some(f) = a.as_float() {
+            return super::stdlib::datetime_mod::timedelta_from_us(
+                ((us as f64) * f).round_ties_even() as i128,
+            );
+        }
+    }
     let a_is_array = is_array_handle_value(a);
     let b_is_array = is_array_handle_value(b);
     if a_is_array {
@@ -2348,13 +2423,81 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
             let bf = b.as_int().map(|i| i as f64).or(b.as_float());
             match (af, bf) {
                 (Some(af), Some(bf)) => MbValue::from_float(af * bf),
-                _ => MbValue::none(),
+                _ => {
+                    if raise_datetime_op_type_error("*", a, b) {
+                        return MbValue::none();
+                    }
+                    MbValue::none()
+                }
             }
         }
     }
 }
 
+/// Fallback guard for arithmetic on datetime.* instances: any combination
+/// that no dedicated arm accepted is an unsupported-operand TypeError in
+/// CPython (e.g. timedelta + 1, datetime + datetime, int // timedelta).
+/// Raises and returns true when either operand is a datetime.* instance.
+fn raise_datetime_op_type_error(op: &str, a: MbValue, b: MbValue) -> bool {
+    fn dt_class(v: MbValue) -> Option<String> {
+        let ptr = v.as_ptr()?;
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name.starts_with("datetime.") {
+                    return Some(class_name.clone());
+                }
+            }
+        }
+        None
+    }
+    let (ca, cb) = (dt_class(a), dt_class(b));
+    if ca.is_none() && cb.is_none() {
+        return false;
+    }
+    let na = ca.unwrap_or_else(|| add_operand_type_name(a).to_string());
+    let nb = cb.unwrap_or_else(|| add_operand_type_name(b).to_string());
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "unsupported operand type(s) for {op}: '{na}' and '{nb}'"
+        ))),
+    );
+    true
+}
+
+/// Python floor division/modulo on i128 (quotient rounds toward -inf,
+/// remainder takes the divisor's sign).
+fn floor_divmod_i128(a: i128, b: i128) -> (i128, i128) {
+    let q = a / b;
+    let r = a % b;
+    if r != 0 && ((r < 0) != (b < 0)) { (q - 1, r + b) } else { (q, r) }
+}
+
 pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
+    // timedelta / timedelta -> float ratio; timedelta / number -> scaled timedelta.
+    if let Some(ua) = super::stdlib::datetime_mod::timedelta_total_us(a) {
+        if let Some(ub) = super::stdlib::datetime_mod::timedelta_total_us(b) {
+            if ub == 0 {
+            super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("division by zero".to_string())),
+                );
+                return MbValue::none();
+            }
+            return MbValue::from_float(ua as f64 / ub as f64);
+        }
+        if let Some(d) = b.as_int().map(|i| i as f64).or_else(|| b.as_float()) {
+            if d == 0.0 {
+            super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("division by zero".to_string())),
+                );
+                return MbValue::none();
+            }
+            let scaled = (ua as f64 / d).round_ties_even() as i128;
+            return super::stdlib::datetime_mod::timedelta_from_us(scaled);
+        }
+    }
     // Complex division — promote when either operand is ObjData::Complex.
     // Formula: (a+bi)/(c+di) = ((ac+bd)+(bc-ad)i)/(c²+d²). (#1256)
     if is_complex_obj(a) || is_complex_obj(b) {
@@ -2390,11 +2533,30 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
             );
             MbValue::none()
         }
-        _ => MbValue::none(),
+        _ => {
+            if raise_datetime_op_type_error("/", a, b) {
+                return MbValue::none();
+            }
+            MbValue::none()
+        }
     }
 }
 
 pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
+    // timedelta % timedelta -> timedelta remainder (floor semantics).
+    if let (Some(ua), Some(ub)) = (
+        super::stdlib::datetime_mod::timedelta_total_us(a),
+        super::stdlib::datetime_mod::timedelta_total_us(b),
+    ) {
+        if ub == 0 {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("division by zero".to_string())),
+            );
+            return MbValue::none();
+        }
+        return super::stdlib::datetime_mod::timedelta_from_us(floor_divmod_i128(ua, ub).1);
+    }
     // Integer fast path — Python floor-division modulo: result has same sign as b
     if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
         if bi != 0 {
@@ -2436,6 +2598,9 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
             }
         }
     }
+    if raise_datetime_op_type_error("%", a, b) {
+        return MbValue::none();
+    }
     MbValue::none()
 }
 
@@ -2463,6 +2628,10 @@ pub fn mb_neg(a: MbValue) -> MbValue {
                     }
                 }
                 return super::bigint_ops::bigint_from_big(neg);
+            }
+            // -timedelta — negate the exact microsecond total.
+            if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(a) {
+                return super::stdlib::datetime_mod::timedelta_from_us(-us);
             }
         }
         MbValue::none()
@@ -3373,6 +3542,16 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             super::stdlib::datetime_mod::timedelta_repr(val),
                         ));
                     }
+                    if class_name == "datetime.time" {
+                        return MbValue::from_ptr(MbObject::new_str(
+                            super::stdlib::datetime_mod::time_repr(val),
+                        ));
+                    }
+                    if class_name == "datetime.timezone" {
+                        return MbValue::from_ptr(MbObject::new_str(
+                            super::stdlib::datetime_mod::timezone_repr(val),
+                        ));
+                    }
                     // namedtuple instances: Point(x=1, y=2). (#1648)
                     if let Some(s) = super::stdlib::collections_mod::namedtuple_repr(val) {
                         return MbValue::from_ptr(MbObject::new_str(s));
@@ -4269,6 +4448,31 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
 /// Python: q = floor(a/b), r = a - q*b  — remainder has same sign as divisor.
 /// Either operand may be float; if so, both result components are floats.
 pub fn mb_divmod(a: MbValue, b: MbValue) -> MbValue {
+    // divmod(timedelta, timedelta) -> (int, timedelta); int divisor raises TypeError.
+    if let Some(ua) = super::stdlib::datetime_mod::timedelta_total_us(a) {
+        if let Some(ub) = super::stdlib::datetime_mod::timedelta_total_us(b) {
+            if ub == 0 {
+            super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("division by zero".to_string())),
+                );
+                return MbValue::none();
+            }
+            let (q, r) = floor_divmod_i128(ua, ub);
+            return MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_int(q as i64),
+                super::stdlib::datetime_mod::timedelta_from_us(r),
+            ]));
+        }
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "unsupported operand type(s) for divmod(): 'datetime.timedelta' and 'int'"
+                    .to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
         if bi == 0 {
             super::exception::mb_raise(
@@ -4634,7 +4838,36 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     let guard = fields.read().unwrap();
                     let method_name = guard.get("__method__").copied()
                         .unwrap_or_else(MbValue::none);
+                    let type_name = guard.get("__type__")
+                        .and_then(|v| v.as_ptr())
+                        .and_then(|p| match &(*p).data {
+                            ObjData::Str(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_default();
                     drop(guard);
+                    // Native classmethods (`datetime.date.today`,
+                    // `datetime.datetime.fromordinal`): the registered method
+                    // value is itself a raw `(args_ptr, nargs)` dispatcher, so
+                    // the call args are NOT receiver + rest — pass them through
+                    // whole. Gated to the date/datetime class tables; every
+                    // other type keeps receiver dispatch.
+                    if matches!(type_name.as_str(), "date" | "datetime") {
+                        let method_str = method_name.as_ptr()
+                            .and_then(|p| match &(*p).data {
+                                ObjData::Str(s) => Some(s.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        let m = super::class::lookup_method(&type_name, &method_str);
+                        if let Some(addr) = m.as_func() {
+                            if super::module::is_native_func(addr as u64) {
+                                let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+                                    std::mem::transmute(addr);
+                                return f(items.as_ptr(), items.len());
+                            }
+                        }
+                    }
                     if items.is_empty() {
                         return MbValue::none();
                     }
@@ -5080,6 +5313,29 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
 
 /// floor division: a // b
 pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
+    // timedelta // timedelta -> int; timedelta // int -> timedelta.
+    if let Some(ua) = super::stdlib::datetime_mod::timedelta_total_us(a) {
+        if let Some(ub) = super::stdlib::datetime_mod::timedelta_total_us(b) {
+            if ub == 0 {
+            super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("division by zero".to_string())),
+                );
+                return MbValue::none();
+            }
+            return MbValue::from_int(floor_divmod_i128(ua, ub).0 as i64);
+        }
+        if let Some(d) = b.as_int() {
+            if d == 0 {
+            super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("division by zero".to_string())),
+                );
+                return MbValue::none();
+            }
+            return super::stdlib::datetime_mod::timedelta_from_us(floor_divmod_i128(ua, d as i128).0);
+        }
+    }
     // Integer fast path — Python floor division (round towards -∞)
     if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
         if bi != 0 {
@@ -5110,7 +5366,12 @@ pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
             );
             MbValue::none()
         }
-        _ => MbValue::none(),
+        _ => {
+            if raise_datetime_op_type_error("//", a, b) {
+                return MbValue::none();
+            }
+            MbValue::none()
+        }
     }
 }
 

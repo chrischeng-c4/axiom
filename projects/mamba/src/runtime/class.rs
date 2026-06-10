@@ -2152,6 +2152,21 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             if nt == "array" && is_array_unbound_method(&attr_name) {
                 return make_unbound_method("array", &attr_name);
             }
+            // `datetime.timedelta.min/.max/.resolution` are class-attribute
+            // VALUES (timedelta instances), not methods — return them directly
+            // instead of wrapping in an unbound method.
+            if nt == "datetime.timedelta" {
+                if let Some(v) = super::stdlib::datetime_mod::timedelta_class_attr(&attr_name) {
+                    return v;
+                }
+            }
+            // `datetime.timezone.utc/.min/.max` are singleton class-attribute
+            // values; `datetime.UTC is timezone.utc` needs the same pointer.
+            if nt == "datetime.timezone" {
+                if let Some(v) = super::stdlib::datetime_mod::timezone_class_attr(&attr_name) {
+                    return v;
+                }
+            }
             // A native class's constructor is bound to its name as a func value
             // (`pathlib.Path` via NATIVE_TYPE_NAMES). Accessing one of the class's
             // REGISTERED methods on that func (`pathlib.Path.joinpath`) is an
@@ -4735,6 +4750,10 @@ pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
                     }
                 }
             }
+            // +timedelta → identity copy.
+            if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(obj) {
+                return super::stdlib::datetime_mod::timedelta_from_us(us);
+            }
         }
         1 => { // neg (-x)
             if let Some(i) = obj.as_int()  { return MbValue::from_int(-i); }
@@ -4747,6 +4766,10 @@ pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
                         return MbValue::from_ptr(MbObject::new_complex(-re, -im));
                     }
                 }
+            }
+            // -timedelta → negated duration.
+            if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(obj) {
+                return super::stdlib::datetime_mod::timedelta_from_us(-us);
             }
         }
         2 => { // not (not x)
@@ -5966,6 +5989,43 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
     }
 
     let name = extract_str(method_name).unwrap_or_default();
+
+    // Native-class constructor func as receiver (`datetime.datetime.fromordinal(1)`,
+    // `datetime.date.today()`): the chained call lowers to a CallMethod whose
+    // receiver is the dispatcher func. Resolve through NATIVE_TYPE_NAMES into the
+    // class table; the registered classmethod values are raw `(args_ptr, nargs)`
+    // dispatchers, so pass the args through whole (no receiver split). Gated to
+    // the date/datetime tables — other native types (pathlib.Path.joinpath)
+    // rely on receiver-style unbound dispatch.
+    if let Some(addr) = receiver.as_func() {
+        let native_type = super::module::NATIVE_TYPE_NAMES
+            .with(|map| map.borrow().get(&(addr as u64)).cloned());
+        if let Some(nt) = native_type {
+            // `datetime.timezone.utc.dst(x)` arrives here with the CONSTRUCTOR
+            // func as receiver and "utc" consumed by getattr — but chained
+            // `datetime.timezone.utc` may also lower as CallMethod("utc") with
+            // no args; surface the class attribute in that shape too.
+            if nt == "datetime.timezone" {
+                if let Some(v) = super::stdlib::datetime_mod::timezone_class_attr(&name) {
+                    let items = super::builtins::extract_items(args);
+                    if items.is_empty() {
+                        return v;
+                    }
+                }
+            }
+            if matches!(nt.as_str(), "date" | "datetime" | "datetime.time") {
+                let m = lookup_method(&nt, &name);
+                if let Some(maddr) = m.as_func() {
+                    if super::module::is_native_func(maddr as u64) {
+                        let items = super::builtins::extract_items(args);
+                        let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+                            unsafe { std::mem::transmute(maddr) };
+                        return unsafe { f(items.as_ptr(), items.len()) };
+                    }
+                }
+            }
+        }
+    }
 
     // statistics.NormalDist behavioral methods (cdf / pdf / inv_cdf / zscore /
     // quantiles). The constructor lives in statistics_mod; the methods are
