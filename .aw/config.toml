@@ -151,6 +151,19 @@ test_cmd = "cargo test -p mamba"
 
 
 [[projects]]
+name = "lumen"
+path = "projects/lumen"
+cap_path = "projects/lumen/README.md"
+label = "project:lumen"
+
+[[projects.workspaces]]
+name = "lumen"
+paths = ["projects/lumen/**"]
+target = "rust"
+test_cmd = "cargo test -p lumen"
+
+
+[[projects]]
 name = "pg"
 path = "projects/pgkit"
 td_path = ".aw/tech-design/projects/pgkit"
