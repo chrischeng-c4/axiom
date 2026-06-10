@@ -1,0 +1,112 @@
+# Port of scripts/chaos.sh §7: 5% packet loss (toxiproxy timeout toxic at
+# toxicity 0.05), search p99 over the surviving requests ≤ 2× baseline.
+#
+# Requires: toxiproxy-server on {{toxiproxy}}, lumen serving on {{upstream}}.
+[record]
+suite = "lumen"
+dimension = "resilience"
+case = "packet_loss_p99"
+subject = "search p99 stays within 2x baseline under 5% packet loss"
+kind = "e2e"
+expected = "pass"
+required = true
+
+[env]
+upstream = "127.0.0.1:7373"
+toxiproxy = "127.0.0.1:8474"
+proxy_listen = "127.0.0.1:18081"
+proxy_name = "rig-lumen-loss"
+collection = "users"
+
+[vat]
+runner = "rig-resilience"
+services = ["toxiproxy", "lumen"]
+
+[limits]
+timeout_secs = 180
+
+[[steps]]
+type = "http"
+name = "collection_exists"
+method = "PUT"
+url = "http://{{upstream}}/collections/{{collection}}"
+body = '{"fields": {"bio": {"type": "text"}, "email": {"type": "keyword"}}}'
+expect = { statuses = [200, 201, 400, 409] }
+
+[[steps]]
+type = "http"
+name = "seed_doc"
+method = "POST"
+url = "http://{{upstream}}/collections/{{collection}}/index"
+body = '{"items": [{"external_id": "rig-seed-1", "field": "bio", "value": "senior engineer in taipei"}]}'
+
+[[steps]]
+type = "http"
+name = "clean_stale_proxy"
+method = "DELETE"
+url = "http://{{toxiproxy}}/proxies/{{proxy_name}}"
+expect = { statuses = [204, 404] }   # idempotent pre-clean: a prior aborted run may have left it
+
+[[steps]]
+type = "http"
+name = "create_proxy"
+method = "POST"
+url = "http://{{toxiproxy}}/proxies"
+body = '{"name": "{{proxy_name}}", "listen": "{{proxy_listen}}", "upstream": "{{upstream}}", "enabled": true}'
+expect = { statuses = [200, 201] }
+
+[[steps]]
+type = "sample"
+name = "baseline"
+samples = 100
+capture = { baseline_p99 = "p99_ms" }
+[steps.request]
+method = "POST"
+url = "http://{{proxy_listen}}/collections/{{collection}}/search"
+body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
+expect = { status = 200, timeout_ms = 5000 }
+
+[[steps]]
+type = "assert"
+name = "baseline_sane"
+exprs = ["baseline_p99 > 0"]
+
+[[steps]]
+type = "http"
+name = "add_loss_toxic"
+method = "POST"
+url = "http://{{toxiproxy}}/proxies/{{proxy_name}}/toxics"
+body = '{"name": "loss", "type": "timeout", "stream": "downstream", "toxicity": 0.05, "attributes": {"timeout": 0}}'
+
+[[steps]]
+# p99 over the SURVIVING requests (sample excludes failed requests from
+# percentiles, mirroring chaos.sh which only collected 200s).
+type = "sample"
+name = "under_loss"
+samples = 100
+allow_failures = true
+capture = { loss_p99 = "p99_ms", loss_fail = "fail_count" }
+[steps.request]
+method = "POST"
+url = "http://{{proxy_listen}}/collections/{{collection}}/search"
+body = '{"query": {"match": {"field": "bio", "text": "engineer"}}, "limit": 1}'
+expect = { status = 200, timeout_ms = 5000 }
+
+[[steps]]
+type = "http"
+name = "remove_loss_toxic"
+method = "DELETE"
+url = "http://{{toxiproxy}}/proxies/{{proxy_name}}/toxics/loss"
+expect = { statuses = [200, 204] }
+
+[[steps]]
+type = "assert"
+name = "loss_p99_within_2x_baseline"
+exprs = ["loss_p99 <= 2 * baseline_p99"]
+
+[[steps]]
+type = "http"
+name = "delete_proxy"
+method = "DELETE"
+url = "http://{{toxiproxy}}/proxies/{{proxy_name}}"
+expect = { statuses = [204, 404] }
