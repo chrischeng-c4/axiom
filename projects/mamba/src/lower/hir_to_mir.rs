@@ -512,9 +512,10 @@ pub fn lower_hir_to_mir_with_symbols(
                 .unwrap_or_default()
         };
         lowerer.pending_classes.push((class_name.clone(), all_base_names, methods, match_args, cls.metaclass.clone(), cls.slots.clone(), cls.class_kwargs.clone()));
-        // P2-R3: Store class-level attribute assignments for emission after class registration.
+        // P2-R3: Store class-level attribute assignments for emission at the
+        // class's ClassDefPlaceholder (its textual position in the module).
         for (attr_name, val_expr) in &cls.class_attr_assigns {
-            lowerer.pending_class_attrs.push((class_name.clone(), attr_name.clone(), val_expr.clone()));
+            lowerer.pending_class_attrs.push((class_name.clone(), cls.name, attr_name.clone(), val_expr.clone()));
         }
         // Store class decorators for application after registration.
         if !cls.decorators.is_empty() {
@@ -679,8 +680,11 @@ struct HirToMir<'a> {
     /// (class_name, all_base_names, [(method_name, method_symbol_id, decor_kind, setter_sym, deleter_sym)], match_args, metaclass, slots, class_kwargs)
     pending_classes: Vec<(String, Vec<String>, Vec<(String, SymbolId, MethodDecorKind, Option<SymbolId>, Option<SymbolId>)>, Vec<String>, Option<String>, Option<Vec<String>>, Vec<(String, HirExpr)>)>,
     /// P2-R3: Class-level attribute assignments to emit after class registration.
-    /// (class_name, attr_name, value_expr)
-    pending_class_attrs: Vec<(String, String, HirExpr)>,
+    /// (class_name, class_symbol_id, attr_name, value_expr)
+    /// Emitted at the class's ClassDefPlaceholder position (textual order) so
+    /// initializer expressions like `X = enum.auto()` see imports/bindings
+    /// established by preceding statements (#1686 motivation).
+    pending_class_attrs: Vec<(String, SymbolId, String, HirExpr)>,
     /// abc: per-class names of methods decorated `@abc.abstractmethod` (and the
     /// abstract{property,classmethod,staticmethod} variants). Emitted after
     /// `mb_class_define_multi` so the runtime can compute `__abstractmethods__`
@@ -1676,21 +1680,14 @@ impl<'a> HirToMir<'a> {
             }
         }
 
-        // P2-R3: Emit class-level attribute assignments after all classes are registered.
-        // This stores values like `attr = Verbose()` in the class's class_attrs dict.
-        let pending_attrs = std::mem::take(&mut self.pending_class_attrs);
-        for (class_name, attr_name, val_expr) in &pending_attrs {
-            let cls_vreg = self.emit_str_const(class_name);
-            let attr_vreg = self.emit_str_const(attr_name);
-            let val_vreg = self.lower_expr(val_expr);
-            let boxed = self.box_operand(val_vreg, val_expr.ty());
-            self.current_stmts.push(MirInst::CallExtern {
-                dest: None,
-                name: "mb_class_set_class_attr".to_string(),
-                args: vec![cls_vreg, attr_vreg, boxed],
-                ty: self.tcx.none(),
-            });
-        }
+        // P2-R3: Class-level attribute assignments are NOT emitted here.
+        // Initializer expressions like `X = enum.auto()` or `X = math.floor(2.5)`
+        // reference imports bound by `import` statements that live in `stmts`
+        // and have not yet been lowered — evaluating them before the main stmt
+        // loop would resolve those names against an empty module (same defect
+        // class as the #1686/#1690 decorator-ordering bug). Each class emits a
+        // `HirStmt::ClassDefPlaceholder` at its textual position (ast_to_hir),
+        // and `lower_stmt` consumes `pending_class_attrs` there.
 
         // Note: pending_class_decorators is intentionally NOT consumed here.
         // Class decorator expressions can reference imported symbols (e.g.
@@ -1728,6 +1725,11 @@ impl<'a> HirToMir<'a> {
             }
             self.lower_stmt(stmt);
         }
+
+        // P2-R3 fallback: drain any class-attr assignments whose class never
+        // produced a ClassDefPlaceholder (defensive; top-level classes always
+        // emit one when they carry attr assigns).
+        self.emit_class_attrs_for(None);
 
         // (#1690) Class decorators are no longer applied here. Each decorated
         // class emits a `HirStmt::ClassDefPlaceholder` at its textual
@@ -3170,6 +3172,12 @@ impl<'a> HirToMir<'a> {
                 self.lower_match(subject, cases);
             }
             HirStmt::ClassDefPlaceholder { name: cls_sym, .. } => {
+                // P2-R3: emit class-level attribute assignments at the class's
+                // textual position so initializer expressions resolve imports
+                // and bindings established by preceding statements (#1686
+                // motivation), and BEFORE decorators so the decorator sees the
+                // fully-initialized class body (CPython execution order).
+                self.emit_class_attrs_for(Some(*cls_sym));
                 // PEP 557: record ordered dataclass field facts BEFORE the
                 // decorator call so the runtime `@dataclass` synthesizer sees
                 // them. Emitted here (not at registration time) so default
@@ -3244,6 +3252,31 @@ impl<'a> HirToMir<'a> {
                         cls_vreg = result_vreg;
                     }
                 }
+            }
+        }
+    }
+
+    /// P2-R3: Emit `mb_class_set_class_attr` calls for pending class-level
+    /// attribute assignments. `cls_sym = Some(sym)` drains only that class's
+    /// entries (ClassDefPlaceholder path, textual order); `None` drains every
+    /// remaining entry (post-loop fallback for classes without a placeholder).
+    fn emit_class_attrs_for(&mut self, cls_sym: Option<SymbolId>) {
+        let mut i = 0;
+        while i < self.pending_class_attrs.len() {
+            if cls_sym.map_or(true, |s| self.pending_class_attrs[i].1 == s) {
+                let (class_name, _, attr_name, val_expr) = self.pending_class_attrs.remove(i);
+                let cls_vreg = self.emit_str_const(&class_name);
+                let attr_vreg = self.emit_str_const(&attr_name);
+                let val_vreg = self.lower_expr(&val_expr);
+                let boxed = self.box_operand(val_vreg, val_expr.ty());
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_class_set_class_attr".to_string(),
+                    args: vec![cls_vreg, attr_vreg, boxed],
+                    ty: self.tcx.none(),
+                });
+            } else {
+                i += 1;
             }
         }
     }

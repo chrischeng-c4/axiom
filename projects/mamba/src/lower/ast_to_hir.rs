@@ -1714,7 +1714,12 @@ impl<'a> AstLowerer<'a> {
                         // (the #1686 stop-gap), which broke patterns like
                         // `@deco class C; obj = C()` where the post-class
                         // statement expects the decorated class.
-                        if !cls.decorators.is_empty() {
+                        // Classes with class-level attribute assignments also
+                        // need one: initializer expressions like
+                        // `X = enum.auto()` must evaluate at the class's
+                        // textual position, after preceding imports/bindings
+                        // have run (P2-R3 ordering, #1686 motivation).
+                        if !cls.decorators.is_empty() || !cls.class_attr_assigns.is_empty() {
                             self.result.top_level.push(HirStmt::ClassDefPlaceholder {
                                 name: cls.name,
                                 span: stmt.span,
