@@ -3337,6 +3337,28 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                 return;
             }
 
+            // __class__-tagged dict stubs (ET.Element / QName / ...): attribute
+            // writes land as dict keys so `e.text = "x"` round-trips through
+            // the dict getattr fast path. Plain dicts (no stub tag) keep the
+            // current fall-through (silent no-op) semantics.
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                let is_stub = lock.read().unwrap().contains_key("__class__");
+                if is_stub {
+                    let attr_name = extract_str(attr).unwrap_or_default();
+                    super::rc::retain_if_ptr(value);
+                    let mut map = lock.write().unwrap();
+                    let dk: super::dict_ops::DictKey = attr_name.into();
+                    if let Some(existing) = map.get_mut(&dk) {
+                        let old = *existing;
+                        *existing = value;
+                        super::rc::release_if_ptr(old);
+                    } else {
+                        map.insert(dk, value);
+                    }
+                    return;
+                }
+            }
+
             // Class name string: `cls.attr = value` where cls is a class name.
             // Stores as a class-level attribute accessible to all instances.
             if let ObjData::Str(ref class_name) = (*ptr).data {
@@ -4038,6 +4060,14 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
         // handle, so it cannot match through the Instance path.
         if super::stdlib::uuid_mod::is_uuid_handle(id) {
             return MbValue::from_bool(matches!(target.as_str(), "UUID" | "object"));
+        }
+    }
+    // __class__-tagged dict stubs (e.g. ET.Element): match the stub class
+    // name against the target (resolved via NATIVE_TYPE_NAMES for native
+    // constructor dispatchers used as types).
+    if let Some(stub) = super::dict_ops::dict_stub_class(obj) {
+        if stub == target {
+            return MbValue::from_bool(true);
         }
     }
     // Check primitive types and built-in containers

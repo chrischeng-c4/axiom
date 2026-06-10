@@ -882,7 +882,21 @@ pub fn mb_len(val: MbValue) -> MbValue {
                 // Python 3 `len(str)` is the number of Unicode code points, not bytes.
                 ObjData::Str(s) => MbValue::from_int(s.chars().count() as i64),
                 ObjData::List(ref lock) => MbValue::from_int(lock.read().unwrap().len() as i64),
-                ObjData::Dict(ref lock) => MbValue::from_int(lock.read().unwrap().len() as i64),
+                ObjData::Dict(ref lock) => {
+                    // ET.Element stub dicts: len(e) is the child count.
+                    if let Some(children) =
+                        super::stdlib::xml_mod::element_stub_children(val)
+                    {
+                        if let Some(cp) = children.as_ptr() {
+                            if let ObjData::List(ref clock) = (*cp).data {
+                                return MbValue::from_int(
+                                    clock.read().unwrap().len() as i64
+                                );
+                            }
+                        }
+                    }
+                    MbValue::from_int(lock.read().unwrap().len() as i64)
+                }
                 ObjData::Tuple(items) => MbValue::from_int(items.len() as i64),
                 ObjData::Set(ref lock) => MbValue::from_int(lock.read().unwrap().len() as i64),
                 ObjData::FrozenSet(items) => MbValue::from_int(items.len() as i64),

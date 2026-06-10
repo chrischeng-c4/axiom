@@ -397,7 +397,31 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     IterKind::Tuple(obj)
                 }
                 ObjData::Str(s) => IterKind::Str(s.chars().collect()),
-                ObjData::Dict(ref lock) => IterKind::DictKeys(lock.read().unwrap().keys().cloned().collect()),
+                ObjData::Dict(ref lock) => {
+                    // ET.Element stub dicts iterate their children, not keys.
+                    if let Some(children) =
+                        super::stdlib::xml_mod::element_stub_children(obj)
+                    {
+                        if let Some(cp) = children.as_ptr() {
+                            if let ObjData::List(ref clock) = (*cp).data {
+                                let items = clock.read().unwrap().to_vec();
+                                IterKind::List(MbValue::from_ptr(
+                                    MbObject::new_list_borrowed(items),
+                                ))
+                            } else {
+                                IterKind::DictKeys(
+                                    lock.read().unwrap().keys().cloned().collect(),
+                                )
+                            }
+                        } else {
+                            IterKind::DictKeys(
+                                lock.read().unwrap().keys().cloned().collect(),
+                            )
+                        }
+                    } else {
+                        IterKind::DictKeys(lock.read().unwrap().keys().cloned().collect())
+                    }
+                }
                 ObjData::Set(ref lock) => {
                     let items = lock.read().unwrap();
                     IterKind::List(
