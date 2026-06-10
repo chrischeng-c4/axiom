@@ -640,6 +640,26 @@ fn json_to_mbvalue(val: &serde_json::Value) -> MbValue {
 
 /// json.dumps(obj) → JSON string (matches CPython default: ", " and ": " separators)
 pub fn mb_json_dumps(val: MbValue) -> MbValue {
+    // CPython: bytes / bytearray / set are not JSON serializable — raise
+    // TypeError eagerly (the serializer below would silently null them).
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            let bad = match (*ptr).data {
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => Some("bytes"),
+                ObjData::Set(_) | ObjData::FrozenSet(_) => Some("set"),
+                _ => None,
+            };
+            if let Some(kind) = bad {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "Object of type {kind} is not JSON serializable"
+                    ))),
+                );
+                return MbValue::none();
+            }
+        }
+    }
     // CPython default uses (", ", ": ") separators — serde_json::to_string uses no spaces.
     // Special-case top-level float to handle Infinity/NaN (CPython outputs these directly).
     let s = serialize_mbvalue_cpython(val);

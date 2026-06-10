@@ -3545,6 +3545,21 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                 ObjData::Tuple(_) => super::tuple_ops::mb_tuple_hash(val),
                 ObjData::FrozenSet(items) => MbValue::from_int(frozenset_hash(items)),
                 ObjData::Instance { class_name, .. } => {
+                    // Mutable-mapping collections (Counter / defaultdict /
+                    // OrderedDict — dict subclasses) are unhashable.
+                    if class_name == "collections.Counter"
+                        || class_name == "collections.defaultdict"
+                        || class_name == "collections.OrderedDict"
+                    {
+                        let short = class_name.rsplit('.').next().unwrap_or(class_name);
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "unhashable type: '{short}'"
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
                     // functools.cmp_to_key key objects set __hash__ = None and are
                     // therefore unhashable (CPython raises TypeError).
                     if class_name == "functools.cmp_to_key_obj" {

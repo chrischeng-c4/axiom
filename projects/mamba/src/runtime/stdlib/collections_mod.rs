@@ -245,9 +245,50 @@ fn value_to_key(val: MbValue) -> String {
 /// Counts elements of an iterable (list or string) and stores the result
 /// as a `collections.Counter` Instance. Method dispatch (`.most_common(n)`)
 /// is handled in `runtime::class::mb_call_method`.
+/// Raise a TypeError and return None (native raise convention).
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Raise a ValueError and return None (native raise convention).
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 pub fn mb_counter_new(iterable: MbValue) -> MbValue {
     use crate::runtime::dict_ops::DictKey;
     let mut counts: indexmap::IndexMap<DictKey, i64> = indexmap::IndexMap::new();
+
+    // CPython: Counter(non-iterable scalar) raises TypeError.
+    if iterable.as_int().is_some() || iterable.as_float().is_some() || iterable.is_bool() {
+        return raise_type_error("'int' object is not iterable");
+    }
+    // CPython: unhashable elements (lists/dicts/sets) raise TypeError.
+    if let Some(ptr) = iterable.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                for item in lock.read().unwrap().iter() {
+                    if let Some(ip) = item.as_ptr() {
+                        let unhashable = matches!(
+                            (*ip).data,
+                            ObjData::List(_) | ObjData::Dict(_) | ObjData::Set(_)
+                        );
+                        if unhashable {
+                            return raise_type_error("unhashable type: 'list'");
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if let Some(ptr) = iterable.as_ptr() {
         unsafe {
@@ -934,6 +975,12 @@ pub fn ordereddict_repr(od: MbValue) -> String {
 /// and a `_factory` callable. `mb_obj_getitem` in `class.rs` handles
 /// auto-vivification by calling the factory when a key is missing.
 pub fn mb_defaultdict_new(factory: MbValue) -> MbValue {
+    // CPython: the first argument must be callable or None.
+    if !factory.is_none()
+        && crate::runtime::builtins::mb_callable(factory).as_bool() != Some(true)
+    {
+        return raise_type_error("first argument must be callable or None");
+    }
     let dict = MbValue::from_ptr(MbObject::new_dict());
     let mut fields = FxHashMap::default();
     fields.insert("_data".into(), dict);
@@ -972,6 +1019,39 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue) -> MbValue {
     } else {
         vec![]
     };
+    // CPython: field names must be valid non-keyword identifiers without
+    // leading underscores or duplicates; violations raise ValueError.
+    const PY_KEYWORDS: &[&str] = &[
+        "False", "None", "True", "and", "as", "assert", "async", "await",
+        "break", "class", "continue", "def", "del", "elif", "else", "except",
+        "finally", "for", "from", "global", "if", "import", "in", "is",
+        "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+        "while", "with", "yield",
+    ];
+    let mut seen = std::collections::HashSet::new();
+    for f in &field_names {
+        let valid_ident = !f.is_empty()
+            && f.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
+            && f.chars().all(|c| c.is_alphanumeric() || c == '_');
+        if !valid_ident {
+            return raise_value_error(&format!(
+                "Type names and field names must be valid identifiers: {f:?}"
+            ));
+        }
+        if PY_KEYWORDS.contains(&f.as_str()) {
+            return raise_value_error(&format!(
+                "Type names and field names cannot be a keyword: {f:?}"
+            ));
+        }
+        if f.starts_with('_') {
+            return raise_value_error(&format!(
+                "Field names cannot start with an underscore: {f:?}"
+            ));
+        }
+        if !seen.insert(f.clone()) {
+            return raise_value_error(&format!("Encountered duplicate field name: {f:?}"));
+        }
+    }
     let tuple_name = extract_str(name).unwrap_or_else(|| "namedtuple".to_string());
     let mut factory_fields = FxHashMap::default();
     factory_fields.insert("_tuple_name".into(),
@@ -1020,6 +1100,20 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
     } else {
         return MbValue::none();
     };
+    // CPython: a namedtuple call must supply exactly the declared fields
+    // (defaults are not modeled); arity mismatches raise TypeError.
+    if args.len() != field_names.len() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "{}() takes {} positional arguments but {} were given",
+                tuple_name,
+                field_names.len(),
+                args.len(),
+            ))),
+        );
+        return MbValue::none();
+    }
     let mut inst_fields = FxHashMap::default();
     inst_fields.insert("_namedtuple_name".into(),
         MbValue::from_ptr(MbObject::new_str(tuple_name.clone())));

@@ -5001,6 +5001,18 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         // miss via KeyError; defaultdict's contract is to
                         // call default_factory instead.
                         super::exception::mb_clear_exception();
+                        // CPython: defaultdict(None) behaves like a plain dict
+                        // — a missing key raises KeyError instead of invoking
+                        // a factory.
+                        if factory.is_none() {
+                            let key_repr = super::builtins::mb_repr(key);
+                            let key_str = extract_str(key_repr).unwrap_or_default();
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(key_str)),
+                            );
+                            return MbValue::none();
+                        }
                         // Key missing: call factory, insert, return default.
                         // Python builtins like `int`, `list`, `dict` are passed
                         // as type-name strings (legacy) or type-singleton objects (new).
