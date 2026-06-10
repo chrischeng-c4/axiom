@@ -35,25 +35,36 @@ antd, tailwind, styled-components, ...); regression fixture:
 
 Correctness is green across the whole corpus (runtime smoke through
 `jet bb` plus static functional checks on all six fixtures, 2026-06-10).
-The remaining violations are performance-only. Latest gate snapshot
-(ratio vs the best of Vite/Webpack; bar: gzip ≤ 1.0, duration < 1.0):
+The remaining violations are size-only on three fixtures; duration is
+won on five of six. Latest gate snapshot (ratio vs the best of
+Vite/Webpack; bar: gzip ≤ 1.0 + 2% tolerance, duration < 1.0):
 
 | Fixture | duration | gzip |
 |---|---|---|
-| react-bench | 1.12 | 1.04 |
-| dom-production-assets | 1.11 | 1.04 |
-| mui-visual-demo | 2.07 | 1.29 |
-| antd-visual-demo | 1.19 | 0.70 ✓ |
-| tailwind-visual-demo | 0.54 ✓ | 1.01 |
-| styled-components-visual-demo | 1.03 | 1.16 |
+| react-bench | 0.98 ✓ | 1.04 |
+| dom-production-assets | 0.87 ✓ | 1.04 |
+| mui-visual-demo | 1.58 | 1.21 |
+| antd-visual-demo | 0.94 ✓ | 0.69 ✓ |
+| tailwind-visual-demo | 0.45 ✓ | 1.01 ✓ |
+| styled-components-visual-demo | 0.91 ✓ | 1.15 |
 
 ## Open gaps before "=== vite/webpack" is claimable
 
-- mui: gzip 1.29 (unshaken barrel breadth beyond the pruned glue —
-  per-component subpath imports retain wide internal graphs) and the
-  size gap directly drives the 2.07 duration ratio.
-- Small fixtures (react-bench, assets): ~1.1 duration is fixed pipeline
-  cost (build_graph ~1.1s, esModule-marker tree-sitter parses ~0.7s on
-  antd-scale bundles; proportionally smaller here but still the gap).
-- styled: gzip 1.16 — fold now applies (regex/template scanner fixes)
-  but mangle leaves long generated names in edge regions.
+All remaining gaps are CJS-interop scaffolding and residual unshaken
+code; the per-fixture diagnosis (with byte counts) lives in the round-2
+workflow output:
+
+- Interop scaffolding reaches the final output: `__esModule`
+  defineProperty markers per consumed-as-namespace module, inline
+  `$(n)["default"]||$(n)` interop thunks (726x on mui), registry slots
+  `var X={exports:{}}`, and string-keyed export assignments — ~60KB raw
+  on mui and the whole react-bench/assets 1.04 gap. Fix lives in the
+  flatten emission (scope_hoist.rs): emit markers only for namespace
+  consumers, cache one interop var per target, skip slots for fully
+  flattened modules.
+- mui residual: CJS+ESM duplicate package copies (~23KB pre-minify) and
+  within-module dead code vite's DCE removes.
+- styled residual: dead `var`/`const` initializer declarations of unused
+  exports (the orphan collector currently handles `function`
+  declarations only) and the remaining dev-map ternary.
+- mui duration 1.58 tracks its size; closes as the bundle shrinks.
