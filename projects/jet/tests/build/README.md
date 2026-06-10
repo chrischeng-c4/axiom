@@ -33,13 +33,27 @@ antd, tailwind, styled-components, ...); regression fixture:
 
 ## Current status
 
-`red` on the expanded DOM production-build corpus (see the dashboard in
-`projects/jet/README.md`). Build is intentionally third in the Basic
-replacement order, behind package management and Browser Bridge.
+Correctness is green across the whole corpus (runtime smoke through
+`jet bb` plus static functional checks on all six fixtures, 2026-06-10).
+The remaining violations are performance-only. Latest gate snapshot
+(ratio vs the best of Vite/Webpack; bar: gzip ≤ 1.0, duration < 1.0):
+
+| Fixture | duration | gzip |
+|---|---|---|
+| react-bench | 1.12 | 1.04 |
+| dom-production-assets | 1.11 | 1.04 |
+| mui-visual-demo | 2.07 | 1.29 |
+| antd-visual-demo | 1.19 | 0.70 ✓ |
+| tailwind-visual-demo | 0.54 ✓ | 1.01 |
+| styled-components-visual-demo | 1.03 | 1.16 |
 
 ## Open gaps before "=== vite/webpack" is claimable
 
-- Remaining corpus fixtures failing correctness or size/speed thresholds.
-- Keep runtime trace, gzip size, CSS/public/static artifact, and contract
-  self-test checks green across the whole corpus, not just the
-  representative fixture.
+- mui: gzip 1.29 (unshaken barrel breadth beyond the pruned glue —
+  per-component subpath imports retain wide internal graphs) and the
+  size gap directly drives the 2.07 duration ratio.
+- Small fixtures (react-bench, assets): ~1.1 duration is fixed pipeline
+  cost (build_graph ~1.1s, esModule-marker tree-sitter parses ~0.7s on
+  antd-scale bundles; proportionally smaller here but still the gap).
+- styled: gzip 1.16 — fold now applies (regex/template scanner fixes)
+  but mangle leaves long generated names in edge regions.
