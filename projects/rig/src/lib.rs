@@ -11,6 +11,7 @@
 
 pub mod discovery;
 pub mod engine;
+pub mod pins;
 pub mod report;
 pub mod scenario;
 pub mod verdict;
