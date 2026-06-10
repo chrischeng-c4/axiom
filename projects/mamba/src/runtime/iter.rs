@@ -439,6 +439,15 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                         let t = MbValue::from_ptr(MbObject::new_tuple(vals));
                         IterKind::Tuple(t)
                     } else
+                    // Functional-API enum class objects (`enum.Enum('M', 'a b')`)
+                    // iterate their members in definition order (`for m in M`).
+                    if let Some(items) =
+                        super::stdlib::enum_mod::functional_enum_members(obj)
+                    {
+                        IterKind::List(MbValue::from_ptr(
+                            MbObject::new_list_borrowed(items),
+                        ))
+                    } else
                     // Dict-like collections classes: iterate over backing _data dict keys.
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"

@@ -907,6 +907,12 @@ pub fn mb_len(val: MbValue) -> MbValue {
                     if let Some(vals) = super::stdlib::collections_mod::namedtuple_values(val) {
                         return MbValue::from_int(vals.len() as i64);
                     }
+                    // Functional-API enum class objects: len() is the member count.
+                    if let Some(items) =
+                        super::stdlib::enum_mod::functional_enum_members(val)
+                    {
+                        return MbValue::from_int(items.len() as i64);
+                    }
                     // memoryview: forward len() to the underlying bytes-like buffer.
                     if class_name == "memoryview" {
                         let buf = fields.read().unwrap().get("_buffer").copied();

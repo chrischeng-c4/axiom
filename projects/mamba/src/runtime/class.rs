@@ -5583,6 +5583,20 @@ pub fn mb_obj_contains(obj: MbValue, item: MbValue) -> MbValue {
         }
         return MbValue::from_bool(false);
     }
+    // Functional-API enum class objects: `member in EnumCls` (identity) and
+    // `value in EnumCls` (data-type/value match, CPython 3.12 semantics).
+    if let Some(items) = super::stdlib::enum_mod::functional_enum_members(obj) {
+        let found = items.iter().any(|m| {
+            if m.to_bits() == item.to_bits()
+                || super::builtins::mb_eq(*m, item).as_bool().unwrap_or(false)
+            {
+                return true;
+            }
+            let mv = super::stdlib::enum_mod::mb_enum_member_value(*m);
+            !mv.is_none() && super::builtins::mb_eq(mv, item).as_bool().unwrap_or(false)
+        });
+        return MbValue::from_bool(found);
+    }
     if let Some(_method) = try_get_dunder(obj, "__contains__") {
         let method_name = MbValue::from_ptr(MbObject::new_str("__contains__".to_string()));
         let args = MbValue::from_ptr(MbObject::new_list(vec![item]));
@@ -5958,6 +5972,11 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                 if class_name == "type" {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
+                }
+                // Functional-API enum class objects: `EnumCls(value)` is the
+                // value→member lookup (`Minor(2) is Minor.july`).
+                if super::stdlib::enum_mod::is_functional_enum_class(func) {
+                    return super::stdlib::enum_mod::mb_functional_enum_call(func, arg);
                 }
                 // __call__ dunder dispatch for callable instances
                 let call_method = lookup_method(class_name, "__call__");
