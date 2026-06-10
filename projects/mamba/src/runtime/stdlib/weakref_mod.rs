@@ -224,7 +224,48 @@ unsafe extern "C" fn dispatch_finalize(args_ptr: *const MbValue, nargs: usize) -
 /// weakref.ref(obj, callback=None) -> Instance wrapping a strong ref.
 ///
 /// Carve-out: holds a strong pointer; never expires.
+/// CPython: plain builtins (int/float/bool/None/str/bytes/tuple/list/dict)
+/// are not weak-referenceable; raise TypeError with the type name.
+fn reject_non_weakreferenceable(obj: MbValue) -> bool {
+    let type_name: Option<&str> = if obj.is_none() {
+        Some("NoneType")
+    } else if obj.is_bool() {
+        Some("bool")
+    } else if obj.is_int() {
+        Some("int")
+    } else if obj.is_float() {
+        Some("float")
+    } else if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            match (*ptr).data {
+                ObjData::Str(_) => Some("str"),
+                ObjData::Bytes(_) => Some("bytes"),
+                ObjData::ByteArray(_) => Some("bytearray"),
+                ObjData::Tuple(_) => Some("tuple"),
+                ObjData::List(_) => Some("list"),
+                ObjData::Dict(_) => Some("dict"),
+                _ => None,
+            }
+        }
+    } else {
+        None
+    };
+    if let Some(name) = type_name {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "cannot create weak reference to '{name}' object"
+            ))),
+        );
+        return true;
+    }
+    false
+}
+
 pub fn mb_weakref_ref(obj: MbValue, callback: MbValue) -> MbValue {
+    if reject_non_weakreferenceable(obj) {
+        return MbValue::none();
+    }
     // CPython reuses no-callback refs: `weakref.ref(o) is weakref.ref(o)` and
     // `weakref.ref(o, None) is weakref.ref(o)`. Refs created with a real
     // callback are always distinct.
@@ -276,6 +317,9 @@ pub fn mb_weakref_deref(wref: MbValue) -> MbValue {
 
 /// weakref.proxy(obj, callback=None) -> obj (carve-out).
 pub fn mb_weakref_proxy(obj: MbValue, _callback: MbValue) -> MbValue {
+    if reject_non_weakreferenceable(obj) {
+        return MbValue::none();
+    }
     obj
 }
 
@@ -533,11 +577,17 @@ mod tests {
         extract_str(val)
     }
 
+    /// Weak-referenceable test target: a plain Instance (ints/strs are
+    /// correctly rejected by reject_non_weakreferenceable now).
+    fn target() -> MbValue {
+        MbValue::from_ptr(MbObject::new_instance("WeakTarget".to_string()))
+    }
+
     // -- ref --
 
     #[test]
     fn test_ref_creates_instance_with_target() {
-        let obj = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
+        let obj = target();
         let wref = mb_weakref_ref(obj, MbValue::none());
         assert!(wref.as_ptr().is_some());
         assert_eq!(get_str(get_field(wref, "__class__")), Some("ReferenceType".to_string()));
@@ -548,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_ref_stores_callback() {
-        let obj = MbValue::from_int(7);
+        let obj = target();
         let cb = MbValue::from_int(42);
         let wref = mb_weakref_ref(obj, cb);
         assert_eq!(get_field(wref, "_callback").as_int(), Some(42));
@@ -557,7 +607,7 @@ mod tests {
     #[test]
     fn test_deref_returns_target() {
         // Carve-out: deref returns the strong-ref target, not None.
-        let obj = MbValue::from_ptr(MbObject::new_str("x".to_string()));
+        let obj = target();
         let wref = mb_weakref_ref(obj, MbValue::none());
         let r = mb_weakref_deref(wref);
         assert_eq!(r.as_ptr(), obj.as_ptr());
@@ -567,15 +617,15 @@ mod tests {
 
     #[test]
     fn test_proxy_returns_object() {
-        let v = MbValue::from_int(42);
-        assert_eq!(mb_weakref_proxy(v, MbValue::none()).as_int(), Some(42));
+        let v = target();
+        assert_eq!(mb_weakref_proxy(v, MbValue::none()).as_ptr(), v.as_ptr());
     }
 
     #[test]
     fn test_proxy_with_callback_returns_object() {
-        let v = MbValue::from_int(99);
+        let v = target();
         let cb = MbValue::from_int(1);
-        assert_eq!(mb_weakref_proxy(v, cb).as_int(), Some(99));
+        assert_eq!(mb_weakref_proxy(v, cb).as_ptr(), v.as_ptr());
     }
 
     // -- getweakrefcount / getweakrefs --

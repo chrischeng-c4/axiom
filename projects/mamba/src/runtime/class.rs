@@ -5137,9 +5137,23 @@ pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
                     super::dict_ops::mb_dict_delitem(obj, key);
                 }
                 _ => {
-                    // Try __delitem__ dunder
-                    if let Some(_method) = try_get_dunder(obj, "__delitem__") {
-                        // TODO: invoke dunder
+                    // Dispatch the __delitem__ dunder like the __setitem__
+                    // path; without one, item deletion is a TypeError.
+                    if try_get_dunder(obj, "__delitem__").is_some() {
+                        let method_name = MbValue::from_ptr(MbObject::new_str(
+                            "__delitem__".to_string(),
+                        ));
+                        let args = MbValue::from_ptr(MbObject::new_list(vec![key]));
+                        let _ = mb_call_method(obj, method_name, args);
+                    } else if let super::rc::ObjData::Instance { ref class_name, .. } =
+                        (*ptr).data
+                    {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "'{class_name}' object doesn't support item deletion"
+                            ))),
+                        );
                     }
                 }
             }
