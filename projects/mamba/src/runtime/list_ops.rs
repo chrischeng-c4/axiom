@@ -251,6 +251,29 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                     return MbValue::from_ptr(MbObject::new_list(items));
                 }
                 ObjData::Dict(ref lock) => {
+                    // ET.Element dict-stubs iterate over their children, not
+                    // their internal keys.
+                    let element_children = {
+                        let guard = lock.read().unwrap();
+                        let is_element = guard.get("__class__")
+                            .and_then(|v| v.as_ptr())
+                            .map(|p| matches!(&(*p).data, ObjData::Str(s) if s == "Element"))
+                            .unwrap_or(false);
+                        if is_element {
+                            guard.get("_children").copied()
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(kids) = element_children {
+                        if let Some(kp) = kids.as_ptr() {
+                            if let ObjData::List(ref kl) = (*kp).data {
+                                return MbValue::from_ptr(MbObject::new_list(
+                                    kl.read().unwrap().to_vec(),
+                                ));
+                            }
+                        }
+                    }
                     // Iterating a dict yields its keys.
                     let keys: Vec<MbValue> = lock.read().unwrap().keys()
                         .map(|k| super::dict_ops::dict_key_to_mbvalue(k))

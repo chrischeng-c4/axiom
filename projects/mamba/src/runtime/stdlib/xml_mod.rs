@@ -41,7 +41,41 @@ macro_rules! disp_binary {
     };
 }
 
-disp_binary!(d_element, mb_xml_element);
+/// Element(tag, attrib={}, **extra) — the trailing kwargs dict may carry
+/// `attrib=` (a real attribute mapping) plus extra attribute kwargs.
+unsafe extern "C" fn d_element(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let tag = a.first().copied().unwrap_or_else(MbValue::none);
+    let mut attrib = MbValue::none();
+    let mut extras: Vec<(MbValue, MbValue)> = Vec::new();
+    for v in a.iter().skip(1) {
+        let is_dict = v.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+            .unwrap_or(false);
+        if !is_dict {
+            continue;
+        }
+        // A kwargs dict carrying `attrib=` unwraps; other keys are extra attrs.
+        if let Some(inner) = kwarg_get(*v, "attrib") {
+            attrib = inner;
+            for pair in super::super::builtins::extract_items(
+                super::super::dict_ops::mb_dict_items(*v)) {
+                let kv = super::super::builtins::extract_items(pair);
+                if kv.len() == 2 && extract_str(kv[0]).as_deref() != Some("attrib") {
+                    extras.push((kv[0], kv[1]));
+                }
+            }
+        } else if attrib.is_none() {
+            attrib = *v;
+        }
+    }
+    let elem = mb_xml_element(tag, attrib);
+    for (k, v) in extras {
+        if let Some(ad) = dict_get_key(elem, "attrib") {
+            super::super::dict_ops::mb_dict_setitem(ad, k, v);
+        }
+    }
+    elem
+}
 disp_unary!(d_parse, mb_xml_parse);
 disp_unary!(d_fromstring, mb_xml_fromstring);
 disp_unary!(d_xml, mb_xml_xml);
@@ -50,7 +84,29 @@ disp_unary!(d_comment, mb_xml_comment);
 disp_binary!(d_processing_instruction, mb_xml_processing_instruction);
 disp_unary!(d_fromstringlist, mb_xml_fromstringlist);
 disp_unary!(d_tostringlist, mb_xml_tostringlist);
-disp_unary!(d_indent, mb_xml_indent);
+unsafe extern "C" fn d_indent(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    // level= arrives in the trailing kwargs dict (or positional index 2).
+    let mut level: i64 = 0;
+    if let Some(last) = a.last() {
+        if let Some(v) = kwarg_get(*last, "level").and_then(|v| v.as_int()) {
+            level = v;
+        }
+    }
+    if let Some(v) = a.get(2).and_then(|v| v.as_int()) {
+        level = v;
+    }
+    if level < 0 {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "Initial indentation level must be >= 0, got {level}"
+            ))),
+        );
+        return MbValue::none();
+    }
+    mb_xml_indent(a.first().copied().unwrap_or_else(MbValue::none))
+}
 disp_binary!(d_register_namespace, mb_xml_register_namespace);
 
 /// SubElement(parent, tag, attrib?, **extra) — the trailing kwargs dict (when
@@ -266,6 +322,12 @@ pub fn register() {
     // the value). C14NWriterTarget keeps a plain Instance shell — only
     // `hasattr` presence is probed. ElementTree / QName / TreeBuilder are
     // func dispatchers above so their `*_is_callable` fixtures pass.
+    // issubclass(ET.ParseError, SyntaxError) and `except ET.ParseError`
+    // resolve through the class registry.
+    super::super::class::mb_class_register(
+        "SyntaxError", vec!["Exception".to_string()], HashMap::new());
+    super::super::class::mb_class_register(
+        "ParseError", vec!["SyntaxError".to_string()], HashMap::new());
     let parse_error = MbObject::new_instance("type".to_string());
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*parse_error).data {
@@ -707,16 +769,80 @@ fn element_to_string(elem: MbValue, depth: usize, short_empty: bool) -> String {
 /// entities plus decimal/hex character references. Does NOT handle:
 /// namespaces (treats `{uri}name` as opaque), DTD entity definitions.
 pub fn mb_xml_fromstring(val: MbValue) -> MbValue {
-    let s = extract_str(val).unwrap_or_default();
+    // Accept str or bytes input.
+    let s = extract_str(val).or_else(|| {
+        val.as_ptr().and_then(|p| unsafe {
+            match &(*p).data {
+                ObjData::Bytes(b) => Some(String::from_utf8_lossy(b).to_string()),
+                ObjData::ByteArray(lock) =>
+                    Some(String::from_utf8_lossy(&lock.read().unwrap()).to_string()),
+                _ => None,
+            }
+        })
+    }).unwrap_or_default();
     let bytes = s.as_bytes();
     let mut i = 0;
     skip_prolog(bytes, &mut i);
-    parse_element(bytes, &mut i).unwrap_or_else(|| {
-        mb_xml_element(
-            MbValue::from_ptr(MbObject::new_str("root".to_string())),
-            MbValue::none(),
-        )
-    })
+    // Undefined entity references are a ParseError (the 5 standard names and
+    // character refs are fine).
+    if let Some(bad) = find_undefined_entity(&s) {
+        return raise_parse_error(&format!("undefined entity {bad}: line 1, column 0"));
+    }
+    match parse_element(bytes, &mut i) {
+        Some(elem) => elem,
+        None => raise_parse_error(if s.trim().is_empty() {
+            "no element found: line 1, column 0"
+        } else {
+            "not well-formed (invalid token): line 1, column 0"
+        }),
+    }
+}
+
+/// First `&name;` reference that is not a standard entity or char ref.
+fn find_undefined_entity(s: &str) -> Option<String> {
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        let after = &rest[i + 1..];
+        let end = after.find(';')?;
+        let name = &after[..end];
+        if !matches!(name, "lt" | "gt" | "amp" | "quot" | "apos") && !name.starts_with('#') {
+            return Some(format!("&{name};"));
+        }
+        rest = &after[end + 1..];
+    }
+    None
+}
+
+/// CPython ElementPath rejections: absolute paths on elements and 0-based
+/// position predicates are SyntaxErrors.
+fn validate_xpath(path: &str) -> Option<MbValue> {
+    if path.starts_with('/') {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "cannot use absolute path on element".to_string(),
+            )),
+        );
+        return Some(MbValue::none());
+    }
+    if path.contains("[0]") {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "indices in path predicates are 1-based, not zero-based".to_string(),
+            )),
+        );
+        return Some(MbValue::none());
+    }
+    None
+}
+
+fn raise_parse_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ParseError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
 }
 
 fn skip_prolog(bytes: &[u8], i: &mut usize) {
@@ -836,10 +962,18 @@ fn parse_element(bytes: &[u8], i: &mut usize) -> Option<MbValue> {
     loop {
         if *i + 1 >= bytes.len() { return None; }
         if bytes[*i] == b'<' && bytes[*i + 1] == b'/' {
-            // End tag
+            // End tag — its name must match the open tag (well-formedness).
             *i += 2;
+            let close_start = *i;
             while *i < bytes.len() && bytes[*i] != b'>' {
                 *i += 1;
+            }
+            let close_name = std::str::from_utf8(&bytes[close_start..*i])
+                .ok()?
+                .trim()
+                .to_string();
+            if close_name != tag {
+                return None;
             }
             *i += 1;
             break;
@@ -940,10 +1074,16 @@ fn decode_entities(s: &str) -> String {
 pub fn mb_xml_parse(source: MbValue) -> MbValue {
     match source_content(source) {
         Some(text) => mb_xml_fromstring(MbValue::from_ptr(MbObject::new_str(text))),
-        None => mb_xml_element(
-            MbValue::from_ptr(MbObject::new_str("root".to_string())),
-            MbValue::none(),
-        ),
+        None => {
+            let path = extract_str(source).unwrap_or_default();
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("FileNotFoundError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "[Errno 2] No such file or directory: {path:?}"
+                ))),
+            );
+            MbValue::none()
+        }
     }
 }
 
@@ -1194,11 +1334,17 @@ pub fn dispatch_xml_stub_method(
                 .or(Some(MbValue::from_ptr(MbObject::new_list(vec![])))),
             "find" => {
                 let path = extract_str(arg(0)).unwrap_or_default();
+                if let Some(err) = validate_xpath(&path) {
+                    return Some(err);
+                }
                 let found = path_matches(receiver, &path).into_iter().next();
                 Some(found.map(retained).unwrap_or_else(MbValue::none))
             }
             "findall" | "iterfind" => {
                 let path = extract_str(arg(0)).unwrap_or_default();
+                if let Some(err) = validate_xpath(&path) {
+                    return Some(err);
+                }
                 let found = path_matches(receiver, &path);
                 Some(MbValue::from_ptr(MbObject::new_list_borrowed(found)))
             }
@@ -1239,7 +1385,23 @@ pub fn dispatch_xml_stub_method(
             }
             "extend" => {
                 if let Some(children) = dict_get_key(receiver, "_children") {
-                    for item in seq_items(arg(0)) {
+                    let src = arg(0);
+                    let mut items = seq_items(src);
+                    // Iterator handles (e.g. extend(iter([...]))) drain lazily.
+                    if items.is_empty() && src.as_int().is_some() {
+                        let handle = super::super::iter::mb_iter(src);
+                        if !handle.is_none() {
+                            loop {
+                                if super::super::iter::mb_has_next(handle).as_bool()
+                                    != Some(true)
+                                {
+                                    break;
+                                }
+                                items.push(super::super::iter::mb_next(handle));
+                            }
+                        }
+                    }
+                    for item in items {
                         super::super::list_ops::mb_list_append(children, item);
                     }
                 }
@@ -1292,7 +1454,11 @@ pub fn dispatch_xml_stub_method(
                 }
                 Some(MbValue::none())
             }
-            "makeelement" => Some(mb_xml_element(arg(0), arg(1))),
+            "makeelement" => {
+                // The attrib mapping is COPIED (no aliasing with the caller).
+                let copied = super::super::dict_ops::mb_dict_from_pairs(arg(1));
+                Some(mb_xml_element(arg(0), copied))
+            }
             "getroot" => Some(retained(receiver)),
             "write" => {
                 let payload = element_to_string(receiver, 0, true);
@@ -1447,8 +1613,15 @@ mod tests {
         // Wave-4 Ship #4: fromstring is a real parser, not a stub.
         assert_eq!(tag_of(mb_xml_fromstring(s("<doc/>"))).as_deref(), Some("doc"));
         assert_eq!(tag_of(mb_xml_fromstring(s("<root><a/></root>"))).as_deref(), Some("root"));
-        // parse() on a missing path still falls back to the stub root element.
-        assert_eq!(tag_of(mb_xml_parse(s("/nonexistent-xml-path"))).as_deref(), Some("root"));
+        // parse() on a missing path raises FileNotFoundError (CPython).
+        super::super::super::exception::mb_clear_exception();
+        let r = mb_xml_parse(s("/nonexistent-xml-path"));
+        assert!(r.is_none());
+        assert_eq!(
+            super::super::super::exception::mb_has_exception().as_bool(),
+            Some(true)
+        );
+        super::super::super::exception::mb_clear_exception();
     }
 
     #[test]

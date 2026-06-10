@@ -5118,7 +5118,89 @@ pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
 
 /// Runtime-dispatched __getitem__: list, tuple, dict, str, or dunder.
 /// Also handles slice tuples: if key is a Tuple(start, stop, step), dispatches to slice.
+/// The `_children` list of an ET.Element dict-stub, if `obj` is one.
+fn element_children_list(obj: MbValue) -> Option<MbValue> {
+    let ptr = obj.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            let guard = lock.read().unwrap();
+            let is_element = guard.get("__class__")
+                .and_then(|v| v.as_ptr())
+                .map(|p| matches!(&(*p).data, ObjData::Str(s) if s == "Element"))
+                .unwrap_or(false);
+            if is_element {
+                return guard.get("_children").copied();
+            }
+        }
+    }
+    None
+}
+
 pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
+    // ET.Element subscript indexes the children list (IndexError when out of
+    // range; slices with step return child lists), not the stub dict's keys.
+    if let Some(kids) = element_children_list(obj) {
+        // Slice key arrives as a (start, stop, step) tuple.
+        let slice_parts: Option<(Option<i64>, Option<i64>, Option<i64>)> =
+            key.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Tuple(ref t) = (*p).data {
+                    if t.len() == 3 {
+                        return Some((t[0].as_int(), t[1].as_int(), t[2].as_int()));
+                    }
+                }
+                None
+            });
+        if let Some(kp) = kids.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref kl) = (*kp).data {
+                    let items = kl.read().unwrap().to_vec();
+                    let n = items.len() as i64;
+                    if let Some((start, stop, step)) = slice_parts {
+                        let step = step.unwrap_or(1);
+                        let mut out = Vec::new();
+                        if step > 0 {
+                            let mut i = start.map(|v| if v < 0 { v + n } else { v })
+                                .unwrap_or(0).clamp(0, n);
+                            let stop = stop.map(|v| if v < 0 { v + n } else { v })
+                                .unwrap_or(n).clamp(0, n);
+                            while i < stop {
+                                out.push(items[i as usize]);
+                                i += step;
+                            }
+                        } else if step < 0 {
+                            let mut i = start.map(|v| if v < 0 { v + n } else { v })
+                                .unwrap_or(n - 1).clamp(-1, n - 1);
+                            let stop = stop.map(|v| if v < 0 { v + n } else { v })
+                                .unwrap_or(-1).clamp(-1, n - 1);
+                            while i > stop {
+                                out.push(items[i as usize]);
+                                i += step;
+                            }
+                        }
+                        for v in &out {
+                            super::rc::retain_if_ptr(*v);
+                        }
+                        return MbValue::from_ptr(MbObject::new_list(out));
+                    }
+                    if let Some(idx) = key.as_int() {
+                        let i = if idx < 0 { idx + n } else { idx };
+                        if i < 0 || i >= n {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "child index out of range".to_string(),
+                                )),
+                            );
+                            return MbValue::none();
+                        }
+                        let v = items[i as usize];
+                        super::rc::retain_if_ptr(v);
+                        return v;
+                    }
+                }
+            }
+        }
+    }
     // re.Match subscript is group lookup: m[0] / m['name'].
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
@@ -5431,6 +5513,65 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
 
 /// Runtime-dispatched __setitem__: list or dict.
 pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
+    // ET.Element subscript assignment: e[i] = child / e[a:b] = [children].
+    if let Some(kids) = element_children_list(obj) {
+        let slice_parts: Option<(Option<i64>, Option<i64>)> =
+            key.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Tuple(ref t) = (*p).data {
+                    if t.len() == 3 && t[2].as_int().unwrap_or(1) == 1 {
+                        return Some((t[0].as_int(), t[1].as_int()));
+                    }
+                }
+                None
+            });
+        if let Some(kp) = kids.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref kl) = (*kp).data {
+                    if let Some((start, stop)) = slice_parts {
+                        let new_items: Vec<MbValue> = value.as_ptr()
+                            .and_then(|vp| match &(*vp).data {
+                                ObjData::List(l) => Some(l.read().unwrap().to_vec()),
+                                ObjData::Tuple(t) => Some(t.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        let mut items = kl.write().unwrap();
+                        let n = items.len() as i64;
+                        let a = start.map(|v| if v < 0 { v + n } else { v })
+                            .unwrap_or(0).clamp(0, n) as usize;
+                        let b = stop.map(|v| if v < 0 { v + n } else { v })
+                            .unwrap_or(n).clamp(0, n) as usize;
+                        for v in &new_items {
+                            super::rc::retain_if_ptr(*v);
+                        }
+                        let removed: Vec<MbValue> =
+                            items.drain(a..b.max(a)).collect();
+                        for (off, v) in new_items.into_iter().enumerate() {
+                            items.insert(a + off, v);
+                        }
+                        drop(items);
+                        for r in removed {
+                            super::rc::release_if_ptr(r);
+                        }
+                        return MbValue::none();
+                    }
+                    if let Some(idx) = key.as_int() {
+                        let mut items = kl.write().unwrap();
+                        let n = items.len() as i64;
+                        let i = if idx < 0 { idx + n } else { idx };
+                        if i >= 0 && i < n {
+                            super::rc::retain_if_ptr(value);
+                            let old = items[i as usize];
+                            items[i as usize] = value;
+                            drop(items);
+                            super::rc::release_if_ptr(old);
+                            return MbValue::none();
+                        }
+                    }
+                }
+            }
+        }
+    }
     if obj.is_int() {
         let id = obj.as_int().unwrap_or(0) as u64;
         if super::stdlib::array_mod::is_array_handle(id) {
@@ -5491,6 +5632,49 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
 
 /// del obj[key] — dispatch to list_delitem or dict_delitem at runtime.
 pub fn mb_obj_delitem(obj: MbValue, key: MbValue) {
+    // ET.Element subscript deletion: del e[i] / del e[a:b].
+    if let Some(kids) = element_children_list(obj) {
+        let slice_parts: Option<(Option<i64>, Option<i64>)> =
+            key.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Tuple(ref t) = (*p).data {
+                    if t.len() == 3 && t[2].as_int().unwrap_or(1) == 1 {
+                        return Some((t[0].as_int(), t[1].as_int()));
+                    }
+                }
+                None
+            });
+        if let Some(kp) = kids.as_ptr() {
+            unsafe {
+                if let ObjData::List(ref kl) = (*kp).data {
+                    if let Some((start, stop)) = slice_parts {
+                        let mut items = kl.write().unwrap();
+                        let n = items.len() as i64;
+                        let a = start.map(|v| if v < 0 { v + n } else { v })
+                            .unwrap_or(0).clamp(0, n) as usize;
+                        let b = stop.map(|v| if v < 0 { v + n } else { v })
+                            .unwrap_or(n).clamp(0, n) as usize;
+                        let removed: Vec<MbValue> = items.drain(a..b.max(a)).collect();
+                        drop(items);
+                        for r in removed {
+                            super::rc::release_if_ptr(r);
+                        }
+                        return;
+                    }
+                    if let Some(idx) = key.as_int() {
+                        let mut items = kl.write().unwrap();
+                        let n = items.len() as i64;
+                        let i = if idx < 0 { idx + n } else { idx };
+                        if i >= 0 && i < n {
+                            let removed = items.remove(i as usize);
+                            drop(items);
+                            super::rc::release_if_ptr(removed);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
     if obj.is_int() {
         let id = obj.as_int().unwrap_or(0) as u64;
         if super::stdlib::array_mod::is_array_handle(id) {
