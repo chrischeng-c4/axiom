@@ -298,6 +298,10 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_class_set_abstractmethods", class::mb_class_set_abstractmethods as fn(super::MbValue, super::MbValue), [I64, I64], Void),
         rt_sym!("mb_class_set_class_attr", class::mb_class_set_class_attr as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
         rt_sym!("mb_class_set_kwargs", class::mb_class_set_kwargs as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
+        // PEP 557: ordered dataclass field facts, recorded right before the
+        // @dataclass decorator call (see hir_to_mir ClassDefPlaceholder).
+        rt_sym!("mb_dataclass_record_field", super::stdlib::dataclasses_mod::mb_dataclass_record_field as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64, I64], Void),
+        rt_sym!("mb_dataclass_record_field_nodefault", super::stdlib::dataclasses_mod::mb_dataclass_record_field_nodefault as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
         rt_sym!("mb_raise_instance", class::mb_raise_instance as fn(super::MbValue), [I64], Void),
         rt_sym!("mb_raise_instance_with_context", class::mb_raise_instance_with_context as fn(super::MbValue, super::MbValue), [I64, I64], Void),
         rt_sym!("mb_raise_instance_from", class::mb_raise_instance_from as fn(super::MbValue, super::MbValue), [I64, I64], Void),

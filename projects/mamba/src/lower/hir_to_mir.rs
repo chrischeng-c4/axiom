@@ -522,6 +522,13 @@ pub fn lower_hir_to_mir_with_symbols(
                 class_name.clone(), cls.name, cls.decorators.clone(),
             ));
         }
+        // PEP 557: stash ordered dataclass field facts; emitted at the
+        // ClassDefPlaceholder right before the decorator call runs.
+        if !cls.dataclass_fields.is_empty() {
+            lowerer.pending_dataclass_fields.push((
+                class_name.clone(), cls.name, cls.dataclass_fields.clone(),
+            ));
+        }
 
         // abc: collect names of methods decorated with `@abc.abstractmethod`
         // (or `abstractproperty`/`abstractclassmethod`/`abstractstaticmethod`),
@@ -682,6 +689,12 @@ struct HirToMir<'a> {
     /// Class decorator applications: (class_name, class_symbol_id, decorators).
     /// Applied after class registration + class attrs in lower_top_level.
     pending_class_decorators: Vec<(String, SymbolId, Vec<HirExpr>)>,
+    /// PEP 557: per-class ordered dataclass field facts
+    /// (class_name, class_symbol_id, [(field_name, annotation_repr, default)]).
+    /// Emitted at the ClassDefPlaceholder position immediately BEFORE the
+    /// decorator call so `@dataclass` sees recorded facts (and default exprs
+    /// can reference imports bound above the class, mirroring #1686).
+    pending_dataclass_fields: Vec<(String, SymbolId, Vec<(String, String, Option<HirExpr>)>)>,
     /// SymbolId.0 set for user-defined classes (need instance-based raise).
     user_class_syms: HashSet<u32>,
     /// Current class context for method lowering (class_name, self_sym).
@@ -812,6 +825,7 @@ impl<'a> HirToMir<'a> {
             pending_class_attrs: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
+            pending_dataclass_fields: Vec::new(),
             user_class_syms: HashSet::new(),
             current_class_ctx: None,
             is_gen_body: false,
@@ -866,6 +880,7 @@ impl<'a> HirToMir<'a> {
             pending_class_attrs: Vec::new(),
             pending_abstract_methods: Vec::new(),
             pending_class_decorators: Vec::new(),
+            pending_dataclass_fields: Vec::new(),
             user_class_syms: HashSet::new(),
             current_class_ctx: None,
             is_gen_body: false,
@@ -3155,6 +3170,43 @@ impl<'a> HirToMir<'a> {
                 self.lower_match(subject, cases);
             }
             HirStmt::ClassDefPlaceholder { name: cls_sym, .. } => {
+                // PEP 557: record ordered dataclass field facts BEFORE the
+                // decorator call so the runtime `@dataclass` synthesizer sees
+                // them. Emitted here (not at registration time) so default
+                // expressions like `field(default_factory=list)` resolve
+                // imports bound above the class (#1686 motivation).
+                let dc_fields = {
+                    let pos = self.pending_dataclass_fields.iter()
+                        .position(|(_, s, _)| s == cls_sym);
+                    pos.map(|i| self.pending_dataclass_fields.remove(i))
+                };
+                if let Some((class_name, _, facts)) = dc_fields {
+                    for (field_name, ann, default) in &facts {
+                        let cls_vreg = self.emit_str_const(&class_name);
+                        let fname_vreg = self.emit_str_const(field_name);
+                        let ann_vreg = self.emit_str_const(ann);
+                        match default {
+                            Some(def_expr) => {
+                                let raw = self.lower_expr(def_expr);
+                                let boxed = self.box_operand(raw, def_expr.ty());
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: None,
+                                    name: "mb_dataclass_record_field".to_string(),
+                                    args: vec![cls_vreg, fname_vreg, ann_vreg, boxed],
+                                    ty: self.tcx.none(),
+                                });
+                            }
+                            None => {
+                                self.current_stmts.push(MirInst::CallExtern {
+                                    dest: None,
+                                    name: "mb_dataclass_record_field_nodefault".to_string(),
+                                    args: vec![cls_vreg, fname_vreg, ann_vreg],
+                                    ty: self.tcx.none(),
+                                });
+                            }
+                        }
+                    }
+                }
                 // Apply class decorator(s) at the textual position so:
                 //  - decorator expressions can see imports declared above (#1686), and
                 //  - subsequent statements observe the post-decorator class (#1690).

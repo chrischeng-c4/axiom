@@ -3135,6 +3135,30 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                     let sigb = gb.get("sigma").and_then(|v| v.as_float().or_else(|| v.as_int().map(|i| i as f64)));
                     return mua == mub && siga == sigb;
                 }
+                // PEP 557: dataclass __eq__ — same-class instances compare by
+                // their compare=True field values (declaration order). Only
+                // fires when the class is a registered dataclass with eq=True
+                // and defines no user __eq__; cross-class comparisons fall
+                // through to the dunder path (→ False), matching CPython's
+                // NotImplemented behavior.
+                (ObjData::Instance { class_name: ca, fields: fa },
+                 ObjData::Instance { class_name: cb, fields: fb })
+                    if ca == cb
+                        && super::class::lookup_method(ca, "__eq__").is_none()
+                        && super::stdlib::dataclasses_mod::dc_eq_field_names(ca).is_some() =>
+                {
+                    let names = super::stdlib::dataclasses_mod::dc_eq_field_names(ca)
+                        .unwrap_or_default();
+                    let (av, bv): (Vec<MbValue>, Vec<MbValue>) = {
+                        let ga = fa.read().unwrap();
+                        let gb = fb.read().unwrap();
+                        (
+                            names.iter().map(|n| ga.get(n).copied().unwrap_or_else(MbValue::none)).collect(),
+                            names.iter().map(|n| gb.get(n).copied().unwrap_or_else(MbValue::none)).collect(),
+                        )
+                    };
+                    return av.iter().zip(bv.iter()).all(|(x, y)| mb_values_eq(*x, *y));
+                }
                 // Instance: dispatch __eq__ dunder with NotImplemented fallback
                 (ObjData::Instance { class_name, .. }, _) => {
                     let eq_method = super::class::lookup_method(class_name, "__eq__");
@@ -3314,6 +3338,27 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
                         return false;
                     }
                     a_items.iter().all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
+                }
+                // PEP 557: @dataclass(order=True) — same-class instances order
+                // lexicographically by their compare=True field tuples. Only
+                // fires when no user __lt__ is defined.
+                (ObjData::Instance { class_name: ca, fields: fa },
+                 ObjData::Instance { class_name: cb, fields: fb })
+                    if ca == cb
+                        && super::class::lookup_method(ca, "__lt__").is_none()
+                        && super::stdlib::dataclasses_mod::dc_order_field_names(ca).is_some() =>
+                {
+                    let names = super::stdlib::dataclasses_mod::dc_order_field_names(ca)
+                        .unwrap_or_default();
+                    let (av, bv): (Vec<MbValue>, Vec<MbValue>) = {
+                        let ga = fa.read().unwrap();
+                        let gb = fb.read().unwrap();
+                        (
+                            names.iter().map(|n| ga.get(n).copied().unwrap_or_else(MbValue::none)).collect(),
+                            names.iter().map(|n| gb.get(n).copied().unwrap_or_else(MbValue::none)).collect(),
+                        )
+                    };
+                    seq_lt(&av, &bv)
                 }
                 // Instance: dispatch __lt__ dunder
                 (ObjData::Instance { class_name, .. }, _) => {
@@ -3779,6 +3824,12 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                             }
                         }
                     }
+                    // PEP 557: dataclass synthesized __repr__ —
+                    // `Cls(f1=v1, f2=v2)` over repr=True fields in declaration
+                    // order. Only reached when no user __repr__ is defined.
+                    if let Some(s) = super::stdlib::dataclasses_mod::dc_repr_string(val, class_name) {
+                        return MbValue::from_ptr(MbObject::new_str(s));
+                    }
                     if class_name == "SimpleNamespace" {
                         // CPython renders `namespace(field=repr(value), ...)`,
                         // with a direct self-reference shown as `namespace(...)`.
@@ -3967,6 +4018,28 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                         let result = super::class::mb_call_method1(hash_method, val);
                         if let Some(i) = result.as_int() {
                             return MbValue::from_int(if i == -1 { -2 } else { i });
+                        }
+                    }
+                    // PEP 557: dataclass synthesized __hash__ (frozen, or
+                    // unsafe_hash=True) — hash of the compare=True field
+                    // tuple, exactly matching `hash((f1, f2, ...))`.
+                    if let Some(names) =
+                        super::stdlib::dataclasses_mod::dc_hash_field_names(class_name)
+                    {
+                        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                            let values: Vec<MbValue> = {
+                                let guard = fields.read().unwrap();
+                                names.iter()
+                                    .map(|n| guard.get(n).copied().unwrap_or_else(MbValue::none))
+                                    .collect()
+                            };
+                            // new_tuple_borrowed retains the elements; the
+                            // release below frees the temp tuple and returns
+                            // those refs.
+                            let tup = MbValue::from_ptr(MbObject::new_tuple_borrowed(values));
+                            let h = super::tuple_ops::mb_tuple_hash(tup);
+                            super::rc::release_if_ptr(tup);
+                            return h;
                         }
                     }
                     MbValue::from_int((ptr as u64 >> 17) as i64)

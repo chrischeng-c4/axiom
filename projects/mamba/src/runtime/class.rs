@@ -601,6 +601,25 @@ pub fn class_is_registered(name: &str) -> bool {
     CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(name))
 }
 
+/// Ordered MRO (ancestors only, most-derived first) of a registered class.
+/// Empty when the class is unknown. Used by the dataclasses runtime to merge
+/// inherited dataclass fields (PEP 557).
+pub(crate) fn class_mro_list(name: &str) -> Vec<String> {
+    CLASS_REGISTRY.with(|reg| {
+        reg.borrow().get(name).map(|c| c.mro.clone()).unwrap_or_default()
+    })
+}
+
+/// Does the class's OWN method table (not the MRO) define `method`? Used by
+/// the dataclass instance-creation path: a dataclass that defines its own
+/// `__init__` keeps it; otherwise the synthesized init wins over any base
+/// `__init__` found later in the MRO.
+pub(crate) fn class_defines_own_method(name: &str, method: &str) -> bool {
+    CLASS_REGISTRY.with(|reg| {
+        reg.borrow().get(name).is_some_and(|c| c.methods.contains_key(method))
+    })
+}
+
 pub fn mb_class_register(
     name: &str,
     bases: Vec<String>,
@@ -1377,6 +1396,19 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
     let instance = MbValue::from_ptr(
         MbObject::new_instance_with_capacity(name.clone(), field_capacity)
     );
+
+    // PEP 557: dataclasses without their own `__init__` route through the
+    // synthesized init (positional binding in declaration order, defaults,
+    // default_factory, InitVar forwarding, __post_init__). Checked before the
+    // cached-init path so a base class's `__init__` in the MRO does not
+    // shadow the synthesized one; a dataclass that defines its own __init__
+    // keeps it.
+    if super::stdlib::dataclasses_mod::dc_has_synth_init(&name)
+        && !class_defines_own_method(&name, "__init__")
+    {
+        super::stdlib::dataclasses_mod::dc_run_synth_init(&name, instance, args_list);
+        return instance;
+    }
 
     // Fast path: use cached __init__ from MbClass to avoid MRO walk.
     // cached_init was already fetched in the single registry access above.
@@ -3326,6 +3358,20 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                 // Slow path: need the attr name as an owned String.
                 let attr_name = extract_str(attr).unwrap_or_default();
 
+                // PEP 557: frozen dataclasses reject all attribute assignment.
+                // (The synthesized __init__ writes the instance dict directly,
+                // so initialization is unaffected.) Frozen classes are never
+                // added to SIMPLE_CLASS_CACHE, so every assignment lands here.
+                if super::stdlib::dataclasses_mod::is_frozen_dataclass(class_name) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("FrozenInstanceError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "cannot assign to field '{attr_name}'"
+                        ))),
+                    );
+                    return;
+                }
+
                 // Descriptor protocol: data descriptor __set__ takes priority over instance __dict__.
                 // lookup_method uses METHOD_CACHE, so this is cheap after the first call for
                 // each (class, attr) pair — just a hash + HashMap lookup.
@@ -3378,7 +3424,11 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                             false
                         }
                     });
-                    if !has_descriptors {
+                    // Frozen dataclasses must keep taking the slow path so the
+                    // FrozenInstanceError check above always runs.
+                    if !has_descriptors
+                        && !super::stdlib::dataclasses_mod::is_frozen_dataclass(class_name)
+                    {
                         SIMPLE_CLASS_CACHE.with(|c| {
                             c.borrow_mut().insert(class_name.clone());
                         });

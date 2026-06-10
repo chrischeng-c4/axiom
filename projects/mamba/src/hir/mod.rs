@@ -70,6 +70,15 @@ pub struct HirClass {
     /// Keyword arguments from class statement, excluding `metaclass=` (R10).
     /// e.g., `class Child(Base, registry="users")` → vec![("registry", expr)]
     pub class_kwargs: Vec<(String, HirExpr)>,
+    /// Ordered dataclass field facts collected from the class body when the
+    /// class carries a `@dataclass`-shaped decorator (PEP 557):
+    /// `(field_name, annotation_repr, default_expr)`. `default_expr` is None
+    /// for bare annotations (`x: int`); annotated assignments (`y: int = 0`,
+    /// `z: list = field(default_factory=list)`) carry the lowered value
+    /// expression. Emitted at the ClassDefPlaceholder position (before the
+    /// decorator call) so the runtime `@dataclass` synthesizer sees ordered
+    /// field facts with class-definition-time default values.
+    pub dataclass_fields: Vec<(String, String, Option<HirExpr>)>,
 }
 
 /// Import statement.
@@ -544,6 +553,7 @@ mod tests {
             class_attr_assigns: vec![],
             slots: None,
             class_kwargs: vec![],
+            dataclass_fields: vec![],
         };
         assert_eq!(cls.base, Some(SymbolId(1)));
         assert_eq!(cls.fields.len(), 1);

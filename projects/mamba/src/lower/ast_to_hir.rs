@@ -1081,6 +1081,54 @@ fn type_expr_repr(ty: &ast::TypeExpr) -> String {
     }
 }
 
+/// Leaf name of a (possibly dotted) annotation type name: `typing.ClassVar`
+/// → `ClassVar`, `ClassVar` → `ClassVar`.
+fn type_name_leaf(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
+
+/// Does the annotation name this PEP 557 marker (`ClassVar`, `InitVar`,
+/// `KW_ONLY`), bare or generic (`ClassVar[str]`), plain or dotted
+/// (`typing.ClassVar[int]`, `dataclasses.KW_ONLY`)?
+fn type_expr_is_marker(ty: &ast::TypeExpr, marker: &str) -> bool {
+    match ty {
+        ast::TypeExpr::Named(n) => type_name_leaf(n) == marker,
+        ast::TypeExpr::Generic { name, .. } => type_name_leaf(name) == marker,
+        _ => false,
+    }
+}
+
+/// Does this decorator expression denote `@dataclass` (PEP 557)? Matches the
+/// bare name (`@dataclass`), attribute form (`@dataclasses.dataclass`), and
+/// the called forms of both (`@dataclass(frozen=True)`).
+fn decorator_is_dataclass(expr: &ast::Expr) -> bool {
+    match expr {
+        ast::Expr::Ident(n) => n == "dataclass",
+        ast::Expr::Attr { attr, .. } => attr == "dataclass",
+        ast::Expr::Call { func, .. } => decorator_is_dataclass(&func.node),
+        _ => false,
+    }
+}
+
+/// Is this class-body default value a `field(...)` / `dataclasses.field(...)`
+/// call carrying `init=False`? Such fields are excluded from the synthesized
+/// `__init__` parameter list (PEP 557).
+fn field_call_has_init_false(expr: &ast::Expr) -> bool {
+    let ast::Expr::Call { func, args } = expr else { return false };
+    let is_field = match &func.node {
+        ast::Expr::Ident(n) => n == "field",
+        ast::Expr::Attr { attr, .. } => attr == "field",
+        _ => false,
+    };
+    if !is_field {
+        return false;
+    }
+    args.iter().any(|a| {
+        matches!(a, ast::CallArg::Keyword { name, value }
+            if name == "init" && matches!(value.node, ast::Expr::BoolLit(false)))
+    })
+}
+
 pub fn lower_module(
     module: &ast::Module,
     checker: &TypeChecker,
@@ -1166,6 +1214,17 @@ struct AstLowerer<'a> {
     /// Function parameter info for kwargs resolution at call sites.
     /// Maps function name → vec of (param_name, default_expr_option).
     func_param_info: HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
+    /// PEP 557: per-dataclass synthesized __init__ parameter shapes, kept
+    /// separately from `func_param_info` so subclasses can prepend their base
+    /// dataclass's params (Derived(Counted) accepts Counted's fields first).
+    dataclass_init_params: HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
+    /// PEP 557: local names bound to `dataclasses.dataclass` / `field` /
+    /// `replace` by a `from dataclasses import ...` statement. Bare-Ident
+    /// calls to these names pack keyword args into a trailing dict (the
+    /// native-dispatcher kwargs convention) instead of flattening them to
+    /// positionals — `dataclass(frozen=True)` / `field(default_factory=list)`
+    /// / `replace(obj, a=99)` all need their keyword names at runtime.
+    dataclasses_kwarg_idents: std::collections::HashSet<String>,
     /// Function-name SymbolId → declared return type. Populated *before* a
     /// function's body is lowered so recursive calls can read the callee's
     /// return type (without this, the call falls through to `any_ty`,
@@ -1220,6 +1279,8 @@ impl<'a> AstLowerer<'a> {
             outer_scope_names: HashMap::new(),
             cell_override_syms: std::collections::HashSet::new(),
             func_param_info: HashMap::new(),
+            dataclass_init_params: HashMap::new(),
+            dataclasses_kwarg_idents: std::collections::HashSet::new(),
             func_return_tys: HashMap::new(),
             func_param_float_hint: HashMap::new(),
             func_ret_float_hint: HashMap::new(),
@@ -1540,7 +1601,70 @@ impl<'a> AstLowerer<'a> {
                     }
                 }
                 ast::Stmt::ClassDef { name, body, bases, decorators, keyword_args, .. } => {
-                    if let Some(mut cls) = self.lower_class(name, body, stmt.span) {
+                    let dataclass_decorated = decorators.iter()
+                        .any(|d| decorator_is_dataclass(&d.node));
+                    if let Some(mut cls) = self.lower_class(name, body, stmt.span, dataclass_decorated) {
+                        // PEP 557: register the synthesized __init__'s parameter
+                        // shape (declaration order; base dataclass fields first;
+                        // ClassVar / KW_ONLY sentinel / field(init=False) fields
+                        // excluded; InitVars included) so call sites resolve
+                        // keyword args and fill defaults exactly like calls to
+                        // classes with an explicit __init__. Skipped when the
+                        // class defines its own __init__ (pre-scan already
+                        // registered it).
+                        if dataclass_decorated && !self.func_param_info.contains_key(name) {
+                            let mut params: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
+                                Vec::new();
+                            // Inherited dataclass init params first (single
+                            // inheritance chains; names overridden by the
+                            // subclass are replaced in place below).
+                            for b in bases {
+                                let base_name = match &b.node {
+                                    ast::Expr::Ident(n) => Some(n.clone()),
+                                    ast::Expr::Attr { attr, .. } => Some(attr.clone()),
+                                    _ => None,
+                                };
+                                if let Some(bn) = base_name {
+                                    if let Some(binfo) = self.dataclass_init_params.get(&bn) {
+                                        params.extend(binfo.iter().cloned());
+                                    }
+                                }
+                            }
+                            for s in body.iter() {
+                                let (fname, ann, default) = match &s.node {
+                                    ast::Stmt::VarDecl { name: fname, ty, value } => {
+                                        (fname, ty, Some(value.clone()))
+                                    }
+                                    ast::Stmt::BareAnnotation { name: fname, ty } => {
+                                        (fname, ty, None)
+                                    }
+                                    _ => continue,
+                                };
+                                if fname == "__match_args__" || fname == "__slots__" {
+                                    continue;
+                                }
+                                // ClassVar fields and the KW_ONLY sentinel are
+                                // not __init__ params; field(init=False) opts out.
+                                if type_expr_is_marker(&ann.node, "ClassVar")
+                                    || type_expr_is_marker(&ann.node, "KW_ONLY")
+                                {
+                                    continue;
+                                }
+                                if default.as_ref()
+                                    .is_some_and(|v| field_call_has_init_false(&v.node))
+                                {
+                                    continue;
+                                }
+                                let entry = (fname.clone(), default, ast::ParamKind::Regular);
+                                if let Some(pos) = params.iter().position(|(n, _, _)| n == fname) {
+                                    params[pos] = entry;
+                                } else {
+                                    params.push(entry);
+                                }
+                            }
+                            self.dataclass_init_params.insert(name.clone(), params.clone());
+                            self.func_param_info.insert(name.clone(), params);
+                        }
                         // Resolve all base classes for multiple inheritance (P1 OOP)
                         cls.all_bases = bases.iter().filter_map(|b| {
                             if let ast::Expr::Ident(name) = &b.node {
@@ -1917,8 +2041,13 @@ impl<'a> AstLowerer<'a> {
         name: &str,
         body: &[Spanned<ast::Stmt>],
         span: Span,
+        dataclass_decorated: bool,
     ) -> Option<HirClass> {
         let name_id = self.resolve_name(name, span)?;
+        // PEP 557: ordered (field_name, annotation_repr, default_expr) facts
+        // from class-body annotations, recorded only for @dataclass classes so
+        // the runtime synthesizer can build __init__/__repr__/__eq__/etc.
+        let mut dataclass_fields: Vec<(String, String, Option<HirExpr>)> = Vec::new();
         let mut fields = Vec::new();
         let mut methods = Vec::new();
         // Track all method name→SymbolId mappings so they survive scope clears
@@ -1962,7 +2091,7 @@ impl<'a> AstLowerer<'a> {
 
         for stmt in body {
             match &stmt.node {
-                ast::Stmt::VarDecl { name: fname, value, .. } => {
+                ast::Stmt::VarDecl { name: fname, ty, value } => {
                     // `__match_args__: tuple = ("x", "y")` — typed var declaration (#827)
                     if fname == "__match_args__" {
                         if let ast::Expr::TupleLit(elems) = &value.node {
@@ -1973,8 +2102,31 @@ impl<'a> AstLowerer<'a> {
                                 .collect();
                             explicit_match_args = Some(names);
                         }
-                    } else if let Some(fid) = self.resolve_name(fname, stmt.span) {
-                        fields.push((fid, self.checker.tcx.int()));
+                    } else {
+                        if let Some(fid) = self.resolve_name(fname, stmt.span) {
+                            fields.push((fid, self.checker.tcx.int()));
+                        }
+                        // PEP 557: annotated assignment with default value.
+                        if dataclass_decorated && fname != "__slots__" {
+                            let default = self.lower_expr(value);
+                            dataclass_fields.push((
+                                fname.clone(),
+                                type_expr_repr(&ty.node),
+                                default,
+                            ));
+                        }
+                    }
+                }
+                // PEP 557: bare annotation `x: float` — an ordered dataclass
+                // field fact with no default. (Outside dataclasses these are
+                // type-info-only and remain dropped.)
+                ast::Stmt::BareAnnotation { name: fname, ty } => {
+                    if dataclass_decorated {
+                        dataclass_fields.push((
+                            fname.clone(),
+                            type_expr_repr(&ty.node),
+                            None,
+                        ));
                     }
                 }
                 ast::Stmt::FnDef { name: mname, params, return_ty, body: mbody, decorators, .. }
@@ -2079,7 +2231,11 @@ impl<'a> AstLowerer<'a> {
         // If neither is found, fall back to field declaration order (matches type checker
         // behavior so that `case Point(1, 2):` works at runtime too — #827).
         let resolved_match_args = explicit_match_args.or(init_derived_match_args).or_else(|| {
-            if fields.is_empty() {
+            // PEP 557: for @dataclass classes the runtime decorator computes
+            // `__match_args__` from the processed field list (kw_only and
+            // ClassVar excluded) — suppress the raw field-order fallback so
+            // the decorator's or_insert is not pre-empted by a wrong tuple.
+            if dataclass_decorated || fields.is_empty() {
                 None
             } else {
                 let field_names: Vec<String> = body.iter().filter_map(|s| {
@@ -2093,7 +2249,7 @@ impl<'a> AstLowerer<'a> {
             }
         });
 
-        Some(HirClass { name: name_id, base: None, all_bases: Vec::new(), fields, methods, span, decorators: Vec::new(), explicit_match_args: resolved_match_args, metaclass: None, class_attr_assigns, slots, class_kwargs: Vec::new() })
+        Some(HirClass { name: name_id, base: None, all_bases: Vec::new(), fields, methods, span, decorators: Vec::new(), explicit_match_args: resolved_match_args, metaclass: None, class_attr_assigns, slots, class_kwargs: Vec::new(), dataclass_fields })
     }
 
     fn lower_stmt(&mut self, stmt: &Spanned<ast::Stmt>) -> Option<HirStmt> {
@@ -2353,6 +2509,19 @@ impl<'a> AstLowerer<'a> {
                 Some(HirStmt::Raise { value: v, from: f, span: stmt.span })
             }
             ast::Stmt::Import { module, names, module_alias } => {
+                // PEP 557: track local bindings of dataclasses.{dataclass,
+                // field, replace} so bare-Ident calls to them keep keyword
+                // names (trailing-kwargs-dict convention) at the call site.
+                if module.len() == 1 && module[0] == "dataclasses" {
+                    if let Some(names) = names {
+                        for (orig, alias) in names {
+                            if matches!(orig.as_str(), "dataclass" | "field" | "replace") {
+                                self.dataclasses_kwarg_idents
+                                    .insert(alias.clone().unwrap_or_else(|| orig.clone()));
+                            }
+                        }
+                    }
+                }
                 Some(HirStmt::Import {
                     import: HirImport {
                         module: module.clone(),
@@ -3363,7 +3532,7 @@ impl<'a> AstLowerer<'a> {
                             | "patch" | "mock_open" | "call"
                             // urllib.parse functions with behavioral kwargs
                             | "parse_qs" | "parse_qsl" | "urlencode"
-                    )
+                    ) || self.dataclasses_kwarg_idents.contains(name.as_str())
                 );
                 let pack_trailing_kwargs = (is_method_call && has_any_kwargs)
                     || (is_native_kwargs_ident && (has_any_kwargs || has_dstar));

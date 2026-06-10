@@ -430,7 +430,15 @@ pub fn mb_tuple_hash(tup: MbValue) -> MbValue {
             let mut hasher = DefaultHasher::new();
             items.len().hash(&mut hasher);
             for item in items {
-                item.to_bits().hash(&mut hasher);
+                // Content-based element hash via mb_hash, which agrees with
+                // mb_eq: equal values hash equal (ints by value, strings by
+                // content, nested tuples recursively). Hashing raw to_bits()
+                // here made `hash((1, "a")) != hash((1, "a"))` for two "a"
+                // allocations — breaking CPython tuple-hash semantics and
+                // value-equal tuple dict keys. Kinds without a value hash
+                // (lists, plain instances) keep mb_hash's pointer-derived
+                // identity hash, preserving the old behavior for them.
+                super::builtins::mb_hash(*item).as_int().unwrap_or(0).hash(&mut hasher);
             }
             // Truncate to 47 bits to fit MbValue's 48-bit signed int range
             let h = (hasher.finish() >> 17) as i64;

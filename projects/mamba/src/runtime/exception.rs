@@ -495,6 +495,9 @@ fn is_builtin_exception_name(name: &str) -> bool {
         // calendar.IllegalMonthError / IllegalWeekdayError (calendar_mod.rs
         // raises these). Both derive from ValueError (CPython 3.12).
         | "IllegalMonthError" | "IllegalWeekdayError"
+        // dataclasses.FrozenInstanceError (class.rs mb_setattr raises this on
+        // frozen-dataclass assignment). Derives from AttributeError.
+        | "FrozenInstanceError"
     )
 }
 
@@ -556,6 +559,8 @@ pub fn is_subclass_of(child: &str, parent: &str) -> bool {
             "NotImplementedError" | "RecursionError"),
         "NameError" => matches!(child, "UnboundLocalError"),
         "ImportError" => matches!(child, "ModuleNotFoundError"),
+        // dataclasses.FrozenInstanceError subclasses AttributeError (PEP 557).
+        "AttributeError" => matches!(child, "FrozenInstanceError"),
         // PEP 654: ExceptionGroup derives from both BaseExceptionGroup and Exception.
         "BaseExceptionGroup" => matches!(child, "ExceptionGroup"),
         "SyntaxError" => matches!(child,
