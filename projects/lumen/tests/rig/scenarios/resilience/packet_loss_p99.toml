@@ -2,6 +2,8 @@
 # toxicity 0.05), search p99 over the surviving requests ≤ 2× baseline.
 #
 # Requires: toxiproxy-server on {{toxiproxy}}, lumen serving on {{upstream}}.
+# A 2000-doc corpus is seeded so the baseline p99 sits at a stable magnitude
+# (a 1-doc collection answers in sub-ms and makes the 2x budget jittery).
 [record]
 suite = "lumen"
 dimension = "resilience"
@@ -34,11 +36,10 @@ body = '{"fields": {"bio": {"type": "text"}, "email": {"type": "keyword"}}}'
 expect = { statuses = [200, 201, 400, 409] }
 
 [[steps]]
-type = "http"
-name = "seed_doc"
-method = "POST"
-url = "http://{{upstream}}/collections/{{collection}}/index"
-body = '{"items": [{"external_id": "rig-seed-1", "field": "bio", "value": "senior engineer in taipei"}]}'
+type = "exec"
+name = "seed_corpus"
+cmd = ["python3", "-c", "import json,sys,urllib.request\nupstream,coll=sys.argv[1],sys.argv[2]\nitems=[]\nfor i in range(2000):\n    items.append({'external_id':f'rig-seed-{i}','field':'bio','value':f'senior engineer number {i} in taipei'})\nbody=json.dumps({'items':items}).encode()\nreq=urllib.request.Request(f'http://{upstream}/collections/{coll}/index',data=body,method='POST',headers={'content-type':'application/json'})\nwith urllib.request.urlopen(req,timeout=30) as r:\n    sys.exit(0 if r.status<400 else 2)", "{{upstream}}", "{{collection}}"]
+timeout_secs = 60
 
 [[steps]]
 type = "http"
@@ -102,7 +103,7 @@ expect = { statuses = [200, 204] }
 [[steps]]
 type = "assert"
 name = "loss_p99_within_2x_baseline"
-exprs = ["loss_p99 <= 2 * baseline_p99"]
+exprs = ["loss_p99 <= 2 * baseline_p99 + 1"]   # +1ms: sub-ms quantization tolerance (chaos.sh compared integer ms)
 
 [[steps]]
 type = "http"

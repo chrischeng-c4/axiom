@@ -1,12 +1,15 @@
 //! The deliberately-tiny assertion expression evaluator.
 //!
 //! Grammar: `IDENT OP RHS` where `OP ∈ {== != < <= > >=}` and
-//! `RHS = NUMBER ['*' IDENT] | IDENT`. Examples:
-//!   `recovery_p99 <= 2 * baseline_p99`
+//! `RHS = (NUMBER ['*' IDENT] | IDENT) ['+' NUMBER]`. Examples:
+//!   `recovery_p99 <= 2 * baseline_p99 + 1`
 //!   `partition_fail > 0`
 //!   `errors == 0`
-//! Resist growing this into an expression language until a real scenario
-//! forces it.
+//! The trailing `+ NUMBER` is an absolute tolerance term — earned by the
+//! chaos ports, where a pure relative budget over sub-millisecond local
+//! baselines is quantization jitter (chaos.sh compared INTEGER
+//! milliseconds; `+ 1` expresses the same sub-ms indifference). Resist
+//! growing this further until a real scenario forces it.
 
 use crate::scenario::interp::VarStore;
 
@@ -24,6 +27,17 @@ pub fn evaluate(expr: &str, vars: &VarStore) -> Result<bool, String> {
         .get_f64(lhs_name)
         .ok_or_else(|| format!("unknown or non-numeric var `{lhs_name}` in `{expr}`"))?;
 
+    // Optional trailing `+ NUMBER` tolerance term.
+    let (rhs_tokens, tolerance) = match rhs_tokens {
+        [head @ .., "+", tol] => {
+            let t: f64 = tol
+                .parse()
+                .map_err(|_| format!("non-numeric tolerance `{tol}` in `{expr}`"))?;
+            (head, t)
+        }
+        _ => (rhs_tokens, 0.0),
+    };
+
     let rhs = match rhs_tokens {
         [single] => operand(single, vars, expr)?,
         [scalar, "*", ident] => {
@@ -35,8 +49,12 @@ pub fn evaluate(expr: &str, vars: &VarStore) -> Result<bool, String> {
                 .ok_or_else(|| format!("unknown or non-numeric var `{ident}` in `{expr}`"))?;
             s * v
         }
-        _ => return Err(format!("unsupported RHS in `{expr}` (want: NUMBER ['*' IDENT] | IDENT)")),
-    };
+        _ => {
+            return Err(format!(
+                "unsupported RHS in `{expr}` (want: (NUMBER ['*' IDENT] | IDENT) ['+' NUMBER])"
+            ))
+        }
+    } + tolerance;
 
     match op {
         "==" => Ok(lhs == rhs),
@@ -95,5 +113,16 @@ mod tests {
         assert!(evaluate("just_one_token", &vars()).is_err());
         assert!(evaluate("a ~~ b", &vars()).is_err());
         assert!(evaluate("a <= 2 * b * c", &vars()).is_err());
+    }
+
+    #[test]
+    fn tolerance_term_extends_the_budget() {
+        // recovery 18.0 vs 1×10 + 1 = 11 → false; + 9 = 19 → true.
+        assert!(!evaluate("recovery_p99 <= 1 * baseline_p99 + 1", &vars()).unwrap());
+        assert!(evaluate("recovery_p99 <= 1 * baseline_p99 + 9", &vars()).unwrap());
+        // Plain operand + tolerance.
+        assert!(evaluate("recovery_p99 <= baseline_p99 + 8", &vars()).unwrap());
+        assert!(evaluate("errors == 0 + 0", &vars()).unwrap());
+        assert!(evaluate("errors <= baseline_p99 + abc", &vars()).is_err());
     }
 }

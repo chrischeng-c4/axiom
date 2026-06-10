@@ -40,18 +40,35 @@ rig run --dir tests/rig/scenarios [--vat] [--pins tests/rig/config/pins]
 
 | verb | status | behavior |
 |---|---|---|
-| `rig run [--scenario <f> \| --dir <d>] [--pins <d>] [--update-baselines] [--vat]` | v0 (in progress) | discover → lint → execute → gate → one JSON report |
-| `rig lint [--dir <d>]` | v0 (in progress) | record-contract check only, no execution |
+| `rig run [--scenario <f> \| --dir <d>] [--pins <d>] [--update-baselines] [--vat]` | v0 | discover → lint → execute → gate → one JSON report |
+| `rig lint [--dir <d>]` | v0 | record-contract check only, no execution |
 | `rig report` | v0 | re-project `.rig/last-report.json` (read-only) |
-| `rig spec` / `rig llm` | v1 | offline self-description / agent playbook |
+| `rig spec` / `rig llm` | v1 | offline self-description / agent playbook (stubs: exit 3) |
 
 ## Capability Index
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| scenario-engine | axiom#5 | in-progress | none | none | not-ready | record contract, step DSL, verdicts, report |
-| load-pins | axiom#5 | in-progress | none | none | not-ready | open-loop loadgen, floor/ratchet pins, JSON baseline store |
-| vat-wrapped-runs | axiom#5 | planned | none | none | not-ready | `--vat` JSONL checkpoint seam |
+| scenario-engine | axiom#5 | implemented | smoke | smoke | candidate | record contract + lint, step DSL (http/sample/assert/wait_until/measure_rss/exec/sleep), verdict bucketing, rig.report/1 |
+| load-pins | axiom#5 | implemented | smoke | smoke | candidate | open-loop loadgen (coordinated-omission honest), floor/ratchet pins, per-host JSON baseline store |
+| vat-wrapped-runs | axiom#5 | implemented | smoke | smoke | candidate | `--vat` shells `vat run`, parses JSONL checkpoints, lifts the inner report, removes the vat |
+
+Verified smoke (2026-06-10): lumen's resilience (partition/packet-loss via
+toxiproxy) + endurance (RSS plateau) + load (search p99 pin) scenarios run
+green locally and through `rig run --vat` with vat-managed services;
+`cargo test -p rig -p rig-cli` green.
+
+## Known limits (v0)
+
+- **Baselines are environment-scoped by convention, not enforcement.** The
+  per-host key is `os-arch` only, so a baseline recorded on the host gates
+  vat-wrapped runs too (the COW clone carries `.rig/` along). Record
+  baselines in the environment you gate in; persisting baselines from
+  inside a vat run back to the host is v1.
+- **Relative latency budgets on loopback are tight.** Sub-millisecond
+  baselines make `2x` budgets quantization-sensitive — scenarios use the
+  assert tolerance term (`+ 1`) and realistic corpus seeding to stay
+  stable; a loaded host can still legitimately trip them.
 
 ## Non-goals (v0)
 
