@@ -342,54 +342,33 @@ pub fn eliminate_unused_exports(code: &str) -> String {
     result
 }
 
-/// Remove `function _mN_name(...){...}` declarations whose name has no
-/// remaining references beyond the declaration itself. Returns None when
-/// nothing was removable.
+/// Remove `function`/`class` declarations and `var`/`const`/`let`
+/// declarations with side-effect-free initializers whose `_mN_`-prefixed
+/// name has no remaining references beyond the declaration itself.
+/// Returns None when nothing was removable.
 fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
     use std::sync::OnceLock;
     static FUNC: OnceLock<Regex> = OnceLock::new();
+    static VAR: OnceLock<Regex> = OnceLock::new();
     let func = FUNC.get_or_init(|| {
-        Regex::new(r"function\s+(_m\d+_[a-zA-Z0-9_$]+)\s*\(").unwrap()
+        Regex::new(r"(function|class)\s+(_m\d+_[a-zA-Z0-9_$]+)\b").unwrap()
+    });
+    let var_decl = VAR.get_or_init(|| {
+        Regex::new(r"(?:var|const|let)\s+(_m\d+_[a-zA-Z0-9_$]+)\s*=\s*").unwrap()
     });
 
     let counts = count_all_prefixed_identifier_refs(code);
     let b = code.as_bytes();
     let mut removals: Vec<(usize, usize)> = Vec::new();
 
-    for cap in func.captures_iter(code) {
-        let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        if counts.get(name).copied().unwrap_or(0) > 1 {
-            continue;
-        }
-        let whole = cap.get(0)?;
-        let start = whole.start();
-        // Declaration position only: the previous significant byte must end
-        // a statement. `= function`, `(function`, `return function` etc.
-        // are expressions and stay.
+    let statement_position = |start: usize| -> bool {
         let mut p = start;
         while p > 0 && matches!(b[p - 1], b' ' | b'\t' | b'\r' | b'\n') {
             p -= 1;
         }
-        if p > 0 && !matches!(b[p - 1], b';' | b'{' | b'}') {
-            continue;
-        }
-        // Walk: params (...) then body {...}, honoring nested literals.
-        let params_open = whole.end() - 1;
-        let Some(params_close) = skip_code_balanced(b, params_open, b'(', b')') else {
-            continue;
-        };
-        let mut q = params_close;
-        while q < b.len() && matches!(b[q], b' ' | b'\t' | b'\r' | b'\n') {
-            q += 1;
-        }
-        if q >= b.len() || b[q] != b'{' {
-            continue;
-        }
-        let Some(body_close) = skip_code_balanced(b, q, b'{', b'}') else {
-            continue;
-        };
-        let mut end = body_close;
-        // Optional trailing `;` and one newline.
+        p == 0 || matches!(b[p - 1], b';' | b'{' | b'}')
+    };
+    let consume_tail = |mut end: usize| -> usize {
         if end < b.len() && b[end] == b';' {
             end += 1;
         }
@@ -399,7 +378,89 @@ fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
         if end < b.len() && b[end] == b'\n' {
             end += 1;
         }
-        removals.push((start, end));
+        end
+    };
+
+    for cap in func.captures_iter(code) {
+        let name = cap.get(2).map(|m| m.as_str()).unwrap_or("");
+        if counts.get(name).copied().unwrap_or(0) > 1 {
+            continue;
+        }
+        let whole = cap.get(0)?;
+        let start = whole.start();
+        // Declaration position only: `= function`, `(class`, `return
+        // function` etc. are expressions and stay.
+        if !statement_position(start) {
+            continue;
+        }
+        let kind = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let mut q = whole.end();
+        if kind == "function" {
+            // params (...) then body {...}
+            while q < b.len() && b[q] != b'(' {
+                if !matches!(b[q], b' ' | b'\t' | b'\r' | b'\n') {
+                    break;
+                }
+                q += 1;
+            }
+            if q >= b.len() || b[q] != b'(' {
+                continue;
+            }
+            let Some(params_close) = skip_code_balanced(b, q, b'(', b')') else {
+                continue;
+            };
+            q = params_close;
+        } else {
+            // class: optional `extends <expr>` before the body brace.
+            while q < b.len() && b[q] != b'{' {
+                match b[q] {
+                    b'(' => {
+                        let Some(next) = skip_code_balanced(b, q, b'(', b')') else {
+                            break;
+                        };
+                        q = next;
+                    }
+                    b';' | b'}' => break,
+                    _ => q += 1,
+                }
+            }
+        }
+        while q < b.len() && matches!(b[q], b' ' | b'\t' | b'\r' | b'\n') {
+            q += 1;
+        }
+        if q >= b.len() || b[q] != b'{' {
+            continue;
+        }
+        let Some(body_close) = skip_code_balanced(b, q, b'{', b'}') else {
+            continue;
+        };
+        removals.push((start, consume_tail(body_close)));
+    }
+
+    // var/const/let with a provably side-effect-free initializer: function
+    // expressions, arrow functions, and object/array/string/number
+    // literals. Anything else (calls, member chains with potential
+    // getters) is left alone.
+    for cap in var_decl.captures_iter(code) {
+        let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        if counts.get(name).copied().unwrap_or(0) > 1 {
+            continue;
+        }
+        let whole = cap.get(0)?;
+        let start = whole.start();
+        if !statement_position(start) {
+            continue;
+        }
+        let init_start = whole.end();
+        let Some(init_end) = side_effect_free_initializer_end(b, init_start) else {
+            continue;
+        };
+        // The initializer must terminate the statement (`;`) — multi-
+        // declarator statements (`var a = ..., b = ...`) are skipped.
+        if init_end >= b.len() || b[init_end] != b';' {
+            continue;
+        }
+        removals.push((start, consume_tail(init_end)));
     }
 
     if removals.is_empty() {
@@ -418,6 +479,90 @@ fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
     }
     out.extend_from_slice(&b[pos..]);
     String::from_utf8(out).ok()
+}
+
+/// End offset of a side-effect-free initializer expression, or None.
+/// Accepted shapes: `function [name](params){body}`, `(params) => body`,
+/// `ident => body`, object/array literals, string/template/number/bool
+/// literals, and `class [name] {...}` expressions.
+fn side_effect_free_initializer_end(b: &[u8], mut i: usize) -> Option<usize> {
+    let len = b.len();
+    while i < len && matches!(b[i], b' ' | b'\t') {
+        i += 1;
+    }
+    if i >= len {
+        return None;
+    }
+    // function expression
+    if b[i..].starts_with(b"function") {
+        let mut q = i + 8;
+        while q < len && b[q] != b'(' {
+            if !matches!(b[q], b' ' | b'\t') && !is_id_cont_byte(b[q]) {
+                return None;
+            }
+            q += 1;
+        }
+        let params_close = skip_code_balanced(b, q, b'(', b')')?;
+        let mut r = params_close;
+        while r < len && matches!(b[r], b' ' | b'\t' | b'\r' | b'\n') {
+            r += 1;
+        }
+        if r >= len || b[r] != b'{' {
+            return None;
+        }
+        return skip_code_balanced(b, r, b'{', b'}');
+    }
+    // arrow with parenthesized params
+    if b[i] == b'(' {
+        let params_close = skip_code_balanced(b, i, b'(', b')')?;
+        let mut r = params_close;
+        while r < len && matches!(b[r], b' ' | b'\t') {
+            r += 1;
+        }
+        if !b[r..].starts_with(b"=>") {
+            return None;
+        }
+        r += 2;
+        while r < len && matches!(b[r], b' ' | b'\t') {
+            r += 1;
+        }
+        if r < len && b[r] == b'{' {
+            return skip_code_balanced(b, r, b'{', b'}');
+        }
+        return None; // expression-bodied arrows: end detection ambiguous
+    }
+    // object / array literal
+    if b[i] == b'{' {
+        return skip_code_balanced(b, i, b'{', b'}');
+    }
+    if b[i] == b'[' {
+        return skip_code_balanced(b, i, b'[', b']');
+    }
+    // string / template literal
+    if matches!(b[i], b'"' | b'\'') {
+        return Some(skip_quoted_literal(b, i));
+    }
+    if b[i] == b'`' {
+        let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+        return Some(next);
+    }
+    // number / boolean / null / undefined
+    if b[i].is_ascii_digit() {
+        let mut q = i;
+        while q < len && (b[q].is_ascii_alphanumeric() || matches!(b[q], b'.' | b'x' | b'e')) {
+            q += 1;
+        }
+        return Some(q);
+    }
+    for kw in [&b"true"[..], &b"false"[..], &b"null"[..], &b"undefined"[..]] {
+        if b[i..].starts_with(kw) {
+            let q = i + kw.len();
+            if q >= len || !is_id_cont_byte(b[q]) {
+                return Some(q);
+            }
+        }
+    }
+    None
 }
 
 /// Balanced-bracket skip that honors strings, templates, comments, and
@@ -2285,3 +2430,94 @@ const raw = `_m0_x`;"#;
     }
 }
 // CODEGEN-END
+
+/// Hoist repeated default-interop thunks into one cached var per module.
+///
+/// Every default import of module N lowers to `_r(N)["default"] || _r(N)`
+/// inline — 668 copies on the MUI corpus bundle (~16KB). Modules execute
+/// in dependency order in the flat bundle, so a single
+/// `var _di<N> = _r(N)["default"] || _r(N);` placed right after module
+/// N's block is initialized before any consumer runs. Runs pre-minify
+/// (module banners must still be present to locate the blocks).
+pub fn hoist_default_interop_thunks(code: &str) -> String {
+    use std::sync::OnceLock;
+    static THUNK: OnceLock<Regex> = OnceLock::new();
+    let thunk = THUNK.get_or_init(|| {
+        Regex::new(r#"_r\((\d+)\)\["default"\]\s*\|\|\s*_r\((\d+)\)"#).unwrap()
+    });
+
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for cap in thunk.captures_iter(code) {
+        let (Ok(a), Ok(b)) = (cap[1].parse::<usize>(), cap[2].parse::<usize>()) else {
+            continue;
+        };
+        if a == b {
+            *counts.entry(a).or_insert(0) += 1;
+        }
+    }
+    let hoistable: std::collections::HashSet<usize> = counts
+        .iter()
+        .filter(|(_, n)| **n >= 2)
+        .map(|(id, _)| *id)
+        .collect();
+    if hoistable.is_empty() {
+        return code.to_string();
+    }
+
+    // Insert after the module's whole section (just before the next
+    // banner / at EOF). Brace-matching the first block was wrong for
+    // retained-wrapper modules — `!function(...){body}(args);` got its
+    // call split off the function expression and the module never
+    // initialized (React booted with undefined internals).
+    let mut insert_at: HashMap<usize, usize> = HashMap::new();
+    for id in &hoistable {
+        let banner = format!("// Module {id}: ");
+        let Some(pos) = code.find(&banner) else { continue };
+        let section_end = code[pos..]
+            .find("\n// Module ")
+            .map(|rel| pos + rel)
+            .unwrap_or(code.len());
+        insert_at.insert(*id, section_end);
+    }
+
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for cap in thunk.captures_iter(code) {
+        let (Ok(a), Ok(bb)) = (cap[1].parse::<usize>(), cap[2].parse::<usize>()) else {
+            continue;
+        };
+        if a != bb || !insert_at.contains_key(&a) {
+            continue;
+        }
+        let whole = cap.get(0).unwrap();
+        // Occurrences before the cached var's init point keep the inline
+        // thunk (shouldn't happen in dependency order, but stay safe).
+        if whole.start() <= insert_at[&a] {
+            continue;
+        }
+        edits.push((whole.start(), whole.end(), format!("_di{a}")));
+    }
+    for (id, pos) in &insert_at {
+        edits.push((
+            *pos,
+            *pos,
+            format!("\nvar _di{id} = _r({id})[\"default\"] || _r({id});"),
+        ));
+    }
+    if edits.is_empty() {
+        return code.to_string();
+    }
+    edits.sort_by_key(|(start, end, _)| (*start, *end));
+
+    let mut out = String::with_capacity(code.len());
+    let mut posn = 0usize;
+    for (start, end, replacement) in edits {
+        if start < posn {
+            continue;
+        }
+        out.push_str(&code[posn..start]);
+        out.push_str(&replacement);
+        posn = end;
+    }
+    out.push_str(&code[posn..]);
+    out
+}

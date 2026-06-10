@@ -1128,8 +1128,10 @@ impl Bundler {
                 lap("r4_inline_constants");
                 let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
                 lap("r5_unused_exports");
-                let out = dce::eliminate_unread_es_module_markers(&after_r5);
+                let after_markers = dce::eliminate_unread_es_module_markers(&after_r5);
                 lap("es_module_markers");
+                let out = scope_hoist_opt::hoist_default_interop_thunks(&after_markers);
+                lap("interop_thunks");
                 out
             } else {
                 tracing::debug!("Using Phase 1 scope hoisting (no dynamic imports)");
