@@ -906,7 +906,13 @@ fn eval_condition(cond: &str) -> Option<bool> {
         }
     }
 
-    // Direct boolean: "false", "true"
+    // Direct boolean: "false", "true", and the minified `!0` / `!1`
+    // forms produced by fold_define_short_circuits.
+    match cond {
+        "!0" => return Some(true),
+        "!1" => return Some(false),
+        _ => {}
+    }
     parse_bool(cond)
 }
 

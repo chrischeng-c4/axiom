@@ -839,8 +839,16 @@ impl Bundler {
                         } else {
                             let after_define =
                                 define::replace_defines(&transform_result.code, &self.defines);
+                            // Fold define-produced literal comparisons and
+                            // their short-circuit consumers before the
+                            // syntax DCE: `"production"!=="production"&&x`
+                            // never folded (the condition pass needs the
+                            // whole condition to be one literal compare),
+                            // keeping multi-KB dev branches and their
+                            // dev-only imports alive through tree shaking.
+                            let after_fold = fold::fold_define_short_circuits(&after_define);
                             let after_dce =
-                                dce::eliminate_static_conditionals_syntax(&after_define);
+                                dce::eliminate_static_conditionals_syntax(&after_fold);
                             dce::eliminate_unused_side_effect_free_require_bindings(
                                 &after_dce,
                                 &side_effect_free_module_ids,
@@ -905,7 +913,8 @@ impl Bundler {
                     if replaced == source {
                         source
                     } else {
-                        dce::eliminate_static_conditionals_syntax(&replaced)
+                        let folded = fold::fold_define_short_circuits(&replaced);
+                        dce::eliminate_static_conditionals_syntax(&folded)
                     }
                 };
                 (m.path.clone(), source)

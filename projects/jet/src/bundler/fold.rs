@@ -24,6 +24,343 @@ pub fn fold_constants(source: &str) -> String {
     result
 }
 
+/// Fold define-produced literal string comparisons and the short-circuit
+/// expressions they feed, per module, before tree shaking.
+///
+/// After define replacement, library dev guards look like
+/// `"production" !== "production" && warnOnce(...)` — expression-level
+/// shapes the whole-condition DCE pass cannot touch. Fold the comparison
+/// to `!0`/`!1`, collapse `!1 && <chain>` / `!0 || <chain>` (short-circuit:
+/// the right side never evaluates), drop `!0 &&` / `!1 ||` wrappers, and
+/// sweep bare `!0;`/`!1;` statements. Anything that fails the conservative
+/// boundary checks is left alone, and the whole result is parse-guarded.
+pub fn fold_define_short_circuits(source: &str) -> String {
+    if !source.contains("===") && !source.contains("!==") {
+        return source.to_string();
+    }
+    let mut result = fold_literal_string_compares(source);
+    for _ in 0..8 {
+        let prev = result.clone();
+        result = collapse_known_short_circuits(&result);
+        if result == prev {
+            break;
+        }
+    }
+    result = sweep_bare_bool_statements(&result);
+    if result != source && !crate::bundler::dce::js_parses_without_errors(&result) {
+        return source.to_string();
+    }
+    result
+}
+
+/// `"<lit>" ===|!==|==|!= "<lit>"` → `!0` / `!1`, with conservative
+/// expression-boundary checks on both sides.
+fn fold_literal_string_compares(source: &str) -> String {
+    let b = source.as_bytes();
+    let len = b.len();
+    let mut out = Vec::with_capacity(len);
+    let mut i = 0usize;
+
+    while i < len {
+        if b[i] == b'`' {
+            i = push_string(b, i, &mut out);
+            continue;
+        }
+        if b[i] == b'/' && is_regex_ctx(out.last().copied().unwrap_or(0)) {
+            i = push_regex(b, i, &mut out);
+            continue;
+        }
+        if matches!(b[i], b'"' | b'\'') {
+            // Left boundary: previous significant byte must start an
+            // expression, never continue one.
+            let prev = out
+                .iter()
+                .rev()
+                .find(|c| !matches!(**c, b' ' | b'\t' | b'\r' | b'\n'))
+                .copied()
+                .unwrap_or(b'(');
+            let left_ok = matches!(
+                prev,
+                b'(' | b',' | b';' | b'{' | b'}' | b'!' | b'&' | b'|' | b'?' | b':' | b'=' | b'['
+            );
+            let lit1_end = skip_string(b, i);
+            if !left_ok || lit1_end <= i + 1 {
+                i = push_string(b, i, &mut out);
+                continue;
+            }
+            // Operator
+            let mut j = lit1_end;
+            while j < len && matches!(b[j], b' ' | b'\t') {
+                j += 1;
+            }
+            let (op_len, negated) = if b[j..].starts_with(b"===") {
+                (3, false)
+            } else if b[j..].starts_with(b"!==") {
+                (3, true)
+            } else if b[j..].starts_with(b"==") {
+                (2, false)
+            } else if b[j..].starts_with(b"!=") {
+                (2, true)
+            } else {
+                i = push_string(b, i, &mut out);
+                continue;
+            };
+            let mut k = j + op_len;
+            while k < len && matches!(b[k], b' ' | b'\t') {
+                k += 1;
+            }
+            if k >= len || !matches!(b[k], b'"' | b'\'') {
+                i = push_string(b, i, &mut out);
+                continue;
+            }
+            let lit2_end = skip_string(b, k);
+            // Right boundary: the comparison must end the expression atom.
+            let mut m = lit2_end;
+            while m < len && matches!(b[m], b' ' | b'\t') {
+                m += 1;
+            }
+            let right_ok = m >= len
+                || matches!(b[m], b'&' | b'|' | b')' | b';' | b',' | b'?' | b':' | b'}' | b']')
+                || b[m..].starts_with(b"==")
+                || b[m..].starts_with(b"!=");
+            if !right_ok {
+                i = push_string(b, i, &mut out);
+                continue;
+            }
+            let lhs = &source[i + 1..lit1_end - 1];
+            let rhs = &source[k + 1..lit2_end - 1];
+            let truth = (lhs == rhs) != negated;
+            out.extend_from_slice(if truth { b"!0" } else { b"!1" });
+            i = lit2_end;
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+/// One round of short-circuit collapsing over known boolean atoms.
+fn collapse_known_short_circuits(source: &str) -> String {
+    let b = source.as_bytes();
+    let len = b.len();
+    let mut out = Vec::with_capacity(len);
+    let mut i = 0usize;
+
+    while i < len {
+        match b[i] {
+            b'"' | b'\'' | b'`' => {
+                i = push_string(b, i, &mut out);
+                continue;
+            }
+            b'/' if is_regex_ctx(out.last().copied().unwrap_or(0)) => {
+                i = push_regex(b, i, &mut out);
+                continue;
+            }
+            b'!' if i + 1 < len && matches!(b[i + 1], b'0' | b'1') => {
+                // Boundary: `x!0` can't occur; still require the previous
+                // significant byte to not be an identifier char.
+                let prev = out
+                    .iter()
+                    .rev()
+                    .find(|c| !matches!(**c, b' ' | b'\t' | b'\r' | b'\n'))
+                    .copied()
+                    .unwrap_or(b'(');
+                if is_id(prev) {
+                    out.push(b[i]);
+                    i += 1;
+                    continue;
+                }
+                // JS minified booleans: `!0` is true, `!1` is false.
+                let truthy = b[i + 1] == b'0';
+                let mut j = i + 2;
+                while j < len && matches!(b[j], b' ' | b'\t') {
+                    j += 1;
+                }
+                let falsy = !truthy;
+                if falsy && b[j..].starts_with(b"&&") {
+                    // `!1 && <chain>` → `!1` (RHS never evaluates).
+                    if let Some(end) = scan_short_circuit_chain(b, j + 2, b"&&") {
+                        out.extend_from_slice(b"!1");
+                        i = end;
+                        continue;
+                    }
+                } else if truthy && b[j..].starts_with(b"||") {
+                    // `!0 || <chain>` → `!0`.
+                    if let Some(end) = scan_short_circuit_chain(b, j + 2, b"||") {
+                        out.extend_from_slice(b"!0");
+                        i = end;
+                        continue;
+                    }
+                } else if truthy && b[j..].starts_with(b"&&") {
+                    // `!0 && X` → `X`.
+                    i = j + 2;
+                    continue;
+                } else if falsy && b[j..].starts_with(b"||") {
+                    // `!1 || X` → `X`.
+                    i = j + 2;
+                    continue;
+                }
+                out.push(b[i]);
+                out.push(b[i + 1]);
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+/// Scan one operand chain after `!1&&` / `!0||`: a unary-prefixed primary
+/// with member/call/index/template postfixes, repeated across the SAME
+/// operator (short-circuit keeps eating). Returns the end offset, or None
+/// when the shape is unsupported (caller leaves the source untouched).
+fn scan_short_circuit_chain(b: &[u8], mut i: usize, op: &[u8]) -> Option<usize> {
+    let len = b.len();
+    loop {
+        // unary prefixes
+        loop {
+            while i < len && matches!(b[i], b' ' | b'\t') {
+                i += 1;
+            }
+            if i < len && matches!(b[i], b'!' | b'+' | b'-' | b'~') {
+                i += 1;
+            } else if i + 6 <= len && &b[i..i + 6] == b"typeof" {
+                i += 6;
+            } else if i + 4 <= len && &b[i..i + 4] == b"void" {
+                i += 4;
+            } else {
+                break;
+            }
+        }
+        if i >= len {
+            return None;
+        }
+        // primary
+        match b[i] {
+            b'(' => i = skip_balanced(b, i, b'(', b')')?,
+            b'[' => i = skip_balanced(b, i, b'[', b']')?,
+            b'"' | b'\'' | b'`' => i = skip_string(b, i),
+            c if is_id(c) || c.is_ascii_digit() => {
+                while i < len && is_id(b[i]) {
+                    i += 1;
+                }
+            }
+            _ => return None,
+        }
+        // postfixes
+        loop {
+            let save = i;
+            while i < len && matches!(b[i], b' ' | b'\t') {
+                i += 1;
+            }
+            if i < len && b[i] == b'.' && i + 1 < len && is_id(b[i + 1]) {
+                i += 1;
+                while i < len && is_id(b[i]) {
+                    i += 1;
+                }
+                continue;
+            }
+            if i < len && b[i] == b'(' {
+                i = skip_balanced(b, i, b'(', b')')?;
+                continue;
+            }
+            if i < len && b[i] == b'[' {
+                i = skip_balanced(b, i, b'[', b']')?;
+                continue;
+            }
+            if i < len && b[i] == b'`' {
+                i = skip_string(b, i);
+                continue;
+            }
+            i = save;
+            break;
+        }
+        // continue across the same operator only
+        let mut j = i;
+        while j < len && matches!(b[j], b' ' | b'\t') {
+            j += 1;
+        }
+        if j + 2 <= len && &b[j..j + 2] == op {
+            i = j + 2;
+            continue;
+        }
+        return Some(i);
+    }
+}
+
+/// Skip a balanced bracket pair, honoring strings/templates/regex inside.
+fn skip_balanced(b: &[u8], start: usize, open: u8, close: u8) -> Option<usize> {
+    debug_assert_eq!(b[start], open);
+    let mut depth = 0usize;
+    let mut i = start;
+    let mut prev = b'(';
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' | b'`' => {
+                i = skip_string(b, i);
+                prev = b'"';
+                continue;
+            }
+            b'/' if is_regex_ctx(prev) => {
+                let mut sink = Vec::new();
+                i = push_regex(b, i, &mut sink);
+                prev = b'/';
+                continue;
+            }
+            c if c == open => depth += 1,
+            c if c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            _ => {}
+        }
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Remove no-op `!0;` / `!1;` expression statements left by collapsing.
+fn sweep_bare_bool_statements(source: &str) -> String {
+    let b = source.as_bytes();
+    let len = b.len();
+    let mut out = Vec::with_capacity(len);
+    let mut i = 0usize;
+    while i < len {
+        if matches!(b[i], b'"' | b'\'' | b'`') {
+            i = push_string(b, i, &mut out);
+            continue;
+        }
+        if b[i] == b'!'
+            && i + 2 < len
+            && matches!(b[i + 1], b'0' | b'1')
+            && b[i + 2] == b';'
+        {
+            let prev = out
+                .iter()
+                .rev()
+                .find(|c| !matches!(**c, b' ' | b'\t' | b'\r' | b'\n'))
+                .copied()
+                .unwrap_or(b';');
+            if matches!(prev, b';' | b'{' | b'}') {
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
 /// R5: Remove statements after `return`/`throw` within the same block.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn eliminate_dead_after_return(source: &str) -> String {
@@ -591,6 +928,38 @@ mod tests {
     #[test]
     fn test_fold_string_concat() {
         assert_eq!(fold_constants(r#""hello "+"world""#), r#""hello world""#);
+    }
+
+    /// Short-circuit folding: define-produced dev guards collapse, code
+    /// with real conditions survives untouched.
+    #[test]
+    fn test_fold_define_short_circuits() {
+        // `"production" !== "production" && warn(...)` dies entirely.
+        let src = r#"function f(){"production"!=="production"&&console.warn("dev only");return 1;}"#;
+        let out = fold_define_short_circuits(src);
+        assert!(!out.contains("console.warn"), "dev guard must fold: {out}");
+        assert!(out.contains("return 1"), "live code stays: {out}");
+
+        // `cmp ===` truthy keeps the RHS.
+        let src2 = r#"var x="production"==="production"&&compute();"#;
+        let out2 = fold_define_short_circuits(src2);
+        assert!(out2.contains("var x=compute()"), "{out2}");
+
+        // Chains collapse across the same operator.
+        let src3 = r#"if(o){"production"!=="production"&&a(b,c).d&&e[f];}g();"#;
+        let out3 = fold_define_short_circuits(src3);
+        assert!(!out3.contains("a(b,c)"), "{out3}");
+        assert!(out3.contains("g()"), "{out3}");
+
+        // Non-literal comparisons survive.
+        let src4 = r#"if(mode!=="production"&&warn()){x();}"#;
+        assert_eq!(fold_define_short_circuits(src4), src4);
+
+        // Mixed-operator chains fold to their short-circuit value:
+        // ("a"==="b" && p) || q  ≡  !1 || q  ≡  q.
+        let src5 = r#"var ok="a"==="b"&&p||q;"#;
+        let out5 = fold_define_short_circuits(src5);
+        assert_eq!(out5, r#"var ok=q;"#, "{out5}");
     }
 
     /// Regression: regex literals whose character classes contain quotes
