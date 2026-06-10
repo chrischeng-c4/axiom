@@ -1990,18 +1990,23 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 {
                     code = compacted;
                 }
-                let squeezed = crate::bundler::minify::squeeze_residual_spaces(&code);
-                if squeezed.len() < code.len()
-                    && crate::bundler::dce::js_parses_without_errors(&squeezed)
-                {
-                    code = squeezed;
-                }
-                code = crate::bundler::dce::remove_redundant_empty_statements(&code);
-                let dotted = crate::bundler::minify::bracket_to_dot_properties(&code);
-                if dotted.len() < code.len()
-                    && crate::bundler::dce::js_parses_without_errors(&dotted)
-                {
-                    code = dotted;
+                // Extra polish (JET_EXTRA_MINIFY=1): residual-space squeeze,
+                // block-level empty-statement removal, bracket-to-dot
+                // properties. Worth ~0.3-2KB gzip per fixture but costs two
+                // extra full-bundle passes plus a tree-sitter guard parse —
+                // currently a net loss against the duration bar, so opt-in
+                // until the passes pay for themselves.
+                if std::env::var_os("JET_EXTRA_MINIFY").is_some() {
+                    let polished = crate::bundler::minify::squeeze_residual_spaces(&code);
+                    let polished =
+                        crate::bundler::dce::remove_redundant_empty_statements(&polished);
+                    let polished =
+                        crate::bundler::minify::bracket_to_dot_properties(&polished);
+                    if polished.len() < code.len()
+                        && crate::bundler::dce::js_parses_without_errors(&polished)
+                    {
+                        code = polished;
+                    }
                 }
                 dump_stage("5-squeeze", &code);
             }

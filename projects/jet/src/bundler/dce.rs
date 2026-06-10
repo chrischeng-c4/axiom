@@ -1643,12 +1643,7 @@ pub fn remove_redundant_empty_statements(source: &str) -> String {
         pos = end;
     }
     out.push_str(&source[pos..]);
-    if parse_js(&out)
-        .map(|t| t.root_node().has_error())
-        .unwrap_or(true)
-    {
-        return source.to_string();
-    }
+    // Callers run a combined parse guard over the whole polish pipeline.
     out
 }
 
