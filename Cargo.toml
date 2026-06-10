@@ -5,6 +5,8 @@ members = [
     "projects/mamba/mambalibs/pgkit/pg",
     "projects/meter",
     "projects/meter/meter-cli",
+    "projects/rig",
+    "projects/rig/rig-cli",
     "crates/cclab-core",
     "crates/cclab-kv",
     "projects/mamba/mambalibs/queuekit",
