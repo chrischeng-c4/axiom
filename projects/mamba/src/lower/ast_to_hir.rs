@@ -3338,9 +3338,60 @@ impl<'a> AstLowerer<'a> {
                 let is_method_call = matches!(func.node, ast::Expr::Attr { .. });
                 let has_any_kwargs = args.iter().any(|a|
                     matches!(a, ast::CallArg::Keyword { .. }));
-                let hir_args: Vec<HirExpr> = if is_method_call && has_any_kwargs {
+                let has_dstar = args.iter().any(|a|
+                    matches!(a, ast::CallArg::DoubleStarArg(_)));
+                // Bare-Ident calls to native/stdlib constructors use the SAME
+                // trailing-kwargs-dict convention as method calls, so
+                // `Counter(a=3)` / `deque(maxlen=2)` keep their keyword names
+                // instead of flattening to positionals. Scoped to a known
+                // native allowlist: user functions reached through dynamic
+                // dispatch (mb_call0/mb_call1_val/mb_call_spread) bind args
+                // positionally and would misread an appended dict — closing
+                // that gap needs runtime kwargs binding for JIT-compiled
+                // functions, tracked separately. (User functions/classes that
+                // ARE statically known were already handled by the
+                // func_param_info reorder path above and never reach here.)
+                let is_native_kwargs_ident = matches!(
+                    &func.node,
+                    ast::Expr::Ident(name) if matches!(
+                        name.as_str(),
+                        "Counter" | "OrderedDict" | "deque" | "defaultdict" | "dict"
+                    )
+                );
+                let pack_trailing_kwargs = (is_method_call && has_any_kwargs)
+                    || (is_native_kwargs_ident && (has_any_kwargs || has_dstar));
+                let hir_args: Vec<HirExpr> = if pack_trailing_kwargs {
                     let mut out: Vec<HirExpr> = Vec::new();
-                    let mut kw_entries: Vec<(HirExpr, HirExpr)> = Vec::new();
+                    // Trailing kwargs accumulator: runs of explicit keywords
+                    // become Dict literals; each `**mapping` splat is folded in
+                    // source order through mb_dict_merge (later wins), instead
+                    // of leaking into the positional slab where the dispatcher
+                    // would misbind it as a leading argument.
+                    let mut kw_acc: Option<HirExpr> = None;
+                    let mut pending: Vec<(HirExpr, HirExpr)> = Vec::new();
+                    fn merge_dicts(acc: HirExpr, next: HirExpr, any_ty: TypeId) -> HirExpr {
+                        HirExpr::Call {
+                            func: Box::new(HirExpr::StrLit(
+                                "mb_dict_merge".to_string(), any_ty,
+                            )),
+                            args: vec![acc, next],
+                            ty: any_ty,
+                        }
+                    }
+                    fn flush_pending(
+                        pending: &mut Vec<(HirExpr, HirExpr)>,
+                        kw_acc: &mut Option<HirExpr>,
+                        any_ty: TypeId,
+                    ) {
+                        if pending.is_empty() { return; }
+                        let chunk = HirExpr::Dict {
+                            entries: std::mem::take(pending), ty: any_ty,
+                        };
+                        *kw_acc = Some(match kw_acc.take() {
+                            None => chunk,
+                            Some(prev) => merge_dicts(prev, chunk, any_ty),
+                        });
+                    }
                     for a in args {
                         match a {
                             ast::CallArg::Positional(e) => {
@@ -3351,15 +3402,33 @@ impl<'a> AstLowerer<'a> {
                                     let key = HirExpr::StrLit(
                                         name.clone(), self.checker.tcx.str(),
                                     );
-                                    kw_entries.push((key, he));
+                                    pending.push((key, he));
                                 }
                             }
-                            ast::CallArg::StarArg(e) | ast::CallArg::DoubleStarArg(e) => {
+                            ast::CallArg::DoubleStarArg(e) => {
+                                if let Some(he) = self.lower_expr(e) {
+                                    flush_pending(&mut pending, &mut kw_acc, any_ty);
+                                    kw_acc = Some(match kw_acc.take() {
+                                        // Lone splat: pass the mapping through
+                                        // unchanged (same shape the fallback
+                                        // path produced for `dict(**m)`).
+                                        None => he,
+                                        Some(prev) => merge_dicts(prev, he, any_ty),
+                                    });
+                                }
+                            }
+                            // StarArg is unreachable here (the has_star branch
+                            // above returns early); keep the bare push as a
+                            // safety net.
+                            ast::CallArg::StarArg(e) => {
                                 if let Some(he) = self.lower_expr(e) { out.push(he); }
                             }
                         }
                     }
-                    out.push(HirExpr::Dict { entries: kw_entries, ty: any_ty });
+                    flush_pending(&mut pending, &mut kw_acc, any_ty);
+                    out.push(kw_acc.unwrap_or(HirExpr::Dict {
+                        entries: vec![], ty: any_ty,
+                    }));
                     out
                 } else {
                     args.iter().filter_map(|a| {

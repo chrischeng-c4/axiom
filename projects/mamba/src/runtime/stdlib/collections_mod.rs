@@ -63,10 +63,38 @@ unsafe extern "C" fn dispatch_counter_most_common(args_ptr: *const MbValue, narg
     )
 }
 
+/// Read a string-keyed entry out of a dict MbValue (kwargs-dict probing).
+fn dict_get_str_key(v: MbValue, key: &str) -> Option<MbValue> {
+    use crate::runtime::dict_ops::DictKey;
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Dict(ref lock) = (*ptr).data {
+            lock.read().unwrap().get(&DictKey::Str(key.to_string())).copied()
+        } else {
+            None
+        }
+    }
+}
+
 unsafe extern "C" fn dispatch_deque_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
+    // The lowerer packs keyword args (`deque(maxlen=3)`,
+    // `deque(xs, maxlen=3)`) into a trailing dict positional; recover
+    // `maxlen` from it by convention. A trailing dict without a "maxlen"
+    // key is left in place untouched.
+    let mut a = a;
+    let mut maxlen: Option<i64> = None;
+    if let Some(last) = a.last() {
+        if let Some(ml) = dict_get_str_key(*last, "maxlen") {
+            // `deque(maxlen=None)` carries the None MbValue → stays unbounded.
+            maxlen = ml.as_int();
+            a = &a[..a.len() - 1];
+        }
+    }
     let initial = a.get(0).copied().unwrap_or_else(MbValue::none);
-    let maxlen = a.get(1).and_then(|v| v.as_int());
+    if maxlen.is_none() {
+        maxlen = a.get(1).and_then(|v| v.as_int());
+    }
     // Collect initial data
     let mut data: Vec<MbValue> = Vec::new();
     if let Some(ptr) = initial.as_ptr() {
@@ -142,7 +170,27 @@ unsafe extern "C" fn dispatch_ordereddict_new(args_ptr: *const MbValue, nargs: u
 
 unsafe extern "C" fn dispatch_defaultdict_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
-    mb_defaultdict_new(a.get(0).copied().unwrap_or_else(MbValue::none))
+    let inst = mb_defaultdict_new(a.get(0).copied().unwrap_or_else(MbValue::none));
+    // `defaultdict(int, a=1)` — the lowerer packs kwargs into a trailing
+    // dict positional — and CPython's positional-mapping form
+    // `defaultdict(int, {'a': 1})` both seed the backing dict.
+    if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let data = fields.read().unwrap().get("_data").copied();
+                if let Some(data) = data {
+                    for extra in a.iter().skip(1) {
+                        if let Some(ep) = extra.as_ptr() {
+                            if matches!((*ep).data, ObjData::Dict(_)) {
+                                super::super::dict_ops::mb_dict_update(data, *extra);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    inst
 }
 
 unsafe extern "C" fn dispatch_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -318,6 +366,17 @@ pub fn mb_counter_new(iterable: MbValue) -> MbValue {
                 ObjData::Str(ref s) => {
                     for ch in s.chars() {
                         *counts.entry(DictKey::Str(ch.to_string())).or_insert(0) += 1;
+                    }
+                }
+                // Counter(mapping) — counts come straight from the mapping's
+                // values (CPython semantics, including zero and negative
+                // counts). This is also the path `Counter(a=3)` takes: the
+                // lowerer packs kwargs into a trailing dict positional.
+                ObjData::Dict(ref lock) => {
+                    for (k, v) in lock.read().unwrap().iter() {
+                        if let Some(i) = v.as_int() {
+                            counts.insert(k.clone(), i);
+                        }
                     }
                 }
                 _ => {}
