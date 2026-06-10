@@ -2040,7 +2040,14 @@ fn scope_and_physical_ancestor_ids(
     stack.push(scopes[sid].parent);
     stack.push(physical_parent_by_scope.get(sid).copied().flatten());
 
-    while let Some(Some(aid)) = stack.pop() {
+    // `while let Some(Some(aid))` would stop on the FIRST `None` popped
+    // (e.g. a scope with no physical parent), silently dropping the real
+    // parent still on the stack. Scopes then missed their ancestors'
+    // assigned short names and the generator reused them — two bindings
+    // in one live chain both became `g` (`var g=g(10)["jsx"]`), breaking
+    // every flattened React bundle at boot.
+    while let Some(entry) = stack.pop() {
+        let Some(aid) = entry else { continue };
         if aid >= scopes.len() || !seen.insert(aid) {
             continue;
         }
@@ -2972,6 +2979,63 @@ const RESERVED: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: the require helper (`function _r`) and a flattened
+    /// module local (`var _m0_jsx`) live in the same root scope; mangling
+    /// must never give them the same short name. The broken output was
+    /// `var g=g(10)["jsx"]` — a self-shadowing redeclaration that parses
+    /// but calls jsx() as require at runtime (react-bench boot failure).
+    #[test]
+    fn test_require_helper_and_module_local_never_collide() {
+        let src = r#"(function(){var _m0={exports:{}};var _m1={exports:{}};var _mods=[_m0,_m1];function _r(id){var m=_mods[id];return m?m.exports:{}}!function(module,exports,require){exports.jsx=function(t,c){return {t:t,c:c};};}(_m1,_m1.exports,_r);{var _m0e=_m0.exports;var _m0_jsx=_r(1)["jsx"];var _m0_jsxs=_r(1)["jsxs"];_m0_jsx("div",{children:_m0_jsxs("span",{})});}})();"#;
+        let out = mangle_variables_with_root(src);
+        // A `var X = X(...)` declaration is the collision signature: the
+        // initializer must never call the binding it declares.
+        for cap in out.split(';') {
+            let cap = cap.trim();
+            if let Some(rest) = cap.strip_prefix("var ") {
+                if let Some((name, init)) = rest.split_once('=') {
+                    let (name, init) = (name.trim(), init.trim());
+                    assert!(
+                        !init.starts_with(&format!("{name}(")),
+                        "mangled output redeclares `{name}` from its own initializer \
+                         (require-helper collision): {cap}\nfull: {out}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Env-gated scope-debug probe for real bundles:
+    /// JET_MANGLE_DEBUG_INPUT=<file> cargo test debug_real_bundle_mangle -- --nocapture
+    #[test]
+    fn debug_real_bundle_mangle() {
+        let Ok(p) = std::env::var("JET_MANGLE_DEBUG_INPUT") else {
+            return;
+        };
+        let src = std::fs::read_to_string(p).unwrap();
+        let tokens = tokenize(&src);
+        let si = build_scopes(&src, &tokens);
+        let probes = ["_r", "_m0_jsx", "_m0_jsxs", "_m0_React", "_m0e"];
+        for (sid, scope) in si.scopes.iter().enumerate() {
+            for n in probes {
+                if scope.decls.contains(n) {
+                    println!(
+                        "decl {n} in scope {sid} is_function={} parent={:?}",
+                        scope.is_function, scope.parent
+                    );
+                }
+            }
+        }
+        let renames = compute_renames(&src, &tokens, &si, true);
+        for (sid, m) in renames.iter().enumerate() {
+            for n in probes {
+                if let Some(s) = m.get(n) {
+                    println!("rename scope={sid} {n} -> {s}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_simple_var_mangling() {

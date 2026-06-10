@@ -1823,8 +1823,21 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
 
             // Post-process: minify
             if minify {
+                // JET_MINIFY_STAGE_DUMP=<dir> writes the bundle after each
+                // minify stage so a runtime-only breakage (parses fine,
+                // misbehaves in the browser) can be bisected to one pass.
+                let stage_dump = std::env::var_os("JET_MINIFY_STAGE_DUMP").map(PathBuf::from);
+                let dump_stage = |stage: &str, code: &str| {
+                    if let Some(dir) = &stage_dump {
+                        let _ = std::fs::create_dir_all(dir);
+                        let _ = std::fs::write(dir.join(format!("{stage}.js")), code);
+                    }
+                };
+                dump_stage("0-bundle", &code);
                 code = crate::bundler::minify::minify_js(&code, &drops);
+                dump_stage("1-minify-js", &code);
                 code = crate::bundler::minify::replace_bool_literals(&code);
+                dump_stage("2-bool-literals", &code);
                 let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
                 if crate::bundler::dce::js_parses_without_errors(&mangled) {
                     code = mangled;
@@ -1833,6 +1846,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                         "Skipping variable mangling because the optimized bundle did not parse"
                     );
                 }
+                dump_stage("3-mangle", &code);
                 let folded = crate::bundler::fold::fold_constants(&code);
                 if crate::bundler::dce::js_parses_without_errors(&folded) {
                     code = folded;
@@ -1841,6 +1855,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                         "Skipping constant folding because the optimized bundle did not parse"
                     );
                 }
+                dump_stage("4-fold", &code);
                 let compacted =
                     crate::bundler::minify::remove_semicolons_before_block_close_candidate(&code);
                 if compacted.len() < code.len()
