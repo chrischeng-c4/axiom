@@ -197,8 +197,9 @@ pub enum WaitOutcome {
 /// that are non-numeric or `0` fall back to the supplied default. Callers
 /// with a fixed budget (e.g. lib_test.rs's 60s seed budget) use
 /// `TimeoutPolicy::fixed` and never read the env. The poll interval is
-/// per-policy so the runner's 20ms cadence and the seed runner's 50ms cadence
-/// are both preserved exactly.
+/// per-policy and acts as the CAP of an exponential backoff that starts at
+/// 1ms (see [`wait_with_timeout`]), so the runner's 20ms and the seed
+/// runner's 50ms remain each caller's worst-case cadence.
 #[derive(Clone, Copy)]
 pub struct TimeoutPolicy {
     timeout: Duration,
@@ -208,8 +209,9 @@ pub struct TimeoutPolicy {
 impl TimeoutPolicy {
     /// The single env-var lookup. Reads `var_name` as a positive `u64`
     /// seconds value, falling back to `default_secs` when unset, unparseable,
-    /// or `0`. The poll interval defaults to 20ms (the conformance runner's
-    /// cadence) and can be overridden with [`Self::with_poll_interval`].
+    /// or `0`. The poll-interval cap defaults to 20ms (the conformance
+    /// runner's historical cadence) and can be overridden with
+    /// [`Self::with_poll_interval`].
     pub fn from_env(var_name: &str, default_secs: u64) -> Self {
         let secs = std::env::var(var_name)
             .ok()
@@ -231,8 +233,8 @@ impl TimeoutPolicy {
         }
     }
 
-    /// Set the spawn-loop poll interval. Lets each caller preserve its
-    /// historical cadence (runner.rs = 20ms, lib_test.rs = 50ms).
+    /// Set the spawn-loop poll-interval cap. Lets each caller preserve its
+    /// historical worst-case cadence (runner.rs = 20ms, lib_test.rs = 50ms).
     pub fn with_poll_interval(mut self, poll_interval: Duration) -> Self {
         self.poll_interval = poll_interval;
         self
@@ -243,7 +245,7 @@ impl TimeoutPolicy {
         self.timeout
     }
 
-    /// The poll interval between `try_wait` checks.
+    /// The cap on the backoff interval between `try_wait` checks.
     pub fn poll_interval(&self) -> Duration {
         self.poll_interval
     }
@@ -264,6 +266,14 @@ pub fn wait_with_timeout(
     policy: TimeoutPolicy,
 ) -> std::io::Result<WaitOutcome> {
     let start = Instant::now();
+    // Exponential backoff from 1ms up to the policy's poll interval (the
+    // cap). A fixed 20ms cadence only observes exits on poll ticks, wasting
+    // ~10ms per child on average (most conformance children finish within a
+    // few tens of ms; two children per fixture ≈ 40-70s across a full run).
+    // Brief fast polling costs negligible harness CPU next to the children's
+    // own work, and the cap preserves each caller's historical worst-case
+    // cadence for long-running children.
+    let mut backoff = Duration::from_millis(1).min(policy.poll_interval);
     loop {
         match child.try_wait()? {
             Some(_status) => {
@@ -273,7 +283,10 @@ pub fn wait_with_timeout(
                 let _ = child.kill();
                 return Ok(WaitOutcome::TimedOut(child.wait_with_output()?));
             }
-            None => std::thread::sleep(policy.poll_interval),
+            None => {
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(policy.poll_interval);
+            }
         }
     }
 }
