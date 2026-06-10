@@ -684,8 +684,21 @@ impl TypeChecker {
             Ty::List(elem) => elem,
             Ty::Dict(_, v) => v,
             Ty::Tuple(ts) if !ts.is_empty() => {
-                // Static tuple index: return union of all element types
-                self.tcx.intern(Ty::Union(ts))
+                // Static tuple index: return the union of all element types,
+                // deduped like `infer_iter_element` (#1562) so a homogeneous
+                // tuple subscripts to the bare element type rather than a
+                // degenerate Union[Int, Int, ...].
+                let mut uniq: Vec<TypeId> = Vec::with_capacity(ts.len());
+                for t in ts {
+                    if !uniq.contains(&t) {
+                        uniq.push(t);
+                    }
+                }
+                if uniq.len() == 1 {
+                    uniq.into_iter().next().unwrap()
+                } else {
+                    self.tcx.intern(Ty::Union(uniq))
+                }
             }
             Ty::Str => self.tcx.str(),
             Ty::Any | Ty::Error => self.tcx.any(),
@@ -707,6 +720,17 @@ impl TypeChecker {
             (Ty::Bool, Ty::Int) | (Ty::Int, Ty::Bool) => Some(self.tcx.int()),
             (Ty::Bool, Ty::Bool) => Some(self.tcx.int()),
             _ => None,
+        }
+    }
+
+    /// True when `t` is a `Union` whose members are ALL numeric
+    /// (Int/Float/Bool). Such unions arise from subscripting heterogeneous
+    /// numeric tuples; arithmetic on them is safe to defer to runtime
+    /// dispatch. Unions with any non-numeric member return false.
+    fn is_all_numeric_union(&self, t: TypeId) -> bool {
+        match self.tcx.get(t) {
+            Ty::Union(ts) => ts.iter().all(|m| self.tcx.get(*m).is_numeric()),
+            _ => false,
         }
     }
 
@@ -782,6 +806,19 @@ impl TypeChecker {
                 // defer to runtime dunder dispatch via Any.
                 if matches!(self.tcx.get(lt), Ty::Class { .. })
                     || matches!(self.tcx.get(rt), Ty::Class { .. })
+                {
+                    return self.tcx.any();
+                }
+                // Union-of-numerics (e.g. a subscript on a heterogeneous
+                // numeric tuple yields Union[Int, Float]): every member
+                // supports arithmetic, so defer to runtime dispatch via Any.
+                // Unions containing ANY non-numeric member do NOT qualify —
+                // those still hard-error below (force-typed policy, Option A).
+                let l_num_union = self.is_all_numeric_union(lt);
+                let r_num_union = self.is_all_numeric_union(rt);
+                if (l_num_union || r_num_union)
+                    && (l_num_union || self.tcx.get(lt).is_numeric())
+                    && (r_num_union || self.tcx.get(rt).is_numeric())
                 {
                     return self.tcx.any();
                 }

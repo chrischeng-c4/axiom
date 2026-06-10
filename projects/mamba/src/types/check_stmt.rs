@@ -232,9 +232,30 @@ impl TypeChecker {
                 let ty = var_ty.as_ref()
                     .map(|t| self.resolve_type_expr(t))
                     .unwrap_or_else(|| self.infer_iter_element(iter));
-                for var in targets {
-                    let sym = self.symbols.define(var.clone(), SymbolKind::Variable);
-                    self.set_sym_type(sym.0, ty);
+                if targets.len() > 1 {
+                    // Tuple-destructuring targets: `for a, b in [(17, 5)]`
+                    // binds each target to the corresponding tuple ELEMENT
+                    // type, not the whole element type (which made `a // b`
+                    // a bogus tuple//tuple hard error). On shape mismatch or
+                    // a non-tuple element type, fall back to Any and defer
+                    // to runtime unpacking.
+                    let elem_tys: Option<Vec<TypeId>> = match self.tcx.get(ty) {
+                        Ty::Tuple(ts) if ts.len() == targets.len() => Some(ts.clone()),
+                        _ => None,
+                    };
+                    for (i, var) in targets.iter().enumerate() {
+                        let t = elem_tys
+                            .as_ref()
+                            .map(|ts| ts[i])
+                            .unwrap_or_else(|| self.tcx.any());
+                        let sym = self.symbols.define(var.clone(), SymbolKind::Variable);
+                        self.set_sym_type(sym.0, t);
+                    }
+                } else {
+                    for var in targets {
+                        let sym = self.symbols.define(var.clone(), SymbolKind::Variable);
+                        self.set_sym_type(sym.0, ty);
+                    }
                 }
                 for s in body { self.check_stmt(s); }
                 if let Some(eb) = else_body {
