@@ -38,6 +38,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+# `build/` above is Python build output; the jet test block named build/ is source.
+!projects/jet/tests/build/
+!projects/jet/tests/build/**
 .pytest_cache/
 
 # Virtual environments

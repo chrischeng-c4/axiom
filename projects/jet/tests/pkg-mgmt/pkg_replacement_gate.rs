@@ -21,103 +21,48 @@
 //! `target/release/jet` if missing — the benchmark must measure the
 //! optimized binary, never a debug build.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .ancestors()
-        .nth(2)
-        .expect("projects/jet is two levels under the repo root")
-        .to_path_buf()
-}
-
-fn tool_available(tool: &str) -> bool {
-    Command::new(tool)
-        .arg("--version")
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
+#[path = "../harness/mod.rs"]
+mod harness;
 
 #[test]
 fn jet_pkg_management_replaces_npm_pnpm_and_is_faster() {
-    let root = repo_root();
-
-    for tool in ["node", "npm", "pnpm"] {
-        if !tool_available(tool) {
-            eprintln!("[pkg-replacement-gate] skipping: `{tool}` is not available on PATH");
-            return;
-        }
+    const GATE: &str = "pkg-replacement-gate";
+    let root = harness::repo_root();
+    if !harness::require_tools(GATE, &["node", "npm", "pnpm"]) {
+        return;
     }
-
     // The speed claim is only meaningful for the optimized binary.
-    let jet_bin = root.join("target/release/jet");
-    if !jet_bin.exists() {
-        eprintln!("[pkg-replacement-gate] building target/release/jet ...");
-        let status = Command::new("cargo")
-            .args(["build", "-p", "jet", "--release"])
-            .current_dir(&root)
-            .status()
-            .expect("spawning cargo build -p jet --release");
-        assert!(status.success(), "release build of jet failed");
-    }
+    harness::ensure_release_jet(&root);
 
-    let evidence = std::env::temp_dir().join(format!(
-        "jet-pkg-replacement-gate-{}.json",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_file(&evidence);
-
-    let status = Command::new("node")
-        .arg("projects/jet/scripts/compare-pkg-management.mjs")
-        .arg("--require-baselines")
-        .arg("--evidence")
-        .arg(&evidence)
-        .current_dir(&root)
-        .status()
-        .expect("spawning compare-pkg-management.mjs");
-
-    let body = std::fs::read_to_string(&evidence).unwrap_or_else(|err| {
-        panic!(
-            "compare-pkg-management.mjs (exit {status:?}) wrote no evidence at {}: {err}",
-            evidence.display()
-        )
-    });
-    let report: serde_json::Value =
-        serde_json::from_str(&body).expect("parsing pkg-management evidence JSON");
+    let evidence = harness::evidence_path(GATE);
+    let run = harness::run_evidence_script(
+        &root,
+        "projects/jet/scripts/compare-pkg-management.mjs",
+        &[
+            "--require-baselines",
+            "--evidence",
+            evidence.to_str().expect("utf-8 evidence path"),
+        ],
+        &evidence,
+    );
+    let report = &run.report;
 
     // 1. Replacement contract: every top-level check green.
-    let checks = report["checks"]
-        .as_array()
-        .expect("evidence must carry a checks array");
-    assert!(!checks.is_empty(), "evidence checks array is empty");
-    let mut check_names = Vec::new();
-    for check in checks {
-        let name = check["name"].as_str().unwrap_or("<unnamed>");
-        check_names.push(name.to_string());
-        assert_eq!(
-            check["ok"], true,
-            "replacement contract check failed: {name}\nreport: {report:#}"
-        );
-    }
-    for required in [
-        "no_npm_pnpm_yarn_bun_executor_commands",
-        "no_npm_ci_anywhere",
-        "required_baseline_benchmarks_green",
-        "required_baseline_performance_green",
-    ] {
-        assert!(
-            check_names.iter().any(|n| n == required),
-            "evidence is missing the {required} check; gate contract drifted: {check_names:?}"
-        );
-    }
+    harness::assert_checks_green(
+        report,
+        &[
+            "no_npm_pnpm_yarn_bun_executor_commands",
+            "no_npm_ci_anywhere",
+            "required_baseline_benchmarks_green",
+            "required_baseline_performance_green",
+        ],
+    );
     assert_eq!(
         report["result"], "green",
         "pkg-management contract is not green: {report:#}"
     );
     assert!(
-        status.success(),
+        run.exit_ok,
         "compare-pkg-management.mjs exited non-zero while reporting green — script/report drift"
     );
 
@@ -131,7 +76,7 @@ fn jet_pkg_management_replaces_npm_pnpm_and_is_faster() {
         "benchmark fixture breadth shrank to {}; the speed claim needs the full corpus",
         fixtures.len()
     );
-    eprintln!("[pkg-replacement-gate] fixture timings (jet vs fastest of npm/pnpm):");
+    eprintln!("[{GATE}] fixture timings (jet vs fastest of npm/pnpm):");
     for fixture in fixtures {
         let name = fixture["fixture"]
             .as_str()

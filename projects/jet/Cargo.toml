@@ -193,6 +193,9 @@ path = "tests/browser-bridge/trace_viewer.rs"
 
 # tests/build/ — jet build matches Vite/Webpack output correctness and bundle size, and beats them on speed
 [[test]]
+name = "build_parity_gate"
+path = "tests/build/build_parity_gate.rs"
+[[test]]
 name = "bundler_monorepo"
 path = "tests/build/bundler_monorepo.rs"
 [[test]]
