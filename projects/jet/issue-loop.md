@@ -2,7 +2,7 @@
 project: jet
 branch: project-jet
 label: "project:jet"
-repo: chrischeng-c4/cclab
+repo: chrischeng-c4/axiom
 pick_order: oldest-first
 build: skip
 verify:
