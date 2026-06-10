@@ -73,11 +73,13 @@ pub fn execute(request: &HttpRequest, vars: &VarStore) -> Result<HttpOutcome, St
     let body_json: Option<Value> = serde_json::from_str(&body_text).ok();
 
     let mut violation = None;
-    if status != request.expect.status {
-        violation = Some(format!(
-            "status {status} != expected {}",
-            request.expect.status
-        ));
+    if !request.expect.status_ok(status) {
+        let expected = if request.expect.statuses.is_empty() {
+            request.expect.status.to_string()
+        } else {
+            format!("{:?}", request.expect.statuses)
+        };
+        violation = Some(format!("status {status} != expected {expected}"));
     } else {
         for (path, predicate) in &request.expect.jsonpath {
             let actual = body_json.as_ref().and_then(|b| json_path(b, path));
