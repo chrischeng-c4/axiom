@@ -112,3 +112,4 @@ projects/mamba/tests/cpython/.cache/
 # cargo-mutants output
 mutants.out
 mutants.out.old
+.rig/

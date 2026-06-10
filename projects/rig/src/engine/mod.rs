@@ -9,6 +9,7 @@
 pub mod assert;
 pub mod exec;
 pub mod http;
+pub mod loadgen;
 pub mod rss;
 pub mod sample;
 pub mod timeout;
