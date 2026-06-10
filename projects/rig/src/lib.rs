@@ -10,5 +10,7 @@
 //! meter owns resource attribution.
 
 pub mod discovery;
+pub mod engine;
 pub mod report;
 pub mod scenario;
+pub mod verdict;
