@@ -98,9 +98,49 @@ fn run_run(args: RunArgs) -> RigReport {
 }
 
 fn run_lint(args: LintArgs) -> RigReport {
+    use rig::report::{finding_id, Finding, Invoke, Kind, Severity};
+
     let mut b = ReportBuilder::new("lint", &args.dir);
     b.add_criterion("every scenario record matches its path and schema");
-    b.tool_error(3, "lint lands in Phase 1");
+
+    let root = std::path::Path::new(&args.dir);
+    let discovered = match rig::discovery::discover(root) {
+        Ok(d) => d,
+        Err(e) => {
+            b.tool_error(5, format!("could not walk `{}`: {e}", args.dir));
+            return b.finalize();
+        }
+    };
+    if discovered.is_empty() {
+        b.tool_error(3, format!("no scenario .toml files under `{}`", args.dir));
+        return b.finalize();
+    }
+    let total = discovered.len();
+    let mut clean = 0usize;
+    for d in discovered {
+        match d.result {
+            Ok(_) => clean += 1,
+            Err(violations) => {
+                let rel = d.path.display().to_string();
+                for v in violations {
+                    b.add_finding(Finding {
+                        id: finding_id(Kind::LintError, &rel),
+                        severity: Severity::High,
+                        kind: Kind::LintError,
+                        title: format!("lint: {rel}"),
+                        detail: v.message.clone(),
+                        remediation: "Fix the scenario record so path == record (dimension = parent dir, case = file stem) and the schema validates, then re-lint.".into(),
+                        invoke: Invoke::command(format!("rig lint --dir {}", args.dir)),
+                        evidence: serde_json::json!({ "path": rel, "violation": v.message }),
+                    });
+                }
+            }
+        }
+    }
+    b.agent_prompt(format!(
+        "rig lint checked {total} scenario file(s) under `{}`: {clean} clean.",
+        args.dir
+    ));
     b.finalize()
 }
 
