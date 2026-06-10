@@ -2175,6 +2175,17 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             // same registry mb_class_register populates for native classes) so
             // ONLY a real method bridges — a missing attr falls through to the
             // normal path and stays absent/None, never a spurious callable.
+            // Class-attribute VALUES (e.g. `Morsel._reserved`, a dict set via
+            // mb_class_set_class_attr) are returned directly; only funcs wrap
+            // as unbound methods.
+            let class_attr = CLASS_REGISTRY.with(|reg| {
+                reg.borrow().get(&nt).and_then(|cls| cls.class_attrs.get(&attr_name).copied())
+            });
+            if let Some(v) = class_attr {
+                if v.as_func().is_none() {
+                    return v;
+                }
+            }
             if !lookup_method(&nt, &attr_name).is_none() {
                 return make_unbound_method(&nt, &attr_name);
             }
@@ -5481,6 +5492,8 @@ pub(crate) fn unwrap_dictlike_data(obj: MbValue) -> Option<MbValue> {
                 if class_name == "collections.defaultdict"
                     || class_name == "collections.Counter"
                     || class_name == "collections.OrderedDict"
+                    || class_name == "BaseCookie"
+                    || class_name == "SimpleCookie"
                 {
                     let guard = fields.read().unwrap();
                     let data = guard.get("_data").copied();
@@ -5488,6 +5501,14 @@ pub(crate) fn unwrap_dictlike_data(obj: MbValue) -> Option<MbValue> {
                         if !d.is_none() {
                             return Some(d);
                         }
+                    }
+                    drop(guard);
+                    // Cookie instances create their backing dict lazily; a
+                    // fresh one is an empty mapping, not a non-iterable.
+                    if class_name == "BaseCookie" || class_name == "SimpleCookie" {
+                        let d = MbValue::from_ptr(MbObject::new_dict());
+                        fields.write().unwrap().insert("_data".to_string(), d);
+                        return Some(d);
                     }
                 }
             }
