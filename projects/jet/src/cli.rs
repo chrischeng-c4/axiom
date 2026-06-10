@@ -1990,6 +1990,14 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 {
                     code = compacted;
                 }
+                let squeezed = crate::bundler::minify::squeeze_residual_spaces(&code);
+                if squeezed.len() < code.len()
+                    && crate::bundler::dce::js_parses_without_errors(&squeezed)
+                {
+                    code = squeezed;
+                }
+                code = crate::bundler::dce::remove_redundant_empty_statements(&code);
+                dump_stage("5-squeeze", &code);
             }
 
             // Content hash for filename

@@ -496,13 +496,13 @@ pub fn eliminate_dead_after_return(source: &str) -> String {
 
 // ---- helpers ----
 
-fn is_id(c: u8) -> bool {
+pub(crate) fn is_id(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
 }
 
 /// Push a string literal into `out`, return index past closing quote.
 /// Template literals are copied verbatim with full `${...}` awareness.
-fn push_string(b: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
+pub(crate) fn push_string(b: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
     let q = b[start];
     if q == b'`' {
         let end = skip_template(b, start);
@@ -531,7 +531,7 @@ fn push_string(b: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
 }
 
 /// Heuristic: `/` starts a regex after these chars (not after ident/num/`)`/`]`).
-fn is_regex_ctx(prev: u8) -> bool {
+pub(crate) fn is_regex_ctx(prev: u8) -> bool {
     matches!(
         prev,
         b'=' | b'('
@@ -558,7 +558,7 @@ fn is_regex_ctx(prev: u8) -> bool {
 }
 
 /// Push a regex literal into `out`, return index past flags.
-fn push_regex(b: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
+pub(crate) fn push_regex(b: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
     out.push(b[start]); // opening /
     let mut i = start + 1;
     while i < b.len() && b[i] != b'/' {
@@ -605,7 +605,7 @@ fn push_regex(b: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
 }
 
 /// Skip a string literal, return index past closing quote.
-fn skip_string(b: &[u8], start: usize) -> usize {
+pub(crate) fn skip_string(b: &[u8], start: usize) -> usize {
     let q = b[start];
     if q == b'`' {
         return skip_template(b, start);
@@ -629,7 +629,7 @@ fn skip_string(b: &[u8], start: usize) -> usize {
 /// (styled-components: `` `<style ${le([t && `nonce="${t}"`])}>` ``).
 /// Stopping at the first inner backtick desynchronized the scanner and
 /// later fold passes rewrote real string content as code.
-fn skip_template(b: &[u8], start: usize) -> usize {
+pub(crate) fn skip_template(b: &[u8], start: usize) -> usize {
     debug_assert_eq!(b[start], b'`');
     let mut i = start + 1;
     while i < b.len() {

@@ -1725,3 +1725,49 @@ var x = 1;"#;
     }
 }
 // CODEGEN-END
+
+/// Final whitespace squeeze: drop any remaining space where at least one
+/// side is a non-identifier character and no token could merge.
+///
+/// The conservative collapse pass keeps spaces like `) return x`,
+/// `} else`, and `case "x"` even though `)return`, `}else`, and
+/// `case"x"` are valid JS — ~1.6KB of residual spaces on the
+/// react-bench bundle. Dangerous pairs (`+ +`, `- -`, anything
+/// involving `/`) are preserved.
+pub fn squeeze_residual_spaces(source: &str) -> String {
+    use crate::bundler::fold::{is_id, is_regex_ctx, push_regex, push_string};
+    let b = source.as_bytes();
+    let len = b.len();
+    let mut out: Vec<u8> = Vec::with_capacity(len);
+    let mut i = 0usize;
+
+    while i < len {
+        match b[i] {
+            b'"' | b'\'' | b'`' => {
+                i = push_string(b, i, &mut out);
+                continue;
+            }
+            b'/' if is_regex_ctx(out.last().copied().unwrap_or(0)) => {
+                i = push_regex(b, i, &mut out);
+                continue;
+            }
+            b' ' => {
+                let prev = out.last().copied().unwrap_or(b'\n');
+                let next = b.get(i + 1).copied().unwrap_or(b'\n');
+                let removable = (!is_id(prev) || !is_id(next))
+                    && !(prev == b'+' && next == b'+')
+                    && !(prev == b'-' && next == b'-')
+                    && prev != b'/'
+                    && next != b'/';
+                if removable {
+                    i += 1;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}

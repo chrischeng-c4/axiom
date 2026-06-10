@@ -1612,3 +1612,60 @@ module.exports["value"] = 1;"#;
     }
 }
 // CODEGEN-END
+
+/// Remove redundant empty statements (`;` directly under a program or
+/// statement block — the transform emits `function f(){...};` with a
+/// trailing semicolon per declaration, ~1KB of `};` on the react-bench
+/// bundle). Empty statements that are a branch body (`if(x);`) are
+/// children of the `if_statement`, not block-level siblings, and are
+/// never touched.
+pub fn remove_redundant_empty_statements(source: &str) -> String {
+    let Some(tree) = parse_js(source) else {
+        return source.to_string();
+    };
+    let root = tree.root_node();
+    if root.has_error() {
+        return source.to_string();
+    }
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    collect_block_level_empty_statements(root, &mut spans);
+    if spans.is_empty() {
+        return source.to_string();
+    }
+    spans.sort_unstable();
+    let mut out = String::with_capacity(source.len());
+    let mut pos = 0usize;
+    for (start, end) in spans {
+        if start < pos {
+            continue;
+        }
+        out.push_str(&source[pos..start]);
+        pos = end;
+    }
+    out.push_str(&source[pos..]);
+    if parse_js(&out)
+        .map(|t| t.root_node().has_error())
+        .unwrap_or(true)
+    {
+        return source.to_string();
+    }
+    out
+}
+
+fn collect_block_level_empty_statements(node: Node<'_>, spans: &mut Vec<(usize, usize)>) {
+    let container = matches!(node.kind(), "program" | "statement_block");
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if container && child.kind() == "empty_statement" {
+            spans.push((child.start_byte(), child.end_byte()));
+            continue;
+        }
+        if matches!(
+            child.kind(),
+            "string" | "template_string" | "comment" | "regex"
+        ) {
+            continue;
+        }
+        collect_block_level_empty_statements(child, spans);
+    }
+}
