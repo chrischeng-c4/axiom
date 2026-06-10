@@ -81,6 +81,10 @@ pub fn execute(cmd: RigCommand) -> RigReport {
 }
 
 fn run_run(args: RunArgs) -> RigReport {
+    use rig::report::{finding_id, Finding, Invoke, Kind, Severity};
+    use rig::scenario::{ExpectedOutcome, ScenarioKind};
+    use rig::verdict::{bucket, Verdict};
+
     let target = args
         .scenario
         .clone()
@@ -89,12 +93,118 @@ fn run_run(args: RunArgs) -> RigReport {
     let mut b = ReportBuilder::new("run", &target);
     b.add_criterion("every required scenario verdicts pass");
     b.add_criterion("every pin gate holds");
-    // Phase 1+ wires discovery/engine here. Until then: usage tool-error.
-    b.tool_error(
-        3,
-        "no scenarios to run yet — scenario discovery lands in Phase 1; pass --scenario <file> once it does",
-    );
-    b.finalize()
+
+    // Discover: a single file or a directory walk.
+    let root = std::path::Path::new(&target);
+    let discovered = if args.scenario.is_some() {
+        match std::fs::read_to_string(root) {
+            Ok(text) => vec![rig::discovery::Discovered {
+                path: root.to_path_buf(),
+                result: rig::scenario::parse_scenario(root, &text),
+            }],
+            Err(e) => {
+                b.tool_error(5, format!("could not read `{target}`: {e}"));
+                return b.finalize();
+            }
+        }
+    } else {
+        match rig::discovery::discover(root) {
+            Ok(d) => d,
+            Err(e) => {
+                b.tool_error(5, format!("could not walk `{target}`: {e}"));
+                return b.finalize();
+            }
+        }
+    };
+    if discovered.is_empty() {
+        b.tool_error(3, format!("no scenario .toml files under `{target}`"));
+        return b.finalize();
+    }
+
+    if args.vat {
+        b.tool_error(3, "--vat lands in Phase 6");
+        return b.finalize();
+    }
+
+    let mut executed = 0usize;
+    for d in discovered {
+        let rel = d.path.display().to_string();
+        let scenario = match d.result {
+            Ok(s) => s,
+            Err(violations) => {
+                for v in violations {
+                    b.add_finding(Finding {
+                        id: finding_id(Kind::LintError, &rel),
+                        severity: Severity::High,
+                        kind: Kind::LintError,
+                        title: format!("lint: {rel}"),
+                        detail: v.message,
+                        remediation: "Fix the record so path == record and the schema validates.".into(),
+                        invoke: Invoke::command(format!("rig lint --dir {target}")),
+                        evidence: serde_json::json!({ "path": rel }),
+                    });
+                }
+                b.scenarios_mut().red += 1;
+                continue;
+            }
+        };
+
+        if scenario.record.expected == ExpectedOutcome::Skip {
+            b.scenarios_mut().skip += 1;
+            continue;
+        }
+        if scenario.record.kind == ScenarioKind::Load {
+            b.add_missing(format!("{rel}: load engine lands in Phase 5"));
+            b.scenarios_mut().skip += 1;
+            continue;
+        }
+
+        let run = rig::engine::run_scenario(&scenario);
+        executed += 1;
+        match bucket(scenario.record.expected, run.raw_passed) {
+            Verdict::Pass => b.scenarios_mut().pass += 1,
+            Verdict::Red => {
+                b.scenarios_mut().red += 1;
+                if scenario.record.required {
+                    b.add_findings(run.findings);
+                } else {
+                    // Optional scenarios report, never gate: demote to Info.
+                    b.add_findings(run.findings.into_iter().map(|mut f| {
+                        f.severity = Severity::Info;
+                        f.detail = format!("[optional scenario — does not gate] {}", f.detail);
+                        f
+                    }));
+                }
+            }
+            Verdict::Xfail => {
+                b.scenarios_mut().xfail += 1;
+                b.add_findings(run.findings.into_iter().map(|mut f| {
+                    f.severity = Severity::Info;
+                    f.detail = format!("[xfail — known gap, does not gate] {}", f.detail);
+                    f
+                }));
+            }
+            Verdict::Xpass => {
+                b.scenarios_mut().xpass += 1;
+                b.add_finding(Finding {
+                    id: finding_id(Kind::ScenarioError, &format!("xpass/{}", run.scenario_id)),
+                    severity: Severity::Info,
+                    kind: Kind::ScenarioError,
+                    title: format!("`{}` passed but is marked xfail", run.scenario_id),
+                    detail: "Graduate it: set expected = \"pass\" in the record.".into(),
+                    remediation: "Flip the record's expected to pass.".into(),
+                    invoke: Invoke::command(format!("rig run --scenario {rel}")),
+                    evidence: serde_json::json!({ "scenario": run.scenario_id }),
+                });
+            }
+            Verdict::Skip => b.scenarios_mut().skip += 1,
+        }
+    }
+
+    let _ = executed;
+    let report = b.finalize();
+    rig::report::persist(&report, std::path::Path::new("."));
+    report
 }
 
 fn run_lint(args: LintArgs) -> RigReport {
@@ -208,10 +318,28 @@ mod tests {
     }
 
     #[test]
-    fn run_without_scenarios_is_usage_tool_error() {
-        let r = run_run(RunArgs::default());
+    fn run_on_empty_dir_is_usage_tool_error() {
+        let tmp = std::env::temp_dir().join(format!("rig-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let r = run_run(RunArgs {
+            dir: Some(tmp.display().to_string()),
+            ..Default::default()
+        });
         assert_eq!(r.exit_code, 3);
         assert_eq!(r.schema_version, rig::report::SCHEMA_VERSION);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn run_executes_the_demo_fixture_clean() {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tests/fixtures/scenarios");
+        let r = run_run(RunArgs {
+            dir: Some(fixture.display().to_string()),
+            ..Default::default()
+        });
+        assert_eq!(r.exit_code, 0, "agent_prompt: {}", r.agent_prompt);
+        assert_eq!(r.scenarios.pass, 1);
     }
 
     #[test]
