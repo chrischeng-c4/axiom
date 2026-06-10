@@ -895,6 +895,24 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
                 ObjData::Bytes(ref data) => data.iter().rev()
                     .map(|&b| MbValue::from_int(b as i64))
                     .collect(),
+                ObjData::Instance { ref class_name, .. } => {
+                    // User __reversed__ dunder returns its own iterator;
+                    // without one, reversed(obj) is a TypeError, not None.
+                    let cls = class_name.clone();
+                    let m = super::class::lookup_method(&cls, "__reversed__");
+                    if !m.is_none() {
+                        let method = MbValue::from_ptr(MbObject::new_str("__reversed__".to_string()));
+                        let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                        return super::class::mb_call_method(seq, method, args);
+                    }
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{cls}' object is not reversible"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
                 _ => return MbValue::none(),
             };
             let iter = MbIterator {

@@ -180,6 +180,32 @@ pub fn mb_bytes_new(source: MbValue) -> MbValue {
                 }
                 // A BigInt count is too large for a size-sized integer.
                 ObjData::BigInt(_) => { raise_count_overflow(); return MbValue::none(); }
+                ObjData::Instance { ref class_name, .. } => {
+                    // User __bytes__ dunder; a class without one cannot
+                    // convert (CPython TypeError, not a silent b'').
+                    let cls = class_name.clone();
+                    let m = super::class::lookup_method(&cls, "__bytes__");
+                    if !m.is_none() {
+                        let method = MbValue::from_ptr(MbObject::new_str("__bytes__".to_string()));
+                        let args = MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                        let r = super::class::mb_call_method(source, method, args);
+                        if let Some(rp) = r.as_ptr() {
+                            if matches!((*rp).data, ObjData::Bytes(_)) {
+                                return r;
+                            }
+                        }
+                        if super::exception::mb_has_exception().as_bool() == Some(true) {
+                            return MbValue::none();
+                        }
+                    }
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "cannot convert '{cls}' object to bytes"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
                 _ => {}
             }
         }
