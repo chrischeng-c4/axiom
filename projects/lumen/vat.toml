@@ -55,3 +55,13 @@ id = "rig-load"
 requires = ["lumen"]
 cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/scenarios/load", "--pins", "tests/rig/config/pins"]
 timeout_s = 300
+
+# Concurrent-profiling companion: `vat run rig-load meter-profile` drives
+# load against the serving lumen WHILE meter samples an engine workload in
+# the same workspace. (Attaching meter to the serving pid itself needs a
+# meter `--pid` mode — tracked separately.)
+[[runners]]
+id = "meter-profile"
+requires = ["lumen"]
+cmd = ["../../target/debug/meter", "profile", "--exec", "../../target/release/lumen-bench", "--duration", "25", "--", "run", "--tiers", "s", "--types", "bool_filter", "--queries", "200000"]
+timeout_s = 300

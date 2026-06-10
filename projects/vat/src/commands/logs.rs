@@ -15,19 +15,26 @@ pub fn exec(id: String, source: Option<String>) -> Result<ExitCode> {
         bail!("vat {id} has no vat.toml runner evidence");
     };
 
+    // Concurrent sets fill `runners`; legacy metadata only has `runner`.
+    let runner_records: Vec<_> = if test_run.runners.is_empty() {
+        test_run.runner.iter().cloned().collect()
+    } else {
+        test_run.runners.clone()
+    };
     match source.as_deref() {
         Some("runner") => {
-            if let Some(runner) = test_run.runner {
+            for runner in &runner_records {
                 print_pair(&runner.stdout_log, &runner.stderr_log)?;
             }
         }
-        Some(service_id) => {
-            let service = test_run
-                .services
-                .iter()
-                .find(|s| s.id == service_id)
-                .with_context(|| format!("no log source `{service_id}` in vat {id}"))?;
-            print_pair(&service.stdout_log, &service.stderr_log)?;
+        Some(source_id) => {
+            if let Some(service) = test_run.services.iter().find(|s| s.id == source_id) {
+                print_pair(&service.stdout_log, &service.stderr_log)?;
+            } else if let Some(runner) = runner_records.iter().find(|r| r.id == source_id) {
+                print_pair(&runner.stdout_log, &runner.stderr_log)?;
+            } else {
+                bail!("no log source `{source_id}` in vat {id}");
+            }
         }
         None => {
             for service in &test_run.services {
@@ -36,10 +43,10 @@ pub fn exec(id: String, source: Option<String>) -> Result<ExitCode> {
                 println!("== service:{} stderr ==", service.id);
                 print_file(&service.stderr_log)?;
             }
-            if let Some(runner) = test_run.runner {
-                println!("== runner stdout ==");
+            for runner in &runner_records {
+                println!("== runner:{} stdout ==", runner.id);
                 print_file(&runner.stdout_log)?;
-                println!("== runner stderr ==");
+                println!("== runner:{} stderr ==", runner.id);
                 print_file(&runner.stderr_log)?;
             }
         }
