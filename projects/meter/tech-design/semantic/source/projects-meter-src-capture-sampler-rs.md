@@ -68,6 +68,7 @@ use std::process::{Child, Command, Stdio};
 /// terminated at this leaf (self samples), which is exactly the folded-stacks /
 /// inferno convention.
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 pub struct FoldedStack {
     /// Root-first frame symbols (last = leaf).
     pub frames: Vec<String>,
@@ -75,6 +76,7 @@ pub struct FoldedStack {
     pub count: u64,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 impl FoldedStack {
     /// Construct a folded stack from root-first `frames` and a self `count`.
     pub fn new(frames: Vec<String>, count: u64) -> Self {
@@ -95,6 +97,7 @@ impl FoldedStack {
 /// The result of a sampling run: the folded stacks plus the backend used and the
 /// effective sampling rate (Hz) so the fold step can convert samples -> ns.
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 pub struct SampleRun {
     /// Folded root->leaf stacks with leaf (self) counts.
     pub stacks: Vec<FoldedStack>,
@@ -109,6 +112,7 @@ pub struct SampleRun {
 
 /// Errors a sampling run can surface.
 #[derive(Debug)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 pub enum SampleError {
     /// No stack sampler is available on this platform (maps to `ToolError(4)`).
     NoBackend(String),
@@ -118,6 +122,7 @@ pub enum SampleError {
     Sampler(String),
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 impl std::fmt::Display for SampleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -128,10 +133,12 @@ impl std::fmt::Display for SampleError {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 impl std::error::Error for SampleError {}
 
 /// How to launch the workload to be sampled.
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 pub enum Target {
     /// `cargo run --bin <name> [-- <args>]`.
     Bin(String),
@@ -144,6 +151,7 @@ pub enum Target {
     Exec(PathBuf),
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 impl Target {
     /// A short human label for the target (used as `MeterReport.target`).
     pub fn label(&self) -> String {
@@ -163,6 +171,7 @@ impl Target {
 /// macOS: builds the target first (so `cargo run` build output does not eat the
 /// sampling window), spawns the child, samples its PID with `/usr/bin/sample`,
 /// waits for the child, then parses the report. No backend => `NoBackend`.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 pub fn sample_target(
     target: &Target,
     extra_args: &[String],
@@ -480,6 +489,7 @@ fn spawn_exec(exec: &std::path::Path, extra_args: &[String]) -> Result<Child, Sa
 /// `inclusive_count - sum(child inclusive_counts)`; any node with a positive
 /// self count contributes a folded stack (root->that node) carrying that self
 /// count. This yields exactly the leaf-sample folding inferno expects.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 pub fn parse_sample_report(report: &str) -> Vec<FoldedStack> {
     // Collect raw (depth, count, symbol) nodes from the Call graph section.
     let mut nodes: Vec<Node> = Vec::new();
@@ -492,12 +502,15 @@ pub fn parse_sample_report(report: &str) -> Vec<FoldedStack> {
         if !in_graph {
             continue;
         }
-        // The call-graph section ends at a blank line followed by the totals
-        // block ("Total number in stack ...") or "Binary Images:".
+        // The call-graph section ends at the totals block ("Total number in
+        // stack ...") or "Binary Images:". Blank lines may separate per-thread
+        // subtrees, so they do not terminate the section.
         let trimmed = line.trim_start();
-        if trimmed.is_empty() {
-            // A blank line ends the graph (the totals block follows).
+        if trimmed.starts_with("Total number in stack") || trimmed.starts_with("Binary Images:") {
             break;
+        }
+        if trimmed.is_empty() {
+            continue;
         }
         if let Some(node) = parse_node_line(line) {
             nodes.push(node);
@@ -515,14 +528,23 @@ struct Node {
     symbol: String,
 }
 
-/// Parse one call-graph line into a [`Node`]: leading spaces -> depth (2 spaces
+/// Parse one call-graph line into a [`Node`]: tree-prefix -> depth (2 columns
 /// per level), then the leading integer count, then the symbol up to the
 /// ` (in <module>)` / ` + offset` decoration.
+///
+/// Once a subtree branches, macOS `sample` switches from plain 2-space
+/// indentation to tree-drawing glyph columns (`+ `, `! `, `: `, `| `, `  `),
+/// e.g. `  + ! : | 574 frame ...`. Both encodings are 2 columns per depth
+/// level, so depth = prefix-width / 2 where the prefix is every leading
+/// space or glyph column before the sample count.
 fn parse_node_line(line: &str) -> Option<Node> {
-    // Count leading spaces for depth. macOS uses 2 spaces per indent level; the
-    // shallowest node (the thread line) sits at indent 4. Normalize so the
-    // thread line is depth 0.
-    let indent = line.len() - line.trim_start().len();
+    // Measure the tree prefix: spaces plus the `+ ! : |` glyphs that `sample`
+    // draws once siblings appear. The count token is the first run of digits
+    // after that prefix. The shallowest node (the thread line) sits at
+    // indent 4.
+    let indent = line
+        .find(|c: char| !matches!(c, ' ' | '+' | '!' | ':' | '|'))
+        .unwrap_or(line.len());
     let rest = &line[indent..];
     // The first whitespace-separated token is the inclusive sample count.
     let mut parts = rest.splitn(2, char::is_whitespace);
@@ -769,6 +791,69 @@ Total:
         assert_eq!(root.frames, vec!["Thread_1", "root"]);
         let child = stacks.iter().find(|s| s.leaf() == Some("child")).unwrap();
         assert_eq!(child.count, 70);
+    }
+
+    #[test]
+    fn parses_glyph_prefixed_branches() {
+        // Once a subtree branches, `sample` switches from plain 2-space
+        // indentation to `+ ! : |` glyph columns. Depth stays 2 columns per
+        // level across both encodings.
+        let report = "\
+Call graph:
+    100 Thread_1   DispatchQueue_1: com.apple.main-thread  (serial)
+      100 start  (in dyld) + 6992  [0x189aefe00]
+        100 main  (in bench) + 964  [0x100bd6c90]
+        + 70 search  (in bench) + 8696  [0x100ca1148]  storage.rs:3371
+        + ! 60 eval_and  (in bench) + 1356  [0x100cbf45c]  storage.rs:4500
+        + ! : 60 range_df  (in bench) + 264,516,...  [0x100c2d17c,0x100c2d278,...]  storage.rs:1406
+        + ! 10 fuse  (in bench) + 924  [0x100cc2384]
+        + 30 index  (in bench) + 100  [0x100cc24cc]
+
+Total number in stack (recursive counted multiple, when >=5):
+        7       _xzm_free  (in libsystem_malloc.dylib) + 0  [0x189ccb06c]
+Binary Images:
+";
+        let stacks = parse_sample_report(report);
+        let by_leaf = |name: &str| {
+            stacks
+                .iter()
+                .find(|s| s.leaf() == Some(name))
+                .unwrap_or_else(|| panic!("missing leaf `{name}`"))
+        };
+        // range_df is the deep leaf under search -> eval_and.
+        let range = by_leaf("range_df");
+        assert_eq!(range.count, 60);
+        assert_eq!(
+            range.frames,
+            vec!["Thread_1", "start", "main", "search", "eval_and", "range_df"]
+        );
+        // fuse (10) is search's other child; index (30) is main's sibling child.
+        assert_eq!(by_leaf("fuse").count, 10);
+        assert_eq!(by_leaf("index").count, 30);
+        // The totals block must not leak into the graph as fake leaves.
+        assert!(stacks.iter().all(|s| s.leaf() != Some("_xzm_free")));
+    }
+
+    #[test]
+    fn blank_lines_between_thread_subtrees_do_not_terminate_the_graph() {
+        let report = "\
+Call graph:
+    60 Thread_1
+      60 main
+        60 hot_a
+
+    40 Thread_2
+      40 worker
+        40 hot_b
+
+Total number in stack (recursive counted multiple, when >=5):
+";
+        let stacks = parse_sample_report(report);
+        assert_eq!(stacks.len(), 2);
+        let a = stacks.iter().find(|s| s.leaf() == Some("hot_a")).unwrap();
+        assert_eq!(a.frames, vec!["Thread_1", "main", "hot_a"]);
+        let b = stacks.iter().find(|s| s.leaf() == Some("hot_b")).unwrap();
+        assert_eq!(b.count, 40);
     }
 
     #[test]
