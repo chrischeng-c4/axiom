@@ -96,7 +96,7 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
     // Callers without an explicit entry (tests, legacy paths) treat the
     // first module as the root of the import graph.
     let entry = modules.first().map(|(p, _)| p.clone()).unwrap_or_default();
-    analyze_used_exports_from(modules, &entry)
+    analyze_used_exports_from(modules, &entry, None)
 }
 
 /// Demand-driven variant: usage flows outward from `entry` only.
@@ -110,10 +110,14 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
 pub fn analyze_used_exports_from(
     modules: &[(PathBuf, String)],
     entry: &Path,
+    resolver: Option<&dyn Fn(&str, &Path) -> Option<PathBuf>>,
 ) -> Result<TreeShakeResult> {
     let mut all_exports: HashMap<PathBuf, Vec<String>> = HashMap::new();
     let mut used: HashMap<PathBuf, HashSet<String>> = HashMap::new();
-    let lookup = ModuleLookup::new(modules);
+    let lookup = match resolver {
+        Some(r) => ModuleLookup::with_resolver(modules, r),
+        None => ModuleLookup::new(modules),
+    };
 
     // Step 1: Collect all exports per module (ESM + CJS)
     for (path, source) in modules {
@@ -897,6 +901,12 @@ struct ModuleLookup<'a> {
     modules: &'a [(PathBuf, String)],
     by_path: HashMap<PathBuf, usize>,
     by_specifier: HashMap<String, usize>,
+    /// Exact specifier resolution from the bundler's resolver. The textual
+    /// variants above cannot map bare package specifiers whose entry comes
+    /// from package.json (`@ant-design/colors` -> `es/index.js`); missing
+    /// those edges starved the demand-driven liveness walk and shook
+    /// genuinely-used modules out of the bundle.
+    resolver: Option<&'a dyn Fn(&str, &Path) -> Option<PathBuf>>,
 }
 
 impl<'a> ModuleLookup<'a> {
@@ -916,7 +926,17 @@ impl<'a> ModuleLookup<'a> {
             modules,
             by_path,
             by_specifier,
+            resolver: None,
         }
+    }
+
+    fn with_resolver(
+        modules: &'a [(PathBuf, String)],
+        resolver: &'a dyn Fn(&str, &Path) -> Option<PathBuf>,
+    ) -> Self {
+        let mut lookup = Self::new(modules);
+        lookup.resolver = Some(resolver);
+        lookup
     }
 
     fn find(&self, specifier: &str, importer: &Path) -> Option<&'a (PathBuf, String)> {
@@ -946,6 +966,15 @@ impl<'a> ModuleLookup<'a> {
         ] {
             if let Some(idx) = self.by_specifier.get(&candidate) {
                 return self.modules.get(*idx);
+            }
+        }
+
+        if let Some(resolver) = self.resolver {
+            if let Some(resolved) = resolver(specifier, importer) {
+                let normalized = normalize_tree_shake_path(&resolved);
+                if let Some(idx) = self.by_path.get(&normalized) {
+                    return self.modules.get(*idx);
+                }
             }
         }
 

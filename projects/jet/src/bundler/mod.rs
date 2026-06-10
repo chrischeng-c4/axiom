@@ -912,7 +912,18 @@ impl Bundler {
             })
             .collect();
 
-        let analysis = match tree_shake::analyze_used_exports_from(&module_pairs, entry) {
+        let resolve_specifier = |spec: &str, importer: &Path| -> Option<PathBuf> {
+            self.resolver
+                .resolve(spec, importer)
+                .ok()
+                .filter(|r| !r.is_external)
+                .map(|r| r.path)
+        };
+        let analysis = match tree_shake::analyze_used_exports_from(
+            &module_pairs,
+            entry,
+            Some(&resolve_specifier),
+        ) {
             Ok(a) => a,
             Err(e) => {
                 tracing::warn!("Tree shake analysis failed, skipping: {}", e);
