@@ -1325,6 +1325,10 @@ fn browser_bridge_command() -> Command {
                 .arg(Arg::new("expr").required(true)),
         )
         .subcommand(
+            Command::new("mcp")
+                .about("Serve the Browser Bridge as an MCP stdio server for agents"),
+        )
+        .subcommand(
             Command::new("debug")
                 .about("Open a foreground Browser Bridge session for human inspection")
                 .arg(Arg::new("url").required(true)),
@@ -2394,6 +2398,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 let url = lm.get_one::<String>("url").expect("url required");
                 crate::browser_cli::launch_foreground(&root_dir, url).await
             }
+            Some(("mcp", _)) => crate::browser_cli::mcp::serve(&root_dir).await,
             Some(("shutdown", _)) => crate::browser_cli::shutdown(&root_dir).await,
             Some(("tree", tm)) => {
                 let which = tm

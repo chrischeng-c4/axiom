@@ -18,6 +18,7 @@
 //! bridge on `window.__jet_debug`. Non-debug builds expose nothing
 //! there; we detect that and print a clear hint.
 
+pub mod mcp;
 pub mod pretty;
 pub mod session;
 

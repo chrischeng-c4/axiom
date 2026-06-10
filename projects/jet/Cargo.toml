@@ -131,6 +131,9 @@ path = "tests/pkg-mgmt/workspace_protocol.rs"
 name = "auto_artifacts_tests"
 path = "tests/browser-bridge/auto_artifacts_tests.rs"
 [[test]]
+name = "bb_mcp_server"
+path = "tests/browser-bridge/bb_mcp_server.rs"
+[[test]]
 name = "browser_cli_smoke"
 path = "tests/browser-bridge/browser_cli_smoke.rs"
 [[test]]
