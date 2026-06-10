@@ -122,8 +122,7 @@ fn run_run(args: RunArgs) -> RigReport {
     }
 
     if args.vat {
-        b.tool_error(3, "--vat lands in Phase 6");
-        return b.finalize();
+        return run_via_vat(&discovered, b);
     }
 
     // Pins + baseline store (cwd-scoped, like .rig/last-report.json).
@@ -301,6 +300,96 @@ fn run_run(args: RunArgs) -> RigReport {
     report
 }
 
+/// `--vat`: resolve the [vat].runner set of the discovered scenarios, run
+/// each runner once through `vat run` (vat owns services/workspace; the
+/// runner's cmd re-invokes rig inside the COW clone), and fold every inner
+/// report into this one.
+fn run_via_vat(discovered: &[rig::discovery::Discovered], mut b: ReportBuilder) -> RigReport {
+    use rig::report::{finding_id, Finding, Invoke, Kind, Severity};
+
+    let mut runners: Vec<String> = Vec::new();
+    for d in discovered {
+        match &d.result {
+            Ok(s) => match &s.vat {
+                Some(needs) if !needs.runner.is_empty() => {
+                    if !runners.contains(&needs.runner) {
+                        runners.push(needs.runner.clone());
+                    }
+                }
+                _ => {
+                    b.add_missing(format!(
+                        "{}: no [vat] runner declared — not runnable under --vat",
+                        d.path.display()
+                    ));
+                }
+            },
+            Err(_) => {
+                b.add_missing(format!(
+                    "{}: lint errors — skipped under --vat",
+                    d.path.display()
+                ));
+            }
+        }
+    }
+    if runners.is_empty() {
+        b.tool_error(3, "no discovered scenario declares a [vat] runner");
+        return b.finalize();
+    }
+
+    for runner in &runners {
+        let run = match rig::vat::run_runner(runner) {
+            Ok(r) => r,
+            Err(e) => {
+                b.tool_error(4, e);
+                return b.finalize();
+            }
+        };
+        b.add_criterion(format!(
+            "vat runner `{runner}` (vat {}; services ready: {})",
+            run.vat_id,
+            run.ready_services.join(", ")
+        ));
+        let log = match rig::vat::runner_log(&run.vat_id) {
+            Ok(l) => l,
+            Err(e) => {
+                b.tool_error(5, e);
+                return b.finalize();
+            }
+        };
+        rig::vat::remove(&run.vat_id);
+        match rig::vat::extract_report(&log) {
+            Some(inner) => {
+                let counts = b.scenarios_mut();
+                counts.pass += inner.scenarios.pass;
+                counts.red += inner.scenarios.red;
+                counts.xfail += inner.scenarios.xfail;
+                counts.xpass += inner.scenarios.xpass;
+                counts.skip += inner.scenarios.skip;
+                b.add_findings(inner.findings);
+                for m in inner.completion.missing {
+                    b.add_missing(format!("[{runner}] {m}"));
+                }
+            }
+            None => {
+                b.add_finding(Finding {
+                    id: finding_id(Kind::ScenarioError, &format!("vat/{runner}")),
+                    severity: Severity::High,
+                    kind: Kind::ScenarioError,
+                    title: format!("runner `{runner}` produced no rig report (exit {})", run.exit_code),
+                    detail: "The vat runner's cmd must invoke `rig run ...` so its stdout carries one rig.report/1 document.".into(),
+                    remediation: format!("Inspect `vat logs {} runner` and fix the runner cmd in vat.toml.", run.vat_id),
+                    invoke: Invoke::command(format!("vat logs {} runner", run.vat_id)),
+                    evidence: serde_json::json!({ "vat_id": run.vat_id, "exit_code": run.exit_code }),
+                });
+            }
+        }
+    }
+
+    let report = b.finalize();
+    rig::report::persist(&report, std::path::Path::new("."));
+    report
+}
+
 /// Drive a `kind = "load"` scenario through the open-loop generator and
 /// shape the result like an engine run (metrics land in vars).
 fn run_load_scenario(
@@ -312,9 +401,20 @@ fn run_load_scenario(
     use rig::scenario::{scenario_id, VarStore};
 
     let id = scenario_id(&scenario.record);
-    let mut vars = VarStore::seed(&scenario.env);
     let mut findings = Vec::new();
     let profile = scenario.load.as_ref().expect("lint guarantees [load]");
+
+    // Setup steps run BEFORE the load block (seed corpus, create
+    // collections); their captured vars feed the load templates.
+    let mut vars = if scenario.steps.is_empty() {
+        VarStore::seed(&scenario.env)
+    } else {
+        let setup = rig::engine::run_scenario(scenario);
+        if !setup.raw_passed {
+            return setup;
+        }
+        setup.vars
+    };
 
     let stats = rig::engine::loadgen::run(profile, &vars);
     if let Some(abort) = &stats.abort {

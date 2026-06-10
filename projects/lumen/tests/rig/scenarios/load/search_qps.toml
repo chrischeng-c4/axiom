@@ -2,8 +2,8 @@
 # delay lands in the percentiles (coordinated-omission honest), and
 # achieved_qps is reported alongside. Gated by config/pins/search_p99.toml.
 #
-# Requires: lumen serving on {{upstream}} with the `users` collection
-# seeded (any prior resilience/endurance scenario run leaves it seeded).
+# Requires: lumen serving on {{upstream}}; the setup steps create + seed
+# the collection so the scenario is self-contained (vat clean workspaces).
 [record]
 suite = "lumen"
 dimension = "load"
@@ -22,7 +22,23 @@ runner = "rig-load"
 services = ["lumen"]
 
 [limits]
-timeout_secs = 120
+timeout_secs = 180
+
+# -- setup (runs before the load block) ---------------------------------------
+
+[[steps]]
+type = "http"
+name = "collection_exists"
+method = "PUT"
+url = "http://{{upstream}}/collections/{{collection}}"
+body = '{"fields": {"bio": {"type": "text"}, "email": {"type": "keyword"}}}'
+expect = { statuses = [200, 201, 400, 409] }
+
+[[steps]]
+type = "exec"
+name = "seed_corpus"
+cmd = ["python3", "-c", "import json,sys,urllib.request\nupstream,coll=sys.argv[1],sys.argv[2]\nitems=[]\nfor i in range(2000):\n    items.append({'external_id':f'rig-seed-{i}','field':'bio','value':f'senior engineer number {i} in taipei'})\nbody=json.dumps({'items':items}).encode()\nreq=urllib.request.Request(f'http://{upstream}/collections/{coll}/index',data=body,method='POST',headers={'content-type':'application/json'})\nwith urllib.request.urlopen(req,timeout=30) as r:\n    sys.exit(0 if r.status<400 else 2)", "{{upstream}}", "{{collection}}"]
+timeout_secs = 60
 
 [load]
 target_qps = 200
