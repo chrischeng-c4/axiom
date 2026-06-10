@@ -5780,12 +5780,15 @@ pub fn mb_call0(func: MbValue) -> MbValue {
     }
     // functools.lru_cache bound-method for cache_info() / cache_clear() —
     // zero-arg call routes through mb_call_spread which detects the class.
+    // Unbound-method wrappers (`m = Path.cwd; m()`) also route through
+    // mb_call_spread, which owns the receiver-less classmethod dispatch.
     if let Some(ptr) = func.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 if class_name == "functools._lru_bound_method"
                     || class_name == "functools.lru_cache_wrapper"
                     || class_name == "functools.lru_cache_factory"
+                    || class_name == "__unbound_method__"
                 {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
                     return super::builtins::mb_call_spread(func, args_list);
@@ -6134,6 +6137,30 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
                             unsafe { std::mem::transmute(maddr) };
                         return unsafe { f(items.as_ptr(), items.len()) };
+                    }
+                }
+            }
+            // pathlib classmethods (`pathlib.Path.cwd()` / `Path.home()`):
+            // the receiver is the class constructor dispatcher func, not an
+            // instance. The registered methods are variadic
+            // `fn(self, args_list)` — NOT raw `(args_ptr, nargs)` dispatchers
+            // like the date/datetime table above — so dispatch with a None
+            // receiver; the methods default to the host concrete flavour.
+            if matches!(
+                nt.as_str(),
+                "Path" | "PosixPath" | "WindowsPath"
+                    | "PurePath" | "PurePosixPath" | "PureWindowsPath"
+            ) && matches!(name.as_str(), "cwd" | "home")
+            {
+                let m = lookup_method(&nt, &name);
+                if let Some(maddr) = m.as_func() {
+                    if super::module::is_variadic_func(maddr as u64) {
+                        let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+                            unsafe { std::mem::transmute(maddr) };
+                        let arg_list = MbValue::from_ptr(MbObject::new_list(
+                            super::builtins::extract_items(args),
+                        ));
+                        return f(MbValue::none(), arg_list);
                     }
                 }
             }

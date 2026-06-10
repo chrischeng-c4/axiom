@@ -137,10 +137,19 @@ pub fn mb_file_name(handle: MbValue) -> MbValue {
 
 /// open(path, mode) → file handle (as MbValue int)
 pub fn mb_open(path: MbValue, mode: MbValue) -> MbValue {
-    let file_path = match extract_str(path) {
+    // str/bytes/bytearray directly; otherwise os.fspath coercion (pathlib
+    // instances and any `__fspath__` provider) — CPython accepts str, bytes,
+    // or os.PathLike here.
+    let file_path = match extract_str(path)
+        .or_else(|| super::stdlib::pathlib_mod::coerce_fspath(path))
+    {
         Some(p) => p,
         None => {
-            raise_type_error("open() argument must be a string");
+            // A failing user `__fspath__` already left its own exception
+            // pending — propagate that instead of masking it.
+            if super::exception::mb_has_exception().as_bool() != Some(true) {
+                raise_type_error("open() argument must be a string");
+            }
             return MbValue::none();
         }
     };

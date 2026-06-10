@@ -4895,6 +4895,38 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             }
                         }
                     }
+                    // Pathlib classmethods (`Path.cwd()` / `Path.home()`)
+                    // arrive with NO receiver: the registered methods are
+                    // variadic `fn(self, args_list)` that derive the flavour
+                    // from the receiver when present and default to the host
+                    // concrete flavour for a None receiver. Dispatch instead
+                    // of falling into the generic empty-args None bail.
+                    if items.is_empty()
+                        && matches!(
+                            type_name.as_str(),
+                            "Path" | "PosixPath" | "WindowsPath"
+                                | "PurePath" | "PurePosixPath" | "PureWindowsPath"
+                        )
+                    {
+                        let method_str = method_name.as_ptr()
+                            .and_then(|p| match &(*p).data {
+                                ObjData::Str(s) => Some(s.clone()),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        if matches!(method_str.as_str(), "cwd" | "home") {
+                            let m = super::class::lookup_method(&type_name, &method_str);
+                            if let Some(addr) = m.as_func() {
+                                if super::module::is_variadic_func(addr as u64) {
+                                    let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+                                        std::mem::transmute(addr);
+                                    let empty =
+                                        MbValue::from_ptr(MbObject::new_list(Vec::new()));
+                                    return f(MbValue::none(), empty);
+                                }
+                            }
+                        }
+                    }
                     if items.is_empty() {
                         return MbValue::none();
                     }
