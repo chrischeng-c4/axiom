@@ -34,6 +34,7 @@ pub mod traceback_mod;
 pub mod warnings_mod;
 pub mod inspect_mod;
 pub mod enum_mod;
+pub mod enum_class;
 pub mod dataclasses_mod;
 // P3 stdlib modules
 pub mod subprocess_mod;

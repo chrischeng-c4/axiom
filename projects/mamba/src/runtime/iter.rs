@@ -396,7 +396,21 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     super::rc::retain_if_ptr(obj);
                     IterKind::Tuple(obj)
                 }
-                ObjData::Str(s) => IterKind::Str(s.chars().collect()),
+                ObjData::Str(s) => {
+                    // Class-body enum classes iterate canonical members in
+                    // definition order (`for c in Color`), not the class-name
+                    // string's characters. Gated: one flag read for programs
+                    // without enums.
+                    if let Some(members) =
+                        super::stdlib::enum_class::class_canonical_members(s)
+                    {
+                        IterKind::List(MbValue::from_ptr(
+                            MbObject::new_list_borrowed(members),
+                        ))
+                    } else {
+                        IterKind::Str(s.chars().collect())
+                    }
+                }
                 ObjData::Dict(ref lock) => {
                     // ET.Element stub dicts iterate their children, not keys.
                     if let Some(children) =

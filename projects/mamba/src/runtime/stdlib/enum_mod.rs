@@ -39,7 +39,7 @@ fn extract_str(val: MbValue) -> Option<String> {
 /// `auto()` sentinel: the maximum positive int representable in the 48-bit
 /// NaN-boxed payload. `mb_enum_auto` returns it and `enum_create_with_opts`
 /// replaces it with the running counter — both sides MUST use this constant.
-const AUTO_SENTINEL: i64 = (1_i64 << 47) - 1;
+pub(crate) const AUTO_SENTINEL: i64 = (1_i64 << 47) - 1;
 
 /// Mixin data type for functional-API construction (`type=int` kwarg /
 /// `enum.IntEnum`). Int/str mixin members are stored as their raw value,

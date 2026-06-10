@@ -238,6 +238,13 @@ pub fn mb_list_from_iterable(val: MbValue) -> MbValue {
                     return MbValue::from_ptr(MbObject::new_list_borrowed(items.clone()));
                 }
                 ObjData::Str(s) => {
+                    // Class-body enum classes: list(Color) is the canonical
+                    // member list, not the class-name string's characters.
+                    if let Some(members) =
+                        super::stdlib::enum_class::class_canonical_members(s)
+                    {
+                        return MbValue::from_ptr(MbObject::new_list_borrowed(members));
+                    }
                     let items: Vec<MbValue> = s.chars()
                         .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
                         .collect();
@@ -915,6 +922,12 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                     return MbValue::from_bool(false);
                 }
                 ObjData::Str(ref s) => {
+                    // Class-body enum class: `member in Color` / `value in Color`.
+                    if let Some(found) =
+                        super::stdlib::enum_class::class_contains(s, value)
+                    {
+                        return MbValue::from_bool(found);
+                    }
                     if let Some(vp) = value.as_ptr() {
                         if let ObjData::Str(ref vs) = (*vp).data {
                             return MbValue::from_bool(s.contains(vs.as_str()));
@@ -953,6 +966,12 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                     return super::bytes_ops::mb_bytes_contains(container, value);
                 }
                 ObjData::Instance { .. } => {
+                    // Flag composite containment: `Color.RED in (RED | BLUE)`.
+                    if let Some(found) =
+                        super::stdlib::enum_class::flag_member_contains(container, value)
+                    {
+                        return MbValue::from_bool(found);
+                    }
                     // User-defined iterable / sequence: check __contains__ first,
                     // fall back to iterator protocol + equality.
                     let contains_method = super::class::mb_lookup_dunder(

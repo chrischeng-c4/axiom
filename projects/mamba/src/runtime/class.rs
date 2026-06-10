@@ -917,6 +917,13 @@ pub fn mb_class_set_class_attr(class_name: MbValue, attr_name: MbValue, value: M
     if name.is_empty() || attr.is_empty() {
         return;
     }
+    // Class-body enums (`class Color(enum.Enum): RED = 1`): convert eligible
+    // class-body assignments into singleton member Instances at registration
+    // time (Lane-B of #1448). Non-enum classes fall through untouched.
+    let value = match super::stdlib::enum_class::maybe_convert_class_attr(&name, &attr, value) {
+        Some(member) => member,
+        None => value,
+    };
     // Fix C-prime: registry takes its own +1 so JIT epilogue release of the
     // source VReg cannot UAF the raw reference in `class_attrs`.
     unsafe { super::rc::retain_if_ptr(value); }
@@ -1177,6 +1184,20 @@ fn unwrap_descriptor_method(method: MbValue) -> (MbValue, DescriptorKind) {
     (method, DescriptorKind::Regular)
 }
 
+/// Unwrap any classmethod/staticmethod wrapper on `method` and return its
+/// function address when the address is in the CALLABLE_REGISTRY; 0
+/// otherwise. Used by the class-body enum machinery to dispatch the
+/// `_missing_(cls, value)` classmethod hook.
+pub(crate) fn registered_callable_addr(method: MbValue) -> u64 {
+    let (unwrapped, _kind) = unwrap_descriptor_method(method);
+    let addr = extract_func_addr(unwrapped);
+    if addr != 0 && CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr)) {
+        addr
+    } else {
+        0
+    }
+}
+
 // ── Function Address Extraction ──
 
 /// Extract a function address from a NaN-boxed method value.
@@ -1314,6 +1335,11 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
     }
     if let Some(result) = mb_user_abc_reject_abstract_instantiation(&name) {
         return result;
+    }
+    // Class-body enums: `Color(2)` is a value→member lookup (with the
+    // `_missing_` hook), never instance creation (CPython EnumType.__call__).
+    if let Some(member) = super::stdlib::enum_class::enum_class_call(&name, args_list) {
+        return member;
     }
 
     // Single registry access: fetch both metaclass and cached_init together to avoid
@@ -2698,6 +2724,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             }
                             "register" if is_user_abc(s) => {
                                 return make_user_abc_register_method(s);
+                            }
+                            "__members__" if super::stdlib::enum_class::is_enum_class(s) => {
+                                // Class-body enum: name→member mapping incl. aliases.
+                                if let Some(d) =
+                                    super::stdlib::enum_class::members_map_dict(s)
+                                {
+                                    return d;
+                                }
                             }
                             _ => {
                                 // Class methods and class attributes via MRO
@@ -4168,6 +4202,11 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
                 if nominal {
                     return MbValue::from_bool(true);
                 }
+                // Data-type-mixin enum members: isinstance(IntFlag member,
+                // int) / isinstance(StrEnum member, str).
+                if super::stdlib::enum_class::member_isinstance_builtin(obj, &target) {
+                    return MbValue::from_bool(true);
+                }
                 // Structural match against a @runtime_checkable Protocol.
                 if is_runtime_checkable_protocol(&target) {
                     return MbValue::from_bool(protocol_structural_match(class_name, &target));
@@ -5223,6 +5262,13 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     // R11: __class_getitem__ — if obj is a class name, check for subscript support.
                     let is_class = CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(s.as_str()));
                     if is_class {
+                        // Class-body enums: `Color["BLUE"]` is a name→member
+                        // lookup (raises KeyError on a missing name).
+                        if let Some(member) =
+                            super::stdlib::enum_class::enum_class_getitem(s, key)
+                        {
+                            return member;
+                        }
                         let getitem_method = lookup_method(s, "__class_getitem__");
                         if !getitem_method.is_none() {
                             let addr = extract_func_addr(getitem_method);
@@ -5752,6 +5798,20 @@ pub fn mb_obj_contains(obj: MbValue, item: MbValue) -> MbValue {
             return MbValue::from_bool((v - current).rem_euclid(step.abs()) == 0);
         }
         return MbValue::from_bool(false);
+    }
+    // Class-body enum class: `member in Color` / `value in Color`.
+    if let Some(p) = obj.as_ptr() {
+        unsafe {
+            if let ObjData::Str(ref s) = (*p).data {
+                if let Some(found) = super::stdlib::enum_class::class_contains(s, item) {
+                    return MbValue::from_bool(found);
+                }
+            }
+        }
+    }
+    // Flag composite containment: `Color.RED in (Color.RED | Color.BLUE)`.
+    if let Some(found) = super::stdlib::enum_class::flag_member_contains(obj, item) {
+        return MbValue::from_bool(found);
     }
     // Functional-API enum class objects: `member in EnumCls` (identity) and
     // `value in EnumCls` (data-type/value match, CPython 3.12 semantics).
@@ -8477,6 +8537,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             super::rc::retain_if_ptr(fv);
                             return super::builtins::mb_call_spread(fv, args);
                         }
+                    }
+                    // str-mixin enum members ((str, Enum) / StrEnum) inherit
+                    // the str method surface: delegate against the raw value
+                    // (`Direction.EAST.upper()` → "EAST").
+                    if let Some(sv) =
+                        super::stdlib::enum_class::str_mixin_member_value(receiver)
+                    {
+                        return super::string_ops::dispatch_str_method(&name, sv, args);
                     }
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),

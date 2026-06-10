@@ -2648,6 +2648,11 @@ pub fn value_to_string(val: MbValue) -> String {
                     if class_name == "UnionType" {
                         return super::builtins::union_type_repr(val);
                     }
+                    // Class-body enum member without a user __str__:
+                    // str(Color.RED) → "Color.RED".
+                    if let Some(s) = super::stdlib::enum_class::member_str(val) {
+                        return s;
+                    }
                     // slice repr matches CPython's "slice(start, stop, step)"
                     // surface — keep print() / str() / repr() consistent. (#1256)
                     if class_name == "slice" {

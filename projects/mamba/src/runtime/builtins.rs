@@ -398,6 +398,11 @@ pub fn mb_print(val: MbValue) -> MbValue {
                     } else if class_name == "datetime.timezone" {
                         drop(f);
                         mb_outln!("{}", super::stdlib::datetime_mod::timezone_str(val));
+                    } else if let Some(s) = super::stdlib::enum_class::member_str(val) {
+                        // Class-body enum member without a user __str__:
+                        // print(Color.RED) → "Color.RED".
+                        drop(f);
+                        mb_outln!("{s}");
                     } else {
                         drop(f);
                         // __str__ dunder dispatch for print(); CPython falls back
@@ -656,6 +661,9 @@ fn print_repr(val: MbValue) {
         mb_out!("None");
     } else if val.is_not_implemented() {
         mb_out!("NotImplemented");
+    } else if let Some(s) = super::stdlib::enum_class::member_repr(val) {
+        // Class-body enum member inside a container: "<Color.RED: 1>".
+        mb_out!("{s}");
     } else if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -880,7 +888,16 @@ pub fn mb_len(val: MbValue) -> MbValue {
         unsafe {
             match &(*ptr).data {
                 // Python 3 `len(str)` is the number of Unicode code points, not bytes.
-                ObjData::Str(s) => MbValue::from_int(s.chars().count() as i64),
+                ObjData::Str(s) => {
+                    // Class-body enum classes: len(Color) is the canonical
+                    // member count, not the class-name string length.
+                    if let Some(n) =
+                        super::stdlib::enum_class::class_member_count(s)
+                    {
+                        return MbValue::from_int(n);
+                    }
+                    MbValue::from_int(s.chars().count() as i64)
+                }
                 ObjData::List(ref lock) => MbValue::from_int(lock.read().unwrap().len() as i64),
                 ObjData::Dict(ref lock) => {
                     // ET.Element stub dicts: len(e) is the child count.
@@ -2212,6 +2229,12 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
 
 /// Bitwise OR — also handles set union, dict merge, and PEP 604 type unions.
 pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
+    // Flag member composition: Color.RED | Color.BLUE → cached composite.
+    if let Some(r) = super::stdlib::enum_class::flag_binop(
+        a, b, super::stdlib::enum_class::FlagOp::Or,
+    ) {
+        return r;
+    }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
             let a_is_setlike = matches!((*pa).data, ObjData::Set(_) | ObjData::FrozenSet(_));
@@ -2425,6 +2448,12 @@ fn is_type_name(s: &str) -> bool {
 
 /// Bitwise AND — also handles set intersection.
 pub fn mb_bitand(a: MbValue, b: MbValue) -> MbValue {
+    // Flag member composition: Color.RED & composite → cached member.
+    if let Some(r) = super::stdlib::enum_class::flag_binop(
+        a, b, super::stdlib::enum_class::FlagOp::And,
+    ) {
+        return r;
+    }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
             let a_is_setlike = matches!((*pa).data, ObjData::Set(_) | ObjData::FrozenSet(_));
@@ -2448,6 +2477,12 @@ pub fn mb_bitand(a: MbValue, b: MbValue) -> MbValue {
 
 /// Bitwise XOR — also handles set symmetric difference.
 pub fn mb_bitxor(a: MbValue, b: MbValue) -> MbValue {
+    // Flag member composition: Color.RED ^ Color.BLUE → cached composite.
+    if let Some(r) = super::stdlib::enum_class::flag_binop(
+        a, b, super::stdlib::enum_class::FlagOp::Xor,
+    ) {
+        return r;
+    }
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
         unsafe {
             let a_is_setlike = matches!((*pa).data, ObjData::Set(_) | ObjData::FrozenSet(_));
@@ -2970,6 +3005,14 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
             }
         }
     }
+    // Class-body enum members: singleton identity between members; raw-value
+    // equality ONLY for data-type mixins (IntFlag == int, StrEnum == str);
+    // Plain/Flag members never equal raw values (`Suit.CLUBS != 1`). Must
+    // run BEFORE the generic Instance-with-value-field rule below, which
+    // would otherwise equate a plain Enum member with its raw value.
+    if let Some(eq) = super::stdlib::enum_class::members_eq_override(a, b) {
+        return eq;
+    }
     // IntEnum-like Instance vs int comparison: when an Instance carries a
     // `value` int field (e.g. HTTPStatus.OK) compare against the other side
     // by value so `HTTPStatus.OK == 200` mirrors CPython's IntEnum semantics.
@@ -3218,6 +3261,48 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
         unsafe {
             if let (ObjData::Str(ref sa), ObjData::Str(ref sb)) = (&(*pa).data, &(*pb).data) {
                 if sa == sb && super::class::class_is_registered(sa) {
+                    return true;
+                }
+            }
+            // Type-object identity: `type(x)` allocates a fresh Instance
+            // (class_name "type", __name__=N) per call, but all type objects
+            // naming the same registered class ARE the same class object —
+            // as is the class-name string itself. Makes `type(obj) is Cls`
+            // and `type(a) is type(b)` behave like CPython for registered
+            // classes and builtin type names.
+            let type_obj_name = |p: *mut MbObject| -> Option<String> {
+                if let ObjData::Instance { ref class_name, ref fields } = (*p).data {
+                    if class_name == "type" {
+                        return fields.read().ok().and_then(|f| {
+                            f.get("__name__").and_then(|v| {
+                                if let Some(np) = v.as_ptr() {
+                                    if let ObjData::Str(ref n) = (*np).data {
+                                        return Some(n.clone());
+                                    }
+                                }
+                                None
+                            })
+                        });
+                    }
+                }
+                None
+            };
+            let resolves_to_type_name = |p: *mut MbObject, name: &str| -> bool {
+                match &(*p).data {
+                    ObjData::Str(ref s) => s == name,
+                    _ => type_obj_name(p).as_deref() == Some(name),
+                }
+            };
+            if let Some(na) = type_obj_name(pa) {
+                if (super::class::class_is_registered(&na) || is_type_name(&na))
+                    && resolves_to_type_name(pb, &na)
+                {
+                    return true;
+                }
+            } else if let Some(nb) = type_obj_name(pb) {
+                if (super::class::class_is_registered(&nb) || is_type_name(&nb))
+                    && resolves_to_type_name(pa, &nb)
+                {
                     return true;
                 }
             }
@@ -3573,6 +3658,12 @@ pub fn extract_items(val: MbValue) -> Vec<MbValue> {
                 ObjData::Set(ref lock) => return lock.read().unwrap().to_vec(),
                 ObjData::FrozenSet(items) => return items.clone(),
                 ObjData::Str(s) => {
+                    // Class-body enum classes iterate canonical members.
+                    if let Some(members) =
+                        super::stdlib::enum_class::class_canonical_members(s)
+                    {
+                        return members;
+                    }
                     // Iterate over characters like Python does: "abc" → ['a', 'b', 'c']
                     return s.chars()
                         .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
@@ -3721,6 +3812,11 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                 ObjData::Instance { class_name, ref fields } => {
                     if class_name == "UnionType" {
                         return MbValue::from_ptr(MbObject::new_str(union_type_repr(val)));
+                    }
+                    // Class-body enum member without a user __repr__:
+                    // repr(Color.RED) → "<Color.RED: 1>".
+                    if let Some(s) = super::stdlib::enum_class::member_repr(val) {
+                        return MbValue::from_ptr(MbObject::new_str(s));
                     }
                     // weakref.ref CPython-style repr: `<weakref at 0x..; to
                     // 'CLASS' at 0x..>`, naming the referent's class (gh-99184).
@@ -5833,6 +5929,11 @@ pub fn mb_is_truthy(val: MbValue) -> i64 {
                         if let Some(iv) = result.as_int() {
                             return if iv != 0 { 1 } else { 0 };
                         }
+                    }
+                    // Empty Flag members (value 0, e.g. `RED & BLUE`) are
+                    // falsy; plain Enum members stay default-truthy.
+                    if super::stdlib::enum_class::flag_member_is_empty(val) {
+                        return 0;
                     }
                     1 // default: truthy
                 }

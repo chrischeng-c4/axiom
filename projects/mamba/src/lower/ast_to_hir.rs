@@ -4178,6 +4178,23 @@ impl<'a> AstLowerer<'a> {
                 HirPattern::Class { class: class_sym, class_name: class_name_str, args }
             }
             ast::Pattern::Constructor { path, fields } => {
+                // PEP 634: a dotted name WITHOUT parentheses is a VALUE
+                // pattern (`case Suit.HEARTS:` compares subject == Suit.HEARTS),
+                // never a class pattern. The parser emits these as Constructor
+                // with empty fields; rebuild the attribute chain and lower as
+                // a Literal equality test. Single-segment bare constructors
+                // (`case int:`) keep the legacy class-pattern shape.
+                if fields.is_empty() && path.len() >= 2 {
+                    let mut expr = ast::Expr::Ident(path[0].clone());
+                    for seg in &path[1..] {
+                        expr = ast::Expr::Attr {
+                            object: Box::new(Spanned { node: expr, span: pat.span }),
+                            attr: seg.clone(),
+                        };
+                    }
+                    let spanned = Spanned { node: expr, span: pat.span };
+                    return Some(HirPattern::Literal(self.lower_expr(&spanned)?));
+                }
                 let class_name_str = path.last()?.clone();  // use last segment for dotted paths
                 let class_sym = self.resolve_name(&class_name_str, pat.span)?;
                 let args: Vec<(String, HirPattern)> = fields.iter()
