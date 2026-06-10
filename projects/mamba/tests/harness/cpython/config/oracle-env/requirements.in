@@ -9,6 +9,18 @@
 # Regenerate the lock:   uv pip compile requirements.in -o requirements.txt
 # Materialize the env:   uv venv <repo>/projects/mamba/tests/cpython/.cache/oracle-env --python 3.12
 #                        VIRTUAL_ENV=<that path> uv pip sync requirements.txt
+#
+# REQUIRED extra step — stdlib `test` package: uv's python-build-standalone
+# interpreters are `install_only` builds that STRIP Lib/test, but thousands
+# of ported fixtures do `from test.support import ...`; without it the
+# oracle exits 1 and the harness reports INVALID fixture (e.g. 89 of the 93
+# behavior/std-libs/pathlib failures were exactly this). Copy a real CPython
+# 3.12 Lib/test into the env's site-packages (any 3.12.x source works):
+#
+#   rsync -a --exclude __pycache__ \
+#     <cpython-3.12-source-or-pyenv>/lib/python3.12/test \
+#     <oracle-env>/lib/python3.12/site-packages/
+#
 # The harness auto-detects .cache/oracle-env/bin/python3 (harness_common.rs
 # python3_bin); MAMBA_ORACLE_PYTHON still overrides everything.
 
