@@ -1031,6 +1031,70 @@ impl KeywordIndex {
     }
 }
 
+/// Order-statistic snapshot of the live `values` tree: distinct value bits
+/// ascending plus cumulative doc counts. Built lazily the first time a range
+/// ESTIMATE walks past [`RANGE_STATS_BUILD_THRESHOLD`] distinct keys; dropped
+/// with the keyword range caches on any write batch, delete, or seal. Both
+/// `range_df` and `range_distinct_count` answer from two binary searches —
+/// O(log distinct) instead of an O(distinct-in-range) tree walk per query.
+/// Estimation-only state: it never feeds result evaluation, so a rebuild race
+/// can at worst pick a different (still correct) plan.
+#[derive(Debug)]
+struct NumberRangeStats {
+    /// Distinct live values (sortable bits), ascending.
+    keys: Vec<u64>,
+    /// `cum_df[i]` = total docs across `keys[..i]`; `len = keys.len() + 1`.
+    cum_df: Vec<u64>,
+}
+
+/// Distinct-key walk budget for a single range estimate before the walk is
+/// abandoned and [`NumberRangeStats`] is built instead. Narrow ranges stay on
+/// the exact walk and never pay the build; one wide estimate pays roughly two
+/// walks (the abandoned prefix + the build) and every later estimate on the
+/// unchanged tree is O(log distinct).
+const RANGE_STATS_BUILD_THRESHOLD: u64 = 1024;
+
+impl NumberRangeStats {
+    fn build(values: &BTreeMap<SortableF64, RoaringBitmap>) -> Self {
+        let mut keys = Vec::with_capacity(values.len());
+        let mut cum_df = Vec::with_capacity(values.len() + 1);
+        cum_df.push(0);
+        let mut running = 0u64;
+        for (k, set) in values {
+            keys.push(k.bits());
+            running += set.len();
+            cum_df.push(running);
+        }
+        Self { keys, cum_df }
+    }
+
+    /// `(distinct, df)` over the half-open index window the bounds select.
+    fn range(
+        &self,
+        low: std::ops::Bound<SortableF64>,
+        high: std::ops::Bound<SortableF64>,
+    ) -> (u64, u64) {
+        use std::ops::Bound;
+        let lo_ix = match low {
+            Bound::Unbounded => 0,
+            Bound::Included(x) => self.keys.partition_point(|&k| k < x.bits()),
+            Bound::Excluded(x) => self.keys.partition_point(|&k| k <= x.bits()),
+        };
+        let hi_ix = match high {
+            Bound::Unbounded => self.keys.len(),
+            Bound::Included(x) => self.keys.partition_point(|&k| k <= x.bits()),
+            Bound::Excluded(x) => self.keys.partition_point(|&k| k < x.bits()),
+        };
+        if hi_ix <= lo_ix {
+            return (0, 0);
+        }
+        (
+            (hi_ix - lo_ix) as u64,
+            self.cum_df[hi_ix] - self.cum_df[lo_ix],
+        )
+    }
+}
+
 #[derive(Debug, Default)]
 struct NumberIndex {
     values: BTreeMap<SortableF64, RoaringBitmap>,
@@ -1050,6 +1114,10 @@ struct NumberIndex {
     /// `Match(text) ∩ Term(keyword) ∩ Range(number)` shapes. This is query-only
     /// derived state, invalidated with `keyword_range_cache`.
     keyword_range_bitmap_cache: RwLock<FastHashMap<String, std::sync::Arc<RoaringBitmap>>>,
+    /// Lazy [`NumberRangeStats`] over the live `values` tree for planner range
+    /// ESTIMATES (`range_df` / `range_distinct_count`). Query-only derived
+    /// state, invalidated with `keyword_range_cache`.
+    range_stats: RwLock<Option<std::sync::Arc<NumberRangeStats>>>,
     bytes: u64,
     /// Stage 2 disk-tier (Phase 2c): a sealed columnar mmap segment covering
     /// doc ids `[0..n_docs)`. When present, per-doc Number PREDICATE point
@@ -1174,6 +1242,48 @@ impl NumberIndex {
         if let Ok(cache) = self.keyword_range_bitmap_cache.get_mut() {
             cache.clear();
         }
+        if let Ok(stats) = self.range_stats.get_mut() {
+            *stats = None;
+        }
+    }
+
+    /// `(distinct, df)` of the LIVE `values` tree in `[low, high]` for planner
+    /// estimates. Walks the tree exactly for narrow ranges; a walk that passes
+    /// [`RANGE_STATS_BUILD_THRESHOLD`] distinct keys abandons and answers from
+    /// the (built-on-demand) [`NumberRangeStats`] snapshot instead.
+    fn live_range_estimate(
+        &self,
+        low: std::ops::Bound<SortableF64>,
+        high: std::ops::Bound<SortableF64>,
+    ) -> (u64, u64) {
+        if let Some(stats) = self
+            .range_stats
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+        {
+            return stats.range(low, high);
+        }
+        let mut distinct = 0u64;
+        let mut df = 0u64;
+        for (_, set) in self.values.range((low, high)) {
+            distinct += 1;
+            if distinct > RANGE_STATS_BUILD_THRESHOLD {
+                return self.build_range_stats().range(low, high);
+            }
+            df += set.len();
+        }
+        (distinct, df)
+    }
+
+    fn build_range_stats(&self) -> std::sync::Arc<NumberRangeStats> {
+        let built = std::sync::Arc::new(NumberRangeStats::build(&self.values));
+        if let Ok(mut guard) = self.range_stats.write() {
+            // A concurrent estimate may have built it first; either snapshot is
+            // valid for the same (read-locked, unmutated) tree — keep ours.
+            *guard = Some(built.clone());
+        }
+        built
     }
 
     fn forward_len(&self) -> usize {
@@ -1396,14 +1506,14 @@ impl NumberIndex {
         if range_is_empty(low, high) {
             return 0;
         }
+        let (_, tail) = self.live_range_estimate(low, high);
         if let Some(seg) = &self.segment {
             let base = seg
                 .number_range_df(bound_to_bits(low), bound_to_bits(high))
                 .unwrap_or(0);
-            let tail: u64 = self.values.range((low, high)).map(|(_, s)| s.len()).sum();
             return base + tail;
         }
-        self.values.range((low, high)).map(|(_, s)| s.len()).sum()
+        tail
     }
 
     #[inline]
@@ -1415,7 +1525,7 @@ impl NumberIndex {
         if range_is_empty(low, high) {
             return 0;
         }
-        let tail = self.values.range((low, high)).count() as u64;
+        let (tail, _) = self.live_range_estimate(low, high);
         if let Some(seg) = &self.segment {
             return seg
                 .number_range_distinct_count(bound_to_bits(low), bound_to_bits(high))
@@ -3542,11 +3652,16 @@ impl Engine {
                 // `terms` driver, so iterating it directly would miss every
                 // on-disk term (and report deleted docs for the tail-only
                 // case). Drive from the segment-aware `live_terms` — segment
-                // dict minus tombstones + live tail. Segment OFF: `live_terms`
-                // returns the live `terms` clone, so the groups are identical
-                // to the old direct iteration (default build unchanged).
-                let live = k.live_terms();
-                let source = &live;
+                // dict minus tombstones + live tail. Segment OFF: iterate the
+                // live `terms` map borrowed — `live_terms` would deep-clone the
+                // whole inverted index (every term + posting bitmap) just to
+                // read it, which dominated duplicates latency.
+                let live = if k.segment.is_some() {
+                    Some(k.live_terms())
+                } else {
+                    None
+                };
+                let source = live.as_ref().unwrap_or(&k.terms);
                 source
                     .iter()
                     .filter(|(_, set)| (set.len() as usize) >= min)
@@ -3567,9 +3682,14 @@ impl Engine {
                 // sorted-value column minus tombstones + live tail. Segment OFF:
                 // `live_values` returns the live `values` clone, so the groups
                 // are identical to the old direct iteration (default build
-                // unchanged).
-                let live = n.live_values();
-                let source = &live;
+                // unchanged). Segment OFF: borrow the live `values` map — the
+                // clone of every value + posting bitmap dominated latency.
+                let live = if n.segment.is_some() {
+                    Some(n.live_values())
+                } else {
+                    None
+                };
+                let source = live.as_ref().unwrap_or(&n.values);
                 source
                     .iter()
                     .filter(|(_, set)| (set.len() as usize) >= min)
@@ -3592,9 +3712,15 @@ impl Engine {
                 // segment-aware `live_elements` — segment dict minus tombstones +
                 // live tail. Segment OFF: `live_elements` returns the live `elements`
                 // clone, so the groups are identical to the old direct iteration
-                // (default build unchanged).
-                let live = s.live_elements();
-                let source = &live;
+                // (default build unchanged). Segment OFF: borrow the live
+                // `elements` map — the clone of every element + posting bitmap
+                // dominated latency.
+                let live = if s.segment.is_some() {
+                    Some(s.live_elements())
+                } else {
+                    None
+                };
+                let source = live.as_ref().unwrap_or(&s.elements);
                 source
                     .iter()
                     .filter(|(_, set)| (set.len() as usize) >= min)
@@ -7799,6 +7925,7 @@ impl FieldIndex {
                     dense_forward: Vec::new(),
                     keyword_range_cache: RwLock::new(FastHashMap::default()),
                     keyword_range_bitmap_cache: RwLock::new(FastHashMap::default()),
+                    range_stats: RwLock::new(None),
                     bytes: 0,
                     segment: Some(reader),
                     // Reopen starts with NO pending deletes — the on-disk segment
@@ -12401,6 +12528,70 @@ mod tests {
             field: field.into(),
             value,
         }
+    }
+
+    #[test]
+    fn number_range_stats_matches_walk_on_all_bound_shapes() {
+        use std::ops::Bound;
+        let mut idx = NumberIndex::default();
+        // Values 0.0, 1.0, ..., 99.0; value k carries k+1 docs so df != distinct.
+        let mut id = 0u32;
+        for k in 0..100u32 {
+            let key = SortableF64::new(k as f64).unwrap();
+            for _ in 0..=k {
+                idx.values.entry(key).or_default().insert(id);
+                id += 1;
+            }
+        }
+        let stats = NumberRangeStats::build(&idx.values);
+        let s = |x: f64| SortableF64::new(x).unwrap();
+        let cases: Vec<(Bound<SortableF64>, Bound<SortableF64>)> = vec![
+            (Bound::Unbounded, Bound::Unbounded),
+            (Bound::Included(s(10.0)), Bound::Excluded(s(20.0))),
+            (Bound::Excluded(s(10.0)), Bound::Included(s(20.0))),
+            (Bound::Included(s(10.5)), Bound::Excluded(s(10.6))), // empty window
+            (Bound::Unbounded, Bound::Excluded(s(0.0))),          // before first
+            (Bound::Excluded(s(99.0)), Bound::Unbounded),         // after last
+            (Bound::Included(s(99.0)), Bound::Included(s(99.0))), // single key
+        ];
+        for (lo, hi) in cases {
+            let walk_distinct = idx.values.range((lo, hi)).count() as u64;
+            let walk_df: u64 = idx.values.range((lo, hi)).map(|(_, s)| s.len()).sum();
+            assert_eq!(
+                stats.range(lo, hi),
+                (walk_distinct, walk_df),
+                "bounds {lo:?}..{hi:?}"
+            );
+            // The public estimate entry points agree with the walk too.
+            assert_eq!(idx.range_df(lo, hi), walk_df, "range_df {lo:?}..{hi:?}");
+            assert_eq!(
+                idx.range_distinct_count(lo, hi),
+                walk_distinct,
+                "distinct {lo:?}..{hi:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn number_range_stats_invalidated_by_cache_clear() {
+        use std::ops::Bound;
+        let mut idx = NumberIndex::default();
+        for k in 0..10u32 {
+            let key = SortableF64::new(k as f64).unwrap();
+            idx.values.entry(key).or_default().insert(k);
+        }
+        let all = (Bound::Unbounded, Bound::Unbounded);
+        idx.build_range_stats();
+        assert_eq!(idx.range_df(all.0, all.1), 10);
+        // Mutate the tree the way the write path does, then clear caches —
+        // the next estimate must see the new value, not the stale snapshot.
+        idx.values
+            .entry(SortableF64::new(100.0).unwrap())
+            .or_default()
+            .insert(10);
+        idx.clear_keyword_range_cache();
+        assert_eq!(idx.range_df(all.0, all.1), 11);
+        assert_eq!(idx.range_distinct_count(all.0, all.1), 11);
     }
 
     #[test]
