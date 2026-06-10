@@ -93,6 +93,24 @@ pub struct TreeShakeResult {
 /// Analyze which exports are used across the module graph.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeResult> {
+    // Callers without an explicit entry (tests, legacy paths) treat the
+    // first module as the root of the import graph.
+    let entry = modules.first().map(|(p, _)| p.clone()).unwrap_or_default();
+    analyze_used_exports_from(modules, &entry)
+}
+
+/// Demand-driven variant: usage flows outward from `entry` only.
+///
+/// Marking every module's imports as "used" let eliminated subtrees keep
+/// themselves alive — MUI's cssVars/extendTheme cluster imports itself
+/// into liveness even though nothing reachable from the entry ever
+/// imports it. Liveness now spreads from the entry across import /
+/// require / dynamic-import edges (and the re-export fixed point below)
+/// so a dead subtree can no longer keep itself or its dependencies live.
+pub fn analyze_used_exports_from(
+    modules: &[(PathBuf, String)],
+    entry: &Path,
+) -> Result<TreeShakeResult> {
     let mut all_exports: HashMap<PathBuf, Vec<String>> = HashMap::new();
     let mut used: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     let lookup = ModuleLookup::new(modules);
@@ -104,24 +122,46 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
         all_exports.insert(path.clone(), exports);
     }
 
-    // Step 2: Mark all ESM imports as used
+    // Steps 2+3: extract every module's outgoing edges once.
+    let mut static_edges: HashMap<&Path, Vec<(PathBuf, Vec<String>)>> = HashMap::new();
+    let mut dynamic_edges: HashMap<&Path, Vec<PathBuf>> = HashMap::new();
     for (path, source) in modules {
-        let imports = extract_import_bindings(path, source, &lookup);
-        for (target_path, names) in imports {
-            let entry = used.entry(target_path).or_default();
-            for name in names {
-                entry.insert(name);
-            }
-        }
+        let mut edges = extract_import_bindings(path, source, &lookup);
+        edges.extend(extract_cjs_require_bindings(path, source, &lookup));
+        static_edges.insert(path.as_path(), edges);
+        dynamic_edges.insert(
+            path.as_path(),
+            extract_dynamic_import_targets_from(path, source, &lookup),
+        );
     }
 
-    // Step 3: Mark CJS require bindings as used
-    for (path, source) in modules {
-        let cjs_imports = extract_cjs_require_bindings(path, source, &lookup);
-        for (target_path, names) in cjs_imports {
-            let entry = used.entry(target_path).or_default();
-            for name in names {
-                entry.insert(name);
+    // Liveness worklist from the entry: each live module marks its import
+    // targets' names used and pulls those targets live.
+    let mut live: HashSet<PathBuf> = HashSet::new();
+    let mut queue: Vec<PathBuf> = vec![entry.to_path_buf()];
+    while let Some(path) = queue.pop() {
+        if !live.insert(path.clone()) {
+            continue;
+        }
+        if let Some(edges) = static_edges.get(path.as_path()) {
+            for (target_path, names) in edges {
+                let target_used = used.entry(target_path.clone()).or_default();
+                for name in names {
+                    target_used.insert(name.clone());
+                }
+                if !live.contains(target_path) {
+                    queue.push(target_path.clone());
+                }
+            }
+        }
+        if let Some(targets) = dynamic_edges.get(path.as_path()) {
+            for target_path in targets {
+                used.entry(target_path.clone())
+                    .or_default()
+                    .insert("*".to_string());
+                if !live.contains(target_path) {
+                    queue.push(target_path.clone());
+                }
             }
         }
     }
@@ -202,12 +242,49 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
                 }
             }
         }
+        // Names propagated onto leaves can make new modules live; spread
+        // their own edges before the next fixed-point round.
+        let newly_used: Vec<PathBuf> = used
+            .keys()
+            .filter(|p| !live.contains(p.as_path()))
+            .cloned()
+            .collect();
+        if !newly_used.is_empty() {
+            changed = true;
+            let mut queue = newly_used;
+            while let Some(path) = queue.pop() {
+                if !live.insert(path.clone()) {
+                    continue;
+                }
+                if let Some(edges) = static_edges.get(path.as_path()) {
+                    for (target_path, names) in edges {
+                        let target_used = used.entry(target_path.clone()).or_default();
+                        for name in names {
+                            target_used.insert(name.clone());
+                        }
+                        if !live.contains(target_path) {
+                            queue.push(target_path.clone());
+                        }
+                    }
+                }
+                if let Some(targets) = dynamic_edges.get(path.as_path()) {
+                    for target_path in targets {
+                        used.entry(target_path.clone())
+                            .or_default()
+                            .insert("*".to_string());
+                        if !live.contains(target_path) {
+                            queue.push(target_path.clone());
+                        }
+                    }
+                }
+            }
+        }
         if !changed {
             break;
         }
     }
 
-    // Step 3.6: Mark dynamic `import("./x")` call-expression targets
+    // Step 3.6 (legacy): dynamic `import("./x")` targets are handled by
     // with the wildcard `"*"`. A dynamic import loads the target
     // module's whole namespace at runtime, so the static analyzer
     // cannot narrow which exports survive — conservative behavior
@@ -221,11 +298,7 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
     // by this pass — the `find_module_by_specifier` API needs a
     // literal specifier, and treating templates as a wildcard over
     // the whole graph would be too coarse.
-    for (path, source) in modules {
-        for target_path in extract_dynamic_import_targets_from(path, source, &lookup) {
-            used.entry(target_path).or_default().insert("*".to_string());
-        }
-    }
+    // the liveness worklist above; nothing left to do here.
 
     // Step 4: Find eliminated modules
     let mut eliminated = Vec::new();
@@ -619,19 +692,22 @@ pub fn extract_imported_names(line: &str) -> Vec<String> {
         }
     }
 
-    // import Default from '...'
-    if line.starts_with("import ")
-        && !line.contains('{')
-        && !line.contains("* as ")
-        && line.contains(" from ")
-    {
-        let after_import = &line["import ".len()..];
-        if let Some(name) = after_import
-            .split(|c: char| !c.is_alphanumeric() && c != '_')
-            .next()
-        {
-            if !name.is_empty() && name != "type" && name != "from" {
-                names.push("default".to_string());
+    // import Default from '...'  AND  import Default, { a, b } from '...'
+    // The default binding is whatever identifier precedes the brace group
+    // (if any). Requiring "no braces on the line" dropped the default half
+    // of mixed imports — `import FormLabel, { formLabelClasses } from
+    // '../FormLabel'` lost "default", and demand-driven shaking then
+    // eliminated FormLabel.js entirely (React error #130 at runtime).
+    if line.starts_with("import ") && !line.contains("* as ") && line.contains(" from ") {
+        let after_import = line["import ".len()..].trim_start();
+        if !after_import.starts_with('{') {
+            if let Some(name) = after_import
+                .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                .next()
+            {
+                if !name.is_empty() && name != "type" && name != "from" {
+                    names.push("default".to_string());
+                }
             }
         }
     }

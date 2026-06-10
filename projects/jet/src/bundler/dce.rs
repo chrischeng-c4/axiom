@@ -126,6 +126,84 @@ pub fn eliminate_unused_side_effect_free_require_bindings(
     out
 }
 
+/// Prune a retained module's lowered re-export glue down to the names the
+/// tree-shake analysis proved used.
+///
+/// Barrel modules lower every `export { x } from "./x"` into an
+/// unconditional `module.exports["x"] = require(id)[...];` statement (several per
+/// line) and every `export * from "./y"` into a
+/// `var __re = require(id); Object.keys(...)` copy loop. Those require calls
+/// rescued every re-export target back into the bundle even when the
+/// analysis had already proven the name unused — on MUI that re-imported
+/// ~170KB of eliminated code. Dropping the assignment leaves the target to
+/// the reachability walk: if nobody else requires it, it is eliminated
+/// with the rest.
+///
+/// Statements are matched span-wise (NOT line-wise — the lowering emits
+/// sibling assignments on one line) and only with safe value shapes
+/// (`require(id)[...]`, `require(id)["default"] || require(id)`, or a bare identifier),
+/// so arbitrary expressions are never deleted. The star-copy loop is kept
+/// whenever any used name is not covered by an explicit assignment.
+pub(crate) fn eliminate_unused_reexport_assignments(
+    source: &str,
+    used: &HashSet<String>,
+) -> String {
+    use std::sync::OnceLock;
+    static EXPLICIT: OnceLock<regex::Regex> = OnceLock::new();
+    static STAR: OnceLock<regex::Regex> = OnceLock::new();
+    let explicit = EXPLICIT.get_or_init(|| {
+        regex::Regex::new(
+            r#"module\.exports\["([A-Za-z0-9_$]+)"\]\s*=\s*(?:require\(\d+\)(?:\["[^"]+"\])?(?:\s*\|\|\s*require\(\d+\))?|[A-Za-z_$][A-Za-z0-9_$]*)\s*;\s?"#,
+        )
+        .unwrap()
+    });
+    let star = STAR.get_or_init(|| {
+        regex::Regex::new(
+            r#"var __re = require\(\d+\); Object\.keys\(__re\)\.forEach\(function\(k\) \{ if \(k !== "default"\) module\.exports\[k\] = __re\[k\]; \}\);\s?"#,
+        )
+        .unwrap()
+    });
+
+    let explicit_names: HashSet<&str> = explicit
+        .captures_iter(source)
+        .map(|cap| cap.get(1).map(|m| m.as_str()).unwrap_or(""))
+        .collect();
+    let star_needed = used
+        .iter()
+        .any(|name| name != "default" && !explicit_names.contains(name.as_str()));
+
+    let mut removals: Vec<(usize, usize)> = Vec::new();
+    for cap in explicit.captures_iter(source) {
+        let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        if !used.contains(name) {
+            let whole = cap.get(0).unwrap();
+            removals.push((whole.start(), whole.end()));
+        }
+    }
+    if !star_needed {
+        for m in star.find_iter(source) {
+            removals.push((m.start(), m.end()));
+        }
+    }
+    if removals.is_empty() {
+        return source.to_string();
+    }
+    removals.sort_unstable();
+
+    let b = source.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut pos = 0usize;
+    for (start, end) in removals {
+        if start < pos {
+            continue;
+        }
+        out.extend_from_slice(&b[pos..start]);
+        pos = end;
+    }
+    out.extend_from_slice(&b[pos..]);
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
 /// Remove transformed CJS re-export glue that points at modules already proven
 /// unused by the source-level tree-shake pass.
 pub fn eliminate_require_reexports_to_eliminated_modules(

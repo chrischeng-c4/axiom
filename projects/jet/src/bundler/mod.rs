@@ -430,7 +430,7 @@ impl Bundler {
         // Tree shaking: analyze used exports across the module graph, then
         // remove unused export declarations from each module.  Modules with
         // no used exports and no side effects are eliminated entirely.
-        let modules = self.apply_tree_shaking(modules);
+        let modules = self.apply_tree_shaking(modules, &entry);
         lap("tree_shaking");
 
         let mut output = self.generate_bundle(modules, has_cycle)?;
@@ -880,22 +880,52 @@ impl Bundler {
     /// This is Phase 3 of the bundler pipeline (after transform + define + DCE,
     /// before generate_bundle).  Modules whose exports are entirely unused and
     /// have no side effects are eliminated.
-    fn apply_tree_shaking(&self, modules: Vec<CompiledModule>) -> Vec<CompiledModule> {
+    fn apply_tree_shaking(&self, modules: Vec<CompiledModule>, entry: &Path) -> Vec<CompiledModule> {
         let module_pairs: Vec<(PathBuf, String)> = modules
             .iter()
             .map(|m| {
                 let source = std::fs::read_to_string(&m.path).unwrap_or_else(|_| m.code.clone());
+                // Analyze post-define sources: without this, the dead
+                // `process.env.NODE_ENV !== 'production'` branch in packages
+                // like prop-types still marks its dev-only requires
+                // (factoryWithTypeCheckers, react-is, object-assign) as used
+                // even though the transformed code only requires the
+                // production shim.
+                let source = if self.defines.is_empty() {
+                    source
+                } else {
+                    let replaced = define::replace_defines(&source, &self.defines);
+                    if replaced == source {
+                        source
+                    } else {
+                        dce::eliminate_static_conditionals_syntax(&replaced)
+                    }
+                };
                 (m.path.clone(), source)
             })
             .collect();
 
-        let analysis = match tree_shake::analyze_used_exports(&module_pairs) {
+        let analysis = match tree_shake::analyze_used_exports_from(&module_pairs, entry) {
             Ok(a) => a,
             Err(e) => {
                 tracing::warn!("Tree shake analysis failed, skipping: {}", e);
                 return modules;
             }
         };
+        // JET_TREESHAKE_DEBUG=<file> dumps per-module used-export sets.
+        if let Some(dump) = std::env::var_os("JET_TREESHAKE_DEBUG") {
+            let mut lines: Vec<String> = analysis
+                .used_exports
+                .iter()
+                .map(|(p, names)| {
+                    let mut sorted: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+                    sorted.sort_unstable();
+                    format!("{} => [{}]", p.display(), sorted.join(","))
+                })
+                .collect();
+            lines.sort();
+            let _ = std::fs::write(dump, lines.join("\n"));
+        }
 
         if !analysis.eliminated_modules.is_empty() {
             tracing::info!(
@@ -905,69 +935,78 @@ impl Bundler {
             );
         }
 
-        let mut eliminated_modules: HashSet<PathBuf> =
+        let eliminated_paths: HashSet<PathBuf> =
             analysis.eliminated_modules.iter().cloned().collect();
-        let initial_eliminated_module_ids: HashSet<usize> = modules
+
+        // Prune retained modules' lowered re-export glue down to the names
+        // the analysis proved used BEFORE computing require edges. The old
+        // rescue criterion ("any retained module's code contains _r(id)")
+        // resurrected every barrel re-export target — unconditional barrel
+        // glue re-imported ~170KB of eliminated MUI code.
+        let mut pruned_codes: HashMap<usize, String> = modules
             .iter()
-            .filter_map(|module| {
-                eliminated_modules
-                    .contains(&module.path)
-                    .then_some(module.id)
-            })
-            .collect();
-        let retained_require_ids: HashSet<usize> = modules
-            .iter()
-            .filter(|module| !eliminated_modules.contains(&module.path))
-            .flat_map(|module| dce::numeric_require_ids(&module.code))
-            .collect();
-        let mut rescued_ids: HashSet<usize> = retained_require_ids
-            .intersection(&initial_eliminated_module_ids)
-            .copied()
-            .collect();
-        loop {
-            let mut changed = false;
-            for module in &modules {
-                if !rescued_ids.contains(&module.id) {
-                    continue;
-                }
-                for required_id in dce::numeric_require_ids(&module.code) {
-                    if initial_eliminated_module_ids.contains(&required_id)
-                        && rescued_ids.insert(required_id)
-                    {
-                        changed = true;
+            .filter(|m| !eliminated_paths.contains(&m.path))
+            .map(|m| {
+                let code = match analysis.used_exports.get(&m.path) {
+                    Some(used) if !used.is_empty() => {
+                        dce::eliminate_unused_reexport_assignments(&m.code, used)
                     }
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        if !rescued_ids.is_empty() {
-            tracing::debug!(
-                "Tree shaking: preserving {} modules still required by retained transformed code",
-                rescued_ids.len()
-            );
-            eliminated_modules.retain(|path| {
-                modules
-                    .iter()
-                    .find(|module| &module.path == path)
-                    .map(|module| !rescued_ids.contains(&module.id))
-                    .unwrap_or(true)
-            });
-        }
-        let eliminated_module_ids: HashSet<usize> = modules
-            .iter()
-            .filter_map(|module| {
-                eliminated_modules
-                    .contains(&module.path)
-                    .then_some(module.id)
+                    _ => m.code.clone(),
+                };
+                (m.id, code)
             })
             .collect();
 
+        // Reachability from the entry over the pruned require edges decides
+        // what stays. Eliminated modules reached directly (a retained module
+        // genuinely requires one) are rescued and traversed via their
+        // original code, preserving the old rescue semantics for real
+        // dependencies.
+        let entry_id = modules
+            .iter()
+            .find(|m| m.path == entry)
+            .map(|m| m.id)
+            .or_else(|| modules.iter().map(|m| m.id).min());
+        let reachable: HashSet<usize> = if let Some(entry_id) = entry_id {
+            let mut reachable = HashSet::new();
+            let mut stack = vec![entry_id];
+            while let Some(id) = stack.pop() {
+                if !reachable.insert(id) {
+                    continue;
+                }
+                let requires = match pruned_codes.get(&id) {
+                    Some(code) => dce::numeric_require_ids(code),
+                    None => modules
+                        .iter()
+                        .find(|m| m.id == id)
+                        .map(|m| dce::numeric_require_ids(&m.code))
+                        .unwrap_or_default(),
+                };
+                stack.extend(requires);
+            }
+            reachable
+        } else {
+            modules.iter().map(|m| m.id).collect()
+        };
+
+        let eliminated_module_ids: HashSet<usize> = modules
+            .iter()
+            .filter(|m| !reachable.contains(&m.id))
+            .map(|m| m.id)
+            .collect();
+        if !eliminated_module_ids.is_empty() {
+            tracing::info!(
+                "Tree shaking: {} of {} modules unreachable after re-export pruning",
+                eliminated_module_ids.len(),
+                modules.len()
+            );
+        }
+
         modules
             .into_iter()
-            .filter(|m| !eliminated_modules.contains(&m.path))
+            .filter(|m| reachable.contains(&m.id))
             .map(|m| {
+                let code_base = pruned_codes.remove(&m.id).unwrap_or_else(|| m.code.clone());
                 let used = analysis
                     .used_exports
                     .get(&m.path)
@@ -975,12 +1014,12 @@ impl Bundler {
                     .unwrap_or_default();
                 if used.is_empty() {
                     let code = dce::eliminate_require_reexports_to_eliminated_modules(
-                        &m.code,
+                        &code_base,
                         &eliminated_module_ids,
                     );
                     return CompiledModule { code, ..m };
                 }
-                let shaken = tree_shake::shake_module(&m.code, &m.path, &used);
+                let shaken = tree_shake::shake_module(&code_base, &m.path, &used);
                 let shaken = dce::eliminate_require_reexports_to_eliminated_modules(
                     &shaken,
                     &eliminated_module_ids,
@@ -1339,7 +1378,7 @@ mod tests {
             make_compiled_with_id(3, "live.js", r#"exports.default = function live() {};"#),
         ];
 
-        let shaken = bundler.apply_tree_shaking(modules);
+        let shaken = bundler.apply_tree_shaking(modules, Path::new("entry.js"));
         let ids: HashSet<usize> = shaken.iter().map(|module| module.id).collect();
 
         assert!(ids.contains(&0), "{ids:?}");
@@ -1535,7 +1574,7 @@ createRoot(document.getElementById("root")!).render(<App />);"##;
         bundler.check_unresolved_deps().unwrap();
         let (modules, has_cycle) = bundler.transform_modules().await.unwrap();
         assert!(!has_cycle, "fixture should stay on Phase 2 flattening path");
-        let modules = bundler.apply_tree_shaking(modules);
+        let modules = bundler.apply_tree_shaking(modules, &entry);
         let raw = scope_hoist::generate_flattened_bundle(&modules);
         let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
         let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
@@ -1621,7 +1660,7 @@ createRoot(document.getElementById("root")!).render(<App />);"##;
         bundler.check_unresolved_deps().unwrap();
         let (modules, has_cycle) = bundler.transform_modules().await.unwrap();
         assert!(!has_cycle, "fixture should stay on Phase 2 flattening path");
-        let modules = bundler.apply_tree_shaking(modules);
+        let modules = bundler.apply_tree_shaking(modules, &entry);
         let raw = scope_hoist::generate_flattened_bundle(&modules);
         let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
         let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
