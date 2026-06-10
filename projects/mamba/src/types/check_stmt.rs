@@ -210,18 +210,25 @@ impl TypeChecker {
             Stmt::While { condition, body, else_body } => {
                 let _cond_ty = self.check_expr(condition);
                 // Python: any type can be used in a while condition
-                self.symbols.push_scope();
+                //
+                // Python has no block scope: assignments inside a `while` body
+                // (or its `else`) bind in the enclosing scope and remain
+                // visible after the loop. Mirror the `Stmt::Try` handling —
+                // do NOT push a scope here, or post-loop reads of body-assigned
+                // names raise bogus "undefined name" type errors.
                 for s in body { self.check_stmt(s); }
-                self.symbols.pop_scope();
                 if let Some(eb) = else_body {
-                    self.symbols.push_scope();
                     for s in eb { self.check_stmt(s); }
-                    self.symbols.pop_scope();
                 }
             }
             Stmt::For { targets, var_ty, iter, body, else_body }
             | Stmt::AsyncFor { targets, var_ty, iter, body, else_body } => {
-                self.symbols.push_scope();
+                // Python has no block scope: loop targets and body assignments
+                // bind in the enclosing scope and persist after the loop (the
+                // very common read-loop-var-after-loop idiom). Mirror the
+                // `Stmt::Try` handling and the resolver pass — do NOT push a
+                // scope here. Comprehensions DO scope their variables; that is
+                // handled separately in `check_expr` and stays scoped.
                 let ty = var_ty.as_ref()
                     .map(|t| self.resolve_type_expr(t))
                     .unwrap_or_else(|| self.infer_iter_element(iter));
@@ -233,7 +240,6 @@ impl TypeChecker {
                 if let Some(eb) = else_body {
                     for s in eb { self.check_stmt(s); }
                 }
-                self.symbols.pop_scope();
             }
             Stmt::Return(value) => {
                 let val_ty = value.as_ref()
@@ -258,17 +264,33 @@ impl TypeChecker {
             }
             Stmt::Match { expr, arms } => {
                 let subject_ty = self.check_expr(expr);
+                // Python has no block scope: pattern captures (incl. AS
+                // aliases) and case-body assignments bind in the enclosing
+                // scope and remain visible after the match. Mirror the
+                // `Stmt::Try` handling — do NOT push a per-arm scope.
+                //
+                // Per-arm class-pattern narrowing of the subject (#827, R4)
+                // must stay arm-local, so snapshot the subject's binding type
+                // before narrowing and restore it after the arm body when (and
+                // only when) narrowing actually re-bound it.
+                let subject_name = match &expr.node {
+                    Expr::Ident(n) => Some(n.clone()),
+                    _ => None,
+                };
                 for arm in arms {
-                    self.symbols.push_scope();
+                    let saved_subject_ty = subject_name
+                        .as_ref()
+                        .and_then(|n| self.symbols.lookup(n))
+                        .map(|s| self.get_sym_type(s.0));
                     // R4: flow-sensitive type narrowing (#827)
                     // When a case branch uses a class pattern, narrow the matched
-                    // variable's type to the class type within the branch scope.
-                    self.narrow_match_subject(expr, &arm.pattern);
+                    // variable's type to the class type within the branch body.
+                    let narrowed = self.narrow_match_subject(expr, &arm.pattern);
                     // Propagate subject type into capture/star/AS bindings (#827).
                     let prev_subject_ty = self.current_match_subject_ty.replace(subject_ty);
                     self.check_pattern(&arm.pattern);
                     self.current_match_subject_ty = prev_subject_ty;
-                    // Type-check guard expression within the arm's scope (#827)
+                    // Type-check guard expression (#827)
                     // Guard must be boolean (same semantics as if/while conditions)
                     if let Some(guard) = &arm.guard {
                         let guard_ty = self.check_expr(guard);
@@ -277,7 +299,18 @@ impl TypeChecker {
                         }
                     }
                     for s in &arm.body { self.check_stmt(s); }
-                    self.symbols.pop_scope();
+                    // Un-narrow: restore the subject's pre-arm type so the
+                    // narrowing does not leak into later arms or past the match.
+                    if narrowed {
+                        if let (Some(name), Some(orig_ty)) =
+                            (subject_name.as_ref(), saved_subject_ty)
+                        {
+                            let sym = self
+                                .symbols
+                                .define(name.clone(), SymbolKind::Variable);
+                            self.set_sym_type(sym.0, orig_ty);
+                        }
+                    }
                 }
             }
             Stmt::ClassDef { name, type_params, body, .. } => {
@@ -621,12 +654,16 @@ impl TypeChecker {
     ///
     /// If `pattern` is a `ClassPattern` (or an `As` pattern wrapping one) and
     /// `subject` is a simple identifier, re-defines that identifier in the
-    /// current (already-pushed) scope with the class's registered type.
+    /// current scope with the class's registered type.
+    ///
+    /// Returns `true` when the subject binding was actually re-bound, so the
+    /// caller can restore the original type after the arm body (match arms are
+    /// not a scope, but narrowing must stay arm-local).
     pub(crate) fn narrow_match_subject(
         &mut self,
         subject: &Spanned<Expr>,
         pattern: &Spanned<Pattern>,
-    ) {
+    ) -> bool {
         // Unwrap outer AS layer if present
         let (inner_pat, alias_name) = match &pattern.node {
             Pattern::As { pattern: inner, name: alias } => (inner.as_ref(), Some(alias.clone())),
@@ -636,7 +673,7 @@ impl TypeChecker {
                 return self.narrow_match_subject_pat(subject, &tmp, None);
             }
         };
-        self.narrow_match_subject_pat(subject, inner_pat, alias_name);
+        self.narrow_match_subject_pat(subject, inner_pat, alias_name)
     }
 
     fn narrow_match_subject_pat(
@@ -644,15 +681,15 @@ impl TypeChecker {
         subject: &Spanned<Expr>,
         pattern: &Spanned<Pattern>,
         alias_name: Option<String>,
-    ) {
-        let Expr::Ident(subject_name) = &subject.node else { return };
+    ) -> bool {
+        let Expr::Ident(subject_name) = &subject.node else { return false };
         // Extract class name from either ClassPattern or Constructor (#827 R4)
         let class_name = match &pattern.node {
             Pattern::ClassPattern { cls, .. } => cls.last().map(|s| s.as_str()).unwrap_or(""),
             Pattern::Constructor { path, .. } => path.last().map(|s| s.as_str()).unwrap_or(""),
-            _ => return,
+            _ => return false,
         };
-        if class_name.is_empty() { return; }
+        if class_name.is_empty() { return false; }
 
         // Built-in self-subject patterns: narrow to the built-in type directly.
         let builtin_narrow_ty = match class_name {
@@ -672,10 +709,10 @@ impl TypeChecker {
                 let alias_sym = self.symbols.define(alias, crate::resolve::SymbolKind::Variable);
                 self.set_sym_type(alias_sym.0, narrow_ty);
             }
-            return;
+            return true;
         }
 
-        let Some(class_sym) = self.symbols.lookup(class_name) else { return };
+        let Some(class_sym) = self.symbols.lookup(class_name) else { return false };
         let class_ty = self.get_sym_type(class_sym.0);
         // Only narrow if the looked-up type is actually a class (not error/any)
         if matches!(self.tcx.get(class_ty), super::Ty::Class { .. }) {
@@ -687,7 +724,9 @@ impl TypeChecker {
                 let alias_sym = self.symbols.define(alias, crate::resolve::SymbolKind::Variable);
                 self.set_sym_type(alias_sym.0, class_ty);
             }
+            return true;
         }
+        false
     }
 
     /// Collect class fields from a class body for type resolution (#246).
