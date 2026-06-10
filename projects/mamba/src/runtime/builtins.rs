@@ -1027,6 +1027,16 @@ pub fn mb_int(val: MbValue) -> MbValue {
                 );
                 return MbValue::none();
             }
+            // int(instance) — dispatch the __int__ dunder when the class
+            // registers one (ipaddress addresses, user numeric types).
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let method = super::class::lookup_method(class_name, "__int__");
+                if !method.is_none() {
+                    let name = MbValue::from_ptr(MbObject::new_str("__int__".to_string()));
+                    let args = MbValue::from_ptr(MbObject::new_list(vec![]));
+                    return super::class::mb_call_method(val, name, args);
+                }
+            }
         }
         MbValue::from_int(0)
     } else {

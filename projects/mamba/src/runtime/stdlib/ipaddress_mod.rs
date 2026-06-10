@@ -127,15 +127,132 @@ pub fn release_handle(id: u64) -> bool {
     true
 }
 
+/// Build the runtime object for an address/network: a real Instance whose
+/// precomputed fields serve attribute access directly and whose class
+/// method table (registered in `register()`) serves the dunders
+/// (str/repr/eq/lt/hash/int). The IpState stays in the IPS store keyed by
+/// the `_handle` field so methods can recover it.
 fn make_handle(state: IpState) -> MbValue {
+    use super::super::rc::{InstanceFields, MbObjectHeader, MbRwLock, ObjKind};
     let id = alloc_ip_id();
     IPS.with(|m| { m.borrow_mut().insert(id, state); });
     IP_IDS.with(|s| { s.borrow_mut().insert(id); });
-    MbValue::from_int(id as i64)
+
+    let mut fields = InstanceFields::default();
+    fields.insert("_handle".to_string(), MbValue::from_int(id as i64));
+
+    let class_name = match state {
+        IpState::V4(a) => {
+            fields.insert("version".to_string(), MbValue::from_int(4));
+            fields.insert("max_prefixlen".to_string(), MbValue::from_int(32));
+            let text = ipv4_to_str(a);
+            fields.insert("compressed".to_string(), estr(&text));
+            fields.insert("exploded".to_string(), estr(&text));
+            fields.insert(
+                "packed".to_string(),
+                MbValue::from_ptr(MbObject::new_bytes(a.to_be_bytes().to_vec())),
+            );
+            fields.insert("_ip".to_string(), MbValue::from_int(a as i64));
+            fields.insert("is_private".to_string(), MbValue::from_bool(is_v4_private(a)));
+            fields.insert("is_global".to_string(), MbValue::from_bool(!is_v4_private(a)));
+            fields.insert(
+                "is_loopback".to_string(),
+                MbValue::from_bool(a >> 24 == 127),
+            );
+            fields.insert(
+                "is_multicast".to_string(),
+                MbValue::from_bool(a >> 28 == 0b1110),
+            );
+            fields.insert(
+                "is_link_local".to_string(),
+                MbValue::from_bool(a >> 16 == 0xA9FE),
+            );
+            fields.insert("is_unspecified".to_string(), MbValue::from_bool(a == 0));
+            fields.insert(
+                "is_reserved".to_string(),
+                MbValue::from_bool(a >> 28 == 0b1111),
+            );
+            "IPv4Address"
+        }
+        IpState::V6(b) => {
+            fields.insert("version".to_string(), MbValue::from_int(6));
+            fields.insert("max_prefixlen".to_string(), MbValue::from_int(128));
+            fields.insert("compressed".to_string(), estr(&ipv6_to_compressed(&b)));
+            fields.insert("exploded".to_string(), estr(&ipv6_to_exploded(&b)));
+            fields.insert(
+                "packed".to_string(),
+                MbValue::from_ptr(MbObject::new_bytes(b.to_vec())),
+            );
+            let loopback = b[..15].iter().all(|&x| x == 0) && b[15] == 1;
+            let unspecified = b.iter().all(|&x| x == 0);
+            fields.insert("is_loopback".to_string(), MbValue::from_bool(loopback));
+            fields.insert("is_unspecified".to_string(), MbValue::from_bool(unspecified));
+            fields.insert(
+                "is_multicast".to_string(),
+                MbValue::from_bool(b[0] == 0xFF),
+            );
+            fields.insert(
+                "is_link_local".to_string(),
+                MbValue::from_bool(b[0] == 0xFE && (b[1] & 0xC0) == 0x80),
+            );
+            let private = b[0] & 0xFE == 0xFC || loopback || unspecified;
+            fields.insert("is_private".to_string(), MbValue::from_bool(private));
+            fields.insert("is_global".to_string(), MbValue::from_bool(!private));
+            "IPv6Address"
+        }
+        IpState::V4Net { addr, prefix } => {
+            fields.insert("version".to_string(), MbValue::from_int(4));
+            fields.insert("max_prefixlen".to_string(), MbValue::from_int(32));
+            fields.insert("prefixlen".to_string(), MbValue::from_int(prefix as i64));
+            let text = format!("{}/{}", ipv4_to_str(addr), prefix);
+            fields.insert("compressed".to_string(), estr(&text));
+            fields.insert("exploded".to_string(), estr(&text));
+            fields.insert("with_prefixlen".to_string(), estr(&text));
+            let host_bits = 32 - prefix as u32;
+            let num = if host_bits >= 32 { u64::from(u32::MAX) + 1 } else { 1u64 << host_bits };
+            fields.insert("num_addresses".to_string(), MbValue::from_int(num as i64));
+            let mask: u32 = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix as u32) };
+            fields.insert("network_address".to_string(), make_handle(IpState::V4(addr)));
+            fields.insert(
+                "broadcast_address".to_string(),
+                make_handle(IpState::V4(addr | !mask)),
+            );
+            fields.insert("netmask".to_string(), make_handle(IpState::V4(mask)));
+            fields.insert("hostmask".to_string(), make_handle(IpState::V4(!mask)));
+            fields.insert("is_private".to_string(), MbValue::from_bool(is_v4_private(addr)));
+            fields.insert("is_global".to_string(), MbValue::from_bool(!is_v4_private(addr)));
+            "IPv4Network"
+        }
+    };
+
+    let obj = Box::new(MbObject {
+        header: MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: class_name.to_string(),
+            fields: MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
 }
 
 fn load(handle: MbValue) -> Option<IpState> {
-    let id = handle.as_int()? as u64;
+    // Instances carry the store key in `_handle`; raw int handles are the
+    // legacy form still used by internal helpers.
+    let id = if let Some(i) = handle.as_int() {
+        i as u64
+    } else {
+        let ptr = handle.as_ptr()?;
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.read().unwrap().get("_handle").and_then(|v| v.as_int())? as u64
+            } else {
+                return None;
+            }
+        }
+    };
     IPS.with(|m| m.borrow().get(&id).copied())
 }
 
@@ -154,6 +271,22 @@ fn parse_ipv4(s: &str) -> Option<u32> {
 }
 
 fn parse_ipv6(s: &str) -> Option<[u8; 16]> {
+    // Embedded dotted-quad suffix (`::ffff:192.168.1.1`, `::1.2.3.42`):
+    // expand the trailing IPv4 part into its two hextet groups, then parse
+    // the result as plain v6.
+    if let Some(idx) = s.rfind(':') {
+        let last = &s[idx + 1..];
+        if last.contains('.') {
+            let v4 = parse_ipv4(last)?;
+            let expanded = format!(
+                "{}{:x}:{:x}",
+                &s[..idx + 1],
+                v4 >> 16,
+                v4 & 0xFFFF
+            );
+            return parse_ipv6(&expanded);
+        }
+    }
     // Minimal v6 parser — splits on `::` once, fills with zeros.
     let (head, tail) = match s.find("::") {
         Some(idx) => (&s[..idx], &s[idx + 2..]),
@@ -527,6 +660,168 @@ fn class_shell(name: &'static str) -> MbValue {
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
+// ── Instance dunder methods (variadic (self, args-list) ABI) ──────
+
+fn args_first(args: MbValue) -> MbValue {
+    // Two caller conventions reach the dunders: the variadic method path
+    // packs arguments into a list, while the binop dispatch passes the
+    // other operand directly (invoke_binop_method's f(slf, arg) ABI).
+    if let Some(p) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*p).data {
+                return lock.read().unwrap().first().copied().unwrap_or_else(MbValue::none);
+            }
+        }
+    }
+    args
+}
+
+fn inst_str_field(v: MbValue, key: &str) -> Option<String> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(key).copied().and_then(extract_str)
+        } else {
+            None
+        }
+    }
+}
+
+fn class_of(v: MbValue) -> Option<String> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    }
+}
+
+/// Comparable key: (version, big-endian bytes). None for non-IP values.
+fn sort_key(v: MbValue) -> Option<(u8, Vec<u8>)> {
+    match load(v)? {
+        IpState::V4(a) => Some((4, a.to_be_bytes().to_vec())),
+        IpState::V6(b) => Some((6, b.to_vec())),
+        IpState::V4Net { addr, prefix } => {
+            let mut k = addr.to_be_bytes().to_vec();
+            k.push(prefix);
+            Some((4, k))
+        }
+    }
+}
+
+unsafe extern "C" fn ip_dunder_str(self_v: MbValue, _args: MbValue) -> MbValue {
+    estr(&inst_str_field(self_v, "compressed").unwrap_or_default())
+}
+
+unsafe extern "C" fn ip_dunder_repr(self_v: MbValue, _args: MbValue) -> MbValue {
+    let class = class_of(self_v).unwrap_or_else(|| "IPv4Address".to_string());
+    let text = inst_str_field(self_v, "compressed").unwrap_or_default();
+    estr(&format!("{class}('{text}')"))
+}
+
+unsafe extern "C" fn ip_dunder_eq(self_v: MbValue, args: MbValue) -> MbValue {
+    let other = args_first(args);
+    MbValue::from_bool(
+        class_of(self_v) == class_of(other)
+            && sort_key(self_v).is_some()
+            && sort_key(self_v) == sort_key(other),
+    )
+}
+
+fn ip_compare(self_v: MbValue, other: MbValue) -> Option<std::cmp::Ordering> {
+    let a = sort_key(self_v)?;
+    let b = sort_key(other)?;
+    // CPython: ordering across IP versions raises TypeError.
+    if a.0 != b.0 {
+        raise(
+            "TypeError",
+            &format!(
+                "{} and {} are not of the same version",
+                inst_str_field(self_v, "compressed").unwrap_or_default(),
+                inst_str_field(other, "compressed").unwrap_or_default(),
+            ),
+        );
+        return None;
+    }
+    Some(a.1.cmp(&b.1))
+}
+
+unsafe extern "C" fn ip_dunder_lt(self_v: MbValue, args: MbValue) -> MbValue {
+    match ip_compare(self_v, args_first(args)) {
+        Some(o) => MbValue::from_bool(o == std::cmp::Ordering::Less),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn ip_dunder_le(self_v: MbValue, args: MbValue) -> MbValue {
+    match ip_compare(self_v, args_first(args)) {
+        Some(o) => MbValue::from_bool(o != std::cmp::Ordering::Greater),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn ip_dunder_gt(self_v: MbValue, args: MbValue) -> MbValue {
+    match ip_compare(self_v, args_first(args)) {
+        Some(o) => MbValue::from_bool(o == std::cmp::Ordering::Greater),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn ip_dunder_ge(self_v: MbValue, args: MbValue) -> MbValue {
+    match ip_compare(self_v, args_first(args)) {
+        Some(o) => MbValue::from_bool(o != std::cmp::Ordering::Less),
+        None => MbValue::none(),
+    }
+}
+
+unsafe extern "C" fn ip_dunder_hash(self_v: MbValue, _args: MbValue) -> MbValue {
+    let key = sort_key(self_v).unwrap_or((0, Vec::new()));
+    let mut h: i64 = key.0 as i64;
+    for b in key.1 {
+        h = h.wrapping_mul(31).wrapping_add(b as i64);
+    }
+    MbValue::from_int(h & 0x0000_7FFF_FFFF_FFFF)
+}
+
+unsafe extern "C" fn ip_dunder_int(self_v: MbValue, _args: MbValue) -> MbValue {
+    match load(self_v) {
+        Some(IpState::V4(a)) => MbValue::from_int(a as i64),
+        Some(IpState::V6(b)) => {
+            let big = num_bigint::BigInt::from_bytes_be(num_bigint::Sign::Plus, &b);
+            super::super::bigint_ops::bigint_from_big(big)
+        }
+        Some(IpState::V4Net { addr, .. }) => MbValue::from_int(addr as i64),
+        None => MbValue::from_int(0),
+    }
+}
+
+/// Register the IP classes' shared dunder tables.
+fn register_ip_classes() {
+    for class in ["IPv4Address", "IPv6Address", "IPv4Network"] {
+        let mut methods: HashMap<String, MbValue> = HashMap::new();
+        for (name, addr) in [
+            ("__str__", ip_dunder_str as *const () as usize),
+            ("__repr__", ip_dunder_repr as *const () as usize),
+            ("__eq__", ip_dunder_eq as *const () as usize),
+            ("__lt__", ip_dunder_lt as *const () as usize),
+            ("__le__", ip_dunder_le as *const () as usize),
+            ("__gt__", ip_dunder_gt as *const () as usize),
+            ("__ge__", ip_dunder_ge as *const () as usize),
+            ("__hash__", ip_dunder_hash as *const () as usize),
+            ("__int__", ip_dunder_int as *const () as usize),
+        ] {
+            super::super::module::register_variadic_func(addr as u64);
+            super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                s.borrow_mut().insert(addr as u64);
+            });
+            methods.insert(name.to_string(), MbValue::from_func(addr));
+        }
+        super::super::class::mb_class_register(class, vec![], methods);
+    }
+}
+
 pub fn register() {
     let mut attrs: HashMap<String, MbValue> = HashMap::new();
 
@@ -555,6 +850,21 @@ pub fn register() {
             s.borrow_mut().insert(addr as u64);
         });
     }
+
+    // isinstance(x, ipaddress.IPv4Address) etc.: bind each class
+    // constructor's func addr to the instance class name. ip_address()
+    // dispatches by version, so v6 inputs through IPv4Address bind to the
+    // v6 class — acceptable for the isinstance surface.
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        let mut map = m.borrow_mut();
+        map.insert(dispatch_class_ipv4_address as *const () as usize as u64, "IPv4Address".to_string());
+        map.insert(dispatch_class_ipv6_address as *const () as usize as u64, "IPv6Address".to_string());
+        map.insert(dispatch_class_ipv4_network as *const () as usize as u64, "IPv4Network".to_string());
+        map.insert(dispatch_class_ipv6_network as *const () as usize as u64, "IPv6Network".to_string());
+        map.insert(dispatch_class_ipv4_interface as *const () as usize as u64, "IPv4Interface".to_string());
+        map.insert(dispatch_class_ipv6_interface as *const () as usize as u64, "IPv6Interface".to_string());
+    });
+    register_ip_classes();
 
     // Exception classes. Expose them as plain string values (the class name)
     // so `resolve_class_name` maps `ipaddress.AddressValueError` ->

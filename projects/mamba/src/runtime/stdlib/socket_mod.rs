@@ -686,8 +686,14 @@ mod tests {
     }
 
     // --- mb_socket_gethostname ---
+
+    /// Serializes the two hostname tests: both mutate the process-global
+    /// HOSTNAME/HOST env vars and race under the parallel test runner.
+    static HOSTNAME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_gethostname_hostname_set() {
+        let _lock = HOSTNAME_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("HOSTNAME", "my-socket-host");
         let result = mb_socket_gethostname();
         std::env::remove_var("HOSTNAME");
@@ -696,6 +702,7 @@ mod tests {
 
     #[test]
     fn test_gethostname_fallback_localhost() {
+        let _lock = HOSTNAME_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let orig_hostname = std::env::var("HOSTNAME").ok();
         let orig_host = std::env::var("HOST").ok();
         std::env::remove_var("HOSTNAME");
