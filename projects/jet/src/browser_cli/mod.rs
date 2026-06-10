@@ -18,6 +18,7 @@
 //! bridge on `window.__jet_debug`. Non-debug builds expose nothing
 //! there; we detect that and print a clear hint.
 
+pub mod interact;
 pub mod mcp;
 pub mod pretty;
 pub mod session;
@@ -152,6 +153,13 @@ async fn prepare_session_with_mode(
         .await
         .context("launching Chromium")?;
     let page = browser.new_page().await.context("opening new page")?;
+    // Observability hooks (console/error/fetch/XHR rings for `jet bb
+    // console` / `jet bb requests`) must precede any app code, and
+    // caller-supplied scripts may want to observe the instrumented
+    // primitives — so ours installs first.
+    page.add_init_script(interact::BB_OBSERVE_INIT_JS)
+        .await
+        .context("registering bb observability init script")?;
     for source in init_scripts {
         page.add_init_script(source)
             .await

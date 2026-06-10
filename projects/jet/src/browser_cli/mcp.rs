@@ -239,7 +239,148 @@ fn tool_definitions() -> Vec<Value> {
             }),
             &[],
         ),
+        tool(
+            "bb_snapshot",
+            "Capture a ref-annotated semantic snapshot of the live DOM. Each interactable element gets a ref (e1, e2, …) that bb_click/bb_fill/bb_type/bb_hover/bb_select accept; refs stay valid until the next snapshot or navigation.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "bb_click",
+            "Click an element by snapshot ref or selector (CSS, text=…, role=…[name=\"…\"]). Pass exactly one of ref/selector.",
+            json!({
+                "ref": { "type": "string", "description": "Snapshot ref such as e12" },
+                "selector": { "type": "string", "description": "CSS, text=…, or role=… selector" },
+                "dblclick": { "type": "boolean", "default": false },
+            }),
+            &[],
+        ),
+        tool(
+            "bb_fill",
+            "Replace an input/textarea value (native setter + input/change events). Pass exactly one of ref/selector.",
+            json!({
+                "ref": { "type": "string" },
+                "selector": { "type": "string" },
+                "text": { "type": "string" },
+            }),
+            &["text"],
+        ),
+        tool(
+            "bb_type",
+            "Focus an element and type text through the real CDP input pipeline (appends; use bb_fill to replace). Pass exactly one of ref/selector.",
+            json!({
+                "ref": { "type": "string" },
+                "selector": { "type": "string" },
+                "text": { "type": "string" },
+            }),
+            &["text"],
+        ),
+        tool(
+            "bb_hover",
+            "Hover an element (mouseenter + mousemove at its center). Pass exactly one of ref/selector.",
+            json!({
+                "ref": { "type": "string" },
+                "selector": { "type": "string" },
+            }),
+            &[],
+        ),
+        tool(
+            "bb_select",
+            "Choose a <select> option by value or label. Pass exactly one of ref/selector.",
+            json!({
+                "ref": { "type": "string" },
+                "selector": { "type": "string" },
+                "option": { "type": "string", "description": "Option value or label" },
+            }),
+            &["option"],
+        ),
+        tool(
+            "bb_check",
+            "Check or uncheck a checkbox idempotently. Pass exactly one of ref/selector.",
+            json!({
+                "ref": { "type": "string" },
+                "selector": { "type": "string" },
+                "checked": { "type": "boolean", "default": true },
+            }),
+            &[],
+        ),
+        tool(
+            "bb_goto",
+            "Navigate the attached session to a URL and wait for load.",
+            json!({ "url": { "type": "string" } }),
+            &["url"],
+        ),
+        tool(
+            "bb_back",
+            "Go back one entry in session history.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "bb_forward",
+            "Go forward one entry in session history.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "bb_reload",
+            "Reload the current document and wait for it to become ready.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "bb_resize",
+            "Resize the viewport (CDP device-metrics override).",
+            json!({
+                "width": { "type": "integer" },
+                "height": { "type": "integer" },
+            }),
+            &["width", "height"],
+        ),
+        tool(
+            "bb_wait_for",
+            "Wait for a selector to attach, text to appear, or a fixed delay. Pass exactly one of selector/text/ms.",
+            json!({
+                "selector": { "type": "string" },
+                "text": { "type": "string" },
+                "ms": { "type": "integer" },
+                "timeout_ms": { "type": "integer", "default": 10000 },
+            }),
+            &[],
+        ),
+        tool(
+            "bb_console",
+            "Console messages, page errors, and unhandled rejections captured since launch (init-script ring buffer).",
+            json!({
+                "level": { "type": "string", "enum": ["log", "info", "warn", "error", "debug"] },
+                "limit": { "type": "integer", "default": 100 },
+                "clear": { "type": "boolean", "default": false, "description": "Drain the buffer after reading" },
+            }),
+            &[],
+        ),
+        tool(
+            "bb_requests",
+            "fetch/XHR activity captured since launch (init-script ring buffer).",
+            json!({
+                "limit": { "type": "integer", "default": 100 },
+                "clear": { "type": "boolean", "default": false, "description": "Drain the buffer after reading" },
+            }),
+            &[],
+        ),
     ]
+}
+
+/// Resolve the `ref`/`selector` argument pair every element-targeted
+/// tool shares. Exactly one must be present.
+fn arg_target(args: &Value) -> Result<super::interact::Target> {
+    let r = args.get("ref").and_then(Value::as_str);
+    let sel = args.get("selector").and_then(Value::as_str);
+    match (r, sel) {
+        (Some(r), None) => super::interact::parse_target(&format!("ref={r}")),
+        (None, Some(sel)) => Ok(super::interact::Target::Selector(sel.to_string())),
+        (Some(_), Some(_)) => anyhow::bail!("pass ref or selector, not both"),
+        (None, None) => anyhow::bail!("missing argument: ref or selector"),
+    }
 }
 
 fn text_content(text: String) -> Vec<Value> {
@@ -492,6 +633,119 @@ async fn call_tool(root_dir: &Path, name: &str, args: &Value) -> Result<Vec<Valu
             page.evaluate(&super::expr("highlight", &arg)).await?;
             Ok(text_content(json!({ "ok": true }).to_string()))
         }
+        "bb_snapshot" => {
+            let v = super::interact::snapshot(root_dir).await?;
+            let mut out = format!(
+                "# {} — {}\n",
+                v["title"].as_str().unwrap_or(""),
+                v["url"].as_str().unwrap_or("")
+            );
+            if v["truncated"].as_bool() == Some(true) {
+                out.push_str("# (truncated at element cap)\n");
+            }
+            out.push_str(v["snapshot"].as_str().unwrap_or(""));
+            Ok(text_content(out))
+        }
+        "bb_click" => {
+            let target = arg_target(args)?;
+            let dblclick = args.get("dblclick").and_then(Value::as_bool).unwrap_or(false);
+            let v = super::interact::click(root_dir, &target, dblclick).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_fill" => {
+            let target = arg_target(args)?;
+            let text = args
+                .get("text")
+                .and_then(Value::as_str)
+                .context("missing argument: text")?;
+            let v = super::interact::fill(root_dir, &target, text).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_type" => {
+            let target = arg_target(args)?;
+            let text = args
+                .get("text")
+                .and_then(Value::as_str)
+                .context("missing argument: text")?;
+            let v = super::interact::type_text(root_dir, &target, text).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_hover" => {
+            let target = arg_target(args)?;
+            let v = super::interact::hover(root_dir, &target).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_select" => {
+            let target = arg_target(args)?;
+            let option = args
+                .get("option")
+                .and_then(Value::as_str)
+                .context("missing argument: option")?;
+            let v = super::interact::select(root_dir, &target, option).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_check" => {
+            let target = arg_target(args)?;
+            let checked = args.get("checked").and_then(Value::as_bool).unwrap_or(true);
+            let v = super::interact::set_checked(root_dir, &target, checked).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_goto" => {
+            let url = args
+                .get("url")
+                .and_then(Value::as_str)
+                .context("missing argument: url")?;
+            let v = super::interact::goto(root_dir, url).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_back" => {
+            let v = super::interact::history_step(root_dir, -1).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_forward" => {
+            let v = super::interact::history_step(root_dir, 1).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_reload" => {
+            let v = super::interact::reload(root_dir).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_resize" => {
+            let width = args
+                .get("width")
+                .and_then(Value::as_u64)
+                .context("missing or non-integer argument: width")?;
+            let height = args
+                .get("height")
+                .and_then(Value::as_u64)
+                .context("missing or non-integer argument: height")?;
+            let v = super::interact::resize(root_dir, width, height).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_wait_for" => {
+            let selector = args.get("selector").and_then(Value::as_str);
+            let text = args.get("text").and_then(Value::as_str);
+            let ms = args.get("ms").and_then(Value::as_u64);
+            let timeout_ms = args
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .unwrap_or(10_000);
+            let v = super::interact::wait(root_dir, selector, text, ms, timeout_ms).await?;
+            Ok(text_content(v.to_string()))
+        }
+        "bb_console" => {
+            let level = args.get("level").and_then(Value::as_str);
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(100) as usize;
+            let clear = args.get("clear").and_then(Value::as_bool).unwrap_or(false);
+            let v = super::interact::console(root_dir, level, limit, clear).await?;
+            Ok(text_content(serde_json::to_string_pretty(&v)?))
+        }
+        "bb_requests" => {
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(100) as usize;
+            let clear = args.get("clear").and_then(Value::as_bool).unwrap_or(false);
+            let v = super::interact::requests(root_dir, limit, clear).await?;
+            Ok(text_content(serde_json::to_string_pretty(&v)?))
+        }
         other => anyhow::bail!("unknown tool: {other}"),
     }
 }
@@ -519,6 +773,21 @@ mod tests {
             "bb_wheel",
             "bb_key",
             "bb_highlight",
+            "bb_snapshot",
+            "bb_click",
+            "bb_fill",
+            "bb_type",
+            "bb_hover",
+            "bb_select",
+            "bb_check",
+            "bb_goto",
+            "bb_back",
+            "bb_forward",
+            "bb_reload",
+            "bb_resize",
+            "bb_wait_for",
+            "bb_console",
+            "bb_requests",
         ] {
             assert!(names.contains(&required.to_string()), "missing tool {required}");
         }
@@ -526,6 +795,20 @@ mod tests {
             assert!(tool["description"].as_str().unwrap().len() > 10);
             assert_eq!(tool["inputSchema"]["type"], "object");
         }
+    }
+
+    #[test]
+    fn element_targeted_tools_resolve_ref_xor_selector() {
+        let t = arg_target(&json!({ "ref": "e3" })).unwrap();
+        assert_eq!(t, super::super::interact::Target::Ref("e3".into()));
+        let t = arg_target(&json!({ "selector": "text=Save" })).unwrap();
+        assert_eq!(
+            t,
+            super::super::interact::Target::Selector("text=Save".into())
+        );
+        assert!(arg_target(&json!({})).is_err());
+        assert!(arg_target(&json!({ "ref": "e3", "selector": "#x" })).is_err());
+        assert!(arg_target(&json!({ "ref": "not-a-ref" })).is_err());
     }
 
     #[tokio::test]

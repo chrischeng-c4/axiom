@@ -22,6 +22,11 @@ the comparison target, never the executor.
 
 - Runtime/CLI: `browser_cli_smoke.rs`, `browser_context.rs`,
   `browser_install.rs`
+- Semantic surface: `bb_semantic_surface.rs` — playwright-mcp-shaped
+  snapshot/ref interaction (`snapshot` mints `e<N>` refs;
+  `click/fill/type/hover/select/check` act by ref or locator selector),
+  navigation (`goto/back/forward/reload/resize/wait`), and the
+  console/fetch observability rings, end-to-end on a real Chromium
 - MCP server: `bb_mcp_server.rs` — `jet bb mcp` serves the Browser Bridge
   over MCP stdio (initialize/tools-list/tools-call contract; tool failures
   must be `isError`, never protocol errors or stdout noise)

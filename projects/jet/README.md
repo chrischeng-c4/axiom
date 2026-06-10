@@ -71,7 +71,7 @@ Basic command-family status:
 | `jet install/add/remove/update/audit` | `green` for local package-manager correctness, fixture hydration, executable bins, mutation behavior, workspace linking, workspace frozen-lockfile drift rejection, and required npm/pnpm baseline benchmark thresholds | `cargo test -p jet --lib pkg_manager -- --nocapture` plus `JET_BASIC_DOM_PACKAGE_BASELINES=npm,pnpm JET_BASIC_DOM_REQUIRE_BASELINES=1 projects/jet/scripts/verify-basic-dom-gates.sh --phase package` | Extend the Jet-owned package gate into downloaded bytes, cache hit evidence, lifecycle output breadth, and broader workspace layouts. npm may run only as a host comparator against isolated benchmark copies; pnpm comparator runs from a temporary tool root provisioned by `jet install`. npm/pnpm artifacts remain oracle evidence, not the fixture management path. |
 | `jet build` | `red` for expanded DOM production build corpus; intentionally third after package and Browser Bridge gates | `node projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required` via `verify-basic-dom-gates.sh`; source fixtures live under `projects/jet/tests/fixtures/dom-production-build/`; direct Jet/Vite MUI/AntD/Tailwind/styled-components comparisons are the production-build gate | Fix remaining DOM production build gaps, then keep runtime trace, speed, gzip size, CSS/public/static artifact, and contract self-test checks green. |
 | `jet serve` / `jet serve --prod` | `green` for current local serve/HMR unit gate; `yellow` for baseline server replacement | `cargo test -p jet --lib dev_server -- --nocapture` through `verify-basic-dom-gates.sh` | Add Vite dev-start/HMR comparisons and Node/nginx-style production static serving comparisons for startup, first-byte latency, throughput, cache headers, SPA fallback, and proxy behavior. |
-| `jet bb` / `jet browser` | `green` for detached agent-first core gesture automation plus isolated Playwright baseline comparison; `yellow` for full Playwright/Cypress replacement surface | `cargo test -p jet --lib browser -- --nocapture`; `JET_BASIC_DOM_BROWSER_BASELINES=playwright JET_BASIC_DOM_REQUIRE_BROWSER_BASELINES=1 projects/jet/scripts/verify-basic-dom-gates.sh --phase browser`; production comparator drives runtime smoke through `jet bb launch/eval/shutdown` | Expand command coverage into locator/actionability CLI parity, richer failure diagnostics, trace replay hooks, and WASM browser-API bridge coverage before broadening build claims. |
+| `jet bb` / `jet browser` | `green` for detached agent-first core gesture automation plus isolated Playwright baseline comparison; `yellow` for full Playwright/Cypress replacement surface | `cargo test -p jet --lib browser -- --nocapture`; `JET_BASIC_DOM_BROWSER_BASELINES=playwright JET_BASIC_DOM_REQUIRE_BROWSER_BASELINES=1 projects/jet/scripts/verify-basic-dom-gates.sh --phase browser`; production comparator drives runtime smoke through `jet bb launch/eval/shutdown` | Semantic snapshot/ref interaction (`snapshot/click/fill/type/hover/select/check` by ref or locator selector), navigation (`goto/back/forward/reload/resize/wait`), and console/fetch observability (`console/requests`) now ship on both `jet bb` and `jet bb mcp`. Next: tabs/multi-session, storage state + route interception on the bb surface, richer failure diagnostics, trace replay hooks, and WASM browser-API bridge coverage before broadening build claims. |
 | `jet test` | `green` for Rust-side runner/reporter gates; `yellow` for full built-in TS test API promise | `cargo test -p jet --lib test_runner -- --nocapture`; `cargo test -p jet --lib reporter -- --nocapture` | Finish and dogfood the Jet-native TS test API as an auto-available virtual module without npm package installation, then compare against Vitest/Jest fixture behavior and reporting. |
 | `jet e2e` | `green` for current product-flow gate; `yellow` for broad e2e replacement | `cargo test -p jet --lib e2e -- --nocapture` | Add browser action fidelity comparisons, artifact replayability, failure diagnostics, and DOM/WASM matrix support across larger real fixtures. |
 | `jet trace` | `green` for trace artifact unit gate; `yellow` for full replay/compare evidence system | `cargo test -p jet --lib trace -- --nocapture` | Add end-to-end trace replay and comparison evidence for serve, browser actions, network/console state, DOM snapshots, WASM capture, screenshots, and pHash deltas. |
@@ -281,11 +281,23 @@ work, `jet bb capture --surface dom` is the DOM oracle and `jet bb capture
   keyboard, wheel, eval, and screenshot operations through Jet-owned CDP code
 - **Agent-first default** — launch is headless and detached by default, returning
   a browser/session handle that follow-up `jet bb` commands can target
+- **Semantic snapshot + refs** — `jet bb snapshot` prints a role-annotated tree
+  of the live DOM and mints element refs (`e1`, `e2`, …); `click`, `fill`,
+  `type`, `hover`, `select`, and `check`/`uncheck` accept a ref or a locator
+  selector (CSS, `text=…`, `role=…[name="…"]`), mirroring playwright-mcp's
+  snapshot/ref interaction model
+- **Navigation** — `goto`, `back`, `forward`, `reload`, `resize`, and `wait`
+  (selector / text / delay) against the attached session
+- **Page observability** — launch installs init-script rings for console
+  output, page errors, and fetch/XHR activity; `jet bb console` and
+  `jet bb requests` read (and optionally drain) them from any later command
 - **DOM oracle capture** — inspect live DOM targets without Playwright
 - **WASM observation bundle** — inspect `window.__jet_debug`, WebGPU status,
   layout tree, element tree, paint ops, hooks, and build manifest
 - **Parity diagnostics** — capture comparable screenshots, pHash probes,
   runtime metadata, and browser-semantics evidence
+- **MCP server** — `jet bb mcp` serves the full `bb` surface (gestures,
+  semantic actions, navigation, observability, capture) as MCP stdio tools
 - **Command target** — `jet bb ...`; legacy-compatible `jet browser ...`
   remains available during migration
 
@@ -347,9 +359,14 @@ jet test                          # Basic: Jet-native TS tests with built-in tes
 jet e2e                           # Basic/Advanced: product-flow and parity e2e
 jet trace                         # Basic/Advanced: inspect/replay/compare trace evidence
 jet bb launch <url>               # Headless detached Browser Bridge session
+jet bb snapshot                   # Ref-annotated semantic DOM snapshot (e1, e2, …)
+jet bb click e7                   # Act on snapshot refs or selectors (fill/type/hover/select too)
+jet bb goto <url>                 # Navigate; back/forward/reload/resize/wait also available
+jet bb console                    # Console/error history; jet bb requests for fetch/XHR
 jet bb drag ...                   # Drive browser input without Playwright
 jet bb capture --surface dom      # Capture DOM oracle evidence
 jet bb capture --surface wasm     # Capture WASM runtime evidence
+jet bb mcp                        # Serve the whole bb surface as MCP stdio tools
 jet browser ...                   # Legacy-compatible Browser Bridge surface
 ```
 

@@ -125,6 +125,23 @@ fn mcp_handshake_advertises_bb_tool_surface() {
         "bb_wheel",
         "bb_key",
         "bb_highlight",
+        // Semantic surface (playwright-mcp-shaped): snapshot refs +
+        // element-targeted actions + navigation + observability.
+        "bb_snapshot",
+        "bb_click",
+        "bb_fill",
+        "bb_type",
+        "bb_hover",
+        "bb_select",
+        "bb_check",
+        "bb_goto",
+        "bb_back",
+        "bb_forward",
+        "bb_reload",
+        "bb_resize",
+        "bb_wait_for",
+        "bb_console",
+        "bb_requests",
     ] {
         assert!(names.contains(&required), "tools/list missing {required}: {names:?}");
     }

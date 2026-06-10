@@ -1329,6 +1329,133 @@ fn browser_bridge_command() -> Command {
                 .about("Serve the Browser Bridge as an MCP stdio server for agents"),
         )
         .subcommand(
+            Command::new("snapshot")
+                .about("Print a ref-annotated semantic snapshot of the live DOM; refs (e1, e2, …) feed click/fill/type/hover/select")
+                .arg(
+                    Arg::new("json")
+                        .long("json")
+                        .action(ArgAction::SetTrue)
+                        .help("Print the full JSON payload instead of the snapshot text"),
+                ),
+        )
+        .subcommand(
+            Command::new("click")
+                .about("Click an element by snapshot ref (e12) or selector (CSS, text=…, role=…)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector"))
+                .arg(
+                    Arg::new("dblclick")
+                        .long("dblclick")
+                        .action(ArgAction::SetTrue)
+                        .help("Double-click instead of single click"),
+                ),
+        )
+        .subcommand(
+            Command::new("fill")
+                .about("Replace an input/textarea value (native setter + input/change events)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector"))
+                .arg(Arg::new("text").required(true).help("New value")),
+        )
+        .subcommand(
+            Command::new("type")
+                .about("Focus an element and type text through the real CDP input pipeline (appends; use fill to replace)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector"))
+                .arg(Arg::new("text").required(true).help("Text to type")),
+        )
+        .subcommand(
+            Command::new("hover")
+                .about("Hover an element (mouseenter + mousemove at its center)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector")),
+        )
+        .subcommand(
+            Command::new("select")
+                .about("Choose a <select> option by value or label")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector"))
+                .arg(Arg::new("option").required(true).help("Option value or label")),
+        )
+        .subcommand(
+            Command::new("check")
+                .about("Check a checkbox (idempotent)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector")),
+        )
+        .subcommand(
+            Command::new("uncheck")
+                .about("Uncheck a checkbox (idempotent)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector")),
+        )
+        .subcommand(
+            Command::new("goto")
+                .about("Navigate the attached session to a URL and wait for load")
+                .arg(Arg::new("url").required(true)),
+        )
+        .subcommand(Command::new("back").about("Go back one entry in session history"))
+        .subcommand(Command::new("forward").about("Go forward one entry in session history"))
+        .subcommand(Command::new("reload").about("Reload the current document"))
+        .subcommand(
+            Command::new("resize")
+                .about("Resize the viewport (CDP device-metrics override)")
+                .arg(Arg::new("width").required(true).help("Viewport width in CSS pixels"))
+                .arg(Arg::new("height").required(true).help("Viewport height in CSS pixels")),
+        )
+        .subcommand(
+            Command::new("wait")
+                .about("Wait for a selector to attach, text to appear, or a fixed delay")
+                .arg(
+                    Arg::new("selector")
+                        .long("selector")
+                        .help("Selector (CSS, text=…, role=…) that must attach"),
+                )
+                .arg(Arg::new("text").long("text").help("Visible text that must appear"))
+                .arg(
+                    Arg::new("ms")
+                        .long("ms")
+                        .help("Sleep this many milliseconds instead of polling"),
+                )
+                .arg(
+                    Arg::new("timeout")
+                        .long("timeout")
+                        .default_value("10000")
+                        .help("Polling budget in milliseconds"),
+                ),
+        )
+        .subcommand(
+            Command::new("console")
+                .about("Print console messages, page errors, and unhandled rejections captured since launch")
+                .arg(
+                    Arg::new("level")
+                        .long("level")
+                        .value_parser(["log", "info", "warn", "error", "debug"])
+                        .help("Only entries of this level"),
+                )
+                .arg(
+                    Arg::new("limit")
+                        .long("limit")
+                        .default_value("100")
+                        .help("Most-recent entry cap"),
+                )
+                .arg(
+                    Arg::new("clear")
+                        .long("clear")
+                        .action(ArgAction::SetTrue)
+                        .help("Drain the buffer after reading"),
+                ),
+        )
+        .subcommand(
+            Command::new("requests")
+                .about("Print fetch/XHR activity captured since launch")
+                .arg(
+                    Arg::new("limit")
+                        .long("limit")
+                        .default_value("100")
+                        .help("Most-recent entry cap"),
+                )
+                .arg(
+                    Arg::new("clear")
+                        .long("clear")
+                        .action(ArgAction::SetTrue)
+                        .help("Drain the buffer after reading"),
+                ),
+        )
+        .subcommand(
             Command::new("debug")
                 .about("Open a foreground Browser Bridge session for human inspection")
                 .arg(Arg::new("url").required(true)),
@@ -2588,9 +2715,151 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 let filter = tm.get_one::<String>("filter").map(|s| s.as_str());
                 crate::browser_cli::tsx(&root_dir, filter)
             }
+            Some(("snapshot", sm)) => {
+                let v = crate::browser_cli::interact::snapshot(&root_dir).await?;
+                if sm.get_flag("json") {
+                    println!("{}", serde_json::to_string_pretty(&v)?);
+                } else {
+                    let url = v["url"].as_str().unwrap_or("");
+                    let title = v["title"].as_str().unwrap_or("");
+                    println!("# {title} — {url}");
+                    if v["truncated"].as_bool() == Some(true) {
+                        println!("# (truncated at element cap — use a tighter page state)");
+                    }
+                    println!("{}", v["snapshot"].as_str().unwrap_or(""));
+                }
+                Ok(())
+            }
+            Some((verb @ ("click" | "hover" | "check" | "uncheck"), am)) => {
+                let raw = am.get_one::<String>("target").expect("target required");
+                let target = crate::browser_cli::interact::parse_target(raw)?;
+                let v = match verb {
+                    "click" => {
+                        crate::browser_cli::interact::click(
+                            &root_dir,
+                            &target,
+                            am.get_flag("dblclick"),
+                        )
+                        .await?
+                    }
+                    "hover" => crate::browser_cli::interact::hover(&root_dir, &target).await?,
+                    "check" => {
+                        crate::browser_cli::interact::set_checked(&root_dir, &target, true).await?
+                    }
+                    _ => {
+                        crate::browser_cli::interact::set_checked(&root_dir, &target, false)
+                            .await?
+                    }
+                };
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some((verb @ ("fill" | "type"), am)) => {
+                let raw = am.get_one::<String>("target").expect("target required");
+                let text = am.get_one::<String>("text").expect("text required");
+                let target = crate::browser_cli::interact::parse_target(raw)?;
+                let v = if verb == "fill" {
+                    crate::browser_cli::interact::fill(&root_dir, &target, text).await?
+                } else {
+                    crate::browser_cli::interact::type_text(&root_dir, &target, text).await?
+                };
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("select", am)) => {
+                let raw = am.get_one::<String>("target").expect("target required");
+                let option = am.get_one::<String>("option").expect("option required");
+                let target = crate::browser_cli::interact::parse_target(raw)?;
+                let v = crate::browser_cli::interact::select(&root_dir, &target, option).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("goto", gm)) => {
+                let url = gm.get_one::<String>("url").expect("url required");
+                let v = crate::browser_cli::interact::goto(&root_dir, url).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("back", _)) => {
+                let v = crate::browser_cli::interact::history_step(&root_dir, -1).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("forward", _)) => {
+                let v = crate::browser_cli::interact::history_step(&root_dir, 1).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("reload", _)) => {
+                let v = crate::browser_cli::interact::reload(&root_dir).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("resize", rm)) => {
+                let width = rm
+                    .get_one::<String>("width")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("width", s))
+                    .context("width must be a number")?;
+                let height = rm
+                    .get_one::<String>("height")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("height", s))
+                    .context("height must be a number")?;
+                let v = crate::browser_cli::interact::resize(&root_dir, width, height).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("wait", wm)) => {
+                let selector = wm.get_one::<String>("selector").map(String::as_str);
+                let text = wm.get_one::<String>("text").map(String::as_str);
+                let ms = wm
+                    .get_one::<String>("ms")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("--ms", s));
+                let timeout = wm
+                    .get_one::<String>("timeout")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("--timeout", s))
+                    .unwrap_or(10_000);
+                let v =
+                    crate::browser_cli::interact::wait(&root_dir, selector, text, ms, timeout)
+                        .await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("console", cm)) => {
+                let level = cm.get_one::<String>("level").map(String::as_str);
+                let limit = cm
+                    .get_one::<String>("limit")
+                    .and_then(|s| parse_cli_numeric_flag::<usize>("--limit", s))
+                    .unwrap_or(100);
+                let v = crate::browser_cli::interact::console(
+                    &root_dir,
+                    level,
+                    limit,
+                    cm.get_flag("clear"),
+                )
+                .await?;
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                Ok(())
+            }
+            Some(("requests", rm)) => {
+                let limit = rm
+                    .get_one::<String>("limit")
+                    .and_then(|s| parse_cli_numeric_flag::<usize>("--limit", s))
+                    .unwrap_or(100);
+                let v = crate::browser_cli::interact::requests(
+                    &root_dir,
+                    limit,
+                    rm.get_flag("clear"),
+                )
+                .await?;
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                Ok(())
+            }
             _ => {
                 anyhow::bail!(
-                    "Unknown browser subcommand. Try one of: install, launch, shutdown, debug, tree, pick, hooks, highlight, frame, perf, mouse, drag, key, capture, screenshot, eval."
+                    "Unknown browser subcommand. Try one of: install, launch, shutdown, debug, \
+                     tree, pick, hooks, highlight, frame, perf, mouse, drag, key, capture, \
+                     screenshot, eval, snapshot, click, fill, type, hover, select, check, \
+                     uncheck, goto, back, forward, reload, resize, wait, console, requests."
                 )
             }
         },
