@@ -357,9 +357,12 @@ fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
         Regex::new(r"(?:var|const|let)\s+(_m\d+_[a-zA-Z0-9_$]+)\s*=\s*").unwrap()
     });
 
-    let counts = count_all_prefixed_identifier_refs(code);
     let b = code.as_bytes();
-    let mut removals: Vec<(usize, usize)> = Vec::new();
+    // Pass 1: collect candidate declarations (name, full span). Liveness is
+    // decided by reachability from references OUTSIDE any candidate span —
+    // reference counting kept mutually-referencing dead-code islands alive
+    // (a dead ServerStyleSheet class calling dead helpers that call back).
+    let mut candidates: Vec<(String, usize, usize)> = Vec::new();
 
     let statement_position = |start: usize| -> bool {
         let mut p = start;
@@ -383,9 +386,6 @@ fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
 
     for cap in func.captures_iter(code) {
         let name = cap.get(2).map(|m| m.as_str()).unwrap_or("");
-        if counts.get(name).copied().unwrap_or(0) > 1 {
-            continue;
-        }
         let whole = cap.get(0)?;
         let start = whole.start();
         // Declaration position only: `= function`, `(class`, `return
@@ -434,7 +434,7 @@ fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
         let Some(body_close) = skip_code_balanced(b, q, b'{', b'}') else {
             continue;
         };
-        removals.push((start, consume_tail(body_close)));
+        candidates.push((name.to_string(), start, consume_tail(body_close)));
     }
 
     // var/const/let with a provably side-effect-free initializer: function
@@ -443,9 +443,6 @@ fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
     // getters) is left alone.
     for cap in var_decl.captures_iter(code) {
         let name = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        if counts.get(name).copied().unwrap_or(0) > 1 {
-            continue;
-        }
         let whole = cap.get(0)?;
         let start = whole.start();
         if !statement_position(start) {
@@ -460,8 +457,76 @@ fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
         if init_end >= b.len() || b[init_end] != b';' {
             continue;
         }
-        removals.push((start, consume_tail(init_end)));
+        candidates.push((name.to_string(), start, consume_tail(init_end)));
     }
+
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by_key(|(_, start, _)| *start);
+    // Nested candidates (a function inside a class body) confuse span
+    // attribution; keep outermost spans only.
+    let mut outer: Vec<(String, usize, usize)> = Vec::new();
+    for cand in candidates {
+        if outer.last().map(|(_, _, e)| cand.1 >= *e).unwrap_or(true) {
+            outer.push(cand);
+        }
+    }
+    let candidates = outer;
+
+    // Pass 2: reference graph. Every `_mN_*` occurrence either falls inside
+    // a candidate span (edge: that candidate -> referenced name) or outside
+    // (root: the name is live).
+    let mut occurrences: Vec<(usize, String)> = Vec::new();
+    collect_prefixed_ident_occurrences(b, &mut occurrences);
+    let name_to_idx: HashMap<&str, usize> = candidates
+        .iter()
+        .enumerate()
+        .map(|(i, (n, _, _))| (n.as_str(), i))
+        .collect();
+    let spans: Vec<(usize, usize)> = candidates.iter().map(|(_, s, e)| (*s, *e)).collect();
+    let owner_of = |pos: usize| -> Option<usize> {
+        let idx = spans.partition_point(|(s, _)| *s <= pos);
+        if idx == 0 {
+            return None;
+        }
+        let (s, e) = spans[idx - 1];
+        (pos >= s && pos < e).then_some(idx - 1)
+    };
+
+    let mut edges: Vec<Vec<usize>> = vec![Vec::new(); candidates.len()];
+    let mut live: Vec<bool> = vec![false; candidates.len()];
+    let mut queue: Vec<usize> = Vec::new();
+    for (pos, name) in &occurrences {
+        let Some(&target) = name_to_idx.get(name.as_str()) else {
+            continue;
+        };
+        match owner_of(*pos) {
+            Some(owner) if owner == target => {} // self-reference
+            Some(owner) => edges[owner].push(target),
+            None => {
+                if !live[target] {
+                    live[target] = true;
+                    queue.push(target);
+                }
+            }
+        }
+    }
+    while let Some(i) = queue.pop() {
+        for &t in &edges[i] {
+            if !live[t] {
+                live[t] = true;
+                queue.push(t);
+            }
+        }
+    }
+
+    let mut removals: Vec<(usize, usize)> = candidates
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !live[*i])
+        .map(|(_, (_, s, e))| (*s, *e))
+        .collect();
 
     if removals.is_empty() {
         return None;
@@ -530,6 +595,26 @@ fn side_effect_free_initializer_end(b: &[u8], mut i: usize) -> Option<usize> {
             return skip_code_balanced(b, r, b'{', b'}');
         }
         return None; // expression-bodied arrows: end detection ambiguous
+    }
+    // class expression
+    if b[i..].starts_with(b"class") {
+        let mut q = i + 5;
+        while q < len && b[q] != b'{' {
+            match b[q] {
+                b'(' => {
+                    let Some(next) = skip_code_balanced(b, q, b'(', b')') else {
+                        return None;
+                    };
+                    q = next;
+                }
+                b';' | b'}' => return None,
+                _ => q += 1,
+            }
+        }
+        if q >= len {
+            return None;
+        }
+        return skip_code_balanced(b, q, b'{', b'}');
     }
     // object / array literal
     if b[i] == b'{' {
@@ -2520,4 +2605,83 @@ pub fn hoist_default_interop_thunks(code: &str) -> String {
     }
     out.push_str(&code[posn..]);
     out
+}
+
+/// Collect every standalone `_m<N>_*` identifier occurrence (position,
+/// name), with the same string/template/comment/regex skipping as the
+/// reference counters.
+fn collect_prefixed_ident_occurrences(b: &[u8], out: &mut Vec<(usize, String)>) {
+    collect_prefixed_ident_occurrences_in_range(b, 0, b.len(), out);
+}
+
+fn collect_prefixed_ident_occurrences_in_range(
+    b: &[u8],
+    start: usize,
+    end: usize,
+    out: &mut Vec<(usize, String)>,
+) {
+    let len = end.min(b.len());
+    let mut i = start.min(len);
+    let mut prev = b'(';
+    while i < len {
+        match b[i] {
+            b'"' | b'\'' => {
+                i = skip_quoted_literal(b, i).min(len);
+                prev = b'"';
+                continue;
+            }
+            b'`' => {
+                let (next, _) = scan_template_literal_expr_ranges(b, i, |es, ee| {
+                    collect_prefixed_ident_occurrences_in_range(b, es, ee, out);
+                    0
+                });
+                i = next.min(len);
+                prev = b'`';
+                continue;
+            }
+            b'/' if i + 1 < len && b[i + 1] == b'/' => {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < len && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+                continue;
+            }
+            b'/' if regex_context_byte(prev) => {
+                i = skip_regex_literal(b, i).min(len);
+                prev = b'/';
+                continue;
+            }
+            _ => {}
+        }
+        if is_id_cont_byte(b[i]) && !b[i].is_ascii_digit() {
+            let start = i;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let ident = &b[start..i];
+            if ident.len() > 3 && ident.starts_with(b"_m") {
+                if let Ok(name) = std::str::from_utf8(ident) {
+                    if name[2..].chars().next().map(|c| c.is_ascii_digit()) == Some(true)
+                        && name.contains('_')
+                        && name[2..].contains('_')
+                    {
+                        out.push((start, name.to_string()));
+                    }
+                }
+            }
+            prev = b'a';
+            continue;
+        }
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev = b[i];
+        }
+        i += 1;
+    }
 }
