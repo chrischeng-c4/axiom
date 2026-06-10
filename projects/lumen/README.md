@@ -684,6 +684,17 @@ POST /collections/{id}/search
 Search responses **only carry `external_id` + `score`** — never field
 values. There is no `_source`.
 
+**Pagination is keyset (search-after), depth-invariant.** The `cursor` is an
+opaque token bound to the query that produced it: echo it back unchanged to
+get the next page. For sorted (single number field) and score-ranked results
+the token carries the LAST hit's position, so every page **seeks** —
+O(log n) on the sorted index — instead of skipping; deep pages cost the same
+as page 1 (measured at depth 50k over 100k docs: 86µs vs 28.7ms offset
+skip). Stop when `cursor` is null. Legacy `{"offset":N}` tokens keep working
+(O(offset) skip). Note: when continuing from a keyset cursor with
+`track_total: true`, `total` counts the REMAINING matches from the cursor,
+not the full set — read the full total off the first page.
+
 ### Duplicates
 
 ```

@@ -1646,6 +1646,7 @@ impl NumberIndex {
         &self,
         seg: &crate::segment::SegmentReader,
         descending: bool,
+        after: Option<u64>,
         mut visit: F,
     ) -> Result<()>
     where
@@ -1656,6 +1657,22 @@ impl NumberIndex {
         // tail in lockstep, emitting the smaller (asc) / larger (desc) key first so
         // the merged order is monotone and each value is visited once.
         let tail_keys: Vec<SortableF64> = self.values.keys().copied().collect();
+
+        // Keyset seek (Phase 2p): start both cursors AT the cursor key (the
+        // caller's visitor still drops the equal-key docids at or before the
+        // cursor docid). Binary search over the index-addressable sorted
+        // column — O(log distinct) probes, no posting decode.
+        let seek_seg = |want_bits: u64| -> u64 {
+            let (mut lo, mut hi) = (0u64, distinct);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                match seg.number_sorted_bits_at(mid as u32) {
+                    Some(bits) if bits < want_bits => lo = mid + 1,
+                    _ => hi = mid,
+                }
+            }
+            lo
+        };
 
         // One unit of work for a single distinct VALUE: compose its segment posting
         // (minus tombstones) with the live-tail posting, then emit each docid in
@@ -1702,6 +1719,10 @@ impl NumberIndex {
             // ----- ASCENDING: two ascending cursors (segment index 0.., tail 0..).
             let mut si: u64 = 0;
             let mut ti: usize = 0;
+            if let Some(bits) = after {
+                si = seek_seg(bits);
+                ti = tail_keys.partition_point(|k| k.bits() < bits);
+            }
             loop {
                 let seg_bits = if si < distinct {
                     seg.number_sorted_bits_at(si as u32)
@@ -1758,6 +1779,19 @@ impl NumberIndex {
             // `values.iter().rev()` then ascending-bitmap iteration).
             let mut si: i64 = distinct as i64 - 1;
             let mut ti: i64 = tail_keys.len() as i64 - 1;
+            if let Some(bits) = after {
+                // Last index with bits <= cursor (first strictly-greater minus 1).
+                let (mut lo, mut hi) = (0u64, distinct);
+                while lo < hi {
+                    let mid = (lo + hi) / 2;
+                    match seg.number_sorted_bits_at(mid as u32) {
+                        Some(b) if b <= bits => lo = mid + 1,
+                        _ => hi = mid,
+                    }
+                }
+                si = lo as i64 - 1;
+                ti = tail_keys.partition_point(|k| k.bits() <= bits) as i64 - 1;
+            }
             loop {
                 let seg_bits = if si >= 0 {
                     seg.number_sorted_bits_at(si as u32)
@@ -3335,7 +3369,34 @@ impl Engine {
         coll.check_live(collection_id)?;
 
         let interner = &coll.interner;
-        let offset = req.cursor.as_deref().and_then(parse_cursor).unwrap_or(0) as usize;
+        let parsed_cursor = req.cursor.as_deref().and_then(parse_page_cursor);
+        let offset = match &parsed_cursor {
+            Some(PageCursor::Offset(n)) => *n as usize,
+            _ => 0,
+        };
+        // A sort keyset only continues the single-number-field sorted planner;
+        // a score keyset only continues score-ranked pages. A cursor that does
+        // not match the request shape degrades to first-page semantics (caller
+        // error — cursors are bound to the query that produced them).
+        let single_number_sort = req.sort.as_deref().and_then(|sort| match sort {
+            [s] => match coll.fields.get(&s.field) {
+                Some(FieldIndex::Number(_)) => Some(s.field.clone()),
+                _ => None,
+            },
+            _ => None,
+        });
+        let sort_after: Option<(u64, u32)> = match &parsed_cursor {
+            Some(PageCursor::SortKeyset { bits, docid }) if single_number_sort.is_some() => {
+                Some((*bits, *docid))
+            }
+            _ => None,
+        };
+        let score_after: Option<(f32, String)> = match &parsed_cursor {
+            Some(PageCursor::ScoreKeyset { score_bits, eid }) if req.sort.is_none() => {
+                Some((f32::from_bits(*score_bits), eid.clone()))
+            }
+            _ => None,
+        };
         let limit = req.limit as usize;
         let cache_key = search_cache_key(&req)?;
         if let Some(mut cached) = coll.cached_search_response(&cache_key) {
@@ -3483,9 +3544,16 @@ impl Engine {
         // early-terminate / avoid materializing a wide clause, returning the
         // final page directly. Everything else falls through to the
         // materialize-and-rank path below (identical result to before).
-        let planned = try_plan(coll, &req, offset)?;
+        // A score keyset bypasses the planner and the bounded top-k fast paths
+        // (they collect top-(k) of the WHOLE set; the keyset page is the top of
+        // the strictly-after-cursor subset).
+        let planned = if score_after.is_some() {
+            None
+        } else {
+            try_plan(coll, &req, offset, sort_after)?
+        };
 
-        let (page, total): (Vec<(u32, f32)>, u64) = match planned {
+        let (page, total, plan_kind): (Vec<(u32, f32)>, u64, PlanKind) = match planned {
             Some(pt) => pt,
             None => {
                 // Single-term (and multi-token AND) `match` fast path: score
@@ -3498,7 +3566,25 @@ impl Engine {
                 // through to the general `eval_query` map path unchanged.
                 let mut ranked: Vec<(u32, f32)>;
                 let total: u64;
-                if let QueryNode::Match(m) = &req.query {
+                if score_after.is_some() {
+                    // Keyset continuation: rank the strictly-after-cursor subset.
+                    let universe: BTreeSet<u32> = if query_needs_universe(&req.query) {
+                        coll.eid_fields.keys().copied().collect()
+                    } else {
+                        BTreeSet::new()
+                    };
+                    let scored = eval_query(coll, collection_id, &req.query, &universe, &state)?;
+                    total = scored.len() as u64;
+                    let (after_score, after_eid) = score_after.as_ref().unwrap();
+                    ranked = scored
+                        .into_iter()
+                        .filter(|(id, s)| {
+                            *s < *after_score
+                                || (*s == *after_score
+                                    && interner.resolve(*id) > after_eid.as_str())
+                        })
+                        .collect();
+                } else if let QueryNode::Match(m) = &req.query {
                     if let Some((top, exact_total)) =
                         eval_match_topk(coll, m, interner, offset.saturating_add(limit))?
                     {
@@ -3546,7 +3632,7 @@ impl Engine {
                 }
                 ranked.sort_by(cmp);
                 let page = ranked.into_iter().skip(offset).take(limit).collect();
-                (page, total)
+                (page, total, PlanKind::ScoreRanked)
             }
         };
 
@@ -3559,13 +3645,46 @@ impl Engine {
             })
             .collect();
 
-        // `total` is the full match count, so the "more results?" check holds
-        // even when the page was truncated to the top-k.
-        let next_offset = offset + hits.len();
-        let cursor = if (next_offset as u64) < total {
-            Some(make_cursor(next_offset))
-        } else {
+        // Next-page cursor. Keyset-capable pages (sorted-field walks and
+        // score-ranked pages) hand out a v2 keyset bound to the LAST hit, so
+        // the next page SEEKS instead of skipping — deep pagination cost does
+        // not grow with depth. Posting-order planner pages and requests that
+        // arrived with a legacy offset cursor keep the offset scheme.
+        let used_offset_cursor = matches!(parsed_cursor, Some(PageCursor::Offset(_)));
+        let cursor = if hits.is_empty() {
             None
+        } else if used_offset_cursor {
+            let next_offset = offset + hits.len();
+            if (next_offset as u64) < total {
+                Some(make_cursor(next_offset))
+            } else {
+                None
+            }
+        } else {
+            match plan_kind {
+                PlanKind::SortedField if hits.len() == limit => {
+                    let field = single_number_sort.as_deref().expect("sorted plan has field");
+                    let Some(FieldIndex::Number(n)) = coll.fields.get(field) else {
+                        unreachable!("sorted plan field is a number index");
+                    };
+                    let (last_id, _) = *page.last().expect("non-empty page");
+                    n.number_bits_at(last_id)
+                        .map(|bits| make_sort_cursor(bits, last_id))
+                }
+                PlanKind::ScoreRanked if hits.len() == limit => {
+                    let last = hits.last().expect("non-empty hits");
+                    Some(make_score_cursor(last.score, &last.external_id))
+                }
+                PlanKind::Posting => {
+                    let next_offset = offset + hits.len();
+                    if (next_offset as u64) < total {
+                        Some(make_cursor(next_offset))
+                    } else {
+                        None
+                    }
+                }
+                _ => None, // keyset page shorter than the limit → exhausted
+            }
         };
 
         let el = start.elapsed();
@@ -7053,11 +7172,23 @@ fn collapse_driver<'a>(
 /// number-index order (standalone range) — NOT the score/eid order of the
 /// fallback. For a constant-score filter the order is unspecified anyway, and
 /// sort queries define their own order, so this is a correct page.
+/// Which planner produced the page — decides the next-cursor encoding:
+/// `SortedField` pages continue via keyset (sort-value bits + docid),
+/// `Posting` pages keep the legacy offset cursor (posting/docid order has no
+/// resumable sort key).
+enum PlanKind {
+    SortedField,
+    Posting,
+    /// The general evaluator's score-desc + external_id-asc ranking.
+    ScoreRanked,
+}
+
 fn try_plan(
     coll: &Collection,
     req: &SearchRequest,
     offset: usize,
-) -> Result<Option<(Vec<(u32, f32)>, u64)>> {
+    sort_after: Option<(u64, u32)>,
+) -> Result<Option<(Vec<(u32, f32)>, u64, PlanKind)>> {
     if offset != 0 {
         return Ok(None);
     }
@@ -7075,11 +7206,33 @@ fn try_plan(
             return Ok(None);
         }
         let descending = matches!(s.order, SortOrder::Desc);
+        // Keyset continuation: a (v, id) pair is on the page iff it sits
+        // strictly AFTER the cursor in walk order. Within an equal key the
+        // walk emits docids ascending in BOTH directions, so the equal-key
+        // remainder is `id > cursor_docid`.
+        let after_bits = sort_after.map(|(bits, _)| bits);
+        let past_cursor = |v_bits: u64, id: u32| -> bool {
+            match sort_after {
+                None => true,
+                Some((k, d)) => {
+                    if v_bits == k {
+                        id > d
+                    } else if descending {
+                        v_bits < k
+                    } else {
+                        v_bits > k
+                    }
+                }
+            }
+        };
         if is_unbounded_range_on_field(&req.query, &s.field) {
             let mut page: Vec<(u32, f32)> = Vec::with_capacity(want.min(1024));
             let mut total: u64 = 0;
             if let Some(seg) = n.segment_ref() {
-                n.sorted_walk_segment(seg.as_ref(), descending, |v, id| {
+                n.sorted_walk_segment(seg.as_ref(), descending, after_bits, |v, id| {
+                    if !past_cursor(SortableF64::new(v).map(|s| s.bits()).unwrap_or(0), id) {
+                        return Ok(true);
+                    }
                     total += 1;
                     if page.len() < want {
                         page.push((id, v as f32));
@@ -7090,10 +7243,19 @@ fn try_plan(
                 })?;
             } else {
                 let values = n.sorted_values();
+                let after_key = sort_after.map(|(bits, _)| SortableF64::from_bits(bits));
                 match s.order {
                     SortOrder::Asc => {
-                        'asc: for (v, docs) in values.iter() {
+                        let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
+                            match after_key {
+                                Some(k) => Box::new(values.range(k..)),
+                                None => Box::new(values.iter()),
+                            };
+                        'asc: for (v, docs) in range {
                             for id in docs {
+                                if !past_cursor(v.bits(), id) {
+                                    continue;
+                                }
                                 total += 1;
                                 if page.len() < want {
                                     page.push((id, v.to_f64() as f32));
@@ -7104,8 +7266,16 @@ fn try_plan(
                         }
                     }
                     SortOrder::Desc => {
-                        'desc: for (v, docs) in values.iter().rev() {
+                        let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
+                            match after_key {
+                                Some(k) => Box::new(values.range(..=k).rev()),
+                                None => Box::new(values.iter().rev()),
+                            };
+                        'desc: for (v, docs) in range {
                             for id in docs {
+                                if !past_cursor(v.bits(), id) {
+                                    continue;
+                                }
                                 total += 1;
                                 if page.len() < want {
                                     page.push((id, v.to_f64() as f32));
@@ -7120,17 +7290,19 @@ fn try_plan(
             if !req.track_total {
                 total = total.max(page.len() as u64);
             }
-            return Ok(Some((page, total)));
+            return Ok(Some((page, total, PlanKind::SortedField)));
         }
-        if let Some(out) = eval_number_sort_keyword_term_page(
-            coll,
-            &req.query,
-            n,
-            descending,
-            want,
-            req.track_total,
-        )? {
-            return Ok(Some(out));
+        if sort_after.is_none() {
+            if let Some(out) = eval_number_sort_keyword_term_page(
+                coll,
+                &req.query,
+                n,
+                descending,
+                want,
+                req.track_total,
+            )? {
+                return Ok(Some((out.0, out.1, PlanKind::SortedField)));
+            }
         }
         let mut page: Vec<(u32, f32)> = Vec::with_capacity(want.min(1024));
         let mut total: u64 = 0;
@@ -7147,7 +7319,10 @@ fn try_plan(
         if let Some(seg) = n.segment_ref() {
             let q = &req.query;
             let track_total = req.track_total;
-            n.sorted_walk_segment(seg.as_ref(), descending, |v, id| {
+            n.sorted_walk_segment(seg.as_ref(), descending, after_bits, |v, id| {
+                if !past_cursor(SortableF64::new(v).map(|s| s.bits()).unwrap_or(0), id) {
+                    return Ok(true);
+                }
                 if query_predicate(coll, q, id)? {
                     total += 1;
                     if page.len() < want {
@@ -7161,7 +7336,7 @@ fn try_plan(
             if !req.track_total {
                 total = total.max(page.len() as u64);
             }
-            return Ok(Some((page, total)));
+            return Ok(Some((page, total, PlanKind::SortedField)));
         }
 
         // SEGMENT OFF (no segment attached): byte-for-byte the original
@@ -7171,10 +7346,19 @@ fn try_plan(
         // Score is the sort value (informational; ranking IS the walk order).
         // `track_total=false` lets us stop as soon as the page is full.
         let values = n.sorted_values();
+        let after_key = sort_after.map(|(bits, _)| SortableF64::from_bits(bits));
         match s.order {
             SortOrder::Asc => {
-                'asc: for (v, docs) in values.iter() {
+                let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
+                    match after_key {
+                        Some(k) => Box::new(values.range(k..)),
+                        None => Box::new(values.iter()),
+                    };
+                'asc: for (v, docs) in range {
                     for id in docs {
+                        if !past_cursor(v.bits(), id) {
+                            continue;
+                        }
                         if query_predicate(coll, &req.query, id)? {
                             total += 1;
                             if page.len() < want {
@@ -7187,8 +7371,16 @@ fn try_plan(
                 }
             }
             SortOrder::Desc => {
-                'desc: for (v, docs) in values.iter().rev() {
+                let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
+                    match after_key {
+                        Some(k) => Box::new(values.range(..=k).rev()),
+                        None => Box::new(values.iter().rev()),
+                    };
+                'desc: for (v, docs) in range {
                     for id in docs {
+                        if !past_cursor(v.bits(), id) {
+                            continue;
+                        }
                         if query_predicate(coll, &req.query, id)? {
                             total += 1;
                             if page.len() < want {
@@ -7204,7 +7396,7 @@ fn try_plan(
         if !req.track_total {
             total = total.max(page.len() as u64);
         }
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::SortedField)));
     }
 
     // ---- no sort: standalone term — page = first `limit` of the posting,
@@ -7235,7 +7427,7 @@ fn try_plan(
             .map(|id| (id, 1.0))
             .collect();
         let total = posting.as_deref().map(|p| p.len()).unwrap_or(0);
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::Posting)));
     }
 
     // ---- no sort: standalone range early-termination ----
@@ -7247,18 +7439,14 @@ fn try_plan(
         // An empty/inverted range yields an empty page (and avoids the
         // `BTreeMap::range` panic on such bounds).
         if range_is_empty(lo, hi) {
-            return Ok(Some((Vec::new(), 0)));
+            return Ok(Some((Vec::new(), 0, PlanKind::Posting)));
         }
         let mut page: Vec<(u32, f32)> = Vec::with_capacity(want.min(1024));
         let mut total: u64 = 0;
         if let Some(seg) = n.segment_ref() {
-            return Ok(Some(n.range_page_segment(
-                seg.as_ref(),
-                lo,
-                hi,
-                want,
-                req.track_total,
-            )?));
+            let (page, total) =
+                n.range_page_segment(seg.as_ref(), lo, hi, want, req.track_total)?;
+            return Ok(Some((page, total, PlanKind::Posting)));
         }
 
         // Segment OFF: zero-clone range walk over the in-RAM `values` BTreeMap.
@@ -7277,7 +7465,7 @@ fn try_plan(
                 break;
             }
         }
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::Posting)));
     }
 
     // ---- no sort: filter-only AND/NOT-AND with exact total + first page ----
@@ -7288,7 +7476,7 @@ fn try_plan(
     // range planners above), so the bitmap is already the answer set: return its
     // first page while preserving the exact total.
     if let Some((page, total)) = eval_filter_only_page(coll, &req.query, want)? {
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::Posting)));
     }
     if let Some((bitmap, score)) = eval_filter_only_bitmap(coll, &req.query)? {
         let total = bitmap.len();
@@ -7297,26 +7485,72 @@ fn try_plan(
             .take(want)
             .map(|id| (id, score))
             .collect();
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::Posting)));
     }
 
     Ok(None)
 }
 
 // ---------------------------------------------------------------------------
-// Cursor helpers (slice 1: opaque base64 of an offset)
+// Cursor helpers — opaque base64 tokens in two generations:
+//   v1 (legacy)  {"offset": N}                    — offset skip, O(offset) deep
+//   v2 keyset    {"v":2,"m":"sort","k":bits,"d":docid}
+//                {"v":2,"m":"score","k":score_bits,"t":external_id}
+// Keyset cursors carry the LAST hit's position so the next page SEEKS to it
+// (sorted walks: O(log n) range/binary-search start; score ranking: filter +
+// top-`limit` heap instead of top-(offset+limit)) — deep pagination cost no
+// longer grows with depth. v1 cursors keep working (legacy skip path).
 // ---------------------------------------------------------------------------
 
-fn make_cursor(offset: usize) -> String {
-    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
-    STANDARD_NO_PAD.encode(format!("{{\"offset\":{offset}}}"))
+/// A parsed pagination cursor.
+enum PageCursor {
+    /// Legacy offset skip.
+    Offset(u64),
+    /// Continue a single-number-field sorted walk after (sort-value bits, docid).
+    SortKeyset { bits: u64, docid: u32 },
+    /// Continue a score-ranked page after (score bits, external_id).
+    ScoreKeyset { score_bits: u32, eid: String },
 }
 
-fn parse_cursor(s: &str) -> Option<u64> {
+fn encode_cursor(json: String) -> String {
+    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+    STANDARD_NO_PAD.encode(json)
+}
+
+fn make_cursor(offset: usize) -> String {
+    encode_cursor(format!("{{\"offset\":{offset}}}"))
+}
+
+fn make_sort_cursor(bits: u64, docid: u32) -> String {
+    encode_cursor(format!("{{\"v\":2,\"m\":\"sort\",\"k\":{bits},\"d\":{docid}}}"))
+}
+
+fn make_score_cursor(score: f32, eid: &str) -> String {
+    let payload = serde_json::json!({"v": 2, "m": "score", "k": score.to_bits(), "t": eid});
+    encode_cursor(payload.to_string())
+}
+
+fn parse_page_cursor(s: &str) -> Option<PageCursor> {
     use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
     let raw = STANDARD_NO_PAD.decode(s).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
-    v.get("offset")?.as_u64()
+    if let Some(offset) = v.get("offset").and_then(|o| o.as_u64()) {
+        return Some(PageCursor::Offset(offset));
+    }
+    if v.get("v")?.as_u64()? != 2 {
+        return None;
+    }
+    match v.get("m")?.as_str()? {
+        "sort" => Some(PageCursor::SortKeyset {
+            bits: v.get("k")?.as_u64()?,
+            docid: v.get("d")?.as_u64()? as u32,
+        }),
+        "score" => Some(PageCursor::ScoreKeyset {
+            score_bits: v.get("k")?.as_u64()? as u32,
+            eid: v.get("t")?.as_str()?.to_string(),
+        }),
+        _ => None,
+    }
 }
 
 fn search_cache_key(req: &SearchRequest) -> Result<String> {
@@ -12629,6 +12863,376 @@ mod tests {
         }
     }
 
+    /// Walk every page through the returned cursors; assert the
+    /// concatenation equals one exhaustive query (order included), with no
+    /// duplicates or gaps — the keyset-pagination contract.
+    fn walk_pages(e: &Engine, base: &SearchRequest) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..1000 {
+            let mut req = base.clone();
+            req.cursor = cursor.clone();
+            let resp = e.search("users", req).unwrap();
+            let n = resp.hits.len();
+            out.extend(resp.hits.into_iter().map(|h| h.external_id));
+            match resp.cursor {
+                Some(c) => cursor = Some(c),
+                None => return out,
+            }
+            if n == 0 {
+                return out;
+            }
+        }
+        panic!("cursor never exhausted");
+    }
+
+    #[test]
+    fn sorted_keyset_pagination_walks_exhaustively_with_ties() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        // 97 docs, age = i % 10 → heavy duplicate sort keys exercise the
+        // (value, docid) tie-break across page boundaries.
+        let items: Vec<_> = (0..97)
+            .flat_map(|i| {
+                vec![item(
+                    &format!("u{i:03}"),
+                    "age",
+                    FieldValue::Number((i % 10) as f64),
+                )]
+            })
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        for order in [SortOrder::Asc, SortOrder::Desc] {
+            let base = SearchRequest {
+                query: QueryNode::Range(crate::types::RangeQuery {
+                    field: "age".into(),
+                    gt: None,
+                    gte: None,
+                    lt: None,
+                    lte: None,
+                }),
+                limit: 7,
+                cursor: None,
+                sort: Some(vec![crate::types::SortSpec {
+                    field: "age".into(),
+                    order,
+                }]),
+                track_total: true,
+                collapse: None,
+            };
+            // One exhaustive page as the oracle.
+            let mut oracle_req = base.clone();
+            oracle_req.limit = 1000;
+            let oracle: Vec<String> = e
+                .search("users", oracle_req)
+                .unwrap()
+                .hits
+                .into_iter()
+                .map(|h| h.external_id)
+                .collect();
+            assert_eq!(oracle.len(), 97);
+
+            let paged = walk_pages(&e, &base);
+            assert_eq!(paged, oracle, "order {order:?}");
+        }
+    }
+
+    #[test]
+    fn sorted_keyset_cursor_is_v2_and_filtered_walks_match() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let mut items = Vec::new();
+        for i in 0..60 {
+            items.push(item(&format!("u{i:03}"), "age", FieldValue::Number(i as f64)));
+            items.push(item(
+                &format!("u{i:03}"),
+                "email",
+                FieldValue::String(format!("{}@x.com", if i % 2 == 0 { "even" } else { "odd" })),
+            ));
+        }
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        // Filtered (query predicate) + sorted + paged.
+        let base = SearchRequest {
+            query: QueryNode::Term(crate::types::TermQuery {
+                field: "email".into(),
+                value: FieldValue::String("even@x.com".into()),
+            }),
+            limit: 4,
+            cursor: None,
+            sort: Some(vec![crate::types::SortSpec {
+                field: "age".into(),
+                order: SortOrder::Desc,
+            }]),
+            track_total: true,
+            collapse: None,
+        };
+        let first = e.search("users", base.clone()).unwrap();
+        // The first page of a sorted query hands out a v2 keyset cursor.
+        let cursor = first.cursor.clone().expect("more pages");
+        match parse_page_cursor(&cursor).expect("parseable") {
+            PageCursor::SortKeyset { .. } => {}
+            _ => panic!("expected a sort keyset cursor"),
+        }
+
+        let paged = walk_pages(&e, &base);
+        let expected: Vec<String> = (0..60)
+            .rev()
+            .filter(|i| i % 2 == 0)
+            .map(|i| format!("u{i:03}"))
+            .collect();
+        assert_eq!(paged, expected);
+    }
+
+    #[test]
+    fn score_keyset_pagination_matches_full_ranking() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let items: Vec<_> = (0..45)
+            .map(|i| {
+                item(
+                    &format!("u{i:03}"),
+                    "bio",
+                    FieldValue::String(format!(
+                        "engineer {}",
+                        if i % 3 == 0 { "rust rust" } else { "rust" }
+                    )),
+                )
+            })
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        let base = SearchRequest {
+            query: QueryNode::Match(crate::types::MatchQuery {
+                field: "bio".into(),
+                text: "rust".into(),
+                op: MatchOp::And,
+            }),
+            limit: 6,
+            cursor: None,
+            sort: None,
+            track_total: true,
+            collapse: None,
+        };
+        let mut oracle_req = base.clone();
+        oracle_req.limit = 1000;
+        let oracle: Vec<String> = e
+            .search("users", oracle_req)
+            .unwrap()
+            .hits
+            .into_iter()
+            .map(|h| h.external_id)
+            .collect();
+        assert_eq!(oracle.len(), 45);
+
+        let first = e.search("users", base.clone()).unwrap();
+        match parse_page_cursor(&first.cursor.clone().unwrap()).unwrap() {
+            PageCursor::ScoreKeyset { .. } => {}
+            _ => panic!("expected a score keyset cursor"),
+        }
+        let paged = walk_pages(&e, &base);
+        assert_eq!(paged, oracle);
+    }
+
+    #[test]
+    fn legacy_offset_cursor_still_pages() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let items: Vec<_> = (0..30)
+            .map(|i| item(&format!("u{i:03}"), "age", FieldValue::Number(i as f64)))
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+        let req = SearchRequest {
+            query: QueryNode::Range(crate::types::RangeQuery {
+                field: "age".into(),
+                gt: None,
+                gte: Some(0.0),
+                lt: None,
+                lte: None,
+            }),
+            limit: 10,
+            cursor: Some(make_cursor(25)),
+            sort: None,
+            track_total: true,
+            collapse: None,
+        };
+        let resp = e.search("users", req).unwrap();
+        assert_eq!(resp.hits.len(), 5);
+        assert_eq!(resp.total, 30);
+        assert!(resp.cursor.is_none());
+    }
+
+    #[test]
+    fn sorted_keyset_pagination_over_sealed_segment_plus_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        // 50 sealed docs with duplicate keys, then a live tail of 13 more —
+        // the keyset walk must seek correctly across BOTH sources.
+        let items: Vec<_> = (0..50)
+            .map(|i| item(&format!("u{i:03}"), "age", FieldValue::Number((i % 7) as f64)))
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+        e.__seal_number_field_to_segment("users", "age", dir.path())
+            .unwrap();
+        let tail: Vec<_> = (50..63)
+            .map(|i| item(&format!("u{i:03}"), "age", FieldValue::Number((i % 7) as f64)))
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items: tail,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        for order in [SortOrder::Asc, SortOrder::Desc] {
+            let base = SearchRequest {
+                query: QueryNode::Range(crate::types::RangeQuery {
+                    field: "age".into(),
+                    gt: None,
+                    gte: None,
+                    lt: None,
+                    lte: None,
+                }),
+                limit: 5,
+                cursor: None,
+                sort: Some(vec![crate::types::SortSpec {
+                    field: "age".into(),
+                    order,
+                }]),
+                track_total: true,
+                collapse: None,
+            };
+            let mut oracle_req = base.clone();
+            oracle_req.limit = 1000;
+            let oracle: Vec<String> = e
+                .search("users", oracle_req)
+                .unwrap()
+                .hits
+                .into_iter()
+                .map(|h| h.external_id)
+                .collect();
+            assert_eq!(oracle.len(), 63);
+            let paged = walk_pages(&e, &base);
+            assert_eq!(paged, oracle, "order {order:?}");
+        }
+    }
+
+    /// Deep-pagination latency proof (run explicitly, release):
+    /// `cargo test -p lumen --release --lib deep_pagination_depth_invariance -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn deep_pagination_depth_invariance() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let n = 100_000;
+        for chunk in (0..n).collect::<Vec<_>>().chunks(5000) {
+            let items: Vec<_> = chunk
+                .iter()
+                .map(|i| item(&format!("u{i:06}"), "age", FieldValue::Number(*i as f64)))
+                .collect();
+            e.index(
+                "users",
+                IndexRequest {
+                    items,
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+        let base = SearchRequest {
+            query: QueryNode::Range(crate::types::RangeQuery {
+                field: "age".into(),
+                gt: None,
+                gte: None,
+                lt: None,
+                lte: None,
+            }),
+            limit: 10,
+            cursor: None,
+            sort: Some(vec![crate::types::SortSpec {
+                field: "age".into(),
+                order: SortOrder::Asc,
+            }]),
+            track_total: false,
+            collapse: None,
+        };
+
+        // Page 1, then jump a keyset cursor to depth ~50_000 and time a page.
+        let t0 = std::time::Instant::now();
+        let first = e.search("users", base.clone()).unwrap();
+        let first_us = t0.elapsed().as_micros();
+        assert_eq!(first.hits.len(), 10);
+
+        let deep_cursor = make_sort_cursor(
+            SortableF64::new(50_000.0).unwrap().bits(),
+            0, // before any docid at that key
+        );
+        let mut deep_req = base.clone();
+        deep_req.cursor = Some(deep_cursor);
+        let t1 = std::time::Instant::now();
+        let deep = e.search("users", deep_req).unwrap();
+        let deep_us = t1.elapsed().as_micros();
+        assert_eq!(deep.hits.len(), 10);
+        assert_eq!(deep.hits[0].external_id, "u050000");
+
+        // Legacy offset to the same depth for contrast.
+        let mut offset_req = base.clone();
+        offset_req.cursor = Some(make_cursor(50_000));
+        let t2 = std::time::Instant::now();
+        let via_offset = e.search("users", offset_req).unwrap();
+        let offset_us = t2.elapsed().as_micros();
+
+        eprintln!(
+            "page#1 {first_us}us | keyset@50k {deep_us}us | offset@50k {offset_us}us (hits {})",
+            via_offset.hits.len()
+        );
+        // The keyset deep page must be the same order of magnitude as page 1 —
+        // depth invariance. (Loose 20x bound to survive CI jitter.)
+        assert!(
+            deep_us < first_us.max(1) * 20,
+            "keyset deep page degraded: first={first_us}us deep={deep_us}us"
+        );
+    }
+
     #[test]
     fn duplicates_side_index_tracks_inserts_and_deletes() {
         let e = Engine::new();
@@ -13562,7 +14166,23 @@ mod tests {
     #[test]
     fn cursor_round_trip() {
         let c = make_cursor(42);
-        assert_eq!(parse_cursor(&c), Some(42));
+        assert!(matches!(
+            parse_page_cursor(&c),
+            Some(PageCursor::Offset(42))
+        ));
+        let c = make_sort_cursor(0x8000_0000_0000_0000, 7);
+        assert!(matches!(
+            parse_page_cursor(&c),
+            Some(PageCursor::SortKeyset { bits: 0x8000_0000_0000_0000, docid: 7 })
+        ));
+        let c = make_score_cursor(1.5, "u042");
+        match parse_page_cursor(&c) {
+            Some(PageCursor::ScoreKeyset { score_bits, eid }) => {
+                assert_eq!(f32::from_bits(score_bits), 1.5);
+                assert_eq!(eid, "u042");
+            }
+            _ => panic!("expected score keyset"),
+        }
     }
 
     // -----------------------------------------------------------------
