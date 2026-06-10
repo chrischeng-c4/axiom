@@ -591,12 +591,18 @@ impl CraneliftJitBackend {
                     MirBinOp::In | MirBinOp::NotIn => false,
                     _ => matches!(resolved_ty, Ty::Int | Ty::Float | Ty::Bool),
                 };
-                if matches!(op, MirBinOp::FloorDiv) {
+                let int_mod = matches!(op, MirBinOp::Mod) && matches!(resolved_ty, Ty::Int);
+                if matches!(op, MirBinOp::FloorDiv) || int_mod {
                     // Floor division → call mb_floordiv runtime for correct Python
                     // floor semantics and ZeroDivisionError handling (#1085).
+                    // Int modulo → call mb_mod for the same reason: the inline
+                    // `srem` fast path executed a raw Cranelift hardware trap on
+                    // `x % 0` (SIGILL, exit 132) instead of raising a catchable
+                    // ZeroDivisionError.
                     // Float operands are already NaN-boxed I64 MbValues — no boxing needed.
                     // Int/Bool operands need boxing from raw I64 to MbValue.
-                    let floordiv_id = self.extern_funcs.get("mb_floordiv").copied();
+                    let helper_name = if int_mod { "mb_mod" } else { "mb_floordiv" };
+                    let floordiv_id = self.extern_funcs.get(helper_name).copied();
                     let is_float = matches!(resolved_ty, Ty::Float);
                     let box_id = if is_float {
                         None
@@ -619,7 +625,7 @@ impl CraneliftJitBackend {
                         } else { (l, r) };
                         let call = builder.ins().call(func_ref, &[l_boxed, r_boxed]);
                         let result_bits = builder.inst_results(call)[0];
-                        // For Int operands: mb_floordiv returns NaN-boxed MbValue,
+                        // For Int operands: mb_floordiv/mb_mod return NaN-boxed MbValue,
                         // but subsequent primitive ops expect raw i64. Unbox inline-int
                         // results (tag=1) to raw i64, keep BigInt NaN-boxed.
                         if !is_float {

@@ -11,6 +11,13 @@ use crate::codegen::cranelift::jit::{CraneliftJitBackend, JIT_LOCK};
 use crate::codegen::cranelift::CraneliftBackend;
 use crate::codegen::{CodegenBackend, CodegenOutput};
 
+/// Bits the JIT entry returns for a module-level implicit return: Python
+/// `None` as the NaN-boxed none sentinel (no longer raw 0, which callers
+/// would misread as int 0).
+fn none_bits() -> i64 {
+    crate::runtime::value::MbValue::none().to_bits() as i64
+}
+
 fn jit_run(src: &str) -> i64 {
     let _jit_guard = JIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
 
@@ -36,32 +43,33 @@ fn jit_run(src: &str) -> i64 {
 #[test]
 fn test_jit_integer_arithmetic() {
     let result = jit_run("x: int = 2 + 3\n");
-    assert_eq!(result, 0);
+    // Module-level implicit return yields Python None (NaN-boxed sentinel).
+    assert_eq!(result, none_bits());
 }
 
 #[test]
 fn test_jit_multiple_vars() {
     let result = jit_run("x: int = 10\ny: int = 20\nz: int = x + y\n");
-    assert_eq!(result, 0);
+    assert_eq!(result, none_bits());
 }
 
 #[test]
 fn test_jit_list_literal() {
     // MakeList emits mb_list_new + mb_list_append via JIT FFI
     let result = jit_run("[1, 2, 3]\n");
-    assert_eq!(result, 0);
+    assert_eq!(result, none_bits());
 }
 
 #[test]
 fn test_jit_dict_literal() {
     let result = jit_run("{}\n");
-    assert_eq!(result, 0);
+    assert_eq!(result, none_bits());
 }
 
 #[test]
 fn test_jit_bitwise_ops() {
     let result = jit_run("x: int = 5 & 3\ny: int = x | 8\n");
-    assert_eq!(result, 0);
+    assert_eq!(result, none_bits());
 }
 
 #[test]

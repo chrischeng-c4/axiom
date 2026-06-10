@@ -1053,8 +1053,12 @@ fn emit_terminator(
                     }
                 }
             }
-            let zero = builder.ins().iconst(ret_ty, 0);
-            builder.ins().return_(&[zero]);
+            // Implicit return (bare fallthrough / valueless `return`) must
+            // produce Python None — the NaN-boxed none sentinel — not raw 0
+            // bits, which callers misread as int 0 (`f() is None` → False,
+            // `repr(f())` → '0').
+            let none = builder.ins().iconst(ret_ty, MbValue::none().to_bits() as i64);
+            builder.ins().return_(&[none]);
         }
         Terminator::Goto(target) => {
             builder.ins().jump(cl_blocks[&target.0], &[]);

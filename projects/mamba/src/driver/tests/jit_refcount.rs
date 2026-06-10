@@ -116,7 +116,8 @@ fn test_jit_return_none_releases_all() {
 x: int = 42
 y: int = 99
 "#);
-    assert_eq!(result, 0); // module-level code returns 0
+    // Module-level implicit return yields Python None (NaN-boxed sentinel).
+    assert_eq!(result, crate::runtime::value::MbValue::none().to_bits() as i64);
 }
 
 // ── Integration: Copy retains new value (R2, S8) ──
