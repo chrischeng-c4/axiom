@@ -13,6 +13,10 @@ pub struct HttpExpect {
     /// Required response status (default 200).
     #[serde(default = "default_status")]
     pub status: u16,
+    /// Accept ANY of these statuses instead of `status` — for
+    /// create-if-absent idioms like `statuses = [200, 409]`.
+    #[serde(default)]
+    pub statuses: Vec<u16>,
     /// Per-request timeout (default 5000).
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
@@ -21,10 +25,22 @@ pub struct HttpExpect {
     pub jsonpath: BTreeMap<String, String>,
 }
 
+impl HttpExpect {
+    /// Does `status` satisfy this expectation's status contract?
+    pub fn status_ok(&self, status: u16) -> bool {
+        if self.statuses.is_empty() {
+            status == self.status
+        } else {
+            self.statuses.contains(&status)
+        }
+    }
+}
+
 impl Default for HttpExpect {
     fn default() -> Self {
         Self {
             status: default_status(),
+            statuses: Vec::new(),
             timeout_ms: default_timeout_ms(),
             jsonpath: BTreeMap::new(),
         }
