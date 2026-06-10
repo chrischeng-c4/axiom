@@ -301,6 +301,8 @@ impl AppState {
         RangeQuery,
         KnnQuery,
         crate::types::RrfQuery,
+        crate::types::ExistsQuery,
+        crate::types::DuplicatedQuery,
         SearchHit,
         SearchResponse,
         DuplicatesRequest,

@@ -277,6 +277,34 @@ pub enum QueryNode {
     /// stays filter-correct. Wire: `{"rrf": {"queries":[{…},{…}], "k":60}}`.
     #[serde(rename = "rrf")]
     Rrf(RrfQuery),
+    /// Non-null / "has a value" predicate over any indexed field: the set of docs
+    /// that have ≥1 value in `field`. Composes under and/or/not like any filter.
+    /// Drives data-table "is not empty" filters (the inverse is `{"not":{"exists":…}}`).
+    /// Wire: `{"exists": {"field": "email"}}`.
+    #[serde(rename = "exists")]
+    Exists(ExistsQuery),
+    /// Docs whose `field` value is SHARED — the value occurs in ≥ `min_group_size`
+    /// docs (default 2). The boolean-composable form of `/duplicates`: drops into
+    /// and/or/not (e.g. "duplicated email AND city=Taipei"). keyword/number/set
+    /// only. Wire: `{"duplicated": {"field":"email","min_group_size":2}}`.
+    #[serde(rename = "duplicated")]
+    Duplicated(DuplicatedQuery),
+}
+
+/// `exists` predicate (see [`QueryNode::Exists`]).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ExistsQuery {
+    pub field: String,
+}
+
+/// `duplicated` predicate (see [`QueryNode::Duplicated`]).
+/// Reuses `default_min_group_size` (defined with `DuplicatesRequest`).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DuplicatedQuery {
+    pub field: String,
+    /// Minimum group size to count as duplicated (default 2).
+    #[serde(default = "default_min_group_size")]
+    pub min_group_size: u32,
 }
 
 /// Reciprocal Rank Fusion query (see [`QueryNode::Rrf`]).

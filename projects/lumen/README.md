@@ -153,13 +153,14 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| search-vector | - | auditing | Semantic kNN (`vector`; CPU HNSW + exact flat brute-force) and perceptual/structural `hash` (pHash / SimHash / b-bit MinHash) queried by Hamming distance. The caller owns all embeddings and hashes; lumen indexes the bits. kNN composes with filters **without recall collapse** (filter-correct kNN). | smoke, conformance | projects/lumen/tests/vector_e2e.rs; projects/lumen/tests/hash_hamming.rs; projects/lumen/scripts/bench_vs_db.py (knn) |
+| search-vector | - | auditing | Semantic kNN (`vector`; CPU HNSW + exact flat brute-force) and perceptual/structural `hash` (pHash / SimHash / b-bit MinHash) queried by Hamming distance. The caller owns all embeddings and hashes; lumen indexes the bits. kNN composes with filters **without recall collapse** (filter-correct kNN). | smoke, conformance | projects/lumen/tests/vector_e2e.rs; projects/lumen/tests/hash_hamming.rs; projects/lumen/tests/perf_gate_vs_db.rs (knn, filtered_knn vs pgvector); projects/lumen/scripts/bench_vs_db.py (knn) |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | HNSW vector kNN (CPU) | subepic | - | implemented | passing | conformance | projects/lumen/tests/vector_e2e.rs |
 | Filtered kNN — allow-list primitive (`search_knn_filtered`) | subepic | 4141 | implemented | passing | conformance | projects/lumen/src/vector_index.rs (filtered_knn_returns_nearest_within_allowlist_not_global_topk) |
 | Filtered kNN — planner wiring (`knn AND filter`) + recall gate | subepic | 4142 | implemented | passing | conformance | projects/lumen/tests/vector_e2e.rs (filtered_knn_returns_nearest_within_filter_no_recall_collapse) |
+| Competitive perf gate: `knn` + `filtered_knn` vs pgvector (opt-in `LUMEN_GATE_VECTOR=1`; OS host has no k-NN plugin) — `knn` is a TARGET (over-the-wire/real-corpus can lose), `filtered_knn` is a WIN (pgvector post-filters and collapses recall) | subepic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (competitive_perf_gate: knn, filtered_knn); projects/lumen/tests/perf-baseline.json |
 | flat-cpu vectors RAM-bounded on the disk tier (base rows demand-paged off the mmap, not re-materialized on reopen) | subepic | - | implemented | passing | conformance | projects/lumen/src/vector_index.rs (reopen_base_seg_plus_tail_plus_tombstone_equals_inram_oracle); projects/lumen/tests/disk_scale_proof.rs |
 | HNSW graph on disk (DiskANN-class) — vectors stay in RAM in the graph; only flat-cpu is disk-RAM-bounded | subepic | - | planned | none | none | future GPU-native vector chapter (`hnsw_rs` owns the vectors internally) |
 | Hash / Hamming search (`hash` field + `hamming` query) | subepic | - | implemented | passing | conformance | projects/lumen/tests/hash_hamming.rs |
@@ -188,13 +189,14 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| search-nested | - | auditing | Search Airtable-style data tables including nested `group` fields: group→child collection, a first-class `has_child` boolean clause, collapse-on-search, enum cascading paths (子母選單), and CJK substring. Correlation-correct (no cross-element false match). | smoke, conformance | projects/lumen/tests/collapse_nested.rs; projects/lumen/scripts/bench_vs_db.py (group_nested) |
+| search-nested | - | auditing | Search Airtable-style data tables including nested `group` fields: group→child collection, a first-class `has_child` boolean clause, collapse-on-search, enum cascading paths (子母選單), and CJK substring. Correlation-correct (no cross-element false match). Plus `exists` (non-blank) and `duplicated` (collision) leaves that compose arbitrary presence/duplicate filters from the same boolean tree. | smoke, conformance | projects/lumen/tests/collapse_nested.rs; projects/lumen/scripts/bench_vs_db.py (group_nested) |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | group→child mapping + collapse-on-search | subepic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs |
 | has_child boolean clause | subepic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs (has_child_composes_in_boolean_tree) |
 | enum level_match + CJK substring | subepic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs (enum_path_and_level_match, ngram_cjk_substring) |
+| `exists` / `duplicated` composite filter nodes (keyword/number/set; text/vector/hash rejected) | subepic | - | implemented | passing | conformance | projects/lumen/src/storage.rs (exists_filters_missing_field, exists_composes_with_boolean, duplicated_as_query_leaf, duplicated_composes_with_boolean, duplicated_min_group_size_floor_is_two) |
 
 ### Elastic Scale (columnar mmap disk tier — RAM=hot / disk=all)
 
@@ -698,6 +700,38 @@ POST /collections/{id}/duplicates
 ```
 
 `text` / `vector` fields do not support duplicates (semantics undefined).
+
+### Exists / Duplicated (presence & collision filters)
+
+Two query nodes for presence and collision. Both compose inside `and` / `or` /
+`not` like any other leaf, so arbitrary combinations ("non-blank email **and**
+duplicate phone") need no bespoke endpoint.
+
+```
+POST /collections/{id}/search
+{
+  "query": {
+    "and": [
+      { "exists":     { "field": "email" } },                      // email is non-blank
+      { "duplicated": { "field": "phone", "min_group_size": 2 } }  // phone collides with another doc
+    ]
+  }
+}
+```
+
+| Node | Matches |
+|------|---------|
+| `exists` | docs holding any value for `field`; `not exists` = "is empty" |
+| `duplicated` | docs whose `field` value is shared by ≥ `min_group_size` docs (`min_group_size` defaults to / floors at 2) |
+
+Both cover `keyword` / `number` / `set` fields. `text` / `vector` / `hash` are
+rejected (presence/equality is undefined there — declare a `keyword` companion
+field for a text "is empty" / duplicate filter).
+
+`duplicated` vs the `/duplicates` endpoint: the endpoint returns *grouped*
+results (`value → external_ids`) for an audit view; the `duplicated` query node
+returns a *flat, composable* doc set you can intersect with other predicates in
+one search.
 
 ### kNN (vector search)
 

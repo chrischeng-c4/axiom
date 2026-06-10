@@ -54,6 +54,16 @@ const CELLS: &[&str] = &[
     "bool_filter",
     "filter_sort",
     "pure_sort",
+    // Presence + collision filters (DataTable composite search). `exists` is a
+    // sparse-field presence scan; `duplicated` finds docs whose value collides.
+    // Start un-baselined → judge() treats them as EXEMPT (numbers reported, never
+    // fails) until a stable ratio is promoted to a `win` floor in perf-baseline.json.
+    "exists",
+    "duplicated",
+    // Vector cells — only run with LUMEN_GATE_VECTOR=1 (parse_gate_cells filters
+    // them out of the default gate; OS has no k-NN plugin so only pgvector is the peer).
+    "knn",
+    "filtered_knn",
 ];
 
 const PG_CHEAP_CELLS: &[&str] = &["kw_term", "range", "bool_filter"];
@@ -240,6 +250,14 @@ struct Doc {
     bio: String,
     city: &'static str,
     age: i32,
+    /// Sparse field for the `exists` cell: present on 25% of docs (i%4==0), NULL
+    /// otherwise. Lets the presence filter measure a *selective* `exists`, not a
+    /// degenerate "every doc has it" scan.
+    note: Option<&'static str>,
+    /// 128-dim unit embedding for the `knn` / `filtered_knn` cells. Only populated
+    /// when LUMEN_GATE_VECTOR=1 — the HNSW build (lumen + pgvector) is expensive,
+    /// so the default search gate stays vector-free and fast.
+    embedding: Option<Vec<f32>>,
 }
 
 /// Deterministic corpus with the same probe selectivities as scripts/bench_vs_db.py:
@@ -259,12 +277,57 @@ fn gen_doc(i: usize, rng: &mut Lcg) -> Doc {
         bio: words.join(" "),
         city: CITIES[i % 50],
         age: 18 + ((i as i64 * 7919) % 63) as i32,
+        // present on 25% of docs → `exists`/`not exists` is selective; `city`
+        // (50-way, every value repeats) drives the `duplicated` cell instead.
+        note: if i % 4 == 0 { Some("present") } else { None },
+        embedding: None, // populated by gen_corpus only when LUMEN_GATE_VECTOR=1
     }
+}
+
+// ---- vector (knn / filtered_knn) cells — opt-in via LUMEN_GATE_VECTOR=1 ----
+const VEC_DIM: usize = 128;
+const KNN_K: usize = 10;
+const VEC_SEED: u64 = 0x5EED_3EC7;
+
+fn vector_enabled() -> bool {
+    std::env::var("LUMEN_GATE_VECTOR")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// Deterministic unit (L2-normalized) vector — cosine cares about direction only.
+fn unit_vec(seed: u64) -> Vec<f32> {
+    let mut rng = Lcg::new(seed);
+    let mut v: Vec<f32> = (0..VEC_DIM)
+        .map(|_| ((rng.next() >> 33) as f64 / (1u64 << 31) as f64 * 2.0 - 1.0) as f32)
+        .collect();
+    let norm = v.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>().sqrt() as f32;
+    if norm > 0.0 {
+        for x in &mut v {
+            *x /= norm;
+        }
+    }
+    v
+}
+
+fn gen_embedding(i: usize) -> Vec<f32> {
+    unit_vec(VEC_SEED ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}
+
+/// Fixed query vector for the knn cells (deterministic, unit-norm).
+fn query_vec() -> Vec<f32> {
+    unit_vec(VEC_SEED ^ 0xDEAD_BEEF)
 }
 
 fn gen_corpus(n: usize) -> Vec<Doc> {
     let mut rng = Lcg::new(SEED);
-    (0..n).map(|i| gen_doc(i, &mut rng)).collect()
+    let mut docs: Vec<Doc> = (0..n).map(|i| gen_doc(i, &mut rng)).collect();
+    if vector_enabled() {
+        for (i, d) in docs.iter_mut().enumerate() {
+            d.embedding = Some(gen_embedding(i));
+        }
+    }
+    docs
 }
 
 #[test]
@@ -279,6 +342,7 @@ fn lcg_skip_ahead_matches_sequential_doc_stream() {
             assert_eq!(got.bio, want.bio);
             assert_eq!(got.city, want.city);
             assert_eq!(got.age, want.age);
+            assert_eq!(got.note, want.note);
         }
     }
 }
@@ -306,8 +370,34 @@ fn lumen_query(cell: &str) -> Value {
         "pure_sort" => {
             json!({"query":{"range":{"field":"age"}},"sort":[{"field":"age","order":"asc"}],"limit":10,"track_total":false})
         }
+        "exists" => json!({"query":{"exists":{"field":"note"}},"limit":10}),
+        "duplicated" => {
+            json!({"query":{"duplicated":{"field":"city","min_group_size":2}},"limit":10})
+        }
+        "knn" => json!({"query":{"knn":{"field":"embedding","vector":query_vec(),"k":KNN_K}},"limit":KNN_K}),
+        // filter-correct kNN: nearest within the city=taipei subset (the pgvector
+        // post-filter recall-collapse case). lumen evaluates the filter then the
+        // kNN over the survivors — no recall loss.
+        "filtered_knn" => json!({"query":{"and":[
+            {"knn":{"field":"embedding","vector":query_vec(),"k":KNN_K}},
+            {"term":{"field":"city","value":"taipei"}}
+        ]},"limit":KNN_K}),
         _ => unreachable!("unknown cell {cell}"),
     }
+}
+
+/// pgvector literal: `[0.12,-0.04,...]`.
+fn pg_vec_literal(v: &[f32]) -> String {
+    let mut s = String::with_capacity(v.len() * 8 + 2);
+    s.push('[');
+    for (i, x) in v.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!("{x:.6}"));
+    }
+    s.push(']');
+    s
 }
 
 fn pg_sql(cell: &str, table: &str) -> String {
@@ -320,6 +410,25 @@ fn pg_sql(cell: &str, table: &str) -> String {
         "bool_filter" => format!("SELECT eid FROM {table} WHERE city='taipei' AND age>=30 AND age<40 LIMIT 10"),
         "filter_sort" => format!("SELECT eid FROM {table} WHERE city='taipei' ORDER BY age ASC, eid ASC LIMIT 10"),
         "pure_sort" => format!("SELECT eid FROM {table} ORDER BY age ASC, eid ASC LIMIT 10"),
+        "exists" => format!("SELECT eid FROM {table} WHERE note IS NOT NULL LIMIT 10"),
+        // pg's idiomatic "find duplicates" — a GROUP BY/HAVING subquery that
+        // collision-filters the rows. The B-tree on city serves the grouping.
+        "duplicated" => format!(
+            "SELECT eid FROM {table} WHERE city IN \
+             (SELECT city FROM {table} GROUP BY city HAVING count(*) >= 2) LIMIT 10"
+        ),
+        "knn" => format!(
+            "SELECT eid FROM {table} ORDER BY embedding <=> '{}' LIMIT {KNN_K}",
+            pg_vec_literal(&query_vec())
+        ),
+        // pgvector + WHERE: pg's HNSW index is a post-filter (ANN top-k then drop
+        // non-matching rows) → recall collapses when the filter is selective; the
+        // planner may instead pre-filter and exact-sort. Either way this is the
+        // cell where lumen's filter-correct kNN wins on correctness + latency.
+        "filtered_knn" => format!(
+            "SELECT eid FROM {table} WHERE city='taipei' ORDER BY embedding <=> '{}' LIMIT {KNN_K}",
+            pg_vec_literal(&query_vec())
+        ),
         _ => unreachable!("unknown cell {cell}"),
     }
 }
@@ -344,6 +453,20 @@ fn os_query(cell: &str) -> Value {
         "pure_sort" => {
             json!({"query":{"match_all":{}},"sort":[{"age":"asc"}],"track_total_hits":false,"size":10})
         }
+        "exists" => json!({"query":{"exists":{"field":"note"}},"size":10}),
+        // OpenSearch has NO single query that returns the *duplicate docs* as a
+        // composable filter — the idiomatic answer is a terms aggregation with
+        // min_doc_count, which returns the colliding *values* (buckets), not docs,
+        // and cannot be AND/OR/NOT-composed with other queries. This cell times
+        // that aggregation as OS's closest equivalent; the semantic gap (values vs
+        // composable doc-set) is the point, not just the latency.
+        "duplicated" => json!({
+            "size": 0,
+            "aggs": {"dups": {"terms": {"field": "city", "min_doc_count": 2, "size": 100}}}
+        }),
+        // OpenSearch on this host has no k-NN plugin; the gate loop never measures
+        // OS for vector cells, but the match arm must be total.
+        "knn" | "filtered_knn" => json!({"query":{"match_all":{}},"size":KNN_K}),
         _ => unreachable!("unknown cell {cell}"),
     }
 }
@@ -424,13 +547,18 @@ async fn lumen_serve_engine(
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
 
+    let mut fields = json!({
+        "bio":{"type":"text"},
+        "city":{"type":"keyword"},
+        "age":{"type":"number"},
+        "note":{"type":"keyword"}
+    });
+    if vector_enabled() {
+        fields["embedding"] = json!({"type":"vector","dim":VEC_DIM,"metric":"cosine"});
+    }
     client
         .put(format!("{base}/collections/docs"))
-        .json(&json!({"fields":{
-            "bio":{"type":"text"},
-            "city":{"type":"keyword"},
-            "age":{"type":"number"}
-        }}))
+        .json(&json!({ "fields": fields }))
         .send()
         .await
         .unwrap()
@@ -443,6 +571,13 @@ async fn lumen_serve_engine(
         items.push(json!({"external_id":d.eid,"field":"bio","value":d.bio}));
         items.push(json!({"external_id":d.eid,"field":"city","value":d.city}));
         items.push(json!({"external_id":d.eid,"field":"age","value":d.age}));
+        // Only index `note` where present → sparse field, lumen `exists` selective.
+        if let Some(note) = d.note {
+            items.push(json!({"external_id":d.eid,"field":"note","value":note}));
+        }
+        if let Some(emb) = &d.embedding {
+            items.push(json!({"external_id":d.eid,"field":"embedding","value":emb}));
+        }
         if items.len() >= 9000 {
             post_index(&client, &base, &items).await;
             items.clear();
@@ -608,10 +743,22 @@ async fn pg_setup(docs: &[Doc], table: &str) -> Option<tokio_postgres::Client> {
     tokio::spawn(async move {
         let _ = connection.await;
     });
+    let vec_on = vector_enabled();
     client
         .batch_execute(&format!("DROP TABLE IF EXISTS {table}"))
         .await
         .unwrap();
+    if vec_on {
+        client
+            .batch_execute("CREATE EXTENSION IF NOT EXISTS vector")
+            .await
+            .unwrap();
+    }
+    let emb_col = if vec_on {
+        format!(", embedding vector({VEC_DIM})")
+    } else {
+        String::new()
+    };
     client
         .batch_execute(&format!(
             "CREATE TABLE {table} (
@@ -619,28 +766,66 @@ async fn pg_setup(docs: &[Doc], table: &str) -> Option<tokio_postgres::Client> {
                 bio text,
                 bio_tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', bio)) STORED,
                 city text,
-                age int
+                age int,
+                note text{emb_col}
             )"
         ))
         .await
         .unwrap();
     // batched multi-row INSERT (corpus is clean [a-z ]; safe to single-quote inline)
+    let cols = if vec_on {
+        "(eid,bio,city,age,note,embedding)"
+    } else {
+        "(eid,bio,city,age,note)"
+    };
     for batch in docs.chunks(2000) {
-        let mut sql = format!("INSERT INTO {table} (eid,bio,city,age) VALUES ");
+        let mut sql = format!("INSERT INTO {table} {cols} VALUES ");
         for (k, d) in batch.iter().enumerate() {
             if k > 0 {
                 sql.push(',');
             }
-            sql.push_str(&format!("('{}','{}','{}',{})", d.eid, d.bio, d.city, d.age));
+            // note is sparse → emit a bare NULL (not the string 'NULL') when absent.
+            let note = d
+                .note
+                .map(|s| format!("'{s}'"))
+                .unwrap_or_else(|| "NULL".to_string());
+            if vec_on {
+                let emb = d
+                    .embedding
+                    .as_ref()
+                    .map(|e| format!("'{}'", pg_vec_literal(e)))
+                    .unwrap_or_else(|| "NULL".to_string());
+                sql.push_str(&format!(
+                    "('{}','{}','{}',{},{},{})",
+                    d.eid, d.bio, d.city, d.age, note, emb
+                ));
+            } else {
+                sql.push_str(&format!(
+                    "('{}','{}','{}',{},{})",
+                    d.eid, d.bio, d.city, d.age, note
+                ));
+            }
         }
         client.batch_execute(&sql).await.unwrap();
     }
+    // pgvector HNSW index (mirrors bench_vs_db.py: m=16, ef_construction=64,
+    // ef_search=100). SET is session-scoped and persists onto the returned client,
+    // so measure_pg's prepared kNN queries run at ef_search=100.
+    let vec_idx = if vec_on {
+        format!(
+            "CREATE INDEX {table}_vec ON {table} USING hnsw (embedding vector_cosine_ops) \
+             WITH (m=16, ef_construction=64);\n             SET hnsw.ef_search = 100;\n             "
+        )
+    } else {
+        String::new()
+    };
     client
         .batch_execute(&format!(
             "CREATE INDEX {table}_bio_gin ON {table} USING gin (bio_tsv);
              CREATE INDEX {table}_city ON {table} (city);
              CREATE INDEX {table}_age ON {table} (age);
-             ANALYZE {table}"
+             CREATE INDEX {table}_note ON {table} (note);
+             {vec_idx}ANALYZE {table}"
         ))
         .await
         .unwrap();
@@ -689,7 +874,7 @@ async fn os_setup(docs: &[Doc], index: &str) -> Option<(reqwest::Client, String)
         .put(format!("{base}/{index}"))
         .json(&json!({
             "settings":{"number_of_shards":1,"number_of_replicas":0,"refresh_interval":"-1"},
-            "mappings":{"properties":{"bio":{"type":"text"},"city":{"type":"keyword"},"age":{"type":"integer"}}}
+            "mappings":{"properties":{"bio":{"type":"text"},"city":{"type":"keyword"},"age":{"type":"integer"},"note":{"type":"keyword"}}}
         }))
         .send()
         .await
@@ -701,10 +886,18 @@ async fn os_setup(docs: &[Doc], index: &str) -> Option<(reqwest::Client, String)
         let mut body = String::new();
         for d in batch {
             body.push_str(&format!("{{\"index\":{{\"_id\":\"{}\"}}}}\n", d.eid));
-            body.push_str(&format!(
-                "{{\"bio\":\"{}\",\"city\":\"{}\",\"age\":{}}}\n",
-                d.bio, d.city, d.age
-            ));
+            // Omit `note` entirely when absent → OS `exists` treats a missing field
+            // as "not present" (matching lumen/pg NULL semantics).
+            match d.note {
+                Some(note) => body.push_str(&format!(
+                    "{{\"bio\":\"{}\",\"city\":\"{}\",\"age\":{},\"note\":\"{}\"}}\n",
+                    d.bio, d.city, d.age, note
+                )),
+                None => body.push_str(&format!(
+                    "{{\"bio\":\"{}\",\"city\":\"{}\",\"age\":{}}}\n",
+                    d.bio, d.city, d.age
+                )),
+            }
         }
         client
             .post(format!("{base}/{index}/_bulk"))
@@ -805,8 +998,19 @@ fn parse_scale_cells() -> Vec<&'static str> {
     parse_cells_env("LUMEN_SCALE_CELLS")
 }
 
+fn is_vector_cell(cell: &str) -> bool {
+    matches!(cell, "knn" | "filtered_knn")
+}
+
 fn parse_gate_cells() -> Vec<&'static str> {
-    parse_cells_env("LUMEN_GATE_CELLS")
+    let cells = parse_cells_env("LUMEN_GATE_CELLS");
+    if vector_enabled() {
+        cells
+    } else {
+        // Vector cells need the embedding corpus + HNSW build (LUMEN_GATE_VECTOR=1);
+        // drop them from the default gate so it stays vector-free and fast.
+        cells.into_iter().filter(|c| !is_vector_cell(c)).collect()
+    }
 }
 
 fn parse_qps_targets_env(var: &str) -> Vec<usize> {
@@ -1228,7 +1432,10 @@ async fn competitive_perf_gate() {
             pg_s.insert(cell, measure_pg(c, cell, pg_table).await);
         }
         if let Some((c, b)) = &os {
-            os_s.insert(cell, measure_os(c, b, os_index, cell).await);
+            // OS has no k-NN plugin on this host → skip vector cells (peer reported as "-").
+            if !is_vector_cell(cell) {
+                os_s.insert(cell, measure_os(c, b, os_index, cell).await);
+            }
         }
     }
 
@@ -1868,7 +2075,10 @@ async fn competitive_perf_gate_disk() {
             pg_s.insert(cell, measure_pg(c, cell, pg_table).await);
         }
         if let Some((c, b)) = &os {
-            os_s.insert(cell, measure_os(c, b, os_index, cell).await);
+            // OS has no k-NN plugin on this host → skip vector cells (peer reported as "-").
+            if !is_vector_cell(cell) {
+                os_s.insert(cell, measure_os(c, b, os_index, cell).await);
+            }
         }
     }
 

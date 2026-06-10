@@ -4064,6 +4064,10 @@ fn eval_query(
         QueryNode::Range(r) => constant_score(eval_range(coll, r)?),
         QueryNode::Knn(k) => eval_knn(coll, k)?,
         QueryNode::Hamming(hq) => eval_hamming(coll, hq)?,
+        QueryNode::Exists(e) => constant_score(eval_field_doc_union(coll, &e.field, 1)?),
+        QueryNode::Duplicated(d) => {
+            constant_score(eval_field_doc_union(coll, &d.field, d.min_group_size.max(2) as u64)?)
+        }
         QueryNode::Rrf(r) => eval_rrf(coll, collection_id, r, universe, state)?,
         QueryNode::And(children) => {
             // A `Not` conjunct is a filter: `A AND NOT B = A \ B`.
@@ -5176,6 +5180,62 @@ fn eval_match_topk(
     Ok(Some((ranked.iter().take(k).copied().collect(), total)))
 }
 
+/// Shared engine for `Exists` and `Duplicated`: the union of doc-ids that have a
+/// value in `field` whose posting size ≥ `min_count`.
+///   - `min_count = 1` → `Exists` (doc has any value in the field).
+///   - `min_count = N` → `Duplicated` (the value is shared by ≥ N docs).
+/// keyword/number/set drive from the segment-aware `live_*` accessors (segment
+/// dict/column minus tombstones + live tail), identical to `duplicates`. text /
+/// vector / hash are not supported here (declare a keyword companion field for a
+/// text "is empty" filter; use knn / hamming for vector / hash).
+fn eval_field_doc_union(coll: &Collection, field: &str, min_count: u64) -> Result<RoaringBitmap> {
+    let fi = coll
+        .fields
+        .get(field)
+        .ok_or_else(|| StorageError::UnknownField {
+            collection: "<>".into(),
+            field: field.to_string(),
+        })?;
+    let mut acc = RoaringBitmap::new();
+    match fi {
+        FieldIndex::Keyword(k) => {
+            for set in k.live_terms().values() {
+                if set.len() >= min_count {
+                    acc |= set;
+                }
+            }
+        }
+        FieldIndex::Number(n) => {
+            for set in n.live_values().values() {
+                if set.len() >= min_count {
+                    acc |= set;
+                }
+            }
+        }
+        FieldIndex::Set(s) => {
+            for set in s.live_elements().values() {
+                if set.len() >= min_count {
+                    acc |= set;
+                }
+            }
+        }
+        FieldIndex::Text { .. } => bail!(
+            "exists/duplicated is not supported on text field `{}` — declare a \
+             keyword companion field for an \"is empty\"/duplicate filter",
+            field
+        ),
+        FieldIndex::Vector { .. } => bail!(
+            "exists/duplicated is not supported on vector field `{}` — use knn",
+            field
+        ),
+        FieldIndex::Hash(_) => bail!(
+            "exists/duplicated is not supported on hash field `{}` — use hamming",
+            field
+        ),
+    }
+    Ok(acc)
+}
+
 fn eval_term(coll: &Collection, t: &TermQuery) -> Result<RoaringBitmap> {
     let fi = coll
         .fields
@@ -5445,7 +5505,12 @@ fn eval_range(coll: &Collection, r: &RangeQuery) -> Result<RoaringBitmap> {
 fn is_predicable(node: &QueryNode) -> bool {
     matches!(
         node,
-        QueryNode::Term(_) | QueryNode::Terms(_) | QueryNode::Range(_) | QueryNode::Match(_)
+        QueryNode::Term(_)
+            | QueryNode::Terms(_)
+            | QueryNode::Range(_)
+            | QueryNode::Match(_)
+            | QueryNode::Exists(_)
+            | QueryNode::Duplicated(_)
     )
 }
 
@@ -5678,14 +5743,18 @@ fn estimate_selectivity(coll: &Collection, node: &QueryNode) -> u64 {
             }
             _ => u64::MAX,
         },
-        // Don't drive an AND from these.
+        // Don't drive an AND from these. Exists/Duplicated would need a full
+        // value-union scan to size, so they're not chosen as the cheap driver
+        // either — a cheaper sibling clause (term/range) drives, then they filter.
         QueryNode::Knn(_)
         | QueryNode::And(_)
         | QueryNode::Or(_)
         | QueryNode::Not(_)
         | QueryNode::HasChild(_)
         | QueryNode::Hamming(_)
-        | QueryNode::Rrf(_) => u64::MAX,
+        | QueryNode::Rrf(_)
+        | QueryNode::Exists(_)
+        | QueryNode::Duplicated(_) => u64::MAX,
     }
 }
 
@@ -5937,6 +6006,10 @@ fn eval_filter_bitmap(coll: &Collection, node: &QueryNode) -> Result<RoaringBitm
         QueryNode::Term(t) => eval_term(coll, t),
         QueryNode::Terms(t) => eval_terms(coll, t),
         QueryNode::Range(r) => eval_range(coll, r),
+        QueryNode::Exists(e) => eval_field_doc_union(coll, &e.field, 1),
+        QueryNode::Duplicated(d) => {
+            eval_field_doc_union(coll, &d.field, d.min_group_size.max(2) as u64)
+        }
         _ => bail!("eval_filter_bitmap called on a non-filter node"),
     }
 }
@@ -6644,6 +6717,12 @@ fn query_predicate(coll: &Collection, node: &QueryNode, id: u32) -> Result<bool>
         QueryNode::Rrf(_) => bail!("rrf cannot be evaluated as a per-doc predicate"),
         QueryNode::HasChild(_) => bail!("has_child cannot be evaluated as a per-doc predicate"),
         QueryNode::Hamming(_) => bail!("hamming cannot be evaluated as a per-doc predicate"),
+        // Exists/Duplicated test membership in the field's doc-union; the sort-walk
+        // runs over a bounded candidate set so the recompute stays cheap.
+        QueryNode::Exists(e) => eval_field_doc_union(coll, &e.field, 1)?.contains(id),
+        QueryNode::Duplicated(d) => {
+            eval_field_doc_union(coll, &d.field, d.min_group_size.max(2) as u64)?.contains(id)
+        }
     })
 }
 
@@ -12261,6 +12340,7 @@ mod segment_vector_diff_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{DuplicatedQuery, ExistsQuery};
 
     fn build_users_schema() -> CreateCollectionRequest {
         let mut fields = BTreeMap::new();
@@ -12676,6 +12756,249 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("duplicates not supported on text"));
+    }
+
+    // ----- Exists / Duplicated query primitives (DataTable composite search) -----
+
+    fn search_ids(e: &Engine, coll: &str, query: QueryNode) -> (u64, Vec<String>) {
+        let resp = e
+            .search(
+                coll,
+                SearchRequest {
+                    query,
+                    limit: 100,
+                    cursor: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        let mut ids: Vec<String> = resp.hits.iter().map(|h| h.external_id.clone()).collect();
+        ids.sort();
+        (resp.total, ids)
+    }
+
+    #[test]
+    fn exists_filters_missing_field() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u1", "age", FieldValue::Number(30.0)),
+                    // u2 carries no email — only age. Exists("email") must skip it.
+                    item("u2", "age", FieldValue::Number(40.0)),
+                    item("u3", "email", FieldValue::String("c@z.com".into())),
+                    // u4 multi-valued set; Exists must see it via element_postings.
+                    item(
+                        "u4",
+                        "tags",
+                        FieldValue::StringList(vec!["a".into(), "b".into()]),
+                    ),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        // Keyword field: only docs that actually hold an email value.
+        let (total, ids) =
+            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "email".into() }));
+        assert_eq!(total, 2);
+        assert_eq!(ids, vec!["u1", "u3"]);
+
+        // Set field: presence via element postings.
+        let (total, ids) =
+            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "tags".into() }));
+        assert_eq!(total, 1);
+        assert_eq!(ids, vec!["u4"]);
+
+        // Number field.
+        let (total, ids) =
+            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "age".into() }));
+        assert_eq!(total, 2);
+        assert_eq!(ids, vec!["u1", "u2"]);
+    }
+
+    #[test]
+    fn exists_composes_with_boolean() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u1", "age", FieldValue::Number(30.0)),
+                    item("u2", "email", FieldValue::String("b@y.com".into())),
+                    item("u2", "age", FieldValue::Number(50.0)),
+                    item("u3", "age", FieldValue::Number(30.0)), // no email
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        // has-email AND age in [25,40): u1 only (u2 too old, u3 no email).
+        let q = QueryNode::And(vec![
+            QueryNode::Exists(ExistsQuery { field: "email".into() }),
+            QueryNode::Range(RangeQuery {
+                field: "age".into(),
+                gte: Some(25.0),
+                lt: Some(40.0),
+                gt: None,
+                lte: None,
+            }),
+        ]);
+        let (total, ids) = search_ids(&e, "users", q);
+        assert_eq!(total, 1);
+        assert_eq!(ids, vec!["u1"]);
+
+        // Inverse: missing email (NOT Exists) → u3.
+        let q = QueryNode::Not(Box::new(QueryNode::Exists(ExistsQuery {
+            field: "email".into(),
+        })));
+        let (total, ids) = search_ids(&e, "users", q);
+        assert_eq!(total, 1);
+        assert_eq!(ids, vec!["u3"]);
+    }
+
+    #[test]
+    fn duplicated_as_query_leaf() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u2", "email", FieldValue::String("a@x.com".into())),
+                    item("u3", "email", FieldValue::String("a@x.com".into())),
+                    item("u4", "email", FieldValue::String("b@y.com".into())),
+                    item("u5", "email", FieldValue::String("b@y.com".into())),
+                    item("u6", "email", FieldValue::String("c@z.com".into())), // unique
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        // min_group_size defaults to >=2: every doc whose email collides.
+        let (total, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Duplicated(DuplicatedQuery {
+                field: "email".into(),
+                min_group_size: 2,
+            }),
+        );
+        assert_eq!(total, 5);
+        assert_eq!(ids, vec!["u1", "u2", "u3", "u4", "u5"]);
+
+        // Raise the threshold: only the 3-way group survives.
+        let (total, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Duplicated(DuplicatedQuery {
+                field: "email".into(),
+                min_group_size: 3,
+            }),
+        );
+        assert_eq!(total, 3);
+        assert_eq!(ids, vec!["u1", "u2", "u3"]);
+    }
+
+    #[test]
+    fn duplicated_composes_with_boolean() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u1", "age", FieldValue::Number(30.0)),
+                    item("u2", "email", FieldValue::String("a@x.com".into())),
+                    item("u2", "age", FieldValue::Number(60.0)),
+                    item("u3", "email", FieldValue::String("a@x.com".into())),
+                    item("u3", "age", FieldValue::Number(35.0)),
+                    item("u4", "email", FieldValue::String("u@u.com".into())), // unique email
+                    item("u4", "age", FieldValue::Number(30.0)),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        // duplicate-email AND age<40: u1, u3 (u2 too old, u4 not a duplicate).
+        let q = QueryNode::And(vec![
+            QueryNode::Duplicated(DuplicatedQuery {
+                field: "email".into(),
+                min_group_size: 2,
+            }),
+            QueryNode::Range(RangeQuery {
+                field: "age".into(),
+                gte: None,
+                lt: Some(40.0),
+                gt: None,
+                lte: None,
+            }),
+        ]);
+        let (total, ids) = search_ids(&e, "users", q);
+        assert_eq!(total, 2);
+        assert_eq!(ids, vec!["u1", "u3"]);
+    }
+
+    #[test]
+    fn duplicated_min_group_size_floor_is_two() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u2", "email", FieldValue::String("a@x.com".into())),
+                    item("u3", "email", FieldValue::String("solo@x.com".into())),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        // min_group_size 0/1 would make every doc a "duplicate"; the leaf floors it
+        // at 2 so a singleton never matches.
+        let (total, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Duplicated(DuplicatedQuery {
+                field: "email".into(),
+                min_group_size: 0,
+            }),
+        );
+        assert_eq!(total, 2);
+        assert_eq!(ids, vec!["u1", "u2"]);
+    }
+
+    #[test]
+    fn exists_on_text_field_rejected() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let err = e
+            .search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Exists(ExistsQuery { field: "bio".into() }),
+                    limit: 10,
+                    cursor: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("text"), "unexpected error: {msg}");
     }
 
     #[test]
