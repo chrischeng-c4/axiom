@@ -120,6 +120,9 @@ jet-parity-oracle = { path = "parity/oracle" }
 
 # tests/pkg-mgmt/ — jet install/add/remove/update replaces npm/pnpm and beats them on speed
 [[test]]
+name = "pkg_replacement_gate"
+path = "tests/pkg-mgmt/pkg_replacement_gate.rs"
+[[test]]
 name = "workspace_protocol"
 path = "tests/pkg-mgmt/workspace_protocol.rs"
 
