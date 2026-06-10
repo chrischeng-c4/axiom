@@ -1730,6 +1730,22 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                     }
                     if in_decl && decl_paren_depth > 0 {
                         decl_paren_depth -= 1;
+                    } else if in_decl
+                        && decl_paren_depth == 0
+                        && decl_brace_depth == 0
+                        && decl_bracket_depth == 0
+                    {
+                        // A `)` with no open decl-parens closes an enclosing
+                        // construct — a `for (var x in y)` / `for (var x of y)`
+                        // head. The declaration ends here; without this, the
+                        // loop body `{` was swallowed into decl_brace_depth,
+                        // an inner `var` then reset that counter, and the
+                        // orphaned `}` popped a real scope. Every binding
+                        // after that point resolved against the wrong scope
+                        // chain (react-dom's updateProperties broke at
+                        // runtime with stale single-letter references).
+                        in_decl = false;
+                        expect_decl_name = false;
                     }
                 }
                 "=>" => {
@@ -3006,8 +3022,49 @@ mod tests {
         }
     }
 
+    /// Regression: a `for (var k in obj) { ... var inner = ...; ... }` body
+    /// must stay a real scope. The for-head `)` previously left `in_decl`
+    /// set, the body `{` was swallowed into decl_brace_depth, the inner
+    /// `var` reset that counter, and the orphaned `}` popped the enclosing
+    /// scope — bindings after the loop then resolved against the wrong
+    /// chain (react-dom updateProperties broke at runtime).
+    #[test]
+    fn test_for_in_var_body_does_not_pop_enclosing_scope() {
+        let src = "function outer(alpha,beta){switch(alpha){case 1:\
+                   for(var key in beta){var inner=beta[key];use(inner);}\
+                   ;break;}for(var tail in alpha)use(alpha[tail],beta);\
+                   return beta;}function other(gamma,beta){return gamma+beta;}";
+        let tokens = tokenize(src);
+        let si = build_scopes(src, &tokens);
+        // `beta` after the for-in loops must still resolve to outer's param
+        // scope (the same scope that declares `alpha`).
+        let alpha_scope = si
+            .scopes
+            .iter()
+            .position(|s| s.decls.contains("alpha"))
+            .expect("outer param scope");
+        let last_beta_ti = (0..tokens.len())
+            .rev()
+            .find(|&i| {
+                tokens[i].kind == TK::Ident
+                    && txt(src, &tokens[i]) == "beta"
+                    && resolve_decl_scope("beta", si.token_scope[i], &si.scopes)
+                        != Some(alpha_scope)
+                    // ignore `other`'s own beta param/uses
+                    && tokens[i].start < src.find("function other").unwrap()
+            })
+            .is_none();
+        assert!(
+            last_beta_ti,
+            "a `beta` reference inside `outer` no longer resolves to outer's \
+             param scope — for-in body popped an enclosing scope"
+        );
+    }
+
     /// Env-gated scope-debug probe for real bundles:
     /// JET_MANGLE_DEBUG_INPUT=<file> cargo test debug_real_bundle_mangle -- --nocapture
+    /// Optional: JET_MANGLE_DEBUG_OFFSETS=123,456 prints the scope chain
+    /// of the token covering each byte offset.
     #[test]
     fn debug_real_bundle_mangle() {
         let Ok(p) = std::env::var("JET_MANGLE_DEBUG_INPUT") else {
@@ -3016,6 +3073,46 @@ mod tests {
         let src = std::fs::read_to_string(p).unwrap();
         let tokens = tokenize(&src);
         let si = build_scopes(&src, &tokens);
+        if let Ok(offsets) = std::env::var("JET_MANGLE_DEBUG_OFFSETS") {
+            for off in offsets.split(',').filter_map(|o| o.trim().parse::<usize>().ok()) {
+                let Some(ti) = tokens.iter().position(|t| t.start <= off && off < t.end + 12)
+                else {
+                    continue;
+                };
+                // walk forward to the nearest ident token
+                let ti = (ti..tokens.len().min(ti + 8))
+                    .find(|&i| tokens[i].kind == TK::Ident)
+                    .unwrap_or(ti);
+                let tok = &tokens[ti];
+                let mut chain = vec![si.token_scope[ti]];
+                while let Some(p) = si.scopes[*chain.last().unwrap()].parent {
+                    chain.push(p);
+                }
+                println!(
+                    "offset {off}: token `{}` scope chain {:?}, decl_scope={:?}",
+                    txt(&src, tok),
+                    chain,
+                    resolve_decl_scope(txt(&src, tok), si.token_scope[ti], &si.scopes)
+                );
+            }
+        }
+        if let Ok(sid_str) = std::env::var("JET_MANGLE_DEBUG_SCOPE_LAST_TOKEN") {
+            if let Ok(target) = sid_str.parse::<usize>() {
+                let last = (0..tokens.len()).rev().find(|&i| si.token_scope[i] == target);
+                if let Some(ti) = last {
+                    let tok = &tokens[ti];
+                    let lo = tok.start.saturating_sub(200);
+                    let hi = (tok.end + 120).min(src.len());
+                    println!(
+                        "scope {target} last token at byte {}..{} `{}`\ncontext: {}",
+                        tok.start,
+                        tok.end,
+                        txt(&src, tok),
+                        &src[lo..hi]
+                    );
+                }
+            }
+        }
         let probes = ["_r", "_m0_jsx", "_m0_jsxs", "_m0_React", "_m0e"];
         for (sid, scope) in si.scopes.iter().enumerate() {
             for n in probes {
