@@ -1037,11 +1037,24 @@ impl Bundler {
                     "Using Phase 2 true module flattening \
                      (minify=true; unsafe modules keep wrapper boundaries)"
                 );
+                let timing = std::env::var_os("JET_BUNDLE_TIMING").is_some();
+                let mut last = std::time::Instant::now();
+                let mut lap = |stage: &str| {
+                    if timing {
+                        eprintln!("[bundle-timing]   generate/{stage}: {:?}", last.elapsed());
+                        last = std::time::Instant::now();
+                    }
+                };
                 let raw = scope_hoist::generate_flattened_bundle(&modules);
+                lap("flatten");
                 // R4: Cross-module constant inlining → R5: DCE
                 let after_r4 = scope_hoist::inline_cross_module_constants(&raw);
+                lap("r4_inline_constants");
                 let after_r5 = scope_hoist::eliminate_unused_exports(&after_r4);
-                dce::eliminate_unread_es_module_markers(&after_r5)
+                lap("r5_unused_exports");
+                let out = dce::eliminate_unread_es_module_markers(&after_r5);
+                lap("es_module_markers");
+                out
             } else {
                 tracing::debug!("Using Phase 1 scope hoisting (no dynamic imports)");
                 scope_hoist::generate_scope_hoisted_bundle(&modules)

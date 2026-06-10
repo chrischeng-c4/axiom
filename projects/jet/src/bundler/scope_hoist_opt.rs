@@ -10,6 +10,7 @@
 //!     package.json to identify safe inlining candidates.
 
 use regex::Regex;
+use std::collections::HashMap;
 
 use super::scope_hoist::is_id_cont_byte;
 use super::CompiledModule;
@@ -43,51 +44,124 @@ pub fn inline_cross_module_constants(code: &str) -> String {
     )
     .unwrap();
 
-    // Phase 1: collect all constant bindings and their literal values
-    let mut constants: Vec<(String, String)> = Vec::new();
+    // Phase 1: collect candidate constant bindings. Eligibility used to
+    // rescan the whole bundle three times per candidate
+    // (count_identifier_refs + has_mutating_identifier_ref +
+    // template_literal_contains_identifier) — O(candidates x bundle size),
+    // ~0.9s on the antd corpus bundle. One lexical sweep now gathers
+    // counts, mutation flags, and template appearances for every
+    // _m-prefixed identifier at once.
+    let stats = collect_prefixed_ident_stats(code);
+    let mut decl_spans: HashMap<&str, Vec<(usize, usize)>> = HashMap::new();
+    let mut literals: HashMap<&str, &str> = HashMap::new();
     for cap in re.captures_iter(code) {
-        let var_name = cap[1].to_string();
-        let literal = cap[2].to_string();
-        let Some(decl_match) = cap.get(0) else {
+        let (Some(name), Some(lit), Some(whole)) = (cap.get(1), cap.get(2), cap.get(0)) else {
             continue;
         };
+        decl_spans
+            .entry(name.as_str())
+            .or_default()
+            .push((whole.start(), whole.end()));
+        literals.insert(name.as_str(), lit.as_str());
+    }
 
-        // Only inline if the binding has more than 0 read references in the code
-        // (otherwise it's dead and will be cleaned up by R5 DCE)
-        // Count occurrences of the var name as a standalone identifier
-        let count = count_identifier_refs(code, &var_name);
-        // count >= 2 means: 1 for the declaration + at least 1 read reference
-        if count >= 2
-            && !has_mutating_identifier_ref(code, &var_name, decl_match.end())
-            && !template_literal_contains_identifier(code, &var_name)
-        {
-            constants.push((var_name, literal));
+    let mut constants: HashMap<&str, &str> = HashMap::new();
+    let mut removals: Vec<(usize, usize)> = Vec::new();
+    for (name, spans) in &decl_spans {
+        // Re-declared names are pathological; leave them alone.
+        if spans.len() != 1 {
+            continue;
+        }
+        let Some(stat) = stats.get(*name) else { continue };
+        // count >= 2 means: 1 for the declaration + at least 1 read.
+        // Mutations and raw-template appearances disqualify inlining.
+        if stat.count >= 2 && stat.mutations <= stat.decl_assignments && !stat.in_template {
+            constants.insert(name, literals[name]);
+            removals.push(spans[0]);
         }
     }
 
     if constants.is_empty() {
         return code.to_string();
     }
+    removals.sort_unstable();
 
-    let mut result = code.to_string();
+    // Phase 2: one forward rebuild — drop the constant declarations and
+    // substitute every standalone reference with its literal.
+    let b = code.as_bytes();
+    let len = b.len();
+    let mut out = Vec::with_capacity(len);
+    let mut i = 0usize;
+    let mut next_removal = 0usize;
 
-    // Phase 2: remove the var declarations FIRST (before replacing identifiers,
-    // because `replace_identifier` would also replace the name in the LHS of the
-    // declaration, making the removal pattern unmatchable).
-    for (var_name, literal) in &constants {
-        let decl_pattern = format!("var {}={};", var_name, literal);
-        result = result.replace(&decl_pattern, "");
-        // Also try with spaces around `=` and before `;`
-        let decl_spaced = format!("var {} = {};", var_name, literal);
-        result = result.replace(&decl_spaced, "");
+    while i < len {
+        if next_removal < removals.len() && removals[next_removal].0 == i {
+            i = removals[next_removal].1;
+            next_removal += 1;
+            continue;
+        }
+        while next_removal < removals.len() && removals[next_removal].0 < i {
+            next_removal += 1;
+        }
+        // Strings and templates are copied verbatim (template-involved
+        // candidates were already disqualified above, matching the old
+        // replace_identifier behavior of skipping backtick spans).
+        if matches!(b[i], b'"' | b'\'') {
+            let end = skip_quoted_literal(b, i).min(len);
+            out.extend_from_slice(&b[i..end]);
+            i = end;
+            continue;
+        }
+        if b[i] == b'`' {
+            let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+            let end = next.min(len);
+            out.extend_from_slice(&b[i..end]);
+            i = end;
+            continue;
+        }
+        if b[i] == b'/' && i + 1 < len && (b[i + 1] == b'/' || b[i + 1] == b'*') {
+            let start = i;
+            if b[i + 1] == b'/' {
+                while i < len && b[i] != b'\n' {
+                    i += 1;
+                }
+            } else {
+                i += 2;
+                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(len);
+            }
+            out.extend_from_slice(&b[start..i]);
+            continue;
+        }
+        if is_id_cont_byte(b[i]) && !b[i].is_ascii_digit() {
+            let ident_start = i;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let ident = &code[ident_start..i];
+            let preceded_by_dot = {
+                let mut p = ident_start;
+                while p > 0 && matches!(b[p - 1], b' ' | b'\t') {
+                    p -= 1;
+                }
+                p > 0 && b[p - 1] == b'.'
+            };
+            if !preceded_by_dot {
+                if let Some(literal) = constants.get(ident) {
+                    out.extend_from_slice(literal.as_bytes());
+                    continue;
+                }
+            }
+            out.extend_from_slice(ident.as_bytes());
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
     }
 
-    // Phase 3: replace all remaining references with the literal value
-    for (var_name, literal) in &constants {
-        result = replace_identifier(&result, var_name, literal);
-    }
-
-    result
+    String::from_utf8(out).unwrap_or_else(|_| code.to_string())
 }
 
 /// Count standalone identifier references (not preceded by `.` or part of a
@@ -167,251 +241,9 @@ fn count_identifier_refs_in_range(b: &[u8], ident_bytes: &[u8], start: usize, en
     count
 }
 
-fn template_literal_contains_identifier(code: &str, ident: &str) -> bool {
-    let b = code.as_bytes();
-    let ident_bytes = ident.as_bytes();
-    let ident_len = ident_bytes.len();
-    let mut i = 0;
 
-    while i < b.len() {
-        if b[i] != b'`' {
-            i += 1;
-            continue;
-        }
 
-        i += 1;
-        while i < b.len() {
-            if b[i] == b'\\' {
-                i += 2;
-                continue;
-            }
-            if b[i] == b'`' {
-                i += 1;
-                break;
-            }
-            if i + ident_len <= b.len() && &b[i..i + ident_len] == ident_bytes {
-                let prev_ok = i == 0 || !is_id_cont_byte(b[i - 1]);
-                let next_ok = i + ident_len >= b.len() || !is_id_cont_byte(b[i + ident_len]);
-                if prev_ok && next_ok {
-                    return true;
-                }
-            }
-            i += 1;
-        }
-    }
 
-    false
-}
-
-fn has_mutating_identifier_ref(code: &str, ident: &str, scan_start: usize) -> bool {
-    let b = code.as_bytes();
-    let ident_bytes = ident.as_bytes();
-    has_mutating_identifier_ref_in_range(b, ident_bytes, scan_start, b.len())
-}
-
-fn has_mutating_identifier_ref_in_range(
-    b: &[u8],
-    ident_bytes: &[u8],
-    start: usize,
-    end: usize,
-) -> bool {
-    let ident_len = ident_bytes.len();
-    let len = end.min(b.len());
-    let mut i = start.min(len);
-
-    while i < len {
-        // Skip plain string literals.
-        if matches!(b[i], b'"' | b'\'') {
-            i = skip_quoted_literal(b, i).min(len);
-            continue;
-        }
-
-        if b[i] == b'`' {
-            let (next, found) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
-                usize::from(has_mutating_identifier_ref_in_range(
-                    b,
-                    ident_bytes,
-                    expr_start,
-                    expr_end,
-                ))
-            });
-            if found > 0 {
-                return true;
-            }
-            i = next.min(len);
-            continue;
-        }
-
-        // Skip comments
-        if b[i] == b'/' && i + 1 < len {
-            if b[i + 1] == b'/' {
-                while i < len && b[i] != b'\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            if b[i + 1] == b'*' {
-                i += 2;
-                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
-                    i += 1;
-                }
-                if i + 1 < len {
-                    i += 2;
-                }
-                continue;
-            }
-        }
-
-        if i + ident_len <= len && &b[i..i + ident_len] == ident_bytes {
-            let prev_ok = i == 0 || !is_id_cont_byte(b[i - 1]);
-            let next_ok = i + ident_len >= len || !is_id_cont_byte(b[i + ident_len]);
-            let not_prop = {
-                let mut p = i;
-                while p > 0 && matches!(b[p - 1], b' ' | b'\t') {
-                    p -= 1;
-                }
-                p == 0 || b[p - 1] != b'.'
-            };
-
-            if prev_ok && next_ok && not_prop {
-                let mut next = i + ident_len;
-                while next < len && matches!(b[next], b' ' | b'\t' | b'\r' | b'\n') {
-                    next += 1;
-                }
-                if next < len {
-                    if b[next] == b'=' && (next + 1 >= len || !matches!(b[next + 1], b'=' | b'>')) {
-                        return true;
-                    }
-                    if next + 1 < len && matches!(b[next], b'+' | b'-') && b[next + 1] == b[next] {
-                        return true;
-                    }
-                    if next + 1 < len
-                        && matches!(
-                            b[next],
-                            b'+' | b'-'
-                                | b'*'
-                                | b'/'
-                                | b'%'
-                                | b'&'
-                                | b'|'
-                                | b'^'
-                                | b'?'
-                                | b'<'
-                                | b'>'
-                        )
-                        && b[next + 1] == b'='
-                    {
-                        return true;
-                    }
-                }
-
-                let mut prev = i;
-                while prev > 0 && matches!(b[prev - 1], b' ' | b'\t' | b'\r' | b'\n') {
-                    prev -= 1;
-                }
-                if prev >= 2 && matches!(b[prev - 1], b'+' | b'-') && b[prev - 2] == b[prev - 1] {
-                    return true;
-                }
-
-                i += ident_len;
-                continue;
-            }
-        }
-
-        i += 1;
-    }
-
-    false
-}
-
-/// Replace all standalone identifier references (not inside strings, comments,
-/// or property accesses) with the given replacement string.
-fn replace_identifier(code: &str, ident: &str, replacement: &str) -> String {
-    let b = code.as_bytes();
-    let ident_bytes = ident.as_bytes();
-    let ident_len = ident_bytes.len();
-    let len = b.len();
-    let mut out = Vec::with_capacity(len + 64);
-    let mut i = 0;
-
-    while i < len {
-        // Skip string literals
-        if matches!(b[i], b'"' | b'\'' | b'`') {
-            let q = b[i];
-            out.push(b[i]);
-            i += 1;
-            while i < len {
-                if b[i] == b'\\' {
-                    out.push(b[i]);
-                    i += 1;
-                    if i < len {
-                        out.push(b[i]);
-                        i += 1;
-                    }
-                    continue;
-                }
-                out.push(b[i]);
-                if b[i] == q {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-
-        // Skip comments
-        if b[i] == b'/' && i + 1 < len {
-            if b[i + 1] == b'/' {
-                while i < len && b[i] != b'\n' {
-                    out.push(b[i]);
-                    i += 1;
-                }
-                continue;
-            }
-            if b[i + 1] == b'*' {
-                out.push(b[i]);
-                i += 1;
-                out.push(b[i]);
-                i += 1;
-                while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
-                    out.push(b[i]);
-                    i += 1;
-                }
-                if i + 1 < len {
-                    out.push(b[i]);
-                    i += 1;
-                    out.push(b[i]);
-                    i += 1;
-                }
-                continue;
-            }
-        }
-
-        // Try to match identifier at word boundary
-        if i + ident_len <= len && &b[i..i + ident_len] == ident_bytes {
-            let prev_ok = i == 0 || !is_id_cont_byte(b[i - 1]);
-            let next_ok = i + ident_len >= len || !is_id_cont_byte(b[i + ident_len]);
-            let not_prop = {
-                let mut p = out.len();
-                while p > 0 && matches!(out[p - 1], b' ' | b'\t') {
-                    p -= 1;
-                }
-                p == 0 || out[p - 1] != b'.'
-            };
-            if prev_ok && next_ok && not_prop {
-                out.extend_from_slice(replacement.as_bytes());
-                i += ident_len;
-                continue;
-            }
-        }
-
-        out.push(b[i]);
-        i += 1;
-    }
-
-    String::from_utf8(out).unwrap_or_else(|_| code.to_string())
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // R5: Unified cross-module DCE
@@ -503,6 +335,179 @@ fn count_all_prefixed_identifier_refs(code: &str) -> std::collections::HashMap<S
     let mut counts = std::collections::HashMap::new();
     collect_prefixed_refs_in_range(code.as_bytes(), 0, code.len(), &mut counts);
     counts
+}
+
+/// Per-identifier facts gathered in one sweep for R4 constant inlining.
+#[derive(Default)]
+struct PrefixedIdentStats {
+    /// Standalone occurrences (template `${...}` expressions included,
+    /// raw template text excluded) — count_identifier_refs semantics.
+    count: usize,
+    /// Occurrences followed by an assignment/update operator
+    /// (has_mutating_identifier_ref semantics, property reads excluded).
+    mutations: usize,
+    /// Of those, ones immediately preceded by `var` — the declaration's
+    /// own initializer, which is not a disqualifying mutation.
+    decl_assignments: usize,
+    /// Appears anywhere between backticks (raw or `${}`),
+    /// template_literal_contains_identifier semantics.
+    in_template: bool,
+}
+
+fn collect_prefixed_ident_stats(
+    code: &str,
+) -> std::collections::HashMap<String, PrefixedIdentStats> {
+    let mut stats = std::collections::HashMap::new();
+    collect_prefixed_ident_stats_in_range(code.as_bytes(), 0, code.len(), false, &mut stats);
+    stats
+}
+
+fn collect_prefixed_ident_stats_in_range(
+    b: &[u8],
+    start: usize,
+    end: usize,
+    in_template: bool,
+    stats: &mut std::collections::HashMap<String, PrefixedIdentStats>,
+) {
+    let len = end.min(b.len());
+    let mut i = start.min(len);
+    // Previous significant ident was `var` (decl-initializer detection).
+    let mut prev_was_var = false;
+
+    while i < len {
+        match b[i] {
+            b'"' | b'\'' => {
+                i = skip_quoted_literal(b, i).min(len);
+                prev_was_var = false;
+                continue;
+            }
+            b'`' => {
+                // Raw template text only marks `in_template`; the `${...}`
+                // expressions are real code and recurse with the flag set.
+                let tpl_start = i;
+                let (next, _) = scan_template_literal_expr_ranges(b, i, |expr_start, expr_end| {
+                    collect_prefixed_ident_stats_in_range(b, expr_start, expr_end, true, stats);
+                    0
+                });
+                mark_template_raw_idents(b, tpl_start, next.min(len), stats);
+                i = next.min(len);
+                prev_was_var = false;
+                continue;
+            }
+            b'/' if i + 1 < len && (b[i + 1] == b'/' || b[i + 1] == b'*') => {
+                if b[i + 1] == b'/' {
+                    while i < len && b[i] != b'\n' {
+                        i += 1;
+                    }
+                } else {
+                    i += 2;
+                    while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    i = (i + 2).min(len);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        if is_id_cont_byte(b[i]) && !b[i].is_ascii_digit() {
+            let ident_start = i;
+            while i < len && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let ident = &b[ident_start..i];
+            let was_var_kw = ident == b"var";
+            if ident.len() > 2 && ident.starts_with(b"_m") {
+                if let Ok(name) = std::str::from_utf8(ident) {
+                    let entry = stats.entry(name.to_string()).or_default();
+                    entry.count += 1;
+                    if in_template {
+                        entry.in_template = true;
+                    }
+                    let preceded_by_dot = {
+                        let mut p = ident_start;
+                        while p > 0 && matches!(b[p - 1], b' ' | b'\t') {
+                            p -= 1;
+                        }
+                        p > 0 && b[p - 1] == b'.'
+                    };
+                    if !preceded_by_dot {
+                        let mut next = i;
+                        while next < len && matches!(b[next], b' ' | b'\t' | b'\r' | b'\n') {
+                            next += 1;
+                        }
+                        let mutated = if next < len {
+                            (b[next] == b'='
+                                && (next + 1 >= len || !matches!(b[next + 1], b'=' | b'>')))
+                                || (next + 1 < len
+                                    && matches!(b[next], b'+' | b'-')
+                                    && b[next + 1] == b[next])
+                                || (next + 1 < len
+                                    && matches!(
+                                        b[next],
+                                        b'+' | b'-'
+                                            | b'*'
+                                            | b'/'
+                                            | b'%'
+                                            | b'&'
+                                            | b'|'
+                                            | b'^'
+                                            | b'?'
+                                            | b'<'
+                                            | b'>'
+                                    )
+                                    && b[next + 1] == b'=')
+                        } else {
+                            false
+                        };
+                        if mutated {
+                            entry.mutations += 1;
+                            if prev_was_var {
+                                entry.decl_assignments += 1;
+                            }
+                        }
+                    }
+                }
+            }
+            prev_was_var = was_var_kw;
+            continue;
+        }
+        if !matches!(b[i], b' ' | b'\t' | b'\r' | b'\n') {
+            prev_was_var = false;
+        }
+        i += 1;
+    }
+}
+
+/// Mark identifiers that appear anywhere inside a template literal span
+/// (raw text included) — disqualifies them from textual inlining.
+fn mark_template_raw_idents(
+    b: &[u8],
+    start: usize,
+    end: usize,
+    stats: &mut std::collections::HashMap<String, PrefixedIdentStats>,
+) {
+    let mut i = start;
+    while i < end {
+        if is_id_cont_byte(b[i]) && !b[i].is_ascii_digit() {
+            let ident_start = i;
+            while i < end && is_id_cont_byte(b[i]) {
+                i += 1;
+            }
+            let ident = &b[ident_start..i];
+            if ident.len() > 2 && ident.starts_with(b"_m") {
+                if let Ok(name) = std::str::from_utf8(ident) {
+                    stats.entry(name.to_string()).or_default().in_template = true;
+                }
+            }
+            continue;
+        }
+        if b[i] == b'\\' {
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
 }
 
 fn collect_prefixed_refs_in_range(
