@@ -4852,7 +4852,10 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     // the call args are NOT receiver + rest — pass them through
                     // whole. Gated to the date/datetime class tables; every
                     // other type keeps receiver dispatch.
-                    if matches!(type_name.as_str(), "date" | "datetime") {
+                    if matches!(
+                        type_name.as_str(),
+                        "date" | "datetime" | "datetime.time" | "StackSummary" | "TracebackException"
+                    ) {
                         let method_str = method_name.as_ptr()
                             .and_then(|p| match &(*p).data {
                                 ObjData::Str(s) => Some(s.clone()),

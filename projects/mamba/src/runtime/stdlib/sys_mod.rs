@@ -686,8 +686,9 @@ pub fn mb_sys_exc_info() -> MbValue {
         Some((etype, msg)) => {
             let type_val = MbValue::from_ptr(MbObject::new_str(etype.clone()));
             let value_val = MbValue::from_ptr(MbObject::new_str(msg));
-            // Mamba does not yet construct traceback objects exposing here.
-            let tb_val = MbValue::none();
+            // Minimal synthetic traceback object (tb_frame/tb_lineno/tb_next)
+            // so extract_tb / walk_tb consumers see a non-None third slot.
+            let tb_val = super::traceback_mod::make_tb_instance();
             MbValue::from_ptr(MbObject::new_tuple(vec![type_val, value_val, tb_val]))
         }
         None => {

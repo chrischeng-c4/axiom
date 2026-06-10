@@ -2131,6 +2131,29 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         }
     }
 
+    // `exc.__traceback__` on exception instances: mamba does not store a
+    // real traceback; synthesize a minimal one (tb_frame/tb_lineno/tb_next)
+    // so walk_tb / extract_tb consumers see a non-None object.
+    if let (Some(obj_ptr), Some(attr_ptr)) = (obj.as_ptr(), attr.as_ptr()) {
+        unsafe {
+            if let (
+                ObjData::Instance { ref class_name, ref fields },
+                ObjData::Str(ref a),
+            ) = (&(*obj_ptr).data, &(*attr_ptr).data)
+            {
+                if a == "__traceback__"
+                    && !fields.read().unwrap().contains_key("__traceback__")
+                    && (super::exception::is_subclass_of(class_name, "BaseException")
+                        || super::exception::is_subclass_of(class_name, "Exception")
+                        || class_name == "Exception"
+                        || class_name == "BaseException")
+                {
+                    return super::stdlib::traceback_mod::make_tb_instance();
+                }
+            }
+        }
+    }
+
     // Array handles are int-tagged values registered by array_mod.
     // Surface CPython conformance attrs (typecode, itemsize).
     if obj.is_int() {
@@ -6034,7 +6057,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     }
                 }
             }
-            if matches!(nt.as_str(), "date" | "datetime" | "datetime.time") {
+            if matches!(
+                nt.as_str(),
+                "date" | "datetime" | "datetime.time" | "StackSummary" | "TracebackException"
+            ) {
                 let m = lookup_method(&nt, &name);
                 if let Some(maddr) = m.as_func() {
                     if super::module::is_native_func(maddr as u64) {

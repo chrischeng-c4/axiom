@@ -258,40 +258,29 @@ fn test_errno_errorcode_and_strerror_integration() {
 // ── traceback ────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_traceback_format_multiple_exception_types() {
+fn test_traceback_format_exception_non_exception_raises_type_error() {
     use crate::runtime::stdlib::traceback_mod::mb_traceback_format_exception;
+    use crate::runtime::exception;
 
-    // None
-    let r = mb_traceback_format_exception(MbValue::none());
-    assert_eq!(str_val(r).as_deref(), Some("NoneType: None"));
-
-    // Str
-    let r = mb_traceback_format_exception(s("connection error"));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: connection error"));
-
-    // Int
-    let r = mb_traceback_format_exception(MbValue::from_int(42));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: 42"));
-
-    // Bool true
-    let r = mb_traceback_format_exception(MbValue::from_bool(true));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: True"));
-
-    // Bool false
-    let r = mb_traceback_format_exception(MbValue::from_bool(false));
-    assert_eq!(str_val(r).as_deref(), Some("Exception: False"));
+    // CPython: format_exception(42) raises TypeError.
+    exception::mb_clear_exception();
+    let r = mb_traceback_format_exception(&[MbValue::from_int(42)]);
+    assert!(r.is_none());
+    assert_eq!(exception::mb_has_exception().as_bool(), Some(true));
+    exception::mb_clear_exception();
 }
 
 #[test]
-fn test_traceback_format_exception_dict_no_type() {
+fn test_traceback_format_exception_two_args_raises_value_error() {
     use crate::runtime::stdlib::traceback_mod::mb_traceback_format_exception;
+    use crate::runtime::exception;
 
-    // Dict without _type key → default "Exception"
-    let dict = MbValue::from_ptr(MbObject::new_dict());
-    let r = mb_traceback_format_exception(dict);
-    // When no _type, falls back to "Exception" with empty msg → "Exception"
-    let result = str_val(r).unwrap_or_default();
-    assert!(result.contains("Exception"));
+    // CPython: passing value without tb raises ValueError.
+    exception::mb_clear_exception();
+    let r = mb_traceback_format_exception(&[s("Exception"), s("x")]);
+    assert!(r.is_none());
+    assert_eq!(exception::mb_has_exception().as_bool(), Some(true));
+    exception::mb_clear_exception();
 }
 
 // ── codecs ────────────────────────────────────────────────────────────────────
