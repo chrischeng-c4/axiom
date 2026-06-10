@@ -404,12 +404,18 @@ fn run_profile(args: ProfileArgs, out: &OutputOpts) -> MeterReport {
             // A hot spot that breached `--fail-hot` is marked High by the fold
             // step. Hot spots are INFORMATIONAL by default: locating where time
             // goes is success, not failure. So the profile run is exit 0 (clean)
-            // UNLESS a `--fail-hot` threshold was breached, in which case it is
-            // exit 1. Forwarding the exit keeps the full ranked findings in the
-            // report while honoring the contract (0 ran clean / 1 fail-hot).
-            let breached = findings
-                .iter()
-                .any(|f| f.severity == meter::report::Severity::High);
+            // UNLESS a `--fail-hot` threshold was breached OR the fold step
+            // escalated a measurement-quality warning (Medium — e.g.
+            // unsymbolicated frames dominate a stripped target), in which case
+            // it is exit 1. Forwarding the exit keeps the full ranked findings
+            // in the report while honoring the contract (0 ran clean / 1
+            // fail-hot or unusable measurement).
+            let breached = findings.iter().any(|f| {
+                matches!(
+                    f.severity,
+                    meter::report::Severity::High | meter::report::Severity::Medium
+                )
+            });
             builder.informational_findings_are_clean();
             builder.add_findings(findings);
             builder.forward_exit(if breached { 1 } else { 0 });
