@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-routing-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Shard routing.
 //!
 //! Two layers, split between client and server:
@@ -552,3 +553,5 @@ mod tests {
         }
     }
 }
+
+// </HANDWRITE>
