@@ -20,14 +20,32 @@ semantic_domain:
         language: "shell"
         ownership_state: "handwrite"
         generator_primitives: ["source_unit"]
+        source_evidence_node:
+          layer: "source"
+          ecosystem: "shell"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/lumen"
       - path: "projects/lumen/install.sh"
         language: "shell"
         ownership_state: "handwrite"
         generator_primitives: ["source_unit"]
+        source_evidence_node:
+          layer: "source"
+          ecosystem: "shell"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/lumen"
       - path: "projects/lumen/llms.txt"
         language: "llms"
         ownership_state: "codegen"
         generator_primitives: ["source_unit"]
+        source_evidence_node:
+          layer: "source"
+          ecosystem: "llms"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/lumen"
 ```
 
 ## Unit Test
@@ -76,4 +94,8 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - action: annotate
+    section: unit-test
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the unit-test section."
 ```
