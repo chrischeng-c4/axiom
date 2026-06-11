@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-benches-bench-search-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-benches.md#schema
+// CODEGEN-BEGIN
 //! Search-latency benches on a 100k-document corpus.
 //!
 //! Three scenarios from the README §9 perf-regression suite:
@@ -24,6 +25,7 @@ const N: usize = 100_000;
 
 struct Lcg(u64);
 
+/// @spec projects/lumen/tech-design/semantic/lumen-benches.md#schema
 impl Lcg {
     fn new(seed: u64) -> Self {
         Self(seed)
@@ -282,5 +284,4 @@ fn bench_search(c: &mut Criterion) {
 
 criterion_group!(benches, bench_search);
 criterion_main!(benches);
-
-// </HANDWRITE>
+// CODEGEN-END
