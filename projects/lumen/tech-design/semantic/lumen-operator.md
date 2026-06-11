@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-operator
 summary: Semantic coverage for "projects/lumen/src/operator"
+capability_refs:
+  - id: "k8s-deployment"
+    role: primary
+    claim: "kustomize-base-overlays-hpa"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen/src/operator`."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -18,7 +24,7 @@ semantic_domain:
     source_units:
       - path: "projects/lumen/src/operator/render.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method"]
         symbols:
           - name: "APP"
@@ -110,7 +116,7 @@ semantic_domain:
           domain: "projects/lumen/src/operator"
       - path: "projects/lumen/src/operator/crd.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "enum_model", "service_method"]
         symbols:
           - name: "LumenSpec"
@@ -184,7 +190,7 @@ semantic_domain:
           domain: "projects/lumen/src/operator"
       - path: "projects/lumen/src/operator/mod.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method"]
         symbols:
           - name: "crd"
@@ -210,7 +216,7 @@ semantic_domain:
           domain: "projects/lumen/src/operator"
       - path: "projects/lumen/src/operator/reconcile.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "MANAGER"
@@ -257,7 +263,7 @@ semantic_domain:
           domain: "projects/lumen/src/operator"
       - path: "projects/lumen/src/operator/lease.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "LEASE_NAME"
@@ -325,38 +331,32 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-operator-render-rs>"
   - path: "projects/lumen/src/operator/crd.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-operator-crd-rs>"
   - path: "projects/lumen/src/operator/mod.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-operator-mod-rs>"
   - path: "projects/lumen/src/operator/reconcile.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-operator-reconcile-rs>"
   - path: "projects/lumen/src/operator/lease.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-operator-lease-rs>"
+  - action: annotate
+    section: unit-test
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the unit-test section."
 ```
