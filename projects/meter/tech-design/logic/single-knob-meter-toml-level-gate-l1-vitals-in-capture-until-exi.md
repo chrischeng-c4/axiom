@@ -284,3 +284,13 @@ requirementDiagram
     test_collapsed_artifact - verifies -> R5
     inspect_residue_grep - verifies -> R6
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** needs-revision
+
+- [logic] vitals-only runs must not pass through stack folding: edges route `want_stacks --no--> has_drive` but both wait nodes feed `fold_stacks -> write_collapsed` unconditionally, so a `level=vitals` run (no sampler attached) would fold stacks and write a collapsed artifact it cannot have. Add a post-window decision (sampler attached?) so the vitals path goes straight to `read_vitals`.
+- [config] applicable and consistent with the charter (single knob plus optional gate, no traffic keys); no change required.
+- [cli] applicable; flags match the config contract and the no-load-flags constraint; no change required.
+- [unit-test] applicable; R1-R6 cover the acceptance criteria including the residue prune inspection; no change required.
