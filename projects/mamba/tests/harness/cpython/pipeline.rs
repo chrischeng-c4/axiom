@@ -224,4 +224,10 @@ fn run_fixture(path: &std::path::Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-harness!(run_fixture, "tests/cpython", r".*\.py$");
+// Same dimension allowlist as runner.rs: keep `.cache/` (oracle-env venv)
+// and `tools/` out of the collected case universe.
+harness!(
+    run_fixture,
+    "tests/cpython",
+    r"tests/cpython/(behavior|type|surface|_regression|real_world|errors|security|security-matrix|perf|concurrency)/.*\.py$"
+);

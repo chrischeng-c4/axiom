@@ -73,7 +73,17 @@ pub fn collect_files(root: &Path, suffix: &str) -> Vec<PathBuf> {
         for entry in entries {
             let path = entry.expect("read_dir entry").path();
             if path.is_dir() {
-                walk(out, &path, suffix);
+                // Hidden directories are never fixture trees — `.cache/`
+                // holds machine-local artifacts (results stores, the
+                // materialized oracle-env venv with thousands of .py files)
+                // that must not be collected.
+                let hidden = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().starts_with('.'))
+                    .unwrap_or(false);
+                if !hidden {
+                    walk(out, &path, suffix);
+                }
             } else if path.to_string_lossy().ends_with(suffix) {
                 out.push(path);
             }
@@ -289,6 +299,17 @@ pub fn wait_with_timeout(
                 return Ok(WaitOutcome::Finished(child.wait_with_output()?));
             }
             None if start.elapsed() > policy.timeout => {
+                // Kill the child's whole process GROUP first (spawn sites
+                // place children in their own group via setpgid in pre_exec):
+                // a grandchild inheriting the stdout/stderr pipes would
+                // otherwise survive the child's kill and wait_with_output
+                // would block forever on pipes that never reach EOF. For
+                // children that are not group leaders the group kill fails
+                // harmlessly and the plain kill below still applies.
+                #[cfg(unix)]
+                unsafe {
+                    let _ = libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+                }
                 let _ = child.kill();
                 return Ok(WaitOutcome::TimedOut(child.wait_with_output()?));
             }

@@ -152,6 +152,12 @@ fn apply_child_limits(command: &mut Command) {
 
     unsafe {
         command.pre_exec(move || {
+            // Own process group, so a timeout kill can take down the whole
+            // spawn tree: a fixture's grandchild otherwise survives the
+            // child's SIGKILL holding the stdout/stderr pipe write-ends,
+            // and wait_with_output blocks forever on a pipe that never EOFs
+            // (observed wedging full conformance runs at the very end).
+            let _ = libc::setpgid(0, 0);
             set_limit(libc::RLIMIT_AS, mem_bytes, mem_bytes);
             set_limit(libc::RLIMIT_DATA, mem_bytes, mem_bytes);
             set_limit(libc::RLIMIT_CPU, cpu_secs, cpu_secs);
@@ -468,4 +474,12 @@ fn format_diff(expected: &str, actual: &str) -> String {
     out
 }
 
-harness!(run_conformance, "tests/cpython", r".*\.py$");
+// Fixture dimensions are allowlisted explicitly: `tests/cpython` also holds
+// non-fixture trees (`.cache/` — notably the materialized oracle-env venv,
+// whose site-packages contain thousands of stdlib/test .py files — and
+// `tools/`), which must never be collected as conformance cases.
+harness!(
+    run_conformance,
+    "tests/cpython",
+    r"tests/cpython/(behavior|type|surface|_regression|real_world|errors|security|security-matrix|perf|concurrency)/.*\.py$"
+);
