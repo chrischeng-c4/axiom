@@ -441,7 +441,7 @@ than left as an adjective.
 |---|---|---:|---|---|---|---|
 | Stateless serving + rebuild-from-log (no PVC) | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
 | Perf-gate envelope (absolute latency + throughput floors) | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate.rs |
-| Competitive regression gate (beat pg + OS per-cell, ratcheting) | epic | - | implemented | passing — all OS search cells and pg non-home-turf/native cells are WIN-gated | conformance | projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json |
+| Competitive regression gate (beat pg + OS per-cell, ratcheting) | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json; all OS search cells and pg non-home-turf/native cells are WIN-gated |
 | RAM=hot/disk=all columnar mmap segment tier + embedded single-node log | epic | - | implemented | passing | conformance | projects/lumen/tests/disk_scale_proof.rs; projects/lumen/src/storage.rs (checkpoint_engine_tests) |
 
 **Stability (穩)** is the **Resilience & Log Replication** capability above: a
