@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-write-qps-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Write-path QPS bench. Default runs are report-only; `LUMEN_PERF_STRICT=1`
 //! (or `LUMEN_WRITE_GATE=1` for this test only) turns the NATS-vs-peer
 //! 100-worker index row into a strict competitive gate.
@@ -1508,3 +1509,5 @@ fn wal_codec_probe() {
         wal_decode.as_secs_f64() * 1_000_000.0 / iters as f64,
     );
 }
+
+// </HANDWRITE>
