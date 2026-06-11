@@ -187,3 +187,12 @@ requirementDiagram
     test_dispatch_uses_binding - verifies -> R3
     test_no_ec_is_manifest_default - verifies -> R4
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] applicable: the verify-ec dispatch flow is correct — category→binding lookup, build tool command (arena/rig/meter) or fall back to the manifest command, exit-code gate. Matches the existing `run_project_ec_command` shape; report-JSON folding is correctly out of scope.
+- [schema] applicable: `ec` is an optional project-scoped map of category→EcBinding; EcBinding{tool enum arena|rig|meter, spec/dir/meter}; additionalProperties false guards typos; absent = manifest fallback. Project-scoped placement (before workspaces) matches aw's TD/contract-is-project-scoped model.
+- [unit-test] applicable: R1–R4 each verified by one #[test] element covering config round-trip, the command builder (incl. unknown-tool error), dispatch-uses-binding, and no-ec-is-manifest-default. One-to-one with the acceptance criteria.
