@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-log-entry-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! The write-log entry vocabulary: the committed-mutation enum that flows
 //! through the active write path (NATS/embedded WAL → `WriteCoordinator` →
 //! `Engine::apply_raft_entry`) and the apply-step response marker.
@@ -52,3 +53,5 @@ pub enum RaftLogEntry {
 /// this is a unit-shaped marker (the `R` of the consensus type config).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RaftLogResponse;
+
+// </HANDWRITE>
