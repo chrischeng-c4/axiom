@@ -154,7 +154,6 @@ commands:
       - "meter.toml [gate] breaches fold as severity>=Medium findings driving the existing exit ladder."
       - "On a gate breach the envelope agent_prompt suggests re-running with --level sample to locate the cost."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
