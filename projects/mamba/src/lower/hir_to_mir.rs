@@ -6029,6 +6029,18 @@ impl<'a> HirToMir<'a> {
                         });
                         return dest;
                     }
+                    // format(x) with 1 arg → format(x, "") (None sentinel;
+                    // mb_format substitutes the empty spec).
+                    if extern_name == "mb_format" && boxed_args.len() == 1 {
+                        let none_vreg = self.emit_none();
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: extern_name,
+                            args: vec![boxed_args[0], none_vreg],
+                            ty: *ty,
+                        });
+                        return dest;
+                    }
                     // Special case: sorted(iterable) with 1 arg → supply None as reverse (False).
                     if extern_name == "mb_sorted" && boxed_args.len() == 1 {
                         let none_vreg = self.emit_none();
@@ -7319,15 +7331,55 @@ impl<'a> HirToMir<'a> {
                             let v = self.lower_expr(e);
                             let boxed = self.box_operand(v, expr_ty);
                             let sv = self.fresh_vreg();
-                            if let Some(fmt) = spec {
-                                let spec_vreg = self.emit_str_const(fmt);
+                            if let Some(spec_parts) = spec {
+                                // Build the spec string: static parts are
+                                // constants, nested replacement fields
+                                // ({value:{width}}) evaluate then stringify.
+                                let mut spec_vregs: Vec<VReg> = Vec::new();
+                                for sp in spec_parts {
+                                    match sp {
+                                        HirFStringPart::Literal(s) => {
+                                            spec_vregs.push(self.emit_str_const(s));
+                                        }
+                                        HirFStringPart::Expr(se, _) => {
+                                            let se_ty = se.ty();
+                                            let sv2 = self.lower_expr(se);
+                                            let sb = self.box_operand(sv2, se_ty);
+                                            let out = self.fresh_vreg();
+                                            self.current_stmts.push(MirInst::CallExtern {
+                                                dest: Some(out), name: "mb_str".to_string(),
+                                                args: vec![sb], ty: *ty,
+                                            });
+                                            spec_vregs.push(out);
+                                        }
+                                    }
+                                }
+                                let spec_vreg = if spec_vregs.is_empty() {
+                                    self.emit_str_const("")
+                                } else if spec_vregs.len() == 1 {
+                                    spec_vregs[0]
+                                } else {
+                                    let mut acc = spec_vregs[0];
+                                    for &pv in &spec_vregs[1..] {
+                                        let next = self.fresh_vreg();
+                                        self.current_stmts.push(MirInst::CallExtern {
+                                            dest: Some(next), name: "mb_str_concat".to_string(),
+                                            args: vec![acc, pv], ty: *ty,
+                                        });
+                                        acc = next;
+                                    }
+                                    acc
+                                };
                                 self.current_stmts.push(MirInst::CallExtern {
                                     dest: Some(sv), name: "mb_format_value".to_string(),
                                     args: vec![boxed, spec_vreg], ty: *ty,
                                 });
                             } else {
+                                // No spec: format(value, "") semantics — an
+                                // instance with __format__ dispatches it;
+                                // everything else takes the str() fast path.
                                 self.current_stmts.push(MirInst::CallExtern {
-                                    dest: Some(sv), name: "mb_str".to_string(),
+                                    dest: Some(sv), name: "mb_fstring_value".to_string(),
                                     args: vec![boxed], ty: *ty,
                                 });
                             }

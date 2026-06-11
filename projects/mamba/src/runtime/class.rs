@@ -3263,6 +3263,34 @@ fn make_code_object(func: MbValue) -> MbValue {
     new_code_instance(fields)
 }
 
+/// Invoke a looked-up method VALUE directly with (self, arg) — bypassing
+/// name-based dispatch so instance fields shadowing a dunder (e.g. a
+/// per-instance `__format__`) cannot intercept type-level dispatch.
+/// Handles both the variadic (self, args-list) and plain two-arg JIT
+/// calling conventions.
+pub(crate) fn call_method_value2(method: MbValue, self_v: MbValue, arg: MbValue) -> MbValue {
+    let addr = extract_func_addr(method);
+    if addr == 0 {
+        return MbValue::none();
+    }
+    let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+    if !is_registered {
+        return MbValue::none();
+    }
+    unsafe {
+        if super::module::is_variadic_func(addr) {
+            let args = MbValue::from_ptr(super::rc::MbObject::new_list(vec![arg]));
+            let f: unsafe extern "C" fn(MbValue, MbValue) -> MbValue =
+                std::mem::transmute(addr as usize);
+            return f(self_v, args);
+        }
+        // REQ: JIT-compiled functions use SystemV/C calling convention.
+        let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+            std::mem::transmute(addr as usize);
+        f(self_v, arg)
+    }
+}
+
 /// Check if a value is a descriptor (has __get__).
 fn is_descriptor(val: MbValue) -> bool {
     if let Some(ptr) = val.as_ptr() {
@@ -7190,6 +7218,19 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
                 }
+                // Bound methods (types.MethodType): call __func__ with
+                // __self__ prepended.
+                if class_name == "method" {
+                    let (func_v, self_v) = {
+                        let f = fields.read().unwrap();
+                        (
+                            f.get("__func__").copied().unwrap_or_else(MbValue::none),
+                            f.get("__self__").copied().unwrap_or_else(MbValue::none),
+                        )
+                    };
+                    let args_list = MbValue::from_ptr(MbObject::new_list(vec![self_v, arg]));
+                    return super::builtins::mb_call_spread(func_v, args_list);
+                }
                 // Functional-API enum class objects: `EnumCls(value)` is the
                 // value→member lookup (`Minor(2) is Minor.july`).
                 if super::stdlib::enum_mod::is_functional_enum_class(func) {
@@ -9493,6 +9534,35 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             }
                         }
                         return MbValue::none();
+                    }
+                    // Per-instance bound method (types.MethodType assigned to
+                    // an instance attribute) shadows the class method — Python
+                    // instance-dict lookup order.
+                    {
+                        let field = fields.read().ok().and_then(|f| f.get(&name).copied());
+                        if let Some(fv) = field {
+                            if let Some(fp) = fv.as_ptr() {
+                                if let ObjData::Instance { class_name: ref fcn, fields: ref ffields } = (*fp).data {
+                                    if fcn == "method" {
+                                        let (func_v, self_v) = {
+                                            let fr = ffields.read().unwrap();
+                                            (
+                                                fr.get("__func__").copied().unwrap_or_else(MbValue::none),
+                                                fr.get("__self__").copied().unwrap_or_else(MbValue::none),
+                                            )
+                                        };
+                                        let mut all_args = vec![self_v];
+                                        if let Some(args_ptr) = args.as_ptr() {
+                                            if let ObjData::List(ref lock) = (*args_ptr).data {
+                                                all_args.extend(lock.read().unwrap().iter());
+                                            }
+                                        }
+                                        let args_list = MbValue::from_ptr(MbObject::new_list(all_args));
+                                        return super::builtins::mb_call_spread(func_v, args_list);
+                                    }
+                                }
+                            }
+                        }
                     }
                     // MRO-based method lookup for regular instances
                     let method = lookup_method(class_name, &name);

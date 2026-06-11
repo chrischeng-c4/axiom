@@ -404,7 +404,20 @@ impl Resolver {
             }
             Expr::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Expr(e, _) = part { self.resolve_expr(e); }
+                    if let FStringPart::Expr(e, spec) = part {
+                        self.resolve_expr(e);
+                        if let Some(sp) = spec {
+                            fn walk_spec(this: &mut Resolver, parts: &[FStringPart]) {
+                                for p in parts {
+                                    if let FStringPart::Expr(e, spec) = p {
+                                        this.resolve_expr(e);
+                                        if let Some(sp) = spec { walk_spec(this, sp); }
+                                    }
+                                }
+                            }
+                            walk_spec(self, sp);
+                        }
+                    }
                 }
             }
             Expr::Yield(Some(e)) | Expr::YieldFrom(e)

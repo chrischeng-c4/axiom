@@ -163,10 +163,18 @@ fn expr_has_yield(expr: &ast::Expr) -> bool {
                         || g.conditions.iter().any(|c| expr_has_yield(&c.node))
                 })
         }
-        ast::Expr::FString(parts) => parts.iter().any(|p| match p {
-            ast::FStringPart::Literal(_) => false,
-            ast::FStringPart::Expr(e, _) => expr_has_yield(&e.node),
-        }),
+        ast::Expr::FString(parts) => {
+            fn part_has_yield(p: &ast::FStringPart) -> bool {
+                match p {
+                    ast::FStringPart::Literal(_) => false,
+                    ast::FStringPart::Expr(e, spec) => {
+                        expr_has_yield(&e.node)
+                            || spec.iter().flatten().any(part_has_yield)
+                    }
+                }
+            }
+            parts.iter().any(part_has_yield)
+        }
         ast::Expr::Await(e) => expr_has_yield(&e.node),
         ast::Expr::Walrus { value, .. } => expr_has_yield(&value.node),
         ast::Expr::ChainedCompare { operands, .. } => {
@@ -779,9 +787,16 @@ fn expr_collect_value_compared_params(
             }
         }
         FString(parts) => {
-            for p in parts {
-                if let ast::FStringPart::Expr(e, _) = p { rec(e, out); }
+            fn walk_parts(parts: &[ast::FStringPart], out: &mut std::collections::HashSet<String>,
+                          rec: &impl Fn(&Spanned<ast::Expr>, &mut std::collections::HashSet<String>)) {
+                for p in parts {
+                    if let ast::FStringPart::Expr(e, spec) = p {
+                        rec(e, out);
+                        if let Some(sp) = spec { walk_parts(sp, out, rec); }
+                    }
+                }
             }
+            walk_parts(parts, out, &rec);
         }
         Yield(opt) => { if let Some(e) = opt { rec(e, out); } }
         YieldFrom(e) | Await(e) | Starred(e) => rec(e, out),
@@ -1023,9 +1038,16 @@ fn expr_collect_numeric_used_params(
             }
         }
         FString(parts) => {
-            for p in parts {
-                if let ast::FStringPart::Expr(e, _) = p { rec(e, out); }
+            fn walk_parts(parts: &[ast::FStringPart], out: &mut std::collections::HashSet<String>,
+                          rec: &impl Fn(&Spanned<ast::Expr>, &mut std::collections::HashSet<String>)) {
+                for p in parts {
+                    if let ast::FStringPart::Expr(e, spec) = p {
+                        rec(e, out);
+                        if let Some(sp) = spec { walk_parts(sp, out, rec); }
+                    }
+                }
             }
+            walk_parts(parts, out, &rec);
         }
         Yield(opt) => { if let Some(e) = opt { rec(e, out); } }
         YieldFrom(e) | Await(e) | Starred(e) => rec(e, out),
@@ -2850,6 +2872,21 @@ impl<'a> AstLowerer<'a> {
         }
     }
 
+    /// Lower f-string parts, recursing into structured format specs so
+    /// nested replacement fields ({value:{width}}) evaluate at runtime.
+    fn lower_fstring_parts(&mut self, parts: &[ast::FStringPart]) -> Vec<HirFStringPart> {
+        parts.iter().filter_map(|p| {
+            match p {
+                ast::FStringPart::Literal(s) => Some(HirFStringPart::Literal(s.clone())),
+                ast::FStringPart::Expr(e, spec) => {
+                    let he = self.lower_expr(e)?;
+                    let hir_spec = spec.as_ref().map(|sp| self.lower_fstring_parts(sp));
+                    Some(HirFStringPart::Expr(he, hir_spec))
+                }
+            }
+        }).collect()
+    }
+
     fn lower_expr(&mut self, expr: &Spanned<ast::Expr>) -> Option<HirExpr> {
         match &expr.node {
             ast::Expr::IntLit(i) => Some(HirExpr::IntLit(*i, self.checker.tcx.int())),
@@ -4023,14 +4060,7 @@ impl<'a> AstLowerer<'a> {
                 })
             }
             ast::Expr::FString(parts) => {
-                let hir_parts: Vec<HirFStringPart> = parts.iter().filter_map(|p| {
-                    match p {
-                        ast::FStringPart::Literal(s) => Some(HirFStringPart::Literal(s.clone())),
-                        ast::FStringPart::Expr(e, spec) => {
-                            self.lower_expr(e).map(|he| HirFStringPart::Expr(he, spec.clone()))
-                        }
-                    }
-                }).collect();
+                let hir_parts = self.lower_fstring_parts(parts);
                 let ty = self.checker.tcx.str();
                 Some(HirExpr::FString { parts: hir_parts, ty })
             }

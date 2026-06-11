@@ -313,7 +313,10 @@ pub enum HirPattern {
 #[derive(Debug, Clone)]
 pub enum HirFStringPart {
     Literal(String),
-    Expr(HirExpr, Option<String>),
+    /// Field expression with an optional format spec; the spec is a part
+    /// list so nested replacement fields evaluate at runtime. A static spec
+    /// is a single Literal part.
+    Expr(HirExpr, Option<Vec<HirFStringPart>>),
 }
 
 impl HirExpr {

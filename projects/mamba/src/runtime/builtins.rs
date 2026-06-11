@@ -5432,6 +5432,13 @@ pub fn mb_divmod(a: MbValue, b: MbValue) -> MbValue {
 
 /// format(value, format_spec) — format a value using a format spec string.
 pub fn mb_format(val: MbValue, spec: MbValue) -> MbValue {
+    // One-arg form: format(x) is format(x, "").
+    if spec.is_none() {
+        return super::string_ops::mb_format_value(
+            val,
+            MbValue::from_ptr(MbObject::new_str(String::new())),
+        );
+    }
     if !matches!(spec.as_ptr(), Some(ptr) if unsafe { matches!(&(*ptr).data, ObjData::Str(_)) }) {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -5892,6 +5899,28 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                             // constructor; zips positionals onto the co_* field
                             // order and returns a real code object.
                             "code" => Some(super::class::make_code_object_from_ctor_args(&items)),
+                            // types.MethodType(func, obj) — a real bound method:
+                            // calling it prepends __self__ to the args.
+                            "method" if items.len() >= 2 => {
+                                let mut fields = rustc_hash::FxHashMap::default();
+                                unsafe {
+                                    super::rc::retain_if_ptr(items[0]);
+                                    super::rc::retain_if_ptr(items[1]);
+                                }
+                                fields.insert("__func__".to_string(), items[0]);
+                                fields.insert("__self__".to_string(), items[1]);
+                                let obj = Box::new(MbObject {
+                                    header: super::rc::MbObjectHeader {
+                                        rc: std::sync::atomic::AtomicU32::new(1),
+                                        kind: super::rc::ObjKind::Instance,
+                                    },
+                                    data: ObjData::Instance {
+                                        class_name: "method".to_string(),
+                                        fields: crate::runtime::rc::MbRwLock::new(fields),
+                                    },
+                                });
+                                Some(MbValue::from_ptr(Box::into_raw(obj)))
+                            }
                             "type" => Some(match items.len() {
                                 1 => mb_type(items[0]),
                                 3 => mb_type3(items[0], items[1], items[2]),
@@ -6598,9 +6627,23 @@ pub fn mb_eval(expr: MbValue) -> MbValue {
     parser.skip_newlines();
     let ast = match parser.parse_expr() {
         Ok(e) => e,
-        Err(_) => return MbValue::none(),
+        Err(err) => {
+            // CPython: eval of unparseable source raises SyntaxError.
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("SyntaxError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(err.to_string())),
+            );
+            return MbValue::none();
+        }
     };
     eval_expr(&ast.node)
+}
+
+/// Pending-exception probe for the eval tree walker: sub-evaluations raise
+/// via mb_raise (NameError, ZeroDivisionError, format ValueError, ...) and
+/// the walker must stop folding once one is pending.
+fn eval_pending() -> bool {
+    super::exception::mb_has_exception().as_bool() == Some(true)
 }
 
 fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
@@ -6616,9 +6659,96 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
             MbValue::from_ptr(MbObject::new_complex(0.0, *imag))
         }
         Expr::Ellipsis => MbValue::ellipsis(),
+        Expr::Ident(name) => {
+            // Resolve module globals by name (the globals() introspection
+            // path); unknown names raise NameError like CPython eval.
+            let globals = super::closure::build_globals_dict();
+            let key = MbValue::from_ptr(MbObject::new_str(name.clone()));
+            let contains = super::dict_ops::mb_dict_contains(globals, key)
+                .as_bool()
+                .unwrap_or(false);
+            if contains {
+                return super::dict_ops::mb_dict_get(globals, key, MbValue::none());
+            }
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("NameError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "name '{name}' is not defined"
+                ))),
+            );
+            MbValue::none()
+        }
+        Expr::FString(parts) => {
+            fn fold_parts(parts: &[crate::parser::ast::FStringPart]) -> Option<String> {
+                let mut out = String::new();
+                for p in parts {
+                    match p {
+                        crate::parser::ast::FStringPart::Literal(s) => out.push_str(s),
+                        crate::parser::ast::FStringPart::Expr(e, spec) => {
+                            let v = eval_expr(&e.node);
+                            if eval_pending() {
+                                return None;
+                            }
+                            let formatted = match spec {
+                                None => super::string_ops::mb_fstring_value(v),
+                                Some(spec_parts) => {
+                                    let mut spec_str = String::new();
+                                    for sp in spec_parts {
+                                        match sp {
+                                            crate::parser::ast::FStringPart::Literal(l) => {
+                                                spec_str.push_str(l)
+                                            }
+                                            crate::parser::ast::FStringPart::Expr(se, _) => {
+                                                let sv = eval_expr(&se.node);
+                                                if eval_pending() {
+                                                    return None;
+                                                }
+                                                let txt = mb_str(sv);
+                                                if let Some(ptr) = txt.as_ptr() {
+                                                    unsafe {
+                                                        if let ObjData::Str(ref t) = (*ptr).data {
+                                                            spec_str.push_str(t);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    super::string_ops::mb_format_value(
+                                        v,
+                                        MbValue::from_ptr(MbObject::new_str(spec_str)),
+                                    )
+                                }
+                            };
+                            if eval_pending() {
+                                return None;
+                            }
+                            if let Some(ptr) = formatted.as_ptr() {
+                                unsafe {
+                                    if let ObjData::Str(ref t) = (*ptr).data {
+                                        out.push_str(t);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Some(out)
+            }
+            match fold_parts(parts) {
+                Some(out) => MbValue::from_ptr(MbObject::new_str(out)),
+                None => MbValue::none(),
+            }
+        }
         Expr::BinOp { op, lhs, rhs } => {
             let l = eval_expr(&lhs.node);
+            if eval_pending() {
+                return MbValue::none();
+            }
             let r = eval_expr(&rhs.node);
+            if eval_pending() {
+                return MbValue::none();
+            }
             eval_binop(*op, l, r)
         }
         Expr::UnaryOp { op, operand } => {
@@ -6693,8 +6823,32 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
                             vals.get(1).copied().unwrap_or_else(MbValue::none),
                         );
                     }
+                    // f-string conversion wrappers (!r lowers to repr(...)).
+                    "repr" if vals.len() == 1 => return mb_repr(vals[0]),
+                    "str" if vals.len() == 1 => return mb_str(vals[0]),
                     _ => {}
                 }
+            }
+            // Calling a non-callable literal ((1)() in an eval'd f-string)
+            // raises TypeError like CPython.
+            let callee_type = match &func.node {
+                Expr::IntLit(_) => Some("int"),
+                Expr::FloatLit(_) => Some("float"),
+                Expr::StrLit(_) => Some("str"),
+                Expr::BoolLit(_) => Some("bool"),
+                Expr::NoneLit => Some("NoneType"),
+                Expr::ListLit(_) => Some("list"),
+                Expr::DictLit(_) => Some("dict"),
+                Expr::TupleLit(_) => Some("tuple"),
+                _ => None,
+            };
+            if let Some(tn) = callee_type {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "'{tn}' object is not callable"
+                    ))),
+                );
             }
             MbValue::none()
         }

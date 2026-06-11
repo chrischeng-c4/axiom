@@ -149,6 +149,18 @@ impl TypeChecker {
         self.errors.push(MambaError::type_err(span, msg));
     }
 
+    /// Current error count — pair with `truncate_errors` to speculatively
+    /// check an expression for its binding side effects (walrus targets in
+    /// f-string fields) without surfacing new type errors.
+    pub(crate) fn errors_mark(&self) -> usize {
+        self.errors.len()
+    }
+
+    /// Drop errors recorded after `mark` (see `errors_mark`).
+    pub(crate) fn truncate_errors(&mut self, mark: usize) {
+        self.errors.truncate(mark);
+    }
+
     /// Emit an Any-inference warning (#244). If strict mode, emits error instead.
     #[allow(dead_code)]
     pub(crate) fn warn_any(&mut self, span: Span, msg: impl Into<String>) {

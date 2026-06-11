@@ -59,7 +59,28 @@ impl TypeChecker {
             Expr::IntLit(_) => self.tcx.int(),
             Expr::FloatLit(_) => self.tcx.float(),
             Expr::ComplexLit(_) => self.tcx.any(), // heap ObjData::Complex (ast_to_hir lowers to `complex(0, N)`)
-            Expr::StrLit(_) | Expr::FString(_) => self.tcx.str(),
+            Expr::StrLit(_) => self.tcx.str(),
+            Expr::FString(parts) => {
+                // Walk replacement fields for their binding side effects
+                // (walrus targets must be declared in the enclosing scope:
+                // `f"{(z := 10)}"` leaks z), but suppress any new type
+                // errors — field expressions are formatted dynamically and
+                // were historically unchecked.
+                fn walk(checker: &mut TypeChecker, parts: &[crate::parser::ast::FStringPart]) {
+                    for p in parts {
+                        if let crate::parser::ast::FStringPart::Expr(e, spec) = p {
+                            let mark = checker.errors_mark();
+                            let _ = checker.check_expr(e);
+                            checker.truncate_errors(mark);
+                            if let Some(sp) = spec {
+                                walk(checker, sp);
+                            }
+                        }
+                    }
+                }
+                walk(self, parts);
+                self.tcx.str()
+            }
             Expr::BytesLit(_) => self.tcx.any(),
             Expr::BoolLit(_) => self.tcx.bool(),
             Expr::NoneLit => self.tcx.none(),

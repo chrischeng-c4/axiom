@@ -453,8 +453,11 @@ pub struct Comprehension {
 #[derive(Debug, Clone, PartialEq)]
 pub enum FStringPart {
     Literal(String),
-    /// Expression with optional format spec (e.g., `{x:.2f}` → spec = Some(".2f"))
-    Expr(Spanned<Expr>, Option<String>),
+    /// Expression with optional format spec. The spec is itself a part list
+    /// so nested replacement fields (`{value:{width}}`) evaluate at runtime;
+    /// a static spec is a single `Literal` part (e.g. `{x:.2f}` →
+    /// `Some(vec![Literal(".2f")])`).
+    Expr(Spanned<Expr>, Option<Vec<FStringPart>>),
 }
 
 /// Binary operators.

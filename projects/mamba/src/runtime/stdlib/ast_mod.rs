@@ -220,6 +220,20 @@ pub fn mb_ast_literal_eval(expr: MbValue) -> MbValue {
         None => return MbValue::none(),
     };
     let trimmed = s.trim();
+    // f-strings are dynamic expressions, never literals: CPython raises
+    // ValueError("malformed node or string ...").
+    let lower = trimmed.to_ascii_lowercase();
+    for pfx in ["f'", "f\"", "rf'", "rf\"", "fr'", "fr\""] {
+        if lower.starts_with(pfx) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "malformed node or string: f-string".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
     // Try integer
     if let Ok(n) = trimmed.parse::<i64>() {
         return MbValue::from_int(n);

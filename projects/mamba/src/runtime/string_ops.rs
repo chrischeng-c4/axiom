@@ -1272,9 +1272,9 @@ pub fn mb_format_value(val: MbValue, spec: MbValue) -> MbValue {
             if let super::rc::ObjData::Instance { ref class_name, .. } = (*ptr).data {
                 let method = super::class::lookup_method(class_name, "__format__");
                 if !method.is_none() {
-                    let name = new_str("__format__".to_string());
-                    let args = MbValue::from_ptr(super::rc::MbObject::new_list(vec![spec]));
-                    return super::class::mb_call_method(val, name, args);
+                    // Direct method-value call: format() dispatches on the
+                    // TYPE, ignoring a per-instance __format__ attribute.
+                    return super::class::call_method_value2(method, val, spec);
                 }
             }
         }
@@ -1297,6 +1297,24 @@ pub fn mb_format_value(val: MbValue, spec: MbValue) -> MbValue {
 /// Kept as a thin wrapper for call-site compatibility.
 fn format_with_spec(val: MbValue, spec: &str) -> String {
     apply_format_spec(val, spec)
+}
+
+/// Spec-less f-string field (`f"{x}"`): CPython calls format(x, "") which
+/// dispatches type-level `__format__`; objects without one fall back to
+/// str(). Keeps the historical mb_str fast path for every non-instance.
+pub fn mb_fstring_value(val: MbValue) -> MbValue {
+    unsafe {
+        if let Some(ptr) = val.as_ptr() {
+            if let super::rc::ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let method = super::class::lookup_method(class_name, "__format__");
+                if !method.is_none() {
+                    let empty = new_str(String::new());
+                    return super::class::call_method_value2(method, val, empty);
+                }
+            }
+        }
+    }
+    super::builtins::mb_str(val)
 }
 
 
@@ -1446,6 +1464,42 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
     } else {
         '\0'
     };
+
+    // CPython format-code/type validation: a known code applied to the wrong
+    // scalar type (or an unknown code) raises ValueError instead of silently
+    // coercing. Only scalar values participate — container/instance handling
+    // keeps its existing behavior.
+    {
+        let is_str_val = unsafe { as_str(val).is_some() };
+        let is_bool_val = val.as_bool().is_some();
+        let is_int_val = val.as_int().is_some() || is_bool_val;
+        let is_float_val = !is_int_val && val.as_float().is_some();
+        if is_str_val || is_int_val || is_float_val {
+            let type_name = if is_str_val { "str" }
+                else if is_float_val { "float" }
+                else if is_bool_val { "bool" }
+                else { "int" };
+            let bad = match type_char {
+                'b' | 'c' | 'd' | 'o' | 'x' | 'X' => !is_int_val,
+                'e' | 'E' | 'f' | 'F' | 'g' | 'G' | '%' => is_str_val,
+                'n' => is_str_val,
+                's' => !is_str_val,
+                // A second grouping separator after `,`/`_` (e.g. `,_`).
+                ',' | '_' => true,
+                '\0' => false,
+                c => c.is_ascii_alphabetic(),
+            };
+            if bad {
+                super::exception::mb_raise(
+                    new_str("ValueError".to_string()),
+                    new_str(format!(
+                        "Unknown format code '{type_char}' for object of type '{type_name}'"
+                    )),
+                );
+                return String::new();
+            }
+        }
+    }
 
     // Build the sign/magnitude pieces separately so `+`/` ` prefix survives
     // zero-padding (CPython: `"{:+05d}".format(3)` → `"+0003"`).
