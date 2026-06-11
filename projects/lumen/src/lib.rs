@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-lib-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! lumen — standalone search and duplicate-detection index.
 //!
 //! Solves the gap B-tree indexes can't fill: keyword search (incl. Chinese
@@ -63,3 +64,5 @@ pub mod types;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
+
+// </HANDWRITE>
