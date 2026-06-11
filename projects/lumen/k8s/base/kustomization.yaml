@@ -1,3 +1,4 @@
+# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-k8s-base-kustomization-yaml" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -32,3 +33,5 @@ resources:
   # overlays pull it in via components/observability; dev (kind/laptop, no
   # operator) omits it so `kubectl apply -k overlays/dev` works on a vanilla
   # cluster.
+
+# </HANDWRITE>
