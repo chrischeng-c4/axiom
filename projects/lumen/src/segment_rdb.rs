@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-segment-rdb-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Segment-checkpoint persistence store (Stage 2 Phase 2f-2) — the disk engine
 //! wired in as the running binary's "RDB".
 //!
@@ -283,3 +284,5 @@ mod tests {
         assert_eq!(store.load_latest().unwrap().unwrap().1, 8);
     }
 }
+
+// </HANDWRITE>
