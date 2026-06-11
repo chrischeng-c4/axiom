@@ -1748,145 +1748,145 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/segment_rdb.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/wal.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/log_entry.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/types.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/config.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/aof.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/lib.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/auth.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/wal_nats.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/vector_index.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/coordinator.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/metrics.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/tokenize.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/segment.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/native_wire.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/raft.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/storage.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/routing.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/rdb.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/api.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/tls.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/backup_sink.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/lumen/src/consumer.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - action: annotate
     section: unit-test
     impl_mode: hand-written

@@ -99,7 +99,7 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - action: annotate
     section: unit-test
     impl_mode: hand-written
