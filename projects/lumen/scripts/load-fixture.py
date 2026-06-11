@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-scripts-load-fixture-py" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-scripts.md#schema
+# CODEGEN-BEGIN
 """Generate a synthetic lumen index fixture.
 
 Emits two files:
@@ -143,5 +144,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-# </HANDWRITE>
+# CODEGEN-END

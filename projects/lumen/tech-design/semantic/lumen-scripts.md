@@ -959,4 +959,8 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-lumen-scripts-bench-vs-db-py>"
+  - action: annotate
+    section: unit-test
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the unit-test section."
 ```
