@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-bin-lumen-bench-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-bin.md#schema
+// CODEGEN-BEGIN
 //! `lumen-bench` — the performance + correctness harness from PERF-GOAL.md.
 //!
 //! Produces the (search-type × data-volume) matrix: for each cell it builds a
@@ -1156,5 +1157,4 @@ fn report_regressions(prev: &[Cell], cur: &[Cell]) -> bool {
     }
     any
 }
-
-// </HANDWRITE>
+// CODEGEN-END
