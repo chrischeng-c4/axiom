@@ -348,7 +348,11 @@ pub fn eliminate_unread_es_module_markers(source: &str) -> String {
     const PREFIX: &str = "Object.defineProperty(";
 
     let b = source.as_bytes();
-    let mut removals: Vec<(usize, usize)> = Vec::new();
+    // (span, module id) per marker; `None` id = receiver we cannot
+    // attribute to a flattened module slot (kept unconditionally).
+    let mut markers: Vec<((usize, usize), Option<usize>)> = Vec::new();
+    // Positions of `.__esModule` property READS (interop helper bodies).
+    let mut reads: Vec<usize> = Vec::new();
     let mut search = 0usize;
     while let Some(rel) = source[search..].find("__esModule") {
         let key_at = search + rel;
@@ -363,7 +367,26 @@ pub fn eliminate_unread_es_module_markers(source: &str) -> String {
             })
             .unwrap_or(false);
         if !is_quoted {
-            return source.to_string();
+            // Not a marker key. `<expr>.__esModule` is interop access:
+            // a WRITE (`x.__esModule = true`) is just a marker in
+            // expression form — kept, no demand; a READ creates demand
+            // for the modules flowing into it. Anything else is an
+            // unknown shape — keep every marker (old behavior).
+            let preceded_by_dot = key_at > 0 && b[key_at - 1] == b'.';
+            if !preceded_by_dot {
+                return source.to_string();
+            }
+            let mut after = key_at + "__esModule".len();
+            while after < b.len() && matches!(b[after], b' ' | b'\t') {
+                after += 1;
+            }
+            let is_write = after < b.len()
+                && b[after] == b'='
+                && !(after + 1 < b.len() && b[after + 1] == b'=');
+            if !is_write {
+                reads.push(key_at);
+            }
+            continue;
         }
         let key_start = key_at - 1;
         let key_end = key_at + "__esModule".len() + 1;
@@ -422,8 +445,81 @@ pub fn eliminate_unread_es_module_markers(source: &str) -> String {
         if e < b.len() && b[e] == b'\n' {
             e += 1;
         }
-        removals.push((prefix_at, e));
+        let module_id = receiver_trim
+            .strip_prefix("_m")
+            .and_then(|r| r.strip_suffix(".exports"))
+            .and_then(|digits| digits.parse::<usize>().ok());
+        markers.push(((prefix_at, e), module_id));
     }
+
+    if markers.is_empty() {
+        return source.to_string();
+    }
+
+    // Demand analysis: a marker on `_mN.exports` is observable only when
+    // module N's namespace flows into an `__esModule` read — directly
+    // (`_r(N).__esModule`) or through an interop helper
+    // (`helper(_r(N))` where helper's body reads the flag). Any read or
+    // helper use we cannot attribute keeps every marker (old behavior).
+    let mut demanded: HashSet<usize> = HashSet::new();
+    let mut helper_names: HashSet<&str> = HashSet::new();
+    for &read_at in &reads {
+        // `.__esModule` — receiver text directly before the dot.
+        let recv_end = read_at - 1;
+        if let Some(id) = direct_marker_read_receiver(source, recv_end) {
+            demanded.insert(id);
+            continue;
+        }
+        match enclosing_function_name(source, b, read_at) {
+            Some(name) => {
+                helper_names.insert(name);
+            }
+            None => return source.to_string(),
+        }
+    }
+    for name in helper_names {
+        let mut at = 0usize;
+        while let Some(rel) = source[at..].find(name) {
+            let start = at + rel;
+            at = start + name.len();
+            // Token boundaries: skip substring hits inside longer names.
+            let before_ok = start == 0 || !is_ident_byte(b[start - 1]);
+            let after = start + name.len();
+            let after_is_ident = after < b.len() && is_ident_byte(b[after]);
+            if !before_ok || after_is_ident {
+                continue;
+            }
+            // Definition site: `function NAME(`.
+            if source[..start].trim_end().ends_with("function") {
+                continue;
+            }
+            // Call site: NAME(<first-arg>) with a resolvable module arg.
+            if after < b.len() && b[after] == b'(' {
+                match first_call_arg_module_id(source, after) {
+                    Some(id) => {
+                        demanded.insert(id);
+                        continue;
+                    }
+                    None => return source.to_string(),
+                }
+            }
+            // Aliased / passed as a value — cannot trace, keep all.
+            return source.to_string();
+        }
+    }
+
+    let removals: Vec<(usize, usize)> = markers
+        .into_iter()
+        .filter_map(|(span, module_id)| match module_id {
+            // Reads exist but module N never flows into one → dead marker.
+            Some(id) if !demanded.contains(&id) => Some(span),
+            // Demanded, or unattributable receiver (`module.exports`):
+            // observable, keep.
+            Some(_) => None,
+            None if reads.is_empty() => Some(span),
+            None => None,
+        })
+        .collect();
 
     if removals.is_empty() {
         return source.to_string();
@@ -440,6 +536,139 @@ pub fn eliminate_unread_es_module_markers(source: &str) -> String {
     }
     out.push_str(&source[pos..]);
     out
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
+
+/// `_r(N).__esModule` / `_mN.exports.__esModule` — resolve the read's
+/// receiver to a flattened module id without helper-call tracing.
+fn direct_marker_read_receiver(source: &str, recv_end: usize) -> Option<usize> {
+    let before = &source[..recv_end];
+    if let Some(open) = before.strip_suffix(')').and_then(|s| s.rfind("_r(")) {
+        let digits = &before[open + 3..recv_end - 1];
+        if !digits.is_empty() && digits.bytes().all(|d| d.is_ascii_digit()) {
+            return digits.parse().ok();
+        }
+    }
+    if let Some(rest) = before.strip_suffix(".exports") {
+        let id_start = rest.rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'));
+        let ident = match id_start {
+            Some(i) => &rest[i + 1..],
+            None => rest,
+        };
+        if let Some(digits) = ident.strip_prefix("_m") {
+            if !digits.is_empty() && digits.bytes().all(|d| d.is_ascii_digit()) {
+                return digits.parse().ok();
+            }
+        }
+    }
+    None
+}
+
+/// Walk backward from a read position to the function declaration that
+/// encloses it, returning the function's name. Bails (None) on any
+/// quote character — string contents would desynchronize the lexical
+/// brace balance — and on anonymous enclosing functions.
+fn enclosing_function_name<'a>(source: &'a str, b: &[u8], pos: usize) -> Option<&'a str> {
+    let mut depth = 0i32;
+    let mut i = pos;
+    while i > 0 {
+        i -= 1;
+        match b[i] {
+            b'"' | b'\'' | b'`' => return None,
+            b'}' => depth += 1,
+            b'{' => {
+                if depth == 0 {
+                    // Enclosing block. Function header? `function NAME(args) {`
+                    if let Some(name) = function_header_name(source, b, i) {
+                        return Some(name);
+                    }
+                    // Plain block (if/for body) — keep walking outward.
+                } else {
+                    depth -= 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// If the `{` at `brace` closes a `function NAME(args)` header, return NAME.
+fn function_header_name<'a>(source: &'a str, b: &[u8], brace: usize) -> Option<&'a str> {
+    let mut i = brace;
+    while i > 0 && matches!(b[i - 1], b' ' | b'\t' | b'\r' | b'\n') {
+        i -= 1;
+    }
+    if i == 0 || b[i - 1] != b')' {
+        return None;
+    }
+    let mut depth = 1i32;
+    i -= 1;
+    while i > 0 && depth > 0 {
+        i -= 1;
+        match b[i] {
+            b')' => depth += 1,
+            b'(' => depth -= 1,
+            b'"' | b'\'' | b'`' => return None,
+            _ => {}
+        }
+    }
+    if depth != 0 {
+        return None;
+    }
+    let name_end = i;
+    let mut name_start = name_end;
+    while name_start > 0 && is_ident_byte(b[name_start - 1]) {
+        name_start -= 1;
+    }
+    if name_start == name_end {
+        return None;
+    }
+    if !source[..name_start].trim_end().ends_with("function") {
+        return None;
+    }
+    Some(&source[name_start..name_end])
+}
+
+/// For a call `NAME(<args>)` with the `(` at `open`, resolve the first
+/// argument to a flattened module id (`_r(N)`, `_mN`, `_mN.exports`).
+fn first_call_arg_module_id(source: &str, open: usize) -> Option<usize> {
+    let b = source.as_bytes();
+    let mut depth = 1i32;
+    let mut i = open + 1;
+    let arg_start = i;
+    while i < b.len() {
+        match b[i] {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            b',' if depth == 1 => break,
+            b'"' | b'\'' | b'`' => return None,
+            _ => {}
+        }
+        i += 1;
+    }
+    let arg = source[arg_start..i].trim();
+    if let Some(inner) = arg.strip_prefix("_r(").and_then(|a| a.strip_suffix(')')) {
+        if !inner.is_empty() && inner.bytes().all(|d| d.is_ascii_digit()) {
+            return inner.parse().ok();
+        }
+        return None;
+    }
+    let bare = arg.strip_suffix(".exports").unwrap_or(arg);
+    if let Some(digits) = bare.strip_prefix("_m") {
+        if !digits.is_empty() && digits.bytes().all(|d| d.is_ascii_digit()) {
+            return digits.parse().ok();
+        }
+    }
+    None
 }
 
 pub fn js_parses_without_errors(source: &str) -> bool {
@@ -1601,6 +1830,38 @@ function _interopRequireDefault(obj) {
   return obj && obj.__esModule ? obj : { default: obj };
 }
 module.exports["value"] = 1;"#;
+        let output = eliminate_unread_es_module_markers(input);
+        assert_eq!(output, input);
+    }
+
+    /// Demand-driven path: a named helper reading `__esModule` with one
+    /// traceable call keeps only the demanded module's marker.
+    #[test]
+    fn test_markers_kept_only_for_modules_flowing_into_interop_reads() {
+        let input = r#"function _m9__interopRequireWildcard(e, r) { if (!r && e && e.__esModule) return e; }
+var ns = _m9__interopRequireWildcard(_r(364));
+Object.defineProperty(_m1.exports, "__esModule", { value: true });
+Object.defineProperty(_m364.exports, "__esModule", { value: true });
+"#;
+        let output = eliminate_unread_es_module_markers(input);
+        assert!(
+            !output.contains("_m1.exports, \"__esModule\""),
+            "undemanded marker must drop: {output}"
+        );
+        assert!(
+            output.contains("_m364.exports, \"__esModule\""),
+            "demanded marker must stay: {output}"
+        );
+    }
+
+    /// Aliased helper (`module.exports = helper`) escapes lexical
+    /// tracing — every marker must survive.
+    #[test]
+    fn test_aliased_interop_helper_keeps_all_markers() {
+        let input = r#"function _interopRequireDefault(e) { return e && e.__esModule ? e : { "default": e }; }
+module.exports = _interopRequireDefault;
+Object.defineProperty(_m1.exports, "__esModule", { value: true });
+"#;
         let output = eliminate_unread_es_module_markers(input);
         assert_eq!(output, input);
     }
