@@ -129,7 +129,6 @@ fn create_example_test_results() -> Vec<TestResult> {
                         .to_string(),
                 ),
                 profile_metrics: None,
-                stress_metrics: None,
                 started_at: chrono::Utc::now().to_rfc3339(),
             }
         },
@@ -153,7 +152,6 @@ fn create_example_test_results() -> Vec<TestResult> {
                         .to_string(),
                 ),
                 profile_metrics: None,
-                stress_metrics: None,
                 started_at: chrono::Utc::now().to_rfc3339(),
             }
         },
@@ -172,7 +170,6 @@ fn create_example_test_results() -> Vec<TestResult> {
                 error: Some("Feature not yet implemented".to_string()),
                 stack_trace: None,
                 profile_metrics: None,
-                stress_metrics: None,
                 started_at: chrono::Utc::now().to_rfc3339(),
             }
         },
@@ -185,7 +182,7 @@ fn create_example_test_results() -> Vec<TestResult> {
         {
             let meta = TestMeta::new("test_concurrent_access")
                 .with_type(TestType::Unit)
-                .with_tags(vec!["concurrency".to_string(), "stress".to_string()]);
+                .with_tags(vec!["concurrency".to_string()]);
             TestResult::passed(meta, 3200)
         },
     ]
@@ -212,7 +209,7 @@ fn create_passing_example_test_results() -> Vec<TestResult> {
         {
             let meta = TestMeta::new("test_concurrent_access")
                 .with_type(TestType::Unit)
-                .with_tags(vec!["concurrency".to_string(), "stress".to_string()]);
+                .with_tags(vec!["concurrency".to_string()]);
             TestResult::passed(meta, 3200)
         },
     ]

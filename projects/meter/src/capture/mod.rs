@@ -12,16 +12,15 @@
 //! cargo-bench delegate + regression-baseline loader), the C1 profiling pair
 //! [`sampler`] (spawn + platform stack sampler -> folded stacks) + [`fold`]
 //! (folded stacks -> ranked `Hotspot` findings, the default stdout),
-//! [`fuzz`] (the seeded `meter fuzz` driver: built-in demo targets + real HTTP
-//! endpoint fuzzing, with byte-reproducible finding ids), and [`run`] (the
-//! composite `meter run` sweep that folds every sub-verb into ONE worst-wins
-//! report).
+//! [`vitals`] (the meter.toml measurement contract + L1 vitals capture window),
+//! and [`run`] (the composite `meter run` sweep that folds every sub-verb into
+//! ONE worst-wins report).
 
 pub mod audit;
 pub mod bench;
 pub mod delegate;
 pub mod fold;
-pub mod fuzz;
 pub mod run;
 pub mod sampler;
+pub mod vitals;
 // CODEGEN-END

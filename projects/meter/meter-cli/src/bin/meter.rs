@@ -11,7 +11,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use meter_cli::dispatch::{dispatch, print_report, OutputOpts, MeterCommand};
+use meter_cli::dispatch::{dispatch, print_report, MeterCommand, OutputOpts};
 
 fn main() -> ExitCode {
     // Parse the verb tree; the global `--human`/`--compact` flags are flattened
