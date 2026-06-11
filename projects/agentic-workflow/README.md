@@ -155,6 +155,7 @@ blocker, or error.
 | CB generation and standardize scan defaults | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | Project dirty-scope protection | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | EC evidence documentation | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow ec_doc` |
+| EC tool binding dispatch | change | #13 | planned | none | none | per-project `ec.<category>` config routes verify-ec to an external tool (arena/rig/meter) command, with the EC manifest command as the cargo-test fallback |
 
 ## Existing Project Standardization
 
