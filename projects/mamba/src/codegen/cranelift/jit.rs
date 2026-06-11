@@ -541,6 +541,7 @@ impl CraneliftJitBackend {
                     }
                     MirConst::None => builder.ins().iconst(cl_types::I64, MbValue::none().to_bits() as i64),
                     MirConst::NotImplemented => builder.ins().iconst(cl_types::I64, MbValue::not_implemented().to_bits() as i64),
+                    MirConst::Ellipsis => builder.ins().iconst(cl_types::I64, MbValue::ellipsis().to_bits() as i64),
                     MirConst::Str(s) => {
                         // Allocate immortal string at JIT compile time (#1129 R4).
                         let ptr = MbObject::new_str_immortal(s.clone());

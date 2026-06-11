@@ -127,6 +127,8 @@ pub enum MirConst {
     None,
     /// Python `NotImplemented` singleton — returned from rich comparison dunders.
     NotImplemented,
+    /// Python `Ellipsis` singleton (`...`).
+    Ellipsis,
     /// Address of a compiled function (#313 R1 — async body fn pointer).
     FuncRef(crate::resolve::SymbolId),
     /// Address of a runtime extern function (e.g. "mb_abs", "mb_str").

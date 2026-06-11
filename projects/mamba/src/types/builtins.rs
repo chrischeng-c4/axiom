@@ -140,6 +140,8 @@ impl TypeChecker {
         // Builtin constants — NotImplemented, Ellipsis, __debug__
         let sym = self.symbols.define("NotImplemented".to_string(), SymbolKind::Variable);
         self.set_sym_type(sym.0, any);
+        let sym = self.symbols.define("Ellipsis".to_string(), SymbolKind::Variable);
+        self.set_sym_type(sym.0, any);
 
         // Module-level dunder variables — always available in every module.
         for dunder in &["__name__", "__file__", "__doc__", "__package__",

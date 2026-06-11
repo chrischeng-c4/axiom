@@ -63,7 +63,10 @@ impl TypeChecker {
             Expr::BytesLit(_) => self.tcx.any(),
             Expr::BoolLit(_) => self.tcx.bool(),
             Expr::NoneLit => self.tcx.none(),
-            Expr::Ellipsis => self.tcx.error(),
+            // `...` is a real runtime singleton (the `ellipsis` type) — type
+            // it as Any so stub bodies and Ellipsis-valued expressions
+            // compile and lower to the interned Ellipsis value.
+            Expr::Ellipsis => self.tcx.any(),
             Expr::Ident(name) => {
                 match self.symbols.lookup(name) {
                     Some(sym) => self.get_sym_type(sym.0),
@@ -201,7 +204,24 @@ impl TypeChecker {
                                         );
                                     }
                                     if let Some(&expected) = params.get(param_idx) {
-                                        if !self.types_compatible(expected, at) {
+                                        // chr/hex/oct/bin accept any class
+                                        // defining __index__ (SupportsIndex
+                                        // protocol — CPython calls the dunder
+                                        // at runtime). The wall stays up for
+                                        // scalars without the protocol
+                                        // (chr(1.5) is still rejected here).
+                                        let index_protocol_ok = matches!(
+                                            func_name.as_deref(),
+                                            Some("chr" | "hex" | "oct" | "bin")
+                                        ) && matches!(self.tcx.get(expected), Ty::Int)
+                                            && match self.tcx.get(at) {
+                                                Ty::Class { name, .. } => self
+                                                    .class_methods
+                                                    .get(name)
+                                                    .is_some_and(|m| m.contains_key("__index__")),
+                                                _ => false,
+                                            };
+                                        if !index_protocol_ok && !self.types_compatible(expected, at) {
                                             self.error(
                                                 a.span,
                                                 format!(
@@ -1322,7 +1342,7 @@ mod tests {
     fn test_check_expr_ellipsis() {
         let mut checker = TypeChecker::new();
         let ty = checker.check_expr(&sp(Expr::Ellipsis));
-        assert_eq!(checker.tcx.get(ty), &Ty::Error);
+        assert_eq!(checker.tcx.get(ty), &Ty::Any);
     }
 
     // --- BinOp type mismatch ---

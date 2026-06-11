@@ -4983,16 +4983,22 @@ impl<'a> HirToMir<'a> {
                 dest
             }
             HirExpr::Var(sym, ty) => {
-                // NotImplemented builtin constant → emit as MirConst::NotImplemented
+                // NotImplemented / Ellipsis builtin constants → emit as MirConst
                 if let Some(st) = self.symbol_table {
-                    if (sym.0 as usize) < st.all_symbols().len()
-                        && st.get_symbol(*sym).name == "NotImplemented"
-                    {
-                        let dest = self.fresh_vreg();
-                        self.current_stmts.push(MirInst::LoadConst {
-                            dest, value: MirConst::NotImplemented, ty: *ty,
-                        });
-                        return dest;
+                    if (sym.0 as usize) < st.all_symbols().len() {
+                        let sym_name = &st.get_symbol(*sym).name;
+                        let builtin_const = match sym_name.as_str() {
+                            "NotImplemented" => Some(MirConst::NotImplemented),
+                            "Ellipsis" => Some(MirConst::Ellipsis),
+                            _ => None,
+                        };
+                        if let Some(value) = builtin_const {
+                            let dest = self.fresh_vreg();
+                            self.current_stmts.push(MirInst::LoadConst {
+                                dest, value, ty: *ty,
+                            });
+                            return dest;
+                        }
                     }
                 }
                 // Exception type names (ValueError, TypeError, etc.) → emit as string constants
@@ -5664,6 +5670,19 @@ impl<'a> HirToMir<'a> {
                             dest: Some(dest),
                             name: "mb_dir_no_args".to_string(),
                             args: vec![],
+                            ty: *ty,
+                        });
+                        return dest;
+                    }
+                    // dir() accepts at most one argument — CPython raises
+                    // TypeError for dir(a, b); route to the raising stub.
+                    if extern_name == "mb_dir" && args.len() > 1 {
+                        let n_raw = self.emit_int_const(args.len() as i64);
+                        let n_boxed = self.box_operand(n_raw, self.tcx.int());
+                        self.current_stmts.push(MirInst::CallExtern {
+                            dest: Some(dest),
+                            name: "mb_dir_arity_error".to_string(),
+                            args: vec![n_boxed],
                             ty: *ty,
                         });
                         return dest;

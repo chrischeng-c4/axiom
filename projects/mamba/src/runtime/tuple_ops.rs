@@ -372,7 +372,14 @@ pub fn mb_tuple_index_range(tup: MbValue, value: MbValue, start: MbValue, stop: 
                     }
                 }
             }
-            MbValue::from_int(-1)
+            // CPython: a missing value raises ValueError, never returns -1.
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "tuple.index(x): x not in tuple".to_string(),
+                )),
+            );
+            MbValue::none()
         } else {
             MbValue::from_int(-1)
         }
@@ -680,7 +687,10 @@ mod tests {
             MbValue::from_int(10), MbValue::from_int(20), MbValue::from_int(30),
         ]);
         assert_eq!(mb_tuple_index(t, MbValue::from_int(20)).as_int(), Some(1));
-        assert_eq!(mb_tuple_index(t, MbValue::from_int(99)).as_int(), Some(-1));
+        // CPython: a missing value raises ValueError; the runtime entry
+        // returns None after routing through the exception machinery.
+        assert!(mb_tuple_index(t, MbValue::from_int(99)).is_none());
+        crate::runtime::exception::mb_clear_exception();
     }
 
     // ── concat ──

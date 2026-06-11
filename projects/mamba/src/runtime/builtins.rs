@@ -229,6 +229,8 @@ pub fn mb_print(val: MbValue) -> MbValue {
         mb_outln!("None");
     } else if val.is_not_implemented() {
         mb_outln!("NotImplemented");
+    } else if val.is_ellipsis() {
+        mb_outln!("Ellipsis");
     } else if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -525,6 +527,8 @@ fn print_value_str(val: MbValue) {
         mb_out!("None");
     } else if val.is_not_implemented() {
         mb_out!("NotImplemented");
+    } else if val.is_ellipsis() {
+        mb_out!("Ellipsis");
     } else if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -661,6 +665,8 @@ fn print_repr(val: MbValue) {
         mb_out!("None");
     } else if val.is_not_implemented() {
         mb_out!("NotImplemented");
+    } else if val.is_ellipsis() {
+        mb_out!("Ellipsis");
     } else if let Some(s) = super::stdlib::enum_class::member_repr(val) {
         // Class-body enum member inside a container: "<Color.RED: 1>".
         mb_out!("{s}");
@@ -1057,6 +1063,76 @@ fn strip_float_underscores(s: &str) -> Option<String> {
     Some(s.replace('_', ""))
 }
 
+/// Plain Python type name of a value — for CPython-exact error messages.
+/// Instances report their short class name (`pkg.Cls` → `Cls`).
+pub(crate) fn value_type_name(val: MbValue) -> String {
+    if val.is_bool() {
+        return "bool".to_string();
+    }
+    if val.is_none() {
+        return "NoneType".to_string();
+    }
+    if val.is_not_implemented() {
+        return "NotImplementedType".to_string();
+    }
+    if val.is_ellipsis() {
+        return "ellipsis".to_string();
+    }
+    if val.is_int() {
+        return "int".to_string();
+    }
+    if val.is_float() {
+        return "float".to_string();
+    }
+    if val.as_func().is_some() {
+        return "function".to_string();
+    }
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            return match &(*ptr).data {
+                ObjData::Str(_) => "str",
+                ObjData::List(_) => "list",
+                ObjData::Dict(_) => "dict",
+                ObjData::Tuple(_) => "tuple",
+                ObjData::Set(_) => "set",
+                ObjData::FrozenSet(_) => "frozenset",
+                ObjData::Bytes(_) => "bytes",
+                ObjData::ByteArray(_) => "bytearray",
+                ObjData::BigInt(_) => "int",
+                ObjData::Complex(_, _) => "complex",
+                ObjData::CodeObject { .. } => "code",
+                ObjData::Instance { class_name, .. } => {
+                    return class_name
+                        .rsplit('.')
+                        .next()
+                        .unwrap_or(class_name)
+                        .to_string();
+                }
+            }
+            .to_string();
+        }
+    }
+    "object".to_string()
+}
+
+/// Raise a TypeError with the given message through the runtime exception
+/// machinery so it is catchable from user code.
+pub(crate) fn raise_type_error(msg: String) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg)),
+    );
+}
+
+/// Raise a ValueError with the given message through the runtime exception
+/// machinery so it is catchable from user code.
+pub(crate) fn raise_value_error(msg: String) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg)),
+    );
+}
+
 /// int(value) — convert to integer.
 pub fn mb_int(val: MbValue) -> MbValue {
     if is_decimal_handle_value(val) {
@@ -1101,20 +1177,57 @@ pub fn mb_int(val: MbValue) -> MbValue {
                 );
                 return MbValue::none();
             }
+            // int(b"42") / int(bytearray(b"42")) — bytes-like parses like str
+            // (CPython accepts ASCII digit bytes).
+            let bytes_body: Option<Vec<u8>> = match (*ptr).data {
+                ObjData::Bytes(ref b) => Some(b.clone()),
+                ObjData::ByteArray(ref lock) => Some(lock.read().unwrap().clone()),
+                _ => None,
+            };
+            if let Some(body) = bytes_body {
+                let text = String::from_utf8_lossy(&body).to_string();
+                if let Ok(i) = text.trim().parse::<i64>() {
+                    return MbValue::from_int(i);
+                }
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "invalid literal for int() with base 10: b'{text}'"
+                    ))),
+                );
+                return MbValue::none();
+            }
             // int(instance) — dispatch the __int__ dunder when the class
-            // registers one (ipaddress addresses, user numeric types).
+            // registers one (ipaddress addresses, user numeric types);
+            // fall back to __index__ (CPython int() accepts SupportsIndex).
             if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
-                let method = super::class::lookup_method(class_name, "__int__");
-                if !method.is_none() {
-                    let name = MbValue::from_ptr(MbObject::new_str("__int__".to_string()));
-                    let args = MbValue::from_ptr(MbObject::new_list(vec![]));
-                    return super::class::mb_call_method(val, name, args);
+                for dunder in ["__int__", "__index__"] {
+                    let method = super::class::lookup_method(class_name, dunder);
+                    if !method.is_none() {
+                        let name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
+                        let args = MbValue::from_ptr(MbObject::new_list(vec![]));
+                        return super::class::mb_call_method(val, name, args);
+                    }
                 }
             }
+            // BigInt is already an int — identity (retain for the caller so
+            // input and output can be released independently).
+            if matches!((*ptr).data, ObjData::BigInt(_)) {
+                super::rc::retain_if_ptr(val);
+                return val;
+            }
         }
-        MbValue::from_int(0)
+        raise_type_error(format!(
+            "int() argument must be a string, a bytes-like object or a real number, not '{}'",
+            value_type_name(val)
+        ));
+        MbValue::none()
     } else {
-        MbValue::from_int(0)
+        raise_type_error(format!(
+            "int() argument must be a string, a bytes-like object or a real number, not '{}'",
+            value_type_name(val)
+        ));
+        MbValue::none()
     }
 }
 
@@ -1168,10 +1281,41 @@ pub fn mb_float(val: MbValue) -> MbValue {
                 );
                 return MbValue::none();
             }
+            // float(instance) — dispatch the __float__ dunder when present;
+            // fall back to __index__ (CPython float() accepts SupportsIndex).
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                for dunder in ["__float__", "__index__"] {
+                    let method = super::class::lookup_method(class_name, dunder);
+                    if !method.is_none() {
+                        let name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
+                        let args = MbValue::from_ptr(MbObject::new_list(vec![]));
+                        let result = super::class::mb_call_method(val, name, args);
+                        if dunder == "__index__" {
+                            if let Some(i) = result.as_int() {
+                                return MbValue::from_float(i as f64);
+                            }
+                        }
+                        return result;
+                    }
+                }
+            }
+            // BigInt → float (may overflow to inf, matching f64 semantics).
+            if let Some(big) = super::bigint_ops::extract_bigint(val) {
+                use num_traits::ToPrimitive;
+                return MbValue::from_float(big.to_f64().unwrap_or(f64::INFINITY));
+            }
         }
-        MbValue::from_float(0.0)
+        raise_type_error(format!(
+            "float() argument must be a string or a real number, not '{}'",
+            value_type_name(val)
+        ));
+        MbValue::none()
     } else {
-        MbValue::from_float(0.0)
+        raise_type_error(format!(
+            "float() argument must be a string or a real number, not '{}'",
+            value_type_name(val)
+        ));
+        MbValue::none()
     }
 }
 
@@ -1243,6 +1387,9 @@ pub fn mb_bool(val: MbValue) -> MbValue {
                 _ => true,
             }
         }
+    } else if val.is_ellipsis() || val.is_not_implemented() {
+        // Both singletons are truthy in CPython.
+        true
     } else {
         false
     };
@@ -1295,6 +1442,8 @@ pub fn mb_str(val: MbValue) -> MbValue {
         "None".to_string()
     } else if val.is_not_implemented() {
         "NotImplemented".to_string()
+    } else if val.is_ellipsis() {
+        "Ellipsis".to_string()
     } else if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {
@@ -1580,6 +1729,10 @@ pub fn mb_type(val: MbValue) -> MbValue {
         "bool"
     } else if val.is_none() {
         "NoneType"
+    } else if val.is_ellipsis() {
+        "ellipsis"
+    } else if val.is_not_implemented() {
+        "NotImplementedType"
     } else if val.as_func().is_some() {
         // TAG_FUNC: JIT-compiled or extern function pointer.
         if let Some(addr) = val.as_func() {
@@ -3501,12 +3654,33 @@ fn list_vs_range_iter_eq(list_ptr: *mut MbObject, handle: MbValue) -> Option<boo
     None
 }
 
+/// Ordering on complex is undefined in Python: raise the CPython-exact
+/// TypeError when either operand is a complex object. Returns true when an
+/// exception was raised (caller must bail with a dummy value).
+fn complex_ordering_guard(a: MbValue, b: MbValue, op: &str) -> bool {
+    if is_complex_obj(a) || is_complex_obj(b) {
+        raise_type_error(format!(
+            "'{op}' not supported between instances of '{}' and '{}'",
+            value_type_name(a),
+            value_type_name(b)
+        ));
+        return true;
+    }
+    false
+}
+
 pub fn mb_lt(a: MbValue, b: MbValue) -> MbValue {
     MbValue::from_bool(mb_values_lt(a, b))
 }
 
 /// Ordering comparison: supports int, float, mixed int/float, lists, tuples, strings.
 fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
+    // complex < complex (or complex vs anything) is a TypeError in CPython —
+    // raise instead of silently answering False. Catches `<` directly and the
+    // sort/min/max paths that funnel through mb_values_lt.
+    if complex_ordering_guard(a, b, "<") {
+        return false;
+    }
     // functools.cmp_to_key key objects delegate ordering to the wrapped cmp.
     if super::stdlib::functools_mod::is_cmp_to_key_obj(a) {
         if let Some(r) = super::stdlib::functools_mod::mb_functools_cmp_to_key_richcmp(a, b, "lt") {
@@ -3538,8 +3712,8 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
         return super::stdlib::collections_mod::counter_le_multiset(a, b)
             && !super::stdlib::collections_mod::counter_eq(a, b);
     }
-    // Int comparison
-    if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
+    // Int comparison (bool ≤ int: True < 2 must order numerically).
+    if let (Some(ai), Some(bi)) = (a.as_int_pyint(), b.as_int_pyint()) {
         return ai < bi;
     }
     // BigInt comparison: when either operand is a heap big integer (literals
@@ -3556,9 +3730,9 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
             return ab < bb;
         }
     }
-    // Float/mixed numeric comparison
-    let af = a.as_int().map(|i| i as f64).or(a.as_float());
-    let bf = b.as_int().map(|i| i as f64).or(b.as_float());
+    // Float/mixed numeric comparison (bool coerces like int).
+    let af = a.as_int_pyint().map(|i| i as f64).or(a.as_float());
+    let bf = b.as_int_pyint().map(|i| i as f64).or(b.as_float());
     if let (Some(af), Some(bf)) = (af, bf) {
         return af < bf;
     }
@@ -3626,10 +3800,32 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
                 (ObjData::Instance { class_name, .. }, _) => {
                     dispatch_richcmp_dunder(a, b, class_name, "__lt__")
                 }
-                _ => false,
+                _ => values_lt_fallback(a, b),
             };
         }
     }
+    values_lt_fallback(a, b)
+}
+
+/// Final fallthrough for `<` when no native ordering applies: try the
+/// reflected `__gt__` when the right operand is an instance (CPython's
+/// `a < b` → `type(b).__gt__(b, a)` fallback), then raise the CPython
+/// unorderable TypeError instead of silently answering False.
+fn values_lt_fallback(a: MbValue, b: MbValue) -> bool {
+    if let Some(pb) = b.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*pb).data {
+                if !super::class::lookup_method(class_name, "__gt__").is_none() {
+                    return dispatch_richcmp_dunder(b, a, class_name, "__gt__");
+                }
+            }
+        }
+    }
+    raise_type_error(format!(
+        "'<' not supported between instances of '{}' and '{}'",
+        value_type_name(a),
+        value_type_name(b)
+    ));
     false
 }
 
@@ -3669,7 +3865,11 @@ pub fn mb_not(a: MbValue) -> MbValue {
 /// min(iterable) or min(a, b) — return the smallest value.
 pub fn mb_min(args: MbValue) -> MbValue {
     let items = extract_items(args);
-    if items.is_empty() { return MbValue::none(); }
+    if items.is_empty() {
+        // CPython: min(()) raises ValueError (no silent None default).
+        raise_value_error("min() arg is an empty sequence".to_string());
+        return MbValue::none();
+    }
     items.into_iter().reduce(|a, b| {
         if compare_values(a, b) { a } else { b }
     }).unwrap_or(MbValue::none())
@@ -3678,7 +3878,11 @@ pub fn mb_min(args: MbValue) -> MbValue {
 /// max(iterable) or max(a, b) — return the largest value.
 pub fn mb_max(args: MbValue) -> MbValue {
     let items = extract_items(args);
-    if items.is_empty() { return MbValue::none(); }
+    if items.is_empty() {
+        // CPython: max(()) raises ValueError (no silent None default).
+        raise_value_error("max() arg is an empty sequence".to_string());
+        return MbValue::none();
+    }
     items.into_iter().reduce(|a, b| {
         if compare_values(b, a) { a } else { b }
     }).unwrap_or(MbValue::none())
@@ -3822,6 +4026,10 @@ fn mb_value_cmp(a: MbValue, b: MbValue) -> std::cmp::Ordering {
             }
         }
     }
+    // CPython: sorting mixed unorderable types raises TypeError — route
+    // through mb_values_lt, which raises the exact unorderable message.
+    if mb_values_lt(a, b) { return std::cmp::Ordering::Less; }
+    if mb_values_lt(b, a) { return std::cmp::Ordering::Greater; }
     std::cmp::Ordering::Equal
 }
 
@@ -3926,6 +4134,8 @@ pub fn mb_repr(val: MbValue) -> MbValue {
         "None".to_string()
     } else if val.is_not_implemented() {
         "NotImplemented".to_string()
+    } else if val.is_ellipsis() {
+        "Ellipsis".to_string()
     } else if let Some(addr) = val.as_func() {
         // TAG_FUNC: produce CPython-style `<function NAME at 0xADDR>`.
         // The FUNC_NAMES registry is primed at module init for every
@@ -4300,6 +4510,15 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                         if let Some(i) = result.as_int() {
                             return MbValue::from_int(if i == -1 { -2 } else { i });
                         }
+                        if let Some(b) = result.as_bool() {
+                            // bool is an int subclass: True hashes to 1.
+                            return MbValue::from_int(b as i64);
+                        }
+                        // CPython: a __hash__ that returns a non-int raises.
+                        raise_type_error(
+                            "__hash__ method should return an integer".to_string(),
+                        );
+                        return MbValue::none();
                     }
                     // PEP 557: dataclass synthesized __hash__ (frozen, or
                     // unsafe_hash=True) — hash of the compare=True field
@@ -4324,6 +4543,16 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                         }
                     }
                     MbValue::from_int((ptr as u64 >> 17) as i64)
+                }
+                // Mutable containers are unhashable in CPython — raise the
+                // exact TypeError instead of silently pointer-hashing.
+                ObjData::List(_) | ObjData::Dict(_) | ObjData::Set(_)
+                | ObjData::ByteArray(_) => {
+                    raise_type_error(format!(
+                        "unhashable type: '{}'",
+                        value_type_name(val)
+                    ));
+                    MbValue::none()
                 }
                 _ => MbValue::from_int((ptr as u64 >> 17) as i64),
             }
@@ -4366,13 +4595,59 @@ pub fn mb_input(prompt: MbValue) -> MbValue {
     }
 }
 
+/// Resolve a value to an integer "index" the way CPython's
+/// `__index__`-accepting builtins (chr/hex/oct/bin) do: ints and bools pass
+/// through, instances dispatch their `__index__` dunder. Returns None (no
+/// exception raised) when the value cannot be interpreted as an integer.
+fn resolve_index_value(val: MbValue) -> Option<i64> {
+    if let Some(i) = val.as_int() {
+        return Some(i);
+    }
+    if let Some(b) = val.as_bool() {
+        return Some(b as i64);
+    }
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                let method = super::class::lookup_method(class_name, "__index__");
+                if !method.is_none() {
+                    let result = super::class::mb_call_method1(method, val);
+                    return result.as_int();
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Raise CPython's "cannot be interpreted as an integer" TypeError.
+fn raise_not_integer(val: MbValue) {
+    raise_type_error(format!(
+        "'{}' object cannot be interpreted as an integer",
+        value_type_name(val)
+    ));
+}
+
 /// chr(i) — return character for Unicode code point.
 pub fn mb_chr(val: MbValue) -> MbValue {
-    if let Some(i) = val.as_int() {
+    if let Some(i) = resolve_index_value(val) {
+        if !(0..=0x10FFFF).contains(&i) {
+            raise_value_error("chr() arg not in range(0x110000)".to_string());
+            return MbValue::none();
+        }
         if let Some(c) = char::from_u32(i as u32) {
             return MbValue::from_ptr(MbObject::new_str(c.to_string()));
         }
+        // Lone surrogate (valid in CPython, unrepresentable in a Rust
+        // String) — keep the legacy silent None rather than a wrong raise.
+        return MbValue::none();
     }
+    // BigInt code points are always out of the 0x110000 range.
+    if unsafe { super::bigint_ops::extract_bigint(val).is_some() } {
+        raise_value_error("chr() arg not in range(0x110000)".to_string());
+        return MbValue::none();
+    }
+    raise_not_integer(val);
     MbValue::none()
 }
 
@@ -4380,46 +4655,102 @@ pub fn mb_chr(val: MbValue) -> MbValue {
 pub fn mb_ord(val: MbValue) -> MbValue {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
-            if let ObjData::Str(ref s) = (*ptr).data {
-                if let Some(c) = s.chars().next() {
-                    if s.chars().count() == 1 {
-                        return MbValue::from_int(c as i64);
+            match (*ptr).data {
+                ObjData::Str(ref s) => {
+                    let n = s.chars().count();
+                    if n == 1 {
+                        return MbValue::from_int(s.chars().next().unwrap() as i64);
                     }
+                    raise_type_error(format!(
+                        "ord() expected a character, but string of length {n} found"
+                    ));
+                    return MbValue::none();
                 }
+                // bytes / bytearray of length 1 are accepted by CPython.
+                ObjData::Bytes(ref b) => {
+                    if b.len() == 1 {
+                        return MbValue::from_int(b[0] as i64);
+                    }
+                    raise_type_error(format!(
+                        "ord() expected a character, but string of length {} found",
+                        b.len()
+                    ));
+                    return MbValue::none();
+                }
+                ObjData::ByteArray(ref lock) => {
+                    let b = lock.read().unwrap();
+                    if b.len() == 1 {
+                        return MbValue::from_int(b[0] as i64);
+                    }
+                    raise_type_error(format!(
+                        "ord() expected a character, but string of length {} found",
+                        b.len()
+                    ));
+                    return MbValue::none();
+                }
+                _ => {}
             }
         }
     }
+    raise_type_error(format!(
+        "ord() expected string of length 1, but {} found",
+        value_type_name(val)
+    ));
     MbValue::none()
 }
 
 /// hex(x) — return hex string representation of an integer.
 pub fn mb_hex(val: MbValue) -> MbValue {
-    if let Some(i) = val.as_int() {
+    if let Some(i) = resolve_index_value(val) {
         let s = if i < 0 { format!("-0x{:x}", -i) } else { format!("0x{:x}", i) };
-        MbValue::from_ptr(MbObject::new_str(s))
-    } else {
-        MbValue::none()
+        return MbValue::from_ptr(MbObject::new_str(s));
     }
+    if let Some(big) = unsafe { super::bigint_ops::extract_bigint(val) } {
+        let s = if big.sign() == num_bigint::Sign::Minus {
+            format!("-0x{:x}", -big)
+        } else {
+            format!("0x{:x}", big)
+        };
+        return MbValue::from_ptr(MbObject::new_str(s));
+    }
+    raise_not_integer(val);
+    MbValue::none()
 }
 
 /// oct(x) — return octal string representation of an integer.
 pub fn mb_oct(val: MbValue) -> MbValue {
-    if let Some(i) = val.as_int() {
+    if let Some(i) = resolve_index_value(val) {
         let s = if i < 0 { format!("-0o{:o}", -i) } else { format!("0o{:o}", i) };
-        MbValue::from_ptr(MbObject::new_str(s))
-    } else {
-        MbValue::none()
+        return MbValue::from_ptr(MbObject::new_str(s));
     }
+    if let Some(big) = unsafe { super::bigint_ops::extract_bigint(val) } {
+        let s = if big.sign() == num_bigint::Sign::Minus {
+            format!("-0o{:o}", -big)
+        } else {
+            format!("0o{:o}", big)
+        };
+        return MbValue::from_ptr(MbObject::new_str(s));
+    }
+    raise_not_integer(val);
+    MbValue::none()
 }
 
 /// bin(x) — return binary string representation of an integer.
 pub fn mb_bin(val: MbValue) -> MbValue {
-    if let Some(i) = val.as_int() {
+    if let Some(i) = resolve_index_value(val) {
         let s = if i < 0 { format!("-0b{:b}", -i) } else { format!("0b{:b}", i) };
-        MbValue::from_ptr(MbObject::new_str(s))
-    } else {
-        MbValue::none()
+        return MbValue::from_ptr(MbObject::new_str(s));
     }
+    if let Some(big) = unsafe { super::bigint_ops::extract_bigint(val) } {
+        let s = if big.sign() == num_bigint::Sign::Minus {
+            format!("-0b{:b}", -big)
+        } else {
+            format!("0b{:b}", big)
+        };
+        return MbValue::from_ptr(MbObject::new_str(s));
+    }
+    raise_not_integer(val);
+    MbValue::none()
 }
 
 /// pow(base, exp) — power operator.
@@ -5993,6 +6324,11 @@ pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
 
 /// gt comparison: a > b
 pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
+    // complex ordering raises in CPython — guard here so the message carries
+    // '>' (delegating to mb_lt(b, a) would mislabel the operator).
+    if complex_ordering_guard(a, b, ">") {
+        return MbValue::from_bool(false);
+    }
     // Try __gt__ dunder on a first
     if let Some(pa) = a.as_ptr() {
         unsafe {
@@ -6015,6 +6351,10 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
 
 /// le comparison: a <= b
 pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
+    // complex ordering raises in CPython — guard with the '<=' op symbol.
+    if complex_ordering_guard(a, b, "<=") {
+        return MbValue::from_bool(false);
+    }
     // Try __le__ dunder on a first
     if let Some(pa) = a.as_ptr() {
         unsafe {
@@ -6041,6 +6381,10 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
 
 /// ge comparison: a >= b
 pub fn mb_ge(a: MbValue, b: MbValue) -> MbValue {
+    // complex ordering raises in CPython — guard with the '>=' op symbol.
+    if complex_ordering_guard(a, b, ">=") {
+        return MbValue::from_bool(false);
+    }
     // Try __ge__ dunder on a first
     if let Some(pa) = a.as_ptr() {
         unsafe {
@@ -6267,7 +6611,7 @@ fn eval_expr(expr: &crate::parser::ast::Expr) -> MbValue {
         Expr::ComplexLit(imag) => {
             MbValue::from_ptr(MbObject::new_complex(0.0, *imag))
         }
-        Expr::Ellipsis => MbValue::none(),
+        Expr::Ellipsis => MbValue::ellipsis(),
         Expr::BinOp { op, lhs, rhs } => {
             let l = eval_expr(&lhs.node);
             let r = eval_expr(&rhs.node);
@@ -6880,8 +7224,11 @@ mod tests {
     }
 
     #[test]
-    fn test_int_from_none() {
-        assert_eq!(mb_int(MbValue::none()).as_int(), Some(0));
+    fn test_int_from_none_raises_type_error() {
+        // CPython: int(None) raises TypeError; the runtime entry returns
+        // None after routing through the exception machinery.
+        assert!(mb_int(MbValue::none()).is_none());
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]
@@ -6891,8 +7238,11 @@ mod tests {
     }
 
     #[test]
-    fn test_float_from_none() {
-        assert_eq!(mb_float(MbValue::none()).as_float(), Some(0.0));
+    fn test_float_from_none_raises_type_error() {
+        // CPython: float(None) raises TypeError; the runtime entry returns
+        // None after routing through the exception machinery.
+        assert!(mb_float(MbValue::none()).is_none());
+        crate::runtime::exception::mb_clear_exception();
     }
 
     #[test]

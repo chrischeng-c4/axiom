@@ -2616,6 +2616,8 @@ pub fn value_to_string(val: MbValue) -> String {
         "None".to_string()
     } else if val.is_not_implemented() {
         "NotImplemented".to_string()
+    } else if val.is_ellipsis() {
+        "Ellipsis".to_string()
     } else if let Some(ptr) = val.as_ptr() {
         unsafe {
             match &(*ptr).data {

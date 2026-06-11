@@ -2792,6 +2792,13 @@ impl<'a> AstLowerer<'a> {
             }
             ast::Expr::BoolLit(b) => Some(HirExpr::BoolLit(*b, self.checker.tcx.bool())),
             ast::Expr::NoneLit => Some(HirExpr::NoneLit(self.checker.tcx.none())),
+            // `...` lowers as a read of the builtin `Ellipsis` symbol, which
+            // hir_to_mir folds to MirConst::Ellipsis — same singleton as the
+            // name `Ellipsis`, so `... is Ellipsis` holds.
+            ast::Expr::Ellipsis => {
+                let sym = self.resolve_name("Ellipsis", expr.span)?;
+                Some(HirExpr::Var(sym, self.checker.tcx.any()))
+            }
             ast::Expr::Ident(name) => {
                 let sym = if let Some(id) = self.resolve_name(name, expr.span) {
                     id

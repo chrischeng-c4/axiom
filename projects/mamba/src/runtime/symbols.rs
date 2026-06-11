@@ -420,6 +420,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_vars", class::mb_vars as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_dir", class::mb_dir as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_dir_no_args", class::mb_dir_no_args as fn() -> super::MbValue, [], I64),
+        rt_sym!("mb_dir_arity_error", class::mb_dir_arity_error as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_check_setattr_dunder", class::mb_check_setattr_dunder as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_check_delattr_dunder", class::mb_check_delattr_dunder as fn(super::MbValue) -> super::MbValue, [I64], I64),
         // ── Dunder dispatch ──

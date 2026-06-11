@@ -385,6 +385,7 @@ impl CraneliftBackend {
                     MirConst::Bool(v) => builder.ins().iconst(cl_types::I64, *v as i64),
                     MirConst::None => builder.ins().iconst(cl_types::I64, 0),
                     MirConst::NotImplemented => builder.ins().iconst(cl_types::I64, MbValue::not_implemented().to_bits() as i64),
+                    MirConst::Ellipsis => builder.ins().iconst(cl_types::I64, MbValue::ellipsis().to_bits() as i64),
                     MirConst::Str(s) => {
                         // Use immortal refcount for compile-time string constants (#1129 R4).
                         let str_val = MbValue::from_ptr(MbObject::new_str_immortal(s.clone()));

@@ -376,13 +376,45 @@ pub fn mb_list_getitem(list: MbValue, index: MbValue) -> MbValue {
     MbValue::none()
 }
 
+/// Result of converting a value sequence into bytearray content.
+enum ByteSeqOutcome {
+    Ok(Vec<u8>),
+    /// An element is an int but outside range(0, 256) — ValueError.
+    OutOfRange,
+    /// The source is not a bytes-like / int sequence — TypeError.
+    NotBytes,
+}
+
+/// Convert MbValue elements to bytes for bytearray slice assignment.
+fn collect_u8_seq(items: &[MbValue]) -> ByteSeqOutcome {
+    let mut out = Vec::with_capacity(items.len());
+    for v in items {
+        let Some(i) = v.as_int_pyint() else {
+            return ByteSeqOutcome::NotBytes;
+        };
+        if !(0..=255).contains(&i) {
+            return ByteSeqOutcome::OutOfRange;
+        }
+        out.push(i as u8);
+    }
+    ByteSeqOutcome::Ok(out)
+}
+
+/// Raise an IndexError through the runtime exception machinery.
+fn raise_index_error(msg: &str) {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+}
+
 /// list[index] = value
 pub fn mb_list_setitem(list: MbValue, index: MbValue, value: MbValue) {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             match &(*ptr).data {
                 ObjData::List(ref lock) => {
-                    if let Some(idx) = index.as_int() {
+                    if let Some(idx) = index.as_int_pyint() {
                         // Fast path: try non-blocking write (succeeds when uncontended)
                         let mut items = match lock.try_write() {
                             Ok(guard) => guard,
@@ -395,18 +427,54 @@ pub fn mb_list_setitem(list: MbValue, index: MbValue, value: MbValue) {
                             super::rc::retain_if_ptr(value);
                             items[actual as usize] = value;
                             super::rc::release_if_ptr(old);
+                        } else {
+                            // CPython: out-of-range store raises IndexError.
+                            raise_index_error("list assignment index out of range");
                         }
+                    } else {
+                        super::builtins::raise_type_error(format!(
+                            "list indices must be integers or slices, not {}",
+                            super::builtins::value_type_name(index)
+                        ));
                     }
                 }
                 ObjData::ByteArray(ref lock) => {
-                    if let (Some(idx), Some(v)) = (index.as_int(), value.as_int()) {
-                        let mut data = lock.write().unwrap();
-                        let len = data.len() as i64;
-                        let actual = if idx < 0 { idx + len } else { idx };
-                        if actual >= 0 && actual < len {
-                            data[actual as usize] = v as u8;
-                        }
+                    let Some(idx) = index.as_int_pyint() else {
+                        super::builtins::raise_type_error(format!(
+                            "bytearray indices must be integers or slices, not {}",
+                            super::builtins::value_type_name(index)
+                        ));
+                        return;
+                    };
+                    let Some(v) = value.as_int_pyint() else {
+                        super::builtins::raise_type_error(format!(
+                            "'{}' object cannot be interpreted as an integer",
+                            super::builtins::value_type_name(value)
+                        ));
+                        return;
+                    };
+                    if !(0..=255).contains(&v) {
+                        super::builtins::raise_value_error(
+                            "byte must be in range(0, 256)".to_string(),
+                        );
+                        return;
                     }
+                    let mut data = lock.write().unwrap();
+                    let len = data.len() as i64;
+                    let actual = if idx < 0 { idx + len } else { idx };
+                    if actual >= 0 && actual < len {
+                        data[actual as usize] = v as u8;
+                    } else {
+                        raise_index_error("bytearray index out of range");
+                    }
+                }
+                // Immutable targets: CPython raises TypeError — never a
+                // silent no-op store.
+                ObjData::Tuple(_) | ObjData::Bytes(_) | ObjData::Str(_) => {
+                    super::builtins::raise_type_error(format!(
+                        "'{}' object does not support item assignment",
+                        super::builtins::value_type_name(list)
+                    ));
                 }
                 _ => {}
             }
@@ -418,6 +486,63 @@ pub fn mb_list_setitem(list: MbValue, index: MbValue, value: MbValue) {
 pub fn mb_list_setslice(list: MbValue, start: MbValue, stop: MbValue, _step: MbValue, value: MbValue) {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
+            // bytearray[start:stop] = bytes-like — splice u8 values.
+            if let ObjData::ByteArray(ref lock) = (*ptr).data {
+                // Collect replacement bytes from bytes / bytearray / int
+                // sequences. Distinguish out-of-range ints (ValueError) from
+                // non-byte sources (TypeError) to match CPython exactly.
+                let outcome: ByteSeqOutcome = if let Some(vp) = value.as_ptr() {
+                    match &(*vp).data {
+                        ObjData::Bytes(ref b) => ByteSeqOutcome::Ok(b.clone()),
+                        ObjData::ByteArray(ref vlock) => {
+                            ByteSeqOutcome::Ok(vlock.read().unwrap().clone())
+                        }
+                        ObjData::List(ref vlock) => {
+                            let items = vlock.read().unwrap();
+                            collect_u8_seq(&items)
+                        }
+                        ObjData::Tuple(ref t) => collect_u8_seq(t),
+                        _ => ByteSeqOutcome::NotBytes,
+                    }
+                } else {
+                    ByteSeqOutcome::NotBytes
+                };
+                let new_bytes = match outcome {
+                    ByteSeqOutcome::Ok(b) => b,
+                    ByteSeqOutcome::OutOfRange => {
+                        super::builtins::raise_value_error(
+                            "byte must be in range(0, 256)".to_string(),
+                        );
+                        return;
+                    }
+                    ByteSeqOutcome::NotBytes => {
+                        super::builtins::raise_type_error(
+                            "can assign only bytes, buffers, or iterables of ints in range(0, 256)"
+                                .to_string(),
+                        );
+                        return;
+                    }
+                };
+                let mut data = lock.write().unwrap();
+                let len = data.len() as i64;
+                let s = start.as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(0) as usize;
+                let e = stop.as_int_pyint().map(|i| clamp_index(i, len)).unwrap_or(len) as usize;
+                let s = s.min(data.len());
+                let e = e.min(data.len()).max(s);
+                data.splice(s..e, new_bytes);
+                return;
+            }
+            // Immutable targets: slice assignment raises TypeError.
+            if matches!(
+                (*ptr).data,
+                ObjData::Tuple(_) | ObjData::Bytes(_) | ObjData::Str(_)
+            ) {
+                super::builtins::raise_type_error(format!(
+                    "'{}' object does not support item assignment",
+                    super::builtins::value_type_name(list)
+                ));
+                return;
+            }
             if let ObjData::List(ref lock) = (*ptr).data {
                 let mut items = lock.write().unwrap();
                 let len = items.len() as i64;
@@ -1324,6 +1449,8 @@ pub fn dispatch_list_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
         // CPython exposes every protocol slot by name on plain list objects;
         // mamba previously raised AttributeError for each of these.
         "__getitem__" => mb_list_getitem(receiver, arg(0)),
+        // `[].__dir__()` — same name set as dir([]) (already sorted).
+        "__dir__" => super::class::mb_dir(receiver),
         "__setitem__" => { mb_list_setitem(receiver, arg(0), arg(1)); MbValue::none() }
         "__delitem__" => { mb_list_delitem(receiver, arg(0)); MbValue::none() }
         "__contains__" => mb_list_contains(receiver, arg(0)),
@@ -1509,11 +1636,14 @@ mod tests {
     }
 
     #[test]
-    fn test_setitem_out_of_bounds_noop() {
+    fn test_setitem_out_of_bounds_raises_index_error() {
+        // CPython: out-of-range store raises IndexError and leaves the
+        // list unchanged.
         let list = mb_list_from(vec![MbValue::from_int(1)]);
         mb_list_setitem(list, MbValue::from_int(5), MbValue::from_int(99));
         assert_eq!(mb_list_len(list).as_int(), Some(1));
         assert_eq!(mb_list_getitem(list, MbValue::from_int(0)).as_int(), Some(1));
+        crate::runtime::exception::mb_clear_exception();
     }
 
     // ── delitem ──

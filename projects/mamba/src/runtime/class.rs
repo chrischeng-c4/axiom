@@ -3241,6 +3241,63 @@ pub fn mb_dir_mro_keys(class_name: &str) -> Vec<String> {
 /// Builtin types lack a runtime method-table walkable from `__mro__`; this
 /// table mirrors the `dispatch_*_method` switch arms. A future change can
 /// codegen this from the dispatcher source to keep the two in sync.
+/// Per-type method names for a builtin TYPE NAME (`dir(str)`, `dir(list)`).
+/// Mirrors `builtin_type_method_names` below so `dir(str)` lists the same
+/// methods as `dir("")`.
+fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
+    match name {
+        "list" => vec![
+            "append", "extend", "insert", "pop", "remove", "clear",
+            "reverse", "sort", "copy", "index", "count",
+            "__iter__", "__len__", "__contains__", "__getitem__",
+            "__setitem__", "__delitem__",
+        ],
+        "dict" => vec![
+            "keys", "values", "items", "get", "pop", "popitem",
+            "setdefault", "update", "clear", "copy",
+            "__iter__", "__len__", "__contains__", "__getitem__",
+            "__setitem__", "__delitem__",
+        ],
+        "str" => vec![
+            "upper", "lower", "title", "capitalize", "swapcase",
+            "strip", "lstrip", "rstrip", "split", "rsplit",
+            "splitlines", "join", "replace", "find", "rfind",
+            "index", "rindex", "startswith", "endswith", "count",
+            "encode", "format", "format_map", "isdigit", "isalpha",
+            "isalnum", "isspace", "isupper", "islower", "istitle",
+            "zfill", "ljust", "rjust", "center",
+            "__iter__", "__len__", "__contains__", "__getitem__",
+        ],
+        "set" | "frozenset" => vec![
+            "add", "discard", "remove", "pop", "clear", "copy",
+            "union", "intersection", "difference", "symmetric_difference",
+            "update", "intersection_update", "difference_update",
+            "isdisjoint", "issubset", "issuperset",
+            "__iter__", "__len__", "__contains__",
+        ],
+        "tuple" => vec![
+            "count", "index",
+            "__iter__", "__len__", "__contains__", "__getitem__",
+        ],
+        "int" | "float" => vec![
+            "bit_length", "to_bytes", "from_bytes",
+            "__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
+            "__mod__", "__pow__", "__neg__", "__abs__", "__eq__", "__lt__",
+            "__le__", "__gt__", "__ge__", "__hash__", "__repr__", "__str__",
+        ],
+        "bool" => vec![
+            "__and__", "__or__", "__xor__", "__bool__", "__repr__", "__str__",
+        ],
+        "bytes" | "bytearray" => vec![
+            "hex", "decode", "count", "find", "index", "startswith",
+            "endswith", "split", "strip", "lstrip", "rstrip", "replace",
+            "upper", "lower", "join",
+            "__iter__", "__len__", "__contains__", "__getitem__",
+        ],
+        _ => Vec::new(),
+    }
+}
+
 fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
@@ -3326,6 +3383,15 @@ pub fn mb_dir_no_args() -> MbValue {
     list
 }
 
+/// dir() called with more than one argument — CPython rejects the call.
+pub fn mb_dir_arity_error(count: MbValue) -> MbValue {
+    let n = count.as_int().unwrap_or(2);
+    super::builtins::raise_type_error(format!(
+        "dir expected at most 1 argument, got {n}"
+    ));
+    MbValue::none()
+}
+
 /// `mb_dir_mro_keys`, then sort+dedup. For builtin types (list/dict/str/...),
 /// use `builtin_type_method_names`.
 /// @spec .aw/tech-design/cclab-mamba/logic/introspection-builtins.md#dir_has_dict
@@ -3358,13 +3424,94 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
         unsafe {
             match &(*ptr).data {
                 ObjData::Instance { class_name, fields } => {
-                    let fields = fields.read().unwrap();
-                    for k in fields.keys() {
-                        push(k.clone(), &mut names, &mut seen);
-                    }
-                    drop(fields);
-                    for k in mb_dir_mro_keys(class_name) {
-                        push(k, &mut names, &mut seen);
+                    // TYPE OBJECT (`dir(str)`, `dir(MyClass)`): list the named
+                    // type's methods, not the type-object wrapper's fields.
+                    if class_name == "type" {
+                        let type_name: Option<String> = {
+                            let guard = fields.read().unwrap();
+                            guard.get("__name__").and_then(|v| {
+                                v.as_ptr().and_then(|p| {
+                                    if let ObjData::Str(ref s) = (*p).data {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                        };
+                        if let Some(tn) = type_name {
+                            let builtin = builtin_type_method_names_by_name(&tn);
+                            if builtin.is_empty() {
+                                // User class type object — walk its MRO.
+                                for k in mb_dir_mro_keys(&tn) {
+                                    push(k, &mut names, &mut seen);
+                                }
+                            } else {
+                                for k in builtin {
+                                    push(k.to_string(), &mut names, &mut seen);
+                                }
+                            }
+                        }
+                    } else if !lookup_method(class_name, "__dir__").is_none() {
+                        // User-defined __dir__: call it, require an iterable
+                        // result, and return its names sorted (CPython sorts
+                        // but does not dedup the custom-__dir__ result).
+                        let name_val =
+                            MbValue::from_ptr(super::rc::MbObject::new_str("__dir__".to_string()));
+                        let args = MbValue::from_ptr(super::rc::MbObject::new_list(vec![]));
+                        let result = mb_call_method(obj, name_val, args);
+                        let items: Option<Vec<MbValue>> = result.as_ptr().and_then(|rp| {
+                            match &(*rp).data {
+                                ObjData::List(ref lock) => {
+                                    Some(lock.read().unwrap().iter().copied().collect())
+                                }
+                                ObjData::Tuple(ref t) => Some(t.clone()),
+                                ObjData::Set(ref lock) => {
+                                    Some(lock.read().unwrap().iter().copied().collect())
+                                }
+                                ObjData::FrozenSet(ref t) => Some(t.clone()),
+                                ObjData::Str(ref s) => Some(
+                                    s.chars()
+                                        .map(|c| {
+                                            MbValue::from_ptr(super::rc::MbObject::new_str(
+                                                c.to_string(),
+                                            ))
+                                        })
+                                        .collect(),
+                                ),
+                                _ => None,
+                            }
+                        });
+                        let Some(items) = items else {
+                            super::builtins::raise_type_error(format!(
+                                "'{}' object is not iterable",
+                                super::builtins::value_type_name(result)
+                            ));
+                            return list;
+                        };
+                        let mut name_strs: Vec<String> = Vec::with_capacity(items.len());
+                        for item in items {
+                            if let Some(p) = item.as_ptr() {
+                                if let ObjData::Str(ref s) = (*p).data {
+                                    name_strs.push(s.clone());
+                                }
+                            }
+                        }
+                        name_strs.sort();
+                        for n in name_strs {
+                            let v = MbValue::from_ptr(super::rc::MbObject::new_str(n));
+                            super::list_ops::mb_list_append(list, v);
+                        }
+                        return list;
+                    } else {
+                        let fields = fields.read().unwrap();
+                        for k in fields.keys() {
+                            push(k.clone(), &mut names, &mut seen);
+                        }
+                        drop(fields);
+                        for k in mb_dir_mro_keys(class_name) {
+                            push(k, &mut names, &mut seen);
+                        }
                     }
                 }
                 ObjData::Dict(lock) => {
@@ -5817,6 +5964,15 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                     super::list_ops::mb_list_setitem(obj, key, value);
                     return MbValue::none();
                 }
+                // Immutable targets — mb_list_setitem raises the CPython
+                // TypeError ("'tuple' object does not support item
+                // assignment") instead of silently dropping the store.
+                super::rc::ObjData::Tuple(_)
+                | super::rc::ObjData::Bytes(_)
+                | super::rc::ObjData::Str(_) => {
+                    super::list_ops::mb_list_setitem(obj, key, value);
+                    return MbValue::none();
+                }
                 super::rc::ObjData::Instance { ref class_name, ref fields } => {
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"
@@ -7980,6 +8136,11 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             receiver.as_int().unwrap_or(0)
         };
         match name.as_str() {
+            // int is its own index: (7).__index__() == 7. Also covers bools
+            // (True.__index__() == 1) via the bool→i64 coercion above.
+            "__index__" | "__int__" => {
+                return MbValue::from_int(val);
+            }
             "bit_length" => {
                 if val == 0 {
                     return MbValue::from_int(0);
