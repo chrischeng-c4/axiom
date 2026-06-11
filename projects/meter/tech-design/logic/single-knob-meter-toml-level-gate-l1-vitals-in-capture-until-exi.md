@@ -131,7 +131,6 @@ properties:
         default: 0
         description: "Total cpu time ceiling in milliseconds (user+sys via getrusage); 0 disables."
 ```
-
 ## CLI
 <!-- type: cli lang: yaml -->
 
