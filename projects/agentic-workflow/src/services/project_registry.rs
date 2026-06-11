@@ -276,6 +276,7 @@ mod tests {
             name: name.to_string(),
             path: PathBuf::from(format!("crates/{}", name)),
             tech_design_dir: None,
+            ec: Default::default(),
             workspaces: vec![Workspace {
                 name: Some(name.to_string()),
                 paths: vec![format!("crates/{}/**", name)],
