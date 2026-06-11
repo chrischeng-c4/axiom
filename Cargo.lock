@@ -392,6 +392,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "arena"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rig",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "arena-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arena",
+ "clap",
+ "serde_json",
+]
+
+[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

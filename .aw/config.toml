@@ -138,6 +138,19 @@ codegen.profile = "rust/score-crate"
 
 
 [[projects]]
+name = "arena"
+path = "projects/arena"
+cap_path = "projects/arena/README.md"
+label = "project:arena"
+
+[[projects.workspaces]]
+name = "arena"
+paths = ["projects/arena/**", ".github/workflows/arena-release.yml"]
+target = "rust"
+test_cmd = "cargo test -p arena"
+
+
+[[projects]]
 name = "mamba"
 path = "projects/mamba"
 td_path = ".aw/tech-design/projects/mamba"
