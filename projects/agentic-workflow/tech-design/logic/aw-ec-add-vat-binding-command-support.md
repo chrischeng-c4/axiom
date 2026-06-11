@@ -137,3 +137,11 @@ requirementDiagram
     test_unknown_tool - verifies -> R3
     test_dispatch_fallback - verifies -> R4
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] applicable: the change is a small extension of the existing EC command builder; the vat branch is deterministic, preserves the existing arena/rig/meter branches, and keeps unknown tools as a failed EC command.
+- [unit-test] applicable: R1-R4 cover the new default vat command, named vat runner command, unknown-tool error text, and unchanged manifest fallback behavior.
