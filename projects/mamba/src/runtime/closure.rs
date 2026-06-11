@@ -305,6 +305,84 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     static FUNC_VARNAMES: std::cell::RefCell<HashMap<u64, Vec<String>>> =
         std::cell::RefCell::new(HashMap::new());
+    // Declared-signature metadata for `inspect.signature` (FUNC_PARAMS) and
+    // the textual return annotation (FUNC_RET_ANNOS). Populated at module
+    // init via mb_func_set_params / mb_func_set_retanno emitted by lowering.
+    static FUNC_PARAMS: std::cell::RefCell<HashMap<u64, Vec<MbParamInfo>>> =
+        std::cell::RefCell::new(HashMap::new());
+    static FUNC_RET_ANNOS: std::cell::RefCell<HashMap<u64, String>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// One declared parameter as recorded for introspection.
+#[derive(Clone)]
+pub struct MbParamInfo {
+    pub name: String,
+    /// CPython `inspect.Parameter` kind ordinal: 0 POSITIONAL_ONLY,
+    /// 1 POSITIONAL_OR_KEYWORD, 2 VAR_POSITIONAL, 3 KEYWORD_ONLY,
+    /// 4 VAR_KEYWORD.
+    pub kind: u8,
+    pub has_default: bool,
+    /// Default value (None-MbValue when has_default is false or the literal
+    /// was not representable at lowering time).
+    pub default: MbValue,
+    /// Textual annotation (`"int"`), None when un-annotated.
+    pub annotation: Option<String>,
+}
+
+/// Register a function's declared parameters. `params` is a list of
+/// (name, kind, has_default, default, annotation) tuples — see the
+/// lower_top_level priming loop in hir_to_mir.rs.
+pub fn mb_func_set_params(func: MbValue, params: MbValue) {
+    let mut infos: Vec<MbParamInfo> = Vec::new();
+    if let Some(ptr) = params.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                for item in lock.read().unwrap().iter() {
+                    let Some(tp) = item.as_ptr() else { continue };
+                    let ObjData::Tuple(ref elems) = (*tp).data else { continue };
+                    if elems.len() < 5 {
+                        continue;
+                    }
+                    let name = extract_str(elems[0]).unwrap_or_default();
+                    let kind = elems[1].as_int().unwrap_or(1).clamp(0, 4) as u8;
+                    let has_default = elems[2].as_int().unwrap_or(0) != 0;
+                    let default = elems[3];
+                    super::rc::retain_if_ptr(default);
+                    let annotation = extract_str(elems[4]);
+                    infos.push(MbParamInfo { name, kind, has_default, default, annotation });
+                }
+            }
+        }
+    }
+    let key = func.to_bits();
+    FUNC_PARAMS.with(|m| {
+        if let Some(prev) = m.borrow_mut().insert(key, infos) {
+            for p in prev {
+                unsafe { super::rc::release_if_ptr(p.default); }
+            }
+        }
+    });
+}
+
+/// Register a function's textual return annotation.
+pub fn mb_func_set_retanno(func: MbValue, anno: MbValue) {
+    if let Some(s) = extract_str(anno) {
+        let key = func.to_bits();
+        FUNC_RET_ANNOS.with(|m| m.borrow_mut().insert(key, s));
+    }
+}
+
+/// Declared parameters for a registered function, or None when unknown.
+pub fn func_params(func: MbValue) -> Option<Vec<MbParamInfo>> {
+    let key = func.to_bits();
+    FUNC_PARAMS.with(|m| m.borrow().get(&key).cloned())
+}
+
+/// Textual return annotation for a registered function, or None.
+pub fn func_ret_anno(func: MbValue) -> Option<String> {
+    let key = func.to_bits();
+    FUNC_RET_ANNOS.with(|m| m.borrow().get(&key).cloned())
 }
 
 /// Register a function's name (called at definition time so `f.__name__` works).
@@ -767,6 +845,8 @@ pub(crate) fn cleanup_all_closures() {
     let _ = FUNC_MODULES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_ARGCOUNTS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_VARNAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_RET_ANNOS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
 }
 
 #[cfg(test)]

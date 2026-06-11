@@ -19,6 +19,46 @@ pub struct HirModule {
     /// auto-create and populate the module `__annotations__` dict (CPython
     /// semantics). `type_repr` is the textual annotation (e.g. "int").
     pub module_annotations: Vec<(String, String)>,
+    /// SymbolId.0 → introspection signature metadata for each user-defined
+    /// `def` (parameter names/kinds/defaults/annotations + return annotation).
+    /// Primed into the runtime FUNC_PARAMS registry at module init so
+    /// `inspect.signature(f)` reflects the real declared signature.
+    pub func_sigs: HashMap<u32, HirFuncSig>,
+}
+
+/// Introspection signature metadata for one user-defined function.
+#[derive(Debug, Clone, Default)]
+pub struct HirFuncSig {
+    pub params: Vec<HirParamSig>,
+    /// Textual return annotation (`"int"`, `"42"`), None when undeclared.
+    pub return_annotation: Option<String>,
+}
+
+/// One parameter's introspection metadata.
+#[derive(Debug, Clone)]
+pub struct HirParamSig {
+    pub name: String,
+    /// CPython `inspect.Parameter` kind ordinal: 0 POSITIONAL_ONLY,
+    /// 1 POSITIONAL_OR_KEYWORD, 2 VAR_POSITIONAL, 3 KEYWORD_ONLY,
+    /// 4 VAR_KEYWORD.
+    pub kind: u8,
+    /// Literal default value when one is declared and representable.
+    pub default: Option<HirSigDefault>,
+    /// True when a default is declared but not a representable literal —
+    /// the runtime records "has a default" with a None placeholder.
+    pub default_opaque: bool,
+    /// Textual annotation (`"int"`), None when un-annotated.
+    pub annotation: Option<String>,
+}
+
+/// Literal default values representable without evaluating module code.
+#[derive(Debug, Clone)]
+pub enum HirSigDefault {
+    Int(i64),
+    Float(f64),
+    Str(String),
+    Bool(bool),
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +119,9 @@ pub struct HirClass {
     /// decorator call) so the runtime `@dataclass` synthesizer sees ordered
     /// field facts with class-definition-time default values.
     pub dataclass_fields: Vec<(String, String, Option<HirExpr>)>,
+    /// Class-body docstring (first bare string statement), for
+    /// `inspect.getdoc` / `Cls.__doc__`.
+    pub doc: Option<String>,
 }
 
 /// Import statement.
@@ -439,6 +482,7 @@ mod tests {
             sym_names: HashMap::new(),
             sym_types: HashMap::new(),
             module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
         };
         assert!(module.functions.is_empty());
         assert!(module.classes.is_empty());
@@ -554,6 +598,7 @@ mod tests {
             slots: None,
             class_kwargs: vec![],
             dataclass_fields: vec![],
+            doc: None,
         };
         assert_eq!(cls.base, Some(SymbolId(1)));
         assert_eq!(cls.fields.len(), 1);

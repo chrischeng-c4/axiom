@@ -258,6 +258,7 @@ pub fn lower_hir_to_mir(hir: &HirModule, tcx: &TypeContext) -> MirModule {
         lowerer.user_func_argcounts.insert(func.name.0, argcount);
         lowerer.user_func_varnames.insert(func.name.0, varnames);
     }
+    lowerer.user_func_sigs = hir.func_sigs.clone();
     for func in &hir.functions {
         if !func.decorators.is_empty() {
             lowerer.pending_decorators.push((func.name, func.decorators.clone()));
@@ -334,6 +335,10 @@ pub fn lower_hir_to_mir_with_symbols(
     let type_names = [
         "int", "float", "str", "bool", "list", "dict", "set", "tuple",
         "bytes", "bytearray", "frozenset", "type", "object",
+        // Descriptor types: `isinstance(x, property)` etc. compare against
+        // the runtime's "__property__"/"__staticmethod__"/"__classmethod__"
+        // wrapper instances via the alias arms in mb_isinstance.
+        "property", "staticmethod", "classmethod",
     ];
     for name in &type_names {
         if let Some(sym_id) = symbols.lookup(name) {
@@ -409,11 +414,24 @@ pub fn lower_hir_to_mir_with_symbols(
         lowerer.user_func_argcounts.insert(func.name.0, argcount);
         lowerer.user_func_varnames.insert(func.name.0, varnames);
     }
+    lowerer.user_func_sigs = hir.func_sigs.clone();
 
     // Process user-defined classes: register class names and compile methods
     for cls in &hir.classes {
         let class_name = sym_name_lookup(cls.name)
             .unwrap_or_else(|| format!("class_{}", cls.name.0));
+
+        // Introspection docs: class-body docstring + per-method docstrings
+        // (inspect.getdoc / __doc__). Method docs ride the existing
+        // FUNC_DOCS priming loop in lower_top_level.
+        if let Some(doc) = &cls.doc {
+            lowerer.pending_class_docs.push((class_name.clone(), doc.clone()));
+        }
+        for m in &cls.methods {
+            if let Some(doc) = extract_leading_docstring(&m.body) {
+                lowerer.user_func_docs.insert(m.name.0, doc);
+            }
+        }
 
         // Resolve all base names for multiple inheritance (P1 OOP conformance).
         let all_base_names: Vec<String> = if !cls.all_bases.is_empty() {
@@ -795,6 +813,14 @@ struct HirToMir<'a> {
     /// `mb_func_set_varnames` so `f.__code__.co_varnames` returns the params
     /// (CORE #3).
     user_func_varnames: HashMap<u32, Vec<String>>,
+    /// SymbolId.0 → declared signature metadata (names/kinds/defaults/
+    /// annotations + return annotation) for each user-defined `def`. Primed
+    /// at module-init via `mb_func_set_params` / `mb_func_set_retanno` so
+    /// `inspect.signature(f)` reflects the real declaration.
+    user_func_sigs: HashMap<u32, crate::hir::HirFuncSig>,
+    /// (class_name, docstring) pairs primed at module-init via
+    /// `mb_class_set_doc` so `inspect.getdoc(Cls)` works.
+    pending_class_docs: Vec<(String, String)>,
     /// Module-scope variable annotations `(name, type_repr)` in source order.
     /// Primed at module-init into the `__annotations__` dict (PEP 526).
     module_annotations: Vec<(String, String)>,
@@ -856,6 +882,8 @@ impl<'a> HirToMir<'a> {
             user_func_docs: HashMap::new(),
             user_func_argcounts: HashMap::new(),
             user_func_varnames: HashMap::new(),
+            user_func_sigs: HashMap::new(),
+            pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
             is_class_method: false,
@@ -911,6 +939,8 @@ impl<'a> HirToMir<'a> {
             user_func_docs: HashMap::new(),
             user_func_argcounts: HashMap::new(),
             user_func_varnames: HashMap::new(),
+            user_func_sigs: HashMap::new(),
+            pending_class_docs: Vec::new(),
             module_annotations: Vec::new(),
             in_module_scope: false,
             is_class_method: false,
@@ -1446,6 +1476,98 @@ impl<'a> HirToMir<'a> {
             });
         }
 
+        // Prime FUNC_PARAMS / FUNC_RET_ANNOS so `inspect.signature(f)` (and
+        // getfullargspec) reflect the declared signature. Each parameter is
+        // packed as a (name, kind, has_default, default, annotation) tuple;
+        // kind is the CPython Parameter ordinal (0 POSITIONAL_ONLY ..
+        // 4 VAR_KEYWORD).
+        let func_sig_pairs: Vec<(SymbolId, crate::hir::HirFuncSig)> = self.user_func_sigs
+            .iter()
+            .map(|(sid, sig)| (SymbolId(*sid), sig.clone()))
+            .collect();
+        for (func_sym, sig) in &func_sig_pairs {
+            let fn_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::LoadConst {
+                dest: fn_vreg,
+                value: MirConst::FuncRef(*func_sym),
+                ty: any_ty,
+            });
+            let mut param_vregs: Vec<VReg> = Vec::new();
+            for p in &sig.params {
+                let name_vreg = self.emit_str_const(&p.name);
+                let kind_raw = self.fresh_vreg();
+                self.current_stmts.push(MirInst::LoadConst {
+                    dest: kind_raw,
+                    value: MirConst::Int(p.kind as i64),
+                    ty: self.tcx.int(),
+                });
+                let kind_vreg = self.box_operand(kind_raw, self.tcx.int());
+                let has_default = p.default.is_some() || p.default_opaque;
+                let hd_raw = self.fresh_vreg();
+                self.current_stmts.push(MirInst::LoadConst {
+                    dest: hd_raw,
+                    value: MirConst::Int(if has_default { 1 } else { 0 }),
+                    ty: self.tcx.int(),
+                });
+                let hd_vreg = self.box_operand(hd_raw, self.tcx.int());
+                let def_vreg = match &p.default {
+                    Some(crate::hir::HirSigDefault::Int(v)) => {
+                        let raw = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadConst {
+                            dest: raw, value: MirConst::Int(*v), ty: self.tcx.int(),
+                        });
+                        self.box_operand(raw, self.tcx.int())
+                    }
+                    Some(crate::hir::HirSigDefault::Float(v)) => {
+                        let raw = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadConst {
+                            dest: raw, value: MirConst::Float(*v), ty: self.tcx.float(),
+                        });
+                        self.box_operand(raw, self.tcx.float())
+                    }
+                    Some(crate::hir::HirSigDefault::Str(s)) => self.emit_str_const(s),
+                    Some(crate::hir::HirSigDefault::Bool(b)) => {
+                        let raw = self.fresh_vreg();
+                        self.current_stmts.push(MirInst::LoadConst {
+                            dest: raw, value: MirConst::Bool(*b), ty: self.tcx.bool(),
+                        });
+                        self.box_operand(raw, self.tcx.bool())
+                    }
+                    Some(crate::hir::HirSigDefault::None) | None => self.emit_none(),
+                };
+                let anno_vreg = match &p.annotation {
+                    Some(s) => self.emit_str_const(s),
+                    None => self.emit_none(),
+                };
+                let tup_vreg = self.fresh_vreg();
+                self.current_stmts.push(MirInst::MakeTuple {
+                    dest: tup_vreg,
+                    elements: vec![name_vreg, kind_vreg, hd_vreg, def_vreg, anno_vreg],
+                    ty: any_ty,
+                });
+                param_vregs.push(tup_vreg);
+            }
+            let params_vreg = self.fresh_vreg();
+            self.current_stmts.push(MirInst::MakeList {
+                dest: params_vreg, elements: param_vregs, ty: any_ty,
+            });
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_func_set_params".to_string(),
+                args: vec![fn_vreg, params_vreg],
+                ty: self.tcx.none(),
+            });
+            if let Some(ret_anno) = &sig.return_annotation {
+                let ra_vreg = self.emit_str_const(ret_anno);
+                self.current_stmts.push(MirInst::CallExtern {
+                    dest: None,
+                    name: "mb_func_set_retanno".to_string(),
+                    args: vec![fn_vreg, ra_vreg],
+                    ty: self.tcx.none(),
+                });
+            }
+        }
+
         // Module `__annotations__` (PEP 526). CPython always exposes a module
         // `__annotations__` dict; annotated module-scope names (`x: int`,
         // `x: int = v`) record their key here. Create the dict and StoreGlobal
@@ -1682,6 +1804,20 @@ impl<'a> HirToMir<'a> {
                     ty: self.tcx.none(),
                 });
             }
+        }
+
+        // Prime CLASS_DOCS so `inspect.getdoc(Cls)` / `Cls.__doc__` see the
+        // class-body docstring.
+        let class_doc_pairs = std::mem::take(&mut self.pending_class_docs);
+        for (cls_name, doc) in &class_doc_pairs {
+            let name_vreg = self.emit_str_const(cls_name);
+            let doc_vreg = self.emit_str_const(doc);
+            self.current_stmts.push(MirInst::CallExtern {
+                dest: None,
+                name: "mb_class_set_doc".to_string(),
+                args: vec![name_vreg, doc_vreg],
+                ty: self.tcx.none(),
+            });
         }
 
         // P2-R3: Class-level attribute assignments are NOT emitted here.
@@ -7370,6 +7506,7 @@ mod tests {
             sym_names: std::collections::HashMap::new(),
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
         };
 
         let mir = lower_hir_to_mir(&hir, &tcx);
@@ -7418,6 +7555,7 @@ mod tests {
             sym_names: std::collections::HashMap::new(),
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
         };
 
         let mir = lower_hir_to_mir(&hir, &tcx);
@@ -7435,6 +7573,7 @@ mod tests {
             sym_names: std::collections::HashMap::new(),
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
         }
     }
 
@@ -7826,6 +7965,7 @@ mod tests {
             sym_names: std::collections::HashMap::new(),
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
         };
         let mir = lower_hir_to_mir(&hir, &tcx);
         assert_eq!(mir.bodies.len(), 1);
@@ -7907,6 +8047,7 @@ mod tests {
             sym_names: std::collections::HashMap::new(),
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
         };
 
         lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols)
@@ -8046,6 +8187,7 @@ mod tests {
             sym_names: std::collections::HashMap::new(),
             sym_types: std::collections::HashMap::new(),
             module_annotations: Vec::new(),
+            func_sigs: HashMap::new(),
         };
         let mir = lower_hir_to_mir_with_symbols(&hir, &tcx, &symbols);
         let has_store = mir.bodies.iter()

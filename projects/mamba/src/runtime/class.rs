@@ -2860,6 +2860,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                     super::rc::retain_if_ptr(val);
                                     return val;
                                 }
+                                // __slots__ entry read on the CLASS yields the
+                                // member descriptor (CPython semantics).
+                                if class_slot_names(s).iter().any(|n| n == &attr_name) {
+                                    return make_member_descriptor(s, &attr_name);
+                                }
                             }
                         }
                     }
@@ -3707,6 +3712,25 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                     return;
                 }
 
+                // inspect.Parameter / Signature / _ParameterKind instances are
+                // immutable (CPython uses __slots__): attribute assignment
+                // raises AttributeError. Native construction writes the field
+                // map directly and is unaffected.
+                if matches!(
+                    class_name.as_str(),
+                    "inspect.Parameter" | "inspect.Signature" | "inspect._ParameterKind"
+                ) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{}' object has no attribute '{}'",
+                            class_name.rsplit('.').next().unwrap_or(class_name),
+                            attr_name
+                        ))),
+                    );
+                    return;
+                }
+
                 // Descriptor protocol: data descriptor __set__ takes priority over instance __dict__.
                 // lookup_method uses METHOD_CACHE, so this is cheap after the first call for
                 // each (class, attr) pair — just a hash + HashMap lookup.
@@ -4160,6 +4184,96 @@ pub(crate) fn class_attr_lookup(class_name: &str, attr: &str) -> Option<MbValue>
     mro_lookup_class_attr(class_name, attr)
 }
 
+/// Own member tables of a registered class for introspection
+/// (inspect.classify_class_attrs / getattr_static): `(name, value,
+/// from_method_table)` sorted by name. Does NOT walk the MRO.
+pub(crate) fn class_own_members(class_name: &str) -> Vec<(String, MbValue, bool)> {
+    CLASS_REGISTRY.with(|reg| {
+        let reg = reg.borrow();
+        let Some(cls) = reg.get(class_name) else { return Vec::new() };
+        let mut out: Vec<(String, MbValue, bool)> = cls
+            .methods
+            .iter()
+            .map(|(k, v)| (k.clone(), *v, true))
+            .collect();
+        out.extend(cls.class_attrs.iter().map(|(k, v)| (k.clone(), *v, false)));
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    })
+}
+
+/// Effective `__slots__` names of a class (own + inherited), empty when the
+/// class declares no slots.
+pub(crate) fn class_slot_names(class_name: &str) -> Vec<String> {
+    SLOTS_REGISTRY.with(|reg| {
+        reg.borrow().get(class_name).cloned().unwrap_or_default()
+    })
+}
+
+/// Synthesize a `member_descriptor` instance for a `__slots__` entry —
+/// CPython's `Slotted.x` class read yields the slot descriptor, not a value.
+pub(crate) fn make_member_descriptor(class_name: &str, attr: &str) -> MbValue {
+    let inst = super::rc::MbObject::new_instance("member_descriptor".to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut g = fields.write().unwrap();
+            g.insert(
+                "__objclass__".to_string(),
+                MbValue::from_ptr(super::rc::MbObject::new_str(class_name.to_string())),
+            );
+            g.insert(
+                "__name__".to_string(),
+                MbValue::from_ptr(super::rc::MbObject::new_str(attr.to_string())),
+            );
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// Find which registered class's OWN method table holds `func`, returning
+/// (class_name, method_name). Used by inspect.getdoc to inherit method
+/// docstrings through the MRO.
+pub(crate) fn find_method_owner(func: MbValue) -> Option<(String, String)> {
+    let addr = extract_func_addr(func);
+    if addr == 0 {
+        return None;
+    }
+    CLASS_REGISTRY.with(|reg| {
+        for (cname, cls) in reg.borrow().iter() {
+            for (mname, mval) in &cls.methods {
+                let (unwrapped, _dk) = unwrap_descriptor_method(*mval);
+                if extract_func_addr(unwrapped) == addr || extract_func_addr(*mval) == addr {
+                    return Some((cname.clone(), mname.clone()));
+                }
+            }
+        }
+        None
+    })
+}
+
+// ── Class docstrings (inspect.getdoc) ──
+
+thread_local! {
+    static CLASS_DOCS: std::cell::RefCell<std::collections::HashMap<String, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Register a class-body docstring (emitted at module init by lowering).
+pub fn mb_class_set_doc(class_name: MbValue, doc: MbValue) {
+    if let (Some(name), Some(d)) = (extract_str(class_name), extract_str(doc)) {
+        CLASS_DOCS.with(|m| m.borrow_mut().insert(name, d));
+    }
+}
+
+/// The registered docstring of a class, or None.
+pub(crate) fn class_doc(class_name: &str) -> Option<String> {
+    CLASS_DOCS.with(|m| m.borrow().get(class_name).cloned())
+}
+
+pub(crate) fn cleanup_class_docs() {
+    let _ = CLASS_DOCS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+}
+
 fn mro_lookup_class_attr(class_name: &str, attr: &str) -> Option<MbValue> {
     CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
@@ -4501,6 +4615,11 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
                             || super::exception::is_subclass_of(class_name, &target)
                             || collections_abc_type_or_virtual_match(class_name, &target)
                             || collections_builtin_subclass(class_name, &target)
+                            // Descriptor wrapper instances answer to their
+                            // public builtin type names.
+                            || (target == "property" && class_name == "__property__")
+                            || (target == "staticmethod" && class_name == "__staticmethod__")
+                            || (target == "classmethod" && class_name == "__classmethod__")
                     }
                 });
                 if nominal {
@@ -9330,6 +9449,7 @@ pub(crate) fn cleanup_all_classes() {
     let _ = KWARGS_REGISTRY.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = LAST_RAISED_INSTANCE.with(|c| c.try_borrow_mut().map(|mut m| *m = None));
     let _ = ABSTRACT_METHODS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    cleanup_class_docs();
     let _ = METHOD_CACHE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = SIMPLE_CLASS_CACHE.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = ABC_VIRTUAL_SUBCLASSES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));

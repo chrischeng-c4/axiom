@@ -234,6 +234,12 @@ pub struct Param {
     pub ty: Spanned<TypeExpr>,
     pub default: Option<Spanned<Expr>>,
     pub kind: ParamKind,
+    /// Declared before a `/` separator (PEP 570 positional-only).
+    /// Introspection metadata only — call binding is unaffected.
+    pub pos_only: bool,
+    /// Declared after a bare `*` separator or `*args` (keyword-only).
+    /// Introspection metadata only — call binding is unaffected.
+    pub kw_only: bool,
     pub span: Span,
 }
 

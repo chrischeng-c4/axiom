@@ -516,6 +516,10 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn parse_params(&mut self) -> crate::error::Result<Vec<Param>> {
         let mut params = Vec::new();
+        // PEP 570/3102 introspection markers: after a bare `*` or `*args`,
+        // every regular param is keyword-only; a `/` retroactively marks all
+        // params parsed so far as positional-only.
+        let mut seen_star = false;
         while self.peek_kind() != Some(TokenKind::RParen)
             && self.peek_kind() != Some(TokenKind::Eof)
         {
@@ -531,6 +535,8 @@ impl<'a> Parser<'a> {
                     ),
                     default: None,
                     kind: ParamKind::Regular,
+                    pos_only: false,
+                    kw_only: false,
                     span: self.span_from(p_start),
                 });
             } else if self.peek_kind() == Some(TokenKind::DoubleStar) {
@@ -546,11 +552,19 @@ impl<'a> Parser<'a> {
                 };
                 params.push(Param {
                     name, ty, default: None,
-                    kind: ParamKind::DoubleStar, span: self.span_from(p_start),
+                    kind: ParamKind::DoubleStar,
+                    pos_only: false, kw_only: false,
+                    span: self.span_from(p_start),
                 });
             } else if self.peek_kind() == Some(TokenKind::Slash) {
-                // `/` positional-only separator — skip
+                // `/` positional-only separator — everything before it is
+                // positional-only (introspection metadata; binding unchanged).
                 self.advance();
+                for p in params.iter_mut() {
+                    if p.kind == ParamKind::Regular {
+                        p.pos_only = true;
+                    }
+                }
             } else if self.peek_kind() == Some(TokenKind::Star) {
                 // bare `*` (keyword-only separator) vs `*args`
                 self.advance();
@@ -558,6 +572,7 @@ impl<'a> Parser<'a> {
                     // bare `*` — keyword-only separator, no param.
                     // Consume the trailing comma so the loop can continue to
                     // the keyword-only parameters that follow.
+                    seen_star = true;
                     if self.peek_kind() == Some(TokenKind::Comma) {
                         self.advance();
                     }
@@ -571,9 +586,12 @@ impl<'a> Parser<'a> {
                 } else {
                     Spanned::new(TypeExpr::Named("Any".to_string()), self.span_from(p_start))
                 };
+                seen_star = true;
                 params.push(Param {
                     name, ty, default: None,
-                    kind: ParamKind::Star, span: self.span_from(p_start),
+                    kind: ParamKind::Star,
+                    pos_only: false, kw_only: false,
+                    span: self.span_from(p_start),
                 });
             } else if self.peek_kind().as_ref().map_or(false, Self::is_name_token) {
                 let (ns, ne) = self.expect_name()?;
@@ -592,7 +610,9 @@ impl<'a> Parser<'a> {
                 };
                 params.push(Param {
                     name, ty, default,
-                    kind: ParamKind::Regular, span: self.span_from(p_start),
+                    kind: ParamKind::Regular,
+                    pos_only: false, kw_only: seen_star,
+                    span: self.span_from(p_start),
                 });
             } else {
                 break;

@@ -425,6 +425,12 @@ impl TypeChecker {
                         // CPython does not evaluate these strings, so treat as
                         // Any rather than emitting an error.
                         self.tcx.any()
+                    } else if name.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+                        // Numeric-literal annotation (`-> 42`, PEP 3107
+                        // arbitrary expression preserved textually by the
+                        // parser for introspection): annotations are never
+                        // validated as types in CPython — treat as Any.
+                        self.tcx.any()
                     } else {
                         self.error(ty.span, format!("unknown type: `{name}`"));
                         self.tcx.error()

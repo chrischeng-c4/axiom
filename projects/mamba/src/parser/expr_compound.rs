@@ -93,6 +93,7 @@ impl<'a> Parser<'a> {
                 params.push(Param {
                     name, ty, default,
                     kind,
+                    pos_only: false, kw_only: false,
                     span: self.span_from(p_start),
                 });
 

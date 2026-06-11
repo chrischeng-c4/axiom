@@ -1076,6 +1076,74 @@ fn collect_ast_bindings_inner(pat: &ast::Pattern, names: &mut std::collections::
 /// module `__annotations__` dict (e.g. "int", "list[int]", "int | str"). Only
 /// the key presence is load-bearing for current fixtures; the repr is a stable
 /// human-readable value.
+/// Build introspection signature metadata (the runtime FUNC_PARAMS payload)
+/// from the AST parameter list of a `def`. Kinds follow CPython's
+/// `inspect.Parameter` ordinals; defaults are captured only when they are
+/// simple literals (everything else records "has a default" with a None
+/// placeholder). `self` receivers are skipped — CPython bound-method
+/// signatures exclude them.
+fn func_sig_meta(
+    params: &[ast::Param],
+    return_ty: &Option<Spanned<ast::TypeExpr>>,
+) -> crate::hir::HirFuncSig {
+    use crate::hir::{HirFuncSig, HirParamSig, HirSigDefault};
+    let mut out = Vec::new();
+    for p in params {
+        if p.name == "self" {
+            continue;
+        }
+        let kind = match p.kind {
+            ast::ParamKind::Star => 2u8,
+            ast::ParamKind::DoubleStar => 4u8,
+            ast::ParamKind::Regular if p.kw_only => 3u8,
+            ast::ParamKind::Regular if p.pos_only => 0u8,
+            ast::ParamKind::Regular => 1u8,
+        };
+        let (default, default_opaque) = match &p.default {
+            Option::None => (Option::None, false),
+            Some(expr) => match &expr.node {
+                ast::Expr::IntLit(v) => (Some(HirSigDefault::Int(*v)), false),
+                ast::Expr::FloatLit(v) => (Some(HirSigDefault::Float(*v)), false),
+                ast::Expr::StrLit(s) => (Some(HirSigDefault::Str(s.clone())), false),
+                ast::Expr::BoolLit(b) => (Some(HirSigDefault::Bool(*b)), false),
+                ast::Expr::NoneLit => (Some(HirSigDefault::None), false),
+                ast::Expr::UnaryOp { op: ast::UnaryOp::Neg, operand } => {
+                    match &operand.node {
+                        ast::Expr::IntLit(v) => {
+                            (Some(HirSigDefault::Int(v.wrapping_neg())), false)
+                        }
+                        ast::Expr::FloatLit(v) => {
+                            (Some(HirSigDefault::Float(-*v)), false)
+                        }
+                        _ => (Option::None, true),
+                    }
+                }
+                _ => (Option::None, true),
+            },
+        };
+        out.push(HirParamSig {
+            name: p.name.clone(),
+            kind,
+            default,
+            default_opaque,
+            annotation: annotation_repr_opt(&p.ty.node),
+        });
+    }
+    HirFuncSig {
+        params: out,
+        return_annotation: return_ty
+            .as_ref()
+            .and_then(|t| annotation_repr_opt(&t.node)),
+    }
+}
+
+/// Textual annotation for introspection, or None for the parser's implicit
+/// `Any` filler (an un-annotated param/return parses as `Named("Any")`).
+fn annotation_repr_opt(ty: &ast::TypeExpr) -> Option<String> {
+    let repr = type_expr_repr(ty);
+    if repr == "Any" { None } else { Some(repr) }
+}
+
 fn type_expr_repr(ty: &ast::TypeExpr) -> String {
     match ty {
         ast::TypeExpr::Named(n) => n.clone(),
@@ -1293,6 +1361,7 @@ impl<'a> AstLowerer<'a> {
                 sym_names: std::collections::HashMap::new(),
                 sym_types: std::collections::HashMap::new(),
                 module_annotations: Vec::new(),
+                func_sigs: std::collections::HashMap::new(),
             },
             errors: Vec::new(),
             local_assigned_names: Vec::new(),
@@ -1565,6 +1634,11 @@ impl<'a> AstLowerer<'a> {
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
+                        // Introspection: record the declared signature shape so
+                        // module init can prime the runtime FUNC_PARAMS registry
+                        // (inspect.signature / getfullargspec).
+                        self.result.func_sigs
+                            .insert(func.name.0, func_sig_meta(params, return_ty));
                         func.is_generator = contains_yield(body);
                         func.decorators = decorators.iter()
                             .filter_map(|d| self.lower_expr(d)).collect();
@@ -1607,6 +1681,9 @@ impl<'a> AstLowerer<'a> {
                     };
                     self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
+                        // Introspection: same FUNC_PARAMS priming as sync defs.
+                        self.result.func_sigs
+                            .insert(func.name.0, func_sig_meta(params, return_ty));
                         let has_yield = contains_yield(body);
                         // `async def f(): yield` is an async generator — CPython
                         // returns an async-generator object, not a coroutine.
@@ -2314,7 +2391,15 @@ impl<'a> AstLowerer<'a> {
             }
         });
 
-        Some(HirClass { name: name_id, base: None, all_bases: Vec::new(), fields, methods, span, decorators: Vec::new(), explicit_match_args: resolved_match_args, metaclass: None, class_attr_assigns, slots, class_kwargs: Vec::new(), dataclass_fields })
+        // Class-body docstring: first bare string statement (inspect.getdoc).
+        let class_doc = body.first().and_then(|s| {
+            if let ast::Stmt::ExprStmt(e) = &s.node {
+                if let ast::Expr::StrLit(d) = &e.node { Some(d.clone()) } else { None }
+            } else {
+                None
+            }
+        });
+        Some(HirClass { name: name_id, base: None, all_bases: Vec::new(), fields, methods, span, decorators: Vec::new(), explicit_match_args: resolved_match_args, metaclass: None, class_attr_assigns, slots, class_kwargs: Vec::new(), dataclass_fields, doc: class_doc })
     }
 
     fn lower_stmt(&mut self, stmt: &Spanned<ast::Stmt>) -> Option<HirStmt> {
@@ -4731,6 +4816,8 @@ mod tests {
             ty: sp(TypeExpr::Named("Any".to_string())),
             default: None,
             kind: ParamKind::Regular,
+            pos_only: false,
+            kw_only: false,
             span: Span::dummy(),
         }
     }
