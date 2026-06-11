@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-wal-nats-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! NATS JetStream backend for [`WalLog`].
 //!
 //! JetStream gives us the clustered log for free — durable, ordered,
@@ -236,3 +237,5 @@ mod tests {
         assert!(NatsWalConfig::new("lumen_wal", "").is_err());
     }
 }
+
+// </HANDWRITE>
