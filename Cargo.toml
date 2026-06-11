@@ -7,6 +7,8 @@ members = [
     "projects/meter/meter-cli",
     "projects/rig",
     "projects/rig/rig-cli",
+    "projects/arena",
+    "projects/arena/arena-cli",
     "crates/cclab-core",
     "crates/cclab-kv",
     "projects/mamba/mambalibs/queuekit",

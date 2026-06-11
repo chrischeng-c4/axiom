@@ -113,3 +113,5 @@ projects/mamba/tests/cpython/.cache/
 mutants.out
 mutants.out.old
 .rig/
+# arena per-run report cache + baseline store written under the cwd
+.arena/
