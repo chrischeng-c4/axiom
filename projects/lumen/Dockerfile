@@ -1,4 +1,5 @@
-# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-dockerfile" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-runtime-image.md#runtime-image
+# CODEGEN-BEGIN
 # syntax=docker/dockerfile:1
 # From-source build for dev / CI. For production prefer `Dockerfile.release`,
 # which downloads a published binary (far faster, no Rust toolchain, no big build
@@ -38,5 +39,4 @@ COPY --from=builder /usr/local/bin/lumen-operator /usr/local/bin/lumen-operator
 EXPOSE 7373
 ENTRYPOINT ["/usr/local/bin/lumen"]
 CMD ["serve"]
-
-# </HANDWRITE>
+# CODEGEN-END
