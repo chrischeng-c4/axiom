@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-benches
 summary: Semantic coverage for "projects/lumen/benches"
+capability_refs:
+  - id: "ops-operability"
+    role: primary
+    claim: "stateless-serving-rebuild-from-log-no-pvc"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen/benches`."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -18,7 +24,7 @@ semantic_domain:
     source_units:
       - path: "projects/lumen/benches/bench_duplicates.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "N"
@@ -50,7 +56,7 @@ semantic_domain:
           domain: "projects/lumen/benches"
       - path: "projects/lumen/benches/bench_search.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "N"
@@ -88,7 +94,7 @@ semantic_domain:
           domain: "projects/lumen/benches"
       - path: "projects/lumen/benches/bench_index.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "N"
@@ -162,22 +168,20 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-benches-bench-duplicates-rs>"
   - path: "projects/lumen/benches/bench_search.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-benches-bench-search-rs>"
   - path: "projects/lumen/benches/bench_index.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-benches-bench-index-rs>"
+  - action: annotate
+    section: unit-test
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the unit-test section."
 ```
