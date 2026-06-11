@@ -304,3 +304,13 @@ requirementDiagram
 - [config] unchanged and correct: single `level` knob plus optional `[gate]` with only per-project ceilings; explicit prohibition on latency-percentile keys.
 - [cli] unchanged and correct: precedence, until-exit window, --drive opacity, hooks/deep not-yet-implemented error, and the no-load-flags constraint are all encoded.
 - [unit-test] unchanged and correct: R1-R6 map one verification element per acceptance criterion including the R6 residue-prune inspection.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] contract-complete: level resolution, off short-circuit, sampler attach condition, drive-vs-child window, post-window sampler_on branch, vitals emission, gate adjudication with escalation prompt, and worst-wins fold are all encoded as nodes/edges; implementable without guessing.
+- [config] contract-complete: JSON Schema pins the level enum (quoted "off"), gate ceilings with 0-disables semantics, additionalProperties: false guards against traffic-key creep, and the description encodes the永不加 latency-percentile constraint.
+- [cli] contract-complete: both verbs' usage strings and behavior lines pin precedence, window semantics, --drive opacity, hooks/deep not-yet-implemented error, and the absence of load-generation flags.
+- [unit-test] contract-complete: R1-R6 each verified by a named element; risk and verify method declared; matches WI #3 acceptance criteria one-to-one.
