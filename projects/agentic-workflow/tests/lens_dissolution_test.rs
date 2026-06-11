@@ -4,7 +4,7 @@
 //! Lens dissolution restructure verification tests
 //!
 //! The lens module was dissolved from sdd into cclab-compass (#1164).
-//! R1/R2/R3 filesystem path tests removed — modules now live in projects/compass/src/.
+//! R1/R2/R3 filesystem path tests removed — modules now live in libs/compass/src/.
 //! sdd re-exports them via `pub use cclab_compass::*` so NF1 tests still verify
 //! that the public API surface is preserved.
 //!

@@ -5,7 +5,6 @@
 //! Provides async mutation-based fuzzing capabilities with support for:
 //! - Async target functions
 //! - Concurrent fuzzing with tokio::spawn
-//! - HTTP endpoint fuzzing with reqwest
 //! - Timeout handling with tokio::time::timeout
 
 use super::fuzzer::{FuzzCrash, FuzzResult, MutationStrategy};
@@ -258,57 +257,6 @@ impl AsyncFuzzer {
             duration_ms: start.elapsed().as_millis() as u64,
         }
     }
-
-    /// Fuzz an HTTP endpoint with mutated payloads
-    ///
-    /// # Arguments
-    /// * `url` - The endpoint URL to fuzz
-    /// * `method` - HTTP method (GET, POST, etc.)
-    ///
-    /// # Example
-    /// ```no_run
-    /// use meter::{AsyncFuzzer, AsyncFuzzConfig};
-    ///
-    /// # async fn example() {
-    /// let config = AsyncFuzzConfig::new().with_iterations(50);
-    /// let mut fuzzer = AsyncFuzzer::new(config);
-    /// let result = fuzzer.fuzz_http_endpoint("http://localhost:8080/api/test", "POST").await;
-    /// println!("Found {} crashes", result.crashes.len());
-    /// # }
-    /// ```
-    pub async fn fuzz_http_endpoint(&mut self, url: &str, method: &str) -> FuzzResult {
-        let client = reqwest::Client::new();
-        let url_owned = url.to_string();
-        let method_owned = method.to_uppercase();
-
-        self.fuzz_async(move |input| {
-            let client = client.clone();
-            let url = url_owned.clone();
-            let method = method_owned.clone();
-
-            async move {
-                let request = match method.as_str() {
-                    "GET" => client.get(&url).query(&[("input", input)]),
-                    "POST" => client.post(&url).body(input),
-                    "PUT" => client.put(&url).body(input),
-                    "DELETE" => client.delete(&url).query(&[("input", input)]),
-                    _ => return Err(format!("Unsupported method: {}", method)),
-                };
-
-                match request.send().await {
-                    Ok(resp) if resp.status().is_success() => Ok(()),
-                    Ok(resp) => Err(format!(
-                        "HTTP {}: {}",
-                        resp.status(),
-                        resp.text().await.unwrap_or_default()
-                    )),
-                    Err(e) => Err(format!("Request failed: {}", e)),
-                }
-            }
-        })
-        .await
-    }
-
     // Helper methods (reuse mutation logic from sync fuzzer)
 
     fn mutate(&mut self, input: &str, strategy: MutationStrategy) -> String {

@@ -26,7 +26,9 @@ No public AST symbols.
 
 <!-- source-snapshot: path=projects/meter/examples/latency_percentiles_demo.rs -->
 ````rust
-use meter::baseline::{FileBaselineStore, PercentileType, RegressionDetector, RegressionThresholds};
+use meter::baseline::{
+    FileBaselineStore, PercentileType, RegressionDetector, RegressionThresholds,
+};
 use meter::benchmark::{AdaptiveBenchmarkConfig, BenchmarkEnvironment, Benchmarker};
 use std::thread;
 use std::time::Duration;

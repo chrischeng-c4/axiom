@@ -220,7 +220,10 @@ fn hotspot_finding(h: &Hotspot, fail_hot: Option<f64>) -> Finding {
              or move it off the hot path, then re-run `meter profile` to confirm.",
             h.symbol
         ),
-        invoke: Invoke::command(format!("meter profile --fail-hot {:.0}", pct_display.max(1.0))),
+        invoke: Invoke::command(format!(
+            "meter profile --fail-hot {:.0}",
+            pct_display.max(1.0)
+        )),
         evidence: serde_json::json!({
             "symbol": h.symbol,
             "self_ns": h.self_ns,

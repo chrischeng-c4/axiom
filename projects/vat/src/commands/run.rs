@@ -8,7 +8,7 @@
 //! services, wait for readiness, execute the runner, capture evidence, and
 //! clean up services.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -388,7 +388,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
         "state": if kept { "kept" } else { "removed" },
         "inspect": if kept {
             serde_json::json!({
-                "state": format!("vat state {} --json", state.id),
+                "state": format!("vat state {}", state.id),
                 "logs": format!("vat logs {} runner", state.id),
                 "diff": format!("vat diff {} --json", state.id),
             })
@@ -430,8 +430,7 @@ fn run_configured(
     }
     let mut service_plans = Vec::new();
     let mut run_env = vat.meta.spec.env.clone();
-    for service_id in service_ids {
-        let service = cfg.service(service_id)?;
+    for service in ordered_required_services(cfg, &service_ids)? {
         let plan = prepare_service(vat, cfg, service)?;
         for (key, value) in &plan.env {
             run_env.insert(key.clone(), value.clone());
@@ -448,14 +447,22 @@ fn run_configured(
 
     let mut services = Vec::new();
     for plan in &service_plans {
-        services.push(start_service(vat, plan, &cwd, logs_dir, &run_env)?);
-    }
-
-    let readiness = wait_for_services(vat, &mut services);
-    if let Err(err) = readiness {
-        stop_services(&mut services);
+        let handle = match start_service(vat, plan, &cwd, logs_dir, &run_env) {
+            Ok(handle) => handle,
+            Err(err) => {
+                stop_services(&mut services);
+                persist_services(vat, &services)?;
+                return Err(err);
+            }
+        };
+        services.push(handle);
+        let last = services.len() - 1;
+        if let Err(err) = wait_for_services(vat, &mut services[last..]) {
+            stop_services(&mut services);
+            persist_services(vat, &services)?;
+            return Err(err);
+        }
         persist_services(vat, &services)?;
-        return Err(err);
     }
     persist_services(vat, &services)?;
 
@@ -511,6 +518,42 @@ fn run_configured(
         .join("; ");
     vat.log(Event::new(EventKind::RunFinished, summary))?;
     Ok(code)
+}
+
+fn ordered_required_services<'a>(
+    cfg: &'a VatConfig,
+    service_ids: &[&str],
+) -> Result<Vec<&'a ServiceConfig>> {
+    let mut ordered = Vec::new();
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    for service_id in service_ids {
+        visit_required_service(cfg, service_id, &mut visiting, &mut visited, &mut ordered)?;
+    }
+    Ok(ordered)
+}
+
+fn visit_required_service<'a>(
+    cfg: &'a VatConfig,
+    service_id: &str,
+    visiting: &mut BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+    ordered: &mut Vec<&'a ServiceConfig>,
+) -> Result<()> {
+    if visited.contains(service_id) {
+        return Ok(());
+    }
+    if !visiting.insert(service_id.to_string()) {
+        bail!("service dependency cycle includes `{service_id}`");
+    }
+    let service = cfg.service(service_id)?;
+    for required in &service.requires {
+        visit_required_service(cfg, required, visiting, visited, ordered)?;
+    }
+    visiting.remove(service_id);
+    visited.insert(service_id.to_string());
+    ordered.push(service);
+    Ok(())
 }
 
 /// One spawned (not yet reaped) runner child plus its bookkeeping.
@@ -1205,7 +1248,7 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
 }
 
 fn stop_services(services: &mut [ServiceHandle]) {
-    for service in services {
+    for service in services.iter_mut().rev() {
         if service.child.try_wait().ok().flatten().is_some() {
             continue;
         }
@@ -1215,6 +1258,127 @@ fn stop_services(services: &mut [ServiceHandle]) {
             || service.record.status == ProcessStatus::Ready
         {
             service.record.status = ProcessStatus::Exited;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_services_stops_in_reverse_start_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let order_path = temp.path().join("stop-order.txt");
+        let mut services = vec![
+            spawn_trapping_service(temp.path(), &order_path, "postgres"),
+            spawn_trapping_service(temp.path(), &order_path, "backend"),
+            spawn_trapping_service(temp.path(), &order_path, "frontend"),
+        ];
+
+        std::thread::sleep(Duration::from_millis(100));
+        stop_services(&mut services);
+
+        let order = std::fs::read_to_string(&order_path).expect("stop order");
+        assert_eq!(
+            order.lines().collect::<Vec<_>>(),
+            vec!["frontend", "backend", "postgres"]
+        );
+        assert!(services
+            .iter()
+            .all(|service| service.record.status == ProcessStatus::Exited));
+    }
+
+    #[test]
+    fn ordered_required_services_expands_dependencies_first() {
+        let cfg = VatConfig {
+            version: 1,
+            name: None,
+            default_runner: None,
+            workspace: crate::config::WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: vec![
+                test_service("frontend", &["backend"]),
+                test_service("backend", &["postgres"]),
+                test_service("postgres", &[]),
+            ],
+            runners: vec![RunnerConfig {
+                id: "e2e".to_string(),
+                requires: vec!["frontend".to_string()],
+                cmd: vec!["true".to_string()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            path: PathBuf::from("vat.toml"),
+            root: PathBuf::from("."),
+            digest: String::new(),
+        };
+
+        let ids: Vec<&str> = cfg.runners[0].requires.iter().map(|s| s.as_str()).collect();
+        let ordered = ordered_required_services(&cfg, &ids).expect("service order");
+
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|service| service.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["postgres", "backend", "frontend"]
+        );
+    }
+
+    fn test_service(id: &str, requires: &[&str]) -> ServiceConfig {
+        ServiceConfig {
+            id: id.to_string(),
+            requires: requires.iter().map(|value| value.to_string()).collect(),
+            cmd: vec!["true".to_string()],
+            preset: None,
+            version: None,
+            port: PortSpec::default(),
+            seed: Vec::new(),
+            export: BTreeMap::new(),
+            ready_http: None,
+            timeout_s: 60,
+        }
+    }
+
+    fn spawn_trapping_service(root: &Path, order_path: &Path, id: &str) -> ServiceHandle {
+        let command = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "trap 'printf \"%s\\n\" \"$VAT_STOP_ID\" >> \"$VAT_STOP_ORDER\"; exit 0' TERM; while :; do sleep 1; done".to_string(),
+        ];
+        let mut env = BTreeMap::new();
+        env.insert("VAT_STOP_ID".to_string(), id.to_string());
+        env.insert(
+            "VAT_STOP_ORDER".to_string(),
+            order_path.to_string_lossy().into_owned(),
+        );
+        let stdout = root.join(format!("{id}.stdout.log"));
+        let stderr = root.join(format!("{id}.stderr.log"));
+        let child =
+            command_with_logs(&command, root, &env, &stdout, &stderr).expect("service child");
+        ServiceHandle {
+            record: ServiceRunRecord {
+                id: id.to_string(),
+                command,
+                status: ProcessStatus::Ready,
+                preset: None,
+                port: None,
+                prepare_mode: Some("direct_start".to_string()),
+                cache_key: None,
+                prepare_duration_ms: Some(0),
+                ready_duration_ms: Some(0),
+                exported_env: Vec::new(),
+                pid: Some(child.id()),
+                exit_code: None,
+                ready_http: None,
+                stdout_log: stdout.to_string_lossy().into_owned(),
+                stderr_log: stderr.to_string_lossy().into_owned(),
+            },
+            child,
+            timeout_s: 1,
+            ready_probe: ReadyProbe::None,
         }
     }
 }

@@ -36,7 +36,14 @@ fn key(scenario_id: &str, metric: &str) -> String {
 impl BaselineStore {
     /// Load from `<dir>/.rig/baselines.json` (absent file = empty store).
     pub fn load(dir: &Path) -> Self {
-        let path = dir.join(".rig").join("baselines.json");
+        Self::load_at(dir.join(".rig").join("baselines.json"))
+    }
+
+    /// Load from an explicit JSON path (absent file = empty store). Lets a
+    /// sibling tool namespace its own store, e.g. `.arena/baselines.json`,
+    /// while reusing the same host-scoped key scheme and ratchet semantics.
+    pub fn load_at(path: impl Into<PathBuf>) -> Self {
+        let path = path.into();
         let mut store = match std::fs::read_to_string(&path) {
             Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
             Err(_) => Self::default(),

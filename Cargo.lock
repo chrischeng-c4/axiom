@@ -392,6 +392,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "arena"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "postgres",
+ "rig",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 0.8.23",
+]
+
+[[package]]
+name = "arena-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arena",
+ "clap",
+ "serde_json",
+]
+
+[[package]]
 name = "arg_enum_proc_macro"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6403,6 +6426,7 @@ dependencies = [
  "axum 0.8.9",
  "blake3",
  "bytecheck",
+ "cclab-compass",
  "chrono",
  "criterion",
  "futures",
@@ -6420,6 +6444,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "toml 0.8.23",
  "tower 0.5.3",
  "tracing",
  "walkdir",
@@ -7771,6 +7796,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "postgres"
+version = "0.19.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aacf632d0554ff75f58183694f41dc8999c8a3a43a386994d0ec2d034f1dfbe1"
+dependencies = [
+ "bytes",
+ "fallible-iterator 0.2.0",
+ "futures-util",
+ "log",
+ "tokio",
+ "tokio-postgres",
+]
+
+[[package]]
 name = "postgres-protocol"
 version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8780,6 +8819,7 @@ name = "rig"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "postgres",
  "serde",
  "serde_json",
  "tempfile",
