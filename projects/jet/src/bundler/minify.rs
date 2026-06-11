@@ -919,6 +919,100 @@ fn is_no_space_before(ch: char) -> bool {
 /// Replace `true` with `!0` and `false` with `!1` (saves bytes).
 /// Only replaces standalone keyword occurrences outside strings.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+/// Strip standalone `'use client'` directive statements. They are React
+/// Server Components build markers with zero runtime effect once bundled
+/// (a bare string-expression statement evaluates to nothing) — MUI ships
+/// one per component file, 145 on the antd/mui bundles. `'use strict'`
+/// is intentionally NOT stripped: it changes scope semantics. Only a
+/// directive in statement position (preceded by `{`, `}`, `;`, or start)
+/// and followed by `;`/`}`/end is removed, so a `'use client'` substring
+/// inside a larger expression or string is never touched.
+pub fn strip_use_client_directives(source: &str) -> String {
+    if !source.contains("use client") {
+        return source.to_string();
+    }
+    let b = source.as_bytes();
+    let len = b.len();
+    let mut out: Vec<u8> = Vec::with_capacity(len);
+    let mut i = 0usize;
+    while i < len {
+        // Skip string/template literals wholesale so we never edit inside them.
+        if matches!(b[i], b'"' | b'\'') {
+            let q = b[i];
+            // Is this the start of a standalone `'use client'` statement?
+            let prev = out
+                .iter()
+                .rev()
+                .find(|c| !matches!(**c, b' ' | b'\t' | b'\r' | b'\n'))
+                .copied()
+                .unwrap_or(b'{');
+            let body_ok = i + 12 < len
+                && &b[i + 1..i + 11] == b"use client"
+                && b[i + 11] == q;
+            if body_ok && matches!(prev, b'{' | b'}' | b';') {
+                // Consume the literal + an optional trailing `;`.
+                let mut j = i + 12;
+                while j < len && matches!(b[j], b' ' | b'\t' | b'\r' | b'\n') {
+                    j += 1;
+                }
+                if j < len && b[j] == b';' {
+                    j += 1;
+                }
+                i = j;
+                continue;
+            }
+            // Otherwise copy the whole string literal verbatim.
+            out.push(q);
+            i += 1;
+            while i < len {
+                if b[i] == b'\\' {
+                    out.push(b[i]);
+                    i += 1;
+                    if i < len {
+                        out.push(b[i]);
+                        i += 1;
+                    }
+                    continue;
+                }
+                let c = b[i];
+                out.push(c);
+                i += 1;
+                if c == q {
+                    break;
+                }
+            }
+            continue;
+        }
+        if b[i] == b'`' {
+            i = push_template_literal_bytes(b, i, &mut out);
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+#[cfg(test)]
+mod use_client_tests {
+    use super::strip_use_client_directives as strip;
+
+    #[test]
+    fn removes_standalone_use_client() {
+        assert_eq!(strip("{'use client';var a=1;}"), "{var a=1;}");
+        assert_eq!(strip("{var a=1;\"use client\";f();}"), "{var a=1;f();}");
+        assert_eq!(strip("'use client';x()"), "x()");
+    }
+
+    #[test]
+    fn preserves_use_strict_and_non_directive_strings() {
+        assert_eq!(strip("{'use strict';a()}"), "{'use strict';a()}");
+        // 'use client' as a value, not a statement, is untouched.
+        assert_eq!(strip("var x='use client';"), "var x='use client';");
+        assert_eq!(strip("f('use client')"), "f('use client')");
+    }
+}
+
 pub fn replace_bool_literals(source: &str) -> String {
     let b = source.as_bytes();
     let len = b.len();

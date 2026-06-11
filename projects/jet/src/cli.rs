@@ -1990,6 +1990,8 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 dump_stage("1-minify-js", &code);
                 code = crate::bundler::minify::replace_bool_literals(&code);
                 lap("bool_literals");
+                code = crate::bundler::minify::strip_use_client_directives(&code);
+                lap("strip_directives");
                 dump_stage("2-bool-literals", &code);
                 // Optimistic guard scheme: run mangle → fold → semicolon
                 // compaction unguarded, then parse ONCE. Parsing the full
