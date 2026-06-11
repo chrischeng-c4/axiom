@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-benches-bench-search-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Search-latency benches on a 100k-document corpus.
 //!
 //! Three scenarios from the README §9 perf-regression suite:
@@ -281,3 +282,5 @@ fn bench_search(c: &mut Criterion) {
 
 criterion_group!(benches, bench_search);
 criterion_main!(benches);
+
+// </HANDWRITE>
