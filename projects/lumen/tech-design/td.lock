@@ -1,8 +1,8 @@
 version = 1
 project = "lumen"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-06-11T16:14:17.955444+00:00"
-digest = "sha256:b9a670cbd724863676de00ade4dcb87634c2605e1bc1ab1fe47735f26cc42a0a"
+generated_at = "2026-06-11T16:41:26.453914+00:00"
+digest = "sha256:c18b725293df9d05955905381ebf7459189e4c8c75ac1bb16be9067f2be8800d"
 
 [[files]]
 path = "logic/external-contracts.md"
@@ -10,67 +10,67 @@ digest = "sha256:0b764f3dd57b14f8313b7357c51066b3cbdaa8691b31733ee6e734ef9282d94
 
 [[files]]
 path = "semantic/lumen-benches.md"
-digest = "sha256:b2f174e39a36015aac9d3a0069ec5b32229a2e919d4ffb3e4de81954c38a3b0f"
+digest = "sha256:22f832e0143f372030b6fe3ed2f595df33ece81145927791ce81cffcc8bba611"
 
 [[files]]
 path = "semantic/lumen-bin.md"
-digest = "sha256:e68b3cdee2b225675ea182231b8ae3ddef5cfa2ac132fe134515da5d076d54ed"
+digest = "sha256:354a47126dcce0cd2e189c183bf7042e403d62189f9964864303eeff68b4da31"
 
 [[files]]
 path = "semantic/lumen-examples.md"
-digest = "sha256:1b92e5d991d69d0aab269822ff9cf32256b53c54e0c9ffb1630f8e02b17585dc"
+digest = "sha256:30c1164b9a30035c114e85068a62e83e3f36129f907de131082b5468ff701934"
 
 [[files]]
 path = "semantic/lumen-k8s-base.md"
-digest = "sha256:df9c3400d7f6586204b8a86fe44f4528189e838f70206c47da1336b39ed0ef29"
+digest = "sha256:2a5ede34594088ebbccfe7bb8e71d501d24b2c9d044a4aa7d5b8d031e003abc1"
 
 [[files]]
 path = "semantic/lumen-k8s-components-observability.md"
-digest = "sha256:8d43677453dd237437f92e986cd79da30e94d95e86753a64b226117bdaebe767"
+digest = "sha256:14db832148e9e8b1b55e18f773986d4aea36dd605f12f96fa20dbc9c37d8eda3"
 
 [[files]]
 path = "semantic/lumen-k8s-operator.md"
-digest = "sha256:862731aa394d1c5bec0f6364400a3eceb272e3b628f58a052d52f827697debd3"
+digest = "sha256:4cfb319ef1addfdd9db610ed6aa005d81d5df2a74a1b1bedb1708a836c4329a0"
 
 [[files]]
 path = "semantic/lumen-k8s-optional-consumer.md"
-digest = "sha256:cb1d53d2b1cb6ec0e8e0681a345e909a87a57d30c8d32462f4a2fb8a76c4ae97"
+digest = "sha256:e7b9d4978b72c8306cb708d810f22b8b6774e9118c16293a43b0afbd70f88fa1"
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-dev.md"
-digest = "sha256:fc9a836e0bbbd126e2522ecc37470d84a5c23e210fd37f6de9ec2ab1850278c8"
+digest = "sha256:7eadbb1497bce0453546e98126b2a66830233a97c81b3bbc8506dc5233e38993"
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-prod.md"
-digest = "sha256:5450c17ccaa92ff32095c0b883b5ae02a4172ae61f6e9536a58cd16e6f3ec41c"
+digest = "sha256:ddb792c3b3b7f92c865ad50b99381f7e680f91eff371342ca8e3d16da69e6957"
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-staging.md"
-digest = "sha256:eddf2a0688dd0140aaf88fed6216c7c2549422141489bcc738a430b634ec44e5"
+digest = "sha256:8bbbea4f875b901e0f6923f5bf3ef99ff130a3ce9b10a9b1e2567d099fa17e57"
 
 [[files]]
 path = "semantic/lumen-k8s-overlays-template.md"
-digest = "sha256:4f8a948ca4dbd0d1980a1fdeb546ab56a1fc43994fda93f96f584f076fe9665d"
+digest = "sha256:631a47d21c98ae327572cc509ce319fffbc1574d4f7457bc707db05667955076"
 
 [[files]]
 path = "semantic/lumen-operator.md"
-digest = "sha256:1b13f3f8dcc3f008f4d803033415bb8848e78689f54acdc5253745cc66ae1f3f"
+digest = "sha256:1b1d765bb701d6c7445f535ad27d029279dbf0c5ade03bfc8e96e27a400114f2"
 
 [[files]]
 path = "semantic/lumen-projects-lumen.md"
-digest = "sha256:68ad001dd7012733ed27a93a122a8095d1fe6e96977231feae671b52a36d8dc4"
+digest = "sha256:9754d126d1ad168271917b740d61cb6c9ee8df92ed4c6ad6c2e1bc39b8766268"
 
 [[files]]
 path = "semantic/lumen-runtime-image.md"
-digest = "sha256:8d82e014c0d4ab210c79a72558898dcaf525a73609971acc412a9b91a050c51b"
+digest = "sha256:b931b584fc135fd3d4829afe61ab19cde14f4a05c15e74dea604a97711f796e2"
 
 [[files]]
 path = "semantic/lumen-scripts.md"
-digest = "sha256:812c3ae8aba3d2d5bc888326c4df5e5d904a6e495c5f69c6bda454f900ada474"
+digest = "sha256:7a014458bef4fdbc78672e6b8c14b6c8991cfcb4c90f968383eec9b294db6d46"
 
 [[files]]
 path = "semantic/lumen-src.md"
-digest = "sha256:ad6bea3c19f20a1e2455336b369863fc34830c1ca30a0e1227712e45dec4e6d5"
+digest = "sha256:70a0d8ab332a801569da1956ecf083fc8596d87f9630c40d496c02c1400ae6ea"
 
 [[files]]
 path = "semantic/lumen-tests.md"

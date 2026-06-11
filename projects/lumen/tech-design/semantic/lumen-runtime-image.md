@@ -90,5 +90,5 @@ changes:
     section: runtime-image
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
 ```
