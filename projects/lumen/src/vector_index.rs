@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-vector-index-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Vector index backends for `FieldType::Vector`.
 //!
 //! Two CPU backends ship in this version:
@@ -1582,3 +1583,5 @@ mod tests {
     }
 
 }
+
+// </HANDWRITE>
