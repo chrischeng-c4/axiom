@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-perf-gate-vs-db-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Competitive perf-regression GATE — native Rust, no Python/GIL.
 //!
 //! The standing commitment (README `ops-speed`): **lumen beats Postgres and
@@ -3449,3 +3450,5 @@ async fn lumen_scale_bench() {
     );
     println!("########################################################################");
 }
+
+// </HANDWRITE>
