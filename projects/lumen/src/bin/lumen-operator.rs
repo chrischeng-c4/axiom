@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-bin-lumen-operator-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! `lumen-operator` — the lumen K8s Operator entrypoint.
 //!
 //! - `lumen-operator` (or `run`): start the `Lumen` CRD reconcile loop. Expects
@@ -43,3 +44,5 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 }
+
+// </HANDWRITE>
