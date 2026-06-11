@@ -192,12 +192,20 @@ pub fn analyze_used_exports_from(
     //                                          mark `y`'s `x` used. Only a
     //                                          wildcard/namespace consumer
     //                                          expands the whole leaf.
+    // Re-export bindings are pure in (path, source) — extract once, not
+    // once per fixed-point round. Re-extracting every module's bindings
+    // each round made this phase O(rounds × modules × source) and
+    // dominated tree shaking on barrel-heavy corpora like MUI.
+    let reexport_bindings: Vec<(&PathBuf, Vec<(PathBuf, ReexportKind)>)> = modules
+        .iter()
+        .map(|(path, source)| (path, extract_reexport_bindings(path, source, &lookup)))
+        .collect();
     loop {
         let mut changed = false;
-        for (path, source) in modules {
-            let reexports = extract_reexport_bindings(path, source, &lookup);
-            let barrel_used: HashSet<String> = used.get(path).cloned().unwrap_or_default();
-            for (target_path, kind) in reexports {
+        for (path, reexports) in &reexport_bindings {
+            let path: &PathBuf = path;
+            let barrel_used: HashSet<String> = used.get(path.as_path()).cloned().unwrap_or_default();
+            for (target_path, kind) in reexports.iter().cloned() {
                 match kind {
                     ReexportKind::Star => {
                         if let Some(leaf_exports) = all_exports.get(&target_path) {

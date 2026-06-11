@@ -1944,9 +1944,33 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             )
             .context("Failed to process CSS side-effect imports")?;
 
+            // JET_BUNDLE_TIMING=1 extends the bundler's per-phase laps into
+            // the post-process/minify tail so the whole wall-clock is
+            // attributable from one run.
+            let timing = std::env::var_os("JET_BUNDLE_TIMING").is_some();
+            let mut last_lap = std::time::Instant::now();
+            let mut lap = move |label: &str| {
+                if timing {
+                    eprintln!("[bundle-timing] post/{label}: {:?}", last_lap.elapsed());
+                    last_lap = std::time::Instant::now();
+                }
+            };
+
             // Post-process: define replacement + syntax-aware static branch DCE.
-            let mut code = crate::bundler::define::replace_defines(&result.code, &defines);
-            code = crate::bundler::dce::eliminate_static_conditionals_syntax(&code);
+            // The transform step already ran both per module (parallel, small
+            // parses), so at bundle level replacement is a no-op unless a
+            // define pattern only materialized across module glue. Gate the
+            // DCE fixpoint (up to 8 full tree-sitter parses of the assembled
+            // bundle — ~2s on the mui corpus) on the replacement actually
+            // changing something.
+            let replaced = crate::bundler::define::replace_defines(&result.code, &defines);
+            lap("replace_defines");
+            let mut code = if replaced == result.code {
+                replaced
+            } else {
+                crate::bundler::dce::eliminate_static_conditionals_syntax(&replaced)
+            };
+            lap("static_conditionals_dce");
 
             // Post-process: minify
             if minify {
@@ -1962,33 +1986,74 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 };
                 dump_stage("0-bundle", &code);
                 code = crate::bundler::minify::minify_js(&code, &drops);
+                lap("minify_js");
                 dump_stage("1-minify-js", &code);
                 code = crate::bundler::minify::replace_bool_literals(&code);
+                lap("bool_literals");
                 dump_stage("2-bool-literals", &code);
-                let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
-                if crate::bundler::dce::js_parses_without_errors(&mangled) {
-                    code = mangled;
+                // Optimistic guard scheme: run mangle → fold → semicolon
+                // compaction unguarded, then parse ONCE. Parsing the full
+                // bundle with tree-sitter is the third-largest build cost
+                // (~0.5-0.9s across the corpus when done per stage); on the
+                // happy path one parse certifies all three stages. Only when
+                // that single parse fails do we re-run the chain with the
+                // original per-stage guards to keep whichever stages are
+                // individually sound — same output as the old scheme, the
+                // extra parses are paid only on the rare corruption path.
+                let optimistic = {
+                    let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
+                    lap("mangle");
+                    let folded = crate::bundler::fold::fold_constants(&mangled);
+                    lap("fold");
+                    let compacted =
+                        crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                            &folded,
+                        );
+                    lap("semicolon_compaction");
+                    if compacted.len() < folded.len() {
+                        compacted
+                    } else {
+                        folded
+                    }
+                };
+                if crate::bundler::dce::js_parses_without_errors(&optimistic) {
+                    code = optimistic;
+                    lap("single_parse_guard");
+                    dump_stage("3-mangle", &code);
+                    dump_stage("4-fold", &code);
                 } else {
                     tracing::warn!(
-                        "Skipping variable mangling because the optimized bundle did not parse"
+                        "Optimized bundle did not parse; re-running minify stages \
+                         with per-stage parse guards"
                     );
-                }
-                dump_stage("3-mangle", &code);
-                let folded = crate::bundler::fold::fold_constants(&code);
-                if crate::bundler::dce::js_parses_without_errors(&folded) {
-                    code = folded;
-                } else {
-                    tracing::warn!(
-                        "Skipping constant folding because the optimized bundle did not parse"
-                    );
-                }
-                dump_stage("4-fold", &code);
-                let compacted =
-                    crate::bundler::minify::remove_semicolons_before_block_close_candidate(&code);
-                if compacted.len() < code.len()
-                    && crate::bundler::dce::js_parses_without_errors(&compacted)
-                {
-                    code = compacted;
+                    let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
+                    if crate::bundler::dce::js_parses_without_errors(&mangled) {
+                        code = mangled;
+                    } else {
+                        tracing::warn!(
+                            "Skipping variable mangling because the optimized bundle did not parse"
+                        );
+                    }
+                    dump_stage("3-mangle", &code);
+                    let folded = crate::bundler::fold::fold_constants(&code);
+                    if crate::bundler::dce::js_parses_without_errors(&folded) {
+                        code = folded;
+                    } else {
+                        tracing::warn!(
+                            "Skipping constant folding because the optimized bundle did not parse"
+                        );
+                    }
+                    dump_stage("4-fold", &code);
+                    let compacted =
+                        crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                            &code,
+                        );
+                    if compacted.len() < code.len()
+                        && crate::bundler::dce::js_parses_without_errors(&compacted)
+                    {
+                        code = compacted;
+                    }
+                    lap("staged_parse_guards");
                 }
                 // Extra polish (JET_EXTRA_MINIFY=1): residual-space squeeze,
                 // block-level empty-statement removal, bracket-to-dot
@@ -2014,6 +2079,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // Content hash for filename
             let hash = content_hash_prefix(&code);
             let out_filename = format!("main.{hash}.js");
+            lap("content_hash");
 
             std::fs::create_dir_all(&output_dir).context("Failed to create output directory")?;
 
@@ -2051,6 +2117,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 }
                 _ => {}
             }
+            lap("sourcemap");
 
             // Write output
             std::fs::write(output_dir.join(&out_filename), &code)

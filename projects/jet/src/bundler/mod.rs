@@ -319,6 +319,15 @@ struct UnresolvedDependency {
 
 /// Core bundler that orchestrates the build process
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+/// Memoized result of `Bundler::prefetch_one_module` — everything the
+/// serial `build_graph` walk needs for one module, with failures kept as
+/// the strings the original warn branches print.
+struct PrefetchedModule {
+    source: std::result::Result<String, String>,
+    imports: std::result::Result<imports::ModuleImports, String>,
+    resolutions: HashMap<String, std::result::Result<PathBuf, String>>,
+}
+
 pub struct Bundler {
     resolver: Arc<crate::resolver::ModuleResolver>,
     transformer: Arc<crate::transform::Transformer>,
@@ -495,10 +504,106 @@ impl Bundler {
     }
 
     /// Build the module dependency graph using iterative approach
+    /// Wave-parallel discovery for [`Self::build_graph`]: walk the import
+    /// graph breadth-first, and for every frontier run the pure per-module
+    /// work (file read, tree-sitter import extraction, dependency
+    /// resolution) across cores. Results are memoized by module path; the
+    /// serial graph walk replays over them so its module-id assignment
+    /// order is untouched. Resolution results are stored as
+    /// `Result<PathBuf, String>` so the replay can preserve the original
+    /// warn / external-module branches verbatim.
+    fn prefetch_graph_modules(&self, entry_abs: &Path) -> HashMap<PathBuf, PrefetchedModule> {
+        use rayon::prelude::*;
+
+        let mut prefetched: HashMap<PathBuf, PrefetchedModule> = HashMap::new();
+        let mut frontier: Vec<PathBuf> = vec![entry_abs.to_path_buf()];
+
+        while !frontier.is_empty() {
+            let wave: Vec<(PathBuf, PrefetchedModule)> = frontier
+                .par_iter()
+                .map(|path| (path.clone(), self.prefetch_one_module(path)))
+                .collect();
+
+            let mut next: Vec<PathBuf> = Vec::new();
+            for (path, module) in wave {
+                for res in module.resolutions.values() {
+                    if let Ok(target) = res {
+                        if !prefetched.contains_key(target) {
+                            next.push(target.clone());
+                        }
+                    }
+                }
+                prefetched.insert(path, module);
+            }
+            next.sort_unstable();
+            next.dedup();
+            next.retain(|p| !prefetched.contains_key(p));
+            frontier = next;
+        }
+
+        prefetched
+    }
+
+    /// The pure per-module slice of `build_graph`'s loop body: read the
+    /// source, extract imports when it is a script module, and resolve
+    /// every specifier the replay will ask about (implicit jsx-runtime,
+    /// static, dynamic) through the shared resolver.
+    fn prefetch_one_module(&self, module_path: &Path) -> PrefetchedModule {
+        let source = std::fs::read_to_string(module_path).map_err(|e| e.to_string());
+        let mut resolutions: HashMap<String, std::result::Result<PathBuf, String>> =
+            HashMap::new();
+        let mut imports: std::result::Result<imports::ModuleImports, String> =
+            Err("not a script module".to_string());
+
+        if determine_module_kind(&module_path.to_path_buf()) == graph::ModuleKind::Script {
+            if let Ok(src) = &source {
+                let ext = module_path.extension().and_then(|e| e.to_str());
+                let is_typescript = matches!(ext, Some("ts") | Some("tsx"));
+                let is_jsx = matches!(ext, Some("tsx") | Some("jsx"));
+                imports = imports::extract_imports(src, is_typescript).map_err(|e| e.to_string());
+                if let Ok(module_imports) = &imports {
+                    let mut specs: Vec<&str> = Vec::new();
+                    if is_jsx {
+                        specs.push("react/jsx-runtime");
+                    }
+                    specs.extend(
+                        module_imports
+                            .static_imports
+                            .iter()
+                            .map(|d| d.source.as_str()),
+                    );
+                    specs.extend(module_imports.dynamic_imports.iter().map(String::as_str));
+                    for spec in specs {
+                        if resolutions.contains_key(spec) {
+                            continue;
+                        }
+                        let resolved = self
+                            .resolve_dependency(&module_path.to_path_buf(), spec)
+                            .map_err(|e| e.to_string());
+                        resolutions.insert(spec.to_string(), resolved);
+                    }
+                }
+            }
+        }
+
+        PrefetchedModule {
+            source,
+            imports,
+            resolutions,
+        }
+    }
+
     async fn build_graph(&self, entry: &PathBuf) -> Result<()> {
         tracing::debug!("Building module graph from: {:?}", entry);
 
         let entry_abs = std::fs::canonicalize(entry)?;
+
+        // Wave-parallel prefetch of the expensive pure work (file read,
+        // tree-sitter import extraction, dependency resolution). The serial
+        // walk below replays over these memos, so module-id assignment
+        // order — and therefore bundle bytes — stay identical to the
+        // sequential traversal while the dominant costs run across cores.
+        let prefetched = self.prefetch_graph_modules(&entry_abs);
 
         let mut queue: Vec<(PathBuf, Option<ModuleId>, Option<graph::EdgeKind>)> =
             vec![(entry_abs, None, None)];
@@ -521,12 +626,20 @@ impl Bundler {
 
             tracing::debug!("Processing module: {:?}", module_path);
 
-            let source = match std::fs::read_to_string(&module_path) {
-                Ok(s) => s,
-                Err(e) => {
+            let prefetch = prefetched.get(&module_path);
+            let source = match prefetch.map(|p| &p.source) {
+                Some(Ok(s)) => s.clone(),
+                Some(Err(e)) => {
                     tracing::warn!("Failed to read module {:?}: {}", module_path, e);
                     continue;
                 }
+                None => match std::fs::read_to_string(&module_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::warn!("Failed to read module {:?}: {}", module_path, e);
+                        continue;
+                    }
+                },
             };
 
             let file_size = source.len() as u64;
@@ -549,12 +662,23 @@ impl Bundler {
                     .map(|e| e == "ts" || e == "tsx")
                     .unwrap_or(false);
 
-                let module_imports = match imports::extract_imports(&source, is_typescript) {
-                    Ok(imports) => imports,
-                    Err(e) => {
+                let module_imports = match prefetch.map(|p| &p.imports) {
+                    Some(Ok(imports)) => imports.clone(),
+                    Some(Err(e)) => {
                         tracing::warn!("Failed to extract imports from {:?}: {}", module_path, e);
                         continue;
                     }
+                    None => match imports::extract_imports(&source, is_typescript) {
+                        Ok(imports) => imports,
+                        Err(e) => {
+                            tracing::warn!(
+                                "Failed to extract imports from {:?}: {}",
+                                module_path,
+                                e
+                            );
+                            continue;
+                        }
+                    },
                 };
 
                 // For TSX/JSX files with automatic runtime, add react/jsx-runtime as implicit dependency
@@ -564,8 +688,16 @@ impl Bundler {
                     .map(|e| e == "tsx" || e == "jsx")
                     .unwrap_or(false);
 
+                let resolve_cached = |spec: &str| -> std::result::Result<PathBuf, String> {
+                    if let Some(res) = prefetch.and_then(|p| p.resolutions.get(spec)) {
+                        return res.clone();
+                    }
+                    self.resolve_dependency(&module_path, spec)
+                        .map_err(|e| e.to_string())
+                };
+
                 if is_jsx {
-                    match self.resolve_dependency(&module_path, "react/jsx-runtime") {
+                    match resolve_cached("react/jsx-runtime") {
                         Ok(resolved_path) => {
                             queue.push((
                                 resolved_path,
@@ -573,10 +705,12 @@ impl Bundler {
                                 Some(graph::EdgeKind::Import),
                             ));
                         }
-                        Err(e) => {
-                            let err_msg = e.to_string();
+                        Err(err_msg) => {
                             if !err_msg.contains("External module") {
-                                tracing::warn!("Failed to resolve 'react/jsx-runtime': {}", e);
+                                tracing::warn!(
+                                    "Failed to resolve 'react/jsx-runtime': {}",
+                                    err_msg
+                                );
                                 self.record_unresolved("react/jsx-runtime", &module_path, &err_msg);
                             }
                         }
@@ -584,7 +718,7 @@ impl Bundler {
                 }
 
                 for import_decl in &module_imports.static_imports {
-                    match self.resolve_dependency(&module_path, &import_decl.source) {
+                    match resolve_cached(&import_decl.source) {
                         Ok(resolved_path) => {
                             let ext_cow =
                                 coerce_bundler_edge_kind_extension_or_warn(&resolved_path);
@@ -597,14 +731,13 @@ impl Bundler {
 
                             queue.push((resolved_path, Some(module_id), Some(edge_kind)));
                         }
-                        Err(e) => {
-                            let err_msg = e.to_string();
+                        Err(err_msg) => {
                             if !err_msg.contains("External module") {
                                 tracing::warn!(
                                     "Failed to resolve '{}' from {:?}: {}",
                                     import_decl.source,
                                     module_path,
-                                    e
+                                    err_msg
                                 );
                                 self.record_unresolved(&import_decl.source, &module_path, &err_msg);
                             } else {
@@ -618,7 +751,7 @@ impl Bundler {
                 }
 
                 for dynamic_import in &module_imports.dynamic_imports {
-                    match self.resolve_dependency(&module_path, dynamic_import) {
+                    match resolve_cached(dynamic_import) {
                         Ok(resolved_path) => {
                             queue.push((
                                 resolved_path,
@@ -626,14 +759,13 @@ impl Bundler {
                                 Some(graph::EdgeKind::DynamicImport),
                             ));
                         }
-                        Err(e) => {
-                            let err_msg = e.to_string();
+                        Err(err_msg) => {
                             if !err_msg.contains("External module") {
                                 tracing::warn!(
                                     "Failed to resolve '{}' from {:?}: {}",
                                     dynamic_import,
                                     module_path,
-                                    e
+                                    err_msg
                                 );
                                 self.record_unresolved(dynamic_import, &module_path, &err_msg);
                             } else {
