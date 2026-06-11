@@ -24,6 +24,16 @@ fn aw_bin() -> Option<String> {
     std::env::var("CARGO_BIN_EXE_aw").ok()
 }
 
+fn aw_bin_for_regression() -> Option<String> {
+    aw_bin().or_else(|| {
+        let mut path = std::env::current_exe().ok()?;
+        path.pop();
+        path.pop();
+        path.push(if cfg!(windows) { "aw.exe" } else { "aw" });
+        path.is_file().then(|| path.to_string_lossy().into_owned())
+    })
+}
+
 fn write_traceability_fixture(root: &std::path::Path, with_capability_ref: bool) {
     write(
         root,
@@ -116,6 +126,68 @@ changes:
 ```
 "#
         ),
+    );
+}
+
+fn append_ec_case(root: &std::path::Path) {
+    let path = root.join(".aw/tech-design/demo/app.md");
+    let mut content = std::fs::read_to_string(&path).unwrap();
+    content.push_str(
+        r#"
+
+## E2E
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: demo-ec-smoke
+    capability_id: demo-capability
+    contract_id: demo-closure
+    category: behavior
+    command: "true"
+    assertions:
+      - demo behavior remains available
+```
+"#,
+    );
+    std::fs::write(path, content).unwrap();
+}
+
+fn write_llms_semantic_td(root: &std::path::Path) {
+    write(
+        root,
+        ".aw/tech-design/demo/semantic/demo-.md",
+        r#"---
+id: demo-agent-context
+capability_refs:
+  - id: demo-capability
+    role: primary
+    gap: demo-closure
+    claim: demo-closure
+    coverage: full
+---
+
+# Demo Agent Context
+
+## Schema
+<!-- type: schema lang: markdown -->
+
+```markdown
+llms.txt exposes TD-first project context for agents.
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: llms.txt
+    action: modify
+    section: schema
+    impl_mode: codegen
+```
+"#,
     );
 }
 
@@ -215,6 +287,92 @@ test_cmd = "false"
     assert_eq!(json["completion"]["workflow_complete"], false);
     assert_eq!(json["completion"]["requires_hitl"], false);
     assert_eq!(json["health"]["test_gates"]["evaluated"], false);
+}
+
+#[test]
+fn standardize_project_health_gate_verifies_ec_cases() {
+    let Some(score) = aw_bin_for_regression() else {
+        eprintln!("skipping: aw test binary not available");
+        return;
+    };
+    let tmp = TempDir::new().unwrap();
+    write_traceability_fixture(tmp.path(), true);
+    append_ec_case(tmp.path());
+    for args in [
+        vec!["init"],
+        vec!["config", "user.email", "aw@example.test"],
+        vec!["config", "user.name", "AW Test"],
+        vec!["add", "."],
+        vec!["commit", "-m", "init"],
+    ] {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(tmp.path())
+            .status()
+            .expect("run git setup");
+        assert!(status.success(), "git setup failed");
+    }
+
+    let ec_gen = Command::new(&score)
+        .args(["ec", "gen", "demo"])
+        .current_dir(tmp.path())
+        .output()
+        .expect("run aw ec gen");
+    assert!(
+        ec_gen.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&ec_gen.stdout),
+        String::from_utf8_lossy(&ec_gen.stderr)
+    );
+    for args in [vec!["add", "."], vec!["commit", "-m", "ec gen"]] {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(tmp.path())
+            .status()
+            .expect("commit generated EC files");
+        assert!(status.success(), "git EC commit failed");
+    }
+    let managed = Command::new(&score)
+        .args([
+            "standardize",
+            "managed",
+            "run",
+            "demo",
+            "--non-interactive",
+            "--max-ticks",
+            "1",
+            "--json",
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("run aw standardize managed");
+    assert!(
+        managed.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&managed.stdout),
+        String::from_utf8_lossy(&managed.stderr)
+    );
+    write_llms_semantic_td(tmp.path());
+
+    let out = Command::new(score)
+        .args(["standardize", "demo"])
+        .current_dir(tmp.path())
+        .output()
+        .expect("run aw standardize health gate");
+    let json: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("standardize health JSON");
+
+    assert_eq!(
+        json["layer"],
+        "health",
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(json["health"]["ec_status"], "passed");
+    assert_eq!(json["health"]["ec_verify_evaluated"].as_bool(), Some(true));
+    assert_eq!(json["health"]["ec"]["command_count"].as_u64(), Some(1));
+    assert_eq!(json["health"]["ec"]["passed_count"].as_u64(), Some(1));
 }
 
 // The previous `standardize_codegen_reports_handwrite_blockers` test exercised
