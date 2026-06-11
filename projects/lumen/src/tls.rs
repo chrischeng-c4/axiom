@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-tls-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! mTLS configuration for the peer (`:8082`) transport.
 //!
 //! v1 ships the configuration surface — paths to cert / key / CA bundle
@@ -131,3 +132,5 @@ mod tests {
         clear_env();
     }
 }
+
+// </HANDWRITE>
