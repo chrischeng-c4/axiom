@@ -2492,6 +2492,10 @@ fn apply_renames(
     // tokens but few distinct (scope, name) pairs, so memoize the walk
     // (~1.3s -> negligible on the antd corpus bundle).
     let mut decl_scope_memo: HashMap<(usize, &str), Option<usize>> = HashMap::new();
+    // The physical-scope fallback walk below is also (start scope, name) ->
+    // resolved rename, and was the remaining unmemoized O(depth)-per-token cost
+    // — deeply-nested react-dom drove apply_renames to ~97ms. Memoize it too.
+    let mut physical_memo: HashMap<(usize, &str), Option<&str>> = HashMap::new();
 
     for (ti, tok) in tokens.iter().enumerate() {
         if tok.kind != TK::Ident {
@@ -2540,20 +2544,28 @@ fn apply_renames(
         {
             continue;
         }
-        let mut sid = Some(physical_sid);
-        while let Some(candidate_sid) = sid {
-            if let Some(new_name) = renames[candidate_sid].get(name) {
-                repls.push((
-                    tok.start,
-                    tok.end,
-                    rename_replacement(source, tokens, ti, name, new_name),
-                ));
-                break;
-            }
-            if scopes[candidate_sid].decls.contains(name) {
-                break;
-            }
-            sid = physical_scopes.parent_by_scope[candidate_sid].or(scopes[candidate_sid].parent);
+        let resolved_physical = *physical_memo
+            .entry((physical_sid, name))
+            .or_insert_with(|| {
+                let mut sid = Some(physical_sid);
+                while let Some(candidate_sid) = sid {
+                    if let Some(new_name) = renames[candidate_sid].get(name) {
+                        return Some(new_name.as_str());
+                    }
+                    if scopes[candidate_sid].decls.contains(name) {
+                        return None;
+                    }
+                    sid = physical_scopes.parent_by_scope[candidate_sid]
+                        .or(scopes[candidate_sid].parent);
+                }
+                None
+            });
+        if let Some(new_name) = resolved_physical {
+            repls.push((
+                tok.start,
+                tok.end,
+                rename_replacement(source, tokens, ti, name, new_name),
+            ));
         }
     }
     lap("token_loop");
