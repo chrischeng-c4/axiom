@@ -9189,6 +9189,7 @@ fn codegen_replay_supported(file: &SourceFile) -> bool {
         "dockerfile"
             | "javascript"
             | "json"
+            | "llms"
             | "python"
             | "rust"
             | "stylesheet"
@@ -9219,7 +9220,7 @@ fn codegen_replay_supported(file: &SourceFile) -> bool {
     ) || path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".dockerignore" | "Dockerfile"))
+        .is_some_and(|name| matches!(name, ".dockerignore" | "Dockerfile" | "llms.txt"))
 }
 
 fn render_codegen_owned_source(path: &Path, content: &str, spec_ref: &str) -> String {
@@ -11015,6 +11016,18 @@ test_cmd = "cargo test -p tool"
         assert!(!llms.contains("open WI"));
         assert!(!llms.contains("CB"));
         assert!(!llms.contains("HANDWRITE"));
+
+        let llms_file = SourceFile {
+            rel: "projects/tool/llms.txt".into(),
+            abs: tmp.path().join("projects/tool/llms.txt"),
+            language: "llms".into(),
+            markers: FileMarkers {
+                codegen: true,
+                handwrite: false,
+            },
+            handwrite_gaps: vec![],
+        };
+        assert!(codegen_replay_supported(&llms_file));
     }
 
     #[test]
