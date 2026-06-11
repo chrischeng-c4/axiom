@@ -38,6 +38,7 @@ use crate::models::project::EcBinding;
   "payload_path": string
 }"#)]
 /// @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#cli
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectHealthArgs {
     // Configured project name from [[projects]] in .aw/config.toml.
     pub project: String,
@@ -69,6 +70,7 @@ pub struct ProjectHealthArgs {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectHealthReport {
     pub project: String,
     pub status: ProjectHealthStatus,
@@ -154,6 +156,7 @@ pub struct CbOwnershipSummary {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct CapabilityHealthReport {
     pub evaluated: bool,
     pub production_evaluated: bool,
@@ -216,6 +219,7 @@ impl CapabilityHealthReport {
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct RegenerabilityAuthorityReport {
     pub authority: RegenerabilityAuthority,
     pub required_for_production: bool,
@@ -228,6 +232,7 @@ pub struct RegenerabilityAuthorityReport {
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#changes
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub enum ProjectHealthStatus {
     Healthy,
     Blocked,
@@ -278,6 +283,7 @@ pub enum ProjectTestCommandStatus {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 /// TD-derived external-contract gate report.
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectEcGateReport {
     pub evaluated: bool,
     pub check_clean: bool,
@@ -296,6 +302,7 @@ pub struct ProjectEcGateReport {
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub enum ProjectEcGateStatus {
     NotEvaluated,
     NotConfigured,
@@ -306,6 +313,7 @@ pub enum ProjectEcGateStatus {
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub struct ProjectEcCommandReport {
     pub case_id: String,
     pub command: String,
@@ -316,6 +324,7 @@ pub struct ProjectEcCommandReport {
     pub stderr_tail: String,
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 impl ProjectEcGateReport {
     pub(crate) fn not_evaluated(project: &str) -> Self {
         Self {
@@ -376,6 +385,7 @@ impl ProjectEcGateReport {
 }
 
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#logic
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub fn build_health_report(project: &str) -> Result<ProjectHealthReport> {
     build_health_report_with_options(project, true, true, true, true)
 }
@@ -398,6 +408,7 @@ pub(crate) fn build_health_report_with_options(
     )
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn build_health_report_with_options_internal(
     project: &str,
     verify_traceability: bool,
@@ -426,6 +437,7 @@ fn build_health_report_with_options_internal(
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 #[allow(dead_code)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn build_health_report_with_test_gates(
     project: &str,
     verify_traceability: bool,
@@ -468,6 +480,7 @@ pub(crate) fn build_health_report_with_test_gates_and_capability_verified(
     )
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn build_health_report_with_test_gates_and_capability_verified_internal(
     project: &str,
     verify_traceability: bool,
@@ -590,6 +603,7 @@ fn build_health_report_with_test_gates_and_capability_verified_internal(
     Ok(report)
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn resolve_health_project_name(project_root: &std::path::Path, requested: &str) -> Result<String> {
     let config_path = project_root.join(".aw/config.toml");
     if !config_path.is_file() {
@@ -609,6 +623,7 @@ fn resolve_health_project_name(project_root: &std::path::Path, requested: &str) 
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Default, Deserialize)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 struct HealthProjectConfig {
     #[serde(default)]
     projects: Vec<HealthProjectRow>,
@@ -616,6 +631,7 @@ struct HealthProjectConfig {
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Default, Deserialize)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 struct HealthProjectRow {
     name: String,
     #[serde(default)]
@@ -623,6 +639,7 @@ struct HealthProjectRow {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 impl HealthProjectRow {
     /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
     fn matches(&self, requested: &str) -> bool {
@@ -630,6 +647,7 @@ impl HealthProjectRow {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn cb_verify_not_evaluated() -> CbVerifySummary {
     CbVerifySummary {
         clean: true,
@@ -640,6 +658,7 @@ fn cb_verify_not_evaluated() -> CbVerifySummary {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn apply_scoped_production_readiness(
     report: &mut ProjectHealthReport,
     production_gates_evaluated: bool,
@@ -791,6 +810,7 @@ fn apply_scoped_production_readiness(
 }
 
 // @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 impl ProjectHealthReport {
     // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#logic
     pub fn from_components(
@@ -1187,6 +1207,7 @@ impl ProjectHealthReport {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn regenerability_authority_report(
     project: &str,
     coverage: &RegenerabilityCoverage,
@@ -1218,6 +1239,7 @@ fn regenerability_authority_report(
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn regenerability_gap_count(coverage: &RegenerabilityCoverage) -> usize {
     coverage.handwrite_files
         + coverage.unmarked_files
@@ -1228,6 +1250,7 @@ fn regenerability_gap_count(coverage: &RegenerabilityCoverage) -> usize {
         + coverage.human_decision_required_gaps
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 struct HealthProgressSink<'a> {
     project: &'a str,
     started: Instant,
@@ -1314,6 +1337,7 @@ pub(crate) fn project_test_gate_report(
     project_test_gate_report_with_progress(project, project_root, verify_tests, &progress)
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_test_gate_report_with_progress(
     project: &str,
     project_root: &std::path::Path,
@@ -1400,6 +1424,7 @@ fn project_test_gate_report_with_progress(
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn run_project_test_command(
     workspace: &str,
     command: &str,
@@ -1486,6 +1511,7 @@ fn run_project_test_command(
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn tail_lossy(bytes: &[u8], max_chars: usize) -> String {
     let text = String::from_utf8_lossy(bytes);
     let len = text.chars().count();
@@ -1500,6 +1526,7 @@ const HEALTH_SUMMARY_PREVIEW_LIMIT: usize = 20;
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub fn project_health_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
         "schema_version": "aw.cli.v1",
@@ -1529,6 +1556,7 @@ pub fn project_health_summary_with_payload_path(
     summary
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_report_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
         "project": &report.project,
@@ -1575,6 +1603,7 @@ fn project_health_report_summary(report: &ProjectHealthReport) -> serde_json::Va
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_capability_summary(report: &CapabilityHealthReport) -> serde_json::Value {
     serde_json::json!({
         "evaluated": report.evaluated,
@@ -1594,6 +1623,7 @@ fn project_health_capability_summary(report: &CapabilityHealthReport) -> serde_j
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_test_gate_summary(report: &ProjectTestGateReport) -> serde_json::Value {
     serde_json::json!({
         "evaluated": report.evaluated,
@@ -1613,6 +1643,7 @@ fn project_test_gate_summary(report: &ProjectTestGateReport) -> serde_json::Valu
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_test_command_summary(command: &ProjectTestCommandReport) -> serde_json::Value {
     serde_json::json!({
         "workspace": &command.workspace,
@@ -1623,6 +1654,7 @@ fn project_test_command_summary(command: &ProjectTestCommandReport) -> serde_jso
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
     serde_json::json!({
         "evaluated": report.evaluated,
@@ -1648,6 +1680,7 @@ fn project_ec_gate_summary(report: &ProjectEcGateReport) -> serde_json::Value {
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_ec_command_summary(command: &ProjectEcCommandReport) -> serde_json::Value {
     serde_json::json!({
         "case_id": &command.case_id,
@@ -1658,6 +1691,7 @@ fn project_ec_command_summary(command: &ProjectEcCommandReport) -> serde_json::V
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_td_lock_summary(lock: &crate::cli::td_lock::TdLockStatus) -> serde_json::Value {
     serde_json::json!({
         "project": &lock.project,
@@ -1676,6 +1710,7 @@ fn project_td_lock_summary(lock: &crate::cli::td_lock::TdLockStatus) -> serde_js
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn preview_strings(values: &[String]) -> Vec<&str> {
     values
         .iter()
@@ -1685,6 +1720,7 @@ fn preview_strings(values: &[String]) -> Vec<&str> {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_loop_status(report: &ProjectHealthReport) -> &'static str {
     if report.production_ready {
         "done"
@@ -1697,6 +1733,7 @@ fn project_health_loop_status(report: &ProjectHealthReport) -> &'static str {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_completion(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
         "root_complete": report.production_ready,
@@ -1712,10 +1749,12 @@ fn project_health_completion(report: &ProjectHealthReport) -> serde_json::Value 
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_requires_hitl(report: &ProjectHealthReport) -> bool {
     report.workflow_lock_count > 0 || report.human_decision_required_count > 0
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_missing(report: &ProjectHealthReport) -> Vec<String> {
     if report.production_ready {
         return Vec::new();
@@ -1737,6 +1776,7 @@ fn project_health_missing(report: &ProjectHealthReport) -> Vec<String> {
     missing
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn push_project_health_missing(
     missing: &mut Vec<String>,
     seen: &mut BTreeSet<String>,
@@ -1747,6 +1787,7 @@ fn push_project_health_missing(
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<String> {
     let mut missing = Vec::new();
     if !report.traceability_evaluated {
@@ -1795,6 +1836,7 @@ fn project_health_missing_evaluations(report: &ProjectHealthReport) -> Vec<Strin
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next(report: &ProjectHealthReport) -> serde_json::Value {
     let command = project_health_next_command(report);
     let mut next = serde_json::Map::new();
@@ -1812,6 +1854,7 @@ fn project_health_next(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::Value::Object(next)
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_kind(report: &ProjectHealthReport, has_command: bool) -> &'static str {
     if report.production_ready {
         "done"
@@ -1824,6 +1867,7 @@ fn project_health_next_kind(report: &ProjectHealthReport, has_command: bool) -> 
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     if report.production_ready || report.workflow_lock_count > 0 {
         return None;
@@ -1888,6 +1932,7 @@ fn project_health_next_command(report: &ProjectHealthReport) -> Option<String> {
     Some(format!("aw run --project {} --max-ticks 1", report.project))
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_next_reason(report: &ProjectHealthReport) -> String {
     if report.production_ready {
         return "project production readiness is complete".to_string();
@@ -1965,6 +2010,7 @@ fn project_health_next_reason(report: &ProjectHealthReport) -> String {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn project_health_readiness_summary(report: &ProjectHealthReport) -> serde_json::Value {
     serde_json::json!({
         "production_ready": report.production_ready,
@@ -2045,6 +2091,7 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 struct HealthVerificationFlags {
     traceability: bool,
     cb: bool,
@@ -2053,6 +2100,7 @@ struct HealthVerificationFlags {
     ec: bool,
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerificationFlags {
     let targeted = args.verify_traceability
         || args.verify_cb
@@ -2078,6 +2126,7 @@ fn effective_health_verification_flags(args: &ProjectHealthArgs) -> HealthVerifi
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn write_health_payload(report: &ProjectHealthReport) -> Result<String> {
     let dir = std::env::temp_dir()
         .join("aw")
@@ -2091,6 +2140,7 @@ fn write_health_payload(report: &ProjectHealthReport) -> Result<String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn sanitize_tmp_path_segment(value: &str) -> String {
     let mut segment = String::new();
     for ch in value.chars() {
@@ -2107,6 +2157,7 @@ fn sanitize_tmp_path_segment(value: &str) -> String {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Result<()> {
     let status = crate::cli::td_lock::check_project_td_lock(&report.project)?;
     if !status.clean {
@@ -2124,6 +2175,7 @@ pub(crate) fn apply_td_lock_to_report(report: &mut ProjectHealthReport) -> Resul
     Ok(())
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bool) -> Result<()> {
     let summary = crate::cli::ec::project_ec_check_summary(&report.project)?;
     let mut ec_report = ProjectEcGateReport::from_check(summary);
@@ -2229,6 +2281,7 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
     Ok(())
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn block_health_report(report: &mut ProjectHealthReport, blocker: String) {
     report.status = ProjectHealthStatus::Blocked;
     report.blockers.push(blocker.clone());
@@ -2241,6 +2294,7 @@ fn block_health_report(report: &mut ProjectHealthReport, blocker: String) {
     report.production_status = ProductionStatus::Blocked;
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 impl EcBinding {
     /// wi-13 R2: deterministic verify command for one EC tool binding. Total
     /// over the three known tools; a missing argument or an unknown tool is
@@ -2277,6 +2331,7 @@ impl EcBinding {
 /// wi-13 R3: the command a case actually runs — the bound tool command when
 /// the case category is bound in the owning project's `ec` map, else the
 /// manifest command (the cargo-test fallback).
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn resolve_project_ec_command(
     case: &crate::cli::ec::EcManifestCase,
     project: Option<&crate::models::project::Project>,
@@ -2287,6 +2342,7 @@ fn resolve_project_ec_command(
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn run_project_ec_command(
     case: &crate::cli::ec::EcManifestCase,
     project: Option<&crate::models::project::Project>,
@@ -2351,6 +2407,7 @@ fn run_project_ec_command(
     })
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub(crate) async fn apply_workflow_locks_to_report(report: &mut ProjectHealthReport) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let locks = crate::cli::workflow_guard::issue_locks(&project_root).await?;
@@ -2379,6 +2436,7 @@ pub(crate) async fn apply_workflow_locks_to_report(report: &mut ProjectHealthRep
     Ok(())
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn print_health_report(report: &ProjectHealthReport) {
     println!("project health: {} ({:?})", report.project, report.status);
     println!(
@@ -2680,6 +2738,7 @@ fn print_health_report(report: &ProjectHealthReport) {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn percent_of(part: usize, total: usize) -> f64 {
     if total == 0 {
         0.0
@@ -2688,10 +2747,12 @@ fn percent_of(part: usize, total: usize) -> f64 {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn semantic_gap_blocks_readiness(primitive: &str) -> bool {
     matches!(primitive, "semantic_td_missing" | "semantic_td_legacy")
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn aggregate_codegen_origin(cold_rebuilds: &[CbColdVerifySummary]) -> CbCodegenOriginSummary {
     let mut summary = CbCodegenOriginSummary::default();
     for cold in cold_rebuilds {
@@ -2703,6 +2764,7 @@ fn aggregate_codegen_origin(cold_rebuilds: &[CbColdVerifySummary]) -> CbCodegenO
     summary
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 fn cb_ownership_summary(
     eligible_files: usize,
     codegen_files: usize,
@@ -2721,6 +2783,7 @@ fn cb_ownership_summary(
 }
 
 #[cfg(test)]
+/// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 mod tests {
     use super::*;
 
