@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-examples
 summary: Semantic coverage for "projects/lumen/examples"
+capability_refs:
+  - id: "search"
+    role: primary
+    claim: "query-planner-boolean-eval-roaring-postings"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen/examples`."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -18,7 +24,7 @@ semantic_domain:
     source_units:
       - path: "projects/lumen/examples/consumer_pg_logical.py"
         language: "python"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method"]
         symbols:
           - name: "shard_of"
@@ -51,6 +57,8 @@ python_modules:
     - kind: raw
       lines:
       - '#!/usr/bin/env python3'
+      - '# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-examples.md#schema'
+      - '# CODEGEN-BEGIN'
       - '"""Illustrative DIY ingestion recipe: Postgres logical replication -> lumen.'
       - ''
       - lumen bundles no connector. Getting data in is the caller's own pub/sub into
@@ -168,6 +176,7 @@ python_modules:
       - ''
       - 'if __name__ == "__main__":'
       - '    main()'
+      - '# CODEGEN-END'
 ```
 
 ## Unit Test
@@ -200,8 +209,6 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-examples-consumer-pg-logical-py>"
   - action: annotate
     section: unit-test
     impl_mode: hand-written
