@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-operator-reconcile-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-operator.md#schema
+// CODEGEN-BEGIN
 //! The reconcile loop. Watches `Lumen` objects cluster-wide; for each, renders
 //! the child objects ([`render::render`]) and server-side-applies them as the
 //! field manager `lumen-operator`, then writes back a status subresource
@@ -30,6 +31,7 @@ const MANAGER: &str = "lumen-operator";
 
 /// Reconcile errors. `kube` + serde failures plus a guard for malformed
 /// rendered objects (which would be an operator bug, not a cluster condition).
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("kube api error: {0}")]
@@ -61,6 +63,7 @@ fn lease_namespace() -> String {
 /// Run the operator until the process is terminated. Every replica watches and
 /// runs the reconcile loop, but only the Lease holder applies changes (HA-safe
 /// at `replicas > 1` — see [`super::lease`]).
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 pub async fn run() -> anyhow::Result<()> {
     let client = Client::try_default().await?;
     let election = Election::new(identity());
@@ -207,5 +210,4 @@ async fn reconcile(lumen: Arc<Lumen>, ctx: Arc<Ctx>) -> Result<Action, Error> {
 fn error_policy(_lumen: Arc<Lumen>, _err: &Error, _ctx: Arc<Ctx>) -> Action {
     Action::requeue(Duration::from_secs(15))
 }
-
-// </HANDWRITE>
+// CODEGEN-END
