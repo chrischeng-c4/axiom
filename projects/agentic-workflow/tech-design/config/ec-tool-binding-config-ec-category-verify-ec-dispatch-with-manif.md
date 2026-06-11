@@ -194,3 +194,12 @@ requirementDiagram
 - [logic] applicable: the verify-ec dispatch flow is correct — category→binding lookup, build tool command (arena/rig/meter) or fall back to the manifest command, exit-code gate. Matches the existing `run_project_ec_command` shape; report-JSON folding is correctly out of scope.
 - [schema] applicable: `ec` is an optional project-scoped map of category→EcBinding; EcBinding{tool enum arena|rig|meter, spec/dir/meter}; additionalProperties false guards typos; absent = manifest fallback. Project-scoped placement (before workspaces) matches aw's TD/contract-is-project-scoped model.
 - [unit-test] applicable: R1–R4 each verified by one #[test] element covering config round-trip, the command builder (incl. unknown-tool error), dispatch-uses-binding, and no-ec-is-manifest-default. One-to-one with the acceptance criteria.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] contract-complete: the dispatch is implementable without guessing — lookup project.ec[case.category], build the tool command or fall back to case.command, spawn under sh -c in project_root, gate on exit 0. Unknown-tool is an explicit Failed branch.
+- [schema] contract-complete: `ec` optional map (absent = clean default), EcBinding{tool enum, spec/dir/meter} with additionalProperties:false. Both regenerate from the model schema TD; no ambiguity.
+- [unit-test] contract-complete: R1–R4 mapped one-to-one to #[test] elements (round-trip, command builder incl. unknown-tool error, dispatch-uses-binding, no-ec default). Matches WI #13 acceptance criteria.
