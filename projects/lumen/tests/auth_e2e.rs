@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-auth-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Auth + RBAC end-to-end tests.
 
 use std::collections::HashMap;
@@ -144,5 +145,4 @@ async fn unauthenticated_request_to_metrics_still_works() {
     s.get("/healthz").await.assert_status_ok();
     s.get("/readyz").await.assert_status_ok();
 }
-
-// </HANDWRITE>
+// CODEGEN-END

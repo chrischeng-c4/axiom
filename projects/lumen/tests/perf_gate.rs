@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-perf-gate-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Coarse perf gate.
 //!
 //! Asserts the in-memory engine meets the v1 budget envelope on a
@@ -183,5 +184,4 @@ fn term_query_latency_floor() {
         "term took {elapsed:?} — perf regression?"
     );
 }
-
-// </HANDWRITE>
+// CODEGEN-END

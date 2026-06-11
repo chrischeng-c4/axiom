@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-hnsw-ef-recall-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! CPU HNSW recall@10 + latency sweep vs brute-force ground truth.
 //!
 //! Validates the kNN bottleneck fix: lowering search-`ef` from 512 and (after
@@ -27,6 +28,7 @@ const CLUSTERS: usize = 200;
 const QUERIES: usize = 200;
 
 struct Lcg(u64);
+/// @spec projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl Lcg {
     fn new(seed: u64) -> Self {
         Self(seed.wrapping_mul(6_364_136_223_846_793_005) ^ 0x9E37_79B9_7F4A_7C15)
@@ -155,5 +157,4 @@ fn hnsw_ef_recall_latency_sweep() {
     }
     println!();
 }
-
-// </HANDWRITE>
+// CODEGEN-END

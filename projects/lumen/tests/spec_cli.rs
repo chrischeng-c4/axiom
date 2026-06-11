@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-spec-cli-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! `lumen spec` surface: the offline, machine-readable self-description an
 //! agent reads to wire lumen into a pipeline. Each emitter must produce valid
 //! JSON with the expected top-level shape (no server, no I/O).
@@ -174,5 +175,4 @@ fn llm_recipes_render_every_cookbook_shape_without_drift() {
         "recipes include the hybrid recipe"
     );
 }
-
-// </HANDWRITE>
+// CODEGEN-END

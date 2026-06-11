@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-vector-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! End-to-end HTTP integration test for the vector / kNN surface.
 //!
 //! Drives the real axum router via `axum-test::TestServer`. Mirrors
@@ -21,6 +22,7 @@ fn server() -> TestServer {
 /// `rand` version. We use it for vectors only; bench paths upstream
 /// rely on the same shape.
 struct Lcg(u64);
+/// @spec projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl Lcg {
     fn new(seed: u64) -> Self {
         Self(seed.wrapping_mul(6_364_136_223_846_793_005) ^ 0x9E37_79B9_7F4A_7C15)
@@ -340,5 +342,4 @@ async fn vector_field_rejects_dim_mismatch() {
         resp.status_code()
     );
 }
-
-// </HANDWRITE>
+// CODEGEN-END

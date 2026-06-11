@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-wal-nats-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! End-to-end fan-out proof against a real NATS JetStream server.
 //!
 //! Spin one up with: `nats-server -js` (the project's standard test
@@ -254,5 +255,4 @@ async fn late_node_replays_backlog_then_sees_live() {
         "late node did not see live append"
     );
 }
-
-// </HANDWRITE>
+// CODEGEN-END

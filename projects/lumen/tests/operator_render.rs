@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-operator-render-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Operator render tests: a `Lumen` spec → the exact child objects, with no
 //! cluster. This encodes the operational knowledge that lives in `k8s/base` +
 //! the overlays as executable assertions — replicas, env wiring, resources,
@@ -367,5 +368,4 @@ fn crd_yaml_emits_lumen_definition() {
     );
     assert!(yaml.contains("v1alpha1"));
 }
-
-// </HANDWRITE>
+// CODEGEN-END

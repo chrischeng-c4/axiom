@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-disk-format-bench-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Disk-format measurement: old `serde_json` path vs the new CBOR + lz4 path,
 //! on the *same* RDB snapshot of a vector-heavy corpus. Run with:
 //!
@@ -21,6 +22,7 @@ use lumen::types::{
 
 /// Deterministic LCG so the corpus is host-independent.
 struct Lcg(u64);
+/// @spec projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl Lcg {
     fn new(seed: u64) -> Self {
         Self(seed.wrapping_mul(6_364_136_223_846_793_005) ^ 0x9E37_79B9_7F4A_7C15)
@@ -164,5 +166,4 @@ fn disk_format_size_and_decode_speed() {
         json_dec.as_secs_f64() / cbor_dec.as_secs_f64()
     );
 }
-
-// </HANDWRITE>
+// CODEGEN-END
