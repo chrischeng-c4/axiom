@@ -3428,6 +3428,18 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                         }
                     }
                 }
+                // ssl.SSLContext attribute writes route through CPython's
+                // property setters (validation + the check_hostname /
+                // verify_mode coupling).
+                if class_name == "SSLContext" {
+                    if let Some(kp) = attr.as_ptr() {
+                        if let ObjData::Str(ref attr_s) = (*kp).data {
+                            if super::stdlib::ssl_mod::sslcontext_setattr(obj, attr_s, value) {
+                                return;
+                            }
+                        }
+                    }
+                }
                 // weakref.ref.__callback__ is a read-only attribute in CPython:
                 // `r.__callback__ = ...` raises AttributeError.
                 if class_name == "ReferenceType" {
