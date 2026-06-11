@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-bin-lumen-consumer-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Placeholder consumer binary. lumen does not bundle an event-pipeline
 //! subscriber — real adapters (AlloyDB CDC, Postgres logical replication,
 //! Kafka, application-direct) live under `examples/`. This binary boots
@@ -34,3 +35,5 @@ async fn main() -> Result<()> {
     std::future::pending::<()>().await;
     Ok(())
 }
+
+// </HANDWRITE>
