@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-vector-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! End-to-end HTTP integration test for the vector / kNN surface.
 //!
 //! Drives the real axum router via `axum-test::TestServer`. Mirrors
@@ -339,3 +340,5 @@ async fn vector_field_rejects_dim_mismatch() {
         resp.status_code()
     );
 }
+
+// </HANDWRITE>
