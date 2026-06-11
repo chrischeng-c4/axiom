@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-coverage-gaps-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Fills the e2e gaps surfaced by the README coverage audit.
 //!
 //! Each test is named after the README §-section + capability so the
@@ -427,3 +428,5 @@ async fn s1_oversized_payload_rejected_with_413_or_422() {
         "expected 413 (size) / 422 / 400, got {st}"
     );
 }
+
+// </HANDWRITE>
