@@ -127,3 +127,27 @@ properties:
         default: 0
         description: "Total cpu time ceiling in milliseconds (user+sys via getrusage); 0 disables."
 ```
+
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: meter profile
+    forms:
+      - usage: "meter profile --bin|--example|--bench|--exec <target> [--level off|vitals|sample|hooks|deep] [--duration-cap <secs>] [--hz <rate>] [--drive <cmd>] [--fail-hot <pct>]"
+        behavior:
+          - "Resolves the effective level from CLI flag, then meter.toml, then the built-in default vitals."
+          - "Default measurement window lasts until the target child exits; --duration-cap optionally bounds it."
+          - "--drive execs an opaque driver command after spawning the target; driver exit ends the measurement window; driver argv is recorded in the report; meter never interprets or implements the driver's traffic."
+          - "At level vitals emits kind=vital findings (cpu_time_ms, wall_time_ms, peak_rss_bytes from getrusage) with no sampler attach."
+          - "At level sample additionally attaches the stack sampler, folds hotspot findings, and writes the collapsed artifact under .meter referenced from the report."
+          - "Levels hooks and deep parse but exit with a not-yet-implemented usage error naming the L3/L4 instrumentation epic."
+          - "No rps, concurrency, or connections flag exists anywhere; load generation is permanently out of charter."
+  - name: meter run
+    usage: "meter run [--target <path>] [--level off|vitals|sample|hooks|deep] [--skip-test|--skip-bench|--skip-profile] [--profile-bin|--profile-example <name>] [--drive <cmd>]"
+    behavior:
+      - "Composite worst-wins sweep honors the same level resolution and emits kind=vital findings for the profiled child."
+      - "meter.toml [gate] breaches fold as severity>=Medium findings driving the existing exit ladder."
+      - "On a gate breach the envelope agent_prompt suggests re-running with --level sample to locate the cost."
+```
