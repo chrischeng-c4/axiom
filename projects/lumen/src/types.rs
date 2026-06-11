@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-types-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Wire types for the public HTTP API.
 //!
 //! These structs serialize to and from the JSON shapes documented in
@@ -690,3 +691,5 @@ mod tests {
         assert!(matches!(l, FieldValue::StringList(_)));
     }
 }
+
+// </HANDWRITE>
