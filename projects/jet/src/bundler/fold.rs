@@ -82,7 +82,7 @@ fn fold_literal_string_compares(source: &str) -> String {
             let left_ok = matches!(
                 prev,
                 b'(' | b',' | b';' | b'{' | b'}' | b'!' | b'&' | b'|' | b'?' | b':' | b'=' | b'['
-            );
+            ) || prev_is_expression_keyword(&out);
             let lit1_end = skip_string(b, i);
             if !left_ok || lit1_end <= i + 1 {
                 i = push_string(b, i, &mut out);
@@ -140,6 +140,44 @@ fn fold_literal_string_compares(source: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| source.to_string())
 }
 
+/// Whether the bytes already emitted end in a keyword that introduces an
+/// expression — so a following string literal (`return"x"`, `typeof"x"`,
+/// `case"x"`) is the left operand of a comparison, a valid fold position the
+/// punctuation-only boundary check misses. In valid JS an identifier is never
+/// directly followed by a string literal except after such a keyword, so this
+/// only ever accepts genuine expression starts.
+fn prev_is_expression_keyword(out: &[u8]) -> bool {
+    let mut end = out.len();
+    while end > 0 && matches!(out[end - 1], b' ' | b'\t' | b'\r' | b'\n') {
+        end -= 1;
+    }
+    let mut start = end;
+    while start > 0 {
+        let c = out[start - 1];
+        if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+            start -= 1;
+        } else {
+            break;
+        }
+    }
+    matches!(
+        &out[start..end],
+        b"return"
+            | b"typeof"
+            | b"case"
+            | b"void"
+            | b"delete"
+            | b"throw"
+            | b"in"
+            | b"of"
+            | b"do"
+            | b"else"
+            | b"yield"
+            | b"await"
+            | b"new"
+    )
+}
+
 /// One round of short-circuit collapsing over known boolean atoms.
 fn collapse_known_short_circuits(source: &str) -> String {
     let b = source.as_bytes();
@@ -166,7 +204,12 @@ fn collapse_known_short_circuits(source: &str) -> String {
                     .find(|c| !matches!(**c, b' ' | b'\t' | b'\r' | b'\n'))
                     .copied()
                     .unwrap_or(b'(');
-                if is_id(prev) {
+                // An identifier char before `!0`/`!1` means it continues an
+                // expression (`x!0` can't occur) — UNLESS it ends an
+                // expression-keyword like `return!1` / `case!0`, which the fold
+                // produces from `return"a"!=="b"`. Those are genuine boolean
+                // atoms and must still collapse.
+                if is_id(prev) && !prev_is_expression_keyword(&out) {
                     out.push(b[i]);
                     i += 1;
                     continue;

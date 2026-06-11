@@ -1965,10 +1965,20 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // changing something.
             let replaced = crate::bundler::define::replace_defines(&result.code, &defines);
             lap("replace_defines");
-            let mut code = if replaced == result.code {
-                replaced
+            // Fold expression-level define guards UNCONDITIONALLY. Per-module
+            // transforms already substitute `process.env.NODE_ENV` upstream, so
+            // `replace_defines` here is often a no-op while the assembled bundle
+            // still carries always-false `"production" !== "production" &&
+            // console.warn(...)` guards (styled-components ships several).
+            // fold_define_short_circuits collapses only literal-vs-literal
+            // compares — pure define residue — and is internally gated, so
+            // running it always is safe and cheap. eliminate_static_conditionals
+            // then strips any statement-position `if (false) {}` the fold left.
+            let folded = crate::bundler::fold::fold_define_short_circuits(&replaced);
+            let mut code = if folded == result.code {
+                folded
             } else {
-                crate::bundler::dce::eliminate_static_conditionals_syntax(&replaced)
+                crate::bundler::dce::eliminate_static_conditionals_syntax(&folded)
             };
             lap("static_conditionals_dce");
 
