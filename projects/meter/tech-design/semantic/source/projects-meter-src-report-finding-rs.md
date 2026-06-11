@@ -56,6 +56,7 @@ use serde::{Deserialize, Serialize};
 
 /// A single machine-actionable issue surfaced by a `meter` verb.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 pub struct Finding {
     /// STABLE/DETERMINISTIC `"{kind}:{slug}"` identifier. Examples:
     /// `"rust_vuln:RUSTSEC-2021-0001"`, `"hotspot:mb_release"`,
@@ -84,6 +85,7 @@ pub struct Finding {
 
 /// A literally-runnable next step the agent can execute verbatim.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 pub struct Invoke {
     /// The command to run (e.g. `"cargo test -p meter mod::name"`).
     pub command: String,
@@ -92,6 +94,7 @@ pub struct Invoke {
     pub args: serde_json::Value,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 impl Invoke {
     /// Construct a command-only invoke with a null args payload.
     pub fn command(command: impl Into<String>) -> Self {
@@ -104,6 +107,7 @@ impl Invoke {
 
 /// Optional source location for a finding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 pub struct Location {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
@@ -116,6 +120,7 @@ pub struct Location {
 /// Severity bucket. Sorted critical -> info when ordering findings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 pub enum Severity {
     Critical,
     High,
@@ -124,6 +129,7 @@ pub enum Severity {
     Info,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 impl Severity {
     /// Descending rank: higher number = more severe (for sort-desc).
     pub fn rank(&self) -> u8 {
@@ -163,6 +169,7 @@ impl Severity {
 /// `evidence` JSON shape it carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 pub enum Kind {
     /// `meter profile` capture — `{symbol,self_ns,total_ns,pct,samples,rank}` (C1 contract).
     Hotspot,
@@ -180,8 +187,13 @@ pub enum Kind {
     Injection,
     /// `meter test` — `{name,stdout_tail}` (delegated, informational).
     TestFailure,
+    /// `meter profile`/`run` capture vitals — `{cpu_time_ms,wall_time_ms,peak_rss_bytes}`
+    /// (Info), or `{gate,limit,observed,unit}` for a breached meter.toml `[gate]`
+    /// ceiling (High => exit 1).
+    Vital,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 impl Kind {
     /// Lowercase snake_case label, matching the serde representation.
     pub fn as_str(&self) -> &'static str {
@@ -194,6 +206,7 @@ impl Kind {
             Kind::FuzzCrash => "fuzz_crash",
             Kind::Injection => "injection",
             Kind::TestFailure => "test_failure",
+            Kind::Vital => "vital",
         }
     }
 
@@ -208,24 +221,27 @@ impl Kind {
             Kind::FuzzCrash => "fuzz_crash",
             Kind::Injection => "injection",
             Kind::TestFailure => "test_failure",
+            Kind::Vital => "vital",
         }
     }
 
     /// Public meter kinds, in declaration order. Legacy carried variants remain
     /// serializable for internal modules but are intentionally absent from the
     /// public `meter spec` schema/catalog.
-    pub fn all() -> [Kind; 4] {
+    pub fn all() -> [Kind; 5] {
         [
             Kind::Hotspot,
             Kind::BoundaryCost,
             Kind::Regression,
             Kind::TestFailure,
+            Kind::Vital,
         ]
     }
 }
 
 /// Build a deterministic finding id as `"{prefix}:{slug}"`. The slug is taken
 /// verbatim (callers are responsible for stable slugs).
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
 pub fn finding_id(kind: Kind, slug: impl AsRef<str>) -> String {
     format!("{}:{}", kind.id_prefix(), slug.as_ref())
 }

@@ -57,7 +57,6 @@ fn show_enhanced_junit_xml() {
             error: Some("Runtime error occurred".to_string()),
             stack_trace: Some("at line 200\nat line 195".to_string()),
             profile_metrics: None,
-            stress_metrics: None,
             started_at: chrono::Utc::now().to_rfc3339(),
         },
     ];

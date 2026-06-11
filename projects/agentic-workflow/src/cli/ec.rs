@@ -13,8 +13,11 @@ use walkdir::WalkDir;
 
 const EC_MANIFEST_VERSION: u8 = 1;
 const EC_MANIFEST_REL: &str = "tests/aw-ec.toml";
+const EC_DOC_REL: &str = "docs/aw-ec-manual.md";
 const EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 const EC_END_MARKER: &str = "AW-EC-END";
+const EC_DOC_BEGIN_MARKER: &str = "AW-EC-DOC-BEGIN";
+const EC_DOC_END_MARKER: &str = "AW-EC-DOC-END";
 
 #[derive(Debug, Args)]
 /// External contract lifecycle: generate and check TD-derived E2E contract inventory.
@@ -31,6 +34,8 @@ pub enum EcCommand {
     Gen(EcGenArgs),
     /// Check EC manifest/list drift and generated test-file presence.
     Check(EcCheckArgs),
+    /// Generate, check, or preview EC-derived product documentation.
+    Doc(EcDocArgs),
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -60,6 +65,60 @@ pub struct EcCheckArgs {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcDocArgs {
+    #[command(subcommand)]
+    pub command: EcDocCommand,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Subcommand)]
+pub enum EcDocCommand {
+    /// Generate docs/aw-ec-manual.md from the EC manifest and evidence metadata.
+    Gen(EcDocGenArgs),
+    /// Check generated EC documentation for manifest drift.
+    Check(EcDocCheckArgs),
+    /// Print the generated EC documentation path for local preview.
+    Preview(EcDocPreviewArgs),
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcDocGenArgs {
+    /// Project name or alias from .aw/config.toml.
+    pub project: String,
+    /// Print the generated documentation without writing files.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Run `aw ec doc check` after generation.
+    #[arg(long)]
+    pub verify: bool,
+    /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcDocCheckArgs {
+    /// Project name or alias from .aw/config.toml.
+    pub project: String,
+    /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Args)]
+pub struct EcDocPreviewArgs {
+    /// Project name or alias from .aw/config.toml.
+    pub project: String,
+    /// Emit JSON instead of human-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EcManifest {
     pub version: u8,
@@ -81,6 +140,37 @@ pub struct EcManifestCase {
     pub command: String,
     #[serde(default)]
     pub assertions: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<EcEvidenceArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluators: Vec<EcEvaluator>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EcEvidenceArtifact {
+    pub kind: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub label: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub locator: String,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EcEvaluator {
+    pub id: String,
+    pub tool: String,
+    pub command: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub report_path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub prompt: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rubric: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pass_criteria: Vec<String>,
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
@@ -101,6 +191,27 @@ pub struct EcCheckSummary {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EcDocCheckSummary {
+    pub project: String,
+    pub clean: bool,
+    pub configured: bool,
+    pub doc_path: String,
+    pub manifest_path: String,
+    pub manifest_digest: Option<String>,
+    pub case_count: usize,
+    pub findings: Vec<String>,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EcDocPreviewSummary {
+    pub project: String,
+    pub doc_path: String,
+    pub exists: bool,
+}
+
+/// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Clone)]
 pub struct EcProjectContext {
     pub project_root: PathBuf,
@@ -109,6 +220,7 @@ pub struct EcProjectContext {
     pub td_root: PathBuf,
     pub tests_root: PathBuf,
     pub manifest_path: PathBuf,
+    pub doc_path: PathBuf,
     pub target: String,
     pub package_name: String,
 }
@@ -159,6 +271,54 @@ struct E2eYamlCase {
     contract_id: Option<String>,
     #[serde(default)]
     category: Option<String>,
+    #[serde(default)]
+    evidence: Option<E2eEvidenceYaml>,
+    #[serde(default, alias = "evals", alias = "agent_evals")]
+    evaluators: Vec<E2eEvaluatorYaml>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct E2eEvidenceYaml {
+    #[serde(default)]
+    screenshots: Vec<E2eArtifactYaml>,
+    #[serde(default)]
+    reports: Vec<E2eArtifactYaml>,
+    #[serde(default)]
+    docs: Vec<E2eArtifactYaml>,
+    #[serde(default)]
+    eval: Option<E2eArtifactYaml>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct E2eArtifactYaml {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    locator: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct E2eEvaluatorYaml {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    tool: Option<String>,
+    #[serde(default)]
+    command: Option<String>,
+    #[serde(default, alias = "report")]
+    report_path: Option<String>,
+    #[serde(default)]
+    prompt: Option<String>,
+    #[serde(default)]
+    rubric: Option<StringOrList>,
+    #[serde(default, alias = "pass", alias = "passes")]
+    pass_criteria: Option<StringOrList>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -191,6 +351,7 @@ pub fn run(args: EcArgs) -> Result<()> {
     match args.command {
         EcCommand::Gen(args) => run_gen(args),
         EcCommand::Check(args) => run_check(args),
+        EcCommand::Doc(args) => run_doc(args),
     }
 }
 
@@ -309,9 +470,142 @@ fn run_check(args: EcCheckArgs) -> Result<()> {
     Ok(())
 }
 
+fn run_doc(args: EcDocArgs) -> Result<()> {
+    match args.command {
+        EcDocCommand::Gen(args) => run_doc_gen(args),
+        EcDocCommand::Check(args) => run_doc_check(args),
+        EcDocCommand::Preview(args) => run_doc_preview(args),
+    }
+}
+
+fn run_doc_gen(args: EcDocGenArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, &args.project)?;
+    let Some((_manifest_path, manifest)) = load_ec_manifest(&ctx)? else {
+        bail!(
+            "EC manifest missing at {}; run `aw ec gen {}` first",
+            relative_to(&ctx.project_root, &ctx.manifest_path),
+            ctx.project
+        );
+    };
+    let content = render_ec_doc(&ctx, &manifest);
+    if args.dry_run {
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "project": ctx.project,
+                    "doc_path": relative_to(&ctx.project_root, &ctx.doc_path),
+                    "case_count": manifest.cases.len(),
+                    "manifest_digest": manifest.generated_from_td_digest,
+                    "content": content,
+                }))?
+            );
+        } else {
+            print!("{content}");
+        }
+    } else {
+        write_ec_doc(&ctx, &content)?;
+        if args.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "project": ctx.project,
+                    "doc_path": relative_to(&ctx.project_root, &ctx.doc_path),
+                    "case_count": manifest.cases.len(),
+                    "manifest_digest": manifest.generated_from_td_digest,
+                }))?
+            );
+        } else {
+            println!(
+                "ec doc gen {}: wrote {} from {} case(s)",
+                ctx.project,
+                relative_to(&ctx.project_root, &ctx.doc_path),
+                manifest.cases.len()
+            );
+        }
+    }
+
+    if args.verify {
+        let summary = check_ec_doc_context(&ctx)?;
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&summary)?);
+        } else if summary.clean {
+            println!(
+                "ec doc check {}: clean ({})",
+                summary.project, summary.doc_path
+            );
+        } else {
+            print_ec_doc_findings(&summary);
+            bail!("ec doc check {} failed", summary.project);
+        }
+    }
+
+    Ok(())
+}
+
+fn run_doc_check(args: EcDocCheckArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, &args.project)?;
+    let summary = check_ec_doc_context(&ctx)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else if summary.clean {
+        if summary.configured {
+            println!(
+                "ec doc check {}: clean ({})",
+                summary.project, summary.doc_path
+            );
+        } else {
+            println!(
+                "ec doc check {}: clean, no EC manifest configured",
+                summary.project
+            );
+        }
+    } else {
+        print_ec_doc_findings(&summary);
+    }
+    if !summary.clean {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn run_doc_preview(args: EcDocPreviewArgs) -> Result<()> {
+    let project_root = crate::find_project_root()?;
+    let ctx = resolve_ec_project_context(&project_root, &args.project)?;
+    let summary = EcDocPreviewSummary {
+        project: ctx.project.clone(),
+        doc_path: relative_to(&ctx.project_root, &ctx.doc_path),
+        exists: ctx.doc_path.is_file(),
+    };
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else if summary.exists {
+        println!("ec doc preview {}: {}", summary.project, summary.doc_path);
+    } else {
+        println!(
+            "ec doc preview {}: {} missing; run `aw ec doc gen {}`",
+            summary.project, summary.doc_path, summary.project
+        );
+    }
+    Ok(())
+}
+
 fn print_ec_findings(summary: &EcCheckSummary) {
     println!(
         "ec check {}: blocked ({} finding(s))",
+        summary.project,
+        summary.findings.len()
+    );
+    for finding in &summary.findings {
+        println!("  - {finding}");
+    }
+}
+
+fn print_ec_doc_findings(summary: &EcDocCheckSummary) {
+    println!(
+        "ec doc check {}: blocked ({} finding(s))",
         summary.project,
         summary.findings.len()
     );
@@ -342,6 +636,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
             .map_err(|err| anyhow::anyhow!("{}", err.message))?;
     let tests_root = source_root.join("tests");
     let manifest_path = source_root.join(EC_MANIFEST_REL);
+    let doc_path = source_root.join(EC_DOC_REL);
     let target = project
         .workspaces
         .iter()
@@ -356,6 +651,7 @@ fn resolve_ec_project_context(project_root: &Path, requested: &str) -> Result<Ec
         td_root,
         tests_root,
         manifest_path,
+        doc_path,
         target,
         package_name,
     })
@@ -454,6 +750,16 @@ fn extract_e2e_cases_from_markdown(
                     .or(raw.asserts)
                     .map(StringOrList::into_vec)
                     .unwrap_or_default();
+                let evidence = raw
+                    .evidence
+                    .map(evidence_artifacts_from_yaml)
+                    .unwrap_or_default();
+                let evaluators = raw
+                    .evaluators
+                    .into_iter()
+                    .map(evaluator_from_yaml)
+                    .filter(|evaluator| !evaluator.id.is_empty())
+                    .collect::<Vec<_>>();
                 out.push(EcManifestCase {
                     id: id.clone(),
                     capability_id: raw
@@ -471,6 +777,8 @@ fn extract_e2e_cases_from_markdown(
                     test_path: relative_to(&ctx.project_root, &test_path),
                     command,
                     assertions,
+                    evidence,
+                    evaluators,
                 });
             }
             idx = next_idx;
@@ -479,6 +787,89 @@ fn extract_e2e_cases_from_markdown(
         idx += 1;
     }
     Ok(out)
+}
+
+fn evaluator_from_yaml(raw: E2eEvaluatorYaml) -> EcEvaluator {
+    let tool = raw
+        .tool
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "agent".to_string());
+    let id = raw
+        .id
+        .map(|value| slugify(&value))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| slugify(&tool));
+    EcEvaluator {
+        id,
+        tool,
+        command: raw
+            .command
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default(),
+        report_path: raw
+            .report_path
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default(),
+        prompt: raw
+            .prompt
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default(),
+        rubric: raw.rubric.map(StringOrList::into_vec).unwrap_or_default(),
+        pass_criteria: raw
+            .pass_criteria
+            .map(StringOrList::into_vec)
+            .unwrap_or_default(),
+    }
+}
+
+fn evidence_artifacts_from_yaml(evidence: E2eEvidenceYaml) -> Vec<EcEvidenceArtifact> {
+    let mut artifacts = Vec::new();
+    for item in evidence.screenshots {
+        push_evidence_artifact(&mut artifacts, "screenshot", item);
+    }
+    for item in evidence.reports {
+        push_evidence_artifact(&mut artifacts, "report", item);
+    }
+    for item in evidence.docs {
+        push_evidence_artifact(&mut artifacts, "doc", item);
+    }
+    if let Some(item) = evidence.eval {
+        push_evidence_artifact(&mut artifacts, "eval", item);
+    }
+    artifacts
+}
+
+fn push_evidence_artifact(
+    artifacts: &mut Vec<EcEvidenceArtifact>,
+    default_kind: &str,
+    item: E2eArtifactYaml,
+) {
+    let Some(path) = item
+        .path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let kind = item
+        .kind
+        .or(item.id)
+        .map(|value| slugify(&value))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default_kind.to_string());
+    artifacts.push(EcEvidenceArtifact {
+        kind,
+        path,
+        label: item
+            .label
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default(),
+        locator: item
+            .locator
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default(),
+    });
 }
 
 fn markdown_heading_title(line: &str) -> Option<String> {
@@ -573,6 +964,25 @@ fn digest_cases(cases: &[EcManifestCase]) -> String {
         hash_field(&mut hasher, &case.command);
         for assertion in &case.assertions {
             hash_field(&mut hasher, assertion);
+        }
+        for artifact in &case.evidence {
+            hash_field(&mut hasher, &artifact.kind);
+            hash_field(&mut hasher, &artifact.path);
+            hash_field(&mut hasher, &artifact.label);
+            hash_field(&mut hasher, &artifact.locator);
+        }
+        for evaluator in &case.evaluators {
+            hash_field(&mut hasher, &evaluator.id);
+            hash_field(&mut hasher, &evaluator.tool);
+            hash_field(&mut hasher, &evaluator.command);
+            hash_field(&mut hasher, &evaluator.report_path);
+            hash_field(&mut hasher, &evaluator.prompt);
+            for rubric in &evaluator.rubric {
+                hash_field(&mut hasher, rubric);
+            }
+            for criterion in &evaluator.pass_criteria {
+                hash_field(&mut hasher, criterion);
+            }
         }
     }
     format!("sha256:{:x}", hasher.finalize())
@@ -714,6 +1124,18 @@ fn check_manifest_against_expected(
                 expected_case.id
             ));
         }
+        if expected_case.evidence != actual_case.evidence {
+            findings.push(format!(
+                "manifest case `{}` evidence artifacts drifted",
+                expected_case.id
+            ));
+        }
+        if expected_case.evaluators != actual_case.evaluators {
+            findings.push(format!(
+                "manifest case `{}` evaluators drifted",
+                expected_case.id
+            ));
+        }
     }
 
     for actual_case in &actual_cases {
@@ -789,6 +1211,67 @@ fn check_manifest_against_expected(
     })
 }
 
+fn check_ec_doc_context(ctx: &EcProjectContext) -> Result<EcDocCheckSummary> {
+    let mut findings = Vec::new();
+    let doc_path = relative_to(&ctx.project_root, &ctx.doc_path);
+    let manifest_path = relative_to(&ctx.project_root, &ctx.manifest_path);
+    let loaded = load_ec_manifest(ctx)?;
+    let configured = loaded.is_some();
+    let manifest = loaded.as_ref().map(|(_, manifest)| manifest);
+
+    if let Some(manifest) = manifest {
+        let ec_summary = check_ec_context(ctx)?;
+        for finding in ec_summary.findings {
+            findings.push(format!("EC manifest is not clean: {finding}"));
+        }
+
+        let expected_content = render_ec_doc(ctx, manifest);
+        if !ctx.doc_path.is_file() {
+            findings.push(format!(
+                "EC doc missing at {}; run `aw ec doc gen {}`",
+                doc_path, ctx.project
+            ));
+        } else {
+            let content = fs::read_to_string(&ctx.doc_path)
+                .with_context(|| format!("read {}", ctx.doc_path.display()))?;
+            if !content.contains(EC_DOC_BEGIN_MARKER) || !content.contains(EC_DOC_END_MARKER) {
+                findings.push(format!(
+                    "EC doc {} is missing generated EC doc markers",
+                    doc_path
+                ));
+            } else if content != expected_content {
+                findings.push(format!(
+                    "EC doc {} generated content drifted; run `aw ec doc gen {}`",
+                    doc_path, ctx.project
+                ));
+            }
+        }
+    } else {
+        let expected = build_expected_manifest(ctx)?;
+        if !expected.cases.is_empty() {
+            findings.push(format!(
+                "EC manifest missing at {}; run `aw ec gen {}` before `aw ec doc gen {}`",
+                manifest_path, ctx.project, ctx.project
+            ));
+        }
+    }
+
+    findings.sort();
+    findings.dedup();
+    Ok(EcDocCheckSummary {
+        project: ctx.project.clone(),
+        clean: findings.is_empty(),
+        configured,
+        doc_path,
+        manifest_path,
+        manifest_digest: manifest.map(|manifest| manifest.generated_from_td_digest.clone()),
+        case_count: manifest
+            .map(|manifest| manifest.cases.len())
+            .unwrap_or_default(),
+        findings,
+    })
+}
+
 fn compare_case_field(
     findings: &mut Vec<String>,
     case_id: &str,
@@ -840,6 +1323,140 @@ fn write_ec_manifest(ctx: &EcProjectContext, manifest: &EcManifest) -> Result<()
         .with_context(|| format!("write {}", ctx.manifest_path.display()))
 }
 
+fn write_ec_doc(ctx: &EcProjectContext, content: &str) -> Result<()> {
+    if ctx.doc_path.exists() {
+        let existing = fs::read_to_string(&ctx.doc_path)
+            .with_context(|| format!("read {}", ctx.doc_path.display()))?;
+        if existing == content {
+            return Ok(());
+        }
+        if !existing.contains(EC_DOC_BEGIN_MARKER) || !existing.contains(EC_DOC_END_MARKER) {
+            bail!(
+                "refusing to overwrite non-EC doc file {}; move it or add AW-EC-DOC markers",
+                ctx.doc_path.display()
+            );
+        }
+    }
+    if let Some(parent) = ctx.doc_path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(&ctx.doc_path, content).with_context(|| format!("write {}", ctx.doc_path.display()))
+}
+
+fn render_ec_doc(ctx: &EcProjectContext, manifest: &EcManifest) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# {} EC Manual\n\n", title_case(&ctx.project)));
+    out.push_str(&format!(
+        "<!-- {EC_DOC_BEGIN_MARKER} project={} manifest={} digest={} -->\n\n",
+        ctx.project,
+        relative_to(&ctx.project_root, &ctx.manifest_path),
+        manifest.generated_from_td_digest
+    ));
+    out.push_str("This document is generated from AW external-contract evidence. Do not edit the generated block directly; update TD `e2e-test` evidence or rerun `aw ec doc gen`.\n\n");
+    out.push_str("## Verification Summary\n\n");
+    out.push_str(&format!("- Project: `{}`\n", ctx.project));
+    out.push_str(&format!(
+        "- Manifest: `{}`\n",
+        relative_to(&ctx.project_root, &ctx.manifest_path)
+    ));
+    out.push_str(&format!(
+        "- Manifest digest: `{}`\n",
+        manifest.generated_from_td_digest
+    ));
+    out.push_str(&format!("- EC case count: `{}`\n\n", manifest.cases.len()));
+
+    if manifest.cases.is_empty() {
+        out.push_str("No EC cases are currently declared.\n\n");
+    } else {
+        out.push_str("## Product Journeys\n\n");
+        for case in &manifest.cases {
+            out.push_str(&format!("### {}\n\n", title_case(&case.id)));
+            out.push_str(&format!("- Capability: `{}`\n", case.capability_id));
+            out.push_str(&format!("- Contract: `{}`\n", case.contract_id));
+            out.push_str(&format!("- Category: `{}`\n", case.category));
+            out.push_str(&format!("- TD source: `{}`\n", case.td_ref));
+            out.push_str(&format!("- Test path: `{}`\n", case.test_path));
+            out.push_str(&format!("- Verification command: `{}`\n", case.command));
+            if !case.assertions.is_empty() {
+                out.push_str("\nExpected evidence:\n\n");
+                for assertion in &case.assertions {
+                    out.push_str(&format!("- {}\n", assertion));
+                }
+            }
+            if !case.evidence.is_empty() {
+                out.push_str("\nEvidence artifacts:\n\n");
+                for artifact in &case.evidence {
+                    out.push_str(&format!(
+                        "- `{}`: `{}`{}\n",
+                        artifact.kind,
+                        artifact.path,
+                        render_artifact_suffix(artifact)
+                    ));
+                }
+            }
+            if !case.evaluators.is_empty() {
+                out.push_str("\nAgent evaluators:\n\n");
+                for evaluator in &case.evaluators {
+                    out.push_str(&format!(
+                        "- `{}` via `{}`{}\n",
+                        evaluator.id,
+                        evaluator.tool,
+                        render_evaluator_suffix(evaluator)
+                    ));
+                    if !evaluator.rubric.is_empty() {
+                        out.push_str("  - Rubric:\n");
+                        for item in &evaluator.rubric {
+                            out.push_str(&format!("    - {}\n", item));
+                        }
+                    }
+                    if !evaluator.pass_criteria.is_empty() {
+                        out.push_str("  - Pass criteria:\n");
+                        for item in &evaluator.pass_criteria {
+                            out.push_str(&format!("    - {}\n", item));
+                        }
+                    }
+                }
+            }
+            out.push('\n');
+        }
+    }
+    out.push_str(&format!("<!-- {EC_DOC_END_MARKER} -->\n"));
+    out
+}
+
+fn render_artifact_suffix(artifact: &EcEvidenceArtifact) -> String {
+    let mut parts = Vec::new();
+    if !artifact.label.is_empty() {
+        parts.push(format!("label: {}", artifact.label));
+    }
+    if !artifact.locator.is_empty() {
+        parts.push(format!("locator: `{}`", artifact.locator));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", parts.join(", "))
+    }
+}
+
+fn render_evaluator_suffix(evaluator: &EcEvaluator) -> String {
+    let mut parts = Vec::new();
+    if !evaluator.command.is_empty() {
+        parts.push(format!("command: `{}`", evaluator.command));
+    }
+    if !evaluator.report_path.is_empty() {
+        parts.push(format!("report: `{}`", evaluator.report_path));
+    }
+    if !evaluator.prompt.is_empty() {
+        parts.push(format!("prompt: {}", evaluator.prompt));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", parts.join(", "))
+    }
+}
+
 fn generated_ec_test_files(
     ctx: &EcProjectContext,
     manifest: &EcManifest,
@@ -887,41 +1504,47 @@ fn write_generated_ec_test(path: &Path, content: &str) -> Result<()> {
 fn render_rust_ec_test(case: &EcManifestCase) -> String {
     let fn_name = rust_ident(&case.id);
     let placeholder = rust_string_literal(&format!("AW EC placeholder for {}", case.id));
+    let evaluator_markers = render_evaluator_marker_lines("//", case);
     format!(
-        "// SPEC-MANAGED: {}\n// CODEGEN-BEGIN\n// {EC_BEGIN_MARKER}\n// @ec {}\n// @capability {}\n// @contract {}\n// @category {}\n// @command {}\n// {EC_END_MARKER}\n\n#[test]\n#[ignore = \"AW EC placeholder: implement this external contract test or keep the manifest command authoritative\"]\nfn {fn_name}() {{\n    panic!({});\n}}\n// CODEGEN-END\n",
+        "// SPEC-MANAGED: {}\n// CODEGEN-BEGIN\n// {EC_BEGIN_MARKER}\n// @ec {}\n// @capability {}\n// @contract {}\n// @category {}\n// @command {}\n{}// {EC_END_MARKER}\n\n#[test]\n#[ignore = \"AW EC placeholder: implement this external contract test or keep the manifest command authoritative\"]\nfn {fn_name}() {{\n    panic!({});\n}}\n// CODEGEN-END\n",
         case.td_ref,
         case.id,
         case.capability_id,
         case.contract_id,
         case.category,
         case.command,
+        evaluator_markers,
         placeholder
     )
 }
 
 fn render_python_ec_test(case: &EcManifestCase) -> String {
+    let evaluator_markers = render_evaluator_marker_lines("#", case);
     format!(
-        "# SPEC-MANAGED: {}\n# CODEGEN-BEGIN\n# {EC_BEGIN_MARKER}\n# @ec {}\n# @capability {}\n# @contract {}\n# @category {}\n# @command {}\n# {EC_END_MARKER}\n\nimport pytest\n\n\n@pytest.mark.skip(reason=\"AW EC placeholder: implement this external contract test or keep the manifest command authoritative\")\ndef test_{}():\n    raise AssertionError(\"AW EC placeholder for {}\")\n# CODEGEN-END\n",
+        "# SPEC-MANAGED: {}\n# CODEGEN-BEGIN\n# {EC_BEGIN_MARKER}\n# @ec {}\n# @capability {}\n# @contract {}\n# @category {}\n# @command {}\n{}# {EC_END_MARKER}\n\nimport pytest\n\n\n@pytest.mark.skip(reason=\"AW EC placeholder: implement this external contract test or keep the manifest command authoritative\")\ndef test_{}():\n    raise AssertionError(\"AW EC placeholder for {}\")\n# CODEGEN-END\n",
         case.td_ref,
         case.id,
         case.capability_id,
         case.contract_id,
         case.category,
         case.command,
+        evaluator_markers,
         rust_ident(&case.id),
         escape_py_string(&case.id)
     )
 }
 
 fn render_ts_ec_test(case: &EcManifestCase) -> String {
+    let evaluator_markers = render_evaluator_marker_lines("//", case);
     format!(
-        "// SPEC-MANAGED: {}\n// CODEGEN-BEGIN\n// {EC_BEGIN_MARKER}\n// @ec {}\n// @capability {}\n// @contract {}\n// @category {}\n// @command {}\n// {EC_END_MARKER}\n\nimport {{ test }} from \"vitest\";\n\ntest.skip({}, () => {{\n  throw new Error({});\n}});\n// CODEGEN-END\n",
+        "// SPEC-MANAGED: {}\n// CODEGEN-BEGIN\n// {EC_BEGIN_MARKER}\n// @ec {}\n// @capability {}\n// @contract {}\n// @category {}\n// @command {}\n{}// {EC_END_MARKER}\n\nimport {{ test }} from \"vitest\";\n\ntest.skip({}, () => {{\n  throw new Error({});\n}});\n// CODEGEN-END\n",
         case.td_ref,
         case.id,
         case.capability_id,
         case.contract_id,
         case.category,
         case.command,
+        evaluator_markers,
         serde_json::to_string(&case.id).unwrap_or_else(|_| "\"aw-ec\"".to_string()),
         serde_json::to_string(&format!("AW EC placeholder for {}", case.id))
             .unwrap_or_else(|_| "\"AW EC placeholder\"".to_string())
@@ -929,10 +1552,35 @@ fn render_ts_ec_test(case: &EcManifestCase) -> String {
 }
 
 fn render_text_ec_test(case: &EcManifestCase) -> String {
+    let evaluator_markers = render_evaluator_marker_lines("", case);
     format!(
-        "SPEC-MANAGED: {}\nCODEGEN-BEGIN\n{EC_BEGIN_MARKER}\n@ec {}\n@capability {}\n@contract {}\n@category {}\n@command {}\n{EC_END_MARKER}\nCODEGEN-END\n",
-        case.td_ref, case.id, case.capability_id, case.contract_id, case.category, case.command
+        "SPEC-MANAGED: {}\nCODEGEN-BEGIN\n{EC_BEGIN_MARKER}\n@ec {}\n@capability {}\n@contract {}\n@category {}\n@command {}\n{}{EC_END_MARKER}\nCODEGEN-END\n",
+        case.td_ref,
+        case.id,
+        case.capability_id,
+        case.contract_id,
+        case.category,
+        case.command,
+        evaluator_markers
     )
+}
+
+fn render_evaluator_marker_lines(prefix: &str, case: &EcManifestCase) -> String {
+    let mut out = String::new();
+    for evaluator in &case.evaluators {
+        if prefix.is_empty() {
+            out.push_str(&format!(
+                "@evaluator {} tool={} command={} report={}\n",
+                evaluator.id, evaluator.tool, evaluator.command, evaluator.report_path
+            ));
+        } else {
+            out.push_str(&format!(
+                "{prefix} @evaluator {} tool={} command={} report={}\n",
+                evaluator.id, evaluator.tool, evaluator.command, evaluator.report_path
+            ));
+        }
+    }
+    out
 }
 
 fn relative_to(root: &Path, path: &Path) -> String {
@@ -960,6 +1608,26 @@ fn slugify(value: &str) -> String {
     } else {
         out
     }
+}
+
+fn title_case(value: &str) -> String {
+    value
+        .split(|ch: char| ch == '-' || ch == '_' || ch.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut word = String::new();
+                    word.push(first.to_ascii_uppercase());
+                    word.push_str(chars.as_str());
+                    word
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn rust_ident(value: &str) -> String {
@@ -1034,6 +1702,26 @@ e2e_tests:
     asserts:
       - command exits zero
       - output is stable
+    evidence:
+      screenshots:
+        - path: e2e-results/demo/happy-path.png
+          label: Demo happy path
+          locator: "[data-testid=demo-happy-path]"
+      reports:
+        - path: e2e-results/demo/report.json
+          kind: agent-eval
+          label: Agent eval report
+    evaluators:
+      - id: Demo agent judge
+        tool: codex
+        command: codex exec --json demo-eval
+        report_path: e2e-results/demo/report.json
+        rubric:
+          - answer is grounded in project state
+          - no blocking contradiction
+        pass_criteria:
+          - score >= 4
+          - blocking_violations is empty
 ```
 "#,
         )
@@ -1100,6 +1788,22 @@ edition = "2021"
             "cargo test -p demo-crate demo_happy_path -- --nocapture"
         );
         assert_eq!(case.assertions.len(), 2);
+        assert_eq!(case.evidence.len(), 2);
+        assert_eq!(case.evidence[0].kind, "screenshot");
+        assert_eq!(case.evidence[0].path, "e2e-results/demo/happy-path.png");
+        assert_eq!(case.evidence[0].label, "Demo happy path");
+        assert_eq!(case.evidence[0].locator, "[data-testid=demo-happy-path]");
+        assert_eq!(case.evidence[1].kind, "agent-eval");
+        assert_eq!(case.evaluators.len(), 1);
+        assert_eq!(case.evaluators[0].id, "demo-agent-judge");
+        assert_eq!(case.evaluators[0].tool, "codex");
+        assert_eq!(case.evaluators[0].command, "codex exec --json demo-eval");
+        assert_eq!(
+            case.evaluators[0].report_path,
+            "e2e-results/demo/report.json"
+        );
+        assert_eq!(case.evaluators[0].rubric.len(), 2);
+        assert_eq!(case.evaluators[0].pass_criteria.len(), 2);
         assert!(case.td_ref.ends_with("contract.md#demo-happy-path"));
         assert_eq!(
             case.test_path,
@@ -1181,6 +1885,67 @@ edition = "2021"
             summary.orphan_test_paths,
             vec!["projects/demo/tests/behavior_orphan.rs"]
         );
+    }
+
+    #[test]
+    fn ec_doc_gen_writes_manual_from_manifest() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
+
+        let content = render_ec_doc(&ctx, &manifest);
+        write_ec_doc(&ctx, &content).unwrap();
+
+        let written = fs::read_to_string(&ctx.doc_path).unwrap();
+        assert!(written.contains(EC_DOC_BEGIN_MARKER));
+        assert!(written.contains("## Product Journeys"));
+        assert!(written.contains("### Demo Happy Path"));
+        assert!(written.contains("e2e-results/demo/happy-path.png"));
+        assert!(written.contains("Agent eval report"));
+        assert!(written.contains("Agent evaluators"));
+        assert!(written.contains("demo-agent-judge"));
+        assert!(written.contains("score >= 4"));
+    }
+
+    #[test]
+    fn ec_doc_check_clean_after_doc_gen() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
+        let content = render_ec_doc(&ctx, &manifest);
+        write_ec_doc(&ctx, &content).unwrap();
+
+        let summary = check_ec_doc_context(&ctx).unwrap();
+        assert!(summary.clean, "{:?}", summary.findings);
+        assert!(summary.configured);
+        assert_eq!(summary.case_count, 1);
+        assert_eq!(summary.doc_path, "projects/demo/docs/aw-ec-manual.md");
+    }
+
+    #[test]
+    fn ec_doc_check_detects_doc_drift() {
+        let (_tmp, ctx) = write_demo_repo();
+        let manifest = build_expected_manifest(&ctx).unwrap();
+        write_ec_manifest(&ctx, &manifest).unwrap();
+        for (path, content) in generated_ec_test_files(&ctx, &manifest) {
+            write_generated_ec_test(&path, &content).unwrap();
+        }
+        let content = render_ec_doc(&ctx, &manifest);
+        write_ec_doc(&ctx, &content).unwrap();
+        fs::write(&ctx.doc_path, content.replace("Demo Happy Path", "Changed")).unwrap();
+
+        let summary = check_ec_doc_context(&ctx).unwrap();
+        assert!(!summary.clean);
+        assert!(summary
+            .findings
+            .iter()
+            .any(|finding| finding.contains("generated content drifted")));
     }
 }
 // CODEGEN-END

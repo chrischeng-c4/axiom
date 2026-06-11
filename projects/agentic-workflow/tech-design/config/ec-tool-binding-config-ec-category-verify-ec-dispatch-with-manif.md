@@ -1,0 +1,205 @@
+---
+id: aw-ec-tool-binding-config
+summary: Per-project EC tool-binding config (`ec.<category>` map on the Project model) plus verify-ec dispatch — bound categories run an external tool (arena/rig/meter) command; unbound categories fall back to the EC manifest command. Exit-code gated; report-JSON folding deferred.
+fill_sections: [logic, schema, unit-test]
+capability_refs:
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: ec-tool-binding-dispatch
+    claim: ec-tool-binding-dispatch
+    coverage: full
+    rationale: "Lets verify-ec route an EC category to an external measurement tool declared in config, instead of only the fixed manifest command."
+---
+
+# TD: aw EC tool-binding config + verify-ec dispatch
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: verify-ec-dispatch
+entry: start
+nodes:
+  start:        { kind: start,    label: "run_project_ec_command(case, project)" }
+  has_ec:       { kind: decision, label: "project.ec has case.category?" }
+  lookup:       { kind: process,  label: "binding = project.ec[case.category]" }
+  build:        { kind: process,  label: "cmd = binding.command() (arena/rig/meter)" }
+  build_ok:     { kind: decision, label: "command built ok?" }
+  bad_tool:     { kind: terminal, label: "Failed: unknown tool in binding" }
+  use_manifest: { kind: process,  label: "cmd = case.command (manifest / cargo-test fallback)" }
+  spawn:        { kind: process,  label: "sh -c cmd in project_root" }
+  exit0:        { kind: decision, label: "exit code == 0?" }
+  passed:       { kind: terminal, label: "ProjectEcCommandReport: Passed" }
+  failed:       { kind: terminal, label: "ProjectEcCommandReport: Failed (exit, tails)" }
+edges:
+  - { from: start,        to: has_ec }
+  - { from: has_ec,       to: lookup,       label: "yes" }
+  - { from: has_ec,       to: use_manifest, label: "no" }
+  - { from: lookup,       to: build }
+  - { from: build,        to: build_ok }
+  - { from: build_ok,     to: spawn,        label: "ok" }
+  - { from: build_ok,     to: bad_tool,     label: "err" }
+  - { from: use_manifest, to: spawn }
+  - { from: spawn,        to: exit0 }
+  - { from: exit0,        to: passed,       label: "yes" }
+  - { from: exit0,        to: failed,       label: "no" }
+---
+flowchart TD
+    start([run_project_ec_command]) --> has_ec{project.ec has case.category?}
+    has_ec -->|yes| lookup[binding = project.ec category]
+    has_ec -->|no| use_manifest[cmd = case.command fallback]
+    lookup --> build[cmd = binding.command]
+    build --> build_ok{command built ok?}
+    build_ok -->|ok| spawn[sh -c cmd in project_root]
+    build_ok -->|err| bad_tool([Failed: unknown tool])
+    use_manifest --> spawn
+    spawn --> exit0{exit code == 0?}
+    exit0 -->|yes| passed([Passed])
+    exit0 -->|no| failed([Failed])
+```
+## Schema
+<!-- type: schema lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "aw-ec-tool-binding"
+title: "EC tool-binding additions to the Project model"
+description: "Project gains an optional `ec` map (category -> tool binding) verified by aw health --verify-ec. Project-scoped (like TD), declared before `workspaces`."
+type: object
+properties:
+  ec:
+    type: object
+    description: "Optional. Map of EC category (free string: correctness | benchmark | security | stability | ...) to a tool binding. A category absent from this map falls back to the EC manifest command (the cargo-test default)."
+    additionalProperties:
+      $ref: "#/$defs/EcBinding"
+$defs:
+  EcBinding:
+    type: object
+    additionalProperties: false
+    required: [tool]
+    properties:
+      tool:
+        type: string
+        enum: ["arena", "rig", "meter"]
+        description: "Which external measurement tool verifies this EC category."
+      spec:
+        type: string
+        description: "arena: comparison spec path -> `arena run --spec <spec>`."
+      dir:
+        type: string
+        description: "rig: scenario directory -> `rig run --dir <dir>`."
+      meter:
+        type: string
+        description: "meter: meter.toml path the meter invocation honors for [gate] ceilings."
+```
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: ec-tool-binding-verification
+requirements:
+  config_roundtrip:
+    id: R1
+    text: "Project.ec deserializes from `[[projects]] ec.<category> = { tool, spec/dir/meter }` and round-trips"
+    kind: functional
+    risk: high
+    verify: test
+  command_builder:
+    id: R2
+    text: "EcBinding::command() builds arena/rig/meter commands and errors on an unknown tool"
+    kind: functional
+    risk: high
+    verify: test
+  dispatch_binding:
+    id: R3
+    text: "run_project_ec_command uses the tool command when the case category is bound, else the manifest command"
+    kind: functional
+    risk: high
+    verify: test
+  absent_is_default:
+    id: R4
+    text: "a project with no ec map verifies exactly as today (manifest command), absence is a clean default"
+    kind: design-constraint
+    risk: medium
+    verify: test
+elements:
+  test_ec_config_roundtrip:
+    kind: test
+    type: "rs/#[test]"
+  test_ec_binding_command:
+    kind: test
+    type: "rs/#[test]"
+  test_dispatch_uses_binding:
+    kind: test
+    type: "rs/#[test]"
+  test_no_ec_is_manifest_default:
+    kind: test
+    type: "rs/#[test]"
+relations:
+  - { from: test_ec_config_roundtrip,        verifies: config_roundtrip }
+  - { from: test_ec_binding_command,         verifies: command_builder }
+  - { from: test_dispatch_uses_binding,      verifies: dispatch_binding }
+  - { from: test_no_ec_is_manifest_default,  verifies: absent_is_default }
+---
+requirementDiagram
+    requirement R1 {
+      id: R1
+      text: "Project.ec deserializes + round-trips"
+      risk: high
+      verifymethod: test
+    }
+    requirement R2 {
+      id: R2
+      text: "EcBinding::command builds per-tool + errors on unknown"
+      risk: high
+      verifymethod: test
+    }
+    requirement R3 {
+      id: R3
+      text: "dispatch uses binding when bound, else manifest"
+      risk: high
+      verifymethod: test
+    }
+    requirement R4 {
+      id: R4
+      text: "no ec map = manifest default"
+      risk: medium
+      verifymethod: test
+    }
+    element test_ec_config_roundtrip {
+      type: "rs/#[test]"
+    }
+    element test_ec_binding_command {
+      type: "rs/#[test]"
+    }
+    element test_dispatch_uses_binding {
+      type: "rs/#[test]"
+    }
+    element test_no_ec_is_manifest_default {
+      type: "rs/#[test]"
+    }
+    test_ec_config_roundtrip - verifies -> R1
+    test_ec_binding_command - verifies -> R2
+    test_dispatch_uses_binding - verifies -> R3
+    test_no_ec_is_manifest_default - verifies -> R4
+```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] applicable: the verify-ec dispatch flow is correct — category→binding lookup, build tool command (arena/rig/meter) or fall back to the manifest command, exit-code gate. Matches the existing `run_project_ec_command` shape; report-JSON folding is correctly out of scope.
+- [schema] applicable: `ec` is an optional project-scoped map of category→EcBinding; EcBinding{tool enum arena|rig|meter, spec/dir/meter}; additionalProperties false guards typos; absent = manifest fallback. Project-scoped placement (before workspaces) matches aw's TD/contract-is-project-scoped model.
+- [unit-test] applicable: R1–R4 each verified by one #[test] element covering config round-trip, the command builder (incl. unknown-tool error), dispatch-uses-binding, and no-ec-is-manifest-default. One-to-one with the acceptance criteria.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] contract-complete: the dispatch is implementable without guessing — lookup project.ec[case.category], build the tool command or fall back to case.command, spawn under sh -c in project_root, gate on exit 0. Unknown-tool is an explicit Failed branch.
+- [schema] contract-complete: `ec` optional map (absent = clean default), EcBinding{tool enum, spec/dir/meter} with additionalProperties:false. Both regenerate from the model schema TD; no ambiguity.
+- [unit-test] contract-complete: R1–R4 mapped one-to-one to #[test] elements (round-trip, command builder incl. unknown-tool error, dispatch-uses-binding, no-ec default). Matches WI #13 acceptance criteria.

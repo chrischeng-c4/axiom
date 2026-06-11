@@ -63,6 +63,7 @@ use std::fmt::Write as FmtWrite;
 
 /// Report output format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub enum ReportFormat {
     /// Markdown format (human-readable)
     #[default]
@@ -79,6 +80,7 @@ pub enum ReportFormat {
     Console,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 impl std::fmt::Display for ReportFormat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -94,6 +96,7 @@ impl std::fmt::Display for ReportFormat {
 
 /// Full test report with all results and metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct TestReport {
     /// Suite name
     pub suite_name: String,
@@ -114,6 +117,7 @@ pub struct TestReport {
 
 /// Environment information
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct EnvironmentInfo {
     /// Python version
     pub python_version: Option<String>,
@@ -127,6 +131,7 @@ pub struct EnvironmentInfo {
 
 /// Coverage information for a single file
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct FileCoverage {
     /// File path (relative to project root)
     pub path: String,
@@ -142,6 +147,7 @@ pub struct FileCoverage {
 
 /// Overall coverage summary
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct CoverageInfo {
     /// Total statements across all files
     pub total_statements: usize,
@@ -155,6 +161,7 @@ pub struct CoverageInfo {
     pub uncovered_files: Vec<String>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 impl TestReport {
     /// Create a new test report
     pub fn new(suite_name: impl Into<String>, results: Vec<TestResult>) -> Self {
@@ -240,6 +247,7 @@ fn calculate_summary(results: &[TestResult]) -> TestSummary {
 
 /// Agent evaluation report with all results and metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct AgentEvalReport {
     /// Suite name
     pub suite_name: String,
@@ -253,6 +261,7 @@ pub struct AgentEvalReport {
     pub environment: EnvironmentInfo,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 impl AgentEvalReport {
     /// Create a new agent evaluation report
     pub fn new(
@@ -288,10 +297,12 @@ impl AgentEvalReport {
 
 /// Test reporter - generates reports in various formats
 #[derive(Debug)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 pub struct Reporter {
     format: ReportFormat,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-reporter-rs.md#source
 impl Reporter {
     /// Create a new reporter with specified format
     pub fn new(format: ReportFormat) -> Self {
@@ -372,12 +383,7 @@ impl Reporter {
         writeln!(output, "| Type | Passed | Failed | Skipped | Duration |").unwrap();
         writeln!(output, "|------|--------|--------|---------|----------|").unwrap();
 
-        for test_type in [
-            TestType::Unit,
-            TestType::Profile,
-            TestType::Stress,
-            TestType::Security,
-        ] {
+        for test_type in [TestType::Unit, TestType::Profile, TestType::Security] {
             let results = report.results_by_type(test_type);
             if !results.is_empty() {
                 let passed = results
@@ -537,45 +543,6 @@ impl Reporter {
                         metrics.avg_cpu_time_ms,
                         format_bytes(metrics.peak_memory_bytes),
                         metrics.boundary_overhead_ms
-                    )
-                    .unwrap();
-                }
-            }
-            writeln!(output).unwrap();
-        }
-
-        // Stress metrics section
-        let stress_results: Vec<_> = report
-            .results
-            .iter()
-            .filter(|r| r.stress_metrics.is_some())
-            .collect();
-
-        if !stress_results.is_empty() {
-            writeln!(output, "## Stress Test Results").unwrap();
-            writeln!(output).unwrap();
-            writeln!(
-                output,
-                "| Test | RPS | P50 (ms) | P95 (ms) | P99 (ms) | Error Rate |"
-            )
-            .unwrap();
-            writeln!(
-                output,
-                "|------|-----|----------|----------|----------|------------|"
-            )
-            .unwrap();
-
-            for result in stress_results {
-                if let Some(ref metrics) = result.stress_metrics {
-                    writeln!(
-                        output,
-                        "| {} | {:.1} | {} | {} | {} | {:.2}% |",
-                        result.meta.name,
-                        metrics.rps,
-                        metrics.latency_p50_ms,
-                        metrics.latency_p95_ms,
-                        metrics.latency_p99_ms,
-                        metrics.error_rate * 100.0
                     )
                     .unwrap();
                 }
@@ -1818,7 +1785,6 @@ mod tests {
                 error: Some("Runtime error".to_string()),
                 stack_trace: Some("stack trace".to_string()),
                 profile_metrics: None,
-                stress_metrics: None,
                 started_at: chrono::Utc::now().to_rfc3339(),
             },
         ];

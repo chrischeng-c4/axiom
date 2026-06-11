@@ -44,11 +44,13 @@ Public API manifest for `projects/meter/src/report/producer.rs` generated from A
 use super::finding::{finding_id, Finding, Invoke, Kind, Location, Severity};
 
 /// Map an engine result into zero or more [`Finding`]s.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 pub trait IntoFindings {
     /// Produce the findings this engine result represents.
     fn into_findings(&self) -> Vec<Finding>;
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 impl IntoFindings for crate::runner::TestResult {
     /// A failed/errored delegated test becomes one informational `TestFailure`.
     /// Passed/skipped tests produce nothing.
@@ -78,6 +80,7 @@ impl IntoFindings for crate::runner::TestResult {
 ///
 /// Public so `capture::delegate` can construct findings directly from parsed
 /// runner output without materializing a full `TestResult`.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 pub fn test_failure_finding(
     name: &str,
     stdout_tail: &str,
@@ -117,6 +120,7 @@ pub fn test_failure_finding(
 
 /// Build a single generic `TestFailure` finding for a delegated run that exited
 /// non-zero but produced no parseable per-test failures.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 pub fn generic_test_failure(target: &str, exit_code: i32) -> Finding {
     Finding {
         id: finding_id(Kind::TestFailure, "delegated-run"),
@@ -139,6 +143,7 @@ pub fn generic_test_failure(target: &str, exit_code: i32) -> Finding {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 impl IntoFindings for crate::baseline::RegressionReport {
     /// Map each detected [`Regression`](crate::baseline::Regression) to a
     /// `Finding{kind: Regression}`. Improvements and unchanged benchmarks
@@ -201,6 +206,7 @@ fn regression_finding(r: &crate::baseline::Regression) -> Finding {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 impl IntoFindings for crate::performance::profiler::PhaseBreakdown {
     /// Map a recorded phase breakdown into per-phase `BoundaryCost` findings —
     /// the `meter profile --phases` EMBED path (no child spawn, no sampler).
@@ -266,6 +272,7 @@ fn boundary_cost_finding(phase: &str, self_ns: u64, total_ns: u64, samples: u64)
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 impl IntoFindings for crate::rust_runner::AuditResult {
     /// Map each `cargo audit` advisory to a `RustVuln` finding and each warning
     /// to a `RustWarning` finding. Both id schemes are deterministic so repeated
@@ -372,6 +379,7 @@ fn rust_warning_finding(w: &crate::rust_runner::AuditWarning) -> Finding {
 /// from the same crashing input / payload are byte-identical — the
 /// reproducibility contract.
 #[cfg(feature = "capture")]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 pub fn hash8(bytes: &[u8]) -> String {
     let digest = blake3::hash(bytes);
     // `to_hex()` is lowercase, deterministic, and platform-independent.
@@ -385,6 +393,7 @@ pub fn hash8(bytes: &[u8]) -> String {
 /// into a deterministic `Injection` finding.
 #[cfg(feature = "capture")]
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 pub struct InjectionHit {
     /// The injection payload that was not blocked.
     pub payload: String,
@@ -403,6 +412,7 @@ pub struct InjectionHit {
 /// strategy, seed}` (the input is base64-encoded so non-UTF-8/control bytes
 /// survive a JSON round-trip intact).
 #[cfg(feature = "capture")]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 pub fn fuzz_crash_finding(
     target: &str,
     crash: &crate::security::FuzzCrash,
@@ -443,6 +453,7 @@ pub fn fuzz_crash_finding(
 /// blake3(payload)[..8]`, so the same leaked payload yields the same id across
 /// runs. `evidence = {payload, category, reflected}`.
 #[cfg(feature = "capture")]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 pub fn injection_finding(target: &str, hit: &InjectionHit) -> Finding {
     let hash = hash8(hit.payload.as_bytes());
     let category = &hit.category;
@@ -471,12 +482,12 @@ pub fn injection_finding(target: &str, hit: &InjectionHit) -> Finding {
 
 /// Map an engine [`FuzzResult`](crate::security::FuzzResult) into `FuzzCrash`
 /// findings. The bare `FuzzResult` carries no target/seed/strategy context (those
-/// live on the capture-layer invocation), so this convenience impl stamps a
-/// generic `target = "fuzz"`, `seed = 0`, `strategy = "unknown"`. The CLI path in
-/// `capture::fuzz` calls [`fuzz_crash_finding`] DIRECTLY with the real
-/// target/seed so its ids are byte-reproducible per invocation; this impl exists
-/// so `FuzzResult` satisfies the `IntoFindings` boundary trait uniformly.
+/// lived on the removed capture-layer fuzz invocation), so this convenience impl
+/// stamps a generic `target = "fuzz"`, `seed = 0`, `strategy = "unknown"`; it
+/// exists so the carried-legacy `FuzzResult` satisfies the `IntoFindings`
+/// boundary trait uniformly.
 #[cfg(feature = "capture")]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 impl IntoFindings for crate::security::FuzzResult {
     fn into_findings(&self) -> Vec<Finding> {
         self.crashes
@@ -493,6 +504,7 @@ impl IntoFindings for crate::security::FuzzResult {
 /// richer [`injection_finding`] with the real payload). `Blocked`/`Error` are the
 /// safe/non-leak outcomes and produce nothing.
 #[cfg(feature = "capture")]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 impl IntoFindings for crate::security::InjectionResult {
     fn into_findings(&self) -> Vec<Finding> {
         use crate::security::InjectionResult;
@@ -606,7 +618,6 @@ mod tests {
             error: Some("assertion failed".into()),
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: String::new(),
         }
     }

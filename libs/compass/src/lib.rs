@@ -29,6 +29,7 @@ pub mod graph;
 pub mod lens_error;
 pub mod lint;
 pub mod lsp;
+pub mod outline;
 pub mod output;
 pub mod refactoring;
 pub mod schemas;
@@ -48,6 +49,7 @@ pub use diagnostic::{Diagnostic, DiagnosticCategory, DiagnosticSeverity, Positio
 pub use gen::{CodeGenerator, GenContext, GenError, GenResult, GeneratedCode, TechStack};
 pub use lens_error::ArgusError;
 pub use lint::{Checker, CheckerRegistry};
+pub use outline::{outline, outline_parsed, FunctionDef, FunctionKind};
 pub use output::reporter::{OutputFormat, Reporter};
 pub use server::{ArgusDaemon, DaemonClient, DaemonConfig, RequestHandler};
 pub use syntax::{Language, MultiParser, ParsedFile};

@@ -116,6 +116,12 @@ pub use ts_runner::{NpmAuditResult, TsRunner, TsRunnerConfig, TsRunnerResult, V8
 // Re-export the agent-first report envelope + finding surface.
 pub use report::{
     catalog, json_schema, Completion, EnvBlock, Finding, FindingsSummary, IntoFindings, Invoke,
-    Kind, Location, OverallStatus, MeterReport, ReportBuilder, RunnerRecord, Severity, SCHEMA_VERSION,
+    Kind, Location, MeterReport, OverallStatus, ReportBuilder, RunnerRecord, Severity,
+    SCHEMA_VERSION,
 };
 // CODEGEN-END
+
+// HANDWRITE-BEGIN gap="missing-generator:meter-ast-instrumentation" reason="AST-assisted probe-point discovery (feature `ast`) backed by compass (libs/compass), filling the README's 'AST-assisted instrumentation is planned but not implemented' gap. Promote to CODEGEN by adding the instrument module to the lib.rs TD Source snapshot + symbols table."
+#[cfg(feature = "ast")]
+pub mod instrument;
+// HANDWRITE-END

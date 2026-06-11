@@ -20,6 +20,7 @@ use super::common::{
 use crate::generate::engine::TemplateEngine;
 use crate::generate::spec_ir::{PropDef, SpecIR, WireframeNode, WireframeSpec};
 use serde::Serialize;
+use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // ReactGenerator
@@ -47,6 +48,44 @@ impl Default for ReactGenerator {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Render one React wireframe output file for TD-to-code apply.
+///
+/// `ReactGenerator` normally returns a manifest and content hashes. The apply
+/// path needs the concrete body for the single `Changes` target it is writing,
+/// so this helper reuses the same context/rendering functions without inventing
+/// a second TSX emitter.
+/// @spec projects/agentic-workflow/tech-design/core/specs/typescript-frontend-emitter.md#ts-emit-component
+pub fn render_react_wireframe_file(spec: &WireframeSpec, target_path: &Path) -> Option<String> {
+    let file_name = target_path.file_name()?.to_str()?;
+    let settings = GeneratorSettings {
+        name: wireframe_settings_name(spec, target_path),
+        ..Default::default()
+    };
+    let ctx = build_context(spec, &settings);
+
+    if file_name == "index.ts" {
+        return Some(generate_index_ts(&ctx));
+    }
+    if file_name.ends_with(".types.ts") {
+        return Some(generate_types_ts(&ctx));
+    }
+    if target_path.extension().and_then(|ext| ext.to_str()) == Some("tsx") {
+        return Some(generate_component_tsx(&ctx));
+    }
+    None
+}
+
+fn wireframe_settings_name(spec: &WireframeSpec, target_path: &Path) -> String {
+    if !spec.name.trim().is_empty() {
+        return spec.name.clone();
+    }
+    target_path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("app")
+        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +519,20 @@ mod tests {
         assert!(names.contains(&"UserCard.tsx".to_string()));
         assert!(names.contains(&"UserCard.types.ts".to_string()));
         assert!(names.contains(&"index.ts".to_string()));
+    }
+
+    #[test]
+    fn test_render_wireframe_file_selects_tsx_body() {
+        let spec = match card_spec() {
+            SpecIR::Wireframe { spec, .. } => spec,
+            _ => unreachable!(),
+        };
+
+        let content = render_react_wireframe_file(&spec, std::path::Path::new("src/UserCard.tsx"))
+            .expect("render TSX");
+
+        assert!(content.contains("export function UserCard"));
+        assert!(content.contains("<button type=\"button\">Edit</button>"));
     }
 
     #[test]
