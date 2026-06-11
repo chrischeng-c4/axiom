@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-segment-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Columnar mmap disk segment — Stage 2 disk-tier (Phase 0 + 2a + 2b).
 //!
 //! One file = one Number column for `n_docs` rows at a single `applied_seq`.
@@ -3592,3 +3593,5 @@ mod tests {
         std::fs::remove_file(&path).ok();
     }
 }
+
+// </HANDWRITE>
