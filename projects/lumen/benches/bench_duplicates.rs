@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-benches-bench-duplicates-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Duplicate-detection bench.
 //!
 //! Builds a 100k-doc keyword field with ~10% duplicate rate
@@ -110,3 +111,5 @@ fn bench_duplicates(c: &mut Criterion) {
 
 criterion_group!(benches, bench_duplicates);
 criterion_main!(benches);
+
+// </HANDWRITE>
