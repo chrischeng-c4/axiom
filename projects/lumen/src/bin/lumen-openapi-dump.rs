@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-bin-lumen-openapi-dump-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Print the lumen OpenAPI spec as pretty JSON to stdout.
 //!
 //! Retained as a back-compat alias; the canonical entrypoint is now
@@ -8,3 +9,5 @@
 fn main() {
     println!("{}", lumen::spec::openapi_json());
 }
+
+// </HANDWRITE>
