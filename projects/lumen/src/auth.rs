@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-auth-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Bearer-token auth + per-collection RBAC.
 //!
 //! v1 keeps the verifier behind a trait so the static config-driven
@@ -340,3 +341,5 @@ mod tests {
         }
     }
 }
+
+// </HANDWRITE>
