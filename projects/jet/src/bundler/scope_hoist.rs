@@ -231,6 +231,155 @@ pub fn generate_flattened_bundle(modules: &[CompiledModule]) -> String {
     }
 
     out.push_str("})();\n");
+    dedup_content_twins(out, modules)
+}
+
+/// Eliminate duplicate copies of the same source module bundled under two
+/// resolved paths — e.g. `@mui/system/colorManipulator.js` (CJS) and
+/// `@mui/system/esm/colorManipulator.js` (ESM), both ~8.5KB of the same
+/// color functions. Importers that resolved to the subset copy are
+/// redirected (`_r(loser)` -> `_r(winner)`) to the copy that provides a
+/// superset of the consumed exports, and the loser's body is dropped.
+///
+/// Safe by construction: a loser is merged only when EVERY name read from
+/// it via `_r(loser)["name"]` is also written as an export by the winner,
+/// so the redirect resolves to the same value. Same package + same file
+/// basename guarantees identical source. The empty `_m{loser}` slot is
+/// left in place (harmless ~18 bytes) so module-id indices never shift.
+fn dedup_content_twins(bundle: String, modules: &[CompiledModule]) -> String {
+    use std::collections::HashMap;
+    // Group module ids by (package, basename).
+    let key_of = |m: &CompiledModule| -> Option<(String, String)> {
+        let p = m.path.to_string_lossy();
+        let rel = p.rsplit_once("/node_modules/").map(|(_, r)| r)?;
+        let pkg = if rel.starts_with('@') {
+            rel.splitn(3, '/').take(2).collect::<Vec<_>>().join("/")
+        } else {
+            rel.split('/').next()?.to_string()
+        };
+        let base = rel.rsplit('/').next()?.to_string();
+        Some((pkg, base))
+    };
+    let mut groups: HashMap<(String, String), Vec<usize>> = HashMap::new();
+    for m in modules {
+        if let Some(k) = key_of(m) {
+            groups.entry(k).or_default().push(m.id);
+        }
+    }
+    let twins: Vec<Vec<usize>> = groups
+        .into_values()
+        .filter(|ids| ids.len() > 1)
+        .collect();
+    if twins.is_empty() {
+        return bundle;
+    }
+
+    // Names consumed from a module via `_r(id)["name"]`.
+    let consumed_names = |bundle: &str, id: usize| -> Vec<String> {
+        let needle = format!("_r({id})[\"");
+        let mut out = Vec::new();
+        let mut from = 0usize;
+        while let Some(rel) = bundle[from..].find(&needle) {
+            let s = from + rel + needle.len();
+            if let Some(end) = bundle[s..].find('"') {
+                out.push(bundle[s..s + end].to_string());
+            }
+            from = s;
+        }
+        out
+    };
+    // Whether module `id`'s emitted block writes export `name`.
+    let block_of = |bundle: &str, id: usize| -> Option<(usize, usize)> {
+        let marker = format!("// Module {id}: ");
+        let start = bundle.find(&marker)?;
+        let after = start + marker.len();
+        let end = bundle[after..]
+            .find("// Module ")
+            .map(|r| after + r)
+            .unwrap_or_else(|| bundle.rfind("})();\n").unwrap_or(bundle.len()));
+        Some((start, end))
+    };
+    let provides = |block: &str, id: usize, name: &str| -> bool {
+        block.contains(&format!("_m{id}e.{name} ="))
+            || block.contains(&format!("_m{id}e.{name}="))
+            || block.contains(&format!("_m{id}.exports[\"{name}\"]"))
+            || block.contains(&format!("_m{id}e[\"{name}\"]"))
+            || block.contains(&format!("_m{id}.exports.{name} ="))
+    };
+
+    let mut result = bundle;
+    for ids in twins {
+        // Winner = the id with the most distinct consumed names (the superset).
+        let mut ranked: Vec<(usize, usize)> = ids
+            .iter()
+            .map(|&id| (consumed_names(&result, id).len(), id))
+            .collect();
+        ranked.sort_unstable();
+        let (_, winner) = *ranked.last().unwrap();
+        let Some((ws, we)) = block_of(&result, winner) else {
+            continue;
+        };
+        let winner_block = result[ws..we].to_string();
+        for &(_, loser) in &ranked {
+            if loser == winner {
+                continue;
+            }
+            let needs = consumed_names(&result, loser);
+            // Only merge when the winner provides every consumed name AND the
+            // loser is consumed purely by property access (no bare `_r(loser)`
+            // namespace/`||_r(loser)` interop we can't prove equivalent).
+            let bare = format!("_r({loser})");
+            let prop = format!("_r({loser})[");
+            let bare_nonprop = {
+                let mut from = 0usize;
+                let mut found = false;
+                while let Some(rel) = result[from..].find(&bare) {
+                    let at = from + rel;
+                    let after = at + bare.len();
+                    let is_prop = result[at..].starts_with(&prop);
+                    let id_continues = result[after..]
+                        .bytes()
+                        .next()
+                        .map(|b| b.is_ascii_digit())
+                        .unwrap_or(false);
+                    if !is_prop && !id_continues {
+                        found = true;
+                        break;
+                    }
+                    from = after;
+                }
+                found
+            };
+            if bare_nonprop || needs.is_empty() {
+                continue;
+            }
+            if !needs.iter().all(|n| provides(&winner_block, winner, n)) {
+                continue;
+            }
+            // Redirect every `_r(loser)` -> `_r(winner)` (exact id), drop body.
+            result = redirect_require_id(&result, loser, winner);
+            if let Some((ls, le)) = block_of(&result, loser) {
+                result.replace_range(ls..le, "");
+            }
+        }
+    }
+    result
+}
+
+/// Replace `_r(<from>)` with `_r(<to>)` for the exact numeric id (not a
+/// prefix of a longer id), across the whole bundle.
+fn redirect_require_id(bundle: &str, from: usize, to: usize) -> String {
+    let needle = format!("_r({from})");
+    let repl = format!("_r({to})");
+    let mut out = String::with_capacity(bundle.len());
+    let mut at = 0usize;
+    while let Some(rel) = bundle[at..].find(&needle) {
+        let s = at + rel;
+        out.push_str(&bundle[at..s]);
+        out.push_str(&repl);
+        at = s + needle.len();
+    }
+    out.push_str(&bundle[at..]);
     out
 }
 
