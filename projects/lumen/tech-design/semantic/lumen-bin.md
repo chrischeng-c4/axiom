@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-bin
 summary: Semantic coverage for "projects/lumen/src/bin"
+capability_refs:
+  - id: "search"
+    role: primary
+    claim: "query-planner-boolean-eval-roaring-postings"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen/src/bin`."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -18,7 +24,7 @@ semantic_domain:
     source_units:
       - path: "projects/lumen/src/bin/lumen.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "enum_model", "service_method"]
         symbols:
           - name: "Cli"
@@ -92,7 +98,7 @@ semantic_domain:
           domain: "projects/lumen/src/bin"
       - path: "projects/lumen/src/bin/lumen-operator.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "enum_model", "service_method"]
         symbols:
           - name: "Cli"
@@ -112,7 +118,7 @@ semantic_domain:
           domain: "projects/lumen/src/bin"
       - path: "projects/lumen/src/bin/lumen-consumer.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method"]
         symbols:
           - name: "main"
@@ -126,7 +132,7 @@ semantic_domain:
           domain: "projects/lumen/src/bin"
       - path: "projects/lumen/src/bin/lumen-bench.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "mix"
@@ -257,7 +263,7 @@ semantic_domain:
           domain: "projects/lumen/src/bin"
       - path: "projects/lumen/src/bin/lumen-openapi-dump.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method"]
         symbols:
           - name: "main"
@@ -301,38 +307,32 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-bin-lumen-rs>"
   - path: "projects/lumen/src/bin/lumen-operator.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-bin-lumen-operator-rs>"
   - path: "projects/lumen/src/bin/lumen-consumer.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-bin-lumen-consumer-rs>"
   - path: "projects/lumen/src/bin/lumen-bench.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-bin-lumen-bench-rs>"
   - path: "projects/lumen/src/bin/lumen-openapi-dump.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-bin-lumen-openapi-dump-rs>"
+  - action: annotate
+    section: unit-test
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the unit-test section."
 ```
