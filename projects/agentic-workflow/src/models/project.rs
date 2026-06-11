@@ -42,16 +42,17 @@ pub struct CodegenProfile {
 /// Binds one EC category to an external measurement tool (wi-13).
 /// The deterministic verify command is built by `EcBinding::command()`
 /// (project-health source): arena -> `arena run --spec <spec>`,
-/// rig -> `rig run --dir <dir>`, meter -> `meter run --target <meter>`.
+/// rig -> `rig run --dir <dir>`, meter -> `meter run --target <meter>`,
+/// vat -> `vat run [runner]`.
 /// @spec projects/agentic-workflow/tech-design/core/interfaces/models/project.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EcBinding {
-    /// Which external tool verifies this category: `arena`, `rig`, or `meter`. Validated by the command builder, not serde — an unknown tool is a Failed EC command, not a parse error.
+    /// Which external tool verifies this category: `arena`, `rig`, `meter`, or `vat`. Validated by the command builder, not serde — an unknown tool is a Failed EC command, not a parse error.
     pub tool: String,
     /// arena: comparison spec path -> `arena run --spec <spec>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spec: Option<String>,
-    /// rig: scenario directory -> `rig run --dir <dir>`.
+    /// rig: scenario directory -> `rig run --dir <dir>`; vat: optional runner id -> `vat run <dir>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dir: Option<String>,
     /// meter: target path whose meter.toml [gate] ceilings the run honors -> `meter run --target <meter>`.

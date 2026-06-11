@@ -26,9 +26,9 @@ Seven structs declared in this spec:
   before `workspaces` so the contract reads before the implementation), and
   `workspaces: Vec<Workspace>`.
 - `EcBinding` — binds one EC category to an external measurement tool.
-  Four fields: `tool` (`arena` | `rig` | `meter`, validated by the command
+  Four fields: `tool` (`arena` | `rig` | `meter` | `vat`, validated by the command
   builder rather than serde), and the per-tool argument carriers: optional
-  `spec` (arena), optional `dir` (rig), optional `meter` (meter).
+  `spec` (arena), optional `dir` (rig directory or vat runner id), optional `meter` (meter).
 - `Workspace` — a single language workspace within a project.
   Five fields: optional `name`, `paths: Vec<String>`, `target: Language`, optional `test_cmd`, optional `codegen: CodegenProfile`.
 - `CodegenProfile` — codegen configuration for a workspace.
@@ -91,18 +91,19 @@ definitions:
       Binds one EC category to an external measurement tool (wi-13).
       The deterministic verify command is built by `EcBinding::command()`
       (project-health source): arena -> `arena run --spec <spec>`,
-      rig -> `rig run --dir <dir>`, meter -> `meter run --target <meter>`.
+      rig -> `rig run --dir <dir>`, meter -> `meter run --target <meter>`,
+      vat -> `vat run [runner]`.
     properties:
       tool:
         type: string
-        description: "Which external tool verifies this category: `arena`, `rig`, or `meter`. Validated by the command builder, not serde — an unknown tool is a Failed EC command, not a parse error."
+        description: "Which external tool verifies this category: `arena`, `rig`, `meter`, or `vat`. Validated by the command builder, not serde — an unknown tool is a Failed EC command, not a parse error."
       spec:
         type: string
         description: "arena: comparison spec path -> `arena run --spec <spec>`."
         x-serde-skip-if: "Option::is_none"
       dir:
         type: string
-        description: "rig: scenario directory -> `rig run --dir <dir>`."
+        description: "rig: scenario directory -> `rig run --dir <dir>`; vat: optional runner id -> `vat run <dir>`."
         x-serde-skip-if: "Option::is_none"
       meter:
         type: string
