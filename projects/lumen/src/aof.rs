@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-aof-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Local append-only log (Stage 2 Phase 2f-3) — the binary's "AOF".
 //!
 //! The segment checkpoint ([`crate::segment_rdb`]) is the binary's "RDB": a
@@ -908,3 +909,5 @@ mod crux_recovery_tests {
         assert_eq!(std::fs::metadata(&aof_path).unwrap().len(), good_len);
     }
 }
+
+// </HANDWRITE>
