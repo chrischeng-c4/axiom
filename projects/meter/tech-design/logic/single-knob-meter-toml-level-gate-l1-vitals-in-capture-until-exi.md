@@ -151,3 +151,136 @@ commands:
       - "meter.toml [gate] breaches fold as severity>=Medium findings driving the existing exit ladder."
       - "On a gate breach the envelope agent_prompt suggests re-running with --level sample to locate the cost."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: capture-vitals-verification
+requirements:
+  config_precedence:
+    id: R1
+    text: "level resolves CLI flag over meter.toml over default vitals; level-only meter.toml is valid; absent file keeps today's defaults"
+    kind: functional
+    risk: high
+    verify: test
+  vitals_findings:
+    id: R2
+    text: "capture emits kind=vital findings with cpu_time_ms, wall_time_ms, peak_rss_bytes after child wait, with no sampler attach at level vitals"
+    kind: functional
+    risk: high
+    verify: test
+  gate_adjudication:
+    id: R3
+    text: "gate breach emits severity>=Medium finding, non-zero exit per ladder, and agent_prompt suggesting --level sample"
+    kind: functional
+    risk: high
+    verify: test
+  until_exit_window:
+    id: R4
+    text: "default sampling window lasts until child exit; --duration-cap bounds it; a self-terminating target is not killed mid-run; --drive lifetime ends the window and driver argv is recorded"
+    kind: functional
+    risk: medium
+    verify: test
+  collapsed_artifact:
+    id: R5
+    text: "collapsed artifact is written under .meter and referenced from the report at level>=sample"
+    kind: functional
+    risk: medium
+    verify: test
+  stress_residue_gone:
+    id: R6
+    text: "StressMetrics, TestType::Stress, with_stress_metrics, reporter RPS table, and orphaned fuzz_http are removed and the workspace still builds and tests green"
+    kind: design-constraint
+    risk: low
+    verify: inspection
+elements:
+  test_config_precedence:
+    kind: test
+    type: "rs/#[test]"
+  test_vitals_emission:
+    kind: test
+    type: "rs/#[test]"
+  test_gate_breach_exit:
+    kind: test
+    type: "rs/#[test]"
+  test_window_semantics:
+    kind: test
+    type: "rs/#[test]"
+  test_collapsed_artifact:
+    kind: test
+    type: "rs/#[test]"
+  inspect_residue_grep:
+    kind: inspection
+    type: "rs/grep"
+relations:
+  - { from: test_config_precedence,  verifies: config_precedence }
+  - { from: test_vitals_emission,    verifies: vitals_findings }
+  - { from: test_gate_breach_exit,   verifies: gate_adjudication }
+  - { from: test_window_semantics,   verifies: until_exit_window }
+  - { from: test_collapsed_artifact, verifies: collapsed_artifact }
+  - { from: inspect_residue_grep,    verifies: stress_residue_gone }
+---
+requirementDiagram
+    requirement R1 {
+      id: R1
+      text: "level precedence CLI over toml over default"
+      risk: high
+      verifymethod: test
+    }
+    requirement R2 {
+      id: R2
+      text: "kind=vital findings from getrusage after child wait"
+      risk: high
+      verifymethod: test
+    }
+    requirement R3 {
+      id: R3
+      text: "gate breach severity and exit ladder plus escalation prompt"
+      risk: high
+      verifymethod: test
+    }
+    requirement R4 {
+      id: R4
+      text: "until-exit window, duration cap, drive lifetime"
+      risk: medium
+      verifymethod: test
+    }
+    requirement R5 {
+      id: R5
+      text: "collapsed artifact written and referenced"
+      risk: medium
+      verifymethod: test
+    }
+    requirement R6 {
+      id: R6
+      text: "stress residue removed, workspace green"
+      risk: low
+      verifymethod: inspection
+    }
+    element test_config_precedence {
+      type: "rs/#[test]"
+    }
+    element test_vitals_emission {
+      type: "rs/#[test]"
+    }
+    element test_gate_breach_exit {
+      type: "rs/#[test]"
+    }
+    element test_window_semantics {
+      type: "rs/#[test]"
+    }
+    element test_collapsed_artifact {
+      type: "rs/#[test]"
+    }
+    element inspect_residue_grep {
+      type: "rs/grep"
+    }
+    test_config_precedence - verifies -> R1
+    test_vitals_emission - verifies -> R2
+    test_gate_breach_exit - verifies -> R3
+    test_window_semantics - verifies -> R4
+    test_collapsed_artifact - verifies -> R5
+    inspect_residue_grep - verifies -> R6
+```
