@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-benches-bench-index-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Index-throughput benches.
 //!
 //! Drives the `Engine` directly (not the HTTP layer) since the README
@@ -217,3 +218,5 @@ fn bench_index(c: &mut Criterion) {
 
 criterion_group!(benches, bench_index);
 criterion_main!(benches);
+
+// </HANDWRITE>
