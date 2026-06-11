@@ -5,6 +5,7 @@
 
 // @spec projects/agentic-workflow/tech-design/surface/specs/sync-command.md#R9
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::models::tech_stack::Language;
