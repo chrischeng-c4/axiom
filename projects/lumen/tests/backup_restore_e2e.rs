@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-backup-restore-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Backup → restore round-trip.
 
 use std::sync::Arc;
@@ -113,3 +114,5 @@ async fn restore_rejects_wrong_version() {
         .await;
     resp.assert_status_bad_request();
 }
+
+// </HANDWRITE>
