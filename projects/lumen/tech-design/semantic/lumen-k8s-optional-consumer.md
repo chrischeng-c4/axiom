@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-k8s-optional-consumer
 summary: Semantic coverage for "projects/lumen/k8s/optional/consumer"
+capability_refs:
+  - id: "k8s-deployment"
+    role: primary
+    claim: "kustomize-base-overlays-hpa"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen/k8s/optional/consumer`."
 fill_sections: [deployment, changes]
 ---
 
@@ -23,7 +29,7 @@ deployment:
     source_units:
       - path: "projects/lumen/k8s/optional/consumer/kustomization.yaml"
         language: "kustomize"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["kustomize_manifest"]
         source_evidence_node:
           layer: "operations"
@@ -65,6 +71,4 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-k8s-optional-consumer-kustomization-yaml>"
 ```
