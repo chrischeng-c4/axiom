@@ -149,6 +149,14 @@ fn as_str(v: MbValue) -> Option<String> {
 }
 
 fn as_bytes(v: MbValue) -> Option<Vec<u8>> {
+    // array.array values are int handles into array_mod's store; their raw
+    // little-endian byte image is what CPython's buffer-protocol write sees.
+    if v.is_int() {
+        let id = v.as_int().unwrap_or(0) as u64;
+        if super::array_mod::is_array_handle(id) {
+            return as_bytes(super::array_mod::mb_array_tobytes(v));
+        }
+    }
     v.as_ptr().and_then(|p| unsafe {
         match (*p).data {
             ObjData::Bytes(ref b) => Some(b.clone()),
@@ -264,6 +272,15 @@ pub fn make_file_opts(
             as_str(source).unwrap_or_default(),
         )),
     );
+    // GzipFile.mode is the integer gzip.READ (1) / gzip.WRITE (2), not the
+    // mode string (CPython 3.12 Lib/gzip.py). BZ2File/LZMAFile expose no
+    // public mode attribute, so this stays GzipFile-only.
+    if class_name == "GzipFile" {
+        fields.insert(
+            "mode".to_string(),
+            MbValue::from_int(if base == "r" { 1 } else { 2 }),
+        );
+    }
 
     let obj = Box::new(MbObject {
         header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
@@ -291,8 +308,19 @@ fn mode_of(slf: MbValue) -> String {
 
 /// Lazily decompress the full source into `_plain`; returns the plaintext.
 fn ensure_plain(slf: MbValue) -> Option<Vec<u8>> {
+    ensure_plain_state(slf).map(|(plain, _)| plain)
+}
+
+/// `ensure_plain` plus the truncation flag. A gzip stream with a valid
+/// header but a missing end-of-stream marker / trailer caches its decodable
+/// prefix with `_truncated=True` (CPython's `_GzipReader` serves those bytes
+/// and raises EOFError only past them); bad gzip headers raise BadGzipFile
+/// up front, and the non-gzip codecs keep the wholesale OSError.
+fn ensure_plain_state(slf: MbValue) -> Option<(Vec<u8>, bool)> {
     if let Some(p) = inst_field(slf, "_plain").and_then(as_bytes) {
-        return Some(p);
+        let truncated =
+            inst_field(slf, "_truncated").and_then(|v| v.as_bool()) == Some(true);
+        return Some((p, truncated));
     }
     let codec = Codec::from_field(inst_field(slf, "_codec"));
     let source = inst_field(slf, "_fileobj").unwrap_or(MbValue::none());
@@ -304,13 +332,50 @@ fn ensure_plain(slf: MbValue) -> Option<Vec<u8>> {
     match codec.decompress_multi(&compressed) {
         Ok(plain) => {
             inst_set(slf, "_plain", bytes_val(plain.clone()));
-            Some(plain)
+            inst_set(slf, "_truncated", MbValue::from_bool(false));
+            Some((plain, false))
+        }
+        Err(()) if codec == Codec::Gzip => {
+            // Same classification as gzip_mod::raise_gzip_decode_error:
+            // bad magic / unknown method are BadGzipFile (an OSError
+            // subclass); everything else is a truncated-but-decodable
+            // stream whose EOFError is deferred to the read path.
+            if compressed.len() < 2 || compressed[0] != 0x1f || compressed[1] != 0x8b {
+                raise("BadGzipFile", "Not a gzipped file");
+                return None;
+            }
+            if compressed.len() >= 3 && compressed[2] != 0x08 {
+                raise("BadGzipFile", "Unknown compression method");
+                return None;
+            }
+            let plain = gzip_partial_decode(&compressed);
+            inst_set(slf, "_plain", bytes_val(plain.clone()));
+            inst_set(slf, "_truncated", MbValue::from_bool(true));
+            Some((plain, true))
         }
         Err(()) => {
             raise("OSError", "Invalid data stream");
             None
         }
     }
+}
+
+/// Decode as much of a (possibly truncated) gzip stream as the deflate
+/// payload allows. flate2's GzDecoder returns decoded bytes from `read`
+/// before the trailer check can fail on a later call, so chunked reads
+/// collect the full decodable prefix and the trailing error is dropped.
+fn gzip_partial_decode(data: &[u8]) -> Vec<u8> {
+    let mut dec = flate2::read::MultiGzDecoder::new(data);
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        match dec.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => out.extend_from_slice(&chunk[..n]),
+            Err(_) => break,
+        }
+    }
+    out
 }
 
 fn pos_of(slf: MbValue) -> usize {
@@ -451,14 +516,32 @@ unsafe extern "C" fn m_read(slf: MbValue, args: MbValue) -> MbValue {
     if mode_of(slf) != "r" {
         return raise("UnsupportedOperation", "File not open for reading");
     }
-    let Some(plain) = ensure_plain(slf) else { return MbValue::none() };
+    let Some((plain, truncated)) = ensure_plain_state(slf) else {
+        return MbValue::none();
+    };
     let pos = pos_of(slf).min(plain.len());
-    let n = list_items(args)
+    let size = list_items(args)
         .first()
         .and_then(|v| v.as_int())
-        .filter(|n| *n >= 0)
-        .map(|n| n as usize)
-        .unwrap_or(plain.len() - pos);
+        .filter(|n| *n >= 0);
+    // CPython's DecompressReader on a truncated stream: a sized read serves
+    // whatever decoded bytes remain, read(0) is b'', and an unsized read
+    // (readall) or a sized read past the decodable prefix raises EOFError
+    // instead of treating the truncation point as a clean EOF.
+    if truncated {
+        let exhausted = match size {
+            Some(0) => false,
+            Some(_) => pos >= plain.len(),
+            None => true,
+        };
+        if exhausted {
+            return raise(
+                "EOFError",
+                "Compressed file ended before the end-of-stream marker was reached",
+            );
+        }
+    }
+    let n = size.map(|n| n as usize).unwrap_or(plain.len() - pos);
     let end = (pos + n).min(plain.len());
     inst_set(slf, "_pos", MbValue::from_int(end as i64));
     if is_text(slf) {
@@ -576,7 +659,103 @@ unsafe extern "C" fn m_seek(slf: MbValue, args: MbValue) -> MbValue {
     MbValue::from_int(new_pos as i64)
 }
 
-unsafe extern "C" fn m_flush(_slf: MbValue, _args: MbValue) -> MbValue {
+/// The Instance class name ("GzipFile" / "BZ2File" / "LZMAFile").
+fn class_of(slf: MbValue) -> String {
+    slf.as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*p).data {
+                Some(class_name.clone())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+/// Offsets into `_wbuf` at which `flush()` was called (gzip write mode).
+fn flush_marks(slf: MbValue) -> Vec<usize> {
+    inst_field(slf, "_flush_marks")
+        .map(list_items)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|v| v.as_int())
+        .map(|n| n.max(0) as usize)
+        .collect()
+}
+
+/// Compressed bytes already pushed to the sink by earlier `flush()` calls.
+fn sunk_of(slf: MbValue) -> usize {
+    inst_field(slf, "_sunk")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0)
+        .max(0) as usize
+}
+
+/// Rebuild the gzip stream for `data` with a Z_SYNC_FLUSH point at each
+/// offset in `marks`. With `finish` the final block + trailer are appended
+/// (one complete stream); without it the result is the flushed-only prefix
+/// (header + sync-flushed deflate, no trailer) that CPython's
+/// GzipFile.flush leaves in the sink. flate2 is deterministic for a fixed
+/// op sequence, so close() can replay the same writes/flushes and extend
+/// the already-sunk prefix byte-for-byte.
+fn gzip_replay(data: &[u8], marks: &[usize], finish: bool) -> Vec<u8> {
+    let mut enc = flate2::write::GzEncoder::new(
+        Vec::with_capacity(data.len() / 2 + 64),
+        flate2::Compression::default(),
+    );
+    let mut prev = 0usize;
+    for &mark in marks {
+        let mark = mark.min(data.len()).max(prev);
+        if enc.write_all(&data[prev..mark]).is_err() {
+            return Vec::new();
+        }
+        if enc.flush().is_err() {
+            return Vec::new();
+        }
+        prev = mark;
+    }
+    if finish {
+        if enc.write_all(&data[prev..]).is_err() {
+            return Vec::new();
+        }
+        enc.finish().unwrap_or_default()
+    } else {
+        enc.get_ref().clone()
+    }
+}
+
+unsafe extern "C" fn m_flush(slf: MbValue, _args: MbValue) -> MbValue {
+    if !check_open(slf) {
+        return MbValue::none();
+    }
+    let codec = Codec::from_field(inst_field(slf, "_codec"));
+    if mode_of(slf) == "r" || codec != Codec::Gzip {
+        return MbValue::none();
+    }
+    let source = inst_field(slf, "_fileobj").unwrap_or(MbValue::none());
+    if as_str(source).is_some() {
+        // Path-backed files materialize once at close(); flush stays a no-op.
+        return MbValue::none();
+    }
+    // CPython GzipFile.flush (Z_SYNC_FLUSH): the sync-flushed compressed
+    // prefix (no trailer) becomes visible in the sink; close() later
+    // extends exactly these bytes into one complete stream.
+    let raw = inst_field(slf, "_wbuf").and_then(as_bytes).unwrap_or_default();
+    let mut marks = flush_marks(slf);
+    marks.push(raw.len());
+    let prefix = gzip_replay(&raw, &marks, false);
+    let sunk = sunk_of(slf).min(prefix.len());
+    if prefix.len() > sunk {
+        call_fileobj(source, "write", vec![bytes_val(prefix[sunk..].to_vec())]);
+    }
+    inst_set(
+        slf,
+        "_flush_marks",
+        MbValue::from_ptr(MbObject::new_list(
+            marks.iter().map(|&m| MbValue::from_int(m as i64)).collect(),
+        )),
+    );
+    inst_set(slf, "_sunk", MbValue::from_int(prefix.len() as i64));
     MbValue::none()
 }
 
@@ -589,7 +768,21 @@ unsafe extern "C" fn m_writable(slf: MbValue, _args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn m_seekable(slf: MbValue, _args: MbValue) -> MbValue {
+    // CPython 3.12 GzipFile.seekable() is unconditionally True (write mode
+    // supports forward seeks); BZ2File/LZMAFile are seekable only when
+    // readable.
+    if class_of(slf) == "GzipFile" {
+        return MbValue::from_bool(true);
+    }
     MbValue::from_bool(mode_of(slf) == "r")
+}
+
+unsafe extern "C" fn m_fileno(slf: MbValue, _args: MbValue) -> MbValue {
+    // This layer holds no OS-level fd (path sinks are materialized at
+    // close), so fileno() surfaces io.UnsupportedOperation like CPython's
+    // BytesIO-backed compressed files.
+    let _ = slf;
+    raise("UnsupportedOperation", "fileno")
 }
 
 unsafe extern "C" fn m_close(slf: MbValue, _args: MbValue) -> MbValue {
@@ -600,7 +793,14 @@ unsafe extern "C" fn m_close(slf: MbValue, _args: MbValue) -> MbValue {
     if mode != "r" {
         let codec = Codec::from_field(inst_field(slf, "_codec"));
         let raw = inst_field(slf, "_wbuf").and_then(as_bytes).unwrap_or_default();
-        let compressed = codec.compress(&raw);
+        // gzip goes through the flush-replay so any sync-flushed prefix a
+        // flush() already pushed to the sink is extended byte-for-byte
+        // into one complete stream (no marks == plain compress).
+        let compressed = if codec == Codec::Gzip {
+            gzip_replay(&raw, &flush_marks(slf), true)
+        } else {
+            codec.compress(&raw)
+        };
         let source = inst_field(slf, "_fileobj").unwrap_or(MbValue::none());
         if let Some(path) = as_str(source) {
             use std::io::Write as _;
@@ -617,7 +817,12 @@ unsafe extern "C" fn m_close(slf: MbValue, _args: MbValue) -> MbValue {
                 return raise("OSError", &format!("cannot write {path:?}"));
             }
         } else {
-            call_fileobj(source, "write", vec![bytes_val(compressed)]);
+            let sunk = sunk_of(slf).min(compressed.len());
+            call_fileobj(
+                source,
+                "write",
+                vec![bytes_val(compressed[sunk..].to_vec())],
+            );
         }
     }
     inst_set(slf, "closed", MbValue::from_bool(true));
@@ -671,6 +876,7 @@ pub fn register_class(class_name: &str) {
         ("tell", m_tell as *const () as usize),
         ("seek", m_seek as *const () as usize),
         ("flush", m_flush as *const () as usize),
+        ("fileno", m_fileno as *const () as usize),
         ("readable", m_readable as *const () as usize),
         ("writable", m_writable as *const () as usize),
         ("seekable", m_seekable as *const () as usize),
