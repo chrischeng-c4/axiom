@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-tokenize-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Tokenizers for `text` fields.
 //!
 //! Each [`Analyzer`] variant maps to one tokenizer impl. Schemas pick
@@ -156,3 +157,5 @@ mod tests {
         assert!(tokens.len() >= 1);
     }
 }
+
+// </HANDWRITE>
