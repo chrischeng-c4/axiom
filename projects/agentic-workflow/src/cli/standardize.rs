@@ -8675,6 +8675,9 @@ fn promote_generator_primitive(
     if is_frontend_promotable_file(target) {
         return promote_frontend_generator_primitive(project_root, inventory);
     }
+    if target.language == "python" {
+        return promote_python_generator_primitive(project_root, target, inventory);
+    }
     if target.language != "python" && !is_operations_language(&target.language) {
         return Ok(ActionOutcome {
             changed_paths: Vec::new(),
@@ -8743,6 +8746,66 @@ fn promote_generator_primitive(
             "promoted {} source unit(s) in semantic group {} to CODEGEN",
             allowed_targets.len(),
             group_key
+        ),
+    })
+}
+
+fn promote_python_generator_primitive(
+    project_root: &Path,
+    target: &SourceFile,
+    inventory: &Inventory,
+) -> Result<ActionOutcome> {
+    let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
+    let group_key = semantic_group_key(&target.rel);
+    let group_action = action(
+        StandardizeActionKind::SemanticGap,
+        &target.rel,
+        "cli",
+        "",
+        "refresh semantic TD before Python preserve-body promotion",
+        false,
+    );
+    let semantic_outcome =
+        create_semantic_td_for_gap(project_root, &group_action, inventory, &configured)?;
+    let mut changed_paths = semantic_outcome.changed_paths;
+    let mut promoted = 0usize;
+
+    for file in inventory
+        .files
+        .iter()
+        .filter(|file| file.markers.handwrite)
+        .filter(|file| file.language == "python")
+        .filter(|file| semantic_group_key(&file.rel) == group_key)
+    {
+        let content = fs::read_to_string(&file.abs)
+            .with_context(|| format!("failed to read {}", file.abs.display()))?;
+        let spec_rel = semantic_spec_rel_with_config(&file.rel, &configured);
+        let section =
+            if file.rel.split('/').any(|segment| {
+                segment == "tests" || segment == "test" || segment.starts_with("test_")
+            }) {
+                "unit-test"
+            } else {
+                "schema"
+            };
+        let spec_ref = format!("{spec_rel}#{section}");
+        let updated = render_codegen_owned_source(&file.abs, &content, &spec_ref);
+        if updated != content {
+            fs::write(&file.abs, updated)
+                .with_context(|| format!("failed to write {}", file.abs.display()))?;
+            changed_paths.push(PathBuf::from(&file.rel));
+            promoted += 1;
+        }
+    }
+
+    changed_paths.sort();
+    changed_paths.dedup();
+
+    Ok(ActionOutcome {
+        changed_paths,
+        message: format!(
+            "promoted {} Python source unit(s) in semantic group {} to CODEGEN-owned preserve-body output",
+            promoted, group_key
         ),
     })
 }
@@ -12916,6 +12979,60 @@ target = "python"
             .generator_primitive_gaps
             .iter()
             .all(|gap| { gap.target != "projects/lumen/build.sh" }));
+    }
+
+    #[test]
+    fn regenerable_promotes_python_source_to_codegen_preserve_body() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "fixture_platform"
+path = "examples/fixture_platform"
+td_path = "examples/fixture_platform/tech_design"
+"#,
+        );
+        write(
+            tmp.path(),
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "# <HANDWRITE gap=\"standardize:python\" tracker=\"py\" reason=\"r\">\n#!/usr/bin/env python3\nprint('load')\n# </HANDWRITE>\n",
+        );
+        let inventory = build_inventory(
+            tmp.path(),
+            &["examples/fixture_platform/backend/**".into()],
+            None,
+            false,
+        )
+        .unwrap();
+        let action = action(
+            StandardizeActionKind::GeneratorPrimitiveGap,
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "cli",
+            "",
+            "",
+            false,
+        );
+
+        let outcome = promote_generator_primitive(tmp.path(), &action, &inventory)
+            .expect("Python source should promote");
+
+        assert!(outcome.changed_paths.iter().any(|path| {
+            path == Path::new("examples/fixture_platform/backend/scripts/load_fixture.py")
+        }));
+        let source = fs::read_to_string(
+            tmp.path()
+                .join("examples/fixture_platform/backend/scripts/load_fixture.py"),
+        )
+        .unwrap();
+        assert!(source.contains("# SPEC-MANAGED: "));
+        assert!(source.contains("/semantic/"));
+        assert!(source.contains("#schema"));
+        assert!(source.contains("# CODEGEN-BEGIN"));
+        assert!(source.contains("#!/usr/bin/env python3"));
+        assert!(source.contains("print('load')"));
+        assert!(!source.contains("HANDWRITE"));
     }
 
     #[test]
