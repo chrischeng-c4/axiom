@@ -85,7 +85,8 @@ fn is_atomic(obj: MbValue) -> bool {
                 ObjData::Instance { class_name, .. } => {
                     matches!(
                         class_name.as_str(),
-                        "range" | "slice" | "ReferenceType" | "weakref"
+                        // "code": CPython's _deepcopy_atomic covers CodeType.
+                        "range" | "slice" | "ReferenceType" | "weakref" | "code"
                     )
                 }
                 _ => false,

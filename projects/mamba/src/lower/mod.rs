@@ -8,3 +8,4 @@ pub use ast_to_hir::ReplSymInfo;
 pub use hir_to_mir::lower_hir_to_mir;
 pub use hir_to_mir::lower_hir_to_mir_repl;
 pub use hir_to_mir::lower_hir_to_mir_with_symbols;
+pub use hir_to_mir::lower_hir_to_mir_with_symbols_src;

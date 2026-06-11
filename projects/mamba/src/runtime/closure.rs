@@ -312,6 +312,13 @@ thread_local! {
         std::cell::RefCell::new(HashMap::new());
     static FUNC_RET_ANNOS: std::cell::RefCell<HashMap<u64, String>> =
         std::cell::RefCell::new(HashMap::new());
+    // Source location metadata: first line number of the `def`/`lambda` and
+    // the source filename. Primed at module init via mb_func_set_srcinfo so
+    // `f.__code__.co_firstlineno` / `.co_filename` report real locations.
+    static FUNC_LINES: std::cell::RefCell<HashMap<u64, i64>> =
+        std::cell::RefCell::new(HashMap::new());
+    static FUNC_FILES: std::cell::RefCell<HashMap<u64, String>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
 /// One declared parameter as recorded for introspection.
@@ -515,6 +522,35 @@ pub fn mb_func_is_registered(func: MbValue) -> bool {
     FUNC_NAMES.with(|m| m.borrow().contains_key(&key))
         || FUNC_ARGCOUNTS.with(|m| m.borrow().contains_key(&key))
         || FUNC_VARNAMES.with(|m| m.borrow().contains_key(&key))
+}
+
+/// Register a function's source location (`co_firstlineno` / `co_filename`).
+/// Called at module init alongside the other metadata priming calls; lambdas
+/// register at closure-creation time.
+pub fn mb_func_set_srcinfo(func: MbValue, line: MbValue, filename: MbValue) {
+    let key = func.to_bits();
+    if let Some(n) = line.as_int() {
+        if n > 0 {
+            FUNC_LINES.with(|m| m.borrow_mut().insert(key, n));
+        }
+    }
+    if let Some(f) = extract_str(filename) {
+        if !f.is_empty() {
+            FUNC_FILES.with(|m| m.borrow_mut().insert(key, f));
+        }
+    }
+}
+
+/// First source line of a registered function, or None when unknown.
+pub fn func_line(func: MbValue) -> Option<i64> {
+    let key = func.to_bits();
+    FUNC_LINES.with(|m| m.borrow().get(&key).copied())
+}
+
+/// Source filename of a registered function, or None when unknown.
+pub fn func_file(func: MbValue) -> Option<String> {
+    let key = func.to_bits();
+    FUNC_FILES.with(|m| m.borrow().get(&key).cloned())
 }
 
 // ── Cell Variables (for nonlocal/closure mutable capture) ──
@@ -847,6 +883,8 @@ pub(crate) fn cleanup_all_closures() {
     let _ = FUNC_VARNAMES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_PARAMS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
     let _ = FUNC_RET_ANNOS.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_LINES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
+    let _ = FUNC_FILES.with(|c| c.try_borrow_mut().map(|mut m| m.clear()));
 }
 
 #[cfg(test)]

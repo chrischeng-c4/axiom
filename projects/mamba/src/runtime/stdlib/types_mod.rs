@@ -172,35 +172,31 @@ pub fn register() {
 
 // -- Type object constructor helper --
 
-/// Create a type object instance with a given __name__.
+/// Create a type object instance with a given __name__. Routes through the
+/// builtins TYPE_OBJ_CACHE singleton so `type(x) is types.XType` identity
+/// holds (the same cache backs `type()`), then tops up the extra fields the
+/// types module surfaces (__qualname__, UnionType.__args__) — idempotent
+/// singleton mutation.
 fn make_type_obj(name: &str) -> MbValue {
-    let fields = {
-        let mut m = FxHashMap::default();
-        m.insert("__name__".to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())));
-        m.insert("__qualname__".to_string(),
-            MbValue::from_ptr(MbObject::new_str(name.to_string())));
-        m.insert("__module__".to_string(),
-            MbValue::from_ptr(MbObject::new_str("builtins".to_string())));
-        if name == "UnionType" {
-            m.insert(
-                "__args__".to_string(),
-                MbValue::from_ptr(MbObject::new_str("getset_descriptor".to_string())),
-            );
+    let val = super::super::builtins::make_type_object(name);
+    if let Some(ptr) = val.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let mut f = fields.write().unwrap();
+                if !f.contains_key("__qualname__") {
+                    f.insert("__qualname__".to_string(),
+                        MbValue::from_ptr(MbObject::new_str(name.to_string())));
+                }
+                if name == "UnionType" && !f.contains_key("__args__") {
+                    f.insert(
+                        "__args__".to_string(),
+                        MbValue::from_ptr(MbObject::new_str("getset_descriptor".to_string())),
+                    );
+                }
+            }
         }
-        m
-    };
-    let obj = Box::new(MbObject {
-        header: MbObjectHeader {
-            rc: AtomicU32::new(1),
-            kind: ObjKind::Instance,
-        },
-        data: ObjData::Instance {
-            class_name: "type".to_string(),
-            fields: RwLock::new(fields),
-        },
-    });
-    MbValue::from_ptr(Box::into_raw(obj))
+    }
+    val
 }
 
 // -- pub helpers — type object accessors (kept for back-compat callers) --

@@ -1802,7 +1802,7 @@ thread_local! {
 /// Returns a cached Instance with `class_name="type"` and `__name__=name`.
 /// The first call allocates and GC-roots the object; subsequent calls return
 /// the same heap pointer, making `type(x) is int` / `type(x) is bool` work.
-fn make_type_object(name: &str) -> MbValue {
+pub(crate) fn make_type_object(name: &str) -> MbValue {
     TYPE_OBJ_CACHE.with(|cache| {
         // Fast path: already cached.
         if let Some(&val) = cache.borrow().get(name) {
@@ -5888,6 +5888,10 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                 items.first().copied().unwrap_or_else(|| MbValue::from_int(0)),
                                 items.get(1).copied().unwrap_or_else(|| MbValue::from_int(0)),
                             )),
+                            // types.CodeType(...) — the 18-arg 3.12 positional
+                            // constructor; zips positionals onto the co_* field
+                            // order and returns a real code object.
+                            "code" => Some(super::class::make_code_object_from_ctor_args(&items)),
                             "type" => Some(match items.len() {
                                 1 => mb_type(items[0]),
                                 3 => mb_type3(items[0], items[1], items[2]),

@@ -232,7 +232,7 @@ pub enum HirExpr {
     /// Lambda expression. `defaults` carries the default-arg expressions
     /// (one slot per parameter, `None` when the parameter has no default).
     /// Defaults are evaluated at closure creation time per Python semantics.
-    Lambda { params: Vec<(SymbolId, TypeId)>, defaults: Vec<Option<Box<HirExpr>>>, body: Box<HirExpr>, ty: TypeId },
+    Lambda { params: Vec<(SymbolId, TypeId)>, defaults: Vec<Option<Box<HirExpr>>>, body: Box<HirExpr>, ty: TypeId, span: Span },
     /// Yield expression (#290)
     Yield { value: Option<Box<HirExpr>>, ty: TypeId },
     /// Yield from expression (#290)

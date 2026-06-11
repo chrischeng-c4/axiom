@@ -3950,7 +3950,7 @@ impl<'a> AstLowerer<'a> {
 
                 let body_expr = body_result?;
                 let ty = any_ty;
-                Some(HirExpr::Lambda { params: hir_params, defaults: hir_defaults, body: Box::new(body_expr), ty })
+                Some(HirExpr::Lambda { params: hir_params, defaults: hir_defaults, body: Box::new(body_expr), ty, span: expr.span })
             }
             ast::Expr::Slice { start, stop, step } => {
                 let s = start.as_ref().and_then(|e| self.lower_expr(e)).map(Box::new);

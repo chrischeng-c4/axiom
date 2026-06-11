@@ -122,7 +122,8 @@ impl CompilerSession {
         }
 
         // Lower HIR → MIR (with builtin resolution)
-        let mir_module = lower::lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
+        let mir_module = lower::lower_hir_to_mir_with_symbols_src(
+            &hir, &checker.tcx, &checker.symbols, Some((path, source.as_str())));
 
         if let Some(EmitMode::Mir) = self.config.emit {
             println!("{mir_module:#?}");
@@ -222,7 +223,8 @@ impl CompilerSession {
 
         let hir = lower::lower_module(&module, &checker)
             .map_err(|errs| errs.into_iter().next().unwrap())?;
-        let mir_module = lower::lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
+        let mir_module = lower::lower_hir_to_mir_with_symbols_src(
+            &hir, &checker.tcx, &checker.symbols, Some((display_name, src.as_str())));
 
         let mut backend = CraneliftJitBackend::new_with_externals(&ext_syms)
             .map_err(|e| MambaError::codegen(e.to_string()))?;
@@ -320,7 +322,8 @@ impl CompilerSession {
         // Lower
         let hir = lower::lower_module(&module, &checker)
             .map_err(|errs| errs.into_iter().next().unwrap())?;
-        let mir_module = lower::lower_hir_to_mir_with_symbols(&hir, &checker.tcx, &checker.symbols);
+        let mir_module = lower::lower_hir_to_mir_with_symbols_src(
+            &hir, &checker.tcx, &checker.symbols, Some((path, source.as_str())));
 
         // Collect external crate symbols when in project mode (R2).
         let ext_syms = register_external_modules(self.config.project_config.as_ref());

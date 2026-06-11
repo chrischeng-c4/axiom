@@ -2938,38 +2938,29 @@ fn make_type_object(name: &str) -> MbValue {
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
-/// Build a function's `__code__` object (CORE #3). Returns a plain Instance
-/// (class_name "code") whose `co_name` / `co_argcount` / `co_varnames` fields
-/// carry the compiled signature metadata pulled from the function registries.
-/// Unregistered metadata defaults (empty name, argcount 0, empty varnames)
-/// so attribute access never returns a bare None for a real function.
-fn make_code_object(func: MbValue) -> MbValue {
-    let co_name = {
-        let n = super::closure::mb_func_get_name(func);
-        if n.is_none() {
-            MbValue::from_ptr(super::rc::MbObject::new_str(String::new()))
-        } else {
-            n
-        }
-    };
-    let co_argcount = {
-        let a = super::closure::mb_func_get_argcount(func);
-        if a.is_none() { MbValue::from_int(0) } else { a }
-    };
-    let co_varnames = {
-        let v = super::closure::mb_func_get_varnames(func);
-        if v.is_none() {
-            MbValue::from_ptr(super::rc::MbObject::new_tuple(Vec::new()))
-        } else {
-            v
-        }
-    };
+/// The co_* field names a code object carries, in the CPython 3.12
+/// `CodeType(...)` positional-constructor order. `replace()` validates its
+/// kwargs against this list; the 18-arg constructor zips its positionals to it.
+const CODE_FIELD_ORDER: [&str; 18] = [
+    "co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals",
+    "co_stacksize", "co_flags", "co_code", "co_consts", "co_names",
+    "co_varnames", "co_filename", "co_name", "co_qualname", "co_firstlineno",
+    "co_linetable", "co_exceptiontable", "co_freevars", "co_cellvars",
+];
 
-    let mut fields = FxHashMap::default();
-    fields.insert("co_name".to_string(), co_name);
-    fields.insert("co_argcount".to_string(), co_argcount);
-    fields.insert("co_varnames".to_string(), co_varnames);
+/// Fields compared by code `__eq__` and folded into `__hash__`. CPython
+/// compares name/code/consts/etc.; firstlineno participates (two otherwise
+/// identical lambdas on different lines are unequal and hash differently).
+const CODE_EQ_FIELDS: [&str; 10] = [
+    "co_name", "co_argcount", "co_posonlyargcount", "co_kwonlyargcount",
+    "co_flags", "co_firstlineno", "co_varnames", "co_consts", "co_names",
+    "co_code",
+];
 
+/// Build a "code" Instance from a prepared field map, ensuring the `code`
+/// class (replace/__eq__/__hash__) is registered first.
+fn new_code_instance(fields: FxHashMap<String, MbValue>) -> MbValue {
+    ensure_code_class_registered();
     let obj = Box::new(super::rc::MbObject {
         header: super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -2981,6 +2972,295 @@ fn make_code_object(func: MbValue) -> MbValue {
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// Build a "code" Instance from an ordered positional field list (the 18-arg
+/// `types.CodeType(...)` constructor). Extra/missing trailing args default to
+/// empty tuples (CPython's freevars/cellvars defaults).
+pub fn make_code_object_from_ctor_args(items: &[MbValue]) -> MbValue {
+    let mut fields = FxHashMap::default();
+    for (i, name) in CODE_FIELD_ORDER.iter().enumerate() {
+        let v = items.get(i).copied().unwrap_or_else(|| {
+            MbValue::from_ptr(super::rc::MbObject::new_tuple(Vec::new()))
+        });
+        unsafe { super::rc::retain_if_ptr(v); }
+        fields.insert((*name).to_string(), v);
+    }
+    new_code_instance(fields)
+}
+
+/// Build the code object for a compiled source snippet (code.compile_command).
+/// Carries module-level co_* metadata plus a hidden `_source` field so
+/// `InteractiveInterpreter.runcode` can re-execute the snippet later.
+pub fn make_module_code_object(filename: &str, source: &str) -> MbValue {
+    let empty_bytes = || MbValue::from_ptr(super::rc::MbObject::new_bytes(Vec::new()));
+    let empty_tuple = || MbValue::from_ptr(super::rc::MbObject::new_tuple(Vec::new()));
+    let mut fields = FxHashMap::default();
+    fields.insert("co_name".to_string(),
+        MbValue::from_ptr(super::rc::MbObject::new_str("<module>".to_string())));
+    fields.insert("co_qualname".to_string(),
+        MbValue::from_ptr(super::rc::MbObject::new_str("<module>".to_string())));
+    fields.insert("co_argcount".to_string(), MbValue::from_int(0));
+    fields.insert("co_posonlyargcount".to_string(), MbValue::from_int(0));
+    fields.insert("co_kwonlyargcount".to_string(), MbValue::from_int(0));
+    fields.insert("co_nlocals".to_string(), MbValue::from_int(0));
+    fields.insert("co_stacksize".to_string(), MbValue::from_int(1));
+    fields.insert("co_flags".to_string(), MbValue::from_int(0));
+    fields.insert("co_varnames".to_string(), empty_tuple());
+    fields.insert("co_filename".to_string(),
+        MbValue::from_ptr(super::rc::MbObject::new_str(filename.to_string())));
+    fields.insert("co_firstlineno".to_string(), MbValue::from_int(1));
+    fields.insert("co_code".to_string(), empty_bytes());
+    fields.insert("co_linetable".to_string(), empty_bytes());
+    fields.insert("co_exceptiontable".to_string(), empty_bytes());
+    fields.insert("co_consts".to_string(),
+        MbValue::from_ptr(super::rc::MbObject::new_tuple(vec![MbValue::none()])));
+    fields.insert("co_names".to_string(), empty_tuple());
+    fields.insert("co_freevars".to_string(), empty_tuple());
+    fields.insert("co_cellvars".to_string(), empty_tuple());
+    fields.insert("_source".to_string(),
+        MbValue::from_ptr(super::rc::MbObject::new_str(source.to_string())));
+    new_code_instance(fields)
+}
+
+thread_local! {
+    static CODE_CLASS_REGISTERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Register the `code` native class (replace / __eq__ / __hash__) once per
+/// thread. All methods land in CALLABLE_REGISTRY via one mb_class_register
+/// call (adding methods later via class_replace_method would NOT enroll them).
+fn ensure_code_class_registered() {
+    if CODE_CLASS_REGISTERED.with(|c| c.get()) {
+        return;
+    }
+    CODE_CLASS_REGISTERED.with(|c| c.set(true));
+    use std::collections::HashMap as Map;
+    let mut m: Map<String, MbValue> = Map::new();
+    for (name, addr) in [
+        ("replace", code_replace as *const () as usize),
+        ("__eq__", code_eq as *const () as usize),
+        ("__hash__", code_hash as *const () as usize),
+    ] {
+        super::module::register_variadic_func(addr as u64);
+        m.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    mb_class_register("code", vec![], m);
+}
+
+/// Read one co_* field off a code Instance (no retain).
+fn code_field(co: MbValue, name: &str) -> MbValue {
+    if let Some(ptr) = co.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(&v) = fields.read().unwrap().get(name) {
+                    return v;
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+/// code.replace(**kwargs) — copy the field map, overwrite the named co_*
+/// fields, return a new code object. Unknown keywords raise TypeError;
+/// changing co_nlocals away from len(co_varnames) raises ValueError (CPython:
+/// nlocals must agree with the varnames table).
+unsafe extern "C" fn code_replace(self_v: MbValue, args: MbValue) -> MbValue {
+    // kwargs arrive as a trailing dict positional in the packed args list.
+    let kwargs = args.as_ptr().and_then(|p| {
+        if let ObjData::List(ref lk) = (*p).data {
+            lk.read().unwrap().last().copied()
+        } else {
+            None
+        }
+    });
+    let mut fields = FxHashMap::default();
+    if let Some(ptr) = self_v.as_ptr() {
+        if let ObjData::Instance { fields: ref flock, .. } = (*ptr).data {
+            for (k, &v) in flock.read().unwrap().iter() {
+                super::rc::retain_if_ptr(v);
+                fields.insert(k.clone(), v);
+            }
+        }
+    }
+    if let Some(kw) = kwargs {
+        if let Some(kp) = kw.as_ptr() {
+            if let ObjData::Dict(ref dlock) = (*kp).data {
+                for (dk, &v) in dlock.read().unwrap().iter() {
+                    let key = match dk {
+                        super::dict_ops::DictKey::Str(s) => s.clone(),
+                        _ => continue,
+                    };
+                    if !CODE_FIELD_ORDER.contains(&key.as_str()) {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(super::rc::MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(super::rc::MbObject::new_str(format!(
+                                "replace() got an unexpected keyword argument '{key}'"
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
+                    if key == "co_nlocals" {
+                        let nvars = fields.get("co_varnames")
+                            .and_then(|t| t.as_ptr())
+                            .map(|p| match &(*p).data {
+                                ObjData::Tuple(items) => items.len() as i64,
+                                _ => 0,
+                            })
+                            .unwrap_or(0);
+                        if v.as_int() != Some(nvars) {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(super::rc::MbObject::new_str("ValueError".to_string())),
+                                MbValue::from_ptr(super::rc::MbObject::new_str(
+                                    "co_nlocals != len(co_varnames)".to_string(),
+                                )),
+                            );
+                            return MbValue::none();
+                        }
+                    }
+                    super::rc::retain_if_ptr(v);
+                    if let Some(old) = fields.insert(key, v) {
+                        super::rc::release_if_ptr(old);
+                    }
+                }
+            }
+        }
+    }
+    new_code_instance(fields)
+}
+
+/// code.__eq__ — field-tuple comparison over CODE_EQ_FIELDS. Dual-convention
+/// operand extraction: dunder dispatch passes the operand directly, method
+/// dispatch packs it in a one-element list.
+unsafe extern "C" fn code_eq(self_v: MbValue, args: MbValue) -> MbValue {
+    let mut other = args;
+    if let Some(ptr) = args.as_ptr() {
+        if let ObjData::List(ref lock) = (*ptr).data {
+            let items = lock.read().unwrap();
+            if items.len() == 1 {
+                other = items[0];
+            }
+        }
+    }
+    let is_code = other.as_ptr().map(|p| {
+        matches!(&(*p).data, ObjData::Instance { class_name, .. } if class_name == "code")
+    }).unwrap_or(false);
+    if !is_code {
+        return MbValue::from_bool(false);
+    }
+    for f in CODE_EQ_FIELDS {
+        let a = code_field(self_v, f);
+        let b = code_field(other, f);
+        if super::builtins::mb_eq(a, b).as_bool() != Some(true) {
+            return MbValue::from_bool(false);
+        }
+    }
+    MbValue::from_bool(true)
+}
+
+/// code.__hash__ — folds the same fields __eq__ compares so equal code
+/// objects hash equal and a co_firstlineno change shifts the hash.
+unsafe extern "C" fn code_hash(self_v: MbValue, _args: MbValue) -> MbValue {
+    let mut acc: i64 = 0x636f6465; // "code"
+    for f in CODE_EQ_FIELDS {
+        let v = code_field(self_v, f);
+        let h = super::builtins::mb_hash(v).as_int().unwrap_or(0);
+        acc = acc.wrapping_mul(1_000_003).wrapping_add(h);
+    }
+    // Clamp into the NaN-box 48-bit int payload range (from_int panics
+    // outside it); 46 bits keeps the value positive and in range.
+    MbValue::from_int(acc & 0x3FFF_FFFF_FFFF)
+}
+
+/// Build a function's `__code__` object (CORE #3). Returns a "code" Instance
+/// whose co_* fields carry the compiled metadata pulled from the function
+/// registries. Param-kind counts (argcount/posonly/kwonly) and variadic flags
+/// derive from FUNC_PARAMS when available; varnames includes params plus
+/// body locals primed by lowering. Unavailable metadata gets CPython-shaped
+/// honest defaults (empty bytes/tuples) so attribute access never returns a
+/// bare None for a real function.
+fn make_code_object(func: MbValue) -> MbValue {
+    let name_str = {
+        let n = super::closure::mb_func_get_name(func);
+        extract_str(n).unwrap_or_default()
+    };
+    let varnames = {
+        let v = super::closure::mb_func_get_varnames(func);
+        if v.is_none() {
+            MbValue::from_ptr(super::rc::MbObject::new_tuple(Vec::new()))
+        } else {
+            v
+        }
+    };
+    let nvars = varnames.as_ptr().map(|p| unsafe {
+        match &(*p).data {
+            ObjData::Tuple(items) => items.len() as i64,
+            _ => 0,
+        }
+    }).unwrap_or(0);
+
+    // Param-kind-aware counts: CPython's co_argcount excludes keyword-only
+    // params and *args/**kwargs; co_posonlyargcount/co_kwonlyargcount count
+    // kinds 0 and 3. Fall back to the coarse FUNC_ARGCOUNTS value (which
+    // already excludes the variadics) when FUNC_PARAMS wasn't primed.
+    let (argcount, posonly, kwonly, has_varargs, has_varkw) =
+        match super::closure::func_params(func) {
+            Some(params) => {
+                let argcount = params.iter().filter(|p| p.kind <= 1).count() as i64;
+                let posonly = params.iter().filter(|p| p.kind == 0).count() as i64;
+                let kwonly = params.iter().filter(|p| p.kind == 3).count() as i64;
+                let va = params.iter().any(|p| p.kind == 2);
+                let vk = params.iter().any(|p| p.kind == 4);
+                (argcount, posonly, kwonly, va, vk)
+            }
+            None => {
+                let a = super::closure::mb_func_get_argcount(func)
+                    .as_int()
+                    .unwrap_or(0);
+                (a, 0, 0, false, false)
+            }
+        };
+    // CO_OPTIMIZED | CO_NEWLOCALS | CO_NOFREE plus the variadic bits.
+    let mut flags: i64 = 0x01 | 0x02 | 0x40;
+    if has_varargs {
+        flags |= 0x04;
+    }
+    if has_varkw {
+        flags |= 0x08;
+    }
+
+    let firstlineno = super::closure::func_line(func).unwrap_or(1);
+    let filename = super::closure::func_file(func)
+        .unwrap_or_else(|| "<string>".to_string());
+    let empty_bytes = || MbValue::from_ptr(super::rc::MbObject::new_bytes(Vec::new()));
+    let empty_tuple = || MbValue::from_ptr(super::rc::MbObject::new_tuple(Vec::new()));
+
+    let mut fields = FxHashMap::default();
+    fields.insert("co_name".to_string(),
+        MbValue::from_ptr(super::rc::MbObject::new_str(name_str.clone())));
+    fields.insert("co_qualname".to_string(),
+        MbValue::from_ptr(super::rc::MbObject::new_str(name_str)));
+    fields.insert("co_argcount".to_string(), MbValue::from_int(argcount));
+    fields.insert("co_posonlyargcount".to_string(), MbValue::from_int(posonly));
+    fields.insert("co_kwonlyargcount".to_string(), MbValue::from_int(kwonly));
+    fields.insert("co_nlocals".to_string(), MbValue::from_int(nvars));
+    fields.insert("co_stacksize".to_string(), MbValue::from_int(1));
+    fields.insert("co_flags".to_string(), MbValue::from_int(flags));
+    fields.insert("co_varnames".to_string(), varnames);
+    fields.insert("co_filename".to_string(),
+        MbValue::from_ptr(super::rc::MbObject::new_str(filename)));
+    fields.insert("co_firstlineno".to_string(), MbValue::from_int(firstlineno));
+    fields.insert("co_code".to_string(), empty_bytes());
+    fields.insert("co_linetable".to_string(), empty_bytes());
+    fields.insert("co_exceptiontable".to_string(), empty_bytes());
+    fields.insert("co_consts".to_string(),
+        MbValue::from_ptr(super::rc::MbObject::new_tuple(vec![MbValue::none()])));
+    fields.insert("co_names".to_string(), empty_tuple());
+    fields.insert("co_freevars".to_string(), empty_tuple());
+    fields.insert("co_cellvars".to_string(), empty_tuple());
+
+    new_code_instance(fields)
 }
 
 /// Check if a value is a descriptor (has __get__).

@@ -353,6 +353,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_func_set_varnames", closure::mb_func_set_varnames as fn(super::MbValue, super::MbValue), [I64, I64], Void),
         rt_sym!("mb_func_set_params", closure::mb_func_set_params as fn(super::MbValue, super::MbValue), [I64, I64], Void),
         rt_sym!("mb_func_set_retanno", closure::mb_func_set_retanno as fn(super::MbValue, super::MbValue), [I64, I64], Void),
+        rt_sym!("mb_func_set_srcinfo", closure::mb_func_set_srcinfo as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
         rt_sym!("mb_apply_decorator", closure::mb_apply_decorator as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_global_get", closure::mb_global_get as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_global_set", closure::mb_global_set as fn(super::MbValue, super::MbValue), [I64, I64], Void),
