@@ -3664,6 +3664,9 @@ impl<'a> AstLowerer<'a> {
                 })
             }
             ast::Expr::ListLit(elems) => {
+                if elems.iter().any(|e| matches!(e.node, ast::Expr::Starred(_))) {
+                    return self.lower_starred_display(elems, None);
+                }
                 let hir_elems: Vec<HirExpr> = elems.iter()
                     .filter_map(|e| self.lower_expr(e)).collect();
                 // Infer element type from the first element to enable typed match patterns.
@@ -3685,6 +3688,9 @@ impl<'a> AstLowerer<'a> {
                 Some(HirExpr::List { elements: hir_elems, ty: list_ty })
             }
             ast::Expr::TupleLit(elems) => {
+                if elems.iter().any(|e| matches!(e.node, ast::Expr::Starred(_))) {
+                    return self.lower_starred_display(elems, Some("mb_tuple_from_iterable"));
+                }
                 let hir_elems: Vec<HirExpr> = elems.iter()
                     .filter_map(|e| self.lower_expr(e)).collect();
                 // Build a proper Tuple type from element types so that sequence patterns
@@ -3859,6 +3865,9 @@ impl<'a> AstLowerer<'a> {
                 Some(HirExpr::FString { parts: hir_parts, ty })
             }
             ast::Expr::SetLit(elems) => {
+                if elems.iter().any(|e| matches!(e.node, ast::Expr::Starred(_))) {
+                    return self.lower_starred_display(elems, Some("mb_set_from_iterable"));
+                }
                 let hir_elems: Vec<HirExpr> = elems.iter()
                     .filter_map(|e| self.lower_expr(e)).collect();
                 let ty = self.checker.tcx.any();
@@ -4048,6 +4057,68 @@ impl<'a> AstLowerer<'a> {
                 None
             }
         }
+    }
+
+    /// Lower a sequence display that contains starred elements —
+    /// `[a, *b, c]`, `(a, *b)`, `{a, *b}`. Plain elements accumulate into
+    /// list segments; each segment and each unpacked iterable (materialized
+    /// via mb_list_from_iterable) concatenates with `+` (mb_add), preserving
+    /// order. `wrap` names the runtime conversion for tuple/set displays;
+    /// None keeps the flat list.
+    fn lower_starred_display(
+        &mut self,
+        elems: &[Spanned<ast::Expr>],
+        wrap: Option<&'static str>,
+    ) -> Option<HirExpr> {
+        let any_ty = self.checker.tcx.any();
+        let concat = |acc: Option<HirExpr>, rhs: HirExpr| -> HirExpr {
+            match acc {
+                None => rhs,
+                Some(lhs) => HirExpr::BinOp {
+                    op: HirBinOp::Add,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    ty: any_ty,
+                },
+            }
+        };
+        let mut acc: Option<HirExpr> = None;
+        let mut pending: Vec<HirExpr> = Vec::new();
+        for e in elems {
+            if let ast::Expr::Starred(inner) = &e.node {
+                if !pending.is_empty() {
+                    let seg = HirExpr::List {
+                        elements: std::mem::take(&mut pending),
+                        ty: any_ty,
+                    };
+                    acc = Some(concat(acc, seg));
+                }
+                let star = HirExpr::Call {
+                    func: Box::new(HirExpr::StrLit(
+                        "mb_list_from_iterable".to_string(),
+                        any_ty,
+                    )),
+                    args: vec![self.lower_expr(inner)?],
+                    ty: any_ty,
+                };
+                acc = Some(concat(acc, star));
+            } else {
+                pending.push(self.lower_expr(e)?);
+            }
+        }
+        if !pending.is_empty() {
+            let seg = HirExpr::List { elements: pending, ty: any_ty };
+            acc = Some(concat(acc, seg));
+        }
+        let flat = acc.unwrap_or(HirExpr::List { elements: Vec::new(), ty: any_ty });
+        Some(match wrap {
+            Some(extern_name) => HirExpr::Call {
+                func: Box::new(HirExpr::StrLit(extern_name.to_string(), any_ty)),
+                args: vec![flat],
+                ty: any_ty,
+            },
+            None => flat,
+        })
     }
 
     /// P0-R5: Save outer `local_names` entries for comprehension variable names.
