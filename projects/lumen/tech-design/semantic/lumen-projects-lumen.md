@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-projects-lumen
 summary: Semantic coverage for "projects/lumen"
+capability_refs:
+  - id: "search"
+    role: primary
+    claim: "query-planner-boolean-eval-roaring-postings"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen`."
 fill_sections: [schema, unit-test, changes]
 ---
 
