@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-src
 summary: Semantic coverage for "projects/lumen/src"
+capability_refs:
+  - id: "search"
+    role: primary
+    claim: "query-planner-boolean-eval-roaring-postings"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen/src`."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -18,7 +24,7 @@ semantic_domain:
     source_units:
       - path: "projects/lumen/src/spec.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method"]
         symbols:
           - name: "openapi_json"
@@ -50,7 +56,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/segment_rdb.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
           - name: "SegmentRdbStore"
@@ -100,7 +106,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/wal.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method", "ts_type_surface"]
         symbols:
           - name: "WAL_FORMAT_VERSION"
@@ -231,7 +237,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/log_entry.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "enum_model"]
         symbols:
           - name: "RaftLogEntry"
@@ -248,7 +254,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/types.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "enum_model", "service_method"]
         symbols:
           - name: "CreateCollectionRequest"
@@ -379,7 +385,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/config.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
           - name: "ClusterConfig"
@@ -414,7 +420,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/aof.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "HEADER_LEN"
@@ -485,7 +491,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/lib.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["source_unit"]
         symbols:
           - name: "aof"
@@ -568,7 +574,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/auth.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "WILDCARD_COLLECTION"
@@ -624,7 +630,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/wal_nats.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method"]
         symbols:
           - name: "DEFAULT_STREAM_NAME"
@@ -686,7 +692,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/vector_index.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "ScalarCodebook"
@@ -817,7 +823,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/coordinator.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method", "ts_type_surface"]
         symbols:
           - name: "OUTCOME_WINDOW"
@@ -873,7 +879,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/metrics.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
           - name: "Metrics"
@@ -911,7 +917,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/tokenize.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method"]
         symbols:
           - name: "DEFAULT_NGRAM_MIN"
@@ -949,7 +955,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/segment.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method", "ts_type_surface"]
         symbols:
           - name: "MAGIC1"
@@ -1080,7 +1086,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/native_wire.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method"]
         symbols:
           - name: "MAX_FRAME_BYTES"
@@ -1202,7 +1208,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/raft.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "enum_model", "service_method"]
         symbols:
           - name: "RaftRole"
@@ -1249,7 +1255,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/storage.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method", "ts_type_surface"]
         symbols:
           - name: "IDEMPOTENCY_TTL"
@@ -1380,7 +1386,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/routing.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
           - name: "shard_index"
@@ -1460,7 +1466,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/rdb.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
           - name: "RdbSnapshot"
@@ -1510,7 +1516,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/api.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
           - name: "AppState"
@@ -1641,7 +1647,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/tls.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
           - name: "PeerTlsConfig"
@@ -1664,7 +1670,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/backup_sink.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
           - name: "LocalFsSink"
@@ -1693,7 +1699,7 @@ semantic_domain:
           domain: "projects/lumen/src"
       - path: "projects/lumen/src/consumer.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method"]
         symbols:
           - name: "ShardRouter"
@@ -1743,190 +1749,146 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-spec-rs>"
   - path: "projects/lumen/src/segment_rdb.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-segment-rdb-rs>"
   - path: "projects/lumen/src/wal.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-wal-rs>"
   - path: "projects/lumen/src/log_entry.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-log-entry-rs>"
   - path: "projects/lumen/src/types.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-types-rs>"
   - path: "projects/lumen/src/config.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-config-rs>"
   - path: "projects/lumen/src/aof.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-aof-rs>"
   - path: "projects/lumen/src/lib.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-lib-rs>"
   - path: "projects/lumen/src/auth.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-auth-rs>"
   - path: "projects/lumen/src/wal_nats.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-wal-nats-rs>"
   - path: "projects/lumen/src/vector_index.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-vector-index-rs>"
   - path: "projects/lumen/src/coordinator.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-coordinator-rs>"
   - path: "projects/lumen/src/metrics.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-metrics-rs>"
   - path: "projects/lumen/src/tokenize.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-tokenize-rs>"
   - path: "projects/lumen/src/segment.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-segment-rs>"
   - path: "projects/lumen/src/native_wire.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-native-wire-rs>"
   - path: "projects/lumen/src/raft.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-raft-rs>"
   - path: "projects/lumen/src/storage.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-storage-rs>"
   - path: "projects/lumen/src/routing.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-routing-rs>"
   - path: "projects/lumen/src/rdb.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-rdb-rs>"
   - path: "projects/lumen/src/api.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-api-rs>"
   - path: "projects/lumen/src/tls.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-tls-rs>"
   - path: "projects/lumen/src/backup_sink.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-backup-sink-rs>"
   - path: "projects/lumen/src/consumer.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-src-consumer-rs>"
+  - action: annotate
+    section: unit-test
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the unit-test section."
 ```
