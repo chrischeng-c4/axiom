@@ -1,3 +1,4 @@
+# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-k8s-components-observability-kustomization-yaml" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 
@@ -12,3 +13,5 @@ kind: Component
 resources:
   - servicemonitor.yaml
   - prometheusrule.yaml
+
+# </HANDWRITE>
