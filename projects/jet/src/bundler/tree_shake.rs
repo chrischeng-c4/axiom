@@ -12,6 +12,7 @@
 //! the static code analysis would otherwise conservatively keep them.
 
 use anyhow::Result;
+use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -113,34 +114,46 @@ pub fn analyze_used_exports(modules: &[(PathBuf, String)]) -> Result<TreeShakeRe
 pub fn analyze_used_exports_from(
     modules: &[(PathBuf, String)],
     entry: &Path,
-    resolver: Option<&dyn Fn(&str, &Path) -> Option<PathBuf>>,
+    resolver: Option<&(dyn Fn(&str, &Path) -> Option<PathBuf> + Sync)>,
 ) -> Result<TreeShakeResult> {
-    let mut all_exports: HashMap<PathBuf, Vec<String>> = HashMap::new();
     let mut used: HashMap<PathBuf, HashSet<String>> = HashMap::new();
     let lookup = match resolver {
         Some(r) => ModuleLookup::with_resolver(modules, r),
         None => ModuleLookup::new(modules),
     };
 
-    // Step 1: Collect all exports per module (ESM + CJS)
-    for (path, source) in modules {
-        let mut exports = extract_export_names(source, is_ts(path));
-        exports.extend(extract_cjs_export_names(source));
-        all_exports.insert(path.clone(), exports);
-    }
+    // Step 1: Collect all exports per module (ESM + CJS). Per-module extraction
+    // is pure byte-scanning with no shared state — parallel across the corpus.
+    // On barrel-heavy bundles (MUI/antd, hundreds of modules) the sequential
+    // extraction dominated tree shaking; rayon cuts it near-linearly.
+    let all_exports: HashMap<PathBuf, Vec<String>> = modules
+        .par_iter()
+        .map(|(path, source)| {
+            let mut exports = extract_export_names(source, is_ts(path));
+            exports.extend(extract_cjs_export_names(source));
+            (path.clone(), exports)
+        })
+        .collect();
 
-    // Steps 2+3: extract every module's outgoing edges once.
-    let mut static_edges: HashMap<&Path, Vec<(PathBuf, Vec<String>)>> = HashMap::new();
-    let mut dynamic_edges: HashMap<&Path, Vec<PathBuf>> = HashMap::new();
-    for (path, source) in modules {
-        let mut edges = extract_import_bindings(path, source, &lookup);
-        edges.extend(extract_cjs_require_bindings(path, source, &lookup));
-        static_edges.insert(path.as_path(), edges);
-        dynamic_edges.insert(
-            path.as_path(),
-            extract_dynamic_import_targets_from(path, source, &lookup),
-        );
-    }
+    // Steps 2+3: extract every module's outgoing edges once (also parallel;
+    // `lookup` is read-only and `Sync`).
+    let static_edges: HashMap<&Path, Vec<(PathBuf, Vec<String>)>> = modules
+        .par_iter()
+        .map(|(path, source)| {
+            let mut edges = extract_import_bindings(path, source, &lookup);
+            edges.extend(extract_cjs_require_bindings(path, source, &lookup));
+            (path.as_path(), edges)
+        })
+        .collect();
+    let dynamic_edges: HashMap<&Path, Vec<PathBuf>> = modules
+        .par_iter()
+        .map(|(path, source)| {
+            (
+                path.as_path(),
+                extract_dynamic_import_targets_from(path, source, &lookup),
+            )
+        })
+        .collect();
 
     // Liveness worklist from the entry: each live module marks its import
     // targets' names used and pulls those targets live.
@@ -197,7 +210,7 @@ pub fn analyze_used_exports_from(
     // each round made this phase O(rounds × modules × source) and
     // dominated tree shaking on barrel-heavy corpora like MUI.
     let reexport_bindings: Vec<(&PathBuf, Vec<(PathBuf, ReexportKind)>)> = modules
-        .iter()
+        .par_iter()
         .map(|(path, source)| (path, extract_reexport_bindings(path, source, &lookup)))
         .collect();
     loop {
@@ -1066,7 +1079,7 @@ struct ModuleLookup<'a> {
     /// from package.json (`@ant-design/colors` -> `es/index.js`); missing
     /// those edges starved the demand-driven liveness walk and shook
     /// genuinely-used modules out of the bundle.
-    resolver: Option<&'a dyn Fn(&str, &Path) -> Option<PathBuf>>,
+    resolver: Option<&'a (dyn Fn(&str, &Path) -> Option<PathBuf> + Sync)>,
 }
 
 impl<'a> ModuleLookup<'a> {
@@ -1092,7 +1105,7 @@ impl<'a> ModuleLookup<'a> {
 
     fn with_resolver(
         modules: &'a [(PathBuf, String)],
-        resolver: &'a dyn Fn(&str, &Path) -> Option<PathBuf>,
+        resolver: &'a (dyn Fn(&str, &Path) -> Option<PathBuf> + Sync),
     ) -> Self {
         let mut lookup = Self::new(modules);
         lookup.resolver = Some(resolver);
