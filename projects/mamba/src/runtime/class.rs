@@ -6253,6 +6253,11 @@ pub fn mb_context_enter(obj: MbValue) -> MbValue {
             }
         }
     }
+    // tarfile.TarFile dict-stubs: __enter__ re-checks the closed flag and
+    // raises OSError on a closed archive (CPython TarFile._check).
+    if super::dict_ops::dict_stub_class(obj).as_deref() == Some("TarFile") {
+        return super::stdlib::tarfile_mod::tarfile_context_enter(obj);
+    }
     // Class instances: look up __enter__
     if let Some(method) = try_get_dunder(obj, "__enter__") {
         let result = mb_call_method1(method, obj);
@@ -6411,6 +6416,16 @@ pub fn mb_context_exit(obj: MbValue, _has_exc: MbValue) -> MbValue {
                 }
             }
         }
+    }
+    // tarfile.TarFile dict-stubs: __exit__ finalizes + closes on clean exit,
+    // marks closed without the end-of-archive blocks when an exception is in
+    // flight (CPython TarFile.__exit__ parity).
+    if super::dict_ops::dict_stub_class(obj).as_deref() == Some("TarFile") {
+        super::stdlib::tarfile_mod::tarfile_context_exit(obj, has_pending);
+        if has_pending {
+            super::exception::mb_reraise(pending);
+        }
+        return MbValue::from_bool(false);
     }
     // Class instances: look up __exit__
     let result = if let Some(method) = try_get_dunder(obj, "__exit__") {

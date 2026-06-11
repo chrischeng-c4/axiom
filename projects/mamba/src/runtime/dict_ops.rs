@@ -1167,6 +1167,17 @@ pub fn dispatch_dict_method(name: &str, receiver: MbValue, args: MbValue) -> MbV
             }
         }
     }
+    // __class__-tagged tarfile stubs (TarFile / TarInfo) route their method
+    // surface to tarfile_mod; None falls through to plain-dict semantics.
+    if let Some(ref cls) = stub_class {
+        if matches!(cls.as_str(), "TarFile" | "TarInfo") {
+            if let Some(result) =
+                super::stdlib::tarfile_mod::dispatch_tar_stub_method(cls, name, receiver, args)
+            {
+                return result;
+            }
+        }
+    }
     if stub_class.as_deref() == Some("ConfigParser") {
         match name {
             "read_string" => {
