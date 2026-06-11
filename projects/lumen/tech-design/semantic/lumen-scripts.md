@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-scripts
 summary: Semantic coverage for "projects/lumen/scripts"
+capability_refs:
+  - id: "search"
+    role: primary
+    claim: "query-planner-boolean-eval-roaring-postings"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen/scripts`."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -18,7 +24,7 @@ semantic_domain:
     source_units:
       - path: "projects/lumen/scripts/load-fixture.py"
         language: "python"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method"]
         symbols:
           - name: "gen_bio"
@@ -38,7 +44,7 @@ semantic_domain:
           domain: "projects/lumen/scripts"
       - path: "projects/lumen/scripts/bench_vs_db.py"
         language: "python"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["python_data_model", "service_method"]
         symbols:
           - name: "Doc"
@@ -146,6 +152,8 @@ python_modules:
     - kind: raw
       lines:
       - '#!/usr/bin/env python3'
+      - '# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-scripts.md#schema'
+      - '# CODEGEN-BEGIN'
       - '"""Generate a synthetic lumen index fixture.'
       - ''
       - 'Emits two files:'
@@ -289,11 +297,14 @@ python_modules:
       - ''
       - 'if __name__ == "__main__":'
       - '    raise SystemExit(main())'
+      - '# CODEGEN-END'
   - path: projects/lumen/scripts/bench_vs_db.py
     body:
     - kind: raw
       lines:
       - '#!/usr/bin/env python3'
+      - '# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-scripts.md#schema'
+      - '# CODEGEN-BEGIN'
       - '"""Cross-engine search latency benchmark: lumen vs PostgreSQL vs MongoDB vs OpenSearch.'
       - ''
       - 'Goal (per the user''s two criteria):'
@@ -917,6 +928,7 @@ python_modules:
       - ''
       - 'if __name__ == "__main__":'
       - '    main()'
+      - '# CODEGEN-END'
 ```
 
 ## Unit Test
@@ -949,16 +961,12 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-scripts-load-fixture-py>"
   - path: "projects/lumen/scripts/bench_vs_db.py"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-scripts-bench-vs-db-py>"
   - action: annotate
     section: unit-test
     impl_mode: hand-written
