@@ -266,17 +266,43 @@ T2 - verifies -> R2
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
 
-<!-- TODO: Use YAML to describe product journeys and machine-verifiable assertions. Example:
+<!-- TODO: Use YAML to describe product journeys, machine-verifiable assertions, and optional evidence artifacts. Example:
 ```yaml
 e2e_tests:
-  - name: cli_prints_help
-    entrypoint: cli
-    command: "./target/debug/aw --help"
-    expect:
-      exit_code: 0
-      stdout_contains: ["Usage: aw"]
-    cleanup:
-      - "true"
+  - id: project-capability-define
+    capability_id: capability-control-plane
+    contract_id: capability-define-onboarding
+    category: product-journey
+    command: "vat run manual --gpu none"
+    assertions:
+      - "user can complete the capability definition journey"
+      - "visual evidence captures the primary UI states"
+      - "agent evaluation report has no blocking violations"
+    evidence:
+      screenshots:
+        - path: "e2e-results/user-manual/images/capability-setup.png"
+          label: "Capability setup"
+          locator: "[data-testid=capability-setup]"
+      reports:
+        - path: "e2e-results/agent-eval/project-capability-define.json"
+          kind: agent-eval
+          label: "Agent evaluation report"
+      docs:
+        - path: "docs/aw-ec-manual.md"
+          kind: generated-manual
+          label: "Generated product manual"
+    evaluators:
+      - id: capability-agent-eval
+        tool: codex
+        command: "codex exec --json --output e2e-results/agent-eval/project-capability-define.json"
+        report_path: "e2e-results/agent-eval/project-capability-define.json"
+        rubric:
+          - "agent response reflects the user-created project goal"
+          - "agent asks for missing capability details instead of inventing commitments"
+          - "agent produces no blocking contradiction with the README capability contract"
+        pass_criteria:
+          - "score >= 4"
+          - "blocking_violations is empty"
 ```
 -->
 

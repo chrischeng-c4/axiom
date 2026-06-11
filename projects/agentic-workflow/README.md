@@ -146,7 +146,7 @@ blocker, or error.
 | Status | verified |
 | Promise | AW-managed projects keep their README, tech designs, external contracts, source, and tests under the project tree by default: `td_path` is only an override, and the resolver otherwise uses `<project.path>/tech-design`. |
 | Required Verification | smoke |
-| Gate Inventory | `cargo test -p agentic-workflow --lib`; `aw td check projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md`; `aw td check projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md` |
+| Gate Inventory | `cargo test -p agentic-workflow --lib`; `cargo test -p agentic-workflow ec_doc`; `aw td check projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md`; `aw td check projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -154,6 +154,7 @@ blocker, or error.
 | TD lock and external-contract target resolution | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | CB generation and standardize scan defaults | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | Project dirty-scope protection | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
+| EC evidence documentation | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow ec_doc` |
 
 ## Existing Project Standardization
 

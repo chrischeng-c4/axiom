@@ -10,6 +10,7 @@ use super::types::{
     HttpMethod, ImportIr, PydanticField, PydanticModelIr, PythonBackendSpec, PythonModuleIr,
     RouteRecord, RouterIr,
 };
+use crate::td_ast::payloads::{OpenApiOperation, OpenApiPathItem, OpenApiPayload};
 
 #[derive(Debug, serde::Deserialize)]
 struct PythonBackendSpecYaml {
@@ -104,6 +105,40 @@ pub fn lower_backend_spec_value(
     Some(lower_backend_spec(parsed, spec_path))
 }
 
+/// Lower an OpenAPI 3.1 TD payload into the shared Python backend IR.
+/// @spec projects/agentic-workflow/tech-design/core/specs/python-backend-emitter.md#py-emit-router
+pub fn lower_openapi_payload(
+    payload: &OpenApiPayload,
+    spec_path: &str,
+    target_path: Option<&str>,
+) -> Option<PythonBackendSpec> {
+    let routes: Vec<RouteRecord> = payload
+        .paths
+        .iter()
+        .flat_map(|(path, item)| openapi_routes_for_path(path, item))
+        .collect();
+    if routes.is_empty() {
+        return None;
+    }
+
+    let router_name = target_path
+        .map(python_router_name_from_target)
+        .unwrap_or_else(|| "api".to_string());
+    Some(PythonBackendSpec {
+        spec_id: default_spec_id(spec_path),
+        routers: vec![RouterIr {
+            name: router_name.clone(),
+            prefix: String::new(),
+            tag: openapi_tag(payload).unwrap_or(router_name),
+            routes,
+        }],
+        pydantic_models: Vec::new(),
+        python_modules: Vec::new(),
+        imports: Vec::new(),
+        module_docstring: None,
+    })
+}
+
 fn lower_backend_spec(parsed: PythonBackendSpecYaml, spec_path: &str) -> PythonBackendSpec {
     let spec_id = if parsed.spec_id.trim().is_empty() {
         default_spec_id(spec_path)
@@ -195,6 +230,158 @@ pub fn parse_http_method(method: &str) -> Option<HttpMethod> {
     }
 }
 
+fn openapi_routes_for_path(path: &str, item: &OpenApiPathItem) -> Vec<RouteRecord> {
+    let mut routes = Vec::new();
+    if let Some(operation) = item.get.as_ref() {
+        routes.push(openapi_route_record(HttpMethod::Get, path, operation));
+    }
+    if let Some(operation) = item.post.as_ref() {
+        routes.push(openapi_route_record(HttpMethod::Post, path, operation));
+    }
+    if let Some(operation) = item.put.as_ref() {
+        routes.push(openapi_route_record(HttpMethod::Put, path, operation));
+    }
+    if let Some(operation) = item.delete.as_ref() {
+        routes.push(openapi_route_record(HttpMethod::Delete, path, operation));
+    }
+    if let Some(operation) = item.patch.as_ref() {
+        routes.push(openapi_route_record(HttpMethod::Patch, path, operation));
+    }
+    routes
+}
+
+fn openapi_route_record(
+    method: HttpMethod,
+    path: &str,
+    operation: &OpenApiOperation,
+) -> RouteRecord {
+    RouteRecord {
+        method,
+        path: path.to_string(),
+        handler_symbol: operation
+            .operation_id
+            .clone()
+            .unwrap_or_else(|| default_openapi_handler_symbol(method, path)),
+        request_model: openapi_request_model(operation),
+        response_model: openapi_response_model(operation).unwrap_or_else(|| "dict".to_string()),
+    }
+}
+
+fn openapi_tag(payload: &OpenApiPayload) -> Option<String> {
+    yaml_mapping_get(payload.info.as_ref()?, "title")
+        .and_then(|value| value.as_str())
+        .map(|title| title.trim().to_string())
+        .filter(|title| !title.is_empty())
+}
+
+fn openapi_request_model(operation: &OpenApiOperation) -> Option<String> {
+    yaml_mapping_get(&operation.extra, "requestBody").and_then(openapi_content_schema_model)
+}
+
+fn openapi_response_model(operation: &OpenApiOperation) -> Option<String> {
+    let responses = yaml_mapping_get(&operation.extra, "responses")?.as_mapping()?;
+    for status in ["200", "201", "202", "203", "default"] {
+        let Some(response) = yaml_mapping_get_in_mapping(responses, status) else {
+            continue;
+        };
+        if let Some(model) = openapi_content_schema_model(response) {
+            return Some(model);
+        }
+    }
+    responses
+        .iter()
+        .filter_map(|(status, response)| {
+            status
+                .as_str()
+                .filter(|status| status.starts_with('2'))
+                .and_then(|_| openapi_content_schema_model(response))
+        })
+        .next()
+}
+
+fn openapi_content_schema_model(value: &serde_yaml::Value) -> Option<String> {
+    let content = yaml_mapping_get(value, "content")?.as_mapping()?;
+    if let Some(json) = yaml_mapping_get_in_mapping(content, "application/json") {
+        if let Some(model) = yaml_mapping_get(json, "schema").and_then(openapi_schema_model) {
+            return Some(model);
+        }
+    }
+    content
+        .values()
+        .filter_map(|media| yaml_mapping_get(media, "schema").and_then(openapi_schema_model))
+        .next()
+}
+
+fn openapi_schema_model(value: &serde_yaml::Value) -> Option<String> {
+    yaml_mapping_get(value, "$ref")
+        .and_then(|value| value.as_str())
+        .and_then(|reference| reference.rsplit('/').next())
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            value
+                .as_mapping()
+                .and_then(|mapping| yaml_mapping_get_in_mapping(mapping, "type"))
+                .and_then(|value| value.as_str())
+                .map(|ty| match ty {
+                    "array" => "list",
+                    "boolean" => "bool",
+                    "integer" => "int",
+                    "number" => "float",
+                    "object" => "dict",
+                    "string" => "str",
+                    _ => "dict",
+                })
+                .map(str::to_string)
+        })
+}
+
+fn yaml_mapping_get<'a>(value: &'a serde_yaml::Value, key: &str) -> Option<&'a serde_yaml::Value> {
+    yaml_mapping_get_in_mapping(value.as_mapping()?, key)
+}
+
+fn yaml_mapping_get_in_mapping<'a>(
+    mapping: &'a serde_yaml::Mapping,
+    key: &str,
+) -> Option<&'a serde_yaml::Value> {
+    mapping.get(serde_yaml::Value::String(key.to_string()))
+}
+
+fn default_openapi_handler_symbol(method: HttpMethod, path: &str) -> String {
+    let mut symbol = method.decorator().to_string();
+    for segment in path.split('/') {
+        let cleaned = segment
+            .trim_matches(|ch| ch == '{' || ch == '}')
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+            .collect::<String>()
+            .trim_matches('_')
+            .to_ascii_lowercase();
+        if cleaned.is_empty() {
+            continue;
+        }
+        symbol.push('_');
+        symbol.push_str(&cleaned);
+    }
+    symbol
+}
+
+fn python_router_name_from_target(target_path: &str) -> String {
+    let path = std::path::Path::new(target_path);
+    if path.file_stem().and_then(|name| name.to_str()) != Some("router") {
+        return path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("api")
+            .to_string();
+    }
+    path.parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str())
+        .unwrap_or("api")
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +455,54 @@ python_modules:
         let spec = lower_backend_spec_yaml(yaml, "app.md").expect("lower value");
 
         assert_eq!(spec.python_modules[0].path, "src/app.py");
+    }
+
+    #[test]
+    fn lower_openapi_payload_builds_router_ir() {
+        let payload = crate::td_ast::payloads::OpenApiPayload::from_yaml_str(
+            r##"
+openapi: 3.1.0
+info:
+  title: Project API
+  version: "0.1.0"
+paths:
+  /projects:
+    post:
+      operationId: create_project
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+components:
+  schemas:
+    ProjectRequest:
+      type: object
+    ProjectResponse:
+      type: object
+"##,
+        )
+        .expect("openapi parses");
+
+        let spec = lower_openapi_payload(&payload, "api.md", Some("src/api/router.py"))
+            .expect("lower openapi");
+
+        assert_eq!(spec.spec_id, "api");
+        assert_eq!(spec.routers[0].name, "api");
+        assert_eq!(spec.routers[0].tag, "Project API");
+        assert_eq!(spec.routers[0].routes[0].handler_symbol, "create_project");
+        assert_eq!(
+            spec.routers[0].routes[0].request_model.as_deref(),
+            Some("ProjectRequest")
+        );
+        assert_eq!(spec.routers[0].routes[0].response_model, "ProjectResponse");
     }
 
     #[test]
