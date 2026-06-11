@@ -3552,6 +3552,8 @@ impl<'a> AstLowerer<'a> {
                         "Counter" | "OrderedDict" | "deque" | "defaultdict" | "dict"
                             // namedtuple takes rename= / defaults= / module=
                             | "namedtuple"
+                            // UserDict seeds its payload from kwargs
+                            | "UserDict"
                             // unittest.mock factories take config kwargs
                             // (return_value= / side_effect= / spec=).
                             | "MagicMock" | "Mock" | "AsyncMock" | "PropertyMock"

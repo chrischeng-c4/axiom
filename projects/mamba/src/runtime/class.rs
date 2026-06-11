@@ -2591,6 +2591,16 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                         super::rc::retain_if_ptr(factory);
                         return factory;
                     }
+                    // UserDict / UserList / UserString public `.data` payload.
+                    if attr_name == "data"
+                        && super::stdlib::collections_mod::user_wrapper_kind(class_name)
+                            .is_some()
+                    {
+                        let data = fields.read().unwrap()
+                            .get("_data").copied().unwrap_or(MbValue::none());
+                        super::rc::retain_if_ptr(data);
+                        return data;
+                    }
                     // io in-memory streams: `.closed` reflects the _closed flag.
                     if matches!(class_name.as_str(),
                         "StringIO" | "BytesIO" | "BufferedReader" | "BufferedWriter" | "TextIOWrapper")
@@ -5508,6 +5518,46 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         }
                         return super::bytes_ops::mb_bytes_getitem(buf, key);
                     }
+                    // UserDict / UserList / UserString subscript forwards to
+                    // the backing value. UserDict honours the `__missing__`
+                    // hook on subclasses (CPython: looked up on the class,
+                    // consulted only by __getitem__ — `.get` bypasses it).
+                    if let Some(kind) =
+                        super::stdlib::collections_mod::user_wrapper_kind(class_name)
+                    {
+                        let guard = fields.read().unwrap();
+                        let data = guard.get("_data").copied().unwrap_or(MbValue::none());
+                        drop(guard);
+                        if !data.is_none() {
+                            match kind {
+                                "list" => return super::list_ops::mb_list_getitem(data, key),
+                                "str" => return mb_obj_getitem(data, key),
+                                _ => {
+                                    if super::dict_ops::mb_dict_contains(data, key)
+                                        .as_bool() == Some(true)
+                                    {
+                                        return super::dict_ops::mb_dict_getitem(data, key);
+                                    }
+                                    let missing = lookup_method(class_name, "__missing__");
+                                    if !missing.is_none() {
+                                        let addr = extract_func_addr(missing);
+                                        if addr > 4096 {
+                                            let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+                                                std::mem::transmute(addr as usize);
+                                            return f(obj, key);
+                                        }
+                                    }
+                                    let key_repr = super::builtins::mb_repr(key);
+                                    let key_str = extract_str(key_repr).unwrap_or_default();
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+                                        MbValue::from_ptr(MbObject::new_str(key_str)),
+                                    );
+                                    return MbValue::none();
+                                }
+                            }
+                        }
+                    }
                     if class_name == "collections.Counter" {
                         let guard = fields.read().unwrap();
                         let data = guard.get("_data").copied().unwrap_or(MbValue::none());
@@ -5698,12 +5748,23 @@ pub fn mb_obj_setitem(obj: MbValue, key: MbValue, value: MbValue) -> MbValue {
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"
                         || class_name == "collections.OrderedDict"
+                        || super::stdlib::collections_mod::user_wrapper_kind(class_name)
+                            .is_some()
                     {
                         let guard = fields.read().unwrap();
                         let data = guard.get("_data").copied().unwrap_or(MbValue::none());
                         drop(guard);
                         if !data.is_none() {
-                            super::dict_ops::mb_dict_setitem(data, key, value);
+                            // UserList backing is a list: route through the
+                            // generic setitem so int indices work.
+                            if matches!(
+                                super::stdlib::collections_mod::user_wrapper_kind(class_name),
+                                Some("list")
+                            ) {
+                                super::list_ops::mb_list_setitem(data, key, value);
+                            } else {
+                                super::dict_ops::mb_dict_setitem(data, key, value);
+                            }
                             return MbValue::none();
                         }
                     }
@@ -6138,6 +6199,8 @@ pub(crate) fn unwrap_dictlike_data(obj: MbValue) -> Option<MbValue> {
                     || class_name == "collections.OrderedDict"
                     || class_name == "BaseCookie"
                     || class_name == "SimpleCookie"
+                    || super::stdlib::collections_mod::user_wrapper_kind(class_name)
+                        == Some("dict")
                 {
                     let guard = fields.read().unwrap();
                     let data = guard.get("_data").copied();
@@ -8134,6 +8197,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // datetime.datetime, functools.partial, ...) short-circuit before
             // the MRO lookup.
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                // UserDict / UserList / UserString: delegate method calls to
+                // the backing dict/list/str (full builtin method surface for
+                // free). User-defined overrides in subclasses win — only
+                // forward when the MRO has no such method.
+                if super::stdlib::collections_mod::user_wrapper_kind(class_name).is_some()
+                    && lookup_method(class_name, &name).is_none()
+                {
+                    let data = fields.read().unwrap().get("_data").copied();
+                    if let Some(data) = data {
+                        if !data.is_none() {
+                            return mb_call_method(data, method_name, args);
+                        }
+                    }
+                }
                 // namedtuple factory classmethod: Point._make(iterable).
                 if class_name == "collections.namedtuple_factory" && name == "_make" {
                     let arg0 = args.as_ptr()

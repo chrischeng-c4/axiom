@@ -944,6 +944,12 @@ pub fn mb_len(val: MbValue) -> MbValue {
                         }
                         return MbValue::from_int(0);
                     }
+                    // UserDict / UserList / UserString: len of the payload.
+                    if let Some((_, data)) =
+                        super::stdlib::collections_mod::user_wrapper_data(val)
+                    {
+                        return mb_len(data);
+                    }
                     // dict-like collections (defaultdict, Counter, OrderedDict):
                     // forward len() to the backing `_data` dict.
                     if class_name == "collections.defaultdict"
@@ -1260,6 +1266,11 @@ pub fn mb_str(val: MbValue) -> MbValue {
             "<lambda>".to_string()
         };
         return MbValue::from_ptr(MbObject::new_str(format!("<function {name} at 0x{addr:x}>")));
+    }
+    // UserDict / UserList / UserString stringify through their payload
+    // (str(UserString("hi")) == "hi", str(UserList([1])) == "[1]").
+    if let Some((_, data)) = super::stdlib::collections_mod::user_wrapper_data(val) {
+        return mb_str(data);
     }
     let s = if let Some(i) = val.as_int() {
         // UUID handles are int-tagged but render as the canonical
@@ -2024,6 +2035,22 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
     }
     if let Some(r) = numeric_handle_binop("+", a, b) {
         return r;
+    }
+    // UserList / UserString concatenation: unwrap to the backing payloads,
+    // add, then re-wrap with the LEFT operand's wrapper class (CPython:
+    // `UserString + str` stays a UserString; `ul + [6]` stays a UserList).
+    {
+        let aw = super::stdlib::collections_mod::user_wrapper_data(a);
+        let bw = super::stdlib::collections_mod::user_wrapper_data(b);
+        if aw.is_some() || bw.is_some() {
+            let av = aw.map(|(_, d)| d).unwrap_or(a);
+            let bv = bw.map(|(_, d)| d).unwrap_or(b);
+            let raw = mb_add(av, bv);
+            if aw.is_some() {
+                return super::stdlib::collections_mod::user_wrapper_rewrap_like(a, raw);
+            }
+            return super::stdlib::collections_mod::user_wrapper_rewrap_like(b, raw);
+        }
     }
 
     // bool is an int subclass in Python (True + 1.0 == 2.0), so coerce bool→int

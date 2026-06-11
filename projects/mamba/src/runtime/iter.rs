@@ -462,6 +462,13 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                             MbObject::new_list_borrowed(items),
                         ))
                     } else
+                    // UserDict / UserList / UserString iterate their payload
+                    // (dict keys / list items / characters).
+                    if let Some((_, data)) =
+                        super::stdlib::collections_mod::user_wrapper_data(obj)
+                    {
+                        return mb_iter(data);
+                    } else
                     // Dict-like collections classes: iterate over backing _data dict keys.
                     if class_name == "collections.defaultdict"
                         || class_name == "collections.Counter"

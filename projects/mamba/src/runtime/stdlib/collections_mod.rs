@@ -207,7 +207,7 @@ unsafe extern "C" fn dispatch_namedtuple(args_ptr: *const MbValue, nargs: usize)
 
 unsafe extern "C" fn dispatch_userdict_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
-    mb_userdict_new(a.get(0).copied().unwrap_or_else(MbValue::none))
+    mb_userdict_new(a)
 }
 
 unsafe extern "C" fn dispatch_userlist_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
@@ -270,6 +270,7 @@ pub fn register() {
     }
 
     register_chainmap_class();
+    register_userdict_class();
 
     super::register_module("collections", attrs);
 }
@@ -869,71 +870,166 @@ pub fn mb_deque_new() -> MbValue {
     MbValue::from_ptr(MbObject::new_list(vec![]))
 }
 
-// ── UserDict / UserList / UserString stubs (#1265 Task #76, Wave-7 ship #3) ──
+// ── UserDict / UserList / UserString wrapper classes ──
 //
-// **Carve-out**: CPython's `UserDict` / `UserList` / `UserString` are
-// thin Python-level wrapper classes that expose a `.data` attribute and
-// let users override methods (the original use-case from before dict /
-// list could be subclassed directly). Modern code typically subclasses
-// `collections.abc.MutableMapping` or uses `__missing__` on dict, so
-// the wrapper-class subclassing surface is rarely needed in practice.
-//
-// These stubs collapse the wrapper-class surface to its underlying
-// primitive — UserDict()→dict, UserList()→list, UserString(s)→str. The
-// `.data` attribute and method-override surface are NOT yet wired
-// (they require attribute-on-builtin-subclass plumbing that the rest
-// of mamba doesn't yet need). Code that *constructs* these types will
-// work; code that *subclasses* and *overrides* won't.
-//
-// Tracked under #1449 conformance.
+// Real wrapper Instances: the payload lives in a `_data` field exposed as
+// the public `.data` attribute (CPython semantics). Mapping/sequence/string
+// operations are forwarded to the backing value at the dispatch sites
+// (mb_obj_getitem / mb_obj_setitem / mb_len / mb_call_method / mb_add /
+// iteration). `class Sub(UserDict)` works through the registered native
+// `__init__` (same pattern as ChainMap subclasses), including the
+// `__missing__` hook on subscript misses.
 
-/// collections.UserDict(initialdata=None) -> dict
-pub fn mb_userdict_new(initialdata: MbValue) -> MbValue {
-    let dict = MbObject::new_dict();
-    if let Some(ptr) = initialdata.as_ptr() {
+/// Build a user-wrapper Instance with class `name` and backing `data`.
+fn user_wrapper_make(name: &str, data: MbValue) -> MbValue {
+    let mut fields = FxHashMap::default();
+    fields.insert("_data".into(), data);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: name.to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// "dict" | "list" | "str" when `class_name` is (a registered subclass of)
+/// UserDict / UserList / UserString.
+pub fn user_wrapper_kind(class_name: &str) -> Option<&'static str> {
+    let matches_base = |short: &str, dotted: &str| {
+        class_name == dotted
+            || super::super::class::class_mro_list(class_name)
+                .iter()
+                .any(|b| b == short || b == dotted)
+    };
+    if matches_base("UserDict", "collections.UserDict") {
+        return Some("dict");
+    }
+    if matches_base("UserList", "collections.UserList") {
+        return Some("list");
+    }
+    if matches_base("UserString", "collections.UserString") {
+        return Some("str");
+    }
+    None
+}
+
+/// If `v` is a user-wrapper Instance, return its kind and backing `_data`.
+pub fn user_wrapper_data(v: MbValue) -> Option<(&'static str, MbValue)> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            let kind = user_wrapper_kind(class_name)?;
+            let data = fields.read().unwrap().get("_data").copied()?;
+            return Some((kind, data));
+        }
+    }
+    None
+}
+
+/// Wrap `raw` in a fresh user-wrapper Instance of the SAME class as
+/// `template` (CPython: `UserString + str` returns a UserString).
+pub fn user_wrapper_rewrap_like(template: MbValue, raw: MbValue) -> MbValue {
+    if let Some(ptr) = template.as_ptr() {
         unsafe {
-            if let ObjData::Dict(ref src_lock) = (*ptr).data {
-                if let ObjData::Dict(ref dst_lock) = (*dict).data {
-                    let src = src_lock.read().unwrap();
-                    let mut dst = dst_lock.write().unwrap();
-                    for (k, v) in src.iter() {
-                        dst.insert(k.clone(), *v);
-                    }
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if user_wrapper_kind(class_name).is_some() {
+                    return user_wrapper_make(class_name, raw);
                 }
             }
         }
     }
-    MbValue::from_ptr(dict)
+    raw
 }
 
-/// collections.UserList(initlist=None) -> list
-pub fn mb_userlist_new(initlist: MbValue) -> MbValue {
-    let mut data: Vec<MbValue> = Vec::new();
-    if let Some(ptr) = initlist.as_ptr() {
-        unsafe {
-            if let ObjData::List(ref lock) = (*ptr).data {
-                data = lock.read().unwrap().to_vec();
+/// Seed a fresh backing dict from every mapping positional (covers both
+/// `UserDict({'a': 1})` and kwargs lowered into a trailing dict).
+fn userdict_backing_from_args(args: &[MbValue]) -> MbValue {
+    let backing = super::super::dict_ops::mb_dict_new();
+    for arg in args {
+        if arg.is_none() { continue; }
+        if let Some(ptr) = arg.as_ptr() {
+            unsafe {
+                if matches!((*ptr).data, ObjData::Dict(_) | ObjData::Instance { .. }) {
+                    super::super::dict_ops::mb_dict_update(backing, *arg);
+                }
             }
         }
     }
-    MbValue::from_ptr(MbObject::new_list(data))
+    backing
 }
 
-/// collections.UserString(seq) -> str(seq)
+/// collections.UserDict(initialdata=None, **kwargs) -> UserDict Instance
+pub fn mb_userdict_new(args: &[MbValue]) -> MbValue {
+    user_wrapper_make("collections.UserDict", userdict_backing_from_args(args))
+}
+
+/// `UserDict.__init__` for registered subclasses (`class Sub(UserDict)`).
+unsafe extern "C" fn userdict_init(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = extract_list(args);
+    let backing = userdict_backing_from_args(&items);
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let old = fields.write().unwrap().insert("_data".to_string(), backing);
+                if let Some(prev) = old {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
+/// Register UserDict as a class (dotted + short alias) so user subclasses
+/// inherit the native `__init__` that creates the backing dict.
+fn register_userdict_class() {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let mut m: Map<String, MbValue> = Map::new();
+    m.insert("__init__".to_string(), var(userdict_init as *const () as usize));
+    super::super::class::mb_class_register("collections.UserDict", vec![], m.clone());
+    super::super::class::mb_class_register("UserDict", vec![], m);
+}
+
+/// collections.UserList(initlist=None) -> UserList Instance
+pub fn mb_userlist_new(initlist: MbValue) -> MbValue {
+    let data: Vec<MbValue> = if initlist.is_none() {
+        Vec::new()
+    } else {
+        super::super::builtins::extract_items(initlist)
+            .into_iter()
+            .map(|v| {
+                unsafe { super::super::rc::retain_if_ptr(v) };
+                v
+            })
+            .collect()
+    };
+    user_wrapper_make("collections.UserList", MbValue::from_ptr(MbObject::new_list(data)))
+}
+
+/// collections.UserString(seq) -> UserString Instance
 ///
-/// Accepts a str directly (returns a clone) or an int (returns its
-/// decimal string form, matching CPython's `str(int)` coercion). For
-/// any other type, returns an empty string — code reaching the
-/// non-str / non-int path on UserString construction is rare enough
-/// that a stub is acceptable until full str() coercion ships.
+/// Accepts a str (clone) or an int (decimal form, matching `str(int)`);
+/// other types stringify through mb_str.
 pub fn mb_userstring_new(seq: MbValue) -> MbValue {
-    if let Some(s) = extract_str(seq) {
-        return MbValue::from_ptr(MbObject::new_str(s));
-    }
-    if let Some(n) = seq.as_int() {
-        return MbValue::from_ptr(MbObject::new_str(n.to_string()));
-    }
-    MbValue::from_ptr(MbObject::new_str(String::new()))
+    let s = if let Some(s) = extract_str(seq) {
+        s
+    } else if let Some(n) = seq.as_int() {
+        n.to_string()
+    } else if seq.is_none() {
+        String::new()
+    } else {
+        extract_str(super::super::builtins::mb_str(seq)).unwrap_or_default()
+    };
+    user_wrapper_make("collections.UserString", MbValue::from_ptr(MbObject::new_str(s)))
 }
 
 /// collections.deque_appendleft(deque, val) -> None
@@ -2414,17 +2510,23 @@ mod tests {
         }
     }
 
-    // -- UserDict / UserList / UserString tests (Wave-7 ship #3) --
+    // -- UserDict / UserList / UserString wrapper tests --
+
+    /// Backing `_data` of a user-wrapper Instance.
+    fn wrapper_backing(v: MbValue) -> MbValue {
+        user_wrapper_data(v).expect("expected user wrapper").1
+    }
 
     #[test]
     fn test_userdict_empty() {
-        let d = mb_userdict_new(MbValue::none());
+        let d = mb_userdict_new(&[]);
+        let backing = wrapper_backing(d);
         unsafe {
-            let ptr = d.as_ptr().expect("UserDict should be a ptr");
+            let ptr = backing.as_ptr().expect("backing should be a ptr");
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 assert_eq!(lock.read().unwrap().len(), 0);
             } else {
-                panic!("expected Dict");
+                panic!("expected Dict backing");
             }
         }
     }
@@ -2439,16 +2541,17 @@ mod tests {
                 m.insert("k2".into(), MbValue::from_int(8));
             }
         }
-        let d = mb_userdict_new(MbValue::from_ptr(src));
+        let d = mb_userdict_new(&[MbValue::from_ptr(src)]);
+        let backing = wrapper_backing(d);
         unsafe {
-            let ptr = d.as_ptr().unwrap();
+            let ptr = backing.as_ptr().unwrap();
             if let ObjData::Dict(ref lock) = (*ptr).data {
                 let m = lock.read().unwrap();
                 assert_eq!(m.len(), 2);
                 assert_eq!(m.get("k").and_then(|v| v.as_int()), Some(7));
                 assert_eq!(m.get("k2").and_then(|v| v.as_int()), Some(8));
             } else {
-                panic!("expected Dict");
+                panic!("expected Dict backing");
             }
         }
     }
@@ -2456,12 +2559,13 @@ mod tests {
     #[test]
     fn test_userlist_empty() {
         let l = mb_userlist_new(MbValue::none());
+        let backing = wrapper_backing(l);
         unsafe {
-            let ptr = l.as_ptr().unwrap();
+            let ptr = backing.as_ptr().unwrap();
             if let ObjData::List(ref lock) = (*ptr).data {
                 assert_eq!(lock.read().unwrap().len(), 0);
             } else {
-                panic!("expected List");
+                panic!("expected List backing");
             }
         }
     }
@@ -2472,15 +2576,16 @@ mod tests {
             MbValue::from_int(1), MbValue::from_int(2), MbValue::from_int(3),
         ]));
         let l = mb_userlist_new(src);
+        let backing = wrapper_backing(l);
         unsafe {
-            let ptr = l.as_ptr().unwrap();
+            let ptr = backing.as_ptr().unwrap();
             if let ObjData::List(ref lock) = (*ptr).data {
                 let items = lock.read().unwrap();
                 assert_eq!(items.len(), 3);
                 assert_eq!(items[0].as_int(), Some(1));
                 assert_eq!(items[2].as_int(), Some(3));
             } else {
-                panic!("expected List");
+                panic!("expected List backing");
             }
         }
     }
@@ -2489,18 +2594,18 @@ mod tests {
     fn test_userstring_from_str() {
         let s = MbValue::from_ptr(MbObject::new_str("hello".to_string()));
         let r = mb_userstring_new(s);
-        assert_eq!(extract_str(r), Some("hello".to_string()));
+        assert_eq!(extract_str(wrapper_backing(r)), Some("hello".to_string()));
     }
 
     #[test]
     fn test_userstring_from_int_coerces() {
         let r = mb_userstring_new(MbValue::from_int(42));
-        assert_eq!(extract_str(r), Some("42".to_string()));
+        assert_eq!(extract_str(wrapper_backing(r)), Some("42".to_string()));
     }
 
     #[test]
     fn test_userstring_from_none_empty() {
         let r = mb_userstring_new(MbValue::none());
-        assert_eq!(extract_str(r), Some(String::new()));
+        assert_eq!(extract_str(wrapper_backing(r)), Some(String::new()));
     }
 }
