@@ -20,6 +20,7 @@ use crate::cli::standardize::{
     TraceabilityCoverage,
 };
 use crate::models::preflight::PreFlightGateReport;
+use crate::models::project::EcBinding;
 
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#cli
 #[derive(Debug, Args, Clone)]
@@ -2165,9 +2166,20 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                 return Ok(());
             };
             let project_root = crate::find_project_root()?;
+            // wi-13: a category bound in the project's `ec` map dispatches to
+            // its external tool command; unbound categories keep the manifest
+            // command.
+            let project_model =
+                crate::services::project_registry::load_projects(&project_root)?
+                    .into_iter()
+                    .find(|project| project.name == report.project);
             let mut commands = Vec::new();
             for case in &manifest.cases {
-                commands.push(run_project_ec_command(case, &project_root)?);
+                commands.push(run_project_ec_command(
+                    case,
+                    project_model.as_ref(),
+                    &project_root,
+                )?);
             }
             let passed_count = commands
                 .iter()
@@ -2229,12 +2241,78 @@ fn block_health_report(report: &mut ProjectHealthReport, blocker: String) {
     report.production_status = ProductionStatus::Blocked;
 }
 
+impl EcBinding {
+    /// wi-13 R2: deterministic verify command for one EC tool binding. Total
+    /// over the three known tools; a missing argument or an unknown tool is
+    /// an error the dispatch surfaces as a Failed EC command, not a
+    /// health-run abort.
+    pub fn command(&self) -> Result<String> {
+        match self.tool.as_str() {
+            "arena" => {
+                let spec = self
+                    .spec
+                    .as_deref()
+                    .context("ec binding `arena` requires `spec`")?;
+                Ok(format!("arena run --spec {spec}"))
+            }
+            "rig" => {
+                let dir = self
+                    .dir
+                    .as_deref()
+                    .context("ec binding `rig` requires `dir`")?;
+                Ok(format!("rig run --dir {dir}"))
+            }
+            "meter" => {
+                let target = self
+                    .meter
+                    .as_deref()
+                    .context("ec binding `meter` requires `meter`")?;
+                Ok(format!("meter run --target {target}"))
+            }
+            other => anyhow::bail!("unknown ec binding tool `{other}` (expected arena|rig|meter)"),
+        }
+    }
+}
+
+/// wi-13 R3: the command a case actually runs — the bound tool command when
+/// the case category is bound in the owning project's `ec` map, else the
+/// manifest command (the cargo-test fallback).
+fn resolve_project_ec_command(
+    case: &crate::cli::ec::EcManifestCase,
+    project: Option<&crate::models::project::Project>,
+) -> Result<String> {
+    match project.and_then(|project| project.ec.get(&case.category)) {
+        Some(binding) => binding.command(),
+        None => Ok(case.command.clone()),
+    }
+}
+
 fn run_project_ec_command(
     case: &crate::cli::ec::EcManifestCase,
+    project: Option<&crate::models::project::Project>,
     project_root: &std::path::Path,
 ) -> Result<ProjectEcCommandReport> {
     let started = Instant::now();
-    let command = &case.command;
+    let command = match resolve_project_ec_command(case, project) {
+        Ok(command) => command,
+        Err(err) => {
+            // Logic terminal `bad_tool`: an unbuildable binding fails the
+            // case with the reason in stderr_tail and no spawn.
+            return Ok(ProjectEcCommandReport {
+                case_id: case.id.clone(),
+                command: case.command.clone(),
+                status: ProjectTestCommandStatus::Failed,
+                exit_code: None,
+                duration_ms: started.elapsed().as_millis(),
+                stdout_tail: String::new(),
+                stderr_tail: format!(
+                    "invalid ec binding for category `{}`: {err:#}",
+                    case.category
+                ),
+            });
+        }
+    };
+    let command = &command;
     let stdout_file = tempfile::NamedTempFile::new()
         .with_context(|| format!("create stdout capture for EC command `{command}`"))?;
     let stderr_file = tempfile::NamedTempFile::new()
@@ -2715,6 +2793,161 @@ mod tests {
                 ec: true,
             }
         );
+    }
+
+    fn ec_case(category: &str) -> crate::cli::ec::EcManifestCase {
+        crate::cli::ec::EcManifestCase {
+            id: "case-1".into(),
+            capability_id: "cap".into(),
+            contract_id: "contract".into(),
+            category: category.into(),
+            td_ref: "td".into(),
+            test_path: "tests/x.rs".into(),
+            command: "cargo test -p demo".into(),
+            assertions: vec![],
+            evidence: vec![],
+            evaluators: vec![],
+        }
+    }
+
+    fn ec_project(
+        ec: BTreeMap<String, EcBinding>,
+    ) -> crate::models::project::Project {
+        crate::models::project::Project {
+            name: "demo".into(),
+            path: "projects/demo".into(),
+            tech_design_dir: None,
+            ec,
+            workspaces: vec![],
+        }
+    }
+
+    /// wi-13 AC2: the builder emits the three deterministic tool shapes.
+    #[test]
+    fn ec_binding_command_builds_arena_rig_meter() {
+        let arena = EcBinding {
+            tool: "arena".into(),
+            spec: Some("tests/arena/x.toml".into()),
+            dir: None,
+            meter: None,
+        };
+        assert_eq!(
+            arena.command().unwrap(),
+            "arena run --spec tests/arena/x.toml"
+        );
+
+        let rig = EcBinding {
+            tool: "rig".into(),
+            spec: None,
+            dir: Some("tests/rig/scenarios".into()),
+            meter: None,
+        };
+        assert_eq!(rig.command().unwrap(), "rig run --dir tests/rig/scenarios");
+
+        let meter = EcBinding {
+            tool: "meter".into(),
+            spec: None,
+            dir: None,
+            meter: Some(".".into()),
+        };
+        assert_eq!(meter.command().unwrap(), "meter run --target .");
+    }
+
+    /// wi-13 AC2: unknown tool and missing per-tool argument are errors.
+    #[test]
+    fn ec_binding_command_rejects_unknown_tool_and_missing_arg() {
+        let unknown = EcBinding {
+            tool: "valgrind".into(),
+            spec: None,
+            dir: None,
+            meter: None,
+        };
+        assert!(unknown
+            .command()
+            .unwrap_err()
+            .to_string()
+            .contains("unknown ec binding tool"));
+
+        let armless = EcBinding {
+            tool: "arena".into(),
+            spec: None,
+            dir: None,
+            meter: None,
+        };
+        assert!(armless
+            .command()
+            .unwrap_err()
+            .to_string()
+            .contains("requires `spec`"));
+    }
+
+    /// wi-13 AC3: a bound category resolves to the tool command; an unbound
+    /// category on the same project falls back to the manifest command.
+    #[test]
+    fn resolve_ec_command_dispatches_bound_category() {
+        let mut ec = BTreeMap::new();
+        ec.insert(
+            "benchmark".to_string(),
+            EcBinding {
+                tool: "arena".into(),
+                spec: Some("tests/arena/x.toml".into()),
+                dir: None,
+                meter: None,
+            },
+        );
+        let project = ec_project(ec);
+
+        let bound =
+            resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap();
+        assert_eq!(bound, "arena run --spec tests/arena/x.toml");
+
+        let unbound =
+            resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
+        assert_eq!(unbound, "cargo test -p demo");
+    }
+
+    /// wi-13 AC4: no `ec` map (or no project model at all) is today's
+    /// behavior — pure manifest-command verify-ec.
+    #[test]
+    fn resolve_ec_command_defaults_without_bindings() {
+        let project = ec_project(BTreeMap::new());
+        assert_eq!(
+            resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap(),
+            "cargo test -p demo"
+        );
+        assert_eq!(
+            resolve_project_ec_command(&ec_case("benchmark"), None).unwrap(),
+            "cargo test -p demo"
+        );
+    }
+
+    /// wi-13 AC1: `[[projects]] ... ec.<category>` round-trips through the
+    /// Project model; absence of the field serializes to nothing.
+    #[test]
+    fn project_ec_map_roundtrips_through_toml() {
+        let doc = r#"
+[[projects]]
+name = "lumen"
+path = "projects/lumen"
+ec.benchmark = { tool = "arena", spec = "tests/arena/x.toml" }
+
+[[projects.workspaces]]
+paths = ["projects/lumen/**"]
+target = "rust"
+"#;
+        let parsed: crate::models::project::ProjectsToml = toml::from_str(doc).unwrap();
+        let project = &parsed.projects[0];
+        assert_eq!(project.ec["benchmark"].tool, "arena");
+        assert_eq!(
+            project.ec["benchmark"].spec.as_deref(),
+            Some("tests/arena/x.toml")
+        );
+
+        let reserialized = toml::to_string(&parsed).unwrap();
+        assert!(reserialized.contains("[projects.ec.benchmark]") || reserialized.contains("ec.benchmark"));
+        let reparsed: crate::models::project::ProjectsToml =
+            toml::from_str(&reserialized).unwrap();
+        assert_eq!(parsed, reparsed);
     }
 }
 // CODEGEN-END
