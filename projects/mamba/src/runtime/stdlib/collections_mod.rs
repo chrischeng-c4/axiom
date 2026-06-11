@@ -1506,16 +1506,29 @@ unsafe extern "C" fn cm_ror(self_v: MbValue, raw: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn cm_new_child(self_v: MbValue, args: MbValue) -> MbValue {
+    // A receiver built via `object.__new__(ChainMap)` has no `maps` field;
+    // CPython's new_child touches `self.maps` and raises AttributeError.
+    let parent_maps = match chainmap_maps(self_v) {
+        Some(maps) => maps,
+        None => {
+            return cm_raise(
+                "AttributeError",
+                "'ChainMap' object has no attribute 'maps'",
+            )
+        }
+    };
     let m = cm_first_arg(args);
     let front = if m.is_none() {
         MbValue::from_ptr(MbObject::new_dict())
-    } else {
+    } else if cm_is_mapping(m) {
         m
+    } else {
+        // mamba force-typed wall: typeshed declares `m` as a mapping, so a
+        // wrong-typed argument is rejected (CPython accepts it silently).
+        return cm_raise("TypeError", "new_child() argument 'm' must be a mapping");
     };
     let mut maps = vec![front];
-    if let Some(parent_maps) = chainmap_maps(self_v) {
-        maps.extend(parent_maps);
-    }
+    maps.extend(parent_maps);
     chainmap_make(maps)
 }
 
