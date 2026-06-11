@@ -387,7 +387,7 @@ impl ProjectEcGateReport {
 // @spec projects/agentic-workflow/tech-design/surface/specs/project-health-governance-report.md#logic
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 pub fn build_health_report(project: &str) -> Result<ProjectHealthReport> {
-    build_health_report_with_options(project, true, true, true, true)
+    build_health_report_with_options(project, true, true, true, true, true)
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -397,6 +397,7 @@ pub(crate) fn build_health_report_with_options(
     verify_cb: bool,
     verify_cold: bool,
     verify_tests: bool,
+    verify_ec: bool,
 ) -> Result<ProjectHealthReport> {
     build_health_report_with_options_internal(
         project,
@@ -404,6 +405,7 @@ pub(crate) fn build_health_report_with_options(
         verify_cb,
         verify_cold,
         verify_tests,
+        verify_ec,
         false,
     )
 }
@@ -415,6 +417,7 @@ fn build_health_report_with_options_internal(
     verify_cb: bool,
     verify_cold: bool,
     verify_tests: bool,
+    verify_ec: bool,
     emit_progress: bool,
 ) -> Result<ProjectHealthReport> {
     let project_root = crate::find_project_root()?;
@@ -429,10 +432,14 @@ fn build_health_report_with_options_internal(
         verify_cb,
         verify_cold,
         test_gates,
-        verify_tests && verify_cb && verify_traceability,
+        verify_tests && verify_cb && verify_traceability && verify_ec,
         None,
         &progress,
     )
+    .and_then(|mut report| {
+        apply_ec_to_report(&mut report, verify_ec)?;
+        Ok(report)
+    })
 }
 
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
@@ -2059,10 +2066,10 @@ pub async fn run_health(args: ProjectHealthArgs) -> Result<()> {
         verification.cb,
         verification.cold,
         verification.tests,
+        verification.ec,
         !args.human,
     )?;
     apply_td_lock_to_report(&mut report)?;
-    apply_ec_to_report(&mut report, verification.ec)?;
     apply_workflow_locks_to_report(&mut report).await?;
     let payload_path = write_health_payload(&report)?;
     if args.human {
@@ -2221,10 +2228,9 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
             // wi-13: a category bound in the project's `ec` map dispatches to
             // its external tool command; unbound categories keep the manifest
             // command.
-            let project_model =
-                crate::services::project_registry::load_projects(&project_root)?
-                    .into_iter()
-                    .find(|project| project.name == report.project);
+            let project_model = crate::services::project_registry::load_projects(&project_root)?
+                .into_iter()
+                .find(|project| project.name == report.project);
             let mut commands = Vec::new();
             for case in &manifest.cases {
                 commands.push(run_project_ec_command(
@@ -2886,9 +2892,7 @@ mod tests {
         }
     }
 
-    fn ec_project(
-        ec: BTreeMap<String, EcBinding>,
-    ) -> crate::models::project::Project {
+    fn ec_project(ec: BTreeMap<String, EcBinding>) -> crate::models::project::Project {
         crate::models::project::Project {
             name: "demo".into(),
             path: "projects/demo".into(),
@@ -2997,12 +3001,10 @@ mod tests {
         );
         let project = ec_project(ec);
 
-        let bound =
-            resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap();
+        let bound = resolve_project_ec_command(&ec_case("benchmark"), Some(&project)).unwrap();
         assert_eq!(bound, "arena run --spec tests/arena/x.toml");
 
-        let unbound =
-            resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
+        let unbound = resolve_project_ec_command(&ec_case("correctness"), Some(&project)).unwrap();
         assert_eq!(unbound, "cargo test -p demo");
     }
 
@@ -3044,9 +3046,11 @@ target = "rust"
         );
 
         let reserialized = toml::to_string(&parsed).unwrap();
-        assert!(reserialized.contains("[projects.ec.benchmark]") || reserialized.contains("ec.benchmark"));
-        let reparsed: crate::models::project::ProjectsToml =
-            toml::from_str(&reserialized).unwrap();
+        assert!(
+            reserialized.contains("[projects.ec.benchmark]")
+                || reserialized.contains("ec.benchmark")
+        );
+        let reparsed: crate::models::project::ProjectsToml = toml::from_str(&reserialized).unwrap();
         assert_eq!(parsed, reparsed);
     }
 }

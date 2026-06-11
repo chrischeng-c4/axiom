@@ -167,7 +167,8 @@ async fn run_request(args: GeneratorRequestArgs) -> Result<()> {
 
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/generator.md#source
 async fn generator_health_report(project: &str) -> Result<ProjectHealthReport> {
-    let mut report = project::build_health_report_with_options(project, true, false, false, false)?;
+    let mut report =
+        project::build_health_report_with_options(project, true, false, false, false, false)?;
     project::apply_workflow_locks_to_report(&mut report).await?;
     Ok(report)
 }

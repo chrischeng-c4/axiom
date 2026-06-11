@@ -1021,8 +1021,9 @@ fn write_traceability_payload<T: Serialize>(
 async fn run_project_standardize_parent(project: &str) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let project = resolve_standardize_project_name(&project_root, project)?;
-    let report =
-        crate::cli::project::build_health_report_with_options(&project, true, false, false, false)?;
+    let report = crate::cli::project::build_health_report_with_options(
+        &project, true, false, false, false, false,
+    )?;
     if project_standardize_layers_ready(&report) {
         return run_project_standardize_health_gate(&project).await;
     }
@@ -1037,8 +1038,9 @@ async fn run_project_standardize_parent(project: &str) -> Result<()> {
 }
 
 async fn run_project_standardize_health_gate(project: &str) -> Result<()> {
-    let report =
-        crate::cli::project::build_health_report_with_options(project, true, true, true, true)?;
+    let report = crate::cli::project::build_health_report_with_options(
+        project, true, true, true, true, true,
+    )?;
     let payload_path = write_traceability_payload(project, "project-health", &report)?;
     let health =
         crate::cli::project::project_health_summary_with_payload_path(&report, &payload_path);
