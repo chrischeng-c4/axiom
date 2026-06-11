@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-consumer-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Consumer adapter glue.
 //!
 //! lumen does not own the source of truth and does not bundle an
@@ -54,3 +55,5 @@ mod tests {
         assert!(url.ends_with("/collections/users/index"));
     }
 }
+
+// </HANDWRITE>
