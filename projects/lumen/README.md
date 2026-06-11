@@ -57,6 +57,28 @@ gate-inventory paths point at the real tests/scripts/manifests that prove them.
 Statuses are deliberately conservative — `auditing` means "built and gated, not
 yet formally `--verify`-proven"; `candidate` means "promised, partially shipped".
 
+## Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| search | - | implemented | auditing | conformance | not_ready | broad search evidence still mixes local gates with external perf/service gates |
+| search-lexical | - | partial | auditing | conformance | not_ready | WAND/block-max remains an open follow-up |
+| search-exact | - | implemented | auditing | conformance | not_ready | release proof remains tied to competitive perf evidence |
+| search-vector | 4141 | implemented | auditing | conformance | not_ready | DiskANN-class HNSW-on-disk remains future work |
+| search-hybrid | 4139 | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| search-duplicates | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| search-nested | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| elastic-scale | - | implemented | auditing | conformance | not_ready | scale proof includes heavier/release evidence outside the default gate |
+| resilience | - | implemented | auditing | dogfood | not_ready | live NATS/kind dogfood gates are external-service dependent |
+| k8s-deployment | - | implemented | auditing | conformance | not_ready | live operator e2e recency remains release-run dependent |
+| rest-integration | - | implemented | auditing | conformance | not_ready | runtime API proof remains outside the selected production scope |
+| agentic-integration | 4143 | implemented | passing | conformance | ready | offline spec and llm CLI contract is covered by local spec_cli tests |
+| security-auth | - | partial | auditing | conformance | not_ready | TLS binding is partial and not e2e-gated |
+| backup-restore | - | implemented | auditing | conformance | not_ready | periodic snapshotter proof remains source-level |
+| observability | - | implemented | auditing | conformance | not_ready | OTLP service proof depends on the compose collector stack |
+| schema-ops | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| ops-operability | - | implemented | auditing | conformance | not_ready | operational proof remains tied to kind/perf/service evidence |
+
 **Honest scope (do not over-claim):**
 
 - **Ingestion is the caller's own pub/sub** into `POST /index` (CDC / logical
@@ -162,7 +184,7 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 | Filtered kNN — planner wiring (`knn AND filter`) + recall gate | subepic | 4142 | implemented | passing | conformance | projects/lumen/tests/vector_e2e.rs (filtered_knn_returns_nearest_within_filter_no_recall_collapse) |
 | Competitive perf gate: `knn` + `filtered_knn` vs pgvector (opt-in `LUMEN_GATE_VECTOR=1`; OS host has no k-NN plugin) — `knn` is a TARGET (over-the-wire/real-corpus can lose), `filtered_knn` is a WIN (pgvector post-filters and collapses recall) | subepic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (competitive_perf_gate: knn, filtered_knn); projects/lumen/tests/perf-baseline.json |
 | flat-cpu vectors RAM-bounded on the disk tier (base rows demand-paged off the mmap, not re-materialized on reopen) | subepic | - | implemented | passing | conformance | projects/lumen/src/vector_index.rs (reopen_base_seg_plus_tail_plus_tombstone_equals_inram_oracle); projects/lumen/tests/disk_scale_proof.rs |
-| HNSW graph on disk (DiskANN-class) — vectors stay in RAM in the graph; only flat-cpu is disk-RAM-bounded | subepic | - | planned | none | none | future GPU-native vector chapter (`hnsw_rs` owns the vectors internally) |
+| HNSW graph on disk (DiskANN-class) — vectors stay in RAM in the graph; only flat-cpu is disk-RAM-bounded | subepic | - | planned | none | none | future GPU-native vector chapter (hnsw_rs owns the vectors internally) |
 | Hash / Hamming search (`hash` field + `hamming` query) | subepic | - | implemented | passing | conformance | projects/lumen/tests/hash_hamming.rs |
 
 #### Hybrid (lexical + semantic fusion)
@@ -367,13 +389,13 @@ self-onboards an agent with no docs site and no running server.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| agentic-integration | - | auditing | An installed `lumen` binary self-onboards an agent **offline** (no server, no network): `lumen spec` emits the machine schema (OpenAPI / JSON-schema, query-shape cookbook, field/analyzer catalog), and `lumen llm *` emits the agent integration playbook (mental model, ingest→search→hydrate workflow, flavor-decision guide, recipes, non-goals). | smoke, conformance | projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs |
+| agentic-integration | - | verified | An installed `lumen` binary self-onboards an agent **offline** (no server, no network): `lumen spec` emits the machine schema (OpenAPI / JSON-schema, query-shape cookbook, field/analyzer catalog), and `lumen llm *` emits the agent integration playbook (mental model, ingest→search→hydrate workflow, flavor-decision guide, recipes, non-goals). | smoke, conformance | projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | `lumen spec` schema (OpenAPI + JSON-schema, offline) | epic | - | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | Query-shape cookbook + field/analyzer catalog | epic | - | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
-| `lumen llm *` agent integration playbook (guide / quickstart / recipes) | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs (llm_guide / llm_quickstart / llm_recipes) |
+| `lumen llm *` agent integration playbook (guide / quickstart / recipes) | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 
 ### Security & Auth
 
@@ -408,7 +430,7 @@ self-onboards an agent with no docs site and no running server.
 |---|---|---:|---|---|---|---|
 | Prometheus `/metrics` endpoint | epic | - | implemented | passing | smoke | projects/lumen/tests/api_e2e.rs |
 | ServiceMonitor + PrometheusRule | epic | - | implemented | passing | smoke | projects/lumen/k8s/components/observability |
-| OTLP trace export (tower-http TraceLayer → tracing-opentelemetry → batch OTLP, opt-in; `otel` feature on in release builds) | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs (build_otel_tracer); projects/lumen/compose.yaml (Jaeger e2e: 13 traces, `request` spans) |
+| OTLP trace export (tower-http TraceLayer → tracing-opentelemetry → batch OTLP, opt-in; `otel` feature on in release builds) | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs (build_otel_tracer); projects/lumen/compose.yaml (Jaeger e2e: 13 request spans) |
 | OTLP metrics push (observable instruments bridge the engine's atomic counters → PeriodicReader, no hot-path cost) | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs (init_otel_meter); projects/lumen/compose.yaml (Prometheus e2e: 11 metrics/replica) |
 
 ### Schema & Ops Lifecycle
