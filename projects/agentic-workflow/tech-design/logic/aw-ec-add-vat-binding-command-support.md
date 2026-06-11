@@ -59,7 +59,7 @@ id: aw-ec-vat-binding-unit-tests
 requirements:
   vat_default:
     id: R1
-    text: "EcBinding::command() returns `vat run` when tool is vat and no runner id is configured."
+    text: "EcBinding::command() returns `vat run` when tool is vat and dir is absent or blank."
     kind: functional
     risk: high
     verify: test
@@ -71,42 +71,42 @@ requirements:
     verify: test
   tool_error:
     id: R3
-    text: "Unknown-tool errors list vat alongside arena, rig, and meter."
+    text: "Unknown-tool errors list `arena|rig|meter|vat`."
     kind: functional
     risk: medium
     verify: test
   fallback_unchanged:
     id: R4
-    text: "Unbound EC categories continue to fall back to the manifest command."
+    text: "resolve_project_ec_command still uses manifest command for unbound EC categories."
     kind: regression
     risk: medium
     verify: test
 elements:
-  test_command_builder:
+  ec_binding_command_builds_arena_rig_meter_vat:
     kind: test
     type: "rs/#[test]"
-  test_unknown_tool:
+  ec_binding_command_rejects_unknown_tool_and_missing_arg:
     kind: test
     type: "rs/#[test]"
-  test_dispatch_fallback:
+  resolve_ec_command_dispatches_bound_category:
     kind: test
     type: "rs/#[test]"
 relations:
-  - { from: test_command_builder, verifies: vat_default }
-  - { from: test_command_builder, verifies: vat_named_runner }
-  - { from: test_unknown_tool, verifies: tool_error }
-  - { from: test_dispatch_fallback, verifies: fallback_unchanged }
+  - { from: ec_binding_command_builds_arena_rig_meter_vat, verifies: vat_default }
+  - { from: ec_binding_command_builds_arena_rig_meter_vat, verifies: vat_named_runner }
+  - { from: ec_binding_command_rejects_unknown_tool_and_missing_arg, verifies: tool_error }
+  - { from: resolve_ec_command_dispatches_bound_category, verifies: fallback_unchanged }
 ---
 requirementDiagram
     requirement R1 {
       id: R1
-      text: "vat without runner yields vat run"
+      text: "vat default yields vat run"
       risk: high
       verifymethod: test
     }
     requirement R2 {
       id: R2
-      text: "vat with runner yields vat run runner"
+      text: "vat runner yields vat run runner"
       risk: high
       verifymethod: test
     }
@@ -122,25 +122,17 @@ requirementDiagram
       risk: medium
       verifymethod: test
     }
-    element test_command_builder {
+    element ec_binding_command_builds_arena_rig_meter_vat {
       type: "rs/#[test]"
     }
-    element test_unknown_tool {
+    element ec_binding_command_rejects_unknown_tool_and_missing_arg {
       type: "rs/#[test]"
     }
-    element test_dispatch_fallback {
+    element resolve_ec_command_dispatches_bound_category {
       type: "rs/#[test]"
     }
-    test_command_builder - verifies -> R1
-    test_command_builder - verifies -> R2
-    test_unknown_tool - verifies -> R3
-    test_dispatch_fallback - verifies -> R4
+    ec_binding_command_builds_arena_rig_meter_vat - verifies -> R1
+    ec_binding_command_builds_arena_rig_meter_vat - verifies -> R2
+    ec_binding_command_rejects_unknown_tool_and_missing_arg - verifies -> R3
+    resolve_ec_command_dispatches_bound_category - verifies -> R4
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] applicable: the change is a small extension of the existing EC command builder; the vat branch is deterministic, preserves the existing arena/rig/meter branches, and keeps unknown tools as a failed EC command.
-- [unit-test] applicable: R1-R4 cover the new default vat command, named vat runner command, unknown-tool error text, and unchanged manifest fallback behavior.
