@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-api-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! HTTP/2 API surface.
 //!
 //! Reads (`/search`, `/duplicates`, `/stats`) can be served by any
@@ -1151,3 +1152,5 @@ impl From<crate::auth::AuthErr> for ApiErr {
         }
     }
 }
+
+// </HANDWRITE>
