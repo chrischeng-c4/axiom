@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-operator-render-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Pure rendering: a [`Lumen`] spec → the set of child Kubernetes objects that
 //! realize it. No cluster, no I/O — every object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels +
@@ -536,3 +537,5 @@ fn prometheus_rule(lumen: &Lumen) -> Value {
         },
     })
 }
+
+// </HANDWRITE>
