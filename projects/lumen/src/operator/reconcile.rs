@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-operator-reconcile-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! The reconcile loop. Watches `Lumen` objects cluster-wide; for each, renders
 //! the child objects ([`render::render`]) and server-side-applies them as the
 //! field manager `lumen-operator`, then writes back a status subresource
@@ -206,3 +207,5 @@ async fn reconcile(lumen: Arc<Lumen>, ctx: Arc<Ctx>) -> Result<Action, Error> {
 fn error_policy(_lumen: Arc<Lumen>, _err: &Error, _ctx: Arc<Ctx>) -> Action {
     Action::requeue(Duration::from_secs(15))
 }
+
+// </HANDWRITE>
