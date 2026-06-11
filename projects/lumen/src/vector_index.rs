@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-vector-index-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Vector index backends for `FieldType::Vector`.
 //!
 //! Two CPU backends ship in this version:
@@ -132,6 +133,7 @@ pub trait VectorIndex: Send + Sync {
 /// at the codebook's edges. In practice this is fine because callers
 /// L2-normalize embeddings before insertion, which bounds the input
 /// range tightly.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ScalarCodebook {
     pub min: f32,
@@ -139,6 +141,7 @@ pub struct ScalarCodebook {
     pub dim: usize,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl ScalarCodebook {
     /// Empty codebook — the next `widen` call defines the range.
     pub fn empty(dim: usize) -> Self {
@@ -174,6 +177,7 @@ impl ScalarCodebook {
 
 /// Encode a vector to one byte per dimension using `cb`. Out-of-range
 /// values saturate at `0` / `255`.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn encode_sq(vec: &[f32], cb: &ScalarCodebook) -> Vec<u8> {
     let span = cb.range();
     vec.iter()
@@ -185,6 +189,7 @@ pub fn encode_sq(vec: &[f32], cb: &ScalarCodebook) -> Vec<u8> {
 }
 
 /// Decode a u8-encoded vector back to f32 using `cb`.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn decode_sq(bytes: &[u8], cb: &ScalarCodebook) -> Vec<f32> {
     let span = cb.range();
     bytes
@@ -268,6 +273,7 @@ struct VectorStore {
     codebook: Option<ScalarCodebook>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl VectorStore {
     fn new(spec: VectorSpec) -> Self {
         let codebook = match spec.quantize {
@@ -354,6 +360,7 @@ impl VectorStore {
 /// Because `hnsw_rs::Hnsw` is parameterised by a concrete distance
 /// type, we keep three internal variants in `HnswInner` and dispatch
 /// on the field's metric at construction time.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub struct HnswCpuIndex {
     inner: RwLock<HnswCpuInner>,
 }
@@ -414,6 +421,7 @@ fn hnsw_search_ef() -> usize {
         .unwrap_or(HNSW_SEARCH_EF_DEFAULT)
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl HnswBackend {
     fn new(metric: VectorMetric, max_elements: usize) -> Self {
         match metric {
@@ -464,6 +472,7 @@ impl HnswBackend {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl HnswCpuIndex {
     /// Construct a fresh, empty CPU HNSW index for the given spec.
     pub fn new(spec: VectorSpec) -> Self {
@@ -513,6 +522,7 @@ impl HnswCpuIndex {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl VectorIndex for HnswCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
         let mut inner = self.inner.write().map_err(|_| anyhow!("hnsw lock poisoned"))?;
@@ -623,6 +633,7 @@ impl VectorIndex for HnswCpuIndex {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl std::fmt::Debug for HnswCpuIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HnswCpuIndex")
@@ -641,6 +652,7 @@ impl std::fmt::Debug for HnswCpuIndex {
 /// moderate N this beats both an approximate index's build cost and a
 /// single-threaded exact scan (e.g. pgvector's `seqscan`), while giving 100%
 /// recall. The flat buffer is cached and rebuilt lazily after a mutation.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub struct FlatCpuIndex {
     inner: Mutex<FlatInner>,
 }
@@ -683,6 +695,7 @@ struct FlatVecs {
     eid_to_row: HashMap<String, u32>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl FlatVecs {
     /// Row `i`'s `dim`-long vector slice. BASE rows (`i < n_base`) come off the
     /// segment mmap (zero-copy); TAIL rows come from the in-RAM `data` buffer at
@@ -708,6 +721,7 @@ impl FlatVecs {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl FlatCpuIndex {
     pub fn new(spec: VectorSpec) -> Self {
         Self { inner: Mutex::new(FlatInner { store: VectorStore::new(spec), flat: None }) }
@@ -900,6 +914,7 @@ impl FlatCpuIndex {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl VectorIndex for FlatCpuIndex {
     fn add(&self, external_id: &str, vector: &[f32]) -> Result<()> {
         let mut inner = self.inner.lock().map_err(|_| anyhow!("flat lock poisoned"))?;
@@ -1098,6 +1113,7 @@ impl VectorIndex for FlatCpuIndex {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl std::fmt::Debug for FlatCpuIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FlatCpuIndex").field("len", &self.len()).finish()
@@ -1111,6 +1127,7 @@ impl std::fmt::Debug for FlatCpuIndex {
 /// Construct the backend implied by `spec.backend`. This version ships
 /// CPU backends only (HNSW + flat brute-force); GPU-native vector search
 /// is a future chapter.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn open_backend(spec: VectorSpec) -> Box<dyn VectorIndex> {
     match spec.backend {
         crate::types::VectorBackend::HnswCpu => Box::new(HnswCpuIndex::new(spec)),
@@ -1583,5 +1600,4 @@ mod tests {
     }
 
 }
-
-// </HANDWRITE>
+// CODEGEN-END

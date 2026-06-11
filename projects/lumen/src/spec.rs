@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-spec-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Offline, machine-readable self-description for agent integration.
 //!
 //! The `lumen spec` CLI subset emits everything an LLM agent needs to wire
@@ -10,6 +11,7 @@
 use serde_json::{json, Value};
 
 /// The full OpenAPI 3 document as pretty JSON (every route + schema).
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn openapi_json() -> String {
     crate::api::openapi()
         .to_pretty_json()
@@ -18,6 +20,7 @@ pub fn openapi_json() -> String {
 
 /// Just the component schemas (the request/response data types) as pretty JSON
 /// — the JSON-Schema view an agent uses to build/validate request bodies.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn json_schema_json() -> String {
     let api = crate::api::openapi();
     serde_json::to_string_pretty(&json!({ "components": api.components }))
@@ -28,6 +31,7 @@ pub fn json_schema_json() -> String {
 /// `{name, description, request}` for `POST /collections/{id}/search` (or
 /// `/duplicates` where noted) using the exact wire form of every `QueryNode`
 /// variant plus sort / collapse.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn query_shapes() -> Value {
     json!({
         "search_endpoint": "POST /collections/{collection}/search",
@@ -91,6 +95,7 @@ pub fn query_shapes() -> Value {
 /// The field-type + analyzer + vector-metric catalog — what `type`/`analyzer`/
 /// `metric` values a `PUT /collections/{id}` schema may use. Mirrors the
 /// `FieldType` / `Analyzer` / `VectorMetric` enums.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn field_catalog() -> Value {
     json!({
         "schema_endpoint": "PUT /collections/{collection}",
@@ -114,6 +119,7 @@ pub fn field_catalog() -> Value {
 /// model, the declare→ingest→search→hydrate workflow, the search-flavor decision
 /// guide, connection, and the non-goals. Where the exact wire shape is needed it
 /// points at `lumen spec` / `lumen llm recipes` so there is one source of truth.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn llm_guide_md() -> String {
     r#"# lumen — agent integration guide
 
@@ -171,6 +177,7 @@ body). `lumen llm quickstart` is a copy-paste end-to-end.
 
 /// A copy-paste end-to-end (`lumen llm quickstart`) as Markdown: create → index
 /// → search against a local `lumen serve` on `:7373`.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn llm_quickstart_md() -> String {
     r#"# lumen quickstart (copy-paste)
 
@@ -226,6 +233,7 @@ More shapes: `lumen llm recipes`. Full schema: `lumen spec`.
 
 /// Task → ready-to-POST body recipes (`lumen llm recipes`) as Markdown, rendered
 /// from [`query_shapes`] so the bodies never drift from the canonical cookbook.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn llm_recipes_md() -> String {
     let shapes = query_shapes();
     let endpoint = shapes["search_endpoint"].as_str().unwrap_or("");
@@ -247,5 +255,4 @@ pub fn llm_recipes_md() -> String {
     }
     out
 }
-
-// </HANDWRITE>
+// CODEGEN-END

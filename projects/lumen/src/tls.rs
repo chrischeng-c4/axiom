@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-tls-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! mTLS configuration for the peer (`:8082`) transport.
 //!
 //! v1 ships the configuration surface — paths to cert / key / CA bundle
@@ -20,6 +21,7 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, Context, Result};
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
 pub struct PeerTlsConfig {
     pub cert: PathBuf,
@@ -28,6 +30,7 @@ pub struct PeerTlsConfig {
     pub required: bool,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl PeerTlsConfig {
     /// Load from env. Returns `Ok(None)` when no TLS material is
     /// configured (plain-HTTP peer transport).
@@ -132,5 +135,4 @@ mod tests {
         clear_env();
     }
 }
-
-// </HANDWRITE>
+// CODEGEN-END

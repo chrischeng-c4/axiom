@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-metrics-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Lightweight in-process Prometheus exposition.
 //!
 //! v1 keeps the metric surface narrow and dep-free: a handful of
@@ -14,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// the README §5 contract. v1 in-memory single-shard reports
 /// `shard="0", partition="0"` as constants; future LSM/Raft tiers will
 /// vary `partition` and `shard` respectively.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Default)]
 pub struct Metrics {
     pub index_writes_total: AtomicU64,
@@ -29,6 +31,7 @@ pub struct Metrics {
     pub posting_cache_misses_total: AtomicU64,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Metrics {
     pub fn new() -> Self {
         Self::default()
@@ -163,5 +166,4 @@ mod tests {
         }
     }
 }
-
-// </HANDWRITE>
+// CODEGEN-END

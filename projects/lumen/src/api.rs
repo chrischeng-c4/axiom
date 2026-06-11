@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-api-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! HTTP/2 API surface.
 //!
 //! Reads (`/search`, `/duplicates`, `/stats`) can be served by any
@@ -42,6 +43,7 @@ use crate::types::{
 };
 use crate::wal::{MemWal, SharedWal};
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Clone)]
 pub struct AppState {
     pub engine: Arc<Engine>,
@@ -91,6 +93,7 @@ struct LocalEngineSearch {
     engine: Arc<Engine>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl SearchBackend for LocalEngineSearch {
     fn search(&self, collection_id: &str, req: SearchRequest) -> Result<SearchResponse> {
         self.engine.search(collection_id, req)
@@ -102,12 +105,14 @@ struct LocalWriteBackend {
     writer: Arc<WriteCoordinator>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl LocalWriteBackend {
     fn unexpected(outcome: ApplyOutcome) -> anyhow::Error {
         anyhow::anyhow!("unexpected apply outcome: {outcome:?}")
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[async_trait]
 impl WriteBackend for LocalWriteBackend {
     async fn create_collection(
@@ -185,6 +190,7 @@ impl WriteBackend for LocalWriteBackend {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl AppState {
     /// Build state with an explicit write log (e.g. a NATS-backed one
     /// for clustered deployments). Spawns the apply loop.
@@ -319,8 +325,10 @@ impl AppState {
         crate::raft::RaftRole,
     ))
 )]
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub struct ApiDoc;
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn router(state: AppState) -> Router {
     // Apply auth middleware only to data-plane routes. Admin/Probe
     // endpoints (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`,
@@ -1004,6 +1012,7 @@ async fn restore(
 // OpenAPI
 // ---------------------------------------------------------------------------
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn openapi() -> utoipa::openapi::OpenApi {
     let mut doc = ApiDoc::openapi();
     doc.info.version = env!("CARGO_PKG_VERSION").to_string();
@@ -1049,12 +1058,14 @@ async fn docs_swagger() -> Html<&'static str> {
 // ---------------------------------------------------------------------------
 
 /// HTTP-friendly wrapper that classifies storage errors to status codes.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub struct ApiErr {
     status: StatusCode,
     kind: &'static str,
     message: String,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl ApiErr {
     fn not_found(msg: impl Into<String>) -> Self {
         Self {
@@ -1065,6 +1076,7 @@ impl ApiErr {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl From<anyhow::Error> for ApiErr {
     fn from(e: anyhow::Error) -> Self {
         if let Some(se) = e.downcast_ref::<StorageError>() {
@@ -1119,6 +1131,7 @@ impl From<anyhow::Error> for ApiErr {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl IntoResponse for ApiErr {
     fn into_response(self) -> axum::response::Response {
         (
@@ -1132,6 +1145,7 @@ impl IntoResponse for ApiErr {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl From<crate::auth::AuthErr> for ApiErr {
     fn from(e: crate::auth::AuthErr) -> Self {
         match e {
@@ -1152,5 +1166,4 @@ impl From<crate::auth::AuthErr> for ApiErr {
         }
     }
 }
-
-// </HANDWRITE>
+// CODEGEN-END

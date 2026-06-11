@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-consumer-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Consumer adapter glue.
 //!
 //! lumen does not own the source of truth and does not bundle an
@@ -19,12 +20,14 @@
 
 use crate::routing::shard_index;
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
 pub struct ShardRouter {
     pub shard_count: u32,
     pub lumen_host: String,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl ShardRouter {
     /// URL of the `POST /index` endpoint for `collection_id` on the
     /// correct shard. Any replica of that shard is fine — a write is
@@ -55,5 +58,4 @@ mod tests {
         assert!(url.ends_with("/collections/users/index"));
     }
 }
-
-// </HANDWRITE>
+// CODEGEN-END

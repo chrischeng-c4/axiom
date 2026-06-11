@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-wal-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Write-ahead log abstraction — the data-plane backbone.
 //!
 //! lumen's write path is "turn the database inside out": a write is not
@@ -54,12 +55,14 @@ const WAL_VALUE_STRING_LIST: u8 = 4;
 /// **not** part of the record — it is assigned by the log on publish
 /// and delivered alongside the record on subscribe (NATS owns it in the
 /// clustered case; `MemWal` uses the append index).
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalRecord {
     pub version: u8,
     pub entry: RaftLogEntry,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl WalRecord {
     pub fn new(entry: RaftLogEntry) -> Self {
         Self {
@@ -350,6 +353,7 @@ pub type SharedWal = Arc<dyn WalLog>;
 /// the *minimum* delivered sequence across all subscribers, which is by
 /// definition ≤ what each one has already consumed. With no subscribers,
 /// nothing is dropped (a future `subscribe(0)` can still replay).
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Clone)]
 pub struct MemWal {
     shared: Arc<Mutex<MemWalInner>>,
@@ -363,6 +367,7 @@ struct MemWalInner {
     next_sub_id: u64,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl MemWalInner {
     fn latest(&self) -> u64 {
         self.base + self.records.len() as u64
@@ -387,6 +392,7 @@ struct SubGuard {
     id: u64,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Drop for SubGuard {
     fn drop(&mut self) {
         if let Ok(mut s) = self.shared.lock() {
@@ -395,12 +401,14 @@ impl Drop for SubGuard {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Default for MemWal {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl MemWal {
     pub fn new() -> Self {
         let (len_tx, _rx) = watch::channel(0u64);
@@ -416,6 +424,7 @@ impl MemWal {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[async_trait]
 impl WalLog for MemWal {
     async fn publish(&self, record: WalRecord) -> Result<u64> {
@@ -709,5 +718,4 @@ mod tests {
         assert_eq!(first, 1, "late subscriber must still replay from seq 1");
     }
 }
-
-// </HANDWRITE>
+// CODEGEN-END
