@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-metrics-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Lightweight in-process Prometheus exposition.
 //!
 //! v1 keeps the metric surface narrow and dep-free: a handful of
@@ -162,3 +163,5 @@ mod tests {
         }
     }
 }
+
+// </HANDWRITE>
