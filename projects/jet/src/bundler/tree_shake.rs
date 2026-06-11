@@ -480,13 +480,153 @@ fn extract_import_bindings(
 
         if let Some((target_path, _)) = target {
             let names = extract_imported_names(trimmed);
-            // Bare side-effect imports (`import './x'`) carry no names but
-            // must still pull the target live so its own imports are walked.
+            // Drop imported names whose LOCAL binding is never referenced in
+            // this module's body (esbuild does this; jet did not). After
+            // define replacement folds out `process.env.NODE_ENV` dev
+            // branches, a `propTypes` import like `elementAcceptingRef` /
+            // `chainPropTypes` / `exactProp` is bound but unreferenced — and
+            // marking it used kept the whole @mui/utils PropTypes validation
+            // chain alive in production. The check is CONSERVATIVE: a binding
+            // is dropped only when its name appears literally nowhere outside
+            // its own import statement (so a short or coincidentally-matching
+            // name is always kept). `*` namespace imports and bare
+            // side-effect imports are never narrowed.
+            let names = filter_referenced_import_names(trimmed, source, names);
             results.push((target_path.clone(), names));
         }
     }
 
     results
+}
+
+/// Keep only imported names whose local binding is referenced in `source`
+/// beyond the import line itself. Conservative by construction: if a
+/// binding's name occurs anywhere else (even inside a string or a longer
+/// token we don't perfectly tokenize), it is retained — only a name that
+/// appears *exclusively* in its import statement is dropped.
+fn filter_referenced_import_names(
+    import_line: &str,
+    source: &str,
+    names: Vec<String>,
+) -> Vec<String> {
+    // `*` (namespace) and empty (bare side-effect import) are never narrowed.
+    if names.iter().any(|n| n == "*") || names.is_empty() {
+        return names;
+    }
+    names
+        .into_iter()
+        .filter(|imported| {
+            let binding = local_binding_for(import_line, imported);
+            // Total whole-word occurrences across the module, minus the one
+            // declaration in the import line. >0 means a real reference.
+            let total = count_word_occurrences(source, &binding);
+            let in_import = count_word_occurrences(import_line, &binding);
+            total > in_import
+        })
+        .collect()
+}
+
+/// The local binding name an imported export is bound to in `import_line`:
+/// `import { a as b }` → `b`, `import { a }` → `a`, `import D from` →
+/// the default identifier `D`. Falls back to the imported name.
+fn local_binding_for(import_line: &str, imported: &str) -> String {
+    if imported == "default" {
+        let after = import_line.trim_start_matches("import ").trim_start();
+        if !after.starts_with('{') {
+            if let Some(id) = after
+                .split(|c: char| !c.is_alphanumeric() && c != '_' && c != '$')
+                .next()
+            {
+                if !id.is_empty() {
+                    return id.to_string();
+                }
+            }
+        }
+        return imported.to_string();
+    }
+    if let (Some(bs), Some(be)) = (import_line.find('{'), import_line.find('}')) {
+        if bs < be {
+            for item in import_line[bs + 1..be].split(',') {
+                let item = item.trim();
+                let (orig, alias) = match item.split_once(" as ") {
+                    Some((o, a)) => (o.trim(), Some(a.trim())),
+                    None => (item, None),
+                };
+                if orig == imported {
+                    return alias.unwrap_or(orig).to_string();
+                }
+            }
+        }
+    }
+    imported.to_string()
+}
+
+#[cfg(test)]
+mod binding_usage_tests {
+    use super::{count_word_occurrences, filter_referenced_import_names, local_binding_for};
+
+    #[test]
+    fn drops_unreferenced_named_import() {
+        let src = "import { used, unused } from 'm';\nconsole.log(used);\n";
+        let line = "import { used, unused } from 'm';";
+        let names = vec!["used".to_string(), "unused".to_string()];
+        let kept = filter_referenced_import_names(line, src, names);
+        assert_eq!(kept, vec!["used".to_string()]);
+    }
+
+    #[test]
+    fn keeps_aliased_and_default_when_referenced() {
+        let src = "import D, { a as b } from 'm';\nb();D.x;\n";
+        let line = "import D, { a as b } from 'm';";
+        assert_eq!(local_binding_for(line, "a"), "b");
+        assert_eq!(local_binding_for(line, "default"), "D");
+        let kept = filter_referenced_import_names(
+            line,
+            src,
+            vec!["a".to_string(), "default".to_string()],
+        );
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn never_narrows_namespace_or_substring() {
+        let names = vec!["*".to_string()];
+        assert_eq!(
+            filter_referenced_import_names("import * as ns from 'm';", "ns.x", names.clone()),
+            names
+        );
+        assert_eq!(
+            count_word_occurrences("elementAcceptingRefThing", "elementAcceptingRef"),
+            0
+        );
+        assert_eq!(
+            count_word_occurrences("a.elementAcceptingRef()", "elementAcceptingRef"),
+            1
+        );
+    }
+}
+
+/// Count whole-word (identifier-boundary) occurrences of `word` in `text`.
+fn count_word_occurrences(text: &str, word: &str) -> usize {
+    if word.is_empty() {
+        return 0;
+    }
+    let bytes = text.as_bytes();
+    let wb = word.as_bytes();
+    let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+    let mut count = 0usize;
+    let mut from = 0usize;
+    while let Some(rel) = text[from..].find(word) {
+        let start = from + rel;
+        let end = start + wb.len();
+        let before_ok = start == 0 || !is_id(bytes[start - 1]);
+        let after_ok = end >= bytes.len() || !is_id(bytes[end]);
+        if before_ok && after_ok {
+            count += 1;
+        }
+        from = start + 1;
+    }
+    count
 }
 
 /// Classification of an `export ... from '...'` re-export line.
