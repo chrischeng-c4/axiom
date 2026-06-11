@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-backup-sink-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Pluggable destination for periodic backups.
 //!
 //! README §7 specifies that backups can be uploaded to S3 / GCS with a
@@ -149,3 +150,5 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+// </HANDWRITE>
