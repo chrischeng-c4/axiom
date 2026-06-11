@@ -275,8 +275,10 @@ pub fn eliminate_unused_exports(code: &str) -> String {
         let full_ref = format!("{}.{}", export_obj, export_name);
 
         // Count read references (not the assignment site itself)
-        // A "read" is `_m{i}e.NAME` not followed by `=` (or `==`/`===`)
-        let read_count = count_export_reads(&result, &full_ref);
+        // A "read" is `_m{i}e.NAME` not followed by `=` (or `==`/`===`).
+        // Only zero-vs-nonzero matters here, so cap at 1: a used export
+        // stops scanning at its first read instead of sweeping the bundle.
+        let read_count = count_export_reads_capped(&result, &full_ref, 1);
 
         if read_count == 0 {
             exports_to_remove.push((export_obj, export_name));
@@ -1025,6 +1027,16 @@ fn collect_prefixed_refs_in_range(
 /// Count read references to an export property like `_m0e.foo`, excluding
 /// assignment sites (where it's followed by `=` but not `==`).
 fn count_export_reads(code: &str, full_ref: &str) -> usize {
+    count_export_reads_capped(code, full_ref, usize::MAX)
+}
+
+/// Like [`count_export_reads`] but stops scanning once `stop_at` reads are
+/// seen. Phase 1 only needs zero-vs-nonzero, so passing `stop_at = 1` turns a
+/// whole-bundle scan per export (O(exports * bundle), the dominant r5 cost on
+/// MUI) into an early-exit at the first read for every export that IS used —
+/// i.e. nearly all of them. Byte-identical: a capped count of 0 means the same
+/// thing as a full count of 0.
+fn count_export_reads_capped(code: &str, full_ref: &str, stop_at: usize) -> usize {
     let b = code.as_bytes();
     let ref_bytes = full_ref.as_bytes();
     let (export_obj, export_name) = full_ref.rsplit_once('.').unwrap_or((full_ref, ""));
@@ -1042,6 +1054,7 @@ fn count_export_reads(code: &str, full_ref: &str) -> usize {
         obj_bytes,
         module_id,
         &require_aliases,
+        stop_at,
     )
 }
 
@@ -1054,6 +1067,7 @@ fn count_export_reads_in_range(
     obj_bytes: &[u8],
     module_id: Option<&str>,
     require_aliases: &[String],
+    stop_at: usize,
 ) -> usize {
     let ref_len = ref_bytes.len();
     let len = end.min(b.len());
@@ -1061,6 +1075,10 @@ fn count_export_reads_in_range(
     let mut i = start.min(len);
 
     while i < len {
+        // Early-exit once the caller's budget is reached (Phase 1 passes 1).
+        if count >= stop_at {
+            return count;
+        }
         // Skip plain string literals.
         if matches!(b[i], b'"' | b'\'') {
             i = skip_quoted_literal(b, i).min(len);
@@ -1078,6 +1096,7 @@ fn count_export_reads_in_range(
                     obj_bytes,
                     module_id,
                     require_aliases,
+                    stop_at.saturating_sub(count),
                 )
             });
             count += refs;
