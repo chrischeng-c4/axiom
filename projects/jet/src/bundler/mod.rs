@@ -326,6 +326,10 @@ struct PrefetchedModule {
     source: std::result::Result<String, String>,
     imports: std::result::Result<imports::ModuleImports, String>,
     resolutions: HashMap<String, std::result::Result<PathBuf, String>>,
+    /// Parsed tree-sitter tree, kept ONLY for plain-JS modules whose source the
+    /// transform won't rewrite, so the module transform can reuse it instead of
+    /// re-parsing. `None` for TS/TSX/JSX/CSS/etc. See `extract_imports_with_tree`.
+    tree: Option<tree_sitter::Tree>,
 }
 
 pub struct Bundler {
@@ -342,6 +346,11 @@ pub struct Bundler {
     /// @spec projects/jet/docs/build-fails-loudly-on-unresolved-bare-specifiers.md
     /// @issue #1317
     unresolved_deps: Mutex<Vec<UnresolvedDependency>>,
+    /// Per-module tree-sitter trees parsed during `build_graph`, drained by
+    /// `transform_modules` so plain-JS modules are parsed once, not twice.
+    /// Keyed by the canonical module path. Empty for any module not safe to
+    /// reuse (TS/TSX/JSX), or when the graph cache short-circuits a module.
+    parsed_trees: Mutex<HashMap<PathBuf, tree_sitter::Tree>>,
     /// When true, use Phase 2 flat bundle in `generate_bundle`.
     ///
     /// Phase 2 (`generate_flattened_bundle`) merges all module bodies into a
@@ -403,6 +412,7 @@ impl Bundler {
             minify,
             defines,
             unresolved_deps: Mutex::new(Vec::new()),
+            parsed_trees: Mutex::new(HashMap::new()),
         })
     }
 
@@ -554,13 +564,26 @@ impl Bundler {
             HashMap::new();
         let mut imports: std::result::Result<imports::ModuleImports, String> =
             Err("not a script module".to_string());
+        let mut tree: Option<tree_sitter::Tree> = None;
 
         if determine_module_kind(&module_path.to_path_buf()) == graph::ModuleKind::Script {
             if let Ok(src) = &source {
                 let ext = module_path.extension().and_then(|e| e.to_str());
                 let is_typescript = matches!(ext, Some("ts") | Some("tsx"));
                 let is_jsx = matches!(ext, Some("tsx") | Some("jsx"));
-                imports = imports::extract_imports(src, is_typescript).map_err(|e| e.to_string());
+                // Plain-JS source is not rewritten before the module transform,
+                // so its JS-grammar parse can be reused there. Keep the tree only
+                // for those modules; TS/TSX/JSX get re-parsed post-rewrite anyway.
+                let reusable = matches!(ext, Some("js") | Some("cjs") | Some("mjs"));
+                match imports::extract_imports_with_tree(src, is_typescript) {
+                    Ok((module_imports, parsed)) => {
+                        if reusable {
+                            tree = Some(parsed);
+                        }
+                        imports = Ok(module_imports);
+                    }
+                    Err(e) => imports = Err(e.to_string()),
+                }
                 if let Ok(module_imports) = &imports {
                     let mut specs: Vec<&str> = Vec::new();
                     if is_jsx {
@@ -590,6 +613,7 @@ impl Bundler {
             source,
             imports,
             resolutions,
+            tree,
         }
     }
 
@@ -603,7 +627,7 @@ impl Bundler {
         // walk below replays over these memos, so module-id assignment
         // order — and therefore bundle bytes — stay identical to the
         // sequential traversal while the dominant costs run across cores.
-        let prefetched = self.prefetch_graph_modules(&entry_abs);
+        let mut prefetched = self.prefetch_graph_modules(&entry_abs);
 
         let mut queue: Vec<(PathBuf, Option<ModuleId>, Option<graph::EdgeKind>)> =
             vec![(entry_abs, None, None)];
@@ -625,6 +649,12 @@ impl Bundler {
             visited.insert(module_path.clone());
 
             tracing::debug!("Processing module: {:?}", module_path);
+
+            // Move the reusable parse tree (plain-JS only) out of the prefetch
+            // memo into the shared map so transform_modules can skip re-parsing.
+            if let Some(t) = prefetched.get_mut(&module_path).and_then(|p| p.tree.take()) {
+                self.parsed_trees.lock().insert(module_path.clone(), t);
+            }
 
             let prefetch = prefetched.get(&module_path);
             let source = match prefetch.map(|p| &p.source) {
@@ -931,14 +961,19 @@ impl Bundler {
                 };
 
                 let result = match node.kind {
-                    graph::ModuleKind::Script => self
-                        .transformer
-                        .transform_js_with_context_and_resolution_index(
-                            &source,
-                            &node.path,
-                            &module_map,
-                            Some(&resolution_index),
-                        ),
+                    graph::ModuleKind::Script => {
+                        // Reuse the tree-sitter parse from graph construction
+                        // (plain-JS modules only) so this module is parsed once.
+                        let reuse_tree = self.parsed_trees.lock().remove(&node.path);
+                        self.transformer
+                            .transform_js_with_context_resolution_and_tree(
+                                &source,
+                                &node.path,
+                                &module_map,
+                                Some(&resolution_index),
+                                reuse_tree,
+                            )
+                    }
                     graph::ModuleKind::Css => Ok(crate::transform::TransformResult {
                         code: String::new(),
                         source_map: None,

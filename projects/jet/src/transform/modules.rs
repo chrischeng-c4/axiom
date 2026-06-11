@@ -74,12 +74,36 @@ pub fn transform_modules_with_dir_and_index(
     resolution_index: Option<&ModuleResolutionIndex>,
     current_dir: Option<&Path>,
 ) -> Result<TransformResult> {
-    let mut parser = Parser::new();
-    parser.set_language(&tree_sitter_javascript::LANGUAGE.into())?;
+    transform_modules_with_dir_index_and_tree(
+        source,
+        module_map,
+        resolution_index,
+        current_dir,
+        None,
+    )
+}
 
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| anyhow::anyhow!("Failed to parse JavaScript"))?;
+/// As [`transform_modules_with_dir_and_index`], but reuses a tree-sitter tree
+/// parsed earlier (during graph construction) when one is supplied, avoiding a
+/// second parse of the same source. The caller guarantees `reuse_tree`, if
+/// `Some`, is the JS-grammar parse of exactly this `source`.
+pub fn transform_modules_with_dir_index_and_tree(
+    source: &str,
+    module_map: &HashMap<PathBuf, usize>,
+    resolution_index: Option<&ModuleResolutionIndex>,
+    current_dir: Option<&Path>,
+    reuse_tree: Option<tree_sitter::Tree>,
+) -> Result<TransformResult> {
+    let tree = match reuse_tree {
+        Some(tree) => tree,
+        None => {
+            let mut parser = Parser::new();
+            parser.set_language(&tree_sitter_javascript::LANGUAGE.into())?;
+            parser
+                .parse(source, None)
+                .ok_or_else(|| anyhow::anyhow!("Failed to parse JavaScript"))?
+        }
+    };
 
     let root = tree.root_node();
 

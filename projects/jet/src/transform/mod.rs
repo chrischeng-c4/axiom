@@ -189,6 +189,29 @@ impl Transformer {
         module_map: &HashMap<PathBuf, usize>,
         resolution_index: Option<&modules::ModuleResolutionIndex>,
     ) -> Result<TransformResult> {
+        self.transform_js_with_context_resolution_and_tree(
+            source,
+            filename,
+            module_map,
+            resolution_index,
+            None,
+        )
+    }
+
+    /// Like [`Self::transform_js_with_context_and_resolution_index`] but accepts
+    /// a tree-sitter tree already parsed during graph construction, so a
+    /// plain-JS module is parsed once instead of twice. The tree is only used
+    /// for `.js`/`.mjs`/`.cjs`, whose source step 1 leaves untouched; for
+    /// TS/TSX/JSX step 1 rewrites the source, so any supplied tree is dropped
+    /// and the module transform re-parses the rewritten code.
+    pub fn transform_js_with_context_resolution_and_tree(
+        &self,
+        source: &str,
+        filename: &Path,
+        module_map: &HashMap<PathBuf, usize>,
+        resolution_index: Option<&modules::ModuleResolutionIndex>,
+        reuse_tree: Option<tree_sitter::Tree>,
+    ) -> Result<TransformResult> {
         let ext = filename.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         // 1. First, apply TypeScript/JSX transformation
@@ -203,13 +226,20 @@ impl Transformer {
             _ => anyhow::bail!("Unsupported file extension: {}", ext),
         };
 
+        // A reuse tree is only valid when step 1 did not rewrite the source.
+        let reuse_tree = match ext.as_ref() {
+            "js" | "mjs" | "cjs" => reuse_tree,
+            _ => None,
+        };
+
         // 2. Apply ES6 module transformation (pass current module dir for relative resolution)
         let current_dir = filename.parent();
-        modules::transform_modules_with_dir_and_index(
+        modules::transform_modules_with_dir_index_and_tree(
             &transformed.code,
             module_map,
             resolution_index,
             current_dir,
+            reuse_tree,
         )
     }
 
