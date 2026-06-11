@@ -2297,7 +2297,7 @@ fn block_health_report(report: &mut ProjectHealthReport, blocker: String) {
 /// @spec projects/agentic-workflow/tech-design/surface/generate/project-health-source.md#source
 impl EcBinding {
     /// wi-13 R2: deterministic verify command for one EC tool binding. Total
-    /// over the three known tools; a missing argument or an unknown tool is
+    /// over the four known tools; a missing argument or an unknown tool is
     /// an error the dispatch surfaces as a Failed EC command, not a
     /// health-run abort.
     pub fn command(&self) -> Result<String> {
@@ -2323,7 +2323,20 @@ impl EcBinding {
                     .context("ec binding `meter` requires `meter`")?;
                 Ok(format!("meter run --target {target}"))
             }
-            other => anyhow::bail!("unknown ec binding tool `{other}` (expected arena|rig|meter)"),
+            "vat" => {
+                let runner = self
+                    .dir
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                Ok(match runner {
+                    Some(runner) => format!("vat run {runner}"),
+                    None => "vat run".to_string(),
+                })
+            }
+            other => {
+                anyhow::bail!("unknown ec binding tool `{other}` (expected arena|rig|meter|vat)")
+            }
         }
     }
 }
@@ -2885,9 +2898,9 @@ mod tests {
         }
     }
 
-    /// wi-13 AC2: the builder emits the three deterministic tool shapes.
+    /// wi-38 AC2: the builder emits deterministic tool shapes, including vat.
     #[test]
-    fn ec_binding_command_builds_arena_rig_meter() {
+    fn ec_binding_command_builds_arena_rig_meter_vat() {
         let arena = EcBinding {
             tool: "arena".into(),
             spec: Some("tests/arena/x.toml".into()),
@@ -2914,6 +2927,30 @@ mod tests {
             meter: Some(".".into()),
         };
         assert_eq!(meter.command().unwrap(), "meter run --target .");
+
+        let vat_default = EcBinding {
+            tool: "vat".into(),
+            spec: None,
+            dir: None,
+            meter: None,
+        };
+        assert_eq!(vat_default.command().unwrap(), "vat run");
+
+        let vat_blank_runner = EcBinding {
+            tool: "vat".into(),
+            spec: None,
+            dir: Some("   ".into()),
+            meter: None,
+        };
+        assert_eq!(vat_blank_runner.command().unwrap(), "vat run");
+
+        let vat_named_runner = EcBinding {
+            tool: "vat".into(),
+            spec: None,
+            dir: Some("rig-load".into()),
+            meter: None,
+        };
+        assert_eq!(vat_named_runner.command().unwrap(), "vat run rig-load");
     }
 
     /// wi-13 AC2: unknown tool and missing per-tool argument are errors.
@@ -2929,7 +2966,7 @@ mod tests {
             .command()
             .unwrap_err()
             .to_string()
-            .contains("unknown ec binding tool"));
+            .contains("expected arena|rig|meter|vat"));
 
         let armless = EcBinding {
             tool: "arena".into(),

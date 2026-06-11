@@ -1,6 +1,6 @@
 ---
 id: aw-ec-tool-binding-config
-summary: Per-project EC tool-binding config (`ec.<category>` map on the Project model) plus verify-ec dispatch — bound categories run an external tool (arena/rig/meter) command; unbound categories fall back to the EC manifest command. Exit-code gated; report-JSON folding deferred.
+summary: Per-project EC tool-binding config (`ec.<category>` map on the Project model) plus verify-ec dispatch — bound categories run an external tool (arena/rig/meter/vat) command; unbound categories fall back to the EC manifest command. Exit-code gated; report-JSON folding deferred.
 fill_sections: [logic, schema, unit-test]
 capability_refs:
   - id: project-local-td-and-ec-gates
@@ -24,7 +24,7 @@ nodes:
   start:        { kind: start,    label: "run_project_ec_command(case, project)" }
   has_ec:       { kind: decision, label: "project.ec has case.category?" }
   lookup:       { kind: process,  label: "binding = project.ec[case.category]" }
-  build:        { kind: process,  label: "cmd = binding.command() (arena/rig/meter)" }
+  build:        { kind: process,  label: "cmd = binding.command() (arena/rig/meter/vat)" }
   build_ok:     { kind: decision, label: "command built ok?" }
   bad_tool:     { kind: terminal, label: "Failed: unknown tool in binding" }
   use_manifest: { kind: process,  label: "cmd = case.command (manifest / cargo-test fallback)" }
@@ -81,14 +81,14 @@ $defs:
     properties:
       tool:
         type: string
-        enum: ["arena", "rig", "meter"]
+        enum: ["arena", "rig", "meter", "vat"]
         description: "Which external measurement tool verifies this EC category."
       spec:
         type: string
         description: "arena: comparison spec path -> `arena run --spec <spec>`."
       dir:
         type: string
-        description: "rig: scenario directory -> `rig run --dir <dir>`."
+        description: "rig: scenario directory -> `rig run --dir <dir>`; vat: optional runner id -> `vat run <dir>`."
       meter:
         type: string
         description: "meter: meter.toml path the meter invocation honors for [gate] ceilings."
@@ -108,7 +108,7 @@ requirements:
     verify: test
   command_builder:
     id: R2
-    text: "EcBinding::command() builds arena/rig/meter commands and errors on an unknown tool"
+    text: "EcBinding::command() builds arena/rig/meter/vat commands and errors on an unknown tool"
     kind: functional
     risk: high
     verify: test
@@ -191,8 +191,8 @@ requirementDiagram
 ### Review 1
 **Verdict:** approved
 
-- [logic] applicable: the verify-ec dispatch flow is correct — category→binding lookup, build tool command (arena/rig/meter) or fall back to the manifest command, exit-code gate. Matches the existing `run_project_ec_command` shape; report-JSON folding is correctly out of scope.
-- [schema] applicable: `ec` is an optional project-scoped map of category→EcBinding; EcBinding{tool enum arena|rig|meter, spec/dir/meter}; additionalProperties false guards typos; absent = manifest fallback. Project-scoped placement (before workspaces) matches aw's TD/contract-is-project-scoped model.
+- [logic] applicable: the verify-ec dispatch flow is correct — category→binding lookup, build tool command (arena/rig/meter/vat) or fall back to the manifest command, exit-code gate. Matches the existing `run_project_ec_command` shape; report-JSON folding is correctly out of scope.
+- [schema] applicable: `ec` is an optional project-scoped map of category→EcBinding; EcBinding{tool enum arena|rig|meter|vat, spec/dir/meter}; additionalProperties false guards typos; absent = manifest fallback. Project-scoped placement (before workspaces) matches aw's TD/contract-is-project-scoped model.
 - [unit-test] applicable: R1–R4 each verified by one #[test] element covering config round-trip, the command builder (incl. unknown-tool error), dispatch-uses-binding, and no-ec-is-manifest-default. One-to-one with the acceptance criteria.
 
 # Reviews
@@ -201,5 +201,5 @@ requirementDiagram
 **Verdict:** approved
 
 - [logic] contract-complete: the dispatch is implementable without guessing — lookup project.ec[case.category], build the tool command or fall back to case.command, spawn under sh -c in project_root, gate on exit 0. Unknown-tool is an explicit Failed branch.
-- [schema] contract-complete: `ec` optional map (absent = clean default), EcBinding{tool enum, spec/dir/meter} with additionalProperties:false. Both regenerate from the model schema TD; no ambiguity.
+- [schema] contract-complete: `ec` optional map (absent = clean default), EcBinding{tool enum arena|rig|meter|vat, spec/dir/meter} with additionalProperties:false. Both regenerate from the model schema TD; no ambiguity.
 - [unit-test] contract-complete: R1–R4 mapped one-to-one to #[test] elements (round-trip, command builder incl. unknown-tool error, dispatch-uses-binding, no-ec default). Matches WI #13 acceptance criteria.
