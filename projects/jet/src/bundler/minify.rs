@@ -919,6 +919,99 @@ fn is_no_space_before(ch: char) -> bool {
 /// Replace `true` with `!0` and `false` with `!1` (saves bytes).
 /// Only replaces standalone keyword occurrences outside strings.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+/// Remove dead `var X=Y.exports;` alias declarations from the FINAL
+/// mangled bundle. The flat-bundle emitter writes one `var _mNe=_mN.exports;`
+/// per inlined module as the rename target for bare `exports.X` writes,
+/// but most modules assign `_mN.exports` directly and never read the
+/// alias — 338 of 341 are dead on the mui bundle. Dropping them BEFORE
+/// mangle shifts name assignment and trips a mangler collision (it broke
+/// dom-production-assets), so this runs AFTER mangle: name assignment is
+/// already fixed, and removing an unreferenced `var X=Y.exports;` is
+/// provably safe (reading `.exports` off a `{exports:{}}` slot has no
+/// side effect). A binding is removed only when its name occurs exactly
+/// once in the whole bundle — its own declaration.
+pub fn remove_dead_exports_aliases(source: &str) -> String {
+    use std::collections::HashMap;
+    let b = source.as_bytes();
+    // One pass: tally every identifier occurrence (whole-word).
+    let mut counts: HashMap<&str, u32> = HashMap::new();
+    {
+        let mut i = 0usize;
+        let is_id = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+        while i < b.len() {
+            if is_id(b[i]) && !b[i].is_ascii_digit() {
+                let start = i;
+                while i < b.len() && is_id(b[i]) {
+                    i += 1;
+                }
+                *counts.entry(&source[start..i]).or_insert(0) += 1;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    // Find `var <X>=<Y>.exports;` where X occurs exactly once (this decl).
+    let mut removals: Vec<(usize, usize)> = Vec::new();
+    let mut search = 0usize;
+    while let Some(rel) = source[search..].find(".exports;") {
+        let dot = search + rel;
+        search = dot + ".exports;".len();
+        // Walk back over `Y` (identifier) then `=` then `X` then `var `.
+        let mut p = dot;
+        let id_end = p;
+        while p > 0 && {
+            let c = b[p - 1];
+            c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+        } {
+            p -= 1;
+        }
+        if p == id_end {
+            continue; // no Y identifier
+        }
+        let y_start = p;
+        if y_start == 0 || b[y_start - 1] != b'=' {
+            continue;
+        }
+        let eq = y_start - 1;
+        let mut q = eq;
+        let x_end = q;
+        while q > 0 && {
+            let c = b[q - 1];
+            c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+        } {
+            q -= 1;
+        }
+        if q == x_end {
+            continue;
+        }
+        let x_start = q;
+        let x = &source[x_start..x_end];
+        // `var ` (or `;var `/`{var `) immediately before X.
+        if !source[..x_start].ends_with("var ") {
+            continue;
+        }
+        let decl_start = x_start - "var ".len();
+        if counts.get(x).copied().unwrap_or(0) != 1 {
+            continue; // referenced elsewhere — keep
+        }
+        removals.push((decl_start, dot + ".exports;".len()));
+    }
+    if removals.is_empty() {
+        return source.to_string();
+    }
+    let mut out = String::with_capacity(source.len());
+    let mut pos = 0usize;
+    for (s, e) in removals {
+        if s < pos {
+            continue;
+        }
+        out.push_str(&source[pos..s]);
+        pos = e;
+    }
+    out.push_str(&source[pos..]);
+    out
+}
+
 /// Strip standalone `'use client'` directive statements. They are React
 /// Server Components build markers with zero runtime effect once bundled
 /// (a bare string-expression statement evaluates to nothing) — MUI ships

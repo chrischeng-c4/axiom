@@ -2070,6 +2070,19 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 }
                 dump_stage("3-mangle", &code);
                 dump_stage("4-fold", &code);
+                // Post-mangle dead `var X=Y.exports;` alias removal — safe
+                // here (name assignment is fixed; removing it pre-mangle
+                // tripped a mangler collision). Parse-guarded; reverts on the
+                // rare shape it can't handle.
+                {
+                    let pruned = crate::bundler::minify::remove_dead_exports_aliases(&code);
+                    if pruned.len() < code.len()
+                        && crate::bundler::dce::js_parses_without_errors(&pruned)
+                    {
+                        code = pruned;
+                    }
+                }
+                lap("dead_exports_aliases");
                 // Extra polish (JET_EXTRA_MINIFY=1): residual-space squeeze,
                 // block-level empty-statement removal, bracket-to-dot
                 // properties. Worth ~0.3-2KB gzip per fixture but costs two
