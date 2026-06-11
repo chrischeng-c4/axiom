@@ -18,6 +18,14 @@ toml = "0.8"
 # Sync HTTP client: scenario steps and the open-loop load generator run on
 # plain worker threads, no async runtime needed.
 ureq = { version = "2", features = ["json"] }
+# Sync Postgres client (feature-gated) for the postgres load transport — same
+# blocking thread model as the HTTP path. Off by default to keep rig lean.
+postgres = { version = "0.19", optional = true }
+
+[features]
+# Enables the postgres load transport (pulls a tokio runtime via the `postgres`
+# crate). Consumers comparing a SQL backend (e.g. arena) opt in.
+postgres = ["dep:postgres"]
 
 [dev-dependencies]
 tempfile = "3"

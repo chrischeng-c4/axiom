@@ -13,6 +13,7 @@ pub mod loadgen;
 pub mod rss;
 pub mod sample;
 pub mod timeout;
+pub mod transport;
 
 use std::time::Instant;
 

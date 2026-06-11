@@ -14,7 +14,7 @@ crate-type = ["rlib"]
 # The whole point: reuse rig's loadgen (measurement), BaselineStore (ratchet
 # gate), and report envelope (worst-wins + exit ladder). meter is NOT a dep —
 # the deferred runtime flavor will shell out to the `meter` CLI, not link it.
-rig = { path = "../rig" }
+rig = { path = "../rig", features = ["postgres"] }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
@@ -22,3 +22,6 @@ toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
+# Used only by the cross-transport e2e test to pre-check pg availability and
+# skip gracefully when no local Postgres is running.
+postgres = "0.19"

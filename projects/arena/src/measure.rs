@@ -1,27 +1,62 @@
-//! Per-(cell, target) measurement. v1 = the service flavor only: assemble a
-//! rig [`LoadProfile`] from the target's load shape + the cell's request, drive
-//! it through [`rig::engine::loadgen`], and hand back the full [`LoadStats`] so
-//! the engine can reduce to the comparable scalar AND judge load-honesty.
+//! Per-(cell, target) measurement. Dispatches on the target's transport and
+//! drives it through rig's ONE open-loop scheduler ([`run_transport`]), so
+//! every target — HTTP or Postgres — is measured by the same thin Rust client
+//! on the same schedule, and the resulting numbers are comparable by
+//! construction. The protocol/client knowledge lives entirely in rig's
+//! transports; arena only picks which one and reads the folded [`LoadStats`].
 
-use rig::engine::loadgen::{self, LoadStats};
+use std::sync::Arc;
+
+use rig::engine::loadgen::{run_transport, LoadStats, Schedule};
+use rig::engine::transport::{HttpTransport, PostgresTransport, Transport};
 use rig::scenario::interp::VarStore;
-use rig::scenario::load::LoadProfile;
-use rig::scenario::step::HttpRequest;
 
-use crate::spec::LoadShape;
+use crate::spec::{CellTarget, LoadShape, TargetSpec};
 
-/// Drive one service target with the cell's request and return the folded
-/// load stats. `Err` only on a template/transport abort (per-request failures
+/// Measure one (target, cell): build the target's transport from the cell's
+/// opaque payload (http `request` or postgres `query`) and drive it under the
+/// shared schedule. `Err` only on a connect/template abort (per-op failures
 /// surface as `error_rate`/`failed` inside the returned stats).
-pub fn measure_service(load: &LoadShape, request: &HttpRequest) -> Result<LoadStats, String> {
-    let profile = LoadProfile {
+pub fn measure(
+    target: &TargetSpec,
+    cell: &CellTarget,
+    load: &LoadShape,
+) -> Result<LoadStats, String> {
+    let schedule = Schedule {
         target_qps: load.target_qps,
         workers: load.workers,
         duration_secs: load.duration_secs,
         warmup_secs: load.warmup_secs,
-        request: request.clone(),
     };
-    let stats = loadgen::run(&profile, &VarStore::new());
+    let transport: Arc<dyn Transport> = match target.kind.as_str() {
+        "service" | "http" => {
+            let request = cell
+                .request
+                .clone()
+                .ok_or_else(|| "http target cell is missing `request`".to_string())?;
+            Arc::new(HttpTransport {
+                request,
+                vars: VarStore::new(),
+            })
+        }
+        "postgres" => {
+            let dsn = target
+                .dsn
+                .clone()
+                .ok_or_else(|| "postgres target is missing `dsn`".to_string())?;
+            let sql = cell
+                .query
+                .clone()
+                .ok_or_else(|| "postgres target cell is missing `query`".to_string())?;
+            Arc::new(PostgresTransport { dsn, sql })
+        }
+        other => {
+            return Err(format!(
+                "target kind `{other}` is not supported (use `http` or `postgres`)"
+            ))
+        }
+    };
+    let stats = run_transport(&schedule, &transport);
     if let Some(abort) = stats.abort {
         return Err(abort);
     }

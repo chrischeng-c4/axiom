@@ -17,14 +17,20 @@ CPython cpu/RSS). arena extracts the comparison essence so neither has to.
 ```text
 vat     — environment: provisions each target's services + a COW workspace.
 arena   — comparison: holds the workload spec, fans out, ratios + gates.   <-- this
-rig     — drives ONE service with load → latency.   (arena reuses its loadgen)
+rig     — drives ONE target with load → latency. Owns the transports (http,
+          postgres). "how to talk to a target" lives here, not in arena.
 meter   — measures ONE process → cpu/RSS.           (deferred runtime flavor)
 ```
 
 `vat` runs `arena` as just another `[[runners]]` entry; `arena` is the middle
-compare layer over `rig`/`meter`. It never generates load itself for the
-runtime flavor — it composes meter's `--drive` seam — and for the service
-flavor it reuses rig's open-loop loadgen.
+compare layer over `rig`/`meter`. arena knows **zero** protocols — it asks rig
+for each target's number through one entry, and rig's transport (HTTP or
+Postgres) owns the wire. Every transport runs on rig's ONE open-loop scheduler
+(same warmup/percentile/honesty), so a thin Rust client's overhead is a
+near-constant floor across targets and the ratio reflects the backend +
+protocol, not the client library — the whole point of comparing lumen vs pg
+fairly. Protocol cost is kept (it is part of what each backend delivers);
+floor-dominated cheap cells are marked `exempt`.
 
 ## Mental model
 
@@ -53,8 +59,17 @@ is EXEMPT vs peer B on one cell) is representable. See
 | `base` | the target every ratio divides BY (`ratio = peer/base`) |
 | `metric` | comparable scalar, lower-is-better (`p99_ms` default); per-cell overridable |
 | `ratchet` | baseline ratchet (default 0.8 — must hold `max(1.0, 0.8*baseline)`) |
-| `[targets.<id>]` | `kind = "service"` (rig loadgen) + a `[targets.<id>.load]` shape |
-| `[[cells]]` + `[cells.targets.<id>]` | one logical workload, per-target `request` (glue) + `gate` |
+| `[targets.<id>]` | `kind = "http"` (alias `service`) or `kind = "postgres"` (+ `dsn`), and a `[targets.<id>.load]` shape |
+| `[[cells]]` + `[cells.targets.<id>]` | one logical workload: per-target `request` (http glue) or `query` (pg SQL) + `gate` |
+
+Transports (rig owns these; arena just selects):
+
+- **http** (alias `service`) — thin ureq client; the cell payload is a
+  `request = { method, url, body }`. Author it from the service's published
+  OpenAPI as a human reference.
+- **postgres** — `tokio-postgres` prepared statement (rig `postgres` feature);
+  the target carries a `dsn`, the cell payload is a `query` SQL string. pg has
+  no OpenAPI — the SQL is hand-written.
 
 Gate classes (a direct port of lumen's `judge()`):
 - **win** — base must beat the peer by `max(1.0, ratchet*baseline)`; a breach is
@@ -95,32 +110,33 @@ cmd = ["../../target/debug/arena", "run", "--spec", "tests/arena/search.toml"]
 timeout_s = 600
 ```
 
-## Scope (v1) and what's deferred
+## Scope and what's deferred
 
-**v1 ships the SERVICE flavor only**: HTTP targets driven by rig's loadgen,
-compared on latency. Both compared targets must speak HTTP (lumen vs OpenSearch
-is fair; **Postgres is not** — it speaks its native wire protocol, so it is the
-deferred `command` flavor, not an HTTP service).
+**Transports: `http` and `postgres`.** Latency comparison across an HTTP
+service and a SQL backend on one scheduler — `lumen` (http) vs `pg` (postgres),
+and lumen vs OpenSearch (both http). Ratios are honest **end-to-end** latency
+with a thin Rust client; the protocol floor is kept (it is part of the cost),
+and floor-dominated cheap cells are `gate = "exempt"`. arena never peeks at
+engine-internal timings — that is glue, and the transport's job is the wire.
 
-Service ratios are honest **end-to-end** latency and inherit the HTTP transport
-floor by design — the correct comparison for a shipped HTTP server. Mark
-floor-dominated cheap cells `gate = "exempt"`; arena never peeks at
-engine-internal timings (that is glue, and the deferred runtime flavor).
-
-Deferred: the runtime/meter flavor (`kind = "runtime"` via `meter profile
---drive` → cpu/RSS, for mamba-vs-CPython); the `command` flavor (opaque metric,
-for pg); migrating lumen's full `perf_gate_vs_db.rs`; correctness-diff
-comparison; concurrent driving.
+Deferred: the runtime/meter flavor (`meter profile --drive` → cpu/RSS, for
+mamba-vs-CPython); other transports (redis, opaque command); OpenAPI-driven
+request scaffolding (lumen's published OpenAPI is a human reference for now);
+migrating lumen's full `perf_gate_vs_db.rs`; correctness-diff comparison;
+concurrent driving; http/2 (the loadgen client is h1 ureq today).
 
 ## Build & test
 
 ```bash
-cargo test -p arena                 # 11 tests: spec/compare units + stub-server pipeline e2e
+cargo test -p arena                 # spec/compare units + stub-server pipeline e2e
+                                    # (+ a real-pg cross-transport test that skips if no local pg)
 projects/arena/build.sh debug       # installs ~/.cargo/bin/arena
-arena run --spec projects/arena/examples/lumen-vs-opensearch.toml --update-baselines
+arena run --spec projects/arena/examples/lumen-vs-pg.toml --update-baselines
 ```
 
 The pipeline e2e (`tests/pipeline_e2e.rs`) drives the whole
 measure→compare→gate→report→exit path against two in-test stub HTTP servers
-(fast base, slow peer), proving WIN-breach→exit 2, exempt→no-gate, and
-baseline recording without any real services.
+(fast base, slow peer) — proving WIN-breach→exit 2, exempt→no-gate, and
+baseline recording without any real services — plus a cross-transport test that
+compares a stub HTTP target against a real local Postgres (`SELECT 1`),
+skipping gracefully when no pg is running.
