@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-nats-cluster-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! The full-stack proof: two independent lumen serving nodes backed by
 //! the SAME NATS write log. Write through node A's HTTP API; read it
 //! back through node B's HTTP API. This exercises the entire data plane
@@ -148,3 +149,5 @@ async fn delete_on_one_node_propagates_to_the_other() {
         "delete on B did not propagate to A"
     );
 }
+
+// </HANDWRITE>
