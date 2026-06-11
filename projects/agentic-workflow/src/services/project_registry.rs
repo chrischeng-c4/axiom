@@ -27,6 +27,7 @@ use crate::shared::workspace::{config_path, workspace_path, SYNC_BEGIN_MARKER, S
 /// - If the markers are absent, the block (with markers) is appended at EOF.
 /// - After a successful write, `.aw/projects.toml` is deleted if it exists (R10 migration).
 /// - Non-generated content in `config.toml` is preserved byte-identical via `toml_edit`.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn write_projects_config(root: &Path, projects: &[Project]) -> Result<()> {
     let config_file = config_path(root);
     std::fs::create_dir_all(config_file.parent().unwrap())?;
@@ -63,6 +64,7 @@ pub fn write_projects_config(root: &Path, projects: &[Project]) -> Result<()> {
 ///
 /// Reads `[[projects]]` entries directly from `config.toml` — the marker block
 /// is written there by `write_projects_config`. No projects.toml overlay.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
     let config_file = config_path(root);
     if !config_file.exists() {
@@ -89,6 +91,7 @@ pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
 /// and a freshly discovered set of projects.
 ///
 /// Returns `Some(unified_diff)` if different, `None` if identical.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn check_drift(root: &Path) -> Result<Option<String>> {
     // Generate fresh block content (without writing)
     let discovered = discover_projects(root)?;
@@ -125,6 +128,7 @@ pub fn check_drift(root: &Path) -> Result<Option<String>> {
 
 /// Serialize a list of projects into the `[[projects]]` TOML block string
 /// (without markers).
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn serialize_projects_block(projects: &[Project]) -> Result<String> {
     #[derive(serde::Serialize)]
     struct ProjectsOnly<'a> {
@@ -139,6 +143,7 @@ fn serialize_projects_block(projects: &[Project]) -> Result<String> {
 /// markers. Otherwise append the block at EOF with a blank-line separator.
 ///
 /// The result preserves all content outside the delimited region byte-identical.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn splice_or_append(existing: &str, block: &str) -> String {
     let begin = SYNC_BEGIN_MARKER;
     let end = SYNC_END_MARKER;
@@ -192,6 +197,7 @@ fn splice_or_append(existing: &str, block: &str) -> String {
 
 /// Extract only the content between BEGIN and END AW SYNC markers (exclusive
 /// of the marker lines themselves).
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn extract_sync_block(content: &str) -> Option<String> {
     let begin = SYNC_BEGIN_MARKER;
     let end = SYNC_END_MARKER;
@@ -205,6 +211,7 @@ fn extract_sync_block(content: &str) -> Option<String> {
 }
 
 /// Build a simple unified-style diff between two strings.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn build_diff(old: &str, new: &str, label: &str) -> String {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
@@ -249,6 +256,7 @@ fn build_diff(old: &str, new: &str, label: &str) -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 mod tests {
     use super::*;
     use crate::models::project::{Project, Workspace};
@@ -531,6 +539,7 @@ mod tests {
 /// Materialised from `[[projects]]` table rows in `.aw/config.toml`.
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub struct TdRootInput {
     /// Project name (matches `[[projects]].name`).
     pub name: String,
@@ -547,6 +556,7 @@ pub struct TdRootInput {
 /// Output of `resolve_td_root`.
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub struct TdRootResult {
     /// Absolute filesystem path to the project's TD spec root.
     pub root: String,
@@ -558,6 +568,7 @@ pub struct TdRootResult {
 /// Failure modes of `resolve_td_root`.
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub struct TdResolveError {
     /// - unknown_project: project name not in `[[projects]]` table.
     /// - td_path_escapes_repo_root: `td_path` resolves outside the repo
@@ -567,6 +578,7 @@ pub struct TdResolveError {
     pub message: String,
 }
 
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn lex_normalize(path: &std::path::Path) -> std::path::PathBuf {
     let mut out = std::path::PathBuf::new();
     for c in path.components() {
@@ -598,6 +610,7 @@ impl TdResolveError {
     }
 }
 
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn default_project_td_path(source_path: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(source_path).join("tech-design")
 }
@@ -615,6 +628,7 @@ pub fn default_project_td_path(source_path: &str) -> std::path::PathBuf {
 /// the resolver runs during `aw td init` before the spec dir is created.
 ///
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#logic
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn resolve_td_root(
     input: &TdRootInput,
     _global_base: Option<&str>,
@@ -663,6 +677,7 @@ pub fn resolve_td_root(
 /// `Project` schema.
 ///
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#logic
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn resolve_td_root_from_config(
     repo_root: &std::path::Path,
     project_name: &str,
@@ -706,6 +721,7 @@ pub fn resolve_td_root_from_config(
 }
 
 #[cfg(test)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 mod resolver_tests {
     use super::*;
     use std::path::PathBuf;

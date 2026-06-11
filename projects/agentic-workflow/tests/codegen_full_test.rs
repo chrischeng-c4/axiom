@@ -605,11 +605,17 @@ files:
     .unwrap();
 
     let result = run_apply(&spec_path, out_dir.path(), false);
-    let err = result.expect_err("should reject python workspace");
-    let msg = format!("{err}");
+    // Greenfield-generator contract: an entry no generator matches is NOT a
+    // hard error — it produces marker-only output (SPEC-REF + TODO) so the
+    // gap surfaces as a HANDWRITE marker instead of a blocked pipeline.
+    let report = result.expect("marker-only output for unmatched generator");
+    assert_eq!(report.files.len(), 1);
+    assert!(report.wrote_files);
+    let generated = out_dir.path().join("pyapp/src/config.py");
+    let content = std::fs::read_to_string(&generated).unwrap();
     assert!(
-        msg.contains("python workspace"),
-        "error should mention python workspace: {msg}"
+        content.contains("SPEC-REF") && content.contains("TODO"),
+        "marker-only output should carry SPEC-REF + TODO: {content}"
     );
 }
 

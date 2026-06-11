@@ -204,7 +204,7 @@ fn test_apply_marker_enumerates_block() {
     std::fs::create_dir_all(&src_dir).unwrap();
     let src_file = src_dir.join("x.rs");
     let body = format!(
-        "fn before() {{}}\n{}\nstub\n{}\nfn after() {{}}\n",
+        "fn before() {{}}\n{}\nTODO: hand-write content\n{}\nfn after() {{}}\n",
         handwrite_begin("gap=\"my-marker\" tracker=\"none\" reason=\"because\""),
         handwrite_end()
     );
@@ -224,7 +224,7 @@ fn test_apply_marker_no_adjacent_disturbance() {
     std::fs::create_dir_all(&src_dir).unwrap();
     let src_file = src_dir.join("x.rs");
     let body = format!(
-        "fn a() {{}}\n{}\nstub-a\n{}\nfn b() {{}}\n{}\nstub-b\n{}\nfn c() {{}}\n",
+        "fn a() {{}}\n{}\nTODO: hand-write content\n{}\nfn b() {{}}\n{}\nTODO: hand-write content\n{}\nfn c() {{}}\n",
         handwrite_begin("gap=\"first\" tracker=\"t\" reason=\"r1\""),
         handwrite_end(),
         handwrite_begin("gap=\"second\" tracker=\"t\" reason=\"r2\""),
@@ -257,7 +257,7 @@ fn test_count_matches_enumeration() {
     let src_dir = tmp.path().join("src");
     std::fs::create_dir_all(&src_dir).unwrap();
     let body = format!(
-        "{}\nstub\n{}\n",
+        "{}\nTODO: hand-write content\n{}\n",
         handwrite_begin("gap=\"x\" tracker=\"t\" reason=\"r\""),
         handwrite_end()
     );
@@ -392,7 +392,7 @@ fn test_collision_enumerate_returns_both_entries() {
     // still be present, so the enumerator must surface them all.
     let shared_id = "missing-generator:hand-written";
     let body = format!(
-        "{}\nstub\n{}\n",
+        "{}\nTODO: hand-write content\n{}\n",
         handwrite_begin(&format!("gap=\"{shared_id}\" tracker=\"t\" reason=\"r\"")),
         handwrite_end()
     );
