@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-examples-consumer-pg-logical-py" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-examples.md#schema
+# CODEGEN-BEGIN
 """Illustrative DIY ingestion recipe: Postgres logical replication -> lumen.
 
 lumen bundles no connector. Getting data in is the caller's own pub/sub into
@@ -117,5 +118,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-# </HANDWRITE>
+# CODEGEN-END
