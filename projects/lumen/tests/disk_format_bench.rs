@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-disk-format-bench-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Disk-format measurement: old `serde_json` path vs the new CBOR + lz4 path,
 //! on the *same* RDB snapshot of a vector-heavy corpus. Run with:
 //!
@@ -163,3 +164,5 @@ fn disk_format_size_and_decode_speed() {
         json_dec.as_secs_f64() / cbor_dec.as_secs_f64()
     );
 }
+
+// </HANDWRITE>
