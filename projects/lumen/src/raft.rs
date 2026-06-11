@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-raft-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Per-shard Raft skeleton.
 //!
 //! v1 ships the **surface** without the consensus machinery —
@@ -351,3 +352,5 @@ mod tests {
         assert_eq!(v.leader_term, 1);
     }
 }
+
+// </HANDWRITE>
