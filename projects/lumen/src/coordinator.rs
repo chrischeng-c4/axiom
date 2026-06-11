@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-coordinator-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Write coordinator — the seam between the HTTP write handlers and the
 //! log-driven apply loop.
 //!
@@ -403,3 +404,5 @@ mod tests {
         );
     }
 }
+
+// </HANDWRITE>
