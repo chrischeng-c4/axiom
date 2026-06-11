@@ -202,4 +202,8 @@ changes:
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-lumen-examples-consumer-pg-logical-py>"
+  - action: annotate
+    section: unit-test
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the unit-test section."
 ```
