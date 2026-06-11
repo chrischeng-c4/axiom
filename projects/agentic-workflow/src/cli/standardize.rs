@@ -2107,6 +2107,7 @@ fn build_inventory(
 
 fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result<SemanticCoverage> {
     let td_index = collect_td_index(project_root, &inventory.coverage.scope)?;
+    let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
     let semantic_source_files = semantic_source_files(inventory);
     let source_ir = build_source_ir_for_files(&semantic_source_files);
     let source_evidence_graph = build_source_evidence_graph(&source_ir);
@@ -2130,7 +2131,7 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
         .collect();
 
     for td in td_index.values() {
-        if td.is_claim || !td.needs_migration {
+        if td.is_claim {
             continue;
         }
         let Some(target) = td
@@ -2140,6 +2141,18 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
         else {
             continue;
         };
+        let td_content = fs::read_to_string(project_root.join(&td.path)).unwrap_or_default();
+        let needs_migration = td.needs_migration
+            || semantic_td_needs_generated_capability_ref_migration(
+                project_root,
+                &configured,
+                target,
+                &td_content,
+            )
+            || semantic_td_needs_traceability_metadata_migration(&td_content);
+        if !needs_migration {
+            continue;
+        }
         generator_primitive_gaps.push(GeneratorPrimitiveGap {
             target: target.clone(),
             primitive: "semantic_td_legacy".to_string(),
@@ -3841,6 +3854,26 @@ fn semantic_td_needs_impl_mode_migration(content: &str) -> bool {
         && !content.contains("impl_mode:")
 }
 
+fn semantic_td_needs_generated_capability_ref_migration(
+    project_root: &Path,
+    configured: &[ConfiguredScope],
+    target: &str,
+    content: &str,
+) -> bool {
+    content.contains("coverage_kind: semantic")
+        && !content.contains("capability_refs:")
+        && !content.contains("capability_scope:")
+        && semantic_capability_ref_for_group(project_root, configured, &semantic_group_key(target))
+            .is_some()
+}
+
+fn semantic_td_needs_traceability_metadata_migration(content: &str) -> bool {
+    content.contains("coverage_kind: semantic")
+        && traceability_td_section_blockers("<semantic-td>", content)
+            .iter()
+            .any(|blocker| blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge)
+}
+
 fn source_spec_refs(abs: &Path, project_root: &Path) -> Vec<String> {
     source_spec_refs_with_sections(abs, project_root)
         .into_iter()
@@ -5369,6 +5402,12 @@ fn deployment_facet_rule(kind: &str, content_lower: &str) -> Option<DeploymentFa
             classification: "composition",
             action: "generate_kustomization",
             reason: "Kustomize resource composition and overlay wiring",
+        },
+        "Component" => DeploymentFacetRule {
+            facet: "kustomize_component",
+            classification: "composition",
+            action: "generate_kustomize_component",
+            reason: "Kustomize component resource composition and optional wiring",
         },
         "PrefixTransformer" => DeploymentFacetRule {
             facet: "kustomize_name_transformer",
@@ -7987,9 +8026,29 @@ fn render_semantic_td_content(
     let id = format!("semantic-{}", semantic_spec_slug(group_key, configured));
     let fill_sections = semantic_fill_sections(kind, source_ir);
     let mut content = format!(
-        "---\nid: {id}\nsummary: Semantic coverage for {group_summary}\nfill_sections: [{fill_sections}]\n---\n\n# Semantic TD: {group_label}\n\n",
+        "---\nid: {id}\nsummary: Semantic coverage for {group_summary}\n",
         group_summary = yaml_safe(group_key)
     );
+    if let Some(capability_ref) =
+        semantic_capability_ref_for_group(project_root, configured, group_key)
+    {
+        content.push_str("capability_refs:\n");
+        content.push_str(&format!("  - id: {}\n", yaml_safe(&capability_ref.id)));
+        content.push_str("    role: primary\n");
+        if let Some(claim) = &capability_ref.claim {
+            content.push_str(&format!("    claim: {}\n", yaml_safe(claim)));
+        }
+        content.push_str("    coverage: partial\n");
+        content.push_str(&format!(
+            "    rationale: {}\n",
+            yaml_safe(&format!(
+                "Semantic takeover coverage for existing source group `{group_key}`."
+            ))
+        ));
+    }
+    content.push_str(&format!(
+        "fill_sections: [{fill_sections}]\n---\n\n# Semantic TD: {group_label}\n\n"
+    ));
 
     match kind {
         SemanticTdKind::Schema => {
@@ -8057,6 +8116,116 @@ fn render_semantic_td_content(
 
     render_changes_section(&mut content, kind, group_files);
     Ok(content)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SemanticCapabilityRef {
+    id: String,
+    claim: Option<String>,
+}
+
+fn semantic_capability_ref_for_group(
+    project_root: &Path,
+    configured: &[ConfiguredScope],
+    group_key: &str,
+) -> Option<SemanticCapabilityRef> {
+    let document = semantic_capability_document_for_group(project_root, configured, group_key)?;
+    let capability_ids = document.capability_ids();
+    let mut candidates = semantic_capability_candidates(group_key)
+        .into_iter()
+        .filter(|id| capability_ids.contains(*id))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    for capability in &document.capabilities {
+        if !candidates.contains(&capability.id) {
+            candidates.push(capability.id.clone());
+        }
+    }
+
+    for id in candidates {
+        let Some(capability) = document
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == id)
+        else {
+            continue;
+        };
+        if capability.status == crate::cli::capability::CapabilityStatus::Retired {
+            continue;
+        }
+        let claim = match &capability.verification_contract {
+            Some(contract) => Some(contract.claims.first()?.id.clone()),
+            None => None,
+        };
+        return Some(SemanticCapabilityRef {
+            id: capability.id.clone(),
+            claim,
+        });
+    }
+    None
+}
+
+fn semantic_capability_document_for_group(
+    project_root: &Path,
+    configured: &[ConfiguredScope],
+    group_key: &str,
+) -> Option<crate::cli::capability::CapabilityDocument> {
+    let scope = configured_scope_for_path(configured, group_key)?;
+    let cap_abs = if let Some(cap_path) = &scope.cap_path {
+        let path = Path::new(cap_path);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            project_root.join(path)
+        }
+    } else {
+        let project = scope.project_name.as_deref()?;
+        crate::cli::capability::resolve_capability_path(project_root, project, None).ok()?
+    };
+    let body = fs::read_to_string(&cap_abs).ok()?;
+    crate::cli::capability::parse_capability_document(&body, &cap_abs).ok()
+}
+
+fn configured_scope_for_path<'a>(
+    configured: &'a [ConfiguredScope],
+    rel: &str,
+) -> Option<&'a ConfiguredScope> {
+    configured
+        .iter()
+        .filter_map(|scope| {
+            let prefix = scope_static_prefix(&scope.scope);
+            if prefix.is_empty() || !path_prefix_of(&prefix, rel) {
+                return None;
+            }
+            Some((prefix.len(), scope))
+        })
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, scope)| scope)
+}
+
+fn semantic_capability_candidates(group_key: &str) -> Vec<&'static str> {
+    let lower = group_key.to_ascii_lowercase();
+    let mut candidates = Vec::new();
+    if lower.contains("/k8s") || lower.contains("/operator") {
+        candidates.push("k8s-deployment");
+    }
+    if lower.contains("llm") || lower.contains("spec") {
+        candidates.push("agentic-integration");
+    }
+    if lower.contains("auth") || lower.contains("tls") {
+        candidates.push("security-auth");
+    }
+    if lower.contains("backup") || lower.contains("rdb") {
+        candidates.push("backup-restore");
+    }
+    if lower.contains("metrics") || lower.contains("observability") {
+        candidates.push("observability");
+    }
+    if lower.contains("bench") || lower.contains("perf") {
+        candidates.push("ops-operability");
+    }
+    candidates.push("search");
+    candidates
 }
 
 fn semantic_fill_sections(kind: SemanticTdKind, source_ir: &[SourceUnit]) -> String {
@@ -11026,6 +11195,12 @@ target = "rust"
             &mut facets,
             &mut unsupported,
         );
+        detect_deployment_facets(
+            "backend/kustomize/components/observability/kustomization.yaml",
+            "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nmetadata:\n  name: observability\n",
+            &mut facets,
+            &mut unsupported,
+        );
 
         let facet_names: BTreeSet<_> = facets
             .iter()
@@ -11035,6 +11210,7 @@ target = "rust"
         assert!(facet_names.contains("deployment_unit"));
         assert!(facet_names.contains("gpu_scheduling"));
         assert!(facet_names.contains("kustomize_name_transformer"));
+        assert!(facet_names.contains("kustomize_component"));
         assert!(unsupported.is_empty());
     }
 
@@ -12934,6 +13110,117 @@ target = "python"
         assert!(content.contains("section: schema"));
         assert!(content.contains("section: unit-test"));
         assert!(content.contains("Traceability metadata edge for the unit-test section."));
+    }
+
+    #[test]
+    fn semantic_td_renderer_attaches_project_capability_ref() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "fixture_platform"
+path = "examples/fixture_platform"
+td_path = "examples/fixture_platform/tech_design"
+cap_path = "README.md"
+
+[[projects.workspaces]]
+name = "backend"
+paths = ["examples/fixture_platform/backend/**"]
+target = "python"
+"#,
+        );
+        write_traceability_readme(tmp.path());
+        write(
+            tmp.path(),
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "print('load')\n",
+        );
+        let configured = read_config_workspace_scopes(tmp.path()).unwrap();
+        let inventory = build_inventory(
+            tmp.path(),
+            &["examples/fixture_platform/backend/**".into()],
+            None,
+            false,
+        )
+        .unwrap();
+        let action = action(
+            StandardizeActionKind::SemanticGap,
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "cli",
+            "",
+            "",
+            false,
+        );
+
+        create_semantic_td_for_gap(tmp.path(), &action, &inventory, &configured).unwrap();
+
+        let spec_rel = semantic_spec_rel_with_config(
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            &configured,
+        );
+        let content = fs::read_to_string(tmp.path().join(spec_rel)).unwrap();
+        assert!(content.contains("capability_refs:"));
+        assert!(content.contains("id: \"demo-capability\""));
+        assert!(content.contains("role: primary"));
+        assert!(content.contains("coverage: partial"));
+
+        let cap_path = tmp.path().join("README.md");
+        let cap_body = fs::read_to_string(&cap_path).unwrap();
+        let document =
+            crate::cli::capability::parse_capability_document(&cap_body, &cap_path).unwrap();
+        let (_, refs, findings) =
+            crate::cli::capability::validate_td_capability_refs_for_content(&content, &document)
+                .unwrap();
+        assert_eq!(refs.len(), 1);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn semantic_coverage_flags_missing_generated_capability_ref_for_refresh() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "fixture_platform"
+path = "examples/fixture_platform"
+td_path = "examples/fixture_platform/tech_design"
+cap_path = "README.md"
+
+[[projects.workspaces]]
+name = "backend"
+paths = ["examples/fixture_platform/backend/**"]
+target = "python"
+"#,
+        );
+        write_traceability_readme(tmp.path());
+        write(
+            tmp.path(),
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "print('load')\n",
+        );
+        write(
+            tmp.path(),
+            "examples/fixture_platform/tech_design/semantic/backend-scripts.md",
+            "---\nid: semantic-backend-scripts\nfill_sections: [schema, unit-test, changes]\n---\n\n## Schema\n<!-- type: schema lang: yaml -->\n\n```yaml\nsemantic_domain:\n  coverage_kind: semantic\n  evidence:\n    source_units:\n      - path: \"examples/fixture_platform/backend/scripts/load_fixture.py\"\n        language: python\n        source_evidence_node:\n          layer: backend\n          ecosystem: python\n          role: source\n          section_type: schema\n          domain: examples/fixture_platform/backend/scripts\n```\n\n## Unit Test\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n---\nid: unit-test\n---\nrequirementDiagram\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\ncoverage_kind: semantic\nchanges:\n  - path: \"examples/fixture_platform/backend/scripts/load_fixture.py\"\n    action: modify\n    section: schema\n    impl_mode: hand-written\n  - action: annotate\n    section: unit-test\n    impl_mode: hand-written\n```\n",
+        );
+        let inventory = build_inventory(
+            tmp.path(),
+            &["examples/fixture_platform/backend/**".into()],
+            None,
+            false,
+        )
+        .unwrap();
+
+        let coverage = build_semantic_coverage(tmp.path(), &inventory).unwrap();
+
+        assert!(coverage.generator_primitive_gaps.iter().any(|gap| {
+            gap.target == "examples/fixture_platform/backend/scripts/load_fixture.py"
+                && gap.primitive == "semantic_td_legacy"
+        }));
     }
 
     #[test]
