@@ -38,6 +38,7 @@ nodes:
   exec_driver:     { kind: process,  label: "Exec opaque driver command" }
   wait_driver:     { kind: process,  label: "Driver exit ends measurement window" }
   wait_child:      { kind: process,  label: "Wait child exit, optional --duration-cap" }
+  sampler_on:      { kind: decision, label: "Sampler attached?" }
   fold_stacks:     { kind: process,  label: "Fold sampled stacks into hotspot findings" }
   write_collapsed: { kind: process,  label: "Write collapsed artifact under .meter" }
   read_vitals:     { kind: process,  label: "Read getrusage cpu + peak RSS + wall clock" }
@@ -60,8 +61,10 @@ edges:
   - { from: has_drive,       to: exec_driver,     label: "yes" }
   - { from: exec_driver,     to: wait_driver }
   - { from: has_drive,       to: wait_child,      label: "no" }
-  - { from: wait_driver,     to: fold_stacks }
-  - { from: wait_child,      to: fold_stacks }
+  - { from: wait_driver,     to: sampler_on }
+  - { from: wait_child,      to: sampler_on }
+  - { from: sampler_on,      to: fold_stacks,     label: "yes" }
+  - { from: sampler_on,      to: read_vitals,     label: "no" }
   - { from: fold_stacks,     to: write_collapsed }
   - { from: write_collapsed, to: read_vitals }
   - { from: read_vitals,     to: emit_vital }
@@ -84,10 +87,12 @@ flowchart TD
     has_drive -->|yes| exec_driver[Exec opaque driver command]
     exec_driver --> wait_driver[Driver exit ends measurement window]
     has_drive -->|no| wait_child[Wait child exit, optional --duration-cap]
-    wait_driver --> fold_stacks[Fold sampled stacks into hotspot findings]
-    wait_child --> fold_stacks
+    wait_driver --> sampler_on{Sampler attached?}
+    wait_child --> sampler_on
+    sampler_on -->|yes| fold_stacks[Fold sampled stacks into hotspot findings]
+    sampler_on -->|no| read_vitals[Read getrusage cpu + peak RSS + wall clock]
     fold_stacks --> write_collapsed[Write collapsed artifact under .meter]
-    write_collapsed --> read_vitals[Read getrusage cpu + peak RSS + wall clock]
+    write_collapsed --> read_vitals
     read_vitals --> emit_vital[Emit Finding kind=vital]
     emit_vital --> gate_check{[gate] threshold breached?}
     gate_check -->|yes| gate_finding[Severity >= Medium finding + escalate agent_prompt to --level sample]
@@ -95,7 +100,6 @@ flowchart TD
     gate_finding --> build_report
     build_report --> done([Exit per ladder 0-5])
 ```
-
 ## Config
 <!-- type: config lang: yaml -->
 
