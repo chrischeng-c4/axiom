@@ -58,7 +58,6 @@ flowchart TD
     exit0 -->|yes| passed([Passed])
     exit0 -->|no| failed([Failed])
 ```
-
 ## Schema
 <!-- type: schema lang: yaml -->
 
