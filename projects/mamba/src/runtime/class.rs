@@ -2532,6 +2532,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             return v;
                         }
                     }
+                    // ChainMap.parents — a lazily built view over maps[1:].
+                    if class_name == "collections.ChainMap" && attr_name == "parents" {
+                        if let Some(p) =
+                            super::stdlib::collections_mod::chainmap_parents(obj)
+                        {
+                            return p;
+                        }
+                    }
                     // io in-memory streams: `.closed` reflects the _closed flag.
                     if matches!(class_name.as_str(),
                         "StringIO" | "BytesIO" | "BufferedReader" | "BufferedWriter" | "TextIOWrapper")
@@ -6052,6 +6060,11 @@ pub(crate) fn unwrap_dictlike_data(obj: MbValue) -> Option<MbValue> {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             if let super::rc::ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                // ChainMap flattens to a fresh dict (front map wins). Callers
+                // only read from the unwrapped mapping, so the copy is safe.
+                if class_name == "collections.ChainMap" {
+                    return super::stdlib::collections_mod::chainmap_flatten(obj);
+                }
                 if class_name == "collections.defaultdict"
                     || class_name == "collections.Counter"
                     || class_name == "collections.OrderedDict"

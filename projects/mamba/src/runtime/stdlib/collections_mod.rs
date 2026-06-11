@@ -265,6 +265,8 @@ pub fn register() {
         }
     }
 
+    register_chainmap_class();
+
     super::register_module("collections", attrs);
 }
 
@@ -1198,30 +1200,433 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
-/// collections.ChainMap(*maps) -> dict that chains multiple dicts
-///
-/// Creates a dict by merging the input dicts in reverse order
-/// (first dict has highest priority).
-pub fn mb_chainmap_new(args: MbValue) -> MbValue {
-    let maps = extract_list(args);
-    let result = MbObject::new_dict();
+// ── ChainMap ─────────────────────────────────────────────────────────────────
+//
+// Real `collections.ChainMap` Instances: the `maps` field holds the SHARED
+// underlying mapping objects (front map first), so writes through one view
+// are visible through every other view, matching CPython. Lookups walk
+// front-to-back; writes/deletes/pop touch only the front map.
+
+fn cm_raise(kind: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(kind.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Build a ChainMap Instance over `maps` (front map first). The map objects
+/// are retained — they are shared with the caller, not copied.
+fn chainmap_make(maps: Vec<MbValue>) -> MbValue {
+    for m in &maps {
+        unsafe { super::super::rc::retain_if_ptr(*m) };
+    }
+    let maps_list = MbValue::from_ptr(MbObject::new_list(maps));
+    let mut fields = FxHashMap::default();
+    fields.insert("maps".to_string(), maps_list);
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name: "collections.ChainMap".to_string(),
+            fields: crate::runtime::rc::MbRwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// The `maps` list of a ChainMap Instance, or None for other values.
+fn chainmap_maps(cm: MbValue) -> Option<Vec<MbValue>> {
+    let ptr = cm.as_ptr()?;
     unsafe {
-        if let ObjData::Dict(ref lock) = (*result).data {
-            let mut out = lock.write().unwrap();
-            // Iterate in reverse: last map is lowest priority
-            for map_val in maps.iter().rev() {
-                if let Some(ptr) = map_val.as_ptr() {
-                    if let ObjData::Dict(ref map_lock) = (*ptr).data {
-                        let m = map_lock.read().unwrap();
-                        for (k, v) in m.iter() {
-                            out.insert(k.clone(), *v);
-                        }
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            if class_name == "collections.ChainMap" {
+                let maps = fields.read().unwrap().get("maps").copied()?;
+                if let Some(mp) = maps.as_ptr() {
+                    if let ObjData::List(ref lock) = (*mp).data {
+                        return Some(lock.read().unwrap().to_vec());
                     }
                 }
             }
         }
     }
-    MbValue::from_ptr(result)
+    None
+}
+
+/// True when `v` can serve as the right-hand mapping of `|` / `|=` / `==`:
+/// a plain dict, a ChainMap, or a dict-like collections Instance.
+fn cm_is_mapping(v: MbValue) -> bool {
+    if chainmap_maps(v).is_some() {
+        return true;
+    }
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            if matches!((*ptr).data, ObjData::Dict(_)) {
+                return true;
+            }
+            if matches!((*ptr).data, ObjData::Instance { .. }) {
+                return super::super::class::unwrap_dictlike_data(v).is_some();
+            }
+        }
+    }
+    false
+}
+
+/// Flatten a ChainMap into a fresh dict: reverse-merge so the front map wins
+/// and key order matches CPython's reversed-merge iteration order.
+pub(crate) fn chainmap_flatten(cm: MbValue) -> Option<MbValue> {
+    let maps = chainmap_maps(cm)?;
+    let out = super::super::dict_ops::mb_dict_new();
+    for m in maps.iter().rev() {
+        super::super::dict_ops::mb_dict_update(out, *m);
+    }
+    Some(out)
+}
+
+/// `cm.parents` — a ChainMap over everything but the front map.
+pub(crate) fn chainmap_parents(cm: MbValue) -> Option<MbValue> {
+    let maps = chainmap_maps(cm)?;
+    let rest: Vec<MbValue> = if maps.len() > 1 {
+        maps[1..].to_vec()
+    } else {
+        vec![MbValue::from_ptr(MbObject::new_dict())]
+    };
+    Some(chainmap_make(rest))
+}
+
+/// The writable backing dict of the front map (unwraps dict-like Instances).
+fn cm_front_backing(cm: MbValue) -> Option<MbValue> {
+    let maps = chainmap_maps(cm)?;
+    let front = *maps.first()?;
+    if let Some(ptr) = front.as_ptr() {
+        unsafe {
+            if matches!((*ptr).data, ObjData::Dict(_)) {
+                return Some(front);
+            }
+        }
+    }
+    super::super::class::unwrap_dictlike_data(front)
+}
+
+/// First positional arg under the mb_call_method convention (args is a list).
+fn cm_first_arg(args: MbValue) -> MbValue {
+    if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                return lock.read().unwrap().first().copied().unwrap_or_else(MbValue::none);
+            }
+        }
+    }
+    args
+}
+
+/// Dual-convention binop operand: mb_dispatch_binop passes the operand
+/// directly; mb_call_method wraps positionals in a list. Unwrap ONLY a
+/// 1-element list whose element is itself a mapping, so a genuine list
+/// operand (`cm | [...]` → TypeError) survives intact.
+fn cm_binop_operand(raw: MbValue) -> MbValue {
+    if let Some(ptr) = raw.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let guard = lock.read().unwrap();
+                if guard.len() == 1 && cm_is_mapping(guard[0]) {
+                    return guard[0];
+                }
+            }
+        }
+    }
+    raw
+}
+
+fn cm_key_repr(key: MbValue) -> String {
+    extract_str(key).unwrap_or_else(|| "key".to_string())
+}
+
+unsafe extern "C" fn cm_getitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = cm_first_arg(args);
+    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    if super::super::dict_ops::mb_dict_contains(flat, key).as_bool() == Some(true) {
+        return super::super::dict_ops::mb_dict_getitem(flat, key);
+    }
+    cm_raise("KeyError", &cm_key_repr(key))
+}
+
+unsafe extern "C" fn cm_get(self_v: MbValue, args: MbValue) -> MbValue {
+    let (key, default) = if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let g = lock.read().unwrap();
+                (
+                    g.first().copied().unwrap_or_else(MbValue::none),
+                    g.get(1).copied().unwrap_or_else(MbValue::none),
+                )
+            } else {
+                (args, MbValue::none())
+            }
+        }
+    } else {
+        (args, MbValue::none())
+    };
+    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    if super::super::dict_ops::mb_dict_contains(flat, key).as_bool() == Some(true) {
+        return super::super::dict_ops::mb_dict_getitem(flat, key);
+    }
+    default
+}
+
+unsafe extern "C" fn cm_setitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let (key, value) = if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let g = lock.read().unwrap();
+                (
+                    g.first().copied().unwrap_or_else(MbValue::none),
+                    g.get(1).copied().unwrap_or_else(MbValue::none),
+                )
+            } else {
+                return MbValue::none();
+            }
+        }
+    } else {
+        return MbValue::none();
+    };
+    if let Some(front) = cm_front_backing(self_v) {
+        super::super::dict_ops::mb_dict_setitem(front, key, value);
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn cm_delitem(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = cm_first_arg(args);
+    if let Some(front) = cm_front_backing(self_v) {
+        if super::super::dict_ops::mb_dict_contains(front, key).as_bool() == Some(true) {
+            super::super::dict_ops::mb_dict_delitem(front, key);
+            return MbValue::none();
+        }
+    }
+    cm_raise(
+        "KeyError",
+        &format!("Key not found in the first mapping: {}", cm_key_repr(key)),
+    )
+}
+
+unsafe extern "C" fn cm_contains(self_v: MbValue, args: MbValue) -> MbValue {
+    let key = cm_first_arg(args);
+    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::from_bool(false) };
+    super::super::dict_ops::mb_dict_contains(flat, key)
+}
+
+unsafe extern "C" fn cm_len(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::from_int(0) };
+    super::super::dict_ops::mb_dict_len(flat)
+}
+
+unsafe extern "C" fn cm_bool(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::from_bool(false) };
+    MbValue::from_bool(
+        super::super::dict_ops::mb_dict_len(flat).as_int().unwrap_or(0) > 0,
+    )
+}
+
+unsafe extern "C" fn cm_iter(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    let keys = super::super::dict_ops::mb_dict_keys(flat);
+    super::super::iter::mb_iter(keys)
+}
+
+unsafe extern "C" fn cm_eq(self_v: MbValue, raw: MbValue) -> MbValue {
+    let other = cm_binop_operand(raw);
+    let Some(flat_self) = chainmap_flatten(self_v) else {
+        return MbValue::from_bool(false);
+    };
+    let flat_other = if let Some(f) = chainmap_flatten(other) {
+        f
+    } else if let Some(ptr) = other.as_ptr() {
+        unsafe {
+            if matches!((*ptr).data, ObjData::Dict(_)) {
+                other
+            } else if let Some(backing) = super::super::class::unwrap_dictlike_data(other) {
+                backing
+            } else {
+                return MbValue::from_bool(false);
+            }
+        }
+    } else {
+        return MbValue::from_bool(false);
+    };
+    super::super::builtins::mb_eq(flat_self, flat_other)
+}
+
+unsafe extern "C" fn cm_or(self_v: MbValue, raw: MbValue) -> MbValue {
+    let other = cm_binop_operand(raw);
+    if !cm_is_mapping(other) {
+        return cm_raise(
+            "TypeError",
+            "unsupported operand type(s) for |: 'ChainMap' and non-mapping",
+        );
+    }
+    let maps = match chainmap_maps(self_v) {
+        Some(m) => m,
+        None => return MbValue::none(),
+    };
+    // copy(): fresh front map, shared tail.
+    let new_front = super::super::dict_ops::mb_dict_new();
+    if let Some(front) = maps.first() {
+        super::super::dict_ops::mb_dict_update(new_front, *front);
+    }
+    // Fold the other mapping into the copy's front map. ChainMap operands
+    // flatten first so their own front-map precedence is preserved.
+    let other_src = chainmap_flatten(other).unwrap_or(other);
+    super::super::dict_ops::mb_dict_update(new_front, other_src);
+    let mut new_maps = vec![new_front];
+    new_maps.extend_from_slice(&maps[1.min(maps.len())..]);
+    chainmap_make(new_maps)
+}
+
+unsafe extern "C" fn cm_ror(self_v: MbValue, raw: MbValue) -> MbValue {
+    let other = cm_binop_operand(raw);
+    if !cm_is_mapping(other) {
+        return cm_raise(
+            "TypeError",
+            "unsupported operand type(s) for |: non-mapping and 'ChainMap'",
+        );
+    }
+    // dict(other) then overlay self back-to-front: a single-map ChainMap.
+    let out = super::super::dict_ops::mb_dict_new();
+    let other_src = chainmap_flatten(other).unwrap_or(other);
+    super::super::dict_ops::mb_dict_update(out, other_src);
+    if let Some(maps) = chainmap_maps(self_v) {
+        for m in maps.iter().rev() {
+            super::super::dict_ops::mb_dict_update(out, *m);
+        }
+    }
+    chainmap_make(vec![out])
+}
+
+unsafe extern "C" fn cm_new_child(self_v: MbValue, args: MbValue) -> MbValue {
+    let m = cm_first_arg(args);
+    let front = if m.is_none() {
+        MbValue::from_ptr(MbObject::new_dict())
+    } else {
+        m
+    };
+    let mut maps = vec![front];
+    if let Some(parent_maps) = chainmap_maps(self_v) {
+        maps.extend(parent_maps);
+    }
+    chainmap_make(maps)
+}
+
+unsafe extern "C" fn cm_copy(self_v: MbValue, _args: MbValue) -> MbValue {
+    let maps = match chainmap_maps(self_v) {
+        Some(m) => m,
+        None => return MbValue::none(),
+    };
+    let new_front = super::super::dict_ops::mb_dict_new();
+    if let Some(front) = maps.first() {
+        super::super::dict_ops::mb_dict_update(new_front, *front);
+    }
+    let mut new_maps = vec![new_front];
+    new_maps.extend_from_slice(&maps[1.min(maps.len())..]);
+    chainmap_make(new_maps)
+}
+
+unsafe extern "C" fn cm_pop(self_v: MbValue, args: MbValue) -> MbValue {
+    let (key, default, has_default) = if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                let g = lock.read().unwrap();
+                (
+                    g.first().copied().unwrap_or_else(MbValue::none),
+                    g.get(1).copied().unwrap_or_else(MbValue::none),
+                    g.len() >= 2,
+                )
+            } else {
+                (args, MbValue::none(), false)
+            }
+        }
+    } else {
+        (args, MbValue::none(), false)
+    };
+    if let Some(front) = cm_front_backing(self_v) {
+        if super::super::dict_ops::mb_dict_contains(front, key).as_bool() == Some(true) {
+            let v = super::super::dict_ops::mb_dict_getitem(front, key);
+            super::super::dict_ops::mb_dict_delitem(front, key);
+            return v;
+        }
+    }
+    if has_default {
+        return default;
+    }
+    cm_raise(
+        "KeyError",
+        &format!("Key not found in the first mapping: {}", cm_key_repr(key)),
+    )
+}
+
+unsafe extern "C" fn cm_popitem(self_v: MbValue, _args: MbValue) -> MbValue {
+    if let Some(front) = cm_front_backing(self_v) {
+        let keys = super::super::dict_ops::mb_dict_keys(front);
+        let last_key = keys.as_ptr().and_then(|kp| unsafe {
+            if let ObjData::List(ref lock) = (*kp).data {
+                lock.read().unwrap().last().copied()
+            } else {
+                None
+            }
+        });
+        if let Some(k) = last_key {
+            let v = super::super::dict_ops::mb_dict_getitem(front, k);
+            super::super::dict_ops::mb_dict_delitem(front, k);
+            return MbValue::from_ptr(MbObject::new_tuple(vec![k, v]));
+        }
+    }
+    cm_raise("KeyError", "No keys found in the first mapping.")
+}
+
+/// Register the `collections.ChainMap` class — one mb_class_register call so
+/// every method (dunders included) lands in CALLABLE_REGISTRY.
+fn register_chainmap_class() {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let mut m: Map<String, MbValue> = Map::new();
+    for (name, addr) in [
+        ("__getitem__", cm_getitem as *const () as usize),
+        ("__setitem__", cm_setitem as *const () as usize),
+        ("__delitem__", cm_delitem as *const () as usize),
+        ("__contains__", cm_contains as *const () as usize),
+        ("__len__", cm_len as *const () as usize),
+        ("__bool__", cm_bool as *const () as usize),
+        ("__iter__", cm_iter as *const () as usize),
+        ("__eq__", cm_eq as *const () as usize),
+        ("__or__", cm_or as *const () as usize),
+        ("__ior__", cm_or as *const () as usize),
+        ("__ror__", cm_ror as *const () as usize),
+        ("get", cm_get as *const () as usize),
+        ("new_child", cm_new_child as *const () as usize),
+        ("copy", cm_copy as *const () as usize),
+        ("pop", cm_pop as *const () as usize),
+        ("popitem", cm_popitem as *const () as usize),
+    ] {
+        m.insert(name.to_string(), var(addr));
+    }
+    super::super::class::mb_class_register("collections.ChainMap", vec![], m);
+}
+
+/// collections.ChainMap(*maps) -> ChainMap Instance over the SHARED maps
+/// (front map first; no-arg form starts with one empty dict).
+pub fn mb_chainmap_new(args: MbValue) -> MbValue {
+    let maps = extract_list(args);
+    let maps = if maps.is_empty() {
+        vec![MbValue::from_ptr(MbObject::new_dict())]
+    } else {
+        maps
+    };
+    chainmap_make(maps)
 }
 
 #[cfg(test)]
