@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-authz-matrix-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Authorization matrix (TEST-STRATEGY security gate): every data-plane
 //! endpoint × {no token, wrong-scope token, right-scope token} returns the
 //! correct 401 / 403 / 200, and no handler silently skips `auth.ensure`.
@@ -141,3 +142,5 @@ async fn authz_matrix_enforced_on_every_endpoint() {
         "create/admin"
     );
 }
+
+// </HANDWRITE>
