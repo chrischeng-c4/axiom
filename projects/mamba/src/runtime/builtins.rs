@@ -3171,6 +3171,25 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                 // so without this they compare by identity. CPython: a
                 // SimpleNamespace is *not* equal to any non-SimpleNamespace,
                 // so this only fires when both sides are SimpleNamespace.
+                // Unbound builtin-method wrappers compare by identity of the
+                // (type, method) pair — CPython slot wrappers are singletons,
+                // so `tuple.__getitem__ == tuple.__getitem__` is True.
+                (ObjData::Instance { class_name: ca, fields: fa },
+                 ObjData::Instance { class_name: cb, fields: fb })
+                    if ca == "__unbound_method__" && cb == "__unbound_method__" =>
+                {
+                    let ga = fa.read().unwrap();
+                    let gb = fb.read().unwrap();
+                    let pair = |g: &rustc_hash::FxHashMap<String, MbValue>| {
+                        (
+                            g.get("__type__").copied().unwrap_or(MbValue::none()),
+                            g.get("__method__").copied().unwrap_or(MbValue::none()),
+                        )
+                    };
+                    let (ta, ma) = pair(&ga);
+                    let (tb, mb) = pair(&gb);
+                    return mb_values_eq(ta, tb) && mb_values_eq(ma, mb);
+                }
                 (ObjData::Instance { class_name: ca, fields: fa },
                  ObjData::Instance { class_name: cb, fields: fb })
                     if ca == "SimpleNamespace" && cb == "SimpleNamespace" =>
@@ -3327,6 +3346,50 @@ fn mb_values_identical(a: MbValue, b: MbValue) -> bool {
                 {
                     return true;
                 }
+            }
+        }
+    }
+    // Native constructor dispatchers used as class objects (e.g.
+    // collections.ChainMap, io.StringIO): a TAG_FUNC with a recorded type
+    // name IS the class object, so `type(x) is ChainMap` must hold when the
+    // other side is a type object / class-name string naming the same type.
+    {
+        let native_name = |v: MbValue| -> Option<String> {
+            v.as_func().and_then(|addr| {
+                super::module::NATIVE_TYPE_NAMES.with(|m| {
+                    m.borrow().get(&(addr as u64)).cloned()
+                })
+            })
+        };
+        let value_type_name = |v: MbValue| -> Option<String> {
+            v.as_ptr().and_then(|p| unsafe {
+                match &(*p).data {
+                    ObjData::Str(ref s) => Some(s.clone()),
+                    ObjData::Instance { ref class_name, ref fields }
+                        if class_name == "type" =>
+                    {
+                        fields.read().ok().and_then(|f| {
+                            f.get("__name__").and_then(|v| v.as_ptr()).and_then(|np| {
+                                if let ObjData::Str(ref n) = (*np).data {
+                                    Some(n.clone())
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                    }
+                    _ => None,
+                }
+            })
+        };
+        if let (Some(n), Some(t)) = (native_name(a), value_type_name(b)) {
+            if n == t {
+                return true;
+            }
+        }
+        if let (Some(n), Some(t)) = (native_name(b), value_type_name(a)) {
+            if n == t {
+                return true;
             }
         }
     }
@@ -4114,6 +4177,14 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                 ObjData::Tuple(_) => super::tuple_ops::mb_tuple_hash(val),
                 ObjData::FrozenSet(items) => MbValue::from_int(frozenset_hash(items)),
                 ObjData::Instance { class_name, .. } => {
+                    // namedtuple instances hash like the equivalent plain
+                    // tuple: hash(Point(11, 22)) == hash((11, 22)).
+                    if let Some(vals) =
+                        super::stdlib::collections_mod::namedtuple_values(val)
+                    {
+                        let tup = MbValue::from_ptr(MbObject::new_tuple(vals));
+                        return super::tuple_ops::mb_tuple_hash(tup);
+                    }
                     // Mutable-mapping collections (Counter / defaultdict /
                     // OrderedDict — dict subclasses) are unhashable.
                     if class_name == "collections.Counter"

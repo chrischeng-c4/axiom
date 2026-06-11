@@ -472,6 +472,7 @@ unsafe extern "C" fn dispatch_namedtuple(args_ptr: *const MbValue, nargs: usize)
     super::collections_mod::mb_namedtuple(
         a.get(0).copied().unwrap_or_else(MbValue::none),
         a.get(1).copied().unwrap_or_else(MbValue::none),
+        a.get(2).copied().unwrap_or_else(MbValue::none),
     )
 }
 

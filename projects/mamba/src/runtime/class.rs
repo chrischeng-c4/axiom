@@ -2551,6 +2551,46 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             return p;
                         }
                     }
+                    // namedtuple factory class attributes: _fields,
+                    // __match_args__, __name__, __slots__, _field_defaults.
+                    if class_name == "collections.namedtuple_factory" {
+                        if let Some(v) = super::stdlib::collections_mod::
+                            namedtuple_factory_getattr(obj, &attr_name)
+                        {
+                            return v;
+                        }
+                        // namedtuple reuses tuple.__getitem__ (CPython:
+                        // `Point.__getitem__ == tuple.__getitem__`).
+                        if attr_name == "__getitem__" {
+                            return make_unbound_method("tuple", "__getitem__");
+                        }
+                    }
+                    // namedtuple instance `_fields` mirrors the class attr.
+                    if matches!(attr_name.as_str(), "_fields" | "__match_args__") {
+                        let names: Option<Vec<MbValue>> = fields.read().unwrap()
+                            .get("_namedtuple_fields")
+                            .and_then(|v| v.as_ptr())
+                            .map(|p| {
+                                if let ObjData::List(ref lk) = (*p).data {
+                                    lk.read().unwrap().iter().map(|s| {
+                                        super::rc::retain_if_ptr(*s);
+                                        *s
+                                    }).collect()
+                                } else { vec![] }
+                            });
+                        if let Some(names) = names {
+                            return MbValue::from_ptr(MbObject::new_tuple(names));
+                        }
+                    }
+                    // defaultdict.default_factory — the stored factory callable.
+                    if class_name == "collections.defaultdict"
+                        && attr_name == "default_factory"
+                    {
+                        let factory = fields.read().unwrap()
+                            .get("_factory").copied().unwrap_or(MbValue::none());
+                        super::rc::retain_if_ptr(factory);
+                        return factory;
+                    }
                     // io in-memory streams: `.closed` reflects the _closed flag.
                     if matches!(class_name.as_str(),
                         "StringIO" | "BytesIO" | "BufferedReader" | "BufferedWriter" | "TextIOWrapper")
@@ -6304,6 +6344,7 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                     || class_name == "functools.lru_cache_wrapper"
                     || class_name == "functools.lru_cache_factory"
                     || class_name == "__unbound_method__"
+                    || class_name == "collections.namedtuple_factory"
                 {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
                     return super::builtins::mb_call_spread(func, args_list);
@@ -6414,6 +6455,7 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                     || class_name == "functools.lru_cache_wrapper"
                     || class_name == "functools.lru_cache_factory"
                     || class_name == "functools.cmp_to_key"
+                    || class_name == "collections.namedtuple_factory"
                 {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
@@ -8092,6 +8134,32 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // datetime.datetime, functools.partial, ...) short-circuit before
             // the MRO lookup.
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                // namedtuple factory classmethod: Point._make(iterable).
+                if class_name == "collections.namedtuple_factory" && name == "_make" {
+                    let arg0 = args.as_ptr()
+                        .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                            lk.read().unwrap().first().copied()
+                        } else { None })
+                        .unwrap_or(MbValue::none());
+                    return super::stdlib::collections_mod::mb_namedtuple_make(receiver, arg0);
+                }
+                // namedtuple instance methods: _asdict() / _replace(**kw).
+                // Marker-field dispatch — namedtuple instances carry a
+                // dynamic class_name (the user-facing tuple name).
+                if matches!(name.as_str(), "_asdict" | "_replace")
+                    && fields.read().unwrap().contains_key("_namedtuple_fields")
+                {
+                    if name == "_asdict" {
+                        return super::stdlib::collections_mod::mb_namedtuple_asdict(receiver);
+                    }
+                    // _replace kwargs arrive as a trailing dict positional.
+                    let kwargs = args.as_ptr()
+                        .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                            lk.read().unwrap().last().copied()
+                        } else { None })
+                        .unwrap_or(MbValue::none());
+                    return super::stdlib::collections_mod::mb_namedtuple_replace(receiver, kwargs);
+                }
                 // Counter-specific methods. `update`/`subtract` ACCUMULATE
                 // counts (CPython semantics) — they must intercept before the
                 // generic dict-like forwarding below, whose `update` replaces.

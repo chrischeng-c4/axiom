@@ -195,9 +195,13 @@ unsafe extern "C" fn dispatch_defaultdict_new(args_ptr: *const MbValue, nargs: u
 
 unsafe extern "C" fn dispatch_namedtuple(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a: &[MbValue] = unsafe { args_as_slice(args_ptr, nargs) };
+    // Keyword args (`rename=True`, `defaults=(...)`, `module=...`) arrive as
+    // a trailing dict positional under the lowering convention.
+    let kwargs = a.get(2).copied().unwrap_or_else(MbValue::none);
     mb_namedtuple(
         a.get(0).copied().unwrap_or_else(MbValue::none),
         a.get(1).copied().unwrap_or_else(MbValue::none),
+        kwargs,
     )
 }
 
@@ -1191,12 +1195,15 @@ pub fn mb_defaultdict_new(factory: MbValue) -> MbValue {
 /// Returns a `collections.namedtuple_factory` Instance that, when called
 /// with positional args, creates a namedtuple Instance with the declared
 /// field names. Dispatch is handled in `mb_call_spread` (builtins.rs).
-pub fn mb_namedtuple(name: MbValue, fields: MbValue) -> MbValue {
-    // Extract field names from a list of strings
+pub fn mb_namedtuple(name: MbValue, fields: MbValue, kwargs: MbValue) -> MbValue {
+    // Extract field names from a space/comma string or a sequence of strings.
     let field_names: Vec<String> = if let Some(ptr) = fields.as_ptr() {
         unsafe {
             match &(*ptr).data {
                 ObjData::List(ref lock) => lock.read().unwrap().iter()
+                    .filter_map(|v| extract_str(*v))
+                    .collect(),
+                ObjData::Tuple(ref items) => items.iter()
                     .filter_map(|v| extract_str(*v))
                     .collect(),
                 ObjData::Str(ref s) => s.replace(',', " ").split_whitespace()
@@ -1207,8 +1214,17 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue) -> MbValue {
     } else {
         vec![]
     };
+    // Keyword options: rename / defaults / module.
+    let rename = dict_get_str_key(kwargs, "rename")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let defaults: Vec<MbValue> = dict_get_str_key(kwargs, "defaults")
+        .filter(|v| !v.is_none())
+        .map(super::super::builtins::extract_items)
+        .unwrap_or_default();
     // CPython: field names must be valid non-keyword identifiers without
-    // leading underscores or duplicates; violations raise ValueError.
+    // leading underscores or duplicates; violations raise ValueError —
+    // unless rename=True, which replaces each offender with `_<index>`.
     const PY_KEYWORDS: &[&str] = &[
         "False", "None", "True", "and", "as", "assert", "async", "await",
         "break", "class", "continue", "def", "del", "elif", "else", "except",
@@ -1217,28 +1233,37 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue) -> MbValue {
         "while", "with", "yield",
     ];
     let mut seen = std::collections::HashSet::new();
-    for f in &field_names {
+    let mut field_names_fixed: Vec<String> = Vec::with_capacity(field_names.len());
+    for (i, f) in field_names.iter().enumerate() {
         let valid_ident = !f.is_empty()
             && f.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
             && f.chars().all(|c| c.is_alphanumeric() || c == '_');
-        if !valid_ident {
-            return raise_value_error(&format!(
-                "Type names and field names must be valid identifiers: {f:?}"
-            ));
+        let offending = if !valid_ident {
+            Some(format!("Type names and field names must be valid identifiers: {f:?}"))
+        } else if PY_KEYWORDS.contains(&f.as_str()) {
+            Some(format!("Type names and field names cannot be a keyword: {f:?}"))
+        } else if f.starts_with('_') {
+            Some(format!("Field names cannot start with an underscore: {f:?}"))
+        } else if seen.contains(f.as_str()) {
+            Some(format!("Encountered duplicate field name: {f:?}"))
+        } else {
+            None
+        };
+        if let Some(msg) = offending {
+            if !rename {
+                return raise_value_error(&msg);
+            }
+            let nf = format!("_{i}");
+            seen.insert(nf.clone());
+            field_names_fixed.push(nf);
+            continue;
         }
-        if PY_KEYWORDS.contains(&f.as_str()) {
-            return raise_value_error(&format!(
-                "Type names and field names cannot be a keyword: {f:?}"
-            ));
-        }
-        if f.starts_with('_') {
-            return raise_value_error(&format!(
-                "Field names cannot start with an underscore: {f:?}"
-            ));
-        }
-        if !seen.insert(f.clone()) {
-            return raise_value_error(&format!("Encountered duplicate field name: {f:?}"));
-        }
+        seen.insert(f.clone());
+        field_names_fixed.push(f.clone());
+    }
+    let field_names = field_names_fixed;
+    if defaults.len() > field_names.len() {
+        return raise_type_error("Got more default values than field names");
     }
     let tuple_name = extract_str(name).unwrap_or_else(|| "namedtuple".to_string());
     let mut factory_fields = FxHashMap::default();
@@ -1249,6 +1274,13 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue) -> MbValue {
         .collect();
     factory_fields.insert("_field_names".into(),
         MbValue::from_ptr(MbObject::new_list(field_vals)));
+    // Defaults align RIGHTMOST: defaults[j] belongs to field n-d+j.
+    let default_vals: Vec<MbValue> = defaults.iter().map(|v| {
+        unsafe { super::super::rc::retain_if_ptr(*v) };
+        *v
+    }).collect();
+    factory_fields.insert("_defaults".into(),
+        MbValue::from_ptr(MbObject::new_list(default_vals)));
     let obj = Box::new(super::super::rc::MbObject {
         header: super::super::rc::MbObjectHeader {
             rc: std::sync::atomic::AtomicU32::new(1),
@@ -1260,6 +1292,102 @@ pub fn mb_namedtuple(name: MbValue, fields: MbValue) -> MbValue {
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// Field names of a namedtuple factory Instance, or None for other values.
+pub(crate) fn namedtuple_factory_fields(factory: MbValue) -> Option<Vec<String>> {
+    let ptr = factory.as_ptr()?;
+    unsafe {
+        let ObjData::Instance { ref class_name, ref fields } = (*ptr).data else {
+            return None;
+        };
+        if class_name != "collections.namedtuple_factory" {
+            return None;
+        }
+        let f = fields.read().ok()?;
+        let names = f.get("_field_names").and_then(|v| v.as_ptr())
+            .map(|p| {
+                if let ObjData::List(ref lock) = (*p).data {
+                    lock.read().unwrap().iter()
+                        .filter_map(|v| extract_str(*v))
+                        .collect()
+                } else { vec![] }
+            })?;
+        Some(names)
+    }
+}
+
+/// Class-level attributes of a namedtuple factory: `_fields`,
+/// `__match_args__`, `__name__`, `__slots__`, `_field_defaults`.
+/// Returns None for unsupported attribute names.
+pub fn namedtuple_factory_getattr(factory: MbValue, attr: &str) -> Option<MbValue> {
+    let names = namedtuple_factory_fields(factory)?;
+    match attr {
+        "_fields" | "__match_args__" => {
+            let vals: Vec<MbValue> = names.iter()
+                .map(|n| MbValue::from_ptr(MbObject::new_str(n.clone())))
+                .collect();
+            Some(MbValue::from_ptr(MbObject::new_tuple(vals)))
+        }
+        "__slots__" => Some(MbValue::from_ptr(MbObject::new_tuple(vec![]))),
+        "__name__" => {
+            let ptr = factory.as_ptr()?;
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                    let tn = fields.read().ok()?.get("_tuple_name")
+                        .and_then(|v| extract_str(*v))?;
+                    return Some(MbValue::from_ptr(MbObject::new_str(tn)));
+                }
+            }
+            None
+        }
+        "_field_defaults" => {
+            let defaults = namedtuple_factory_defaults(factory);
+            let out = super::super::dict_ops::mb_dict_new();
+            let start = names.len() - defaults.len().min(names.len());
+            for (j, d) in defaults.iter().enumerate() {
+                if start + j < names.len() {
+                    let key = MbValue::from_ptr(MbObject::new_str(names[start + j].clone()));
+                    super::super::dict_ops::mb_dict_setitem(out, key, *d);
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// Rightmost-aligned default values stored on a namedtuple factory.
+fn namedtuple_factory_defaults(factory: MbValue) -> Vec<MbValue> {
+    if let Some(ptr) = factory.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                if let Some(d) = fields.read().unwrap().get("_defaults") {
+                    if let Some(dp) = d.as_ptr() {
+                        if let ObjData::List(ref lock) = (*dp).data {
+                            return lock.read().unwrap().to_vec();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    vec![]
+}
+
+/// Factory._make(iterable) — build an instance from an iterable of exactly
+/// the declared field count; CPython raises TypeError on length mismatch.
+pub fn mb_namedtuple_make(factory: MbValue, iterable: MbValue) -> MbValue {
+    let Some(names) = namedtuple_factory_fields(factory) else {
+        return MbValue::none();
+    };
+    let items = super::super::builtins::extract_items(iterable);
+    if items.len() != names.len() {
+        return raise_type_error(&format!(
+            "Expected {} arguments, got {}", names.len(), items.len()
+        ));
+    }
+    mb_namedtuple_create(factory, &items)
 }
 
 /// Create a namedtuple instance from the factory and positional args.
@@ -1288,9 +1416,12 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
     } else {
         return MbValue::none();
     };
-    // CPython: a namedtuple call must supply exactly the declared fields
-    // (defaults are not modeled); arity mismatches raise TypeError.
-    if args.len() != field_names.len() {
+    // Arity: missing trailing args fill from the factory's rightmost-aligned
+    // defaults; out-of-range arg counts raise TypeError (CPython).
+    let defaults = namedtuple_factory_defaults(factory);
+    let n = field_names.len();
+    let min_required = n.saturating_sub(defaults.len());
+    if args.len() < min_required || args.len() > n {
         super::super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str(format!(
@@ -1311,7 +1442,15 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
     inst_fields.insert("_namedtuple_fields".into(),
         MbValue::from_ptr(MbObject::new_list(ordered)));
     for (i, fname) in field_names.iter().enumerate() {
-        let val = args.get(i).copied().unwrap_or(MbValue::none());
+        let val = if i < args.len() {
+            args[i]
+        } else {
+            // Defaults are owned by the factory; the instance takes its own
+            // reference.
+            let d = defaults[i - (n - defaults.len())];
+            unsafe { super::super::rc::retain_if_ptr(d) };
+            d
+        };
         inst_fields.insert(fname.clone(), val);
     }
     let obj = Box::new(super::super::rc::MbObject {
@@ -1321,6 +1460,122 @@ pub fn mb_namedtuple_create(factory: MbValue, args: &[MbValue]) -> MbValue {
         },
         data: ObjData::Instance {
             class_name: tuple_name,
+            fields: crate::runtime::rc::MbRwLock::new(inst_fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+/// Field names of a namedtuple INSTANCE (declared order), or None.
+fn namedtuple_instance_fields(inst: MbValue) -> Option<Vec<String>> {
+    let ptr = inst.as_ptr()?;
+    unsafe {
+        let ObjData::Instance { ref fields, .. } = (*ptr).data else {
+            return None;
+        };
+        let f = fields.read().ok()?;
+        let nt_fields = f.get("_namedtuple_fields")?;
+        nt_fields.as_ptr().and_then(|p| {
+            if let ObjData::List(ref lock) = (*p).data {
+                Some(lock.read().unwrap().iter()
+                    .filter_map(|v| extract_str(*v))
+                    .collect())
+            } else { None }
+        })
+    }
+}
+
+/// instance._asdict() — a fresh dict mapping field names to values in
+/// declared order.
+pub fn mb_namedtuple_asdict(inst: MbValue) -> MbValue {
+    let Some(names) = namedtuple_instance_fields(inst) else {
+        return MbValue::none();
+    };
+    let out = super::super::dict_ops::mb_dict_new();
+    if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let f = fields.read().unwrap();
+                for n in &names {
+                    let key = MbValue::from_ptr(MbObject::new_str(n.clone()));
+                    let val = f.get(n).copied().unwrap_or(MbValue::none());
+                    super::super::dict_ops::mb_dict_setitem(out, key, val);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// instance._replace(**kwargs) — a modified copy; the original is untouched.
+/// Unknown field names raise ValueError (CPython).
+pub fn mb_namedtuple_replace(inst: MbValue, kwargs: MbValue) -> MbValue {
+    use crate::runtime::dict_ops::DictKey;
+    let Some(names) = namedtuple_instance_fields(inst) else {
+        return MbValue::none();
+    };
+    // Collect replacement values keyed by field name.
+    let mut replacements: Vec<(String, MbValue)> = Vec::new();
+    if let Some(kp) = kwargs.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*kp).data {
+                for (k, v) in lock.read().unwrap().iter() {
+                    if let DictKey::Str(name) = k {
+                        if !names.iter().any(|n| n == name) {
+                            return raise_value_error(&format!(
+                                "Got unexpected field names: ['{name}']"
+                            ));
+                        }
+                        replacements.push((name.clone(), *v));
+                    }
+                }
+            }
+        }
+    }
+    let (class_name, tuple_name) = if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                let tn = fields.read().unwrap().get("_namedtuple_name")
+                    .and_then(|v| extract_str(*v))
+                    .unwrap_or_else(|| class_name.clone());
+                (class_name.clone(), tn)
+            } else {
+                return MbValue::none();
+            }
+        }
+    } else {
+        return MbValue::none();
+    };
+    let mut inst_fields = FxHashMap::default();
+    inst_fields.insert("_namedtuple_name".into(),
+        MbValue::from_ptr(MbObject::new_str(tuple_name)));
+    let ordered: Vec<MbValue> = names.iter()
+        .map(|f| MbValue::from_ptr(MbObject::new_str(f.clone())))
+        .collect();
+    inst_fields.insert("_namedtuple_fields".into(),
+        MbValue::from_ptr(MbObject::new_list(ordered)));
+    if let Some(ptr) = inst.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let f = fields.read().unwrap();
+                for n in &names {
+                    let val = replacements.iter()
+                        .find(|(rn, _)| rn == n)
+                        .map(|(_, v)| *v)
+                        .unwrap_or_else(|| f.get(n).copied().unwrap_or(MbValue::none()));
+                    super::super::rc::retain_if_ptr(val);
+                    inst_fields.insert(n.clone(), val);
+                }
+            }
+        }
+    }
+    let obj = Box::new(super::super::rc::MbObject {
+        header: super::super::rc::MbObjectHeader {
+            rc: std::sync::atomic::AtomicU32::new(1),
+            kind: super::super::rc::ObjKind::Instance,
+        },
+        data: ObjData::Instance {
+            class_name,
             fields: crate::runtime::rc::MbRwLock::new(inst_fields),
         },
     });
@@ -1345,6 +1600,12 @@ fn cm_raise(kind: &str, msg: &str) -> MbValue {
 /// Build a ChainMap Instance over `maps` (front map first). The map objects
 /// are retained — they are shared with the caller, not copied.
 fn chainmap_make(maps: Vec<MbValue>) -> MbValue {
+    chainmap_make_with_class(maps, "collections.ChainMap")
+}
+
+/// `chainmap_make` with an explicit class name so binary operators can
+/// follow CPython's result-type-follows-left-operand rule for subclasses.
+fn chainmap_make_with_class(maps: Vec<MbValue>, class_name: &str) -> MbValue {
     for m in &maps {
         unsafe { super::super::rc::retain_if_ptr(*m) };
     }
@@ -1357,19 +1618,41 @@ fn chainmap_make(maps: Vec<MbValue>) -> MbValue {
             kind: super::super::rc::ObjKind::Instance,
         },
         data: ObjData::Instance {
-            class_name: "collections.ChainMap".to_string(),
+            class_name: class_name.to_string(),
             fields: crate::runtime::rc::MbRwLock::new(fields),
         },
     });
     MbValue::from_ptr(Box::into_raw(obj))
 }
 
-/// The `maps` list of a ChainMap Instance, or None for other values.
+/// True for `collections.ChainMap` itself and registered user subclasses
+/// (their MRO contains the ChainMap class through either name form).
+fn is_chainmap_class(class_name: &str) -> bool {
+    class_name == "collections.ChainMap"
+        || super::super::class::class_mro_list(class_name)
+            .iter()
+            .any(|b| b == "collections.ChainMap" || b == "ChainMap")
+}
+
+/// The runtime class name of a ChainMap-like Instance, or None.
+fn chainmap_class_of(cm: MbValue) -> Option<String> {
+    let ptr = cm.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            if is_chainmap_class(class_name) {
+                return Some(class_name.clone());
+            }
+        }
+    }
+    None
+}
+
+/// The `maps` list of a ChainMap Instance (or subclass), or None.
 fn chainmap_maps(cm: MbValue) -> Option<Vec<MbValue>> {
     let ptr = cm.as_ptr()?;
     unsafe {
         if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
-            if class_name == "collections.ChainMap" {
+            if is_chainmap_class(class_name) {
                 let maps = fields.read().unwrap().get("maps").copied()?;
                 if let Some(mp) = maps.as_ptr() {
                     if let ObjData::List(ref lock) = (*mp).data {
@@ -1586,6 +1869,31 @@ unsafe extern "C" fn cm_eq(self_v: MbValue, raw: MbValue) -> MbValue {
     super::super::builtins::mb_eq(flat_self, flat_other)
 }
 
+/// `ChainMap.__init__(self, *maps)` — registered in the class method table so
+/// user subclasses (`class Sub(ChainMap)`) construct a working `maps` field
+/// through normal class instantiation.
+unsafe extern "C" fn cm_init(self_v: MbValue, args: MbValue) -> MbValue {
+    let mut maps = extract_list(args);
+    if maps.is_empty() {
+        maps.push(MbValue::from_ptr(MbObject::new_dict()));
+    }
+    for m in &maps {
+        unsafe { super::super::rc::retain_if_ptr(*m) };
+    }
+    let maps_list = MbValue::from_ptr(MbObject::new_list(maps));
+    if let Some(ptr) = self_v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let old = fields.write().unwrap().insert("maps".to_string(), maps_list);
+                if let Some(prev) = old {
+                    super::super::rc::release_if_ptr(prev);
+                }
+            }
+        }
+    }
+    MbValue::none()
+}
+
 unsafe extern "C" fn cm_or(self_v: MbValue, raw: MbValue) -> MbValue {
     let other = cm_binop_operand(raw);
     if !cm_is_mapping(other) {
@@ -1609,7 +1917,10 @@ unsafe extern "C" fn cm_or(self_v: MbValue, raw: MbValue) -> MbValue {
     super::super::dict_ops::mb_dict_update(new_front, other_src);
     let mut new_maps = vec![new_front];
     new_maps.extend_from_slice(&maps[1.min(maps.len())..]);
-    chainmap_make(new_maps)
+    // Result type follows the LEFT operand (CPython: Sub() | cm -> Sub).
+    let cls = chainmap_class_of(self_v)
+        .unwrap_or_else(|| "collections.ChainMap".to_string());
+    chainmap_make_with_class(new_maps, &cls)
 }
 
 unsafe extern "C" fn cm_ror(self_v: MbValue, raw: MbValue) -> MbValue {
@@ -1630,6 +1941,21 @@ unsafe extern "C" fn cm_ror(self_v: MbValue, raw: MbValue) -> MbValue {
         }
     }
     chainmap_make(vec![out])
+}
+
+unsafe extern "C" fn cm_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    super::super::dict_ops::mb_dict_items(flat)
+}
+
+unsafe extern "C" fn cm_keys(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    super::super::dict_ops::mb_dict_keys(flat)
+}
+
+unsafe extern "C" fn cm_values(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some(flat) = chainmap_flatten(self_v) else { return MbValue::none() };
+    super::super::dict_ops::mb_dict_values(flat)
 }
 
 unsafe extern "C" fn cm_new_child(self_v: MbValue, args: MbValue) -> MbValue {
@@ -1735,6 +2061,7 @@ fn register_chainmap_class() {
     };
     let mut m: Map<String, MbValue> = Map::new();
     for (name, addr) in [
+        ("__init__", cm_init as *const () as usize),
         ("__getitem__", cm_getitem as *const () as usize),
         ("__setitem__", cm_setitem as *const () as usize),
         ("__delitem__", cm_delitem as *const () as usize),
@@ -1747,6 +2074,9 @@ fn register_chainmap_class() {
         ("__ior__", cm_or as *const () as usize),
         ("__ror__", cm_ror as *const () as usize),
         ("get", cm_get as *const () as usize),
+        ("items", cm_items as *const () as usize),
+        ("keys", cm_keys as *const () as usize),
+        ("values", cm_values as *const () as usize),
         ("new_child", cm_new_child as *const () as usize),
         ("copy", cm_copy as *const () as usize),
         ("pop", cm_pop as *const () as usize),
@@ -1754,7 +2084,10 @@ fn register_chainmap_class() {
     ] {
         m.insert(name.to_string(), var(addr));
     }
-    super::super::class::mb_class_register("collections.ChainMap", vec![], m);
+    super::super::class::mb_class_register("collections.ChainMap", vec![], m.clone());
+    // Alias under the short import name: `class Sub(ChainMap)` records the
+    // base as "ChainMap" in its MRO, and method lookup walks registry keys.
+    super::super::class::mb_class_register("ChainMap", vec![], m);
 }
 
 /// collections.ChainMap(*maps) -> ChainMap Instance over the SHARED maps

@@ -3550,6 +3550,8 @@ impl<'a> AstLowerer<'a> {
                     ast::Expr::Ident(name) if matches!(
                         name.as_str(),
                         "Counter" | "OrderedDict" | "deque" | "defaultdict" | "dict"
+                            // namedtuple takes rename= / defaults= / module=
+                            | "namedtuple"
                             // unittest.mock factories take config kwargs
                             // (return_value= / side_effect= / spec=).
                             | "MagicMock" | "Mock" | "AsyncMock" | "PropertyMock"
