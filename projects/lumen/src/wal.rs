@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-wal-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Write-ahead log abstraction — the data-plane backbone.
 //!
 //! lumen's write path is "turn the database inside out": a write is not
@@ -708,3 +709,5 @@ mod tests {
         assert_eq!(first, 1, "late subscriber must still replay from seq 1");
     }
 }
+
+// </HANDWRITE>
