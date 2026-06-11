@@ -7826,6 +7826,14 @@ fn supports_source_backed_replay_path(path: &Path, section: Option<&str>) -> boo
     if section.is_none() {
         return false;
     }
+    if matches!(section, Some("schema"))
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "llms.txt")
+    {
+        return true;
+    }
     if matches!(section, Some("unit-test" | "e2e-test" | "tests")) && is_rust_source(path) {
         return true;
     }
@@ -8128,6 +8136,15 @@ mod source_backed_replay_tests {
             "projects/jet/tools/manifest/src/lib.rs",
             Some("schema"),
             ".aw/tech-design/projects/jet/specs/jet-tools-manifest-src.md",
+        ));
+    }
+
+    #[test]
+    fn project_root_llms_txt_schema_uses_source_backed_replay() {
+        assert!(supports_source_backed_replay_for_spec(
+            "projects/lumen/llms.txt",
+            Some("schema"),
+            "projects/lumen/tech-design/semantic/lumen-projects-lumen.md",
         ));
     }
 
