@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-collapse-nested-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Collapse-on-search + nested `group` (data-table) correctness.
 //!
 //! * collapse: grouping a keyword field returns one hit per distinct value with
@@ -586,3 +587,5 @@ fn enum_path_and_level_match() {
     })));
     assert_eq!(lvl3c, BTreeSet::from(["a".to_string(), "c".to_string()]));
 }
+
+// </HANDWRITE>
