@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-spec-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Offline, machine-readable self-description for agent integration.
 //!
 //! The `lumen spec` CLI subset emits everything an LLM agent needs to wire
@@ -246,3 +247,5 @@ pub fn llm_recipes_md() -> String {
     }
     out
 }
+
+// </HANDWRITE>
