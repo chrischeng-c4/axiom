@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-config-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Runtime config — sourced from env so it can be wired through the K8s
 //! ConfigMap without any rebuild.
 //!
@@ -175,3 +176,5 @@ mod tests {
         }
     }
 }
+
+// </HANDWRITE>
