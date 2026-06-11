@@ -94,3 +94,96 @@ $defs:
         type: string
         description: "meter: meter.toml path the meter invocation honors for [gate] ceilings."
 ```
+
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: ec-tool-binding-verification
+requirements:
+  config_roundtrip:
+    id: R1
+    text: "Project.ec deserializes from `[[projects]] ec.<category> = { tool, spec/dir/meter }` and round-trips"
+    kind: functional
+    risk: high
+    verify: test
+  command_builder:
+    id: R2
+    text: "EcBinding::command() builds arena/rig/meter commands and errors on an unknown tool"
+    kind: functional
+    risk: high
+    verify: test
+  dispatch_binding:
+    id: R3
+    text: "run_project_ec_command uses the tool command when the case category is bound, else the manifest command"
+    kind: functional
+    risk: high
+    verify: test
+  absent_is_default:
+    id: R4
+    text: "a project with no ec map verifies exactly as today (manifest command), absence is a clean default"
+    kind: design-constraint
+    risk: medium
+    verify: test
+elements:
+  test_ec_config_roundtrip:
+    kind: test
+    type: "rs/#[test]"
+  test_ec_binding_command:
+    kind: test
+    type: "rs/#[test]"
+  test_dispatch_uses_binding:
+    kind: test
+    type: "rs/#[test]"
+  test_no_ec_is_manifest_default:
+    kind: test
+    type: "rs/#[test]"
+relations:
+  - { from: test_ec_config_roundtrip,        verifies: config_roundtrip }
+  - { from: test_ec_binding_command,         verifies: command_builder }
+  - { from: test_dispatch_uses_binding,      verifies: dispatch_binding }
+  - { from: test_no_ec_is_manifest_default,  verifies: absent_is_default }
+---
+requirementDiagram
+    requirement R1 {
+      id: R1
+      text: "Project.ec deserializes + round-trips"
+      risk: high
+      verifymethod: test
+    }
+    requirement R2 {
+      id: R2
+      text: "EcBinding::command builds per-tool + errors on unknown"
+      risk: high
+      verifymethod: test
+    }
+    requirement R3 {
+      id: R3
+      text: "dispatch uses binding when bound, else manifest"
+      risk: high
+      verifymethod: test
+    }
+    requirement R4 {
+      id: R4
+      text: "no ec map = manifest default"
+      risk: medium
+      verifymethod: test
+    }
+    element test_ec_config_roundtrip {
+      type: "rs/#[test]"
+    }
+    element test_ec_binding_command {
+      type: "rs/#[test]"
+    }
+    element test_dispatch_uses_binding {
+      type: "rs/#[test]"
+    }
+    element test_no_ec_is_manifest_default {
+      type: "rs/#[test]"
+    }
+    test_ec_config_roundtrip - verifies -> R1
+    test_ec_binding_command - verifies -> R2
+    test_dispatch_uses_binding - verifies -> R3
+    test_no_ec_is_manifest_default - verifies -> R4
+```
