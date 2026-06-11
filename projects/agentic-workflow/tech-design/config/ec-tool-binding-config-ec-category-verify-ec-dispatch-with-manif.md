@@ -93,7 +93,6 @@ $defs:
         type: string
         description: "meter: meter.toml path the meter invocation honors for [gate] ceilings."
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
