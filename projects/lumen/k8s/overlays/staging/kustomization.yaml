@@ -1,4 +1,5 @@
-# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-k8s-overlays-staging-kustomization-yaml" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-overlays-staging.md#deployment
+# CODEGEN-BEGIN
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -82,5 +83,4 @@ patches:
       - op: replace
         path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
         value: "10Gi"
-
-# </HANDWRITE>
+# CODEGEN-END
