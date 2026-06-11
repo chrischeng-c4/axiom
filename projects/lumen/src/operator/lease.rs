@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-operator-lease-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Minimal Lease-based leader election (coordination.k8s.io/v1).
 //!
 //! kube-rs 0.98 ships no built-in elector, so this is a small hand-rolled one:
@@ -161,3 +162,5 @@ mod tests {
         assert!(may_acquire(Some("other"), None, 15, "me", 1000));
     }
 }
+
+// </HANDWRITE>
