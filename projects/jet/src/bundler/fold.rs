@@ -200,6 +200,36 @@ fn collapse_known_short_circuits(source: &str) -> String {
                     // `!1 || X` → `X`.
                     i = j + 2;
                     continue;
+                } else if j < len && b[j] == b'?' && !matches!(b.get(j + 1), Some(b'.')) {
+                    // Constant ternary `!0 ? A : B` → A, `!1 ? A : B` → B.
+                    // Conservatively require BOTH arms to be a single balanced
+                    // operand (primary + postfixes) so the kept/dropped spans
+                    // are unambiguous — this is what carries dead branches like
+                    // styled-components' `!1?{<3.7KB error dictionary>}:{}`,
+                    // whose unique English text gzips poorly. `?.` optional
+                    // chaining is excluded above.
+                    if let Some(conseq_end) = scan_operand(b, j + 1) {
+                        let mut c = conseq_end;
+                        while c < len && matches!(b[c], b' ' | b'\t') {
+                            c += 1;
+                        }
+                        if c < len && b[c] == b':' {
+                            if let Some(alt_end) = scan_operand(b, c + 1) {
+                                let cs = j + 1;
+                                if truthy {
+                                    out.extend_from_slice(&b[cs..conseq_end]);
+                                } else {
+                                    out.extend_from_slice(&b[c + 1..alt_end]);
+                                }
+                                i = alt_end;
+                                continue;
+                            }
+                        }
+                    }
+                    out.push(b[i]);
+                    out.push(b[i + 1]);
+                    i += 2;
+                    continue;
                 }
                 out.push(b[i]);
                 out.push(b[i + 1]);
@@ -290,6 +320,76 @@ fn scan_short_circuit_chain(b: &[u8], mut i: usize, op: &[u8]) -> Option<usize> 
         }
         return Some(i);
     }
+}
+
+/// Scan exactly ONE operand: optional unary prefixes, a balanced primary
+/// (`(...)`, `[...]`, `{...}`, string/template, or identifier/number), then
+/// member/call/index/template postfixes. Returns the end offset, or None on
+/// an unsupported shape. Unlike [`scan_short_circuit_chain`], it does NOT
+/// continue across binary operators — the caller uses it to delimit the
+/// arms of a constant ternary unambiguously.
+fn scan_operand(b: &[u8], mut i: usize) -> Option<usize> {
+    let len = b.len();
+    // unary prefixes
+    loop {
+        while i < len && matches!(b[i], b' ' | b'\t') {
+            i += 1;
+        }
+        if i < len && matches!(b[i], b'!' | b'+' | b'-' | b'~') {
+            i += 1;
+        } else if i + 6 <= len && &b[i..i + 6] == b"typeof" {
+            i += 6;
+        } else if i + 4 <= len && &b[i..i + 4] == b"void" {
+            i += 4;
+        } else {
+            break;
+        }
+    }
+    if i >= len {
+        return None;
+    }
+    // primary
+    match b[i] {
+        b'(' => i = skip_balanced(b, i, b'(', b')')?,
+        b'[' => i = skip_balanced(b, i, b'[', b']')?,
+        b'{' => i = skip_balanced(b, i, b'{', b'}')?,
+        b'"' | b'\'' | b'`' => i = skip_string(b, i),
+        c if is_id(c) || c.is_ascii_digit() => {
+            while i < len && is_id(b[i]) {
+                i += 1;
+            }
+        }
+        _ => return None,
+    }
+    // postfixes
+    loop {
+        let save = i;
+        while i < len && matches!(b[i], b' ' | b'\t') {
+            i += 1;
+        }
+        if i < len && b[i] == b'.' && i + 1 < len && is_id(b[i + 1]) {
+            i += 1;
+            while i < len && is_id(b[i]) {
+                i += 1;
+            }
+            continue;
+        }
+        if i < len && b[i] == b'(' {
+            i = skip_balanced(b, i, b'(', b')')?;
+            continue;
+        }
+        if i < len && b[i] == b'[' {
+            i = skip_balanced(b, i, b'[', b']')?;
+            continue;
+        }
+        if i < len && b[i] == b'`' {
+            i = skip_string(b, i);
+            continue;
+        }
+        i = save;
+        break;
+    }
+    Some(i)
 }
 
 /// Skip a balanced bracket pair, honoring strings/templates/regex inside.
@@ -960,6 +1060,27 @@ mod tests {
         let src5 = r#"var ok="a"==="b"&&p||q;"#;
         let out5 = fold_define_short_circuits(src5);
         assert_eq!(out5, r#"var ok=q;"#, "{out5}");
+    }
+
+    #[test]
+    fn test_constant_ternary_collapse() {
+        // `"production"!=="production"` folds to `!1`, then the ternary
+        // collapses to the false arm, dropping the dead dictionary —
+        // the styled-components `ap=!1?{...}:{}` shape.
+        let src = r#"var ap="production"!=="production"?{1:"err one",2:"err two"}:{};"#;
+        let out = fold_define_short_circuits(src);
+        assert_eq!(out, r#"var ap={};"#, "{out}");
+        assert!(!out.contains("err one"), "dead consequent dropped: {out}");
+
+        // Truthy keeps the consequent.
+        let src2 = r#"var x="a"==="a"?keep(y):drop(z);"#;
+        let out2 = fold_define_short_circuits(src2);
+        assert_eq!(out2, r#"var x=keep(y);"#, "{out2}");
+
+        // Optional chaining `?.` must NOT be treated as a ternary.
+        let src3 = r#"var n="a"!=="a"||obj?.prop;"#;
+        let out3 = fold_define_short_circuits(src3);
+        assert!(out3.contains("obj?.prop"), "optional chain preserved: {out3}");
     }
 
     /// Regression: regex literals whose character classes contain quotes

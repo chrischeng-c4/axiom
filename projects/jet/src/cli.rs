@@ -2000,61 +2000,74 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 // original per-stage guards to keep whichever stages are
                 // individually sound — same output as the old scheme, the
                 // extra parses are paid only on the rare corruption path.
-                let optimistic = {
-                    let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
-                    lap("mangle");
-                    let folded = crate::bundler::fold::fold_constants(&mangled);
-                    lap("fold");
-                    let compacted =
-                        crate::bundler::minify::remove_semicolons_before_block_close_candidate(
-                            &folded,
-                        );
-                    lap("semicolon_compaction");
-                    if compacted.len() < folded.len() {
-                        compacted
-                    } else {
-                        folded
-                    }
-                };
-                if crate::bundler::dce::js_parses_without_errors(&optimistic) {
-                    code = optimistic;
-                    lap("single_parse_guard");
-                    dump_stage("3-mangle", &code);
-                    dump_stage("4-fold", &code);
+                // Compute mangle -> fold -> semicolon-compaction ONCE, then
+                // certify with as few full-bundle tree-sitter parses as
+                // possible. The happy path is a single parse of the most
+                // minified candidate. When that parse fails (a minify pass
+                // produced output tree-sitter flags), we DON'T recompute the
+                // expensive mangle: the already-computed `mangled`/`folded`
+                // values ARE the stagewise fallback results (fold operates on
+                // mangled, semicolon on folded), so we just probe them in
+                // size order and keep the first that parses — byte-identical
+                // to the old per-stage-guard scheme, minus the re-mangle and
+                // the redundant parses.
+                let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
+                lap("mangle");
+                let folded = crate::bundler::fold::fold_constants(&mangled);
+                lap("fold");
+                let compacted =
+                    crate::bundler::minify::remove_semicolons_before_block_close_candidate(&folded);
+                lap("semicolon_compaction");
+                let candidate = if compacted.len() < folded.len() {
+                    &compacted
                 } else {
-                    tracing::warn!(
-                        "Optimized bundle did not parse; re-running minify stages \
-                         with per-stage parse guards"
+                    &folded
+                };
+                if crate::bundler::dce::js_parses_without_errors(candidate) {
+                    code = candidate.clone();
+                    lap("single_parse_guard");
+                } else if crate::bundler::dce::js_parses_without_errors(&folded) {
+                    // semicolon-compaction is the culprit; keep folded.
+                    code = folded;
+                    lap("reuse_parse_guard");
+                } else if crate::bundler::dce::js_parses_without_errors(&mangled) {
+                    // fold broke parse; keep mangled, still try its compaction.
+                    let s = crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                        &mangled,
                     );
-                    let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
-                    if crate::bundler::dce::js_parses_without_errors(&mangled) {
-                        code = mangled;
-                    } else {
-                        tracing::warn!(
-                            "Skipping variable mangling because the optimized bundle did not parse"
-                        );
-                    }
-                    dump_stage("3-mangle", &code);
-                    let folded = crate::bundler::fold::fold_constants(&code);
-                    if crate::bundler::dce::js_parses_without_errors(&folded) {
-                        code = folded;
-                    } else {
-                        tracing::warn!(
-                            "Skipping constant folding because the optimized bundle did not parse"
-                        );
-                    }
-                    dump_stage("4-fold", &code);
-                    let compacted =
-                        crate::bundler::minify::remove_semicolons_before_block_close_candidate(
-                            &code,
-                        );
-                    if compacted.len() < code.len()
-                        && crate::bundler::dce::js_parses_without_errors(&compacted)
+                    code = if s.len() < mangled.len()
+                        && crate::bundler::dce::js_parses_without_errors(&s)
                     {
-                        code = compacted;
-                    }
-                    lap("staged_parse_guards");
+                        s
+                    } else {
+                        mangled
+                    };
+                    tracing::warn!("Constant folding skipped: optimized bundle did not parse");
+                    lap("reuse_parse_guard");
+                } else {
+                    // Mangle itself broke parse — fall all the way back to the
+                    // pre-mangle bundle and fold/compact that.
+                    tracing::warn!("Variable mangling skipped: optimized bundle did not parse");
+                    let f = crate::bundler::fold::fold_constants(&code);
+                    let base = if crate::bundler::dce::js_parses_without_errors(&f) {
+                        f
+                    } else {
+                        code.clone()
+                    };
+                    let s = crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                        &base,
+                    );
+                    code = if s.len() < base.len()
+                        && crate::bundler::dce::js_parses_without_errors(&s)
+                    {
+                        s
+                    } else {
+                        base
+                    };
+                    lap("remangle_fallback");
                 }
+                dump_stage("3-mangle", &code);
+                dump_stage("4-fold", &code);
                 // Extra polish (JET_EXTRA_MINIFY=1): residual-space squeeze,
                 // block-level empty-statement removal, bracket-to-dot
                 // properties. Worth ~0.3-2KB gzip per fixture but costs two

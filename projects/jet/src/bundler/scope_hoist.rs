@@ -202,6 +202,14 @@ pub fn generate_flattened_bundle(modules: &[CompiledModule]) -> String {
             // Apply per-module prefix renaming (R3) + CJS substitutions (R2).
             let inlined = inline_module_body_v2(&module.code, module_id);
             out.push_str("{\n");
+            // NOTE: the `exports` alias is emitted unconditionally on purpose.
+            // Dropping provably-unused `var _mNe=_mN.exports;` declarations
+            // looks free (338 of 341 are dead on the mui bundle) but removing
+            // a binding before the mangle pass shifts its name assignment and
+            // exposes a latent mangler collision that breaks the runtime
+            // (dom-production-assets). Until the mangler is collision-stable
+            // under binding removal, keep the alias and recover the bytes in a
+            // post-mangle dead-`var` pass instead. Tracker: jet-exports-alias.
             out.push_str(&format!("var _m{idx}e=_m{idx}.exports;\n", idx = module_id));
             out.push_str(&inlined);
             out.push_str("\n}\n\n");
@@ -1453,17 +1461,17 @@ mod tests {
         let result = inline_module_body_v2(code, 671);
 
         assert!(
-            result.contains("grey: _m671_grey"),
+            result.contains("grey:_m671_grey"),
             "renamed shorthand value must preserve grey key, got: {}",
             result
         );
         assert!(
-            result.contains("dark: _m671_dark"),
+            result.contains("dark:_m671_dark"),
             "renamed shorthand value must preserve dark key, got: {}",
             result
         );
         assert!(
-            result.contains("light: _m671_light"),
+            result.contains("light:_m671_light"),
             "renamed shorthand value must preserve light key, got: {}",
             result
         );

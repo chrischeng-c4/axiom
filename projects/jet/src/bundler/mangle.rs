@@ -2859,7 +2859,11 @@ fn rename_replacement(
     new_name: &str,
 ) -> String {
     if is_shorthand_property_position(source, tokens, ti) {
-        format!("{}: {}", old_name, new_name)
+        // Expand shorthand `{x}` -> `{x:y}` when the binding is renamed.
+        // No space after the colon: minify_js already stripped object-key
+        // colon-spaces, and re-introducing one here (1459 on the mui
+        // bundle) is pure dead weight terser/esbuild never emit.
+        format!("{}:{}", old_name, new_name)
     } else {
         new_name.to_string()
     }
@@ -3558,8 +3562,13 @@ mod tests {
         let src = "function f() { var longName = 1; return {longName}; }";
         let out = mangle_variables(src);
         assert!(
-            out.contains("{longName: "),
+            out.contains("{longName:"),
             "object shorthand key must be preserved when value is renamed, got: {}",
+            out
+        );
+        assert!(
+            !out.contains("{longName: "),
+            "no dead space after the expanded shorthand colon, got: {}",
             out
         );
         assert!(
