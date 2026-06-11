@@ -548,6 +548,26 @@ fn infer_return_type_from_ast(
                     ast::Expr::BoolLit(_) => Some(tc.tcx.bool()),
                     ast::Expr::StrLit(_) => Some(tc.tcx.str()),
                     ast::Expr::NoneLit => Some(tc.tcx.none()),
+                    // Container returns are provably heap values — falling
+                    // through to int_ty would make binops on the call result
+                    // take the raw-i64 fast path (e.g. `f() | g()` compiles
+                    // to a bitwise `bor` of two NaN-boxed POINTERS → UB).
+                    // Widen to Any so operators dispatch through the runtime.
+                    ast::Expr::ListLit(_)
+                    | ast::Expr::SetLit(_)
+                    | ast::Expr::DictLit(_)
+                    | ast::Expr::TupleLit(_) => Some(tc.tcx.any()),
+                    ast::Expr::Call { func, .. }
+                        if matches!(
+                            &func.node,
+                            ast::Expr::Ident(n) if matches!(
+                                n.as_str(),
+                                "set" | "frozenset" | "dict" | "list" | "tuple" | "sorted"
+                            )
+                        ) =>
+                    {
+                        Some(tc.tcx.any())
+                    }
                     _ => {
                         // Consult the float-hint analysis for non-literal returns.
                         // Only force `float` when provably float; otherwise fall

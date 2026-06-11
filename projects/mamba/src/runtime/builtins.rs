@@ -3063,6 +3063,28 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         if let Some(eq) = list_vs_range_iter_eq(ptr, a) { return eq; }
     }
 
+    // Counter == Counter — multiset equality: missing keys count as zero
+    // (CPython Counter.__eq__). Counter vs plain dict falls back to exact
+    // dict equality on the backing data (dict.__eq__ semantics).
+    {
+        let a_counter = super::stdlib::collections_mod::is_counter_instance(a);
+        let b_counter = super::stdlib::collections_mod::is_counter_instance(b);
+        if a_counter && b_counter {
+            return super::stdlib::collections_mod::counter_eq(a, b);
+        }
+        if a_counter || b_counter {
+            let (cnt, other) = if a_counter { (a, b) } else { (b, a) };
+            let is_plain_dict = other.as_ptr().is_some_and(|p| unsafe {
+                matches!((*p).data, ObjData::Dict(_))
+            });
+            if is_plain_dict {
+                if let Some(backing) = super::class::unwrap_dictlike_data(cnt) {
+                    return mb_values_eq(backing, other);
+                }
+            }
+        }
+    }
+
     // namedtuple instances behave like tuple subclasses: compare element-wise
     // against another namedtuple or against a plain tuple of equal values.
     {
@@ -3360,6 +3382,16 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
         || is_fraction_handle_value(a) || is_fraction_handle_value(b)
     {
         return super::stdlib::decimal_mod::mb_numeric_handle_lt(a, b).unwrap_or(false);
+    }
+    // Counter < Counter — strict multiset inclusion (CPython 3.12:
+    // `__lt__ = self <= other and self != other`, counts compared
+    // elementwise with missing keys as zero). `>`, `<=`, `>=` all derive
+    // from this via mb_gt/mb_le/mb_ge's lt/eq composition.
+    if super::stdlib::collections_mod::is_counter_instance(a)
+        && super::stdlib::collections_mod::is_counter_instance(b)
+    {
+        return super::stdlib::collections_mod::counter_le_multiset(a, b)
+            && !super::stdlib::collections_mod::counter_eq(a, b);
     }
     // Int comparison
     if let (Some(ai), Some(bi)) = (a.as_int(), b.as_int()) {
@@ -5970,10 +6002,25 @@ pub fn mb_set_from_iterable(args: MbValue) -> MbValue {
     if args.is_none() {
         return MbValue::from_ptr(MbObject::new_set(vec![]));
     }
+    // Heap-container sources (list/tuple/set/frozenset/dict) lend their
+    // elements: extract_items copies the MbValues without retaining, so the
+    // set must retain what it keeps — otherwise releasing the source (e.g. a
+    // temporary list from a method call inside a function) leaves the set
+    // holding dangling pointers. Iterator/str sources hand over fresh values.
+    let borrowed_source = args.as_ptr().is_some_and(|p| unsafe {
+        matches!(
+            (*p).data,
+            ObjData::List(_) | ObjData::Tuple(_) | ObjData::Set(_)
+                | ObjData::FrozenSet(_) | ObjData::Dict(_)
+        )
+    });
     let items = extract_items(args);
     let mut unique: Vec<MbValue> = Vec::new();
     for item in items {
         if !unique.iter().any(|v| mb_values_eq(*v, item)) {
+            if borrowed_source {
+                unsafe { super::rc::retain_if_ptr(item) };
+            }
             unique.push(item);
         }
     }

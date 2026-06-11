@@ -15,6 +15,14 @@ fn eq_py(a: MbValue, b: MbValue) -> bool {
 /// → set. Wrap the resulting `Vec<MbValue>` accordingly.
 #[inline]
 fn build_set_like_left(left: MbValue, items: Vec<MbValue>) -> MbValue {
+    // Every caller (union / intersection / difference / symmetric_difference)
+    // passes elements BORROWED from the operand sets via extract_set_items.
+    // The result must own its elements: retain each one, otherwise releasing
+    // a temporary operand (e.g. `f(xs) | f(ys)` where both calls return fresh
+    // sets) leaves the result holding dangling pointers.
+    for item in &items {
+        unsafe { super::rc::retain_if_ptr(*item) };
+    }
     let is_frozen = left.as_ptr().map(|p| unsafe {
         matches!((*p).data, ObjData::FrozenSet(_))
     }).unwrap_or(false);

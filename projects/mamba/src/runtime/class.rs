@@ -463,6 +463,17 @@ fn collections_abc_type_or_virtual_match(child: &str, parent: &str) -> bool {
     collections_abc_is_subclass(child, parent) || collections_abc_virtual_match(child, parent)
 }
 
+/// Builtin-subclass relations for native collections types: Counter,
+/// OrderedDict, and defaultdict are real dict subclasses in CPython, so
+/// `isinstance(Counter(), dict)` / `issubclass(Counter, dict)` are true.
+fn collections_builtin_subclass(child: &str, parent: &str) -> bool {
+    parent == "dict"
+        && matches!(
+            child,
+            "collections.Counter" | "collections.OrderedDict" | "collections.defaultdict"
+        )
+}
+
 fn class_matches_collections_abc(class_name: &str, target: &str) -> bool {
     let nominal = CLASS_REGISTRY.with(|reg| {
         let reg = reg.borrow();
@@ -4219,9 +4230,16 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
                         class_name == &target
                             || super::exception::is_subclass_of(class_name, &target)
                             || collections_abc_type_or_virtual_match(class_name, &target)
+                            || collections_builtin_subclass(class_name, &target)
                     }
                 });
                 if nominal {
+                    return MbValue::from_bool(true);
+                }
+                // namedtuple instances are genuine tuple subclasses.
+                if target == "tuple"
+                    && super::stdlib::collections_mod::namedtuple_values(obj).is_some()
+                {
                     return MbValue::from_bool(true);
                 }
                 // Data-type-mixin enum members: isinstance(IntFlag member,
@@ -4592,6 +4610,7 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
                 || parent_name == "object" // all types are subclasses of object
                 || (child_name == "bool" && parent_name == "int") // bool is subclass of int
                 || collections_abc_type_or_virtual_match(&child_name, &parent_name)
+                || collections_builtin_subclass(&child_name, &parent_name)
                 || super::exception::is_subclass_of(&child_name, &parent_name)
             )
         }
@@ -5126,6 +5145,15 @@ pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
             if let Some(b) = obj.as_bool()  { return MbValue::from_int(!(b as i64)); }
         }
         _ => {}
+    }
+    // Counter unary +/- — multiset sign filtering (CPython: `+c` keeps only
+    // positive counts, `-c` flips signs then keeps positives).
+    if super::stdlib::collections_mod::is_counter_instance(obj) {
+        match op_code {
+            0 => return super::stdlib::collections_mod::mb_counter_unary(obj, false),
+            1 => return super::stdlib::collections_mod::mb_counter_unary(obj, true),
+            _ => {}
+        }
     }
     // ── Dunder method fallback ──
     let op_name = UNARYOP_DUNDERS.get(op_code as usize).copied().unwrap_or("neg");
@@ -8064,6 +8092,25 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             // datetime.datetime, functools.partial, ...) short-circuit before
             // the MRO lookup.
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                // Counter-specific methods. `update`/`subtract` ACCUMULATE
+                // counts (CPython semantics) — they must intercept before the
+                // generic dict-like forwarding below, whose `update` replaces.
+                if class_name == "collections.Counter"
+                    && matches!(name.as_str(), "update" | "subtract" | "total" | "elements")
+                {
+                    let arg_items: Vec<MbValue> = args.as_ptr()
+                        .and_then(|p| if let ObjData::List(ref lk) = (*p).data {
+                            Some(lk.read().unwrap().to_vec())
+                        } else { None })
+                        .unwrap_or_default();
+                    match name.as_str() {
+                        "update" => return super::stdlib::collections_mod::mb_counter_update_args(receiver, &arg_items, 1),
+                        "subtract" => return super::stdlib::collections_mod::mb_counter_update_args(receiver, &arg_items, -1),
+                        "total" => return super::stdlib::collections_mod::mb_counter_total(receiver),
+                        "elements" => return super::stdlib::collections_mod::mb_counter_elements(receiver),
+                        _ => {}
+                    }
+                }
                 // Dict-like collections classes: forward dict methods (keys, values,
                 // items, get, pop, update, setdefault, clear, copy, __contains__,
                 // __len__) to the backing `_data` dict.
@@ -8072,7 +8119,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     || (class_name == "collections.Counter"
                         && matches!(name.as_str(),
                             "keys" | "values" | "items" | "get" | "pop"
-                            | "update" | "setdefault" | "clear" | "copy"))
+                            | "setdefault" | "clear" | "copy"))
                 {
                     let data = {
                         let guard = fields.read().unwrap();

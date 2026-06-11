@@ -512,6 +512,133 @@ fn counter_int_counts(
         .collect()
 }
 
+/// The writable `_data` backing dict of a Counter Instance.
+fn counter_backing(counter: MbValue) -> Option<MbValue> {
+    let ptr = counter.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            return fields.read().unwrap().get("_data").copied();
+        }
+    }
+    None
+}
+
+/// Accumulate `sign * count(arg)` into the Counter's backing dict.
+/// `arg` may be a mapping (dict / Counter / dict-like Instance) whose values
+/// are added per key, or an iterable (str / list / tuple / iterator) whose
+/// elements each contribute `sign`. CPython `Counter.update` / `.subtract`
+/// semantics: counts ACCUMULATE (zero and negative results are kept).
+fn counter_merge(counter: MbValue, arg: MbValue, sign: i64) {
+    use crate::runtime::dict_ops::DictKey;
+    if arg.is_none() {
+        return;
+    }
+    let Some(data) = counter_backing(counter) else { return };
+    // Collect (key, delta) pairs from the argument first so we never hold
+    // two locks at once (arg may share the backing dict).
+    let mut deltas: Vec<(DictKey, i64)> = Vec::new();
+    let mut is_mapping = false;
+    if let Some(ptr) = arg.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Dict(ref lock) => {
+                    is_mapping = true;
+                    for (k, v) in lock.read().unwrap().iter() {
+                        deltas.push((k.clone(), v.as_int().unwrap_or(0)));
+                    }
+                }
+                ObjData::Instance { .. } => {
+                    if super::super::class::unwrap_dictlike_data(arg).is_some() {
+                        is_mapping = true;
+                        for (k, v) in counter_int_counts(arg) {
+                            deltas.push((k, v));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if !is_mapping {
+        // Iterable of elements: each occurrence contributes one count.
+        for item in super::super::builtins::extract_items(arg) {
+            deltas.push((super::super::dict_ops::to_dict_key(item), 1));
+        }
+    }
+    if let Some(dp) = data.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*dp).data {
+                let mut map = lock.write().unwrap();
+                for (k, v) in deltas {
+                    let cur = map.get(&k).and_then(|x| x.as_int()).unwrap_or(0);
+                    map.insert(k, MbValue::from_int(cur + sign * v));
+                }
+            }
+        }
+    }
+}
+
+/// Counter.update(*args) / Counter.subtract(*args) — accumulate each
+/// positional argument's counts with the given sign (+1 update, -1 subtract).
+/// Kwargs arrive as a trailing dict positional under mamba's call convention
+/// and merge exactly like a mapping argument.
+pub fn mb_counter_update_args(counter: MbValue, args: &[MbValue], sign: i64) -> MbValue {
+    for arg in args {
+        counter_merge(counter, *arg, sign);
+    }
+    MbValue::none()
+}
+
+/// Counter.total() — sum of all counts (zero and negative included).
+pub fn mb_counter_total(counter: MbValue) -> MbValue {
+    let total: i64 = counter_int_counts(counter).values().sum();
+    MbValue::from_int(total)
+}
+
+/// Counter.elements() — each element repeated by its count, insertion order,
+/// elements with count <= 0 skipped (CPython semantics).
+pub fn mb_counter_elements(counter: MbValue) -> MbValue {
+    let mut out: Vec<MbValue> = Vec::new();
+    for (k, v) in counter_int_counts(counter) {
+        // One fresh MbValue per repetition: pushing the same heap pointer
+        // multiple times without retaining would over-release on list drop.
+        for _ in 0..v.max(0) {
+            out.push(super::super::dict_ops::dict_key_to_mbvalue(&k));
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(out))
+}
+
+/// Unary +Counter / -Counter — keep only counts that are strictly positive
+/// after applying the sign (CPython: `+c` drops non-positive counts, `-c`
+/// flips signs then drops non-positive).
+pub fn mb_counter_unary(counter: MbValue, negate: bool) -> MbValue {
+    let mut counts = counter_int_counts(counter);
+    if negate {
+        for v in counts.values_mut() {
+            *v = -*v;
+        }
+    }
+    build_counter_from_counts(counts)
+}
+
+/// Counter == Counter — multiset equality: a missing key counts as zero.
+pub fn counter_eq(a: MbValue, b: MbValue) -> bool {
+    let ca = counter_int_counts(a);
+    let cb = counter_int_counts(b);
+    ca.iter().all(|(k, v)| cb.get(k).copied().unwrap_or(0) == *v)
+        && cb.iter().all(|(k, v)| ca.get(k).copied().unwrap_or(0) == *v)
+}
+
+/// Counter <= Counter — multiset inclusion: every count in `a` is <= the
+/// matching count in `b` (missing keys count as zero on either side).
+pub fn counter_le_multiset(a: MbValue, b: MbValue) -> bool {
+    let ca = counter_int_counts(a);
+    let cb = counter_int_counts(b);
+    ca.iter().all(|(k, v)| *v <= cb.get(k).copied().unwrap_or(0))
+        && cb.iter().all(|(k, v)| ca.get(k).copied().unwrap_or(0) <= *v)
+}
+
 /// Counter + Counter — CPython multiset semantics: per-key sum, drop <= 0.
 pub fn mb_counter_add(a: MbValue, b: MbValue) -> MbValue {
     let mut out = counter_int_counts(a);
