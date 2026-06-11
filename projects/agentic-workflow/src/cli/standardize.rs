@@ -4079,7 +4079,17 @@ fn build_source_evidence_node(
         });
     }
 
-    None
+    Some(SourceEvidenceNode {
+        path: file.rel.clone(),
+        layer: "source".to_string(),
+        ecosystem: file.language.clone(),
+        role: "source".to_string(),
+        section_type: "schema".to_string(),
+        domain: semantic_group_key(&file.rel),
+        workspace_root: None,
+        route: None,
+        component: None,
+    })
 }
 
 fn frontend_ecosystem_label(file: &SourceFile) -> &'static str {
@@ -8446,6 +8456,11 @@ fn render_changes_section(content: &mut String, kind: SemanticTdKind, group_file
                 yaml_safe(&format!("<handwrite-tracker:{tracker}>"))
             ));
         }
+    }
+    if kind == SemanticTdKind::Schema {
+        content.push_str(
+            "  - action: annotate\n    section: unit-test\n    impl_mode: hand-written\n    description: \"Traceability metadata edge for the unit-test section.\"\n",
+        );
     }
     content.push_str("```\n");
 }
@@ -12823,6 +12838,46 @@ target = "python"
             "semantic TD changes should be intent-only for existing source, even when the file is CODEGEN-owned:\n{}",
             content
         );
+    }
+
+    #[test]
+    fn semantic_changes_include_unit_test_metadata_edge_for_schema_tds() {
+        let file = SourceFile {
+            rel: "projects/lumen/build.sh".into(),
+            abs: PathBuf::from("projects/lumen/build.sh"),
+            language: "shell".into(),
+            markers: FileMarkers {
+                codegen: false,
+                handwrite: true,
+            },
+            handwrite_gaps: Vec::new(),
+        };
+
+        let mut content = String::new();
+        render_changes_section(&mut content, SemanticTdKind::Schema, &[&file]);
+
+        assert!(content.contains("section: schema"));
+        assert!(content.contains("section: unit-test"));
+        assert!(content.contains("Traceability metadata edge for the unit-test section."));
+    }
+
+    #[test]
+    fn source_evidence_node_falls_back_for_unclassified_source_languages() {
+        let file = SourceFile {
+            rel: "projects/lumen/build.sh".into(),
+            abs: PathBuf::from("projects/lumen/build.sh"),
+            language: "shell".into(),
+            markers: FileMarkers::default(),
+            handwrite_gaps: Vec::new(),
+        };
+
+        let node = build_source_evidence_node(&file, &[], &["source_unit".to_string()], None)
+            .expect("all in-scope source units should have evidence nodes");
+
+        assert_eq!(node.path, "projects/lumen/build.sh");
+        assert_eq!(node.layer, "source");
+        assert_eq!(node.ecosystem, "shell");
+        assert_eq!(node.section_type, "schema");
     }
 
     #[test]
