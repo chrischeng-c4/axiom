@@ -163,6 +163,12 @@ fn compress_generated_prefixed_names(source: &str) -> String {
     }
 
     let mut repls: Vec<(usize, usize, String)> = Vec::new();
+    // Track whether any replacement is a shorthand-property expansion
+    // (`{x}` -> `{x:y}`). A plain identifier->identifier rename cannot change
+    // the parse, so the validation reparse below is only needed when an
+    // expansion actually happened — otherwise it is ~40ms (react) / ~90ms (mui)
+    // of dead tree-sitter parsing on every bundle.
+    let mut structural_change = false;
     for (ti, tok) in tokens.iter().enumerate() {
         if tok.kind != TK::Ident {
             continue;
@@ -174,14 +180,14 @@ fn compress_generated_prefixed_names(source: &str) -> String {
         if should_skip_identifier_rename(source, &tokens, ti) {
             continue;
         }
-        repls.push((
-            tok.start,
-            tok.end,
-            rename_replacement(source, &tokens, ti, name, short),
-        ));
+        let repl = rename_replacement(source, &tokens, ti, name, short);
+        if repl.as_str() != short.as_str() {
+            structural_change = true;
+        }
+        repls.push((tok.start, tok.end, repl));
     }
     let out = apply_replacements(source, repls);
-    if crate::bundler::dce::js_parses_without_errors(&out) {
+    if !structural_change || crate::bundler::dce::js_parses_without_errors(&out) {
         out
     } else {
         source.to_string()
