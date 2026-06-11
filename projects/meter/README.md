@@ -95,6 +95,7 @@ one report.
 | Profile phase boundary-cost report | epic | - | implemented | verified | smoke | `cargo run -p meter-cli --bin meter -- profile --phases projects/meter/tests/fixtures/profile_phase_breakdown.json` |
 | Embedded profiler API | epic | - | implemented | verified | smoke | `cargo test -p meter performance::profiler` |
 | Benchmark regression API | epic | - | implemented | verified | smoke | `cargo test -p meter benchmark::` |
+| Capture vitals and measurement contract | change | #3 | planned | none | none | meter.toml single-knob level plus gate table driving kind=vital cpu/wall/peak-RSS findings in capture with until-exit window, opaque drive seam, and collapsed artifact |
 
 Shipped behavior:
 
@@ -160,6 +161,7 @@ Shipped behavior:
 | Cargo audit advisory detection | epic | - | out_of_scope | verified | smoke | `cargo test -p meter --test audit_trust_bug` |
 | Seeded fuzz and injection finding generation | epic | - | out_of_scope | verified | smoke | `cargo test -p meter security::` |
 | Agent-eval and legacy reporter internals | epic | - | out_of_scope | verified | smoke | `cargo test -p meter` |
+| Stress residue prune | change | #3 | planned | none | none | delete dead StressMetrics, TestType::Stress, reporter RPS table, and orphaned fuzz_http so the code stops advertising load-testing meter must not have |
 
 These modules are intentionally not listed in `meter --help`, `meter spec
 --catalog`, or `meter llm recipes`. They are compatibility code until a later
