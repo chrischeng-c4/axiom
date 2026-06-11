@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-stats-metadata-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! `/stats` is engine *metadata*, not data analytics.
 //!
 //! These tests pin the shape so callers can rely on it and so a future
@@ -153,5 +154,4 @@ async fn stats_per_field_bytes_attribute_capacity_to_the_right_field() {
         "storage.total_bytes must equal sum of per-field bytes (engine metadata, not analytics)"
     );
 }
-
-// </HANDWRITE>
+// CODEGEN-END

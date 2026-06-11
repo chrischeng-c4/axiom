@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-planner-diff-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Differential test for the query planner: for randomized corpora and every
 //! specialized query shape (term / range / boolean AND / filtered ranked search
 //! / sort-by-field), the planner's result SET must equal a brute-force
@@ -160,5 +161,4 @@ proptest! {
         }
     }
 }
-
-// </HANDWRITE>
+// CODEGEN-END

@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-properties-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Property-based tests — Contract 3 of the coverage goal.
 //!
 //! Each invariant is fuzzed with proptest over randomized
@@ -302,5 +303,4 @@ proptest! {
         }
     }
 }
-
-// </HANDWRITE>
+// CODEGEN-END

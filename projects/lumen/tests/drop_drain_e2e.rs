@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-drop-drain-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Two-phase drop + drain behavior.
 
 use std::sync::Arc;
@@ -121,5 +122,4 @@ async fn list_collections_skips_soft_deleted() {
     let ids: Vec<&str> = arr.iter().map(|v| v.as_str().unwrap()).collect();
     assert_eq!(ids, vec!["a", "c"]);
 }
-
-// </HANDWRITE>
+// CODEGEN-END
