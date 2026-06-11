@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-operator-mod-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! K8s Operator for lumen: a `Lumen` custom resource ([`crd`]) plus a reconcile
 //! loop ([`reconcile`]) that renders ([`render`]) and applies the serving fleet
 //! and NATS broker. Behind the `operator` feature so the serving image never
@@ -23,3 +24,5 @@ pub fn crd_yaml() -> String {
     use kube::CustomResourceExt;
     serde_yaml::to_string(&crd::Lumen::crd()).expect("CRD serializes")
 }
+
+// </HANDWRITE>
