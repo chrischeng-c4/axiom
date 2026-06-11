@@ -1,4 +1,5 @@
-# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-k8s-operator-kustomization-yaml" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-operator.md#deployment
+# CODEGEN-BEGIN
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -17,5 +18,4 @@ resources:
   - crd.yaml
   - rbac.yaml
   - deployment.yaml
-
-# </HANDWRITE>
+# CODEGEN-END
