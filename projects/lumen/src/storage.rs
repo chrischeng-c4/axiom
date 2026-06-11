@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-storage-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! In-memory storage and query execution.
 //!
 //! The engine is `BTreeMap`-backed inverted indexes per field,
@@ -15754,3 +15755,5 @@ mod checkpoint_engine_tests {
         }
     }
 }
+
+// </HANDWRITE>
