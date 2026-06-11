@@ -1,4 +1,5 @@
-# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-k8s-optional-consumer-kustomization-yaml" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-optional-consumer.md#deployment
+# CODEGEN-BEGIN
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -15,5 +16,4 @@ labels:
 resources:
   - deployment.yaml
   - hpa.yaml
-
-# </HANDWRITE>
+# CODEGEN-END
