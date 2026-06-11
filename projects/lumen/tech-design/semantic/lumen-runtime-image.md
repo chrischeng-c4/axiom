@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-runtime-image
 summary: Semantic coverage for "projects/lumen/runtime-image"
+capability_refs:
+  - id: "search"
+    role: primary
+    claim: "query-planner-boolean-eval-roaring-postings"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen/runtime-image`."
 fill_sections: [runtime-image, changes]
 ---
 
@@ -20,7 +26,7 @@ runtime_image:
     source_units:
       - path: "projects/lumen/Dockerfile"
         language: "dockerfile"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["runtime_image"]
         source_evidence_node:
           layer: "operations"
@@ -85,6 +91,4 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-dockerfile>"
 ```
