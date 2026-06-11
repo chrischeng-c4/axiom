@@ -379,7 +379,7 @@ self-onboards an agent with no docs site and no running server.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| security-auth | - | auditing | Optional bearer-token auth (`LUMEN_AUTH=off\|required`) with per-token role-based authorization enforced on every API route; tokens supplied out-of-band via env/Secret. TLS (rustls) binding available. | smoke, conformance | projects/lumen/tests/auth_e2e.rs; projects/lumen/tests/authz_matrix_e2e.rs |
+| security-auth | - | auditing | Optional bearer-token auth (`LUMEN_AUTH=off` or `LUMEN_AUTH=required`) with per-token role-based authorization enforced on every API route; tokens supplied out-of-band via env/Secret. TLS (rustls) binding available. | smoke, conformance | projects/lumen/tests/auth_e2e.rs; projects/lumen/tests/authz_matrix_e2e.rs |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
