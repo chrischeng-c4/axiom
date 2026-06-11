@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-api-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! End-to-end HTTP integration tests.
 //!
 //! Drives the real axum router via `axum-test::TestServer`. These tests
@@ -594,3 +595,5 @@ async fn openapi_spec_served() {
     assert!(body["paths"]["/collections/{collection_id}/search"].is_object());
     assert!(body["paths"]["/collections/{collection_id}/duplicates"].is_object());
 }
+
+// </HANDWRITE>
