@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-coverage-pass-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Coverage-driven test pass — drives the HTTP surface through every
 //! status code the engine can produce, plus a few cross-feature scenarios
 //! the per-feature tests don't hit. Pure additive; no production
@@ -476,3 +477,5 @@ async fn drop_field_requires_admin() {
         .await;
     resp.assert_status(StatusCode::FORBIDDEN);
 }
+
+// </HANDWRITE>
