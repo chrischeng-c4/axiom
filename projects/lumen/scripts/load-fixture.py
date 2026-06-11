@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-scripts-load-fixture-py" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 """Generate a synthetic lumen index fixture.
 
 Emits two files:
@@ -142,3 +143,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# </HANDWRITE>
