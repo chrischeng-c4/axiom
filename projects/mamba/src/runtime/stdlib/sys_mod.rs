@@ -707,6 +707,14 @@ pub fn register() {
     attrs.insert("version".into(),
         MbValue::from_ptr(MbObject::new_str("Mamba 0.1.0 (cclab)".to_string())));
 
+    // sys._git — CPython exposes ('CPython', branch, revision); the platform
+    // module's test helpers save/restore it.
+    attrs.insert("_git".into(), MbValue::from_ptr(MbObject::new_tuple(vec![
+        MbValue::from_ptr(MbObject::new_str("CPython".to_string())),
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+        MbValue::from_ptr(MbObject::new_str(String::new())),
+    ])));
+
     // sys.version_info — a 5-field struct sequence (named + indexed + sliced
     // + tuple-compared).
     register_struct_seq_classes();

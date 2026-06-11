@@ -104,7 +104,8 @@ fn test_platform_all_functions_return_strings() {
     use crate::runtime::stdlib::platform_mod::*;
 
     assert!(str_val(mb_platform_system()).map(|s| !s.is_empty()).unwrap_or(false));
-    assert!(str_val(mb_platform_release()).map(|s| s == "0.0.0").unwrap_or(false));
+    // release() now reports the real kernel release (uname -r).
+    assert!(str_val(mb_platform_release()).map(|s| !s.is_empty()).unwrap_or(false));
     assert!(str_val(mb_platform_machine()).map(|s| !s.is_empty()).unwrap_or(false));
     assert!(str_val(mb_platform_processor()).map(|s| !s.is_empty()).unwrap_or(false));
     assert!(str_val(mb_platform_python_version()).map(|s| s == "3.12.0").unwrap_or(false));

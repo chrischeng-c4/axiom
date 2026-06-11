@@ -230,7 +230,15 @@ pub fn mb_tuple_getitem(tup: MbValue, index: MbValue) -> MbValue {
                 super::rc::retain_if_ptr(val);
                 val
             } else {
-                MbValue::none() // IndexError
+                super::exception::mb_raise(
+                    MbValue::from_ptr(super::rc::MbObject::new_str(
+                        "IndexError".to_string(),
+                    )),
+                    MbValue::from_ptr(super::rc::MbObject::new_str(
+                        "tuple index out of range".to_string(),
+                    )),
+                );
+                MbValue::none()
             }
         } else {
             MbValue::none()

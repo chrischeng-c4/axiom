@@ -6211,6 +6211,32 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         super::stdlib::collections_mod::namedtuple_values(obj)
                     {
                         let t = MbValue::from_ptr(MbObject::new_tuple(vals));
+                        // Slice keys (res[:2], res[:]) lower to a 3-tuple
+                        // (start, stop, step) on this dynamic path — unpack
+                        // to the tuple slicer. Slice instances too.
+                        if let Some(kp) = key.as_ptr() {
+                            match &(*kp).data {
+                                super::rc::ObjData::Tuple(kitems) if kitems.len() == 3 => {
+                                    return super::tuple_ops::mb_tuple_slice_full(
+                                        t, kitems[0], kitems[1], kitems[2],
+                                    );
+                                }
+                                super::rc::ObjData::Instance { class_name: kcn, fields: kf }
+                                    if kcn == "slice" =>
+                                {
+                                    let (start, stop, step) = {
+                                        let f = kf.read().unwrap();
+                                        (
+                                            f.get("start").copied().unwrap_or_else(MbValue::none),
+                                            f.get("stop").copied().unwrap_or_else(MbValue::none),
+                                            f.get("step").copied().unwrap_or_else(MbValue::none),
+                                        )
+                                    };
+                                    return super::tuple_ops::mb_tuple_slice_full(t, start, stop, step);
+                                }
+                                _ => {}
+                            }
+                        }
                         return super::tuple_ops::mb_tuple_getitem(t, key);
                     }
                     // memoryview[i] — forward to the backing bytes/bytearray
