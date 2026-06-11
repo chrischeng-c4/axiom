@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-native-wire-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Native binary search wire.
 //!
 //! The public HTTP/JSON API remains lumen's integration surface. This module is
@@ -524,3 +525,5 @@ mod tests {
         assert_eq!(fast.hits[0].external_id, "a");
     }
 }
+
+// </HANDWRITE>
