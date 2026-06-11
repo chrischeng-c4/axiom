@@ -1,6 +1,12 @@
 ---
 id: semantic-lumen-tests
 summary: Semantic coverage for "projects/lumen/tests"
+capability_refs:
+  - id: "search"
+    role: primary
+    claim: "query-planner-boolean-eval-roaring-postings"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/lumen/tests`."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -18,7 +24,7 @@ semantic_domain:
     source_units:
       - path: "projects/lumen/tests/perf_gate_vs_db.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method", "test_case"]
         symbols:
           - name: "SEED"
@@ -149,7 +155,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/spec_cli.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "openapi_is_valid_json_with_search_path"
@@ -181,7 +187,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/drop_field_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "server"
@@ -204,7 +210,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/reindex_stream_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "server"
@@ -230,7 +236,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/coverage_gaps_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "server"
@@ -280,7 +286,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/api_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "server"
@@ -351,7 +357,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/disk_format_bench.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method", "test_case"]
         symbols:
           - name: "Lcg"
@@ -383,7 +389,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/hash_hamming.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "spec"
@@ -421,7 +427,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/properties.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "eid_strategy"
@@ -453,7 +459,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/vector_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method", "test_case"]
         symbols:
           - name: "server"
@@ -497,7 +503,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/backup_restore_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "server"
@@ -517,7 +523,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/nats_cluster_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "nats_url"
@@ -549,7 +555,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/auth_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "auth_server"
@@ -587,7 +593,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/write_qps.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "enum_model", "service_method", "test_case"]
         symbols:
           - name: "DEFAULT_WARMUP_S"
@@ -718,7 +724,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/hnsw_ef_recall.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method", "test_case"]
         symbols:
           - name: "DIM"
@@ -765,7 +771,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/planner_diff.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["data_model", "service_method", "test_case"]
         symbols:
           - name: "fieldspec"
@@ -794,7 +800,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/coverage_pass_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "server"
@@ -877,7 +883,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/disk_scale_proof.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "data_model", "service_method", "test_case"]
         symbols:
           - name: "procmem"
@@ -960,7 +966,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/collapse_nested.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "spec"
@@ -998,7 +1004,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/drop_drain_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "server_with_engine"
@@ -1027,7 +1033,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/wal_nats_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "nats_url"
@@ -1065,7 +1071,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/hybrid_rrf.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "server"
@@ -1085,7 +1091,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/operator_render.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "lumen"
@@ -1138,7 +1144,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/stats_metadata_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "server"
@@ -1164,7 +1170,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/authz_matrix_e2e.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["config_surface", "service_method", "test_case"]
         symbols:
           - name: "READER"
@@ -1202,7 +1208,7 @@ semantic_domain:
           domain: "projects/lumen/tests"
       - path: "projects/lumen/tests/perf_gate.rs"
         language: "rust"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["service_method", "test_case"]
         symbols:
           - name: "schema"
@@ -1284,206 +1290,158 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-perf-gate-vs-db-rs>"
   - path: "projects/lumen/tests/spec_cli.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-spec-cli-rs>"
   - path: "projects/lumen/tests/drop_field_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-drop-field-e2e-rs>"
   - path: "projects/lumen/tests/reindex_stream_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-reindex-stream-e2e-rs>"
   - path: "projects/lumen/tests/coverage_gaps_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-coverage-gaps-e2e-rs>"
   - path: "projects/lumen/tests/api_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-api-e2e-rs>"
   - path: "projects/lumen/tests/disk_format_bench.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-disk-format-bench-rs>"
   - path: "projects/lumen/tests/hash_hamming.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-hash-hamming-rs>"
   - path: "projects/lumen/tests/properties.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-properties-rs>"
   - path: "projects/lumen/tests/vector_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-vector-e2e-rs>"
   - path: "projects/lumen/tests/backup_restore_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-backup-restore-e2e-rs>"
   - path: "projects/lumen/tests/nats_cluster_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-nats-cluster-e2e-rs>"
   - path: "projects/lumen/tests/auth_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-auth-e2e-rs>"
   - path: "projects/lumen/tests/write_qps.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-write-qps-rs>"
   - path: "projects/lumen/tests/hnsw_ef_recall.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-hnsw-ef-recall-rs>"
   - path: "projects/lumen/tests/planner_diff.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-planner-diff-rs>"
   - path: "projects/lumen/tests/coverage_pass_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-coverage-pass-e2e-rs>"
   - path: "projects/lumen/tests/disk_scale_proof.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-disk-scale-proof-rs>"
   - path: "projects/lumen/tests/collapse_nested.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-collapse-nested-rs>"
   - path: "projects/lumen/tests/drop_drain_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-drop-drain-e2e-rs>"
   - path: "projects/lumen/tests/wal_nats_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-wal-nats-e2e-rs>"
   - path: "projects/lumen/tests/hybrid_rrf.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-hybrid-rrf-rs>"
   - path: "projects/lumen/tests/operator_render.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-operator-render-rs>"
   - path: "projects/lumen/tests/stats_metadata_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-stats-metadata-e2e-rs>"
   - path: "projects/lumen/tests/authz_matrix_e2e.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-authz-matrix-e2e-rs>"
   - path: "projects/lumen/tests/perf_gate.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:projects-lumen-tests-perf-gate-rs>"
+  - action: annotate
+    section: unit-test
+    impl_mode: hand-written
+    description: "Traceability metadata edge for the unit-test section."
 ```
