@@ -2181,7 +2181,7 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
             .find(|unit| unit.path == file.rel)
             .map(|unit| unit.generator_primitives.clone())
             .unwrap_or_default();
-        if covered && file.markers.handwrite {
+        if covered && file.markers.handwrite && has_executable_generator_promotion(file) {
             let primitive = primitives
                 .first()
                 .cloned()
@@ -8676,10 +8676,13 @@ fn promote_generator_primitive(
         return promote_frontend_generator_primitive(project_root, inventory);
     }
     if target.language != "python" && !is_operations_language(&target.language) {
-        bail!(
-            "generator primitive promotion for '{}' is not executable yet; only Python and operations artifacts are supported by the current emitters",
-            action.target
-        );
+        return Ok(ActionOutcome {
+            changed_paths: Vec::new(),
+            message: format!(
+                "kept {} HANDWRITE; no deterministic generator primitive emitter exists yet",
+                action.target
+            ),
+        });
     }
 
     let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
@@ -8935,6 +8938,15 @@ fn is_rust_mixed_source_promotable_file(file: &SourceFile) -> bool {
         && file.markers.codegen
         && file.markers.handwrite
         && !is_rust_test_promotable_file(file)
+}
+
+fn has_executable_generator_promotion(file: &SourceFile) -> bool {
+    file.language == "python"
+        || is_operations_language(&file.language)
+        || is_frontend_promotable_file(file)
+        || is_rust_test_promotable_file(file)
+        || is_rust_mixed_source_promotable_file(file)
+        || is_rust_source_promotable_file(file)
 }
 
 fn codegen_replay_supported(file: &SourceFile) -> bool {
@@ -12878,6 +12890,32 @@ target = "python"
         assert_eq!(node.layer, "source");
         assert_eq!(node.ecosystem, "shell");
         assert_eq!(node.section_type, "schema");
+    }
+
+    #[test]
+    fn semantic_coverage_does_not_queue_unsupported_handwrite_promotion() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "projects/lumen/build.sh",
+            "# <HANDWRITE gap=\"standardize:shell\" tracker=\"shell\" reason=\"r\">\n#!/usr/bin/env bash\ncargo build -p lumen\n# </HANDWRITE>\n",
+        );
+        write(
+            tmp.path(),
+            "projects/lumen/tech-design/semantic/lumen-projects-lumen.md",
+            "---\nid: semantic-lumen-projects-lumen\nfill_sections: [schema, unit-test, changes]\n---\n\n## Schema\n<!-- type: schema lang: yaml -->\n\n```yaml\nsemantic_domain:\n  coverage_kind: semantic\n  evidence:\n    source_units:\n      - path: \"projects/lumen/build.sh\"\n        language: shell\n        source_evidence_node:\n          layer: source\n          ecosystem: shell\n          role: source\n          section_type: schema\n          domain: projects/lumen\n```\n\n## Unit Test\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n---\nid: unit-test\n---\nrequirementDiagram\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\ncoverage_kind: semantic\nchanges:\n  - path: \"projects/lumen/build.sh\"\n    action: modify\n    section: schema\n    impl_mode: hand-written\n  - action: annotate\n    section: unit-test\n    impl_mode: hand-written\n```\n",
+        );
+
+        let inventory = build_inventory(tmp.path(), &["projects/lumen/**".into()], None, false)
+            .expect("inventory should build");
+        let coverage =
+            build_semantic_coverage(tmp.path(), &inventory).expect("semantic coverage builds");
+
+        assert_eq!(coverage.percent, 100.0);
+        assert!(coverage
+            .generator_primitive_gaps
+            .iter()
+            .all(|gap| { gap.target != "projects/lumen/build.sh" }));
     }
 
     #[test]
