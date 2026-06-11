@@ -286,3 +286,21 @@ requirementDiagram
     test_collapsed_artifact - verifies -> R5
     inspect_residue_grep - verifies -> R6
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** needs-revision
+
+- [logic] vitals-only runs must not pass through stack folding: edges route `want_stacks --no--> has_drive` but both wait nodes feed `fold_stacks -> write_collapsed` unconditionally, so a `level=vitals` run (no sampler attached) would fold stacks and write a collapsed artifact it cannot have. Add a post-window decision (sampler attached?) so the vitals path goes straight to `read_vitals`.
+- [config] applicable and consistent with the charter (single knob plus optional gate, no traffic keys); no change required.
+- [cli] applicable; flags match the config contract and the no-load-flags constraint; no change required.
+- [unit-test] applicable; R1-R6 cover the acceptance criteria including the residue prune inspection; no change required.
+
+### Review 2
+**Verdict:** approved
+
+- [logic] revision verified: `sampler_on` post-window decision added; the vitals path now goes `wait_* -> sampler_on --no--> read_vitals`, and fold/collapsed only run when the sampler was attached. Flow matches the charter (observe one spawned process; driver opaque; no load generation).
+- [config] unchanged and correct: single `level` knob plus optional `[gate]` with only per-project ceilings; explicit prohibition on latency-percentile keys.
+- [cli] unchanged and correct: precedence, until-exit window, --drive opacity, hooks/deep not-yet-implemented error, and the no-load-flags constraint are all encoded.
+- [unit-test] unchanged and correct: R1-R6 map one verification element per acceptance criterion including the R6 residue-prune inspection.
