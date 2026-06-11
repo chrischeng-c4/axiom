@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-reindex-stream-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! `POST /collections/{id}/reindex/stream` — NDJSON in, NDJSON out.
 
 use std::sync::Arc;
@@ -157,3 +158,5 @@ async fn stream_requires_write_role_under_auth() {
         .await;
     resp.assert_status_forbidden();
 }
+
+// </HANDWRITE>
