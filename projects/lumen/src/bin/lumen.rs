@@ -1,4 +1,5 @@
-// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-bin-lumen-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-bin.md#schema
+// CODEGEN-BEGIN
 //! `lumen` — the unified CLI. Today it has one subcommand, `serve`,
 //! which runs a serving node.
 //!
@@ -727,5 +728,4 @@ fn init_otel_meter(
     opentelemetry::global::set_meter_provider(provider);
     Ok(())
 }
-
-// </HANDWRITE>
+// CODEGEN-END
