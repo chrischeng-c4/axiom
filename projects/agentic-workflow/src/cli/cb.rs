@@ -1196,6 +1196,33 @@ fn scope_root_from_pattern(pattern: &str) -> &str {
         .trim_end_matches('/')
 }
 
+fn should_skip_force_regen_scan_dir(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    matches!(
+        name,
+        ".aw"
+            | ".git"
+            | ".hg"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".ruff_cache"
+            | ".tox"
+            | ".venv"
+            | "__pycache__"
+            | "build"
+            | "coverage"
+            | "dist"
+            | "e2e-results"
+            | "node_modules"
+            | "playwright-report"
+            | "target"
+            | "test-results"
+            | "venv"
+    )
+}
+
 fn collect_force_regen_specs(
     cwd: &std::path::Path,
     scope: &ForceRegenScope,
@@ -1224,11 +1251,20 @@ fn collect_spec_managed_refs(
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if should_skip_force_regen_scan_dir(&path) {
+                continue;
+            }
             collect_spec_managed_refs(cwd, td_root, &path, out)?;
             continue;
         }
-        collect_spec_managed_refs_from_file(cwd, td_root, &path, out);
+        if file_type.is_file() {
+            collect_spec_managed_refs_from_file(cwd, td_root, &path, out);
+        }
     }
     Ok(())
 }
@@ -1273,8 +1309,18 @@ fn collect_force_regen_specs_from_td_changes_inner(
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if should_skip_force_regen_scan_dir(&path) {
+                continue;
+            }
             collect_force_regen_specs_from_td_changes_inner(cwd, scope, &path, out)?;
+            continue;
+        }
+        if !file_type.is_file() {
             continue;
         }
         if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
@@ -1345,7 +1391,15 @@ fn collect_canonical_spec_refs_by_target_inner(
     if path.is_dir() {
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
-            collect_canonical_spec_refs_by_target_inner(cwd, td_root, &entry.path(), refs)?;
+            let child = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() && should_skip_force_regen_scan_dir(&child) {
+                continue;
+            }
+            collect_canonical_spec_refs_by_target_inner(cwd, td_root, &child, refs)?;
         }
         return Ok(());
     }
@@ -3100,6 +3154,38 @@ paths = ["examples/fixture_platform/backend/**"]
                 td_root.join("interfaces/src/schema.md")
             ]
         );
+    }
+
+    #[test]
+    fn cb_gen_force_regen_skips_dependency_dirs_under_project_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let td_root = root.join("tech-design");
+        let source_root = root.to_path_buf();
+        std::fs::create_dir_all(&td_root).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(td_root.join("app.md"), "# app\n").unwrap();
+        std::fs::write(td_root.join("dependency.md"), "# dependency\n").unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "// SPEC-MANAGED: tech-design/app.md#source\n// CODEGEN-BEGIN\n// CODEGEN-END\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("node_modules/pkg/index.ts"),
+            "// SPEC-MANAGED: tech-design/dependency.md#source\n// CODEGEN-BEGIN\n// CODEGEN-END\n",
+        )
+        .unwrap();
+
+        let scope = ForceRegenScope {
+            td_root: td_root.clone(),
+            source_roots: vec![source_root],
+        };
+        let mut specs = Vec::new();
+        collect_force_regen_specs(root, &scope, &mut specs).unwrap();
+
+        assert_eq!(specs, vec![td_root.join("app.md")]);
     }
 
     #[test]
