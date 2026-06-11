@@ -136,3 +136,11 @@ requirementDiagram
     ec_binding_command_rejects_unknown_tool_and_missing_arg - verifies -> R3
     resolve_ec_command_dispatches_bound_category - verifies -> R4
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] contract-complete: `EcBinding::command()` has a deterministic vat branch, uses `dir` only as an optional runner id, preserves existing arena/rig/meter behavior, and reports unknown tools with the supported-tool set.
+- [unit-test] contract-complete: Rust tests are named and mapped to the new vat default, vat named-runner, unknown-tool, and manifest-fallback assertions.
