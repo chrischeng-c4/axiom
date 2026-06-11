@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-operator-crd-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! The `Lumen` custom resource (`lumen.dev/v1alpha1`).
 //!
 //! One `Lumen` object declares a full deployment: a stateless, autoscaled
@@ -274,3 +275,5 @@ fn default_nats_cpu() -> String {
 fn default_nats_memory() -> String {
     "1Gi".into()
 }
+
+// </HANDWRITE>
