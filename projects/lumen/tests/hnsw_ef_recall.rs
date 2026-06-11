@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-hnsw-ef-recall-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! CPU HNSW recall@10 + latency sweep vs brute-force ground truth.
 //!
 //! Validates the kNN bottleneck fix: lowering search-`ef` from 512 and (after
@@ -154,3 +155,5 @@ fn hnsw_ef_recall_latency_sweep() {
     }
     println!();
 }
+
+// </HANDWRITE>
