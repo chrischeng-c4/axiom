@@ -116,7 +116,8 @@ pub use ts_runner::{NpmAuditResult, TsRunner, TsRunnerConfig, TsRunnerResult, V8
 // Re-export the agent-first report envelope + finding surface.
 pub use report::{
     catalog, json_schema, Completion, EnvBlock, Finding, FindingsSummary, IntoFindings, Invoke,
-    Kind, Location, OverallStatus, MeterReport, ReportBuilder, RunnerRecord, Severity, SCHEMA_VERSION,
+    Kind, Location, MeterReport, OverallStatus, ReportBuilder, RunnerRecord, Severity,
+    SCHEMA_VERSION,
 };
 // CODEGEN-END
 

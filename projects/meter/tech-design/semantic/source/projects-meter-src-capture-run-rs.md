@@ -70,6 +70,7 @@ use crate::report::producer::IntoFindings;
 /// sub-verb can be pruned with its `skip_*` flag; a pruned or un-driven sub-verb
 /// is recorded in `completion.missing` with a human reason.
 #[derive(Debug, Clone, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-run-rs.md#source
 pub struct RunOptions {
     /// The crate path the delegated/resource sub-verbs operate on.
     pub target: String,
@@ -85,8 +86,14 @@ pub struct RunOptions {
     pub profile_bin: Option<String>,
     /// `profile` runs only when a `--profile-example` is supplied here.
     pub profile_example: Option<String>,
-    /// Sampling duration (seconds) for the `profile` sub-verb.
-    pub profile_duration: u64,
+    /// Instrumentation level for the `profile` sub-verb (CLI > meter.toml in
+    /// the target dir > built-in `vitals`).
+    pub level: Option<String>,
+    /// Opaque driver command bounding the `profile` window (its exit ends the
+    /// window; never interpreted).
+    pub drive: Option<String>,
+    /// Optional cap (seconds) on the `profile` window; `None` = until exit.
+    pub profile_duration_cap: Option<u64>,
     /// Whether the delegated `test` runner should prefer nextest.
     pub nextest_present: bool,
 }
@@ -97,6 +104,7 @@ pub struct RunOptions {
 /// sub-findings; the test child's exit is recorded in `last_run` but never
 /// forwarded (so a regression outranks a test failure per §4). Un-run sub-verbs
 /// are listed in `completion.missing`.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-run-rs.md#source
 pub fn run_sweep(opts: &RunOptions) -> MeterReport {
     let mut builder = ReportBuilder::new("run", opts.target.clone());
     builder.with_environment(EnvBlock::detect());
@@ -184,10 +192,15 @@ fn profile_target_missing(opts: &RunOptions) -> Option<String> {
     }
 }
 
-/// Run the `profile` sub-verb (capture-mode sampler) and fold its hot spots.
+/// Run the `profile` sub-verb under the single-knob measurement contract:
+/// resolve the level (CLI > meter.toml in the target dir > default `vitals`),
+/// run one capture window (until-exit / cap / driver lifetime), and fold the
+/// `vital` findings (plus ranked hot spots at level `sample`). meter.toml
+/// `[gate]` ceilings adjudicate via High findings on the worst-wins ladder.
 fn run_profile_sub(opts: &RunOptions, builder: &mut ReportBuilder) {
     use super::fold;
-    use super::sampler::{self, Target};
+    use super::sampler::Target;
+    use super::vitals::{self, Level};
 
     let target = if let Some(bin) = &opts.profile_bin {
         Target::Bin(bin.clone())
@@ -198,22 +211,79 @@ fn run_profile_sub(opts: &RunOptions, builder: &mut ReportBuilder) {
         builder.add_missing("profile: no --profile-bin/--profile-example given");
         return;
     };
-    let duration = if opts.profile_duration == 0 {
-        3
-    } else {
-        opts.profile_duration
+
+    // The measurement contract lives with the measured project (the --target dir).
+    let config = match vitals::MeterConfig::load(std::path::Path::new(&opts.target)) {
+        Ok(c) => c,
+        Err(e) => {
+            builder.add_missing(format!("profile: {e}"));
+            return;
+        }
     };
-    match sampler::sample_target(&target, &[], duration, None) {
-        Ok(run) => {
-            // Hot spots are informational by default (no --fail-hot in the
-            // composite), so they are Info findings and never move the status
-            // off Clean on their own — but they ARE folded into the report.
-            let findings = fold::fold_hotspots(&run.stacks, run.effective_hz, None);
-            builder.add_findings(findings);
+    let cli_level = match opts.level.as_deref().map(Level::parse).transpose() {
+        Ok(l) => l,
+        Err(e) => {
+            builder.add_missing(format!("profile: {e}"));
+            return;
+        }
+    };
+    let level = vitals::resolve_level(cli_level, config.as_ref());
+    match level {
+        Level::Off => {
+            builder.add_missing("profile: level off (no measurement requested)");
+            return;
+        }
+        Level::Hooks | Level::Deep => {
+            builder.add_missing(format!(
+                "profile: level {} not implemented yet (meter L3/L4 instrumentation epic, WI #4)",
+                level.as_str()
+            ));
+            return;
+        }
+        Level::Vitals | Level::Sample => {}
+    }
+    let gate = config.map(|c| c.gate).unwrap_or_default();
+
+    let wopts = vitals::WindowOpts {
+        attach_sampler: level >= Level::Sample,
+        duration_cap_secs: opts.profile_duration_cap,
+        drive: opts.drive.clone(),
+        hz: None,
+    };
+    match vitals::capture_window(&target, &[], &wopts) {
+        Ok(outcome) => {
+            let escalate = format!(
+                "meter run --target {} {} --level sample",
+                opts.target,
+                if let Some(b) = &opts.profile_bin {
+                    format!("--profile-bin {b}")
+                } else {
+                    format!(
+                        "--profile-example {}",
+                        opts.profile_example.as_deref().unwrap_or("<target>")
+                    )
+                }
+            );
+            builder.add_findings(vitals::vitals_findings(
+                &outcome.vitals,
+                &target.label(),
+                &gate,
+                &escalate,
+            ));
+            if let Some(run) = &outcome.sample {
+                // Hot spots are informational by default (no --fail-hot in the
+                // composite), so they are Info findings and never move the
+                // status off Clean on their own — but they ARE folded in.
+                let findings = fold::fold_hotspots(&run.stacks, run.effective_hz, None);
+                builder.add_findings(findings);
+                if let Err(e) = vitals::write_collapsed(&run.stacks, &target.label()) {
+                    builder.add_missing(format!("profile: collapsed artifact not written ({e})"));
+                }
+            }
         }
         Err(e) => {
             // Soft: no sampler / un-spawnable target => record the gap, keep going.
-            builder.add_missing(format!("profile: sampler unavailable ({e})"));
+            builder.add_missing(format!("profile: capture unavailable ({e})"));
         }
     }
 }
@@ -323,7 +393,6 @@ mod tests {
         // The agent prompt surfaces the coverage gaps.
         assert!(report.agent_prompt.contains("coverage gaps"));
     }
-
 }
 ````
 

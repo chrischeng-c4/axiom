@@ -36,6 +36,7 @@ jwalk.workspace = true
 tracing.workspace = true
 rand = "0.8"
 libc = "0.2"
+toml = "0.8"
 
 # Flamegraph generation
 inferno = "0.12"

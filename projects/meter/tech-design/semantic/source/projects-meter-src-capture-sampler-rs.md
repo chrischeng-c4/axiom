@@ -396,7 +396,8 @@ fn sample_linux(
 ///
 /// Uses `cargo build --message-format=json` and reads the last
 /// `compiler-artifact` message that carries an `executable` path for the target.
-fn resolve_target_exec(target: &Target) -> Result<PathBuf, SampleError> {
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
+pub(crate) fn resolve_target_exec(target: &Target) -> Result<PathBuf, SampleError> {
     let mut build = Command::new("cargo");
     match target {
         Target::Bin(name) => {
@@ -465,7 +466,11 @@ fn last_executable_artifact(json_stream: &str) -> Option<String> {
 
 /// Spawn the workload executable directly (stdout/stderr discarded) so the
 /// sampled PID is the workload.
-fn spawn_exec(exec: &std::path::Path, extra_args: &[String]) -> Result<Child, SampleError> {
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
+pub(crate) fn spawn_exec(
+    exec: &std::path::Path,
+    extra_args: &[String],
+) -> Result<Child, SampleError> {
     let mut cmd = Command::new(exec);
     cmd.args(extra_args);
     cmd.stdin(Stdio::null());
@@ -676,8 +681,9 @@ fn self_counts(norm: &[(usize, u64, &str)]) -> Vec<u64> {
 /// (`comm pid ... cycles:`) followed by indented frame lines (`<addr> sym (mod)`),
 /// innermost-first; a blank line separates samples. We reverse to root-first and
 /// count one self sample per leaf stack.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 #[cfg(target_os = "linux")]
-fn parse_perf_script(text: &str) -> Vec<FoldedStack> {
+pub(crate) fn parse_perf_script(text: &str) -> Vec<FoldedStack> {
     use std::collections::HashMap;
     let mut counts: HashMap<Vec<String>, u64> = HashMap::new();
     let mut current: Vec<String> = Vec::new();
@@ -712,9 +718,10 @@ fn parse_perf_script(text: &str) -> Vec<FoldedStack> {
         .collect()
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-sampler-rs.md#source
 #[cfg(not(target_os = "linux"))]
 #[allow(dead_code)]
-fn parse_perf_script(_text: &str) -> Vec<FoldedStack> {
+pub(crate) fn parse_perf_script(_text: &str) -> Vec<FoldedStack> {
     Vec::new()
 }
 

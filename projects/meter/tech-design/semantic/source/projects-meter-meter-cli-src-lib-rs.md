@@ -52,15 +52,17 @@ Public API manifest for `projects/meter/meter-cli/src/lib.rs` generated from AST
 
 pub mod dispatch;
 
-pub use dispatch::{dispatch, print_report, Dispatched, OutputOpts, MeterCommand, Verb};
+pub use dispatch::{dispatch, print_report, Dispatched, MeterCommand, OutputOpts, Verb};
 
 use cclab_cli_registry::{CliModule, CLI_MODULES};
 use clap::{ArgMatches, CommandFactory, FromArgMatches};
 use linkme::distributed_slice;
 
 /// The `meter` CLI module: name, clap command tree, and execute hook.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-lib-rs.md#source
 pub struct MeterCli;
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-lib-rs.md#source
 impl CliModule for MeterCli {
     fn name(&self) -> &'static str {
         "meter"

@@ -11,6 +11,8 @@ run and emits agent-readable findings.
 Current public scope:
 
 - CPU hot spots from capture-mode sampling.
+- Per-run process vitals (cpu_time / wall_time / peak RSS) with declarative
+  meter.toml gates (`level` knob + `[gate]` ceilings).
 - Phase and boundary cost from embedded measurement data.
 - Benchmark regression folding from saved baselines.
 - Delegated test failure packaging, without replacing the test runner.
@@ -18,7 +20,7 @@ Current public scope:
 
 Planned resource scope:
 
-- Memory/RSS and leak growth.
+- Leak growth over time (peak RSS per run shipped via capture vitals).
 - IO, disk, network, and GPU attribution.
 - AST-assisted probe placement so agents can request finer measurement without
   hand-editing product code.
@@ -95,12 +97,20 @@ one report.
 | Profile phase boundary-cost report | epic | - | implemented | verified | smoke | `cargo run -p meter-cli --bin meter -- profile --phases projects/meter/tests/fixtures/profile_phase_breakdown.json` |
 | Embedded profiler API | epic | - | implemented | verified | smoke | `cargo test -p meter performance::profiler` |
 | Benchmark regression API | epic | - | implemented | verified | smoke | `cargo test -p meter benchmark::` |
-| Capture vitals and measurement contract | change | #3 | planned | none | none | meter.toml single-knob level plus gate table driving kind=vital cpu/wall/peak-RSS findings in capture with until-exit window, opaque drive seam, and collapsed artifact |
+| Capture vitals and measurement contract | change | #3 | implemented | verified | smoke | `cargo test -p meter capture::vitals` |
 
 Shipped behavior:
 
-- `meter profile --bin|--example|--bench|--exec <target>` samples CPU stacks and
-  emits ranked `Finding{kind:hotspot}` evidence.
+- `meter profile --bin|--example|--bench|--exec <target>` measures under the
+  single-knob contract: level `vitals` (default) emits `Finding{kind:vital}`
+  (cpu_time_ms / wall_time_ms / peak_rss_bytes via wait4+rusage, no sampler);
+  level `sample` adds ranked `Finding{kind:hotspot}` evidence plus a
+  `.meter/<target>.collapsed` artifact. The window lasts until the child exits
+  (`--duration-cap` bounds it; `--drive <cmd>` runs an opaque driver whose exit
+  ends the window — meter never generates load). meter.toml `[gate]` ceilings
+  (max_peak_rss_mb / max_cpu_time_ms) breach as High findings (exit 1) with an
+  escalation prompt to `--level sample`. Levels `hooks`/`deep` parse but defer
+  to the L3/L4 instrumentation epic (WI #4).
 - `meter profile --phases <file>` reads a serialized `PhaseBreakdown` and emits
   `Finding{kind:boundary_cost}` without sampler privileges.
 - `meter bench --target <crate> --baseline <file>` folds benchmark regressions
@@ -110,8 +120,8 @@ Shipped behavior:
 
 Known limits:
 
-- CLI capture currently focuses on CPU and benchmark regressions.
-- Memory/RSS, IO, disk, GPU, network, and leak detection are not public gates yet.
+- IO, disk, GPU, network, and leak detection are not public gates yet
+  (cpu_time / wall / peak RSS are, via meter.toml `[gate]`).
 - Whole-crate auto-discovery is not wired; profile needs an explicit target.
 
 ### Agent Use First CLI
@@ -161,7 +171,7 @@ Shipped behavior:
 | Cargo audit advisory detection | epic | - | out_of_scope | verified | smoke | `cargo test -p meter --test audit_trust_bug` |
 | Seeded fuzz and injection finding generation | epic | - | out_of_scope | verified | smoke | `cargo test -p meter security::` |
 | Agent-eval and legacy reporter internals | epic | - | out_of_scope | verified | smoke | `cargo test -p meter` |
-| Stress residue prune | change | #3 | planned | none | none | delete dead StressMetrics, TestType::Stress, reporter RPS table, and orphaned fuzz_http so the code stops advertising load-testing meter must not have |
+| Stress residue prune | change | #3 | implemented | verified | smoke | `cargo test -p meter` |
 
 These modules are intentionally not listed in `meter --help`, `meter spec
 --catalog`, or `meter llm recipes`. They are compatibility code until a later
