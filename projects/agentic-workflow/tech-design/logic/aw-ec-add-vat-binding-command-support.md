@@ -22,35 +22,34 @@ id: aw-ec-vat-binding-command
 entry: start
 nodes:
   start: { kind: start, label: "EcBinding::command()" }
-  branch: { kind: decision, label: "binding.tool" }
-  arena: { kind: process, label: "arena: require spec, emit arena run --spec <spec>" }
-  rig: { kind: process, label: "rig: require dir, emit rig run --dir <dir>" }
-  meter: { kind: process, label: "meter: require meter, emit meter run --target <meter>" }
-  vat_runner: { kind: decision, label: "vat binding has dir runner id?" }
-  vat_named: { kind: terminal, label: "emit vat run <dir>" }
-  vat_default: { kind: terminal, label: "emit vat run" }
-  unknown: { kind: terminal, label: "error: expected arena|rig|meter|vat" }
+  branch: { kind: decision, label: "binding.tool.as_str()" }
+  arena: { kind: process, label: "require spec; return arena run --spec <spec>" }
+  rig: { kind: process, label: "require dir; return rig run --dir <dir>" }
+  meter: { kind: process, label: "require meter; return meter run --target <meter>" }
+  vat_runner: { kind: decision, label: "self.dir has non-empty runner id?" }
+  vat_named: { kind: terminal, label: "return vat run <runner>" }
+  vat_default: { kind: terminal, label: "return vat run" }
+  unknown: { kind: terminal, label: "bail unknown ec binding tool; expected arena|rig|meter|vat" }
 edges:
   - { from: start, to: branch }
   - { from: branch, to: arena, label: "arena" }
   - { from: branch, to: rig, label: "rig" }
   - { from: branch, to: meter, label: "meter" }
   - { from: branch, to: vat_runner, label: "vat" }
-  - { from: vat_runner, to: vat_named, label: "yes" }
-  - { from: vat_runner, to: vat_default, label: "no" }
+  - { from: vat_runner, to: vat_named, label: "Some(dir) and not blank" }
+  - { from: vat_runner, to: vat_default, label: "None or blank" }
   - { from: branch, to: unknown, label: "other" }
 ---
 flowchart TD
-  start([EcBinding::command]) --> branch{binding.tool}
+  start([EcBinding::command]) --> branch{tool}
   branch -->|arena| arena[require spec; arena run --spec]
   branch -->|rig| rig[require dir; rig run --dir]
   branch -->|meter| meter[require meter; meter run --target]
-  branch -->|vat| vat_runner{dir runner id present?}
-  vat_runner -->|yes| vat_named([vat run runner])
-  vat_runner -->|no| vat_default([vat run])
-  branch -->|other| unknown([error: expected arena|rig|meter|vat])
+  branch -->|vat| vat_runner{dir runner id?}
+  vat_runner -->|present| vat_named([vat run runner])
+  vat_runner -->|absent| vat_default([vat run])
+  branch -->|other| unknown([error expected arena|rig|meter|vat])
 ```
-
 ## Unit Test
 <!-- type: unit-test lang: mermaid -->
 
