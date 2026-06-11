@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-src-rdb-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! RDB — point-in-time snapshots of the materialized index, tagged with
 //! the WAL sequence they correspond to.
 //!
@@ -251,3 +252,5 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+// </HANDWRITE>
