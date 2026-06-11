@@ -33,6 +33,13 @@ fn extract_str(v: MbValue) -> Option<String> {
     })
 }
 
+/// Public field setter over an Instance MbValue (typing TypeVar kwargs).
+pub fn instance_field_set_pub(inst: MbValue, name: &str, value: MbValue) {
+    if let Some(ptr) = inst.as_ptr() {
+        instance_field_set(ptr, name, value);
+    }
+}
+
 fn instance_field_set(inst: *mut MbObject, name: &str, value: MbValue) {
     unsafe {
         if let ObjData::Instance { ref fields, .. } = (*inst).data {

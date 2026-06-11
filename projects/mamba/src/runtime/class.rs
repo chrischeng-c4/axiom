@@ -2031,6 +2031,48 @@ fn is_array_unbound_method(name: &str) -> bool {
 /// Get an attribute from an instance (checks instance fields, then class methods via MRO).
 /// Falls back to `__getattr__` dunder if normal lookup fails.
 pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
+    // Unbound-method wrappers (Cls.method): function attributes set by
+    // decorators (@typing.override → __override__) live in the FUNC_ATTRS
+    // registry keyed by the underlying method value — resolve through it.
+    if let (Some(ptr), Some(attr_name)) = (obj.as_ptr(), extract_str(attr)) {
+        unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "__unbound_method__"
+                    && attr_name != "__method__"
+                    && attr_name != "__type__"
+                    && attr_name != "__name__"
+                {
+                    let (ty, m) = {
+                        let f = fields.read().unwrap();
+                        (
+                            f.get("__type__").copied().and_then(extract_str),
+                            f.get("__method__").copied().and_then(extract_str),
+                        )
+                    };
+                    if let (Some(ty), Some(m)) = (ty, m) {
+                        let method = lookup_method(&ty, &m);
+                        if !method.is_none() {
+                            let (actual, _) = unwrap_descriptor_method(method);
+                            if let Some(v) = super::pep695::func_attrs_get(actual, &attr_name) {
+                                return v;
+                            }
+                            if attr_name == "__override__" || attr_name == "__final__" {
+                                super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str(
+                                        "AttributeError".to_string(),
+                                    )),
+                                    MbValue::from_ptr(MbObject::new_str(format!(
+                                        "'function' object has no attribute '{attr_name}'"
+                                    ))),
+                                );
+                                return MbValue::none();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     // Typed native wrappers are raw `Box<T>` pointers, not `MbObject`s.
     // Dispatch them through registered getters before any fast path deref.
     if let Some(type_name) = native_type_name_for(obj) {
@@ -4847,6 +4889,10 @@ pub fn mb_lookup_dunder(obj: MbValue, name: MbValue) -> MbValue {
 
 /// isinstance(obj, class_name) → bool
 pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
+    // typing.Union[...] aliases: any member matching counts (#22).
+    if let Some(hit) = super::stdlib::typing_mod::typing_union_isinstance(obj, class_name) {
+        return MbValue::from_bool(hit);
+    }
     // Handle tuple of types: isinstance(x, (A, B, C))
     if let Some(ptr) = class_name.as_ptr() {
         unsafe {
@@ -6126,6 +6172,37 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     return super::bytes_ops::mb_bytes_getitem(obj, key);
                 }
                 super::rc::ObjData::Instance { ref class_name, ref fields } => {
+                    // Builtin type objects: PEP 585 generics subscript into
+                    // aliases (list[int]); non-generic scalars raise (#22).
+                    if class_name == "type" {
+                        let tn = fields.read().unwrap().get("__name__").copied()
+                            .and_then(extract_str)
+                            .unwrap_or_default();
+                        match tn.as_str() {
+                            "list" | "dict" | "set" | "frozenset" | "tuple" | "type" => {
+                                return super::stdlib::typing_mod::pep585_subscript(obj, key);
+                            }
+                            "int" | "float" | "str" | "bool" | "bytes" | "complex"
+                            | "bytearray" | "range" | "NoneType" => {
+                                super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                    MbValue::from_ptr(MbObject::new_str(format!(
+                                        "type '{tn}' is not subscriptable"
+                                    ))),
+                                );
+                                return MbValue::none();
+                            }
+                            _ => {}
+                        }
+                    }
+                    // typing special forms subscript into normalized alias
+                    // objects: Union[int, str], Optional[int], List[int] (#22).
+                    if class_name == "typing.SpecialForm" {
+                        let name = fields.read().unwrap().get("_name").copied()
+                            .and_then(extract_str)
+                            .unwrap_or_default();
+                        return super::stdlib::typing_mod::special_form_subscript(&name, key);
+                    }
                     // namedtuple instances: int / slice indexing dispatches via
                     // an ephemeral tuple of the ordered field values so the
                     // existing tuple_ops paths handle bounds, negatives, and
@@ -7217,6 +7294,11 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
                 if class_name == "type" {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
+                }
+                // typing.NewType wrappers are identity callables.
+                if class_name == "typing.NewType" {
+                    super::rc::retain_if_ptr(arg);
+                    return arg;
                 }
                 // Bound methods (types.MethodType): call __func__ with
                 // __self__ prepended.
