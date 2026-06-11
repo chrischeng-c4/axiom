@@ -1,3 +1,4 @@
+# <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-k8s-overlays-template-kustomization-yaml" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -83,3 +84,5 @@ patches:
   #       value:
   #         name: LUMEN_TOKENS
   #         valueFrom: { secretKeyRef: { name: lumen-tokens, key: LUMEN_TOKENS } }
+
+# </HANDWRITE>
