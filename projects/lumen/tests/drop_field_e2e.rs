@@ -1,3 +1,4 @@
+// <HANDWRITE gap="standardize:claim-code" tracker="projects-lumen-tests-drop-field-e2e-rs" reason="Existing code claimed during Score standardization until deterministic generator coverage lands.">
 //! Online field deletion.
 
 use std::sync::Arc;
@@ -80,3 +81,5 @@ async fn drop_field_on_missing_collection_404() {
     let r = s.delete("/collections/missing/fields/x").await;
     r.assert_status(axum::http::StatusCode::NOT_FOUND);
 }
+
+// </HANDWRITE>
