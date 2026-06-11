@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use crate::scenario::interp::VarStore;
 use crate::scenario::load::LoadProfile;
 
-use super::http;
 use super::sample::percentile;
+use super::transport::{HttpTransport, Transport};
 
 /// Folded result of one load run.
 #[derive(Debug, Clone, Default)]
@@ -44,36 +44,74 @@ impl LoadStats {
     }
 }
 
-/// Run the profile. Returns folded stats; per-request work happens on
-/// `profile.workers` plain threads.
+/// The open-loop schedule, transport-free: offered rate, concurrency, window.
+#[derive(Debug, Clone, Copy)]
+pub struct Schedule {
+    pub target_qps: u32,
+    pub workers: u32,
+    pub duration_secs: u64,
+    pub warmup_secs: u64,
+}
+
+/// Run the HTTP profile. Thin wrapper over [`run_transport`] preserving the
+/// original API. Per-request work happens on `profile.workers` plain threads.
 pub fn run(profile: &LoadProfile, vars: &VarStore) -> LoadStats {
-    // Pre-interpolate once: load templates must be constant during the run.
-    let request = profile.request.clone();
-    if let Err(e) = vars.interpolate(&request.url) {
+    // Pre-interpolate once: load templates must be constant during the run, so
+    // a bad template is an abort, not a per-request failure.
+    if let Err(e) = vars.interpolate(&profile.request.url) {
         return LoadStats {
             abort: Some(e),
             ..Default::default()
         };
     }
+    let transport: Arc<dyn Transport> = Arc::new(HttpTransport {
+        request: profile.request.clone(),
+        vars: vars.clone(),
+    });
+    let schedule = Schedule {
+        target_qps: profile.target_qps,
+        workers: profile.workers,
+        duration_secs: profile.duration_secs,
+        warmup_secs: profile.warmup_secs,
+    };
+    run_transport(&schedule, &transport)
+}
 
-    let interval = Duration::from_secs_f64(1.0 / profile.target_qps.max(1) as f64);
-    let total_ticks = (profile.target_qps as u64) * profile.duration_secs;
-    let warmup_cutoff = Duration::from_secs(profile.warmup_secs);
+/// Drive `transport` under the open-loop `schedule`. The scheduler is identical
+/// for every transport, so two transports (HTTP vs Postgres) measured this way
+/// are comparable by construction. Returns `abort` only when every worker
+/// failed to connect (e.g. the backend is down).
+pub fn run_transport(schedule: &Schedule, transport: &Arc<dyn Transport>) -> LoadStats {
+    let interval = Duration::from_secs_f64(1.0 / schedule.target_qps.max(1) as f64);
+    let total_ticks = (schedule.target_qps as u64) * schedule.duration_secs;
+    let warmup_cutoff = Duration::from_secs(schedule.warmup_secs);
 
     let (tx, rx) = mpsc::channel::<Duration>(); // tick offset from start
     let rx = Arc::new(Mutex::new(rx));
     // (offset_from_start, latency_from_scheduled_ms, ok)
     let observations: Arc<Mutex<Vec<(Duration, f64, bool)>>> =
         Arc::new(Mutex::new(Vec::with_capacity(total_ticks as usize)));
+    let connect_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let start = Instant::now();
     let mut handles = Vec::new();
-    for _ in 0..profile.workers.max(1) {
+    for _ in 0..schedule.workers.max(1) {
         let rx = Arc::clone(&rx);
         let observations = Arc::clone(&observations);
-        let request = request.clone();
-        let vars = vars.clone();
+        let transport = Arc::clone(transport);
+        let connect_err = Arc::clone(&connect_err);
         handles.push(std::thread::spawn(move || {
+            // One per-worker op handle (e.g. a pg connection + prepared stmt).
+            // A connect failure just retires this worker; the unbounded tick
+            // channel is drained by the survivors. If ALL fail, the empty
+            // observation set becomes an abort below.
+            let mut worker = match transport.connect() {
+                Ok(w) => w,
+                Err(e) => {
+                    *connect_err.lock().expect("connect_err lock") = Some(e);
+                    return;
+                }
+            };
             loop {
                 let tick = {
                     let guard = rx.lock().expect("tick channel lock");
@@ -86,14 +124,14 @@ pub fn run(profile: &LoadProfile, vars: &VarStore) -> LoadStats {
                 if scheduled > now {
                     std::thread::sleep(scheduled - now);
                 }
-                let outcome = http::execute(&request, &vars);
+                let res = worker.execute();
                 let done = Instant::now();
                 let latency_ms = done.duration_since(scheduled).as_secs_f64() * 1000.0;
-                let ok = matches!(&outcome, Ok(o) if o.violation.is_none());
-                observations
-                    .lock()
-                    .expect("observations lock")
-                    .push((offset, latency_ms, ok));
+                observations.lock().expect("observations lock").push((
+                    offset,
+                    latency_ms,
+                    res.is_ok(),
+                ));
             }
         }));
     }
@@ -117,12 +155,23 @@ pub fn run(profile: &LoadProfile, vars: &VarStore) -> LoadStats {
     }
 
     let observations = observations.lock().expect("observations lock");
+    // Nothing measured because every worker failed to connect => abort with the
+    // reason (backend down / bad dsn), not a silent zero.
+    if observations.is_empty() {
+        if let Some(e) = connect_err.lock().expect("connect_err lock").clone() {
+            return LoadStats {
+                abort: Some(e),
+                ..Default::default()
+            };
+        }
+    }
+
     let measured: Vec<&(Duration, f64, bool)> = observations
         .iter()
         .filter(|(offset, _, _)| *offset >= warmup_cutoff)
         .collect();
     let measured_window_secs =
-        (profile.duration_secs.saturating_sub(profile.warmup_secs)).max(1) as f64;
+        (schedule.duration_secs.saturating_sub(schedule.warmup_secs)).max(1) as f64;
 
     let mut ok_latencies: Vec<f64> = measured
         .iter()

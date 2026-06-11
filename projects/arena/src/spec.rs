@@ -45,21 +45,19 @@ pub struct Spec {
     pub cells: Vec<Cell>,
 }
 
-/// How one target is measured. v1 implements `service` only.
+/// How one target is measured — which rig transport drives it. `http` (alias
+/// `service`) and `postgres` are implemented; both run on rig's one open-loop
+/// scheduler so their numbers are comparable.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TargetSpec {
-    /// `service` (rig loadgen) | `runtime` (meter, deferred) | `command` (deferred).
+    /// `http` (alias `service`, rig HTTP loadgen) | `postgres` (rig pg transport).
     pub kind: String,
-    /// Required for `kind = "service"`: the open-loop load shape (request comes
-    /// from each cell).
+    /// The open-loop load shape (the per-op payload comes from each cell).
     #[serde(default)]
     pub load: Option<LoadShape>,
-    /// `kind = "runtime"` (deferred): the binary meter spawns.
+    /// Required for `kind = "postgres"`: the libpq-style connection DSN.
     #[serde(default)]
-    pub exec: Option<String>,
-    /// `kind = "runtime"` (deferred): the meter level.
-    #[serde(default)]
-    pub level: Option<String>,
+    pub dsn: Option<String>,
 }
 
 /// A [`rig::scenario::load::LoadProfile`] minus its `request` (the request is
@@ -84,7 +82,9 @@ pub struct Cell {
     pub targets: BTreeMap<String, CellTarget>,
 }
 
-/// The per-target payload for one cell. `request` is the glue arena never reads.
+/// The per-target payload for one cell — the glue arena never reads, just
+/// forwards to the target's transport. An `http` target uses `request`; a
+/// `postgres` target uses `query`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CellTarget {
     /// `win` | `exempt` | `target` (ignored on the base target).
@@ -96,9 +96,12 @@ pub struct CellTarget {
     /// Floor for a `target` gate.
     #[serde(default)]
     pub floor: Option<f64>,
-    /// The opaque per-target request, deserialized straight into rig's
-    /// `HttpRequest`. arena moves it into the load profile untouched.
-    pub request: HttpRequest,
+    /// `http` target payload: deserialized straight into rig's `HttpRequest`.
+    #[serde(default)]
+    pub request: Option<HttpRequest>,
+    /// `postgres` target payload: the SQL prepared + executed each tick.
+    #[serde(default)]
+    pub query: Option<String>,
 }
 
 impl Spec {
@@ -114,10 +117,21 @@ impl Spec {
             ));
         }
         for (id, t) in &spec.targets {
-            if t.kind == "service" && t.load.is_none() {
+            match t.kind.as_str() {
+                "service" | "http" | "postgres" => {}
+                other => {
+                    return Err(format!(
+                        "target `{id}` has unsupported kind `{other}` (use `http` or `postgres`)"
+                    ))
+                }
+            }
+            if t.load.is_none() {
                 return Err(format!(
-                    "service target `{id}` is missing its [targets.{id}.load] block"
+                    "target `{id}` is missing its [targets.{id}.load] block"
                 ));
+            }
+            if t.kind == "postgres" && t.dsn.is_none() {
+                return Err(format!("postgres target `{id}` is missing `dsn`"));
             }
         }
         for cell in &spec.cells {
@@ -126,6 +140,24 @@ impl Spec {
                     "cell `{}` does not include the base target `{}`",
                     cell.name, spec.base
                 ));
+            }
+            for (tid, ct) in &cell.targets {
+                let kind = spec.targets[tid].kind.as_str();
+                let ok = match kind {
+                    "postgres" => ct.query.is_some(),
+                    _ => ct.request.is_some(),
+                };
+                if !ok {
+                    let want = if kind == "postgres" {
+                        "`query`"
+                    } else {
+                        "`request`"
+                    };
+                    return Err(format!(
+                        "cell `{}` target `{tid}` (kind `{kind}`) is missing {want}",
+                        cell.name
+                    ));
+                }
             }
         }
         Ok(spec)

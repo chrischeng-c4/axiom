@@ -9,9 +9,9 @@ use rig::pins::BaselineStore;
 use rig::report::{finding_id, Finding, Invoke, Kind, ReportBuilder, Severity};
 
 use crate::compare::{classify, Classification};
-use crate::measure::{fully_failed, load_is_honest, measure_service};
+use crate::measure::{fully_failed, load_is_honest, measure};
 use crate::report::{ArenaReport, ComparisonRow, PeerCell};
-use crate::spec::{Cell, Spec, TargetSpec};
+use crate::spec::{Cell, LoadShape, Spec};
 
 /// Knobs for one comparison run.
 #[derive(Debug, Clone, Default)]
@@ -72,8 +72,9 @@ fn measure_cell(
 ) -> Option<ComparisonRow> {
     // --- base ---
     let base_ct = cell.targets.get(&spec.base)?;
-    let base_load = service_load(spec, &spec.base, b)?;
-    let base_stats = match measure_service(base_load, &base_ct.request) {
+    let base_target = spec.targets.get(&spec.base)?;
+    let base_load = target_load(spec, &spec.base, b)?;
+    let base_stats = match measure(base_target, base_ct, base_load) {
         Ok(s) => s,
         Err(e) => {
             b.tool_error(
@@ -114,11 +115,14 @@ fn measure_cell(
         if tid == &spec.base {
             continue;
         }
-        let load = match service_load(spec, tid, b) {
+        let load = match target_load(spec, tid, b) {
             Some(l) => l,
             None => continue,
         };
-        let stats = match measure_service(load, &ct.request) {
+        let Some(peer_target) = spec.targets.get(tid) else {
+            continue;
+        };
+        let stats = match measure(peer_target, ct, load) {
             Ok(s) => s,
             Err(e) => {
                 b.tool_error(5, format!("cell `{}` peer `{tid}` aborted: {e}", cell.name));
@@ -230,30 +234,12 @@ fn fold_class(
     let _ = spec;
 }
 
-/// The service load shape for a target id, or a tool_error if it isn't a
-/// service target (runtime/command are deferred).
-fn service_load<'a>(
-    spec: &'a Spec,
-    tid: &str,
-    b: &mut ReportBuilder,
-) -> Option<&'a crate::spec::LoadShape> {
-    match spec.targets.get(tid) {
-        Some(TargetSpec {
-            kind,
-            load: Some(load),
-            ..
-        }) if kind == "service" => Some(load),
-        Some(TargetSpec { kind, .. }) if kind == "runtime" || kind == "command" => {
-            b.tool_error(
-                3,
-                format!(
-                    "target `{tid}` kind `{kind}` is not implemented in v1 (service flavor only)"
-                ),
-            );
-            None
-        }
-        _ => {
-            b.tool_error(3, format!("target `{tid}` is not a usable service target"));
+/// The load shape for a target id, or a tool_error if it has none.
+fn target_load<'a>(spec: &'a Spec, tid: &str, b: &mut ReportBuilder) -> Option<&'a LoadShape> {
+    match spec.targets.get(tid).and_then(|t| t.load.as_ref()) {
+        Some(load) => Some(load),
+        None => {
+            b.tool_error(3, format!("target `{tid}` is missing its load shape"));
             None
         }
     }

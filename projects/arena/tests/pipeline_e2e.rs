@@ -194,3 +194,78 @@ fn update_baselines_records_the_measured_ratio() {
     assert!(entry.is_some(), "the measured ratio should be recorded");
     assert!(entry.unwrap().value > 1.0);
 }
+
+/// Cross-transport comparison: an HTTP target (stub) vs a real Postgres target,
+/// both driven by rig's ONE scheduler. Skips gracefully if no local pg.
+#[test]
+fn http_vs_postgres_compares_across_transports() {
+    let dsn = std::env::var("ARENA_TEST_PG_DSN").unwrap_or_else(|_| {
+        let user = std::env::var("USER").unwrap_or_else(|_| "postgres".to_string());
+        format!("host=/tmp user={user} dbname=postgres")
+    });
+    // Skip pattern (CLAUDE.md): no local pg => return, don't fail.
+    let Ok(mut client) = postgres::Client::connect(&dsn, postgres::NoTls) else {
+        eprintln!("skipping http_vs_postgres: no postgres reachable at `{dsn}`");
+        return;
+    };
+    let _ = client.batch_execute("SELECT 1");
+    drop(client);
+
+    let web = spawn_stub(Duration::from_millis(3));
+    let toml = format!(
+        r#"
+spec_version = 1
+name = "http-vs-pg"
+base = "web"
+metric = "p99_ms"
+
+[targets.web]
+kind = "http"
+[targets.web.load]
+target_qps = 20
+workers = 4
+duration_secs = 2
+
+[targets.db]
+kind = "postgres"
+dsn = "{dsn}"
+[targets.db.load]
+target_qps = 20
+workers = 4
+duration_secs = 2
+
+[[cells]]
+name = "ping"
+[cells.targets.web]
+request = {{ method = "POST", url = "{web}", body = "{{}}" }}
+[cells.targets.db]
+gate = "exempt"
+query = "SELECT 1"
+"#
+    );
+    let spec = Spec::parse(&toml).unwrap();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let opts = RunOpts {
+        baseline_path: Some(tmp.path().join("baselines.json")),
+        ..Default::default()
+    };
+    let report = run(&spec, &opts);
+
+    assert_eq!(
+        report.exit_code(),
+        0,
+        "prompt: {}",
+        report.base.agent_prompt
+    );
+    let row = &report.comparison[0];
+    let db = row
+        .peers
+        .iter()
+        .find(|p| p.target == "db")
+        .expect("db peer present");
+    assert!(db.trustworthy, "pg load should be honest at 20 qps");
+    assert!(db.value > 0.0, "pg p99 should be measured (> 0)");
+    assert!(db.ratio.is_finite(), "ratio computed across transports");
+    assert_eq!(db.verdict, "exempt");
+}
