@@ -166,9 +166,13 @@ impl TypeChecker {
     }
 
     /// Register type parameters as TypeVars and return GenericParams.
-    pub(crate) fn register_type_params(&mut self, type_params: &[String]) -> GenericParams {
+    pub(crate) fn register_type_params(
+        &mut self,
+        type_params: &[crate::parser::ast::TypeParam],
+    ) -> GenericParams {
         let mut gp = GenericParams::new();
-        for name in type_params {
+        for param in type_params {
+            let name = &param.name;
             let var_id = TypeVarId(self.next_type_var_id);
             self.next_type_var_id += 1;
             self.tcx.new_type_var(name.clone(), None, Vec::new());
@@ -182,9 +186,12 @@ impl TypeChecker {
     }
 
     /// Remove type parameter aliases to prevent leaking outside scope.
-    pub(crate) fn unregister_type_params(&mut self, type_params: &[String]) {
-        for name in type_params {
-            self.tcx.unregister_alias(name);
+    pub(crate) fn unregister_type_params(
+        &mut self,
+        type_params: &[crate::parser::ast::TypeParam],
+    ) {
+        for param in type_params {
+            self.tcx.unregister_alias(&param.name);
         }
     }
 
@@ -285,9 +292,24 @@ impl TypeChecker {
                     let sym = self.symbols.define(name.clone(), SymbolKind::Enum);
                     self.set_sym_type(sym.0, enum_ty);
                 }
-                Stmt::TypeAlias { name, value, .. } => {
-                    let resolved = self.resolve_type_expr(value);
-                    self.tcx.register_alias(name.clone(), resolved);
+                Stmt::TypeAlias { name, type_params, value } => {
+                    // The alias value is a general expression (PEP 695). For
+                    // compile-time annotation use (`x: Alias`), convert the
+                    // type-shaped subset back into a TypeExpr; non-type-shaped
+                    // values (e.g. lambdas) only exist as runtime
+                    // TypeAliasType objects and are skipped here.
+                    if let Some(te) = expr_to_type_expr(value) {
+                        // Pre-register the alias as Any so a recursive alias
+                        // (`type R = R | None`) resolves instead of erroring.
+                        let any = self.tcx.any();
+                        self.tcx.register_alias(name.clone(), any);
+                        // The alias's own params (`type Pair[T] = list[T]`)
+                        // resolve as TypeVars within the value.
+                        let _gp = self.register_type_params(type_params);
+                        let resolved = self.resolve_type_expr(&te);
+                        self.unregister_type_params(type_params);
+                        self.tcx.register_alias(name.clone(), resolved);
+                    }
                 }
                 // Register imported names as Any in the first pass so that
                 // collect_class_methods / collect_class_fields can resolve
@@ -753,7 +775,10 @@ impl TypeChecker {
 
         let mut methods = HashMap::new();
         for stmt in body {
-            if let Stmt::FnDef { name, params, return_ty, .. } = &stmt.node {
+            if let Stmt::FnDef { name, type_params, params, return_ty, .. } = &stmt.node {
+                // Generic methods (`def meth[U](...)`) resolve their own
+                // type params within the signature (PEP 695).
+                let _gp = self.register_type_params(type_params);
                 let param_types: Vec<TypeId> = params.iter()
                     .filter(|p| p.name != "self")
                     .map(|p| self.resolve_type_expr(&p.ty))
@@ -761,6 +786,7 @@ impl TypeChecker {
                 let ret = return_ty.as_ref()
                     .map(|t| self.resolve_type_expr(t))
                     .unwrap_or(self.tcx.any());
+                self.unregister_type_params(type_params);
                 methods.insert(name.clone(), MethodSig {
                     params: param_types,
                     return_type: ret,
@@ -777,6 +803,55 @@ impl Default for TypeChecker {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Best-effort conversion of a PEP 695 type-alias *value expression* back
+/// into a `TypeExpr` for compile-time annotation resolution (`x: Alias`).
+///
+/// Only the type-shaped subset converts (`int`, `int | str`, `list[T]`,
+/// `(A, B)`, dotted names). Anything else — lambdas, calls, literals —
+/// returns `None` and the alias exists purely as a runtime TypeAliasType.
+pub(crate) fn expr_to_type_expr(expr: &Spanned<Expr>) -> Option<Spanned<TypeExpr>> {
+    fn dotted_name(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Ident(n) => Some(n.clone()),
+            Expr::Attr { object, attr } => {
+                Some(format!("{}.{}", dotted_name(&object.node)?, attr))
+            }
+            _ => None,
+        }
+    }
+    let node = match &expr.node {
+        Expr::Ident(n) => TypeExpr::Named(n.clone()),
+        Expr::NoneLit => TypeExpr::Named("None".to_string()),
+        Expr::StrLit(s) => TypeExpr::Named(s.clone()),
+        Expr::Attr { .. } => TypeExpr::Named(dotted_name(&expr.node)?),
+        Expr::BinOp { op: BinOp::BitOr, lhs, rhs } => {
+            let mut variants = Vec::new();
+            match expr_to_type_expr(lhs)?.node {
+                TypeExpr::Union(vs) => variants.extend(vs),
+                other => variants.push(Spanned::new(other, lhs.span)),
+            }
+            variants.push(expr_to_type_expr(rhs)?);
+            TypeExpr::Union(variants)
+        }
+        Expr::Index { object, index } => {
+            let name = dotted_name(&object.node)?;
+            let args = match &index.node {
+                Expr::TupleLit(items) => items
+                    .iter()
+                    .map(expr_to_type_expr)
+                    .collect::<Option<Vec<_>>>()?,
+                _ => vec![expr_to_type_expr(index)?],
+            };
+            TypeExpr::Generic { name, args }
+        }
+        Expr::TupleLit(items) => TypeExpr::Tuple(
+            items.iter().map(expr_to_type_expr).collect::<Option<Vec<_>>>()?,
+        ),
+        _ => return None,
+    };
+    Some(Spanned::new(node, expr.span))
 }
 
 #[cfg(test)]
@@ -1043,7 +1118,10 @@ mod tests {
     #[test]
     fn test_register_type_params() {
         let mut tc = TypeChecker::new();
-        let gp = tc.register_type_params(&["T".to_string(), "U".to_string()]);
+        let gp = tc.register_type_params(&[
+            crate::parser::ast::TypeParam::plain("T"),
+            crate::parser::ast::TypeParam::plain("U"),
+        ]);
         assert_eq!(gp.len(), 2);
         assert_eq!(gp.params[0].name, "T");
         assert_eq!(gp.params[1].name, "U");
@@ -1055,9 +1133,9 @@ mod tests {
     #[test]
     fn test_unregister_type_params() {
         let mut tc = TypeChecker::new();
-        tc.register_type_params(&["T".to_string()]);
+        tc.register_type_params(&[crate::parser::ast::TypeParam::plain("T")]);
         assert!(tc.tcx.resolve_alias("T").is_some());
-        tc.unregister_type_params(&["T".to_string()]);
+        tc.unregister_type_params(&[crate::parser::ast::TypeParam::plain("T")]);
         assert!(tc.tcx.resolve_alias("T").is_none());
     }
 

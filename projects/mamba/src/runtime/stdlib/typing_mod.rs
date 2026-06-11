@@ -37,6 +37,36 @@ macro_rules! disp_binary {
     };
 }
 
+/// TypeVar-family constructors: `TypeVar('T', *constraints, **kw)` builds a
+/// real TypeVar instance (PEP 695 runtime object) instead of a type-erased
+/// None. The first string argument is the name; remaining positional
+/// arguments become eager constraints; keyword forms (bound= / covariant=)
+/// are accepted but not modelled. The dispatcher addresses are registered in
+/// NATIVE_TYPE_NAMES so `isinstance(x, TypeVar)` resolves nominally.
+macro_rules! disp_typevar_ctor {
+    ($disp:ident, $kind:expr) => {
+        unsafe extern "C" fn $disp(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+            let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+            let name = a
+                .first()
+                .and_then(|v| v.as_ptr())
+                .and_then(|p| unsafe {
+                    match &(*p).data {
+                        super::super::rc::ObjData::Str(s) => Some(s.clone()),
+                        _ => None,
+                    }
+                })
+                .unwrap_or_default();
+            let constraints: Vec<MbValue> = a.iter().skip(1).copied().collect();
+            super::super::pep695::make_typevar_instance(&name, $kind, constraints)
+        }
+    };
+}
+
+disp_typevar_ctor!(d_typevar_ctor, 0);
+disp_typevar_ctor!(d_typevartuple_ctor, 1);
+disp_typevar_ctor!(d_paramspec_ctor, 2);
+
 disp_binary!(d_cast, mb_typing_cast);
 disp_unary!(d_get_type_hints, mb_typing_get_type_hints);
 disp_nullary!(d_sentinel, mb_typing_sentinel);
@@ -58,11 +88,28 @@ pub fn register() {
     for name in &[
         "Any", "Union", "Optional", "List", "Dict", "Tuple", "Set",
         "FrozenSet", "Deque", "Type", "Literal",
-        "TypeVar", "Protocol", "Callable", "Iterator",
+        "Protocol", "Callable", "Iterator",
         "Generator", "Coroutine", "AsyncGenerator", "AsyncIterator",
         "Awaitable", "NamedTuple", "TypedDict",
     ] {
         attrs.insert(name.to_string(), MbValue::from_func(sentinel_addr));
+    }
+
+    // TypeVar / ParamSpec / TypeVarTuple: real constructors building PEP 695
+    // runtime instances, with their addresses registered as nominal type
+    // names so `isinstance(x, TypeVar)` works.
+    for (name, addr) in [
+        ("TypeVar", d_typevar_ctor as *const () as usize),
+        ("TypeVarTuple", d_typevartuple_ctor as *const () as usize),
+        ("ParamSpec", d_paramspec_ctor as *const () as usize),
+    ] {
+        attrs.insert(name.to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+        super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+            m.borrow_mut().insert(addr as u64, name.to_string());
+        });
     }
 
     // `Generic` is a class and `ClassVar` / `Final` are `_SpecialForm`
@@ -106,7 +153,7 @@ pub fn register() {
 
     // More type-erased sentinels accepted by `from typing import ...`.
     for name in &[
-        "Annotated", "ParamSpec", "TypeAlias", "TypeGuard", "Never", "Self",
+        "Annotated", "TypeAlias", "TypeGuard", "Never", "Self",
         "Concatenate", "Unpack", "LiteralString", "Required", "NotRequired",
         "OrderedDict", "DefaultDict", "Counter", "ChainMap", "Hashable",
         "Sized", "Container", "Collection", "Reversible", "Mapping",
@@ -153,7 +200,7 @@ pub fn register() {
         "GenericAlias", "IO", "ItemsView", "Iterable", "KT", "KeysView",
         "MappingView", "Match", "MethodDescriptorType", "MethodWrapperType",
         "NamedTupleMeta", "ParamSpecArgs", "ParamSpecKwargs", "Pattern",
-        "T", "T_co", "T_contra", "TextIO", "TypeAliasType", "TypeVarTuple",
+        "T", "T_co", "T_contra", "TextIO", "TypeAliasType",
         "VT", "VT_co", "V_co", "ValuesView", "WrapperDescriptorType",
         "abstractmethod", "assert_never", "clear_overloads", "collections",
         "contextlib", "copyreg", "dataclass_transform", "defaultdict",

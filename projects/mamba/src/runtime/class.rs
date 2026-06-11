@@ -2193,6 +2193,19 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
         return make_code_object(obj);
     }
 
+    // Function / closure attributes (PEP 695): user-set attributes (incl. a
+    // writable __type_params__) live in the FUNC_ATTRS side registry; a
+    // registered function without an explicit entry reports the CPython
+    // default — an empty __type_params__ tuple.
+    if obj.as_ptr().is_none() {
+        if let Some(v) = super::pep695::func_attrs_get(obj, &attr_name) {
+            return v;
+        }
+        if attr_name == "__type_params__" && super::pep695::is_attrable_function(obj) {
+            return MbValue::from_ptr(super::rc::MbObject::new_tuple(vec![]));
+        }
+    }
+
     // Generator handles are int-tagged values. Handle generator-specific attributes.
     if obj.is_int() && super::generator::is_known_generator(obj) {
         match attr_name.as_str() {
@@ -2517,6 +2530,15 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             {
                                 return make_unbound_method(&type_name_str, &attr_name);
                             }
+                            // PEP 695: every type object carries
+                            // __type_params__, defaulting to () (the
+                            // mro_lookup above already returned a generic
+                            // class's stored tuple).
+                            if attr_name == "__type_params__" {
+                                return MbValue::from_ptr(
+                                    super::rc::MbObject::new_tuple(vec![]),
+                                );
+                            }
                         }
                     }
                 }
@@ -2540,6 +2562,16 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             super::stdlib::unittest_mock_mod::mock_getattr_hook(obj, &attr_name)
                         {
                             super::rc::retain_if_ptr(v);
+                            return v;
+                        }
+                    }
+                    // PEP 695 TypeVar / TypeAliasType: __bound__ /
+                    // __constraints__ / __value__ evaluate their stored thunk
+                    // lazily on first access (then cache).
+                    if super::pep695::is_pep695_class(class_name) {
+                        if let Some(v) = super::pep695::instance_lazy_attr_hook(
+                            obj, class_name, &attr_name,
+                        ) {
                             return v;
                         }
                     }
@@ -2794,6 +2826,18 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             "register" if is_user_abc(s) => {
                                 return make_user_abc_register_method(s);
                             }
+                            // PEP 695: classes always carry __type_params__;
+                            // generic classes get theirs set as a class attr
+                            // by the desugarer, plain classes default to ().
+                            "__type_params__" => {
+                                if let Some(val) = mro_lookup_class_attr(s, &attr_name) {
+                                    super::rc::retain_if_ptr(val);
+                                    return val;
+                                }
+                                return MbValue::from_ptr(
+                                    super::rc::MbObject::new_tuple(vec![]),
+                                );
+                            }
                             "__members__" if super::stdlib::enum_class::is_enum_class(s) => {
                                 // Class-body enum: name→member mapping incl. aliases.
                                 if let Some(d) =
@@ -2818,6 +2862,14 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 }
                             }
                         }
+                    }
+                    // PEP 695: builtin type names (`type`, `object`, `int`,
+                    // ...) carry an empty __type_params__ even when not in
+                    // the user class registry.
+                    if attr_name == "__type_params__"
+                        && super::builtins::is_type_name(s)
+                    {
+                        return MbValue::from_ptr(super::rc::MbObject::new_tuple(vec![]));
                     }
                 }
                 _ => {}
@@ -3616,6 +3668,15 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                 }
             }
         }
+        return;
+    }
+
+    // Function / closure attribute writes (PEP 695 writable __type_params__
+    // and generic `f.attr = v`): functions carry no field storage, so the
+    // attributes live in the pep695 FUNC_ATTRS side registry. Gated on the
+    // function-name registry so plain ints never accrue attributes.
+    if super::pep695::is_attrable_function(obj) {
+        super::pep695::func_attrs_set(obj, attr, value);
     }
 }
 
@@ -8960,6 +9021,19 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         super::stdlib::enum_class::str_mixin_member_value(receiver)
                     {
                         return super::string_ops::dispatch_str_method(&name, sv, args);
+                    }
+                    // PEP 695: `Alias.__value__()` — lazily resolved fields on
+                    // TypeVar / TypeAliasType instances may hold callables;
+                    // resolve through the lazy hook, then call (no bound self,
+                    // mirroring the instance-dict rule above).
+                    if super::pep695::is_pep695_class(class_name) {
+                        if let Some(v) = super::pep695::instance_lazy_attr_hook(
+                            receiver, class_name, &name,
+                        ) {
+                            if super::builtins::mb_callable(v).as_bool() == Some(true) {
+                                return super::builtins::mb_call_spread(v, args);
+                            }
+                        }
                     }
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),

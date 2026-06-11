@@ -237,7 +237,22 @@ impl TypeChecker {
                                 for err in bound_errors {
                                     self.error(expr.span, err);
                                 }
-                                return subst.apply(ret, &mut self.tcx);
+                                let applied = subst.apply(ret, &mut self.tcx);
+                                // ABI honesty: a bare-TypeVar return crosses
+                                // the call boundary as a boxed MbValue in the
+                                // integer register (the generic callee
+                                // compiles to the boxed I64 ABI). Substituting
+                                // `float` would make codegen read an F64
+                                // register that was never written — degrade to
+                                // Any so the boxed value is handled
+                                // dynamically. Int/Bool share the I64 register
+                                // file and round-trip unchanged.
+                                if matches!(self.tcx.get(ret), Ty::TypeVar(_))
+                                    && matches!(self.tcx.get(applied), Ty::Float)
+                                {
+                                    return self.tcx.any();
+                                }
+                                return applied;
                             }
                         }
                         ret

@@ -1274,6 +1274,11 @@ struct AstLowerer<'a> {
     /// (e.g. `scale = 0.25; def ff(j): return j * scale`) infers a float return.
     /// Seeded into each function's return-inference env below the params.
     module_float_globals: HashMap<String, FloatHint>,
+    /// PEP 695 type-parameter names of the function currently being lowered
+    /// (`def f[T](x: T) -> T`). A `T`-annotated param/return is a boxed
+    /// MbValue at runtime (the TypeVar erases to `any`), so the int-default
+    /// fallback for unresolved annotations must not fire for these names.
+    active_type_params: std::collections::HashSet<String>,
 }
 
 impl<'a> AstLowerer<'a> {
@@ -1292,6 +1297,7 @@ impl<'a> AstLowerer<'a> {
             errors: Vec::new(),
             local_assigned_names: Vec::new(),
             local_declared_names: Vec::new(),
+            active_type_params: std::collections::HashSet::new(),
             local_names: HashMap::new(),
             local_types: HashMap::new(),
             next_local_sym: 1_000_000,
@@ -1539,17 +1545,25 @@ impl<'a> AstLowerer<'a> {
         self.collect_float_hints(module);
         for stmt in &module.stmts {
             match &stmt.node {
-                ast::Stmt::FnDef { name, params, return_ty, body, decorators, .. } => {
+                ast::Stmt::FnDef { name, type_params, params, return_ty, body, decorators, .. } => {
                     // Register param info for kwargs resolution at call sites.
                     self.func_param_info.insert(name.clone(), params.iter().map(|p| {
                         (p.name.clone(), p.default.clone(), p.kind)
                     }).collect());
                     let is_decorated = !decorators.is_empty();
+                    // PEP 695: make this def's type-param names visible to the
+                    // param/return type lowering (TypeVar-annotated values are
+                    // boxed `any`, never raw ints).
+                    let saved_tps = std::mem::replace(
+                        &mut self.active_type_params,
+                        type_params.iter().map(|p| p.name.clone()).collect(),
+                    );
                     let lowered = if is_decorated {
                         self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                     } else {
                         self.lower_fn(name, params, return_ty, body, stmt.span)
                     };
+                    self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
                         func.is_generator = contains_yield(body);
                         func.decorators = decorators.iter()
@@ -1577,13 +1591,21 @@ impl<'a> AstLowerer<'a> {
                         self.result.functions.push(func);
                     }
                 }
-                ast::Stmt::AsyncFnDef { name, params, return_ty, body, decorators, .. } => {
+                ast::Stmt::AsyncFnDef { name, type_params, params, return_ty, body, decorators, .. } => {
                     let is_decorated = !decorators.is_empty();
+                    // PEP 695: make this def's type-param names visible to the
+                    // param/return type lowering (TypeVar-annotated values are
+                    // boxed `any`, never raw ints).
+                    let saved_tps = std::mem::replace(
+                        &mut self.active_type_params,
+                        type_params.iter().map(|p| p.name.clone()).collect(),
+                    );
                     let lowered = if is_decorated {
                         self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                     } else {
                         self.lower_fn(name, params, return_ty, body, stmt.span)
                     };
+                    self.active_type_params = saved_tps;
                     if let Some(mut func) = lowered {
                         let has_yield = contains_yield(body);
                         // `async def f(): yield` is an async generator — CPython
@@ -1920,6 +1942,15 @@ impl<'a> AstLowerer<'a> {
                         | ast::TypeExpr::Union(_)
                         | ast::TypeExpr::Tuple(_)
                         | ast::TypeExpr::Optional(_) => any_ty,
+                        // PEP 695: a `T`-annotated param of a generic function
+                        // is a boxed MbValue at runtime (call sites box every
+                        // primitive destined for a TypeVar param) — the
+                        // raw-int default would reinterpret boxed bits.
+                        ast::TypeExpr::Named(n)
+                            if self.active_type_params.contains(n.as_str()) =>
+                        {
+                            any_ty
+                        }
                         // An unannotated param used in `==`/`!=`/`in` must compare
                         // by value, so it cannot keep the raw-int identity path.
                         _ if value_compared_params.contains(&p.name) => any_ty,
@@ -1955,7 +1986,16 @@ impl<'a> AstLowerer<'a> {
             let resolved = _return_ty.as_ref()
                 .map(|rt| self.resolve_type_expr_ro(rt))
                 .unwrap_or(any_ty);
-            if resolved == any_ty {
+            // PEP 695: `-> T` returns a boxed MbValue (TypeVar erases to
+            // any); skip the float/int return inference entirely.
+            let ret_is_type_param = matches!(
+                _return_ty.as_ref().map(|rt| &rt.node),
+                Some(ast::TypeExpr::Named(n))
+                    if self.active_type_params.contains(n.as_str())
+            );
+            if ret_is_type_param {
+                any_ty
+            } else if resolved == any_ty {
                 // Build a name→FloatHint environment from the (possibly float-
                 // promoted) param types plus float-typed locals, then infer the
                 // return type. Provably-float returns become `float`; everything
@@ -2620,7 +2660,7 @@ impl<'a> AstLowerer<'a> {
                 self.current_match_subject_ty = prev_subj_ty;
                 Some(HirStmt::Match { subject, cases, span: stmt.span })
             }
-            ast::Stmt::FnDef { name, params, return_ty, body, decorators, .. } => {
+            ast::Stmt::FnDef { name, type_params, params, return_ty, body, decorators, .. } => {
                 // Register param info for kwargs resolution.
                 self.func_param_info.insert(name.clone(), params.iter().map(|p| {
                     (p.name.clone(), p.default.clone(), p.kind)
@@ -2630,11 +2670,18 @@ impl<'a> AstLowerer<'a> {
                 // outer function body can call it, and so resolve_name works inside lower_fn.
                 let fn_sym = self.define_local(name, self.checker.tcx.any());
                 let is_decorated = !decorators.is_empty();
+                // PEP 695: see the module-level FnDef arm — type-param names
+                // must reach the param/return type lowering.
+                let saved_tps = std::mem::replace(
+                    &mut self.active_type_params,
+                    type_params.iter().map(|p| p.name.clone()).collect(),
+                );
                 let lowered = if is_decorated {
                     self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                 } else {
                     self.lower_fn(name, params, return_ty, body, stmt.span)
                 };
+                self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
                     func.is_generator = contains_yield(body);
                     func.decorators = decorators.iter()
@@ -2653,15 +2700,22 @@ impl<'a> AstLowerer<'a> {
                 let _ = fn_sym;
                 Some(HirStmt::FuncDefPlaceholder { name: fn_sym, span: stmt.span })
             }
-            ast::Stmt::AsyncFnDef { name, params, return_ty, body, decorators, .. } => {
+            ast::Stmt::AsyncFnDef { name, type_params, params, return_ty, body, decorators, .. } => {
                 // Nested async function inside a function body — same as FnDef above.
                 let fn_sym = self.define_local(name, self.checker.tcx.any());
                 let is_decorated = !decorators.is_empty();
+                // PEP 695: see the module-level FnDef arm — type-param names
+                // must reach the param/return type lowering.
+                let saved_tps = std::mem::replace(
+                    &mut self.active_type_params,
+                    type_params.iter().map(|p| p.name.clone()).collect(),
+                );
                 let lowered = if is_decorated {
                     self.lower_decorated_fn(name, params, return_ty, body, stmt.span)
                 } else {
                     self.lower_fn(name, params, return_ty, body, stmt.span)
                 };
+                self.active_type_params = saved_tps;
                 if let Some(mut func) = lowered {
                     if contains_yield(body) {
                         // Same async-generator routing as the top-level

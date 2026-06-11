@@ -660,7 +660,9 @@ impl<'a> Parser<'a> {
         let name = self.text_at(ns, ne).to_string();
         let type_params = self.parse_optional_type_params()?;
         self.expect(TokenKind::Eq)?;
-        let value = self.parse_type_expr()?;
+        // PEP 695: the alias value is an arbitrary expression, evaluated
+        // lazily at runtime (e.g. `type Lazy[T] = lambda: T`).
+        let value = self.parse_expr()?;
         self.skip_newlines();
         Ok(Spanned::new(
             Stmt::TypeAlias { name, type_params, value },
@@ -712,7 +714,8 @@ mod tests {
     fn test_fn_def_with_type_params() {
         match parse_stmt("def foo[T, U]():\n    pass\n") {
             Stmt::FnDef { type_params, .. } => {
-                assert_eq!(type_params, vec!["T", "U"]);
+                let names: Vec<&str> = type_params.iter().map(|p| p.name.as_str()).collect();
+                assert_eq!(names, vec!["T", "U"]);
             }
             other => panic!("expected FnDef, got {other:?}"),
         }
@@ -779,7 +782,8 @@ mod tests {
     fn test_class_def_with_type_params() {
         match parse_stmt("class Foo[T]:\n    pass\n") {
             Stmt::ClassDef { type_params, .. } => {
-                assert_eq!(type_params, vec!["T"]);
+                let names: Vec<&str> = type_params.iter().map(|p| p.name.as_str()).collect();
+                assert_eq!(names, vec!["T"]);
             }
             other => panic!("expected ClassDef, got {other:?}"),
         }
@@ -1291,7 +1295,7 @@ mod tests {
             Stmt::TypeAlias { name, type_params, value } => {
                 assert_eq!(name, "Number");
                 assert!(type_params.is_empty());
-                assert!(matches!(value.node, TypeExpr::Named(ref n) if n == "int"));
+                assert!(matches!(value.node, Expr::Ident(ref n) if n == "int"));
             }
             other => panic!("expected TypeAlias, got {other:?}"),
         }
@@ -1301,7 +1305,7 @@ mod tests {
     fn test_type_alias_union() {
         match parse_stmt("type Number = int | float\n") {
             Stmt::TypeAlias { value, .. } => {
-                assert!(matches!(value.node, TypeExpr::Union(_)));
+                assert!(matches!(value.node, Expr::BinOp { op: BinOp::BitOr, .. }));
             }
             other => panic!("expected TypeAlias(Union), got {other:?}"),
         }
@@ -1312,7 +1316,8 @@ mod tests {
         match parse_stmt("type Container[T] = list[int]\n") {
             Stmt::TypeAlias { name, type_params, .. } => {
                 assert_eq!(name, "Container");
-                assert_eq!(type_params, vec!["T"]);
+                let names: Vec<&str> = type_params.iter().map(|p| p.name.as_str()).collect();
+                assert_eq!(names, vec!["T"]);
             }
             other => panic!("expected TypeAlias, got {other:?}"),
         }

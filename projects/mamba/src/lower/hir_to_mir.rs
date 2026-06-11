@@ -63,6 +63,10 @@ fn builtin_extern_map() -> HashMap<&'static str, &'static str> {
         ("bytes", "mb_bytes_new_checked"), ("bytearray", "mb_bytearray_new_checked"),
         ("ascii", "mb_ascii"),
         ("open", "mb_open"),
+        // PEP 695 desugaring intrinsics (lower::pep695): runtime TypeVar /
+        // TypeAliasType construction.
+        ("__mb_pep695_typevar__", "mb_pep695_typevar"),
+        ("__mb_pep695_type_alias__", "mb_pep695_type_alias"),
     ].into_iter().collect()
 }
 
@@ -5335,8 +5339,12 @@ impl<'a> HirToMir<'a> {
                 // ABI changes.
                 let has_class = matches!(lt, crate::types::Ty::Class { .. })
                     || matches!(rt, crate::types::Ty::Class { .. });
-                let has_any = matches!(lt, crate::types::Ty::Any)
-                    || matches!(rt, crate::types::Ty::Any);
+                // Ty::TypeVar values are runtime-boxed MbValues (a generic
+                // callee's params/returns compile to the boxed I64 ABI), so
+                // they must take the dynamic-dispatch path like Any — a raw
+                // icmp/fcmp would compare boxed bits against a raw primitive.
+                let has_any = matches!(lt, crate::types::Ty::Any | crate::types::Ty::TypeVar(_))
+                    || matches!(rt, crate::types::Ty::Any | crate::types::Ty::TypeVar(_));
                 if (has_class || has_any) && binop_to_runtime(*op).is_some() {
                     let boxed_l = self.box_operand(l, lhs.ty());
                     let boxed_r = self.box_operand(r, rhs.ty());

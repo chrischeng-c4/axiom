@@ -266,7 +266,8 @@ fn test_type_params() {
     let module = parse(src);
     match &module.stmts[0].node {
         Stmt::FnDef { type_params, .. } => {
-            assert_eq!(type_params, &["T"]);
+            let names: Vec<&str> = type_params.iter().map(|p| p.name.as_str()).collect();
+            assert_eq!(names, vec!["T"]);
         }
         _ => panic!("expected FnDef with type params"),
     }

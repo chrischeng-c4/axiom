@@ -604,7 +604,10 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    pub(crate) fn parse_optional_type_params(&mut self) -> crate::error::Result<Vec<Name>> {
+    pub(crate) fn parse_optional_type_params(
+        &mut self,
+    ) -> crate::error::Result<Vec<crate::parser::ast::TypeParam>> {
+        use crate::parser::ast::{TypeParam, TypeParamKind};
         if self.peek_kind() != Some(TokenKind::LBracket) {
             return Ok(Vec::new());
         }
@@ -617,38 +620,58 @@ impl<'a> Parser<'a> {
             if self.peek_kind() == Some(TokenKind::DoubleStar) {
                 self.advance(); // consume **
                 let (s, e) = self.expect_name()?;
-                params.push(self.text_at(s, e).to_string());
+                params.push(TypeParam {
+                    name: self.text_at(s, e).to_string(),
+                    kind: TypeParamKind::ParamSpec,
+                    bound: None,
+                    constraints: None,
+                });
             }
             // TypeVarTuple: *Ts
             else if self.peek_kind() == Some(TokenKind::Star) {
                 self.advance(); // consume *
                 let (s, e) = self.expect_name()?;
-                params.push(self.text_at(s, e).to_string());
+                params.push(TypeParam {
+                    name: self.text_at(s, e).to_string(),
+                    kind: TypeParamKind::TypeVarTuple,
+                    bound: None,
+                    constraints: None,
+                });
             }
             // Regular type param: T  or  T: bound  or  T: (c1, c2, ...)
             else {
                 let (s, e) = self.expect_name()?;
-                params.push(self.text_at(s, e).to_string());
-                // Optional bound: T: type  or  T: (type1, type2, ...)
+                let name = self.text_at(s, e).to_string();
+                let mut bound = None;
+                let mut constraints = None;
+                // Optional bound: T: expr  or  T: (expr1, expr2, ...)
                 if self.peek_kind() == Some(TokenKind::Colon) {
                     self.advance(); // consume :
                     if self.peek_kind() == Some(TokenKind::LParen) {
                         // Constrained: T: (int, float, str)
                         self.advance(); // consume (
+                        let mut items = Vec::new();
                         while self.peek_kind() != Some(TokenKind::RParen)
                             && self.peek_kind() != Some(TokenKind::Eof)
                         {
-                            self.parse_type_expr()?;
+                            items.push(self.parse_expr()?);
                             if self.peek_kind() == Some(TokenKind::Comma) {
                                 self.advance();
                             }
                         }
                         self.expect(TokenKind::RParen)?;
+                        constraints = Some(items);
                     } else {
-                        // Bounded: T: int
-                        self.parse_type_expr()?;
+                        // Bounded: T: int  (any non-tuple expression)
+                        bound = Some(self.parse_expr()?);
                     }
                 }
+                params.push(TypeParam {
+                    name,
+                    kind: TypeParamKind::TypeVar,
+                    bound,
+                    constraints,
+                });
             }
             if self.peek_kind() == Some(TokenKind::Comma) {
                 self.advance();

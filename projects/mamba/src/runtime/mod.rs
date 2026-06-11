@@ -15,6 +15,7 @@ pub mod class;
 pub mod iter;
 pub mod generator;
 pub mod closure;
+pub mod pep695;
 pub mod module;
 pub mod registry_bridge;
 pub mod async_rt;

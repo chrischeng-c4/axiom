@@ -53,7 +53,9 @@ impl CompilerSession {
     pub fn check(&mut self, path: &str) -> crate::error::Result<()> {
         let file_id = self.load_file(path)?;
         let source = self.source_map.get_file(file_id).source.clone();
-        let module = parser::parse(&source, file_id)?;
+        let mut module = parser::parse(&source, file_id)?;
+        crate::lower::pep695::desugar_module(&mut module);
+        let module = module;
 
         if let Some(EmitMode::Ast) = self.config.emit {
             println!("{module:#?}");
@@ -89,7 +91,9 @@ impl CompilerSession {
 
         let file_id = self.load_file(path)?;
         let source = self.source_map.get_file(file_id).source.clone();
-        let module = parser::parse(&source, file_id)?;
+        let mut module = parser::parse(&source, file_id)?;
+        crate::lower::pep695::desugar_module(&mut module);
+        let module = module;
 
         if let Some(EmitMode::Ast) = self.config.emit {
             println!("{module:#?}");
@@ -197,7 +201,9 @@ impl CompilerSession {
             .source_map
             .add_file(display_name.to_string(), source.to_string());
         let src = self.source_map.get_file(file_id).source.clone();
-        let module = parser::parse(&src, file_id)?;
+        let mut module = parser::parse(&src, file_id)?;
+        crate::lower::pep695::desugar_module(&mut module);
+        let module = module;
 
         // Enforce expose filtering for native-module imports when a project config is active.
         if let Some(proj) = &self.config.project_config {
@@ -288,7 +294,9 @@ impl CompilerSession {
 
         let file_id = self.load_file(path)?;
         let source = self.source_map.get_file(file_id).source.clone();
-        let module = parser::parse(&source, file_id)?;
+        let mut module = parser::parse(&source, file_id)?;
+        crate::lower::pep695::desugar_module(&mut module);
+        let module = module;
 
         // Type check — resolve and pre-check all imported dependency modules
         // first so the shared TypeChecker accumulates cross-module type info.

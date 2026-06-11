@@ -2380,6 +2380,15 @@ fn collect_union_operand(v: MbValue, out: &mut Vec<MbValue>) -> bool {
                         _ => false,
                     }
                 }
+                // PEP 695: TypeVars and TypeAliasTypes are valid `|` operands
+                // (`type R = R | None`, `T | int` bounds) — they join the
+                // union as themselves.
+                ObjData::Instance { class_name, .. }
+                    if super::pep695::is_pep695_class(class_name) =>
+                {
+                    out.push(v);
+                    true
+                }
                 _ => false,
             }
         }
@@ -2463,7 +2472,7 @@ pub(crate) fn union_type_repr(v: MbValue) -> String {
         .join(" | ")
 }
 
-fn is_type_name(s: &str) -> bool {
+pub(crate) fn is_type_name(s: &str) -> bool {
     matches!(
         s,
         "int" | "str" | "float" | "bool" | "list" | "dict"
@@ -3216,6 +3225,52 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                     let (ta, ma) = pair(&ga);
                     let (tb, mb) = pair(&gb);
                     return mb_values_eq(ta, tb) && mb_values_eq(ma, mb);
+                }
+                // PEP 604/695: UnionType value equality — same member set
+                // (order-insensitive, like CPython's frozenset-based eq).
+                (ObjData::Instance { class_name: ca, fields: fa },
+                 ObjData::Instance { class_name: cb, fields: fb })
+                    if ca == "UnionType" && cb == "UnionType" =>
+                {
+                    let aa = fa.read().unwrap().get("__args__").copied();
+                    let bb = fb.read().unwrap().get("__args__").copied();
+                    let items = |v: Option<MbValue>| -> Option<Vec<MbValue>> {
+                        v.and_then(|t| t.as_ptr()).and_then(|p| match &(*p).data {
+                            ObjData::Tuple(ref it) => Some(it.to_vec()),
+                            _ => None,
+                        })
+                    };
+                    return match (items(aa), items(bb)) {
+                        (Some(xs), Some(ys)) => {
+                            xs.len() == ys.len()
+                                && xs.iter().all(|x| {
+                                    ys.iter().any(|y| mb_values_eq(*x, *y))
+                                })
+                        }
+                        _ => false,
+                    };
+                }
+                // Type objects compare by the class they name: `type(x)`
+                // allocates a fresh Instance per call, but all type objects
+                // naming the same class are the same class object.
+                (ObjData::Instance { class_name: ca, fields: fa },
+                 ObjData::Instance { class_name: cb, fields: fb })
+                    if ca == "type" && cb == "type" =>
+                {
+                    let name_of = |f: &super::rc::MbRwLock<super::rc::InstanceFields>| {
+                        f.read().ok().and_then(|g| {
+                            g.get("__name__").and_then(|v| v.as_ptr()).and_then(|p| {
+                                match &(*p).data {
+                                    ObjData::Str(s) => Some(s.clone()),
+                                    _ => None,
+                                }
+                            })
+                        })
+                    };
+                    return match (name_of(fa), name_of(fb)) {
+                        (Some(na), Some(nb)) => na == nb,
+                        _ => false,
+                    };
                 }
                 (ObjData::Instance { class_name: ca, fields: fa },
                  ObjData::Instance { class_name: cb, fields: fb })

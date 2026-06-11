@@ -42,6 +42,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
     use super::iter;
     use super::generator;
     use super::closure;
+    use super::pep695;
     use super::module;
     use super::async_rt;
     use super::set_ops;
@@ -282,6 +283,9 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_raise_from", exception::mb_raise_from as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
         rt_sym!("mb_raise_with_context", exception::mb_raise_with_context as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
         rt_sym!("mb_raise_from_with_context", exception::mb_raise_from_with_context as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64, I64], Void),
+        // ── PEP 695 runtime type parameters ──
+        rt_sym!("mb_pep695_typevar", pep695::mb_pep695_typevar as fn(super::MbValue, super::MbValue, super::MbValue, super::MbValue) -> super::MbValue, [I64, I64, I64, I64], I64),
+        rt_sym!("mb_pep695_type_alias", pep695::mb_pep695_type_alias as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue, [I64, I64, I64], I64),
         // ── Class ──
         rt_sym!("mb_getattr", class::mb_getattr as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_setattr", class::mb_setattr as fn(super::MbValue, super::MbValue, super::MbValue), [I64, I64, I64], Void),
