@@ -95,3 +95,35 @@ flowchart TD
     gate_finding --> build_report
     build_report --> done([Exit per ladder 0-5])
 ```
+
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "meter-toml"
+title: "meter.toml per-project measurement contract"
+type: object
+additionalProperties: false
+properties:
+  level:
+    type: string
+    enum: ["off", "vitals", "sample", "hooks", "deep"]
+    default: "vitals"
+    description: "Single instrumentation knob. Cumulative ladder; each level bundles its own defaults. off=no measurement; vitals=getrusage cpu/wall/peak-RSS, zero overhead; sample=vitals plus sampled call stacks (250Hz, until-exit window, flamegraph and collapsed artifacts); hooks and deep parse but surface a not-yet-implemented error until the L3/L4 epic lands. Precedence: CLI flags over meter.toml over level-bundled defaults."
+  gate:
+    type: object
+    additionalProperties: false
+    description: "Optional per-project resource gate. Only per-project facts not derivable from level. Absent table means report-only, no adjudication. A latency-percentile key must never be added; traffic metrics belong to external drivers."
+    properties:
+      max_peak_rss_mb:
+        type: integer
+        minimum: 0
+        default: 0
+        description: "Peak RSS ceiling in MiB for the measured child; 0 disables. Breach emits a severity>=Medium finding and a non-zero exit per the existing ladder."
+      max_cpu_time_ms:
+        type: integer
+        minimum: 0
+        default: 0
+        description: "Total cpu time ceiling in milliseconds (user+sys via getrusage); 0 disables."
+```
