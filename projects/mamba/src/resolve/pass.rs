@@ -54,7 +54,15 @@ impl Resolver {
     }
 
     fn register_top_level(&mut self, module: &Module) {
-        for stmt in &module.stmts {
+        self.register_defs_in(&module.stmts);
+    }
+
+    /// Pre-register def/class/enum names, descending into compound-statement
+    /// bodies (try/if/while/for/with) — a class defined inside a module-level
+    /// `try:` is still a module-scope binding. Function bodies are NOT
+    /// descended into (their defs are their own scope).
+    fn register_defs_in(&mut self, stmts: &[Spanned<Stmt>]) {
+        for stmt in stmts {
             match &stmt.node {
                 Stmt::FnDef { name, .. } | Stmt::AsyncFnDef { name, .. } => {
                     let id = self.symbols.define(name.clone(), SymbolKind::Function);
@@ -67,6 +75,37 @@ impl Resolver {
                 Stmt::EnumDef { name, .. } => {
                     let id = self.symbols.define(name.clone(), SymbolKind::Enum);
                     self.name_map.push((stmt.span, id));
+                }
+                Stmt::Try { body, handlers, else_body, finally_body } => {
+                    self.register_defs_in(body);
+                    for h in handlers {
+                        self.register_defs_in(&h.body);
+                    }
+                    if let Some(eb) = else_body {
+                        self.register_defs_in(eb);
+                    }
+                    if let Some(fb) = finally_body {
+                        self.register_defs_in(fb);
+                    }
+                }
+                Stmt::If { body, elif_clauses, else_body, .. } => {
+                    self.register_defs_in(body);
+                    for (_, eb) in elif_clauses {
+                        self.register_defs_in(eb);
+                    }
+                    if let Some(eb) = else_body {
+                        self.register_defs_in(eb);
+                    }
+                }
+                Stmt::While { body, else_body, .. }
+                | Stmt::For { body, else_body, .. } => {
+                    self.register_defs_in(body);
+                    if let Some(eb) = else_body {
+                        self.register_defs_in(eb);
+                    }
+                }
+                Stmt::With { body, .. } => {
+                    self.register_defs_in(body);
                 }
                 _ => {}
             }

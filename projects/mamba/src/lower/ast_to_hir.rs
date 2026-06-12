@@ -1742,132 +1742,9 @@ impl<'a> AstLowerer<'a> {
                     }
                 }
                 ast::Stmt::ClassDef { name, body, bases, decorators, keyword_args, .. } => {
-                    let dataclass_decorated = decorators.iter()
-                        .any(|d| decorator_is_dataclass(&d.node));
-                    if let Some(mut cls) = self.lower_class(name, body, stmt.span, dataclass_decorated) {
-                        // PEP 557: register the synthesized __init__'s parameter
-                        // shape (declaration order; base dataclass fields first;
-                        // ClassVar / KW_ONLY sentinel / field(init=False) fields
-                        // excluded; InitVars included) so call sites resolve
-                        // keyword args and fill defaults exactly like calls to
-                        // classes with an explicit __init__. Skipped when the
-                        // class defines its own __init__ (pre-scan already
-                        // registered it).
-                        if dataclass_decorated && !self.func_param_info.contains_key(name) {
-                            let mut params: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
-                                Vec::new();
-                            // Inherited dataclass init params first (single
-                            // inheritance chains; names overridden by the
-                            // subclass are replaced in place below).
-                            for b in bases {
-                                let base_name = match &b.node {
-                                    ast::Expr::Ident(n) => Some(n.clone()),
-                                    ast::Expr::Attr { attr, .. } => Some(attr.clone()),
-                                    _ => None,
-                                };
-                                if let Some(bn) = base_name {
-                                    if let Some(binfo) = self.dataclass_init_params.get(&bn) {
-                                        params.extend(binfo.iter().cloned());
-                                    }
-                                }
-                            }
-                            for s in body.iter() {
-                                let (fname, ann, default) = match &s.node {
-                                    ast::Stmt::VarDecl { name: fname, ty, value } => {
-                                        (fname, ty, Some(value.clone()))
-                                    }
-                                    ast::Stmt::BareAnnotation { name: fname, ty } => {
-                                        (fname, ty, None)
-                                    }
-                                    _ => continue,
-                                };
-                                if fname == "__match_args__" || fname == "__slots__" {
-                                    continue;
-                                }
-                                // ClassVar fields and the KW_ONLY sentinel are
-                                // not __init__ params; field(init=False) opts out.
-                                if type_expr_is_marker(&ann.node, "ClassVar")
-                                    || type_expr_is_marker(&ann.node, "KW_ONLY")
-                                {
-                                    continue;
-                                }
-                                if default.as_ref()
-                                    .is_some_and(|v| field_call_has_init_false(&v.node))
-                                {
-                                    continue;
-                                }
-                                let entry = (fname.clone(), default, ast::ParamKind::Regular);
-                                if let Some(pos) = params.iter().position(|(n, _, _)| n == fname) {
-                                    params[pos] = entry;
-                                } else {
-                                    params.push(entry);
-                                }
-                            }
-                            self.dataclass_init_params.insert(name.clone(), params.clone());
-                            self.func_param_info.insert(name.clone(), params);
-                        }
-                        // Resolve all base classes for multiple inheritance (P1 OOP)
-                        cls.all_bases = bases.iter().filter_map(|b| {
-                            if let ast::Expr::Ident(name) = &b.node {
-                                self.resolve_name(name, stmt.span)
-                            } else if let ast::Expr::Attr { attr, .. } = &b.node {
-                                // `class X(unittest.TestCase):` — treat the
-                                // attribute's bare name as the base class id
-                                // so MRO walks find the runtime-registered
-                                // class. Fall back to declaring the symbol
-                                // when it isn't in scope yet so the
-                                // resolver doesn't drop the base.
-                                self.resolve_name(attr, stmt.span)
-                                    .or_else(|| Some(self.define_local(attr, self.checker.tcx.any())))
-                            } else {
-                                None
-                            }
-                        }).collect();
-                        // Keep first base for backward compatibility
-                        cls.base = cls.all_bases.first().copied();
-                        cls.decorators = decorators.iter()
-                            .filter_map(|d| self.lower_expr(d)).collect();
-                        // Extract metaclass keyword arg if present. The value
-                        // may be a bare name (`metaclass=Meta`) or an attribute
-                        // access (`metaclass=abc.ABCMeta`); in both cases the
-                        // metaclass identity is the leaf name.
-                        cls.metaclass = keyword_args.iter().find_map(|(k, v)| {
-                            if k == "metaclass" {
-                                match &v.node {
-                                    ast::Expr::Ident(meta_name) => Some(meta_name.clone()),
-                                    ast::Expr::Attr { attr, .. } => Some(attr.clone()),
-                                    _ => None,
-                                }
-                            } else {
-                                None
-                            }
-                        });
-                        // R10: Extract non-metaclass keyword arguments for __init_subclass__.
-                        cls.class_kwargs = keyword_args.iter()
-                            .filter(|(k, _)| k != "metaclass")
-                            .filter_map(|(k, v)| {
-                                self.lower_expr(v).map(|expr| (k.clone(), expr))
-                            })
-                            .collect();
-                        // Emit a ClassDefPlaceholder so decorator application
-                        // happens at the textual position (#1690). Without
-                        // a placeholder, decorators were applied at module-end
-                        // (the #1686 stop-gap), which broke patterns like
-                        // `@deco class C; obj = C()` where the post-class
-                        // statement expects the decorated class.
-                        // Classes with class-level attribute assignments also
-                        // need one: initializer expressions like
-                        // `X = enum.auto()` must evaluate at the class's
-                        // textual position, after preceding imports/bindings
-                        // have run (P2-R3 ordering, #1686 motivation).
-                        if !cls.decorators.is_empty() || !cls.class_attr_assigns.is_empty() {
-                            self.result.top_level.push(HirStmt::ClassDefPlaceholder {
-                                name: cls.name,
-                                span: stmt.span,
-                            });
-                        }
-                        self.result.classes.push(cls);
-                    }
+                    self.collect_class_stmt(
+                        name, body, bases, decorators, keyword_args, stmt.span, true,
+                    );
                 }
                 _ => {
                     // Module-scope variable annotations record their name in the
@@ -2200,6 +2077,159 @@ impl<'a> AstLowerer<'a> {
         })
     }
 
+
+    /// Collect a `class` statement into the module class set: lower the body,
+    /// register dataclass init params, record decorators / metaclass /
+    /// class-attr assigns, and emit a ClassDefPlaceholder marker when needed.
+    /// Returns the class symbol when the class needs a ClassDefPlaceholder
+    /// (decorators or class-attr assigns). When `placeholder_to_top` the
+    /// marker is pushed to top_level (module top-level path); otherwise the
+    /// CALLER must emit it into its own statement stream (nested classes in
+    /// try/if/for bodies — previously silently dropped there).
+    fn collect_class_stmt(
+        &mut self,
+        name: &str,
+        body: &[Spanned<ast::Stmt>],
+        bases: &[Spanned<ast::Expr>],
+        decorators: &[Spanned<ast::Expr>],
+        keyword_args: &[(String, Spanned<ast::Expr>)],
+        span: crate::source::span::Span,
+        placeholder_to_top: bool,
+    ) -> Option<SymbolId> {
+        let placeholder_sym: std::cell::Cell<Option<SymbolId>> = std::cell::Cell::new(None);
+        let stmt_span = span;
+                    let dataclass_decorated = decorators.iter()
+                        .any(|d| decorator_is_dataclass(&d.node));
+                    if let Some(mut cls) = self.lower_class(name, body, stmt_span, dataclass_decorated) {
+                        // PEP 557: register the synthesized __init__'s parameter
+                        // shape (declaration order; base dataclass fields first;
+                        // ClassVar / KW_ONLY sentinel / field(init=False) fields
+                        // excluded; InitVars included) so call sites resolve
+                        // keyword args and fill defaults exactly like calls to
+                        // classes with an explicit __init__. Skipped when the
+                        // class defines its own __init__ (pre-scan already
+                        // registered it).
+                        if dataclass_decorated && !self.func_param_info.contains_key(name) {
+                            let mut params: Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)> =
+                                Vec::new();
+                            // Inherited dataclass init params first (single
+                            // inheritance chains; names overridden by the
+                            // subclass are replaced in place below).
+                            for b in bases {
+                                let base_name = match &b.node {
+                                    ast::Expr::Ident(n) => Some(n.clone()),
+                                    ast::Expr::Attr { attr, .. } => Some(attr.clone()),
+                                    _ => None,
+                                };
+                                if let Some(bn) = base_name {
+                                    if let Some(binfo) = self.dataclass_init_params.get(&bn) {
+                                        params.extend(binfo.iter().cloned());
+                                    }
+                                }
+                            }
+                            for s in body.iter() {
+                                let (fname, ann, default) = match &s.node {
+                                    ast::Stmt::VarDecl { name: fname, ty, value } => {
+                                        (fname, ty, Some(value.clone()))
+                                    }
+                                    ast::Stmt::BareAnnotation { name: fname, ty } => {
+                                        (fname, ty, None)
+                                    }
+                                    _ => continue,
+                                };
+                                if fname == "__match_args__" || fname == "__slots__" {
+                                    continue;
+                                }
+                                // ClassVar fields and the KW_ONLY sentinel are
+                                // not __init__ params; field(init=False) opts out.
+                                if type_expr_is_marker(&ann.node, "ClassVar")
+                                    || type_expr_is_marker(&ann.node, "KW_ONLY")
+                                {
+                                    continue;
+                                }
+                                if default.as_ref()
+                                    .is_some_and(|v| field_call_has_init_false(&v.node))
+                                {
+                                    continue;
+                                }
+                                let entry = (fname.clone(), default, ast::ParamKind::Regular);
+                                if let Some(pos) = params.iter().position(|(n, _, _)| n == fname) {
+                                    params[pos] = entry;
+                                } else {
+                                    params.push(entry);
+                                }
+                            }
+                            self.dataclass_init_params.insert(name.to_string(), params.clone());
+                            self.func_param_info.insert(name.to_string(), params);
+                        }
+                        // Resolve all base classes for multiple inheritance (P1 OOP)
+                        cls.all_bases = bases.iter().filter_map(|b| {
+                            if let ast::Expr::Ident(name) = &b.node {
+                                self.resolve_name(name, stmt_span)
+                            } else if let ast::Expr::Attr { attr, .. } = &b.node {
+                                // `class X(unittest.TestCase):` — treat the
+                                // attribute's bare name as the base class id
+                                // so MRO walks find the runtime-registered
+                                // class. Fall back to declaring the symbol
+                                // when it isn't in scope yet so the
+                                // resolver doesn't drop the base.
+                                self.resolve_name(attr, stmt_span)
+                                    .or_else(|| Some(self.define_local(attr, self.checker.tcx.any())))
+                            } else {
+                                None
+                            }
+                        }).collect();
+                        // Keep first base for backward compatibility
+                        cls.base = cls.all_bases.first().copied();
+                        cls.decorators = decorators.iter()
+                            .filter_map(|d| self.lower_expr(d)).collect();
+                        // Extract metaclass keyword arg if present. The value
+                        // may be a bare name (`metaclass=Meta`) or an attribute
+                        // access (`metaclass=abc.ABCMeta`); in both cases the
+                        // metaclass identity is the leaf name.
+                        cls.metaclass = keyword_args.iter().find_map(|(k, v)| {
+                            if k == "metaclass" {
+                                match &v.node {
+                                    ast::Expr::Ident(meta_name) => Some(meta_name.clone()),
+                                    ast::Expr::Attr { attr, .. } => Some(attr.clone()),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        });
+                        // R10: Extract non-metaclass keyword arguments for __init_subclass__.
+                        cls.class_kwargs = keyword_args.iter()
+                            .filter(|(k, _)| k != "metaclass")
+                            .filter_map(|(k, v)| {
+                                self.lower_expr(v).map(|expr| (k.clone(), expr))
+                            })
+                            .collect();
+                        // Emit a ClassDefPlaceholder so decorator application
+                        // happens at the textual position (#1690). Without
+                        // a placeholder, decorators were applied at module-end
+                        // (the #1686 stop-gap), which broke patterns like
+                        // `@deco class C; obj = C()` where the post-class
+                        // statement expects the decorated class.
+                        // Classes with class-level attribute assignments also
+                        // need one: initializer expressions like
+                        // `X = enum.auto()` must evaluate at the class's
+                        // textual position, after preceding imports/bindings
+                        // have run (P2-R3 ordering, #1686 motivation).
+                        if !cls.decorators.is_empty() || !cls.class_attr_assigns.is_empty() {
+                            if placeholder_to_top {
+                                self.result.top_level.push(HirStmt::ClassDefPlaceholder {
+                                    name: cls.name,
+                                    span: stmt_span,
+                                });
+                            }
+                            placeholder_sym.set(Some(cls.name));
+                        }
+                        self.result.classes.push(cls);
+                    }
+        placeholder_sym.get()
+    }
+
     fn lower_class(
         &mut self,
         name: &str,
@@ -2426,6 +2456,17 @@ impl<'a> AstLowerer<'a> {
 
     fn lower_stmt(&mut self, stmt: &Spanned<ast::Stmt>) -> Option<HirStmt> {
         match &stmt.node {
+            // Classes nested inside try/if/for bodies: collect like a
+            // top-level class (registration is hoisted), and leave a
+            // ClassDefPlaceholder IN this statement stream so decorators and
+            // class-attr initializers run at the textual position — inside
+            // the enclosing try's handler scope.
+            ast::Stmt::ClassDef { name, body, bases, decorators, keyword_args, .. } => {
+                let sym = self.collect_class_stmt(
+                    name, body, bases, decorators, keyword_args, stmt.span, false,
+                );
+                return sym.map(|name| HirStmt::ClassDefPlaceholder { name, span: stmt.span });
+            }
             ast::Stmt::VarDecl { name, value, .. } => {
                 let val = self.lower_expr(value)?;
                 // Mirror the Assign first-definition path: when the resolve

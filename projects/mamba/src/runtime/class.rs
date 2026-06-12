@@ -615,6 +615,23 @@ pub fn class_is_registered(name: &str) -> bool {
 /// Ordered MRO (ancestors only, most-derived first) of a registered class.
 /// Empty when the class is unknown. Used by the dataclasses runtime to merge
 /// inherited dataclass fields (PEP 557).
+/// Snapshot of a registered class's class-level attributes (name, value),
+/// in insertion order where the map preserves it. Used by @enum.unique /
+/// @enum.verify fallbacks for data-mixin enums that skip ENUM_CLASSES.
+pub(crate) fn class_attr_entries(name: &str) -> Vec<(String, MbValue)> {
+    CLASS_REGISTRY.with(|reg| {
+        reg.borrow()
+            .get(name)
+            .map(|cls| {
+                cls.class_attrs
+                    .iter()
+                    .map(|(k, v)| (k.clone(), *v))
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
 pub(crate) fn class_mro_list(name: &str) -> Vec<String> {
     CLASS_REGISTRY.with(|reg| {
         reg.borrow().get(name).map(|c| c.mro.clone()).unwrap_or_default()

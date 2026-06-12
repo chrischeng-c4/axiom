@@ -796,13 +796,20 @@ pub fn class_first_alias(class_name: &str) -> Option<(String, String)> {
     ENUM_CLASSES.with(|m| {
         let map = m.borrow();
         let info = map.get(class_name)?;
-        let mut seen: Vec<(u64, &str)> = Vec::new();
+        let mut seen: Vec<(u64, MbValue, &str)> = Vec::new();
         for (name, member) in &info.by_name {
             let bits = member.to_bits();
-            if let Some((_, first)) = seen.iter().find(|(b, _)| *b == bits) {
+            let mv = member_value(*member);
+            if let Some((_, _, first)) = seen.iter().find(|(b, sv, _)| {
+                // Same member object, or distinct members carrying equal
+                // values (the class-body translation can mint separate
+                // member objects for an alias).
+                *b == bits
+                    || super::super::builtins::mb_eq(*sv, mv).as_bool() == Some(true)
+            }) {
                 return Some((name.clone(), (*first).to_string()));
             }
-            seen.push((bits, name));
+            seen.push((bits, mv, name));
         }
         None
     })
@@ -829,4 +836,40 @@ pub fn class_member_int_values(class_name: &str) -> Option<Vec<(String, i64)>> {
         }
         Some(out)
     })
+}
+
+
+/// class_first_alias fallback for data-mixin enums (IntEnum et al.) that
+/// keep raw values as class attrs instead of ENUM_CLASSES members.
+pub fn attrs_first_alias(class_name: &str) -> Option<(String, String)> {
+    let entries = super::super::class::class_attr_entries(class_name);
+    let mut seen: Vec<(MbValue, String)> = Vec::new();
+    for (name, value) in entries {
+        if name.starts_with("__") {
+            continue;
+        }
+        if value.as_int().is_none()
+            && value.as_ptr().map(|p| unsafe {
+                !matches!((*p).data, super::super::rc::ObjData::Str(_))
+            }).unwrap_or(true)
+        {
+            continue; // only int/str member values participate
+        }
+        if let Some((_, first)) = seen.iter().find(|(sv, _)| {
+            super::super::builtins::mb_eq(*sv, value).as_bool() == Some(true)
+        }) {
+            return Some((name, first.clone()));
+        }
+        seen.push((value, name));
+    }
+    None
+}
+
+/// class_member_int_values fallback over class attrs (data-mixin enums).
+pub fn attrs_member_int_values(class_name: &str) -> Vec<(String, i64)> {
+    super::super::class::class_attr_entries(class_name)
+        .into_iter()
+        .filter(|(n, _)| !n.starts_with("__"))
+        .filter_map(|(n, v)| v.as_int().map(|i| (n, i)))
+        .collect()
 }

@@ -213,9 +213,11 @@ impl TypeChecker {
     }
 
     /// Check a module. Returns accumulated errors.
-    pub fn check_module(&mut self, module: &Module) -> Vec<MambaError> {
-        // First pass: register all top-level function/class/enum/alias names
-        for stmt in &module.stmts {
+    /// First-pass def/class/enum/alias pre-registration, descending into
+    /// compound-statement bodies (try/if/while/for/with): a class defined in
+    /// a module-level `try:` is still a module-scope binding.
+    fn preregister_defs(&mut self, stmts: &[Spanned<Stmt>]) {
+        for stmt in stmts {
             match &stmt.node {
                 Stmt::FnDef { name, type_params, params, return_ty, .. }
                 | Stmt::AsyncFnDef { name, type_params, params, return_ty, .. } => {
@@ -377,7 +379,45 @@ impl TypeChecker {
                 }
                 _ => {}
             }
+            match &stmt.node {
+                Stmt::Try { body, handlers, else_body, finally_body } => {
+                    self.preregister_defs(body);
+                    for h in handlers {
+                        self.preregister_defs(&h.body);
+                    }
+                    if let Some(eb) = else_body {
+                        self.preregister_defs(eb);
+                    }
+                    if let Some(fb) = finally_body {
+                        self.preregister_defs(fb);
+                    }
+                }
+                Stmt::If { body, elif_clauses, else_body, .. } => {
+                    self.preregister_defs(body);
+                    for (_, eb) in elif_clauses {
+                        self.preregister_defs(eb);
+                    }
+                    if let Some(eb) = else_body {
+                        self.preregister_defs(eb);
+                    }
+                }
+                Stmt::While { body, else_body, .. } | Stmt::For { body, else_body, .. } => {
+                    self.preregister_defs(body);
+                    if let Some(eb) = else_body {
+                        self.preregister_defs(eb);
+                    }
+                }
+                Stmt::With { body, .. } => {
+                    self.preregister_defs(body);
+                }
+                _ => {}
+            }
         }
+    }
+
+    pub fn check_module(&mut self, module: &Module) -> Vec<MambaError> {
+        // First pass: register all top-level function/class/enum/alias names
+        self.preregister_defs(&module.stmts);
 
         // Second pass: check bodies
         for stmt in &module.stmts {

@@ -395,14 +395,19 @@ unsafe extern "C" fn dispatch_enum_verify_apply(args: *const MbValue, n: usize) 
     for check in checks {
         match check.as_str() {
             "UNIQUE" => {
-                if let Some((alias, canonical)) = super::enum_class::class_first_alias(&name) {
+                if let Some((alias, canonical)) = super::enum_class::class_first_alias(&name)
+                    .or_else(|| super::enum_class::attrs_first_alias(&name))
+                {
                     return verify_raise(format!(
                         "aliases found in <enum '{name}'>: {alias} -> {canonical}"
                     ));
                 }
             }
             "CONTINUOUS" => {
-                if let Some(vals) = super::enum_class::class_member_int_values(&name) {
+                let vals = super::enum_class::class_member_int_values(&name)
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| super::enum_class::attrs_member_int_values(&name));
+                {
                     let mut ints: Vec<i64> = vals.iter().map(|(_, i)| *i).collect();
                     ints.sort_unstable();
                     ints.dedup();
@@ -421,7 +426,10 @@ unsafe extern "C" fn dispatch_enum_verify_apply(args: *const MbValue, n: usize) 
                 }
             }
             "NAMED_FLAGS" => {
-                if let Some(vals) = super::enum_class::class_member_int_values(&name) {
+                let vals = super::enum_class::class_member_int_values(&name)
+                    .filter(|v| !v.is_empty())
+                    .unwrap_or_else(|| super::enum_class::attrs_member_int_values(&name));
+                {
                     // Single-bit named values form the alphabet; any member
                     // using a bit outside it is invalid.
                     let named_bits: i64 = vals
@@ -579,7 +587,9 @@ pub fn mb_enum_member_value(member: MbValue) -> MbValue {
 pub fn mb_enum_unique(enum_class: MbValue) -> MbValue {
     // Class-body enums arrive as registered class-name strings.
     if let Some(name) = extract_str_local(enum_class) {
-        if let Some((alias, canonical)) = super::enum_class::class_first_alias(&name) {
+        if let Some((alias, canonical)) = super::enum_class::class_first_alias(&name)
+            .or_else(|| super::enum_class::attrs_first_alias(&name))
+        {
             super::super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                 MbValue::from_ptr(MbObject::new_str(format!(
