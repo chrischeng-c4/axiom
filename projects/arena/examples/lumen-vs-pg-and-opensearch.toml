@@ -65,17 +65,23 @@ query = "SELECT eid FROM docs WHERE bio_tsv @@ websearch_to_tsquery('simple', 'e
 gate = "win"
 request = { method = "POST", url = "http://127.0.0.1:9200/docs/_search", body = '{"query":{"match":{"bio":"engineer"}},"size":10}' }
 
-# --- kw_term: exact keyword lookup. Both peers' keyword/btree path is home turf
-#     on loopback where the protocol floor dominates — report, don't gate. ---
+# --- kw_term: exact keyword lookup. The peers' keyword/btree path is home turf
+#     on loopback where the protocol floor favours native-wire pg, so lumen is
+#     not expected to WIN here. But we report it HONESTLY rather than exempt it:
+#     a `target` gate with floor 0.95 means lumen must stay within ~5% of each
+#     peer — below that it shows RED in the report (a tracked weakness) without
+#     hard-failing the benchmark gate. No hiding slow cells behind `exempt`. ---
 [[cells]]
 name = "kw_term"
 [cells.targets.lumen]
 request = { method = "POST", url = "http://127.0.0.1:7373/collections/docs/search", body = '{"query":{"term":{"field":"city","value":"taipei"}},"limit":10}' }
 [cells.targets.pg]
-gate = "exempt"
-reason = "pg btree point-lookup home turf; floor-dominated on loopback, not an engine comparison"
+gate = "target"
+floor = 0.95
+reason = "point lookup; lumen must hold within 5% of pg (honest floor, not exempt)"
 query = "SELECT eid FROM docs WHERE city = 'taipei' LIMIT 10"
 [cells.targets.opensearch]
-gate = "exempt"
-reason = "keyword term lookup is floor-dominated on loopback; not a fair engine comparison"
+gate = "target"
+floor = 0.95
+reason = "point lookup; lumen must hold within 5% of OpenSearch (honest floor, not exempt)"
 request = { method = "POST", url = "http://127.0.0.1:9200/docs/_search", body = '{"query":{"term":{"city":"taipei"}},"size":10}' }
