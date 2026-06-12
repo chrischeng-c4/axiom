@@ -190,11 +190,12 @@ label = "project:lumen"
 # (e.g. behavior, security) fall back to the manifest command. One spec, two
 # surfaces: the same workload is driven both as a vat runner (self-provisioning)
 # and as the verify-ec command (host-provisioned).
-#   benchmark (效能) -> arena: lumen vs pg search-latency, ratcheting gate.
+#   benchmark (效能) -> arena: lumen vs pg AND OpenSearch search-latency, one
+#                        3-target run, ratcheting gate (lumen must beat both).
 #   stability (穩定性) -> rig: resilience scenarios (partition recovery + 5%
 #                        packet-loss p99 budget) over toxiproxy.
 # behavior (功能) and security (安全) stay cargo gates per the EC-gatekeeper map.
-ec.benchmark = { tool = "arena", spec = "projects/arena/examples/lumen-vs-pg.toml" }
+ec.benchmark = { tool = "arena", spec = "projects/arena/examples/lumen-vs-pg-and-opensearch.toml" }
 ec.stability = { tool = "rig", dir = "projects/lumen/tests/rig/scenarios/resilience" }
 
 [[projects.workspaces]]
