@@ -82,32 +82,46 @@ changes:
     section: logic
     impl_mode: hand-written
     description: >
-      Add a conservative command optimizer step before maybe_rewrite builds the
-      cap-run shell payload. The optimizer uses a hardcoded whitelist, checks
-      that the replacement tool exists, keeps the cap label equal to the
-      original command, and emits a fallback shell payload that runs the
-      original command if the optimized command exits unsuccessfully. Initial
-      whitelist scope is simple recursive grep forms that can use rg.
+      Change maybe_rewrite so it computes an execution payload separately from
+      the original label. Keep first_program_is_cap and empty-command handling
+      unchanged. Add a best-effort optimizer helper that only examines simple
+      whole-command input with no shell metacharacters or command chaining. The
+      first whitelist entry recognizes grep -R/-r style recursive searches with
+      supported flags and positional pattern/path arguments, then emits an rg
+      command only when rg is discoverable on PATH. Unsupported flags,
+      non-recursive grep, pipeline grep, redirection, heredoc, and parse
+      uncertainty return None so maybe_rewrite wraps the original command.
+
+  - path: projects/cap/src/hook.rs
+    action: modify
+    section: logic
+    impl_mode: hand-written
+    description: >
+      For an optimized command, build the bash payload as a fallback script:
+      run the optimized command first, and if it exits non-zero, run the
+      original command. The cap label remains the original command in both
+      optimized and unoptimized cases. This keeps failed optimizer attempts
+      from changing the caller-visible command semantics.
 
   - path: projects/cap/src/hook.rs
     action: modify
     section: unit-test
     impl_mode: hand-written
     description: >
-      Extend hook rewrite tests to cover optimized rg payload construction,
-      missing replacement tool fallback to the original payload, unsupported
-      grep forms staying unchanged, pipeline grep staying unchanged, and the
-      runtime fallback script shape.
+      Add unit tests for grep -R to rg conversion, rg unavailable fallback,
+      original label preservation, optimized bash payload fallback shape,
+      unsupported grep flags, non-recursive grep, and pipeline/chained shell
+      commands staying on the original payload.
 
   - path: projects/cap/README.md
     action: modify
     section: docs
     impl_mode: hand-written
     description: >
-      Document that cap hook may automatically optimize a small whitelist of
-      read-only commands when the faster replacement is installed, and that any
-      optimizer miss or optimized-command failure falls back to the original
-      command semantics.
+      Document the auto optimizer as a small installed-tool-dependent
+      whitelist. State that cap leaves commands untouched when it cannot prove
+      a safe rewrite, and that optimized commands include runtime fallback to
+      the original command on non-zero optimized exit.
 ```
 ## E2E Test
 <!-- type: e2e-test lang: yaml -->
