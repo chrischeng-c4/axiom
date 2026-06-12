@@ -95,33 +95,24 @@ pub fn mb_numbers_Integral() -> MbValue {
 mod tests {
     use super::*;
 
-    fn extract_name(d: MbValue) -> String {
-        unsafe {
-            let ObjData::Dict(ref lock) = (*d.as_ptr().unwrap()).data else { panic!("expected Dict"); };
-            let m = lock.read().unwrap();
-            let ObjData::Str(ref s) = (*m["__name__"].as_ptr().unwrap()).data else { panic!("expected Str"); };
-            s.clone()
-        }
-    }
-
-    fn extract_abstract(d: MbValue) -> bool {
-        unsafe {
-            let ObjData::Dict(ref lock) = (*d.as_ptr().unwrap()).data else { panic!("expected Dict"); };
-            lock.read().unwrap()["__abstract__"].as_bool().unwrap()
-        }
-    }
-
     #[test]
-    fn test_numbers_abc_hierarchy() {
-        for (val, expected) in [
-            (mb_numbers_Number(), "Number"),
-            (mb_numbers_Complex(), "Complex"),
-            (mb_numbers_Real(), "Real"),
-            (mb_numbers_Rational(), "Rational"),
-            (mb_numbers_Integral(), "Integral"),
-        ] {
-            assert!(extract_abstract(val));
-            assert_eq!(extract_name(val), expected);
+    fn test_numbers_abcs_raise_on_instantiation() {
+        // CPython: the numeric-tower ABCs cannot be instantiated; each call
+        // raises TypeError and returns None. Calls run one at a time so each
+        // pending exception is observed before the next raise.
+        let cases: [(fn() -> MbValue, &str); 5] = [
+            (mb_numbers_Number, "Number"),
+            (mb_numbers_Complex, "Complex"),
+            (mb_numbers_Real, "Real"),
+            (mb_numbers_Rational, "Rational"),
+            (mb_numbers_Integral, "Integral"),
+        ];
+        for (ctor, expected) in cases {
+            let val = ctor();
+            assert!(val.is_none(), "for {expected}");
+            let exc = super::super::super::exception::current_exception_type();
+            assert_eq!(exc.as_deref(), Some("TypeError"), "for {expected}");
+            super::super::super::exception::mb_clear_exception();
         }
     }
 }
