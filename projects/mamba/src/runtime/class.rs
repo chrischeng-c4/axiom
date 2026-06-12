@@ -1340,6 +1340,21 @@ fn call_init_with_args(addr: u64, instance: MbValue, args_list: MbValue) {
 /// `args_list` is a List MbValue containing all constructor arguments.
 /// Used by compiled code for `ClassName(arg1, arg2, ...)`.
 pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbValue {
+    instance_new_with_init_impl(class_name, args_list, false)
+}
+
+/// Default instance creation BYPASSING metaclass `__call__` routing — the
+/// `type.__call__(cls, ...)` a metaclass body reaches via `super().__call__()`.
+/// Routing through the public entry from inside the metaclass would recurse.
+pub(crate) fn instance_new_default(class_name: MbValue, args_list: MbValue) -> MbValue {
+    instance_new_with_init_impl(class_name, args_list, true)
+}
+
+fn instance_new_with_init_impl(
+    class_name: MbValue,
+    args_list: MbValue,
+    skip_metaclass: bool,
+) -> MbValue {
     let name = extract_str(class_name).unwrap_or_else(|| "object".to_string());
     if let Some(result) = mb_collections_abc_reject_abstract_instantiation(&name) {
         return result;
@@ -1363,6 +1378,7 @@ pub fn mb_instance_new_with_init(class_name: MbValue, args_list: MbValue) -> MbV
             (None, None)
         }
     });
+    let metaclass_name = if skip_metaclass { None } else { metaclass_name };
 
     // P2-R2: Check for metaclass — route through metaclass.__call__ if present.
     // When a class has a metaclass, the metaclass's __call__ controls instance creation.
@@ -3378,6 +3394,63 @@ pub(crate) fn call_method_value2(method: MbValue, self_v: MbValue, arg: MbValue)
         let f: extern "C" fn(MbValue, MbValue) -> MbValue =
             std::mem::transmute(addr as usize);
         f(self_v, arg)
+    }
+}
+
+/// Like [`call_method_value2`] but with an args LIST (`self` + 0..=3 args),
+/// for dispatch sites that already hold the packed argument list.
+pub(crate) fn call_method_value_with_args(
+    method: MbValue,
+    self_v: MbValue,
+    args: MbValue,
+) -> MbValue {
+    let addr = extract_func_addr(method);
+    if addr == 0 {
+        return MbValue::none();
+    }
+    let is_registered = CALLABLE_REGISTRY.with(|reg| reg.borrow().contains(&addr));
+    if !is_registered {
+        return MbValue::none();
+    }
+    let mut items: Vec<MbValue> = Vec::new();
+    if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                items.extend(lock.read().unwrap().iter());
+            }
+        }
+    }
+    unsafe {
+        if super::module::is_variadic_func(addr) {
+            let packed = MbValue::from_ptr(super::rc::MbObject::new_list(items));
+            let f: unsafe extern "C" fn(MbValue, MbValue) -> MbValue =
+                std::mem::transmute(addr as usize);
+            return f(self_v, packed);
+        }
+        // REQ: JIT-compiled functions use SystemV/C calling convention.
+        match items.len() {
+            0 => {
+                let f: extern "C" fn(MbValue) -> MbValue =
+                    std::mem::transmute(addr as usize);
+                f(self_v)
+            }
+            1 => {
+                let f: extern "C" fn(MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(addr as usize);
+                f(self_v, items[0])
+            }
+            2 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(addr as usize);
+                f(self_v, items[0], items[1])
+            }
+            3 => {
+                let f: extern "C" fn(MbValue, MbValue, MbValue, MbValue) -> MbValue =
+                    std::mem::transmute(addr as usize);
+                f(self_v, items[0], items[1], items[2])
+            }
+            _ => MbValue::none(),
+        }
     }
 }
 
@@ -9817,6 +9890,40 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                                 class_name.clone()
                             } else { String::new() }
                         } else { String::new() };
+                        // Metaclass context: `self` is a CLASS (a name string),
+                        // so the MRO walked is the metaclass's. The builtin
+                        // `type.__call__` tail of that MRO is default instance
+                        // creation of the class (bypassing metaclass routing,
+                        // which is the very frame we are in).
+                        if instance_class.is_empty() {
+                            let self_class = super_self
+                                .as_ptr()
+                                .and_then(|p| match &(*p).data {
+                                    ObjData::Str(s) => Some(s.clone()),
+                                    _ => None,
+                                });
+                            if let Some(cls_str) = self_class {
+                                let meta = CLASS_REGISTRY.with(|reg| {
+                                    reg.borrow()
+                                        .get(&cls_str)
+                                        .and_then(|c| c.metaclass.clone())
+                                });
+                                if let Some(meta) = meta {
+                                    let inherited =
+                                        lookup_method_after(&meta, &super_class, &name);
+                                    if !inherited.is_none() {
+                                        // A parent metaclass method: call it
+                                        // with the class as self.
+                                        return call_method_value_with_args(
+                                            inherited, super_self, args,
+                                        );
+                                    }
+                                    if name == "__call__" {
+                                        return instance_new_default(super_self, args);
+                                    }
+                                }
+                            }
+                        }
                         let method = lookup_method_after(&instance_class, &super_class, &name);
                         if !method.is_none() {
                             // R1 P1: Unwrap classmethod/staticmethod descriptors for super dispatch.
