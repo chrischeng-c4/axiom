@@ -191,6 +191,19 @@ impl RustSourceUnit {
     }
 }
 
+/// Apply-time regeneration entry point: parse `raw` into the structured
+/// item-tree and emit it back. The codegen pipeline calls this instead of
+/// replaying a stored snapshot, so the emitted file is always routed through
+/// (and validated as) a clean Rust item-tree. For unedited input the result is
+/// byte-identical; for an edited TD the structured edit is what regenerates —
+/// never a stale snapshot. Rejects with [`ParseError`] when `raw` is not a
+/// clean Rust unit.
+///
+/// @spec projects/agentic-workflow/tech-design/validate/rust-source-unit-ir-lossless-cst-parse-to-structured-item-tree-b.md#logic
+pub fn regenerate(raw: &str) -> Result<String, ParseError> {
+    parse(raw).map(|unit| unit.emit())
+}
+
 /// Recover the structured projection of a top-level CST node. `text` is always
 /// the node's lossless text; the remaining fields are best-effort structured
 /// metadata that never gate byte-identical emit.
@@ -340,6 +353,13 @@ impl Foo {
     fn parse_rejects_syntactically_broken_source() {
         let err = parse("fn broken( {").expect_err("broken source must be rejected");
         assert!(!err.errors.is_empty(), "must report at least one error");
+    }
+
+    #[test]
+    fn regenerate_round_trips_clean_source_and_rejects_broken() {
+        let src = "pub fn answer() -> i32 {\n    42 // the answer\n}\n";
+        assert_eq!(regenerate(src).expect("clean source regenerates"), src);
+        assert!(regenerate("fn broken( {").is_err(), "broken source must reject");
     }
 
     #[test]

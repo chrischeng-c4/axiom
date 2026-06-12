@@ -604,7 +604,7 @@ fn run_apply_inner(
                 Some("e2e-test") if target_lang == crate::generate::marker::Lang::Rust => {
                     crate::generate::gen::rust::tests_gen::generate_e2e_tests(&spec_content).code
                 }
-                Some("source") => generate_source_section_code(
+                Some("source" | "rust-source-unit") => generate_source_section_code(
                     &spec_content,
                     &spec_path_str,
                     Some(&entry.path),
@@ -3224,6 +3224,39 @@ pub struct MermaidPlusPayload;
 
         assert_eq!(source.matches("@spec ").count(), 1);
         assert!(!source.contains("#[derive(Debug)]\n/// @spec"));
+    }
+
+    #[test]
+    fn rust_source_unit_section_regenerates_from_td_fence_via_item_tree() {
+        // A `## Source` marked rust-source-unit (td_ast) regenerates the
+        // TD-embedded fence through the structured item-tree, WITHOUT reading
+        // the live target — the TD is the source of truth. Pass a target path
+        // that does not exist to prove no target read occurs.
+        let spec = r#"
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+```rust
+//! kept module doc
+pub struct Widget {
+    pub id: u64, // kept comment
+}
+```
+"#;
+        let source = generate_source_section_code(
+            spec,
+            ".aw/tech-design/projects/lumen/widget.md",
+            Some("projects/lumen/src/does-not-exist.rs"),
+            std::path::Path::new("/nonexistent-root"),
+        );
+
+        // Code round-tripped through the IR byte-for-byte (comments preserved),
+        // proving regeneration goes through rust_source_unit::regenerate.
+        assert!(source.contains("//! kept module doc"));
+        assert!(source.contains("pub id: u64, // kept comment"));
+        assert!(source.contains("pub struct Widget {"));
+        // Rust target → per-item @spec breadcrumb is added.
+        assert!(source.contains("#source"));
     }
 
     #[test]
@@ -8565,6 +8598,24 @@ pub(crate) fn generate_source_section_code(
 ) -> String {
     let spec_ref = format!("{spec_path}#source");
     let embedded_source = extract_section_fence(spec_content, "Source").unwrap_or_default();
+
+    // rust-source-unit (td_ast): regenerate the file by routing the TD-embedded
+    // source through the structured lossless item-tree, NOT by replaying a
+    // stored snapshot or re-reading the live target. The TD fence is the source
+    // of truth: for unedited input this is byte-identical; for an edited TD the
+    // structured edit regenerates. A parse failure means the TD fence is not
+    // clean Rust — fall back to the raw embedded source so apply still writes
+    // something inspectable rather than silently dropping the section.
+    if source_is_rust_source_unit(spec_content) {
+        let regenerated = crate::generate::rust_source_unit::regenerate(&embedded_source)
+            .unwrap_or_else(|_| embedded_source.clone());
+        return if target_rel_path.is_some_and(is_rust_path_str) {
+            annotate_rust_source_items(&regenerated, &spec_ref)
+        } else {
+            regenerated
+        };
+    }
+
     let source = if let Some(directive) = source_from_target_directive(spec_content) {
         target_rel_path
             .and_then(|path| std::fs::read_to_string(root.join(path)).ok())
@@ -8580,6 +8631,29 @@ pub(crate) fn generate_source_section_code(
     } else {
         source
     }
+}
+
+/// True when the `## Source` section opts into rust-source-unit (td_ast)
+/// regeneration via a `<!-- type: rust-source-unit ... -->` marker. Such a
+/// section carries no `source-snapshot:`/`source-from-target:` directive — the
+/// TD-embedded fence is the source of truth and is regenerated through the
+/// structured item-tree instead of replayed.
+fn source_is_rust_source_unit(spec_content: &str) -> bool {
+    let mut in_source = false;
+    for line in spec_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") {
+            in_source = trimmed
+                .trim_start_matches('#')
+                .trim()
+                .eq_ignore_ascii_case("Source");
+            continue;
+        }
+        if in_source && trimmed.starts_with("<!--") && trimmed.contains("type: rust-source-unit") {
+            return true;
+        }
+    }
+    false
 }
 
 enum SourceFromTargetDirective {
