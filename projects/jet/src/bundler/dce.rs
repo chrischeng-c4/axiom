@@ -419,13 +419,10 @@ pub fn eliminate_unread_es_module_markers(source: &str) -> String {
         consumed += 1;
         let rest_trim = rest.trim_start();
         consumed += rest.len() - rest_trim.len();
-        let body = ["{ value: true });", "{value:true});", "{value:!0});"]
-            .iter()
-            .find(|p| rest_trim.starts_with(**p));
-        let Some(body) = body else {
+        let Some(body_len) = es_module_marker_body_len(rest_trim) else {
             return source.to_string();
         };
-        let stmt_end = key_end + consumed + body.len();
+        let stmt_end = key_end + consumed + body_len;
 
         // Statement position: the previous significant byte before the
         // prefix must open or end a statement.
@@ -448,7 +445,19 @@ pub fn eliminate_unread_es_module_markers(source: &str) -> String {
         let module_id = receiver_trim
             .strip_prefix("_m")
             .and_then(|r| r.strip_suffix(".exports"))
-            .and_then(|digits| digits.parse::<usize>().ok());
+            .or_else(|| {
+                receiver_trim
+                    .strip_prefix("_m")
+                    .and_then(|r| r.strip_suffix('e'))
+            })
+            .and_then(|digits| digits.parse::<usize>().ok())
+            .or_else(|| {
+                if matches!(receiver_trim, "module.exports" | "exports") {
+                    module_id_for_position(source, prefix_at)
+                } else {
+                    None
+                }
+            });
         markers.push(((prefix_at, e), module_id));
     }
 
@@ -478,6 +487,7 @@ pub fn eliminate_unread_es_module_markers(source: &str) -> String {
         }
     }
     for name in helper_names {
+        let mut helper_module_ids = HashSet::new();
         let mut at = 0usize;
         while let Some(rel) = source[at..].find(name) {
             let start = at + rel;
@@ -503,8 +513,19 @@ pub fn eliminate_unread_es_module_markers(source: &str) -> String {
                     None => return source.to_string(),
                 }
             }
+            if let Some(id) = exported_helper_module_id(source, b, start, name) {
+                helper_module_ids.insert(id);
+                continue;
+            }
             // Aliased / passed as a value — cannot trace, keep all.
             return source.to_string();
+        }
+
+        for id in helper_module_ids {
+            let Some(ids) = exported_helper_demands(source, b, id) else {
+                return source.to_string();
+            };
+            demanded.extend(ids);
         }
     }
 
@@ -669,6 +690,201 @@ fn first_call_arg_module_id(source: &str, open: usize) -> Option<usize> {
         }
     }
     None
+}
+
+fn exported_helper_module_id(source: &str, b: &[u8], start: usize, name: &str) -> Option<usize> {
+    let before = source[..start].trim_end();
+    if !(before.ends_with("module.exports =")
+        || before.ends_with("module.exports=")
+        || before.ends_with(".exports =")
+        || before.ends_with(".exports="))
+    {
+        return None;
+    }
+
+    let mut after = start + name.len();
+    while after < b.len() && matches!(b[after], b' ' | b'\t') {
+        after += 1;
+    }
+    if after < b.len() && !matches!(b[after], b',' | b';' | b'\n' | b'\r') {
+        return None;
+    }
+
+    module_id_for_position(source, start)
+}
+
+fn module_id_for_position(source: &str, pos: usize) -> Option<usize> {
+    let marker = source[..pos].rfind("// Module ")?;
+    let start = marker + "// Module ".len();
+    let mut end = start;
+    let b = source.as_bytes();
+    while end < pos && b[end].is_ascii_digit() {
+        end += 1;
+    }
+    if start == end || b.get(end) != Some(&b':') {
+        return None;
+    }
+    source[start..end].parse().ok()
+}
+
+fn exported_helper_demands(source: &str, b: &[u8], helper_id: usize) -> Option<HashSet<usize>> {
+    let needle = format!("_r({helper_id})");
+    let mut aliases: HashSet<String> = HashSet::new();
+    let mut demanded = HashSet::new();
+    let mut at = 0usize;
+
+    while let Some(rel) = source[at..].find(&needle) {
+        let start = at + rel;
+        at = start + needle.len();
+        if source[at..]
+            .bytes()
+            .next()
+            .map(|byte| byte.is_ascii_digit())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if at < b.len() && b[at] == b'(' {
+            demanded.insert(first_call_arg_module_id(source, at)?);
+            continue;
+        }
+        if let Some(alias) = require_alias_name(source, b, start) {
+            aliases.insert(alias);
+            continue;
+        }
+        return None;
+    }
+
+    for alias in aliases {
+        demanded.extend(alias_demands(source, b, &alias)?);
+    }
+
+    Some(demanded)
+}
+
+fn require_alias_name(source: &str, b: &[u8], require_start: usize) -> Option<String> {
+    let stmt_start = source[..require_start]
+        .rfind(|c| matches!(c, ';' | '{' | '}' | '\n'))
+        .map(|idx| idx + 1)
+        .unwrap_or(0);
+    let prefix = source[stmt_start..require_start].trim();
+    let rest = ["var ", "let ", "const "]
+        .iter()
+        .find_map(|keyword| prefix.strip_prefix(keyword))?;
+    let (name, tail) = rest.split_once('=')?;
+    if !tail.trim().is_empty() {
+        return None;
+    }
+    let name = name.trim();
+    if !is_ident(name.as_bytes()) {
+        return None;
+    }
+    let mut after = require_start;
+    while after < b.len() && b[after] != b';' && b[after] != b'\n' {
+        after += 1;
+    }
+    Some(name.to_string())
+}
+
+fn alias_demands(source: &str, b: &[u8], alias: &str) -> Option<HashSet<usize>> {
+    let mut demanded = HashSet::new();
+    let mut at = 0usize;
+
+    while let Some(rel) = source[at..].find(alias) {
+        let start = at + rel;
+        at = start + alias.len();
+        let before_ok = start == 0 || !is_ident_byte(b[start - 1]);
+        let after_is_ident = at < b.len() && is_ident_byte(b[at]);
+        if !before_ok || after_is_ident {
+            continue;
+        }
+        if is_alias_declaration_lhs(source, b, start, alias) {
+            continue;
+        }
+        let mut call = at;
+        while call < b.len() && matches!(b[call], b' ' | b'\t') {
+            call += 1;
+        }
+        if call < b.len() && b[call] == b'(' {
+            demanded.insert(first_call_arg_module_id(source, call)?);
+            continue;
+        }
+        return None;
+    }
+
+    Some(demanded)
+}
+
+fn is_alias_declaration_lhs(source: &str, b: &[u8], start: usize, alias: &str) -> bool {
+    let stmt_start = source[..start]
+        .rfind(|c| matches!(c, ';' | '{' | '}' | '\n'))
+        .map(|idx| idx + 1)
+        .unwrap_or(0);
+    let before = source[stmt_start..start].trim_end();
+    if !matches!(before, "var" | "let" | "const") {
+        return false;
+    }
+    let mut after = start + alias.len();
+    while after < b.len() && matches!(b[after], b' ' | b'\t') {
+        after += 1;
+    }
+    after < b.len() && b[after] == b'='
+}
+
+fn is_ident(bytes: &[u8]) -> bool {
+    let Some((first, rest)) = bytes.split_first() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || *first == b'_' || *first == b'$') {
+        return false;
+    }
+    rest.iter().all(|byte| is_ident_byte(*byte))
+}
+
+fn es_module_marker_body_len(source: &str) -> Option<usize> {
+    let b = source.as_bytes();
+    let mut i = 0usize;
+    skip_ascii_ws(b, &mut i);
+    if b.get(i) != Some(&b'{') {
+        return None;
+    }
+    i += 1;
+    skip_ascii_ws(b, &mut i);
+    if !source[i..].starts_with("value") {
+        return None;
+    }
+    i += "value".len();
+    skip_ascii_ws(b, &mut i);
+    if b.get(i) != Some(&b':') {
+        return None;
+    }
+    i += 1;
+    skip_ascii_ws(b, &mut i);
+    if source[i..].starts_with("true") {
+        i += "true".len();
+    } else if source[i..].starts_with("!0") {
+        i += "!0".len();
+    } else {
+        return None;
+    }
+    skip_ascii_ws(b, &mut i);
+    if b.get(i) != Some(&b'}') {
+        return None;
+    }
+    i += 1;
+    skip_ascii_ws(b, &mut i);
+    if !source[i..].starts_with(");") {
+        return None;
+    }
+    Some(i + 2)
+}
+
+fn skip_ascii_ws(bytes: &[u8], offset: &mut usize) {
+    while *offset < bytes.len()
+        && matches!(bytes[*offset], b' ' | b'\t' | b'\r' | b'\n')
+    {
+        *offset += 1;
+    }
 }
 
 pub fn js_parses_without_errors(source: &str) -> bool {
@@ -1854,6 +2070,45 @@ Object.defineProperty(_m364.exports, "__esModule", { value: true });
         );
     }
 
+    #[test]
+    fn test_multiline_exports_alias_es_module_marker_is_removed() {
+        let input = r#"// Module 7: node_modules/pkg/index.js
+{
+var _m7e=_m7.exports;
+Object.defineProperty(_m7e, "__esModule", {
+  value: true
+});
+_m7e.value = 1;
+}"#;
+        let output = eliminate_unread_es_module_markers(input);
+        assert!(!output.contains("__esModule"), "{output}");
+        assert!(output.contains("_m7e.value = 1"), "{output}");
+    }
+
+    #[test]
+    fn test_wrapper_module_exports_marker_uses_module_banner_for_demand() {
+        let input = r#"function helper(e) { return e && e.__esModule ? e : { "default": e }; }
+var wrapped = helper(_r(2));
+// Module 1: node_modules/pkg/a.js
+!function(module,exports,require){Object.defineProperty(module.exports, "__esModule", { value: true });
+module.exports.value = 1;
+}(_m1,_m1.exports,_r);
+// Module 2: node_modules/pkg/b.js
+!function(module,exports,require){Object.defineProperty(module.exports, "__esModule", { value: true });
+module.exports.value = 2;
+}(_m2,_m2.exports,_r);
+"#;
+        let output = eliminate_unread_es_module_markers(input);
+        assert!(
+            !output.contains("Module 1: node_modules/pkg/a.js\n!function(module,exports,require){Object.defineProperty"),
+            "undemanded wrapper marker must drop: {output}"
+        );
+        assert!(
+            output.contains("Module 2: node_modules/pkg/b.js\n!function(module,exports,require){Object.defineProperty"),
+            "demanded wrapper marker must stay: {output}"
+        );
+    }
+
     /// Aliased helper (`module.exports = helper`) escapes lexical
     /// tracing — every marker must survive.
     #[test]
@@ -1867,10 +2122,35 @@ Object.defineProperty(_m1.exports, "__esModule", { value: true });
     }
 
     #[test]
+    fn test_exported_interop_helper_keeps_only_called_module_markers() {
+        let input = r#"// Module 9: node_modules/@babel/runtime/helpers/interopRequireDefault.js
+!function(module,exports,require){function _interopRequireDefault(e) {
+  return e && e.__esModule ? e : { "default": e };
+}
+module.exports = _interopRequireDefault, module.exports.__esModule = true;
+}(_m9,_m9.exports,_r);
+var helper = _r(9);
+var wrapped = helper(_r(1));
+Object.defineProperty(_m1.exports, "__esModule", { value: true });
+Object.defineProperty(_m2.exports, "__esModule", { value: true });
+"#;
+        let output = eliminate_unread_es_module_markers(input);
+        assert!(
+            output.contains("_m1.exports, \"__esModule\""),
+            "demanded marker must stay: {output}"
+        );
+        assert!(
+            !output.contains("_m2.exports, \"__esModule\""),
+            "undemanded marker must drop: {output}"
+        );
+    }
+
+    #[test]
     fn test_js_parses_without_errors_reports_syntax_errors() {
         assert!(js_parses_without_errors("const value = `${name}`;"));
         assert!(!js_parses_without_errors("const value = ;"));
     }
+
 }
 // CODEGEN-END
 

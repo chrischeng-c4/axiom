@@ -1297,7 +1297,10 @@ impl Bundler {
                 lap("r5_unused_exports");
                 let after_markers = dce::eliminate_unread_es_module_markers(&after_r5);
                 lap("es_module_markers");
-                let out = scope_hoist_opt::hoist_default_interop_thunks(&after_markers);
+                let after_reexport_wrappers =
+                    scope_hoist_opt::collapse_pure_reexport_wrappers(&after_markers);
+                lap("reexport_wrappers");
+                let out = scope_hoist_opt::hoist_default_interop_thunks(&after_reexport_wrappers);
                 lap("interop_thunks");
                 out
             } else {

@@ -10,7 +10,7 @@
 //!     package.json to identify safe inlining candidates.
 
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::scope_hoist::is_id_cont_byte;
 use super::CompiledModule;
@@ -2534,6 +2534,413 @@ const raw = `_m0_x`;"#;
     }
 }
 // CODEGEN-END
+
+#[derive(Debug, Clone)]
+struct ReexportWrapper {
+    id: usize,
+    start: usize,
+    end: usize,
+    exports: HashMap<String, (usize, String)>,
+}
+
+/// Collapse pure re-export wrapper modules after flattening.
+///
+/// MUI-style subpath entries often compile to a module whose only remaining
+/// work is `exports["default"] = _r(leaf)["default"]`.  Keeping the wrapper
+/// forces downstream code to read through `_r(wrapper)` and keeps an otherwise
+/// empty module section in the bundle.  This pass redirects property reads to
+/// the leaf module and removes the wrapper section, but only when every
+/// `_r(wrapper)` use is a property read or the default-import thunk shape that
+/// Jet itself emits.
+pub fn collapse_pure_reexport_wrappers(code: &str) -> String {
+    let mut current = code.to_string();
+    for _ in 0..4 {
+        let next = collapse_pure_reexport_wrappers_once(&current);
+        if next.len() == current.len() {
+            return current;
+        }
+        current = next;
+    }
+    current
+}
+
+fn collapse_pure_reexport_wrappers_once(code: &str) -> String {
+    let wrappers = collect_pure_reexport_wrappers(code);
+    if wrappers.is_empty() {
+        return code.to_string();
+    }
+
+    let section_ranges: HashMap<usize, (usize, usize)> = wrappers
+        .iter()
+        .map(|wrapper| (wrapper.id, (wrapper.start, wrapper.end)))
+        .collect();
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    let mut removed = HashSet::new();
+
+    for wrapper in wrappers {
+        let Some(mut wrapper_edits) = reexport_wrapper_read_edits(code, &wrapper) else {
+            continue;
+        };
+        removed.insert(wrapper.id);
+        edits.append(&mut wrapper_edits);
+        edits.push((wrapper.start, wrapper.end, String::new()));
+    }
+
+    if removed.is_empty() {
+        return code.to_string();
+    }
+
+    // Avoid redirecting inside any wrapper section that is also removed; those
+    // edits would overlap the section deletion and are unnecessary.
+    edits.retain(|(start, _, replacement)| {
+        if replacement.is_empty() {
+            return true;
+        }
+        !section_ranges
+            .values()
+            .any(|(section_start, section_end)| start >= section_start && start < section_end)
+    });
+    apply_ordered_edits(code, edits)
+}
+
+fn collect_pure_reexport_wrappers(code: &str) -> Vec<ReexportWrapper> {
+    let mut wrappers = Vec::new();
+    let mut search = 0usize;
+    while let Some(rel) = code[search..].find("// Module ") {
+        let start = search + rel;
+        let Some(line_end_rel) = code[start..].find('\n') else {
+            break;
+        };
+        let line_end = start + line_end_rel;
+        let Some(id) = parse_module_id(&code[start..line_end]) else {
+            search = line_end + 1;
+            continue;
+        };
+        let body_start = line_end + 1;
+        let end = code[body_start..]
+            .find("\n// Module ")
+            .map(|next| body_start + next + 1)
+            .unwrap_or_else(|| code[body_start..].find("\n})();").map_or(code.len(), |r| body_start + r));
+        if id != 0 {
+            if let Some(exports) = pure_reexport_exports(id, &code[body_start..end]) {
+                if !exports.is_empty() {
+                    wrappers.push(ReexportWrapper {
+                        id,
+                        start,
+                        end,
+                        exports,
+                    });
+                }
+            }
+        }
+        search = end;
+    }
+    wrappers
+}
+
+fn parse_module_id(line: &str) -> Option<usize> {
+    let rest = line.strip_prefix("// Module ")?;
+    let id = rest.split(':').next()?;
+    id.parse().ok()
+}
+
+fn pure_reexport_exports(id: usize, section_body: &str) -> Option<HashMap<String, (usize, String)>> {
+    let mut exports = HashMap::new();
+    for raw_line in section_body.lines() {
+        let line = raw_line.trim();
+        if line.is_empty()
+            || line == "{"
+            || line == "}"
+            || line == "'use client';"
+            || line == "\"use client\";"
+            || line == "'use strict';"
+            || line == "\"use strict\";"
+            || line == format!("var _m{id}e=_m{id}.exports;")
+            || line == format!("var _m{id}e = _m{id}.exports;")
+        {
+            continue;
+        }
+        if is_es_module_marker_line(id, line) {
+            continue;
+        }
+        if let Some((export_name, target_id, target_name)) =
+            parse_reexport_assignment(id, line)
+        {
+            if target_id == id {
+                return None;
+            }
+            exports.insert(export_name, (target_id, target_name));
+            continue;
+        }
+        return None;
+    }
+    Some(exports)
+}
+
+fn is_es_module_marker_line(id: usize, line: &str) -> bool {
+    let receiver_matches = line.starts_with(&format!("Object.defineProperty(_m{id}.exports"))
+        || line.starts_with(&format!("Object.defineProperty(_m{id}e"))
+        || line.starts_with("Object.defineProperty(module.exports")
+        || line.starts_with("Object.defineProperty(exports");
+    receiver_matches && line.contains("\"__esModule\"") && line.contains("value: true")
+}
+
+fn parse_reexport_assignment(id: usize, line: &str) -> Option<(String, usize, String)> {
+    let lhs_prefixes = [
+        format!("_m{id}.exports[\""),
+        format!("_m{id}e[\""),
+    ];
+    for prefix in lhs_prefixes {
+        if let Some(rest) = line.strip_prefix(&prefix) {
+            let (export_name, rest) = rest.split_once("\"]")?;
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix('=')?.trim_start();
+            let (target_id, target_name, rest) = parse_require_property(rest)?;
+            if rest.trim() == ";" {
+                return Some((export_name.to_string(), target_id, target_name));
+            }
+        }
+    }
+
+    let dotted_prefixes = [
+        format!("_m{id}.exports."),
+        format!("_m{id}e."),
+    ];
+    for prefix in dotted_prefixes {
+        if let Some(rest) = line.strip_prefix(&prefix) {
+            let name_end = rest
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))?;
+            let export_name = &rest[..name_end];
+            let rest = rest[name_end..].trim_start();
+            let rest = rest.strip_prefix('=')?.trim_start();
+            let (target_id, target_name, rest) = parse_require_property(rest)?;
+            if rest.trim() == ";" {
+                return Some((export_name.to_string(), target_id, target_name));
+            }
+        }
+    }
+    None
+}
+
+fn parse_require_property(input: &str) -> Option<(usize, String, &str)> {
+    let rest = input.strip_prefix("_r(")?;
+    let (id_raw, rest) = rest.split_once(')')?;
+    let target_id = id_raw.parse().ok()?;
+    let rest = rest.strip_prefix("[\"")?;
+    let (name, rest) = rest.split_once("\"]")?;
+    Some((target_id, name.to_string(), rest))
+}
+
+fn reexport_wrapper_read_edits(
+    code: &str,
+    wrapper: &ReexportWrapper,
+) -> Option<Vec<(usize, usize, String)>> {
+    let needle = format!("_r({})", wrapper.id);
+    let mut edits = Vec::new();
+    let mut pos = 0usize;
+    while let Some(rel) = code[pos..].find(&needle) {
+        let start = pos + rel;
+        let after = start + needle.len();
+        if start >= wrapper.start && start < wrapper.end {
+            pos = after;
+            continue;
+        }
+        let suffix = &code[after..];
+        if let Some((export_name, prop_end_rel)) = parse_property_suffix(suffix) {
+            let prop_end = after + prop_end_rel;
+            let (target_id, target_name) = wrapper.exports.get(export_name)?.clone();
+            let (replacement, end) = if export_name == "default" {
+                if let Some(thunk_end) = default_thunk_end(code, prop_end, &needle) {
+                    (
+                        format!("_r({target_id})[\"{target_name}\"] || _r({target_id})"),
+                        thunk_end,
+                    )
+                } else {
+                    (format!("_r({target_id})[\"{target_name}\"]"), prop_end)
+                }
+            } else {
+                (format!("_r({target_id})[\"{target_name}\"]"), prop_end)
+            };
+            edits.push((start, end, replacement));
+            pos = end;
+            continue;
+        }
+        return None;
+    }
+    if edits.is_empty() {
+        return None;
+    }
+    Some(edits)
+}
+
+fn parse_property_suffix(suffix: &str) -> Option<(&str, usize)> {
+    if let Some(rest) = suffix.strip_prefix("[\"") {
+        let (name, rest) = rest.split_once("\"]")?;
+        return Some((name, suffix.len() - rest.len()));
+    }
+    if let Some(rest) = suffix.strip_prefix('.') {
+        let name_len = rest
+            .bytes()
+            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$')
+            .count();
+        if name_len > 0 {
+            return Some((&rest[..name_len], 1 + name_len));
+        }
+    }
+    None
+}
+
+fn default_thunk_end(code: &str, prop_end: usize, needle: &str) -> Option<usize> {
+    let b = code.as_bytes();
+    let mut i = skip_ws_bytes(b, prop_end);
+    if !code[i..].starts_with("||") {
+        return None;
+    }
+    i = skip_ws_bytes(b, i + 2);
+    if code[i..].starts_with(needle) {
+        return Some(i + needle.len());
+    }
+    None
+}
+
+fn skip_ws_bytes(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && matches!(b[i], b' ' | b'\n' | b'\r' | b'\t') {
+        i += 1;
+    }
+    i
+}
+
+fn apply_ordered_edits(code: &str, mut edits: Vec<(usize, usize, String)>) -> String {
+    if edits.is_empty() {
+        return code.to_string();
+    }
+    edits.sort_by_key(|(start, end, _)| (*start, *end));
+    let mut out = String::with_capacity(code.len());
+    let mut pos = 0usize;
+    for (start, end, replacement) in edits {
+        if start < pos {
+            continue;
+        }
+        out.push_str(&code[pos..start]);
+        out.push_str(&replacement);
+        pos = end;
+    }
+    out.push_str(&code[pos..]);
+    out
+}
+
+#[cfg(test)]
+mod reexport_wrapper_collapse_tests {
+    use super::*;
+
+    #[test]
+    fn collapses_default_reexport_wrapper_and_redirects_default_thunk() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _m2={exports:{}};
+var _mods=[_m0,_m1,_m2];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+
+// Module 2: leaf.js
+{
+var _m2e=_m2.exports;
+const Leaf = function Leaf(){};
+_m2.exports["default"] = Leaf;
+}
+
+// Module 1: wrapper.js
+{
+var _m1e=_m1.exports;
+'use client';
+_m1.exports["default"] = _r(2)["default"];
+}
+
+// Module 0: entry.js
+{
+var _m0e=_m0.exports;
+var Button = _r(1)["default"] || _r(1);
+Button();
+}
+})();
+"#;
+
+        let out = collapse_pure_reexport_wrappers(code);
+
+        assert!(!out.contains("// Module 1: wrapper.js"), "{out}");
+        assert!(out.contains(r#"var Button = _r(2)["default"] || _r(2);"#), "{out}");
+    }
+
+    #[test]
+    fn collapses_named_reexport_property_reads() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _m2={exports:{}};
+var _mods=[_m0,_m1,_m2];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+
+// Module 2: leaf.js
+{
+var _m2e=_m2.exports;
+_m2.exports["bar"] = 1;
+}
+
+// Module 1: wrapper.js
+{
+var _m1e=_m1.exports;
+_m1.exports["foo"] = _r(2)["bar"];
+}
+
+// Module 0: entry.js
+{
+var _m0e=_m0.exports;
+var value = _r(1)["foo"];
+}
+})();
+"#;
+
+        let out = collapse_pure_reexport_wrappers(code);
+
+        assert!(!out.contains("// Module 1: wrapper.js"), "{out}");
+        assert!(out.contains(r#"var value = _r(2)["bar"];"#), "{out}");
+    }
+
+    #[test]
+    fn keeps_wrapper_when_namespace_object_is_read() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _m2={exports:{}};
+var _mods=[_m0,_m1,_m2];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+
+// Module 2: leaf.js
+{
+var _m2e=_m2.exports;
+_m2.exports["default"] = function Leaf(){};
+}
+
+// Module 1: wrapper.js
+{
+var _m1e=_m1.exports;
+_m1.exports["default"] = _r(2)["default"];
+}
+
+// Module 0: entry.js
+{
+var _m0e=_m0.exports;
+var namespace = _r(1);
+}
+})();
+"#;
+
+        let out = collapse_pure_reexport_wrappers(code);
+
+        assert!(out.contains("// Module 1: wrapper.js"), "{out}");
+        assert!(out.contains("var namespace = _r(1);"), "{out}");
+    }
+}
 
 /// Hoist repeated default-interop thunks into one cached var per module.
 ///
