@@ -60,7 +60,7 @@ name = "text_bm25"
 request = { method = "POST", url = "http://127.0.0.1:7373/collections/docs/search", body = '{"query":{"match":{"field":"bio","text":"engineer"}},"limit":10}' }
 [cells.targets.pg]
 gate = "win"
-query = "SELECT id FROM docs WHERE to_tsvector('english', bio) @@ websearch_to_tsquery('english', 'engineer') ORDER BY ts_rank(to_tsvector('english', bio), websearch_to_tsquery('english', 'engineer')) DESC LIMIT 10"
+query = "SELECT eid FROM docs WHERE bio_tsv @@ websearch_to_tsquery('simple', 'engineer') ORDER BY ts_rank(bio_tsv, websearch_to_tsquery('simple', 'engineer')) DESC LIMIT 10"
 [cells.targets.opensearch]
 gate = "win"
 request = { method = "POST", url = "http://127.0.0.1:9200/docs/_search", body = '{"query":{"match":{"bio":"engineer"}},"size":10}' }
@@ -74,7 +74,7 @@ request = { method = "POST", url = "http://127.0.0.1:7373/collections/docs/searc
 [cells.targets.pg]
 gate = "exempt"
 reason = "pg btree point-lookup home turf; floor-dominated on loopback, not an engine comparison"
-query = "SELECT id FROM docs WHERE city = 'taipei' LIMIT 10"
+query = "SELECT eid FROM docs WHERE city = 'taipei' LIMIT 10"
 [cells.targets.opensearch]
 gate = "exempt"
 reason = "keyword term lookup is floor-dominated on loopback; not a fair engine comparison"
