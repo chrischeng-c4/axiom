@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-engine-assert-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The deliberately-tiny assertion expression evaluator.
 //!
 //! Grammar: `IDENT OP RHS` where `OP ∈ {== != < <= > >=}` and
@@ -16,11 +18,16 @@ use crate::scenario::interp::VarStore;
 /// Evaluate one expression. `Ok(true)` = holds, `Ok(false)` = violated,
 /// `Err` = malformed expression or unknown var (a scenario_error, not a
 /// failed assertion).
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-assert-rs.md#source
 pub fn evaluate(expr: &str, vars: &VarStore) -> Result<bool, String> {
     let tokens: Vec<&str> = expr.split_whitespace().collect();
     let (lhs_name, op, rhs_tokens) = match tokens.as_slice() {
         [lhs, op, rest @ ..] if !rest.is_empty() => (*lhs, *op, rest),
-        _ => return Err(format!("malformed expression `{expr}` (want: IDENT OP RHS)")),
+        _ => {
+            return Err(format!(
+                "malformed expression `{expr}` (want: IDENT OP RHS)"
+            ))
+        }
     };
 
     let lhs = vars
@@ -126,3 +133,4 @@ mod tests {
         assert!(evaluate("errors <= baseline_p99 + abc", &vars()).is_err());
     }
 }
+// CODEGEN-END

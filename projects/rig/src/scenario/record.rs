@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-scenario-record-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The embedded `[record]` table — the machine-readable identity of a
 //! scenario file. The record is the source of truth, not the path; the
 //! path==record invariant (lint) keeps the tree a queryable database.
@@ -11,6 +13,7 @@ use std::path::Path;
 /// Scenario kind: which execution engine drives the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-record-rs.md#source
 pub enum ScenarioKind {
     /// Step-DSL behavior scenario.
     E2e,
@@ -22,6 +25,7 @@ pub enum ScenarioKind {
 /// flips a failure into a pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-record-rs.md#source
 pub enum ExpectedOutcome {
     /// Must pass; a failure is RED and gates the run.
     Pass,
@@ -36,6 +40,7 @@ pub enum ExpectedOutcome {
 /// The `[record]` table. `dimension` must equal the scenario file's parent
 /// directory name and `case` its file stem (enforced by [`lint_record`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-record-rs.md#source
 pub struct Record {
     /// Owning suite/project, e.g. `lumen`.
     pub suite: String,
@@ -58,12 +63,14 @@ fn default_required() -> bool {
 
 /// One lint violation, ready to become a `lint_error` finding.
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-record-rs.md#source
 pub struct LintViolation {
     pub message: String,
 }
 
 /// Enforce the path==record invariant and field sanity for a scenario file
 /// at `path` whose parsed record is `record`.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-record-rs.md#source
 pub fn lint_record(path: &Path, record: &Record) -> Vec<LintViolation> {
     let mut violations = Vec::new();
     let stem = path
@@ -92,7 +99,12 @@ pub fn lint_record(path: &Path, record: &Record) -> Vec<LintViolation> {
             ),
         });
     }
-    if record.case.is_empty() || !record.case.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+    if record.case.is_empty()
+        || !record
+            .case
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
         violations.push(LintViolation {
             message: format!(
                 "record.case `{}` must be non-empty snake_case ([a-z0-9_])",
@@ -115,6 +127,7 @@ pub fn lint_record(path: &Path, record: &Record) -> Vec<LintViolation> {
 
 /// `suite/dimension/case` — the stable scenario id used in reports, pins,
 /// and baselines.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-record-rs.md#source
 pub fn scenario_id(record: &Record) -> String {
     format!("{}/{}/{}", record.suite, record.dimension, record.case)
 }
@@ -167,6 +180,10 @@ mod tests {
 
     #[test]
     fn scenario_id_is_suite_dimension_case() {
-        assert_eq!(scenario_id(&record()), "lumen/resilience/partition_recovery");
+        assert_eq!(
+            scenario_id(&record()),
+            "lumen/resilience/partition_recovery"
+        );
     }
 }
+// CODEGEN-END

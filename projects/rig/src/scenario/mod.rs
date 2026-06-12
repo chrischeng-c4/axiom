@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-scenario-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Scenario model: one TOML file = `[record]` + `[env]` + `[vat]`? +
 //! `[limits]` + (`[[steps]]` | `[load]`).
 
@@ -18,6 +20,7 @@ pub use step::Step;
 /// Optional `[vat]` table: what the scenario expects vat to provide when
 /// run with `--vat`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-mod-rs.md#source
 pub struct VatNeeds {
     /// The vat.toml runner that re-invokes rig inside the workspace.
     pub runner: String,
@@ -28,6 +31,7 @@ pub struct VatNeeds {
 
 /// `[limits]` — whole-scenario budget.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-mod-rs.md#source
 pub struct Limits {
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
@@ -37,6 +41,7 @@ fn default_timeout_secs() -> u64 {
     300
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-mod-rs.md#source
 impl Default for Limits {
     fn default() -> Self {
         Self {
@@ -47,6 +52,7 @@ impl Default for Limits {
 
 /// A parsed scenario file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-mod-rs.md#source
 pub struct Scenario {
     pub record: Record,
     #[serde(default)]
@@ -63,6 +69,7 @@ pub struct Scenario {
 
 /// Parse + structurally validate one scenario file. Returns the scenario
 /// or the list of lint violations (parse errors are a single violation).
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-mod-rs.md#source
 pub fn parse_scenario(path: &Path, text: &str) -> Result<Scenario, Vec<LintViolation>> {
     let scenario: Scenario = toml::from_str(text).map_err(|e| {
         vec![LintViolation {
@@ -168,3 +175,4 @@ expected = "pass"
         assert!(v[0].message.contains("TOML parse error"));
     }
 }
+// CODEGEN-END

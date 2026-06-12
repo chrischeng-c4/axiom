@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Finding model — one actionable observation inside a [`RigReport`].
 //!
 //! Mirrors the meter finding contract (severity / kind / evidence /
@@ -11,6 +13,7 @@ use serde::{Deserialize, Serialize};
 /// Severity bucket. Sorted critical -> info when ordering findings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#source
 pub enum Severity {
     Critical,
     High,
@@ -19,6 +22,7 @@ pub enum Severity {
     Info,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#source
 impl Severity {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -45,6 +49,7 @@ impl Severity {
 /// The closed kind set rig emits. Every kind maps to one producing stage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#source
 pub enum Kind {
     /// A scenario step failed (http non-expect, exec non-zero, wait_until budget).
     StepFailure,
@@ -64,6 +69,7 @@ pub enum Kind {
     LoadHonesty,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#source
 impl Kind {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -81,10 +87,12 @@ impl Kind {
 
 /// The smallest next command an agent can run to act on a finding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#source
 pub struct Invoke {
     pub command: String,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#source
 impl Invoke {
     pub fn command(cmd: impl Into<String>) -> Self {
         Self {
@@ -96,6 +104,7 @@ impl Invoke {
 /// One actionable observation. `evidence` carries the kind-specific payload
 /// (captured vars, expected/actual, metric values).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#source
 pub struct Finding {
     pub id: String,
     pub severity: Severity,
@@ -109,6 +118,7 @@ pub struct Finding {
 
 /// Stable finding id: `<kind>:<subject>` with the subject squashed to a
 /// filesystem/grep-friendly token.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-finding-rs.md#source
 pub fn finding_id(kind: Kind, subject: &str) -> String {
     let squashed: String = subject
         .chars()
@@ -147,3 +157,4 @@ mod tests {
         assert_eq!(j, "pin_regression");
     }
 }
+// CODEGEN-END

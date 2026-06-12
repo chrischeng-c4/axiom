@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The step DSL — `[[steps]]` entries, serde-tagged by `type`.
 //!
 //! Steps are deliberately few and declarative; `exec` is the escape hatch.
@@ -9,6 +11,7 @@ use std::collections::BTreeMap;
 
 /// Expectations for one HTTP exchange.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 pub struct HttpExpect {
     /// Required response status (default 200).
     #[serde(default = "default_status")]
@@ -25,6 +28,7 @@ pub struct HttpExpect {
     pub jsonpath: BTreeMap<String, String>,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 impl HttpExpect {
     /// Does `status` satisfy this expectation's status contract?
     pub fn status_ok(&self, status: u16) -> bool {
@@ -36,6 +40,7 @@ impl HttpExpect {
     }
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 impl Default for HttpExpect {
     fn default() -> Self {
         Self {
@@ -57,6 +62,7 @@ fn default_timeout_ms() -> u64 {
 /// One HTTP request template (used by `http`, `sample.request`,
 /// `wait_until.probe`, and `[load.request]`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 pub struct HttpRequest {
     pub method: String,
     pub url: String,
@@ -68,6 +74,7 @@ pub struct HttpRequest {
 
 /// `type = "http"` — one request; optional jsonpath captures into vars.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 pub struct HttpStep {
     pub name: String,
     #[serde(flatten)]
@@ -80,6 +87,7 @@ pub struct HttpStep {
 
 /// `type = "sample"` — repeat one request N times, fold latency stats.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 pub struct SampleStep {
     pub name: String,
     pub samples: u32,
@@ -97,6 +105,7 @@ pub struct SampleStep {
 /// `type = "assert"` — expressions over captured vars.
 /// Grammar: `IDENT OP (NUMBER ['*' IDENT] | IDENT)`, OP ∈ {== != < <= > >=}.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 pub struct AssertStep {
     pub name: String,
     pub exprs: Vec<String>,
@@ -104,6 +113,7 @@ pub struct AssertStep {
 
 /// `type = "wait_until"` — poll a probe until it passes or the budget ends.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 pub struct WaitUntilStep {
     pub name: String,
     pub budget_secs: u64,
@@ -118,6 +128,7 @@ fn default_interval_ms() -> u64 {
 
 /// `type = "measure_rss"` — sample a process's resident set size.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 pub struct MeasureRssStep {
     pub name: String,
     /// Process name for `pgrep -n` (racy; prefer `pid_var`).
@@ -133,6 +144,7 @@ pub struct MeasureRssStep {
 
 /// `type = "exec"` — escape hatch: run a command under a timeout.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 pub struct ExecStep {
     pub name: String,
     pub cmd: Vec<String>,
@@ -153,6 +165,7 @@ fn default_exec_timeout() -> u64 {
 /// One scenario step, tagged by `type`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 pub enum Step {
     Http(HttpStep),
     Sample(SampleStep),
@@ -163,6 +176,7 @@ pub enum Step {
     Sleep { name: String, secs: u64 },
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-scenario-step-rs.md#source
 impl Step {
     pub fn name(&self) -> &str {
         match self {
@@ -241,10 +255,12 @@ name = "x"
 
     #[test]
     fn sleep_and_assert_parse() {
-        let s: Step = toml::from_str(r#"type = "sleep"
+        let s: Step = toml::from_str(
+            r#"type = "sleep"
 name = "settle"
-secs = 2"#)
-            .unwrap();
+secs = 2"#,
+        )
+        .unwrap();
         assert_eq!(s.name(), "settle");
         let s: Step = toml::from_str(
             r#"
@@ -257,3 +273,4 @@ exprs = ["recovery_p99 <= 2 * baseline_p99"]
         assert_eq!(s.name(), "recovered");
     }
 }
+// CODEGEN-END

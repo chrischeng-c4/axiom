@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-tests-engine_e2e-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Engine end-to-end: a stub HTTP server (std TcpListener, no framework)
 //! and a multi-step scenario through `engine::run_scenario`.
 
@@ -197,3 +199,4 @@ exprs = ["ready_recovered_secs < 5"]
         run.findings.iter().map(|f| &f.detail).collect::<Vec<_>>()
     );
 }
+// CODEGEN-END

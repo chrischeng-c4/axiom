@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-discovery-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Scenario discovery: walk a directory for `*.toml` scenario files,
 //! parse, and lint. Pins/config trees are excluded by convention —
 //! discovery only descends `scenarios/`-rooted paths when present.
@@ -7,6 +9,7 @@ use std::path::{Path, PathBuf};
 use crate::scenario::{parse_scenario, LintViolation, Scenario};
 
 /// One discovered file: parsed scenario or its lint violations.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-discovery-rs.md#source
 pub struct Discovered {
     pub path: PathBuf,
     pub result: Result<Scenario, Vec<LintViolation>>,
@@ -14,6 +17,7 @@ pub struct Discovered {
 
 /// Recursively collect every `*.toml` under `root` (sorted for
 /// determinism), skipping `config/` and dot-directories.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-discovery-rs.md#source
 pub fn discover(root: &Path) -> std::io::Result<Vec<Discovered>> {
     let mut files = Vec::new();
     collect_toml_files(root, &mut files)?;
@@ -103,10 +107,17 @@ secs = 1
 
         let found = discover(tmp.path()).unwrap();
         assert_eq!(found.len(), 2);
-        let ok = found.iter().find(|d| d.path.ends_with("ok_case.toml")).unwrap();
+        let ok = found
+            .iter()
+            .find(|d| d.path.ends_with("ok_case.toml"))
+            .unwrap();
         assert!(ok.result.is_ok());
-        let bad = found.iter().find(|d| d.path.ends_with("bad_case.toml")).unwrap();
+        let bad = found
+            .iter()
+            .find(|d| d.path.ends_with("bad_case.toml"))
+            .unwrap();
         let v = bad.result.as_ref().unwrap_err();
         assert!(v.len() >= 2); // case stem + dimension mismatches
     }
 }
+// CODEGEN-END

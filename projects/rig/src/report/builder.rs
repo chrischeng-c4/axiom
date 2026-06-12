@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-report-builder-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Report assembly — the SOLE site deriving `status` / `clean` / `exit_code`.
 //!
 //! Worst-wins fold: `ToolError > Regression > Findings > Clean`. Info-only
@@ -12,6 +14,7 @@ use super::finding::{Finding, Kind, Severity};
 
 const SUMMARY_SAMPLE_MAX: usize = 8;
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-builder-rs.md#source
 pub struct ReportBuilder {
     verb: String,
     target: String,
@@ -23,6 +26,7 @@ pub struct ReportBuilder {
     agent_prompt: Option<String>,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-builder-rs.md#source
 impl ReportBuilder {
     pub fn new(verb: impl Into<String>, target: impl Into<String>) -> Self {
         Self {
@@ -148,6 +152,7 @@ impl ReportBuilder {
 
 /// Persist the report under `.rig/last-report.json` relative to `dir`
 /// (best-effort; failures are non-fatal).
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-builder-rs.md#source
 pub fn persist(report: &RigReport, dir: &std::path::Path) {
     let rig_dir = dir.join(".rig");
     if std::fs::create_dir_all(&rig_dir).is_err() {
@@ -232,3 +237,4 @@ mod tests {
         assert!(r.findings[1].id <= r.findings[2].id);
     }
 }
+// CODEGEN-END

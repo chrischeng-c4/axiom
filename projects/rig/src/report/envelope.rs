@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-report-envelope-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The one JSON document every rig verb prints to stdout.
 //!
 //! Field names and the exit-code ladder mirror meter's report contract
@@ -17,6 +19,7 @@ pub const SCHEMA_VERSION: &str = "rig.report/1";
 /// (3 usage / 4 missing tool / 5 io).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-envelope-rs.md#source
 pub enum OverallStatus {
     Clean,
     Findings,
@@ -24,6 +27,7 @@ pub enum OverallStatus {
     ToolError { code: u8 },
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-envelope-rs.md#source
 impl OverallStatus {
     pub fn exit_code(&self) -> i32 {
         match self {
@@ -51,6 +55,7 @@ impl OverallStatus {
 
 /// Severity histogram plus a short id sample for cheap triage.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-envelope-rs.md#source
 pub struct Summary {
     pub critical: u32,
     pub high: u32,
@@ -64,6 +69,7 @@ pub struct Summary {
 
 /// Per-scenario verdict roll-up (pass/xfail/skip bucketing).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-envelope-rs.md#source
 pub struct ScenarioCounts {
     pub pass: u32,
     pub red: u32,
@@ -76,6 +82,7 @@ pub struct ScenarioCounts {
 
 /// What the run promised vs what it did not cover.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-envelope-rs.md#source
 pub struct Completion {
     pub clean: bool,
     pub criteria: Vec<String>,
@@ -84,12 +91,14 @@ pub struct Completion {
 
 /// Host/environment stamp for reproducibility.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-envelope-rs.md#source
 pub struct EnvBlock {
     pub os: String,
     pub arch: String,
     pub tool_version: String,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-envelope-rs.md#source
 impl EnvBlock {
     pub fn current() -> Self {
         Self {
@@ -102,6 +111,7 @@ impl EnvBlock {
 
 /// The single report document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-report-envelope-rs.md#source
 pub struct RigReport {
     pub schema_version: String,
     pub tool_version: String,
@@ -146,3 +156,4 @@ mod tests {
         assert!(OverallStatus::Regression.rank() > OverallStatus::Findings.rank());
     }
 }
+// CODEGEN-END

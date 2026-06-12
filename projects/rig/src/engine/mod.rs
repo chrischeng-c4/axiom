@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-engine-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Scenario execution engine: drive steps sequentially against a
 //! [`VarStore`], collecting findings and captured metrics.
 //!
@@ -23,6 +25,7 @@ use crate::report::{finding_id, Finding, Invoke, Kind, Severity};
 use crate::scenario::{scenario_id, Scenario, Step, VarStore};
 
 /// The raw result of executing one scenario's steps.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-mod-rs.md#source
 pub struct ScenarioRun {
     pub scenario_id: String,
     /// True when every step held its expectations.
@@ -35,6 +38,7 @@ pub struct ScenarioRun {
 
 /// Execute an e2e scenario's steps. (Load scenarios are driven by the
 /// loadgen engine — Phase 5.)
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-mod-rs.md#source
 pub fn run_scenario(scenario: &Scenario) -> ScenarioRun {
     let id = scenario_id(&scenario.record);
     let mut vars = VarStore::seed(&scenario.env);
@@ -297,3 +301,4 @@ fn expr_snapshot(expr: &str, vars: &VarStore) -> String {
         .collect::<Vec<_>>()
         .join(", ")
 }
+// CODEGEN-END

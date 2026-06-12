@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-verdict-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Verdict vocabulary + expected-outcome bucketing.
 //!
 //! Inherited from mamba's harness: a RAW result (did the scenario's steps
@@ -9,6 +11,7 @@ use crate::scenario::ExpectedOutcome;
 
 /// Final per-scenario verdict after bucketing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-verdict-rs.md#source
 pub enum Verdict {
     /// Expected pass, passed.
     Pass,
@@ -23,6 +26,7 @@ pub enum Verdict {
 }
 
 /// Bucket a raw pass/fail through the declared expectation.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-verdict-rs.md#source
 pub fn bucket(expected: ExpectedOutcome, raw_passed: bool) -> Verdict {
     match (expected, raw_passed) {
         (ExpectedOutcome::Skip, _) => Verdict::Skip,
@@ -47,3 +51,4 @@ mod tests {
         assert_eq!(bucket(ExpectedOutcome::Skip, false), Verdict::Skip);
     }
 }
+// CODEGEN-END
