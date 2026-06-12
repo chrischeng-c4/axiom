@@ -6508,6 +6508,54 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     return MbValue::none();
                 }
                 super::rc::ObjData::Instance { ref class_name, ref fields } => {
+                    // time.struct_time is a named 9-tuple: integer index and
+                    // slice subscripts read the tm_* fields in CPython order.
+                    if class_name == "struct_time" {
+                        const ORDER: [&str; 9] = [
+                            "tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min",
+                            "tm_sec", "tm_wday", "tm_yday", "tm_isdst",
+                        ];
+                        let read = |name: &str| -> MbValue {
+                            fields.read().unwrap().get(name).copied()
+                                .unwrap_or_else(MbValue::none)
+                        };
+                        if let Some(i) = key.as_int() {
+                            let i = if i < 0 { i + 9 } else { i };
+                            if (0..9).contains(&i) {
+                                return read(ORDER[i as usize]);
+                            }
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "tuple index out of range".to_string(),
+                                )),
+                            );
+                            return MbValue::none();
+                        }
+                        // Slice key — the lowering packs s[:6] as a 3-tuple
+                        // (start, stop, step); slice instances also appear.
+                        let parts: Option<(i64, i64, i64)> = key.as_ptr().and_then(|kp| {
+                            if let super::rc::ObjData::Tuple(ref t) = (*kp).data {
+                                if t.len() == 3 {
+                                    let start = t[0].as_int().unwrap_or(0);
+                                    let stop = t[1].as_int().unwrap_or(9);
+                                    let step = t[2].as_int().unwrap_or(1);
+                                    return Some((start, stop, step));
+                                }
+                            }
+                            None
+                        });
+                        if let Some((start, stop, step)) = parts {
+                            if step == 1 {
+                                let a = start.clamp(0, 9) as usize;
+                                let b = stop.clamp(0, 9) as usize;
+                                let items: Vec<MbValue> = (a..b.max(a))
+                                    .map(|i| read(ORDER[i]))
+                                    .collect();
+                                return MbValue::from_ptr(MbObject::new_tuple(items));
+                            }
+                        }
+                    }
                     // Builtin type objects: PEP 585 generics subscript into
                     // aliases (list[int]); non-generic scalars raise (#22).
                     if class_name == "type" {

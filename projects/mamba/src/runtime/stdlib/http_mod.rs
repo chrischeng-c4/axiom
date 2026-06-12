@@ -446,6 +446,8 @@ pub fn register() {
         set.insert(req_shell as u64);
         set.insert(req_str as u64);
     });
+    // Real Request object (#24 prerequisite) — overwrites the dict shell.
+    register_request_class(&mut request_attrs);
     super::register_module("urllib.request", request_attrs);
 
     // urllib.response — callable class shells matching CPython's documented surface.
@@ -1899,4 +1901,261 @@ mod tests {
             "https://example.com/path?q=1#frag"
         );
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// urllib.request.Request — a real object (#24 prerequisite): full_url/host/
+// headers/data/method fields plus the introspection methods cookiejar's
+// request_host/request_path/request_port and user code rely on.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const REQUEST_CLASS: &str = "urllib.request.Request";
+
+fn req_field(self_v: MbValue, name: &str) -> Option<MbValue> {
+    let ptr = self_v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            return fields.read().unwrap().get(name).copied();
+        }
+    }
+    None
+}
+
+fn req_args_vec(args: MbValue) -> Vec<MbValue> {
+    let mut out = Vec::new();
+    if let Some(ptr) = args.as_ptr() {
+        unsafe {
+            if let ObjData::List(ref lock) = (*ptr).data {
+                out.extend(lock.read().unwrap().iter());
+            }
+        }
+    }
+    out
+}
+
+/// (scheme, netloc, path-with-params-query-fragment) split of a URL.
+fn split_url(url: &str) -> (String, String, String) {
+    let (scheme, rest) = match url.find("://") {
+        Some(i) => (url[..i].to_string(), &url[i + 3..]),
+        None => (String::new(), url),
+    };
+    match rest.find('/') {
+        Some(i) => (scheme, rest[..i].to_string(), rest[i..].to_string()),
+        None => (scheme, rest.to_string(), String::new()),
+    }
+}
+
+unsafe extern "C" fn d_request_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let raw: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    // Trailing kwargs dict appended by the call lowering.
+    let (positional, kwargs): (&[MbValue], Option<MbValue>) = match raw.last().copied() {
+        Some(last)
+            if raw.len() > 1
+                && last
+                    .as_ptr()
+                    .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+                    .unwrap_or(false) =>
+        {
+            (&raw[..raw.len() - 1], Some(last))
+        }
+        _ => (raw, None),
+    };
+    let kwarg = |name: &str| -> Option<MbValue> {
+        let ptr = kwargs?.as_ptr()?;
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                return lock.read().unwrap().get(name).copied();
+            }
+        }
+        None
+    };
+
+    let url = positional
+        .first()
+        .copied()
+        .and_then(extract_str)
+        .unwrap_or_default();
+    let data = positional
+        .get(1)
+        .copied()
+        .or_else(|| kwarg("data"))
+        .unwrap_or_else(MbValue::none);
+    let headers_in = positional
+        .get(2)
+        .copied()
+        .or_else(|| kwarg("headers"))
+        .unwrap_or_else(MbValue::none);
+    let method = kwarg("method").unwrap_or_else(MbValue::none);
+
+    let (scheme, host, path) = split_url(&url);
+    let inst = MbObject::new_instance(REQUEST_CLASS.to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut f = fields.write().unwrap();
+            f.insert("full_url".into(), MbValue::from_ptr(MbObject::new_str(url.clone())));
+            f.insert("host".into(), MbValue::from_ptr(MbObject::new_str(host)));
+            f.insert("type".into(), MbValue::from_ptr(MbObject::new_str(scheme)));
+            // selector: path+query (no fragment); "/" for a bare host URL.
+            let selector = {
+                let p = path.split('#').next().unwrap_or("");
+                if p.is_empty() { "/".to_string() } else { p.to_string() }
+            };
+            f.insert("selector".into(), MbValue::from_ptr(MbObject::new_str(selector)));
+            f.insert("data".into(), data);
+            f.insert("method".into(), method);
+            f.insert("unverifiable".into(), MbValue::from_bool(false));
+            // Header keys are stored capitalized (CPython add_header shape).
+            let hdrs = MbObject::new_dict();
+            if let ObjData::Dict(ref hlock) = (*hdrs).data {
+                let mut hmap = hlock.write().unwrap();
+                if let Some(hin) = headers_in.as_ptr() {
+                    if let ObjData::Dict(ref inlock) = (*hin).data {
+                        for (k, v) in inlock.read().unwrap().iter() {
+                            let kv = super::super::dict_ops::dict_key_to_mbvalue(k);
+                            if let Some(ks) = extract_str(kv) {
+                                super::super::rc::retain_if_ptr(*v);
+                                hmap.insert(
+                                    super::super::dict_ops::DictKey::Str(capitalize_header(&ks)),
+                                    *v,
+                                );
+                            }
+                        }
+                    }
+                }
+                drop(hmap);
+            }
+            f.insert("headers".into(), MbValue::from_ptr(hdrs));
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn capitalize_header(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + &c.as_str().to_lowercase(),
+        None => String::new(),
+    }
+}
+
+unsafe extern "C" fn rm_get_method(self_v: MbValue, _args: MbValue) -> MbValue {
+    let m = req_field(self_v, "method").unwrap_or_else(MbValue::none);
+    if let Some(s) = extract_str(m) {
+        return MbValue::from_ptr(MbObject::new_str(s));
+    }
+    let data = req_field(self_v, "data").unwrap_or_else(MbValue::none);
+    MbValue::from_ptr(MbObject::new_str(
+        if data.is_none() { "GET" } else { "POST" }.to_string(),
+    ))
+}
+
+unsafe extern "C" fn rm_get_full_url(self_v: MbValue, _args: MbValue) -> MbValue {
+    let v = req_field(self_v, "full_url").unwrap_or_else(MbValue::none);
+    unsafe { super::super::rc::retain_if_ptr(v) };
+    v
+}
+
+unsafe extern "C" fn rm_get_header(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = req_args_vec(args);
+    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let default = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*hd).data {
+                if let Some(v) = lock.read().unwrap().get(capitalize_header(&name).as_str()) {
+                    let v = *v;
+                    super::super::rc::retain_if_ptr(v);
+                    return v;
+                }
+            }
+        }
+    }
+    unsafe { super::super::rc::retain_if_ptr(default) };
+    default
+}
+
+unsafe extern "C" fn rm_has_header(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = req_args_vec(args);
+    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*hd).data {
+                return MbValue::from_bool(
+                    lock.read()
+                        .unwrap()
+                        .contains_key(capitalize_header(&name).as_str()),
+                );
+            }
+        }
+    }
+    MbValue::from_bool(false)
+}
+
+unsafe extern "C" fn rm_add_header(self_v: MbValue, args: MbValue) -> MbValue {
+    let a = req_args_vec(args);
+    let name = a.first().copied().and_then(extract_str).unwrap_or_default();
+    let val = a.get(1).copied().unwrap_or_else(MbValue::none);
+    if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*hd).data {
+                unsafe { super::super::rc::retain_if_ptr(val) };
+                lock.write().unwrap().insert(
+                    super::super::dict_ops::DictKey::Str(capitalize_header(&name)),
+                    val,
+                );
+            }
+        }
+    }
+    MbValue::none()
+}
+
+unsafe extern "C" fn rm_header_items(self_v: MbValue, _args: MbValue) -> MbValue {
+    let mut items = Vec::new();
+    if let Some(hd) = req_field(self_v, "headers").and_then(|v| v.as_ptr()) {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*hd).data {
+                for (k, v) in lock.read().unwrap().iter() {
+                    let kv = super::super::dict_ops::dict_key_to_mbvalue(k);
+                    items.push(MbValue::from_ptr(MbObject::new_tuple(vec![kv, *v])));
+                }
+            }
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(items))
+}
+
+/// Register the Request class + rewire urllib.request.Request.
+pub(crate) fn register_request_class(attrs: &mut HashMap<String, MbValue>) {
+    use std::collections::HashMap as Map;
+    let var = |addr: usize| {
+        super::super::module::register_variadic_func(addr as u64);
+        MbValue::from_func(addr)
+    };
+    let methods: Vec<(&str, usize)> = vec![
+        ("get_method", rm_get_method as *const () as usize),
+        ("get_full_url", rm_get_full_url as *const () as usize),
+        ("get_header", rm_get_header as *const () as usize),
+        ("has_header", rm_has_header as *const () as usize),
+        ("add_header", rm_add_header as *const () as usize),
+        ("add_unredirected_header", rm_add_header as *const () as usize),
+        ("header_items", rm_header_items as *const () as usize),
+    ];
+    let mut map: Map<String, MbValue> = Map::new();
+    for (name, addr) in methods {
+        map.insert(name.to_string(), var(addr));
+    }
+    super::super::class::mb_class_register(REQUEST_CLASS, vec!["object".to_string()], map);
+
+    attrs.insert("Request".to_string(), MbValue::from_func(d_request_new as *const () as usize));
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(d_request_new as *const () as u64);
+    });
+    super::super::module::NATIVE_TYPE_NAMES.with(|m| {
+        m.borrow_mut()
+            .insert(d_request_new as *const () as u64, REQUEST_CLASS.to_string());
+    });
 }
