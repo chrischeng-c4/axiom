@@ -686,6 +686,21 @@ impl TypeChecker {
             // Differing arity, neither homogeneous: genuine length mismatch.
             return false;
         }
+        // Callable compatibility is structural: equal arity, parameters
+        // contravariant (checked reversed), return covariant. `Any` on either
+        // side of any position dominates, so an `(Any) -> Any` lambda
+        // satisfies an `(Any) -> int` parameter (the mypy-accepted shape).
+        if let (Ty::Fn { params: pe, ret: re, .. }, Ty::Fn { params: pa, ret: ra, .. }) = (e, a) {
+            let (pe, pa, re, ra) = (pe.clone(), pa.clone(), *re, *ra);
+            if pe.len() != pa.len() {
+                return false;
+            }
+            return pe
+                .iter()
+                .zip(pa.iter())
+                .all(|(&te, &ta)| self.types_compatible(ta, te))
+                && self.types_compatible(re, ra);
+        }
         // Bool is a subclass of int in Python (#1680) — `isinstance(True, int) is True`.
         // Accept bool wherever int or float is expected, and int wherever float is
         // expected (Python's numeric promotion is implicit in argument position too;
