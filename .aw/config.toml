@@ -168,6 +168,11 @@ name = "lumen"
 path = "projects/lumen"
 cap_path = "projects/lumen/README.md"
 label = "project:lumen"
+# EC tool binding (contract before implementation). `aw health --verify-ec`
+# dispatches the benchmark dimension to arena (lumen vs pg); other categories
+# fall back to test_cmd. Reuses the arena project's example spec, also driven as
+# the `arena-pg` vat runner in projects/lumen/vat.toml (one spec, two surfaces).
+ec.benchmark = { tool = "arena", spec = "projects/arena/examples/lumen-vs-pg.toml" }
 
 [[projects.workspaces]]
 name = "lumen"

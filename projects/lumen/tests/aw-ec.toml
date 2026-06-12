@@ -2,7 +2,7 @@
 # CODEGEN-BEGIN
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:4b947ed2648a8b4bf0c5214a3200e5988409792287230a53e4c6aa517986572e"
+generated_from_td_digest = "sha256:9aeefc77d74da104c34f9460bff40de8f320766067b5f2645e6364316f6c06d9"
 
 [[cases]]
 id = "lumen-agentic-integration-offline-cli"
@@ -16,5 +16,18 @@ assertions = [
     "lumen spec emits valid OpenAPI and JSON-schema output offline.",
     "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.",
     "lumen llm guide, quickstart, and recipes preserve the ingest-search-hydrate agent workflow and non-goals.",
+]
+
+[[cases]]
+id = "lumen-ops-speed-benchmark-vs-db"
+capability_id = "ops-speed"
+contract_id = "ops-speed-competitive-benchmark-vs-db"
+category = "benchmark"
+td_ref = "projects/lumen/tech-design/logic/external-contracts.md#lumen-ops-speed-benchmark-vs-db"
+test_path = "projects/lumen/tests/benchmark_lumen_ops_speed_benchmark_vs_db.rs"
+command = "cargo test -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
+assertions = [
+    "lumen wins the contracted search-latency cells against Postgres (text_bm25 WIN; ratcheted floor holds).",
+    "floor-dominated cells (pg btree point-lookup) stay EXEMPT, not gated.",
 ]
 # CODEGEN-END
