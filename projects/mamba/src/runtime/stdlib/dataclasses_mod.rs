@@ -392,6 +392,55 @@ fn decorate_class(class_name: &str, opts: DcOptions) {
         }
     }
 
+    // CPython definition-time validation, before any registration:
+    // 1. mutable defaults (list/dict/set) are rejected — use default_factory;
+    // 2. a non-default positional field may not follow a defaulted one.
+    let mut saw_default = false;
+    for f in &merged {
+        if f.is_classvar || f.is_initvar || !f.init {
+            continue;
+        }
+        if let Some(d) = f.default {
+            if let Some(ptr) = d.as_ptr() {
+                let mutable_label = unsafe {
+                    match (*ptr).data {
+                        ObjData::List(_) => Some("list"),
+                        ObjData::Dict(_) => Some("dict"),
+                        ObjData::Set(_) => Some("set"),
+                        ObjData::ByteArray(_) => Some("bytearray"),
+                        _ => None,
+                    }
+                };
+                if let Some(label) = mutable_label {
+                    super::super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "mutable default <class '{label}'> for field {} is not allowed: use default_factory",
+                            f.name
+                        ))),
+                    );
+                    return;
+                }
+            }
+        }
+        if f.kw_only {
+            continue; // kw-only fields don't participate in positional ordering
+        }
+        let has_default = f.default.is_some() || f.default_factory.is_some();
+        if has_default {
+            saw_default = true;
+        } else if saw_default {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "non-default argument '{}' follows default argument",
+                    f.name
+                ))),
+            );
+            return;
+        }
+    }
+
     let cls_val = MbValue::from_ptr(MbObject::new_str(class_name.to_string()));
 
     // Plain defaults become shared class attributes (CPython sets them on the
