@@ -6652,6 +6652,23 @@ pub(crate) fn generate_code_for_entry(
         return source.trim_end().to_string();
     }
 
+    // rust-source-unit (td_ast): regenerate the whole file through the
+    // structured item-tree from the TD-embedded `## Source` fence. Mirrors the
+    // dispatch in the main apply loop so the standardize/gen-apply entry point
+    // produces correct byte-equivalent output instead of a marker-only TODO
+    // stub. The rust-source-unit path reads the TD fence, not the target, so the
+    // root argument is unused here.
+    if matches!(target_section, Some("source" | "rust-source-unit"))
+        && source_is_rust_source_unit(spec_content)
+    {
+        return generate_source_section_code(
+            spec_content,
+            spec_path,
+            Some(&entry.path),
+            Path::new("."),
+        );
+    }
+
     if matches!(target_section, Some("runtime-image" | "deployment")) {
         if let Some(code) = try_generate_operations_artifact(spec_content, entry, td_ast) {
             return code;
