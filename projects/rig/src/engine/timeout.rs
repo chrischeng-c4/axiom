@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-engine-timeout-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Child-process timeout policy — ported from mamba's
 //! `tests/harness/cpython/harness_common.rs` (the proven shared body of its
 //! spawn loops), with `RIG_TIMEOUT_SECS` as the env override.
@@ -8,6 +10,7 @@ use std::time::{Duration, Instant};
 /// Outcome of [`wait_with_timeout`]: either the child finished on its own
 /// and we collected its `Output`, or the budget elapsed and we killed it
 /// (still collecting whatever output had been buffered).
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-timeout-rs.md#source
 pub enum WaitOutcome {
     Finished(Output),
     TimedOut(Output),
@@ -15,11 +18,13 @@ pub enum WaitOutcome {
 
 /// A single-source-of-truth timeout budget.
 #[derive(Clone, Copy)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-timeout-rs.md#source
 pub struct TimeoutPolicy {
     timeout: Duration,
     poll_interval: Duration,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-timeout-rs.md#source
 impl TimeoutPolicy {
     /// Read `var_name` as positive u64 seconds, falling back to
     /// `default_secs` when unset, unparseable, or `0`.
@@ -52,6 +57,7 @@ impl TimeoutPolicy {
 
 /// Drive an already-spawned `child` to completion under `policy`, polling
 /// with `try_wait` and killing it if the budget elapses.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-timeout-rs.md#source
 pub fn wait_with_timeout(mut child: Child, policy: TimeoutPolicy) -> std::io::Result<WaitOutcome> {
     let start = Instant::now();
     loop {
@@ -98,3 +104,4 @@ mod tests {
         }
     }
 }
+// CODEGEN-END

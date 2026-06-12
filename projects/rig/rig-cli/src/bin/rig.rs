@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-bin-rig-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `rig` standalone binary: parse → dispatch → one JSON document → exit code.
 
 use clap::Parser;
@@ -10,3 +12,4 @@ fn main() {
     let code = print_report(&report, &output);
     std::process::exit(code);
 }
+// CODEGEN-END

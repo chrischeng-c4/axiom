@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-vat-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! vat integration: wrap a run in `vat run <runner>` and lift the inner
 //! rig report back out.
 //!
@@ -20,6 +22,7 @@ fn vat_bin() -> String {
 
 /// The outcome of one `vat run <runner>` invocation.
 #[derive(Debug)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-vat-rs.md#source
 pub struct VatRun {
     pub vat_id: String,
     pub runner: String,
@@ -30,11 +33,17 @@ pub struct VatRun {
 }
 
 /// Spawn `vat run <runner>` and fold its checkpoint stream.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-vat-rs.md#source
 pub fn run_runner(runner: &str) -> Result<VatRun, String> {
     let output = Command::new(vat_bin())
         .args(["run", runner])
         .output()
-        .map_err(|e| format!("could not spawn `{}` (install vat or set RIG_VAT_BIN): {e}", vat_bin()))?;
+        .map_err(|e| {
+            format!(
+                "could not spawn `{}` (install vat or set RIG_VAT_BIN): {e}",
+                vat_bin()
+            )
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut result: Option<VatRun> = None;
@@ -51,7 +60,11 @@ pub fn run_runner(runner: &str) -> Result<VatRun, String> {
             }
             Some("result") => {
                 result = Some(VatRun {
-                    vat_id: v.get("id").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+                    vat_id: v
+                        .get("id")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     runner: runner.to_string(),
                     ok: v.get("ok").and_then(|b| b.as_bool()).unwrap_or(false),
                     exit_code: v.get("exit_code").and_then(|c| c.as_i64()).unwrap_or(-1) as i32,
@@ -80,6 +93,7 @@ pub fn run_runner(runner: &str) -> Result<VatRun, String> {
 }
 
 /// Fetch the inner runner's captured stdout (`vat logs <id> runner`).
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-vat-rs.md#source
 pub fn runner_log(vat_id: &str) -> Result<String, String> {
     let output = Command::new(vat_bin())
         .args(["logs", vat_id, "runner"])
@@ -96,12 +110,14 @@ pub fn runner_log(vat_id: &str) -> Result<String, String> {
 
 /// Best-effort removal once the report is lifted (the vat.toml uses
 /// `keep = "always"` so the log survives success; rig owns the cleanup).
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-vat-rs.md#source
 pub fn remove(vat_id: &str) {
     let _ = Command::new(vat_bin()).args(["rm", vat_id]).output();
 }
 
 /// Extract the inner rig report from a runner log: the LAST line (or
 /// pretty-printed block) that parses as a `RigReport`.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-vat-rs.md#source
 pub fn extract_report(log: &str) -> Option<RigReport> {
     // Fast path: whole log is one pretty JSON document.
     if let Ok(report) = serde_json::from_str::<RigReport>(log.trim()) {
@@ -190,3 +206,4 @@ mod tests {
         assert!(extract_report(&log).is_some());
     }
 }
+// CODEGEN-END

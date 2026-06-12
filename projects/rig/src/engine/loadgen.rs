@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-engine-loadgen-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Open-loop load generator.
 //!
 //! The request schedule is FIXED at `target_qps` (one tick every
@@ -21,6 +23,7 @@ use super::transport::{HttpTransport, Transport};
 
 /// Folded result of one load run.
 #[derive(Debug, Clone, Default)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-loadgen-rs.md#source
 pub struct LoadStats {
     pub p50_ms: f64,
     pub p99_ms: f64,
@@ -32,6 +35,7 @@ pub struct LoadStats {
     pub abort: Option<String>,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-loadgen-rs.md#source
 impl LoadStats {
     pub fn get(&self, key: &str) -> Option<f64> {
         match key {
@@ -46,6 +50,7 @@ impl LoadStats {
 
 /// The open-loop schedule, transport-free: offered rate, concurrency, window.
 #[derive(Debug, Clone, Copy)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-loadgen-rs.md#source
 pub struct Schedule {
     pub target_qps: u32,
     pub workers: u32,
@@ -55,6 +60,7 @@ pub struct Schedule {
 
 /// Run the HTTP profile. Thin wrapper over [`run_transport`] preserving the
 /// original API. Per-request work happens on `profile.workers` plain threads.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-loadgen-rs.md#source
 pub fn run(profile: &LoadProfile, vars: &VarStore) -> LoadStats {
     // Pre-interpolate once: load templates must be constant during the run, so
     // a bad template is an abort, not a per-request failure.
@@ -81,6 +87,7 @@ pub fn run(profile: &LoadProfile, vars: &VarStore) -> LoadStats {
 /// for every transport, so two transports (HTTP vs Postgres) measured this way
 /// are comparable by construction. Returns `abort` only when every worker
 /// failed to connect (e.g. the backend is down).
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-loadgen-rs.md#source
 pub fn run_transport(schedule: &Schedule, transport: &Arc<dyn Transport>) -> LoadStats {
     let interval = Duration::from_secs_f64(1.0 / schedule.target_qps.max(1) as f64);
     let total_ticks = (schedule.target_qps as u64) * schedule.duration_secs;
@@ -279,3 +286,4 @@ mod tests {
         assert_eq!(stats.achieved_qps, 0.0);
     }
 }
+// CODEGEN-END

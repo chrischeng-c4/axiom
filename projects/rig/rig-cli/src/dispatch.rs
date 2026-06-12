@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Verb tree + dispatch. One JSON `RigReport` per invocation on stdout.
 
 use clap::{Args, Parser, Subcommand};
@@ -11,6 +13,7 @@ use rig::report::{ReportBuilder, RigReport};
     about = "rig — declarative test-scenario harness: e2e scenarios + open-loop load pins (JSON on stdout by default)",
     disable_help_subcommand = true
 )]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub struct RigCommand {
     #[command(subcommand)]
     pub verb: Verb,
@@ -20,6 +23,7 @@ pub struct RigCommand {
 
 /// Output-format opt-ins shared by every verb. JSON-on-stdout is the default.
 #[derive(Args, Debug, Clone, Default)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub struct OutputOpts {
     /// Render a human-readable summary to stderr in addition to the JSON report.
     #[arg(long, global = true)]
@@ -30,6 +34,7 @@ pub struct OutputOpts {
 }
 
 #[derive(Subcommand, Debug)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub enum Verb {
     /// Discover, lint, execute scenarios; gate pins; print ONE report.
     Run(RunArgs),
@@ -44,6 +49,7 @@ pub enum Verb {
 }
 
 #[derive(Args, Debug, Default)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub struct RunArgs {
     /// Run a single scenario file.
     #[arg(long, group = "run_target")]
@@ -63,6 +69,7 @@ pub struct RunArgs {
 }
 
 #[derive(Args, Debug, Default)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub struct LintArgs {
     /// Directory to lint (defaults to the current directory).
     #[arg(long, default_value = ".")]
@@ -70,6 +77,7 @@ pub struct LintArgs {
 }
 
 /// Execute a parsed command and return the report to print.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub fn execute(cmd: RigCommand) -> RigReport {
     match cmd.verb {
         Verb::Run(args) => run_run(args),
@@ -153,7 +161,8 @@ fn run_run(args: RunArgs) -> RigReport {
                         kind: Kind::LintError,
                         title: format!("lint: {rel}"),
                         detail: v.message,
-                        remediation: "Fix the record so path == record and the schema validates.".into(),
+                        remediation: "Fix the record so path == record and the schema validates."
+                            .into(),
                         invoke: Invoke::command(format!("rig lint --dir {target}")),
                         evidence: serde_json::json!({ "path": rel }),
                     });
@@ -195,13 +204,23 @@ fn run_run(args: RunArgs) -> RigReport {
                     baselines.record(&run.scenario_id, &pin.metric, value);
                     baselines_dirty = true;
                     b.add_finding(Finding {
-                        id: finding_id(Kind::PinMissingBaseline, &format!("recorded/{}/{}", run.scenario_id, pin.metric)),
+                        id: finding_id(
+                            Kind::PinMissingBaseline,
+                            &format!("recorded/{}/{}", run.scenario_id, pin.metric),
+                        ),
                         severity: Severity::Info,
                         kind: Kind::PinMissingBaseline,
-                        title: format!("baseline recorded: {} {} = {value:.3}", run.scenario_id, pin.metric),
-                        detail: "Recorded via --update-baselines; future runs gate against it.".into(),
+                        title: format!(
+                            "baseline recorded: {} {} = {value:.3}",
+                            run.scenario_id, pin.metric
+                        ),
+                        detail: "Recorded via --update-baselines; future runs gate against it."
+                            .into(),
                         remediation: "None — informational.".into(),
-                        invoke: Invoke::command(format!("rig run --scenario {rel} --pins {}", args.pins.as_deref().unwrap_or("."))),
+                        invoke: Invoke::command(format!(
+                            "rig run --scenario {rel} --pins {}",
+                            args.pins.as_deref().unwrap_or(".")
+                        )),
                         evidence: serde_json::json!({ "value": value }),
                     });
                     continue;
@@ -221,7 +240,11 @@ fn run_run(args: RunArgs) -> RigReport {
                             evidence: serde_json::json!({ "value": value, "floor": floor, "pin": pin.issue }),
                         });
                     }
-                    GateOutcome::RatchetBreach { value, baseline, limit } => {
+                    GateOutcome::RatchetBreach {
+                        value,
+                        baseline,
+                        limit,
+                    } => {
                         b.add_finding(Finding {
                             id: finding_id(Kind::PinRegression, &format!("{}/{}", run.scenario_id, pin.metric)),
                             severity: Severity::High,
@@ -235,13 +258,27 @@ fn run_run(args: RunArgs) -> RigReport {
                     }
                     GateOutcome::NoBaseline { value } => {
                         b.add_finding(Finding {
-                            id: finding_id(Kind::PinMissingBaseline, &format!("{}/{}", run.scenario_id, pin.metric)),
-                            severity: if strict { Severity::High } else { Severity::Info },
+                            id: finding_id(
+                                Kind::PinMissingBaseline,
+                                &format!("{}/{}", run.scenario_id, pin.metric),
+                            ),
+                            severity: if strict {
+                                Severity::High
+                            } else {
+                                Severity::Info
+                            },
                             kind: Kind::PinMissingBaseline,
-                            title: format!("no baseline for {} {} (measured {value:.3})", run.scenario_id, pin.metric),
-                            detail: "The pin has a ratchet but no recorded baseline on this host.".into(),
+                            title: format!(
+                                "no baseline for {} {} (measured {value:.3})",
+                                run.scenario_id, pin.metric
+                            ),
+                            detail: "The pin has a ratchet but no recorded baseline on this host."
+                                .into(),
                             remediation: "Record one: re-run with --update-baselines.".into(),
-                            invoke: Invoke::command(format!("rig run --scenario {rel} --pins {} --update-baselines", args.pins.as_deref().unwrap_or("."))),
+                            invoke: Invoke::command(format!(
+                                "rig run --scenario {rel} --pins {} --update-baselines",
+                                args.pins.as_deref().unwrap_or(".")
+                            )),
                             evidence: serde_json::json!({ "value": value, "strict": strict }),
                         });
                     }
@@ -392,10 +429,7 @@ fn run_via_vat(discovered: &[rig::discovery::Discovered], mut b: ReportBuilder) 
 
 /// Drive a `kind = "load"` scenario through the open-loop generator and
 /// shape the result like an engine run (metrics land in vars).
-fn run_load_scenario(
-    scenario: &rig::scenario::Scenario,
-    rel: &str,
-) -> rig::engine::ScenarioRun {
+fn run_load_scenario(scenario: &rig::scenario::Scenario, rel: &str) -> rig::engine::ScenarioRun {
     use rig::report::{finding_id, Finding, Invoke, Kind, Severity};
     use rig::scenario::load::ACHIEVED_QPS_HONESTY_RATIO;
     use rig::scenario::{scenario_id, VarStore};
@@ -550,6 +584,7 @@ fn stub_report(verb: &str, msg: &str) -> RigReport {
 }
 
 /// Print the report as the single stdout document and return its exit code.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-rig-cli-src-dispatch-rs.md#source
 pub fn print_report(report: &RigReport, opts: &OutputOpts) -> i32 {
     let json = if opts.compact {
         serde_json::to_string(report)
@@ -599,8 +634,8 @@ mod tests {
 
     #[test]
     fn run_executes_the_demo_fixture_clean() {
-        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../tests/fixtures/scenarios");
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/scenarios");
         let r = run_run(RunArgs {
             dir: Some(fixture.display().to_string()),
             ..Default::default()
@@ -612,8 +647,14 @@ mod tests {
     #[test]
     fn scenario_and_dir_conflict() {
         let res = RigCommand::try_parse_from([
-            "rig", "run", "--scenario", "a.toml", "--dir", "scenarios",
+            "rig",
+            "run",
+            "--scenario",
+            "a.toml",
+            "--dir",
+            "scenarios",
         ]);
         assert!(res.is_err());
     }
 }
+// CODEGEN-END

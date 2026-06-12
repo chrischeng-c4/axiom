@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Pluggable load transports — the per-operation work the open-loop
 //! [`loadgen`](super::loadgen) scheduler drives.
 //!
@@ -18,6 +20,7 @@ use super::http;
 /// Per-worker operation handle: built once per worker thread, then driven once
 /// per scheduled tick. `execute` returns `Ok` on success, `Err(reason)` on a
 /// failure that counts toward `error_rate`.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 pub trait OpWorker: Send {
     fn execute(&mut self) -> Result<(), String>;
 }
@@ -26,6 +29,7 @@ pub trait OpWorker: Send {
 /// builds one [`OpWorker`] per worker thread (a pg connection + prepared
 /// statement, or a stateless HTTP sender), so per-worker state is never shared
 /// across threads.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 pub trait Transport: Send + Sync {
     fn connect(&self) -> Result<Box<dyn OpWorker>, String>;
 }
@@ -34,11 +38,13 @@ pub trait Transport: Send + Sync {
 // HTTP (built in) — thin ureq client, the existing load path.
 // ---------------------------------------------------------------------------
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 pub struct HttpTransport {
     pub request: HttpRequest,
     pub vars: VarStore,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 impl Transport for HttpTransport {
     fn connect(&self) -> Result<Box<dyn OpWorker>, String> {
         Ok(Box::new(HttpWorker {
@@ -53,6 +59,7 @@ struct HttpWorker {
     vars: VarStore,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 impl OpWorker for HttpWorker {
     fn execute(&mut self) -> Result<(), String> {
         match http::execute(&self.request, &self.vars) {
@@ -71,6 +78,7 @@ impl OpWorker for HttpWorker {
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "postgres")]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 pub struct PostgresTransport {
     /// libpq-style DSN, e.g. `postgresql://user@127.0.0.1/db`.
     pub dsn: String,
@@ -80,6 +88,7 @@ pub struct PostgresTransport {
 }
 
 #[cfg(feature = "postgres")]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 impl Transport for PostgresTransport {
     fn connect(&self) -> Result<Box<dyn OpWorker>, String> {
         let mut client = postgres::Client::connect(&self.dsn, postgres::NoTls)
@@ -98,6 +107,7 @@ struct PgWorker {
 }
 
 #[cfg(feature = "postgres")]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-transport-rs.md#source
 impl OpWorker for PgWorker {
     fn execute(&mut self) -> Result<(), String> {
         self.client
@@ -106,3 +116,4 @@ impl OpWorker for PgWorker {
             .map_err(|e| e.to_string())
     }
 }
+// CODEGEN-END

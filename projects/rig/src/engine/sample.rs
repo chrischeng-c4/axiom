@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-engine-sample-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! The `sample` step: repeat one request N times, fold latency statistics.
 //!
 //! Percentile = ceil-rank (`values[ceil(q/100 * n) - 1]` on the sorted
@@ -5,6 +7,7 @@
 //! meaning.
 
 #[derive(Debug, Default, Clone)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-sample-rs.md#source
 pub struct SampleStats {
     pub ok_count: u64,
     pub fail_count: u64,
@@ -14,6 +17,7 @@ pub struct SampleStats {
     pub mean_ms: f64,
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-sample-rs.md#source
 impl SampleStats {
     /// Fold from per-request (latency_ms, ok) observations. Latencies of
     /// FAILED requests are excluded from percentiles (they often sit at the
@@ -57,6 +61,7 @@ impl SampleStats {
 }
 
 /// Ceil-rank percentile over a SORTED slice. Empty slice -> 0.0.
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-engine-sample-rs.md#source
 pub fn percentile(sorted: &[f64], q: f64) -> f64 {
     if sorted.is_empty() {
         return 0.0;
@@ -99,3 +104,4 @@ mod tests {
         assert_eq!(s.get("nope"), None);
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-pins-mod-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Declarative pins: floor + ratchet gates over scenario metrics.
 //!
 //! Pin TOML (mamba pin shape, lumen perf-baseline ratchet spirit):
@@ -24,6 +26,7 @@ use std::path::Path;
 pub use baseline::BaselineStore;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-pins-mod-rs.md#source
 pub struct Pin {
     /// Provenance: tracker reference.
     pub issue: String,
@@ -45,14 +48,15 @@ struct PinFile {
 }
 
 /// Collect every `[[pins]]` entry from `*.toml` under `dir` (sorted walk).
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-pins-mod-rs.md#source
 pub fn load_pins(dir: &Path) -> Result<Vec<Pin>, String> {
     let mut paths = Vec::new();
     collect(dir, &mut paths).map_err(|e| format!("could not walk `{}`: {e}", dir.display()))?;
     paths.sort();
     let mut pins = Vec::new();
     for p in paths {
-        let text =
-            std::fs::read_to_string(&p).map_err(|e| format!("unreadable `{}`: {e}", p.display()))?;
+        let text = std::fs::read_to_string(&p)
+            .map_err(|e| format!("unreadable `{}`: {e}", p.display()))?;
         let file: PinFile =
             toml::from_str(&text).map_err(|e| format!("bad pin file `{}`: {e}", p.display()))?;
         pins.extend(file.pins);
@@ -72,6 +76,7 @@ fn collect(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> std::io::Result<()>
     Ok(())
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-pins-mod-rs.md#source
 impl Pin {
     /// Does this pin gate the given scenario id?
     pub fn matches(&self, scenario_id: &str) -> bool {
@@ -81,13 +86,24 @@ impl Pin {
 
 /// Gate verdict for one pin against one measured value.
 #[derive(Debug, Clone, PartialEq)]
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-pins-mod-rs.md#source
 pub enum GateOutcome {
     Pass,
-    FloorBreach { value: f64, floor: f64 },
-    RatchetBreach { value: f64, baseline: f64, limit: f64 },
-    NoBaseline { value: f64 },
+    FloorBreach {
+        value: f64,
+        floor: f64,
+    },
+    RatchetBreach {
+        value: f64,
+        baseline: f64,
+        limit: f64,
+    },
+    NoBaseline {
+        value: f64,
+    },
 }
 
+/// @spec projects/rig/tech-design/semantic/source/projects-rig-src-pins-mod-rs.md#source
 pub fn gate(pin: &Pin, scenario_id: &str, value: f64, store: &BaselineStore) -> GateOutcome {
     if let Some(floor) = pin.floor {
         if value > floor {
@@ -139,7 +155,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = BaselineStore::load(tmp.path());
         let p = pin(Some(25.0), None);
-        assert_eq!(gate(&p, "lumen/load/search_qps", 10.0, &store), GateOutcome::Pass);
+        assert_eq!(
+            gate(&p, "lumen/load/search_qps", 10.0, &store),
+            GateOutcome::Pass
+        );
         assert!(matches!(
             gate(&p, "lumen/load/search_qps", 30.0, &store),
             GateOutcome::FloorBreach { .. }
@@ -153,7 +172,10 @@ mod tests {
         store.record("lumen/load/search_qps", "p99_ms", 10.0);
         let p = pin(None, Some(0.8));
         // limit = 10 / 0.8 = 12.5
-        assert_eq!(gate(&p, "lumen/load/search_qps", 12.0, &store), GateOutcome::Pass);
+        assert_eq!(
+            gate(&p, "lumen/load/search_qps", 12.0, &store),
+            GateOutcome::Pass
+        );
         assert!(matches!(
             gate(&p, "lumen/load/search_qps", 13.0, &store),
             GateOutcome::RatchetBreach { .. }
@@ -191,3 +213,4 @@ ratchet = 0.8
         assert_eq!(pins[0].metric, "p99_ms");
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/rig/tech-design/semantic/source/projects-rig-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! rig — declarative test-scenario harness engine.
 //!
 //! Runs declarative SCENARIOS (e2e behavior steps) and LOAD profiles
@@ -16,3 +18,4 @@ pub mod report;
 pub mod scenario;
 pub mod vat;
 pub mod verdict;
+// CODEGEN-END
