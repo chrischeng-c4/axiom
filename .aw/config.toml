@@ -153,6 +153,21 @@ codegen.profile = "rust/score-crate"
 
 
 [[projects]]
+name = "rig"
+path = "projects/rig"
+cap_path = "projects/rig/README.md"
+label = "project:rig"
+
+[[projects.workspaces]]
+name = "rig"
+paths = ["projects/rig/**"]
+target = "rust"
+test_cmd = "cargo test -p rig"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+
+[[projects]]
 name = "mamba"
 path = "projects/mamba"
 td_path = ".aw/tech-design/projects/mamba"
