@@ -24,10 +24,8 @@ Public API manifest for `projects/meter/src/report/schema.rs` generated from AST
 | `catalog` | projects/meter/src/report/schema.rs | function | pub | 152 | catalog() -> Value |
 | `json_schema` | projects/meter/src/report/schema.rs | function | pub | 20 | json_schema() -> Value |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/schema.rs -->
 ````rust
 //! Offline self-describers for `meter spec`.
 //!
@@ -254,7 +252,7 @@ mod tests {
 changes:
   - path: projects/meter/src/report/schema.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/schema.rs` captured during meter full-codegen standardization.

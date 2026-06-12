@@ -28,10 +28,8 @@ Public API manifest for `projects/meter/src/report/producer.rs` generated from A
 | `injection_finding` | projects/meter/src/report/producer.rs | function | pub | 424 | injection_finding(target: &str, hit: &InjectionHit) -> Finding |
 | `test_failure_finding` | projects/meter/src/report/producer.rs | function | pub | 51 | test_failure_finding(     name: &str,     stdout_tail: &str,     file: Option<String>,     line: Option<u32>, ) -> Finding |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/producer.rs -->
 ````rust
 //! The ONE producer trait at the report boundary.
 //!
@@ -1042,7 +1040,7 @@ mod fuzz_tests {
 changes:
   - path: projects/meter/src/report/producer.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/producer.rs` captured during meter full-codegen standardization.

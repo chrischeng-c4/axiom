@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/tests/async_fuzzing_test.rs` generated f
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/tests/async_fuzzing_test.rs -->
 ````rust
 use meter::{AsyncFuzzConfig, AsyncFuzzer};
 use tokio::time::Duration;
@@ -251,7 +249,7 @@ async fn test_empty_corpus_handling() {
 changes:
   - path: projects/meter/tests/async_fuzzing_test.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/tests/async_fuzzing_test.rs` captured during meter full-codegen standardization.

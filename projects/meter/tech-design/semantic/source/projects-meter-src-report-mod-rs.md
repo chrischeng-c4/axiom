@@ -30,10 +30,8 @@ Public API manifest for `projects/meter/src/report/mod.rs` generated from AST du
 | `producer` | projects/meter/src/report/mod.rs | module | pub | 21 |  |
 | `schema` | projects/meter/src/report/mod.rs | module | pub | 22 |  |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/mod.rs -->
 ````rust
 //! Agent-first report layer — the center of the `meter` agent surface.
 //!
@@ -75,7 +73,7 @@ pub use schema::{catalog, json_schema};
 changes:
   - path: projects/meter/src/report/mod.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/mod.rs` captured during meter full-codegen standardization.

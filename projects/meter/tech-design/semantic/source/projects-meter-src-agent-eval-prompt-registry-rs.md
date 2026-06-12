@@ -34,10 +34,8 @@ Public API manifest for `projects/meter/src/agent_eval/prompt/registry.rs` gener
 | `register` | projects/meter/src/agent_eval/prompt/registry.rs | function | pub | 27 | register(&mut self, template: PromptTemplate) |
 | `save_to_file` | projects/meter/src/agent_eval/prompt/registry.rs | function | pub | 98 | save_to_file(         &self,         name: &str,         version: &str,         path: impl AsRef<Path>,     ) -> io::Result<()> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/agent_eval/prompt/registry.rs -->
 ````rust
 //! Prompt template registry for managing multiple templates
 
@@ -48,10 +46,12 @@ use std::path::Path;
 
 /// Registry for managing prompt templates
 #[derive(Debug, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-registry-rs.md#source
 pub struct PromptRegistry {
     templates: HashMap<String, PromptTemplate>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-registry-rs.md#source
 impl PromptRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
@@ -254,7 +254,7 @@ mod tests {
 changes:
   - path: projects/meter/src/agent_eval/prompt/registry.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/agent_eval/prompt/registry.rs` captured during meter full-codegen standardization.

@@ -35,10 +35,8 @@ Public API manifest for `projects/meter/scripts/ts_harness.js` generated from AS
 | `v8` | projects/meter/scripts/ts_harness.js | constant | pub | 18 |  |
 | `{ glob }` | projects/meter/scripts/ts_harness.js | constant | pub | 17 |  |
 ## Source
-<!-- type: source lang: javascript -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: javascript -->
 
-<!-- source-snapshot: path=projects/meter/scripts/ts_harness.js -->
 ````javascript
 #!/usr/bin/env node
 /**
@@ -200,7 +198,7 @@ main().catch(error => {
 changes:
   - path: projects/meter/scripts/ts_harness.js
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/scripts/ts_harness.js` captured during meter full-codegen standardization.

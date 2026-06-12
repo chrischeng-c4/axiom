@@ -49,10 +49,8 @@ Public API manifest for `projects/meter/src/reporter.rs` generated from AST duri
 | `with_environment` | projects/meter/src/reporter.rs | function | pub | 228 | with_environment(mut self, env: EnvironmentInfo) -> Self |
 | `yaml` | projects/meter/src/reporter.rs | function | pub | 279 | yaml() -> Self |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/reporter.rs -->
 ````rust
 //! Test reporter - generates reports in various formats
 
@@ -2152,7 +2150,7 @@ mod tests {
 changes:
   - path: projects/meter/src/reporter.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/reporter.rs` captured during meter full-codegen standardization.

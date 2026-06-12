@@ -30,10 +30,8 @@ Public API manifest for `projects/meter/src/agent_eval/regression.rs` generated 
 | `has_regressions` | projects/meter/src/agent_eval/regression.rs | function | pub | 86 | has_regressions(&self) -> bool |
 | `severe_regressions` | projects/meter/src/agent_eval/regression.rs | function | pub | 91 | severe_regressions(&self) -> Vec<&AgentRegression> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/agent_eval/regression.rs -->
 ````rust
 //! Agent evaluation regression detection
 
@@ -44,6 +42,7 @@ use serde::{Deserialize, Serialize};
 
 /// Thresholds for agent evaluation regression detection
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegressionThresholds {
     /// Pass rate decrease threshold as percentage (e.g., 5.0 = 5%)
     pub pass_rate_threshold_percent: f64,
@@ -61,6 +60,7 @@ pub struct AgentRegressionThresholds {
     pub quality_score_threshold: Option<f64>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 impl Default for AgentRegressionThresholds {
     fn default() -> Self {
         Self {
@@ -75,6 +75,7 @@ impl Default for AgentRegressionThresholds {
 
 /// A detected agent evaluation regression
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegression {
     /// Metric name
     pub metric: String,
@@ -97,6 +98,7 @@ pub struct AgentRegression {
 
 /// Agent regression detection report
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegressionReport {
     /// Baseline timestamp
     pub baseline_timestamp: String,
@@ -111,6 +113,7 @@ pub struct AgentRegressionReport {
     pub summary: AgentRegressionSummary,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 impl AgentRegressionReport {
     /// Check if any regressions were detected
     pub fn has_regressions(&self) -> bool {
@@ -128,6 +131,7 @@ impl AgentRegressionReport {
 
 /// Summary of regression analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegressionSummary {
     /// Total test cases compared
     pub total_cases: usize,
@@ -140,8 +144,10 @@ pub struct AgentRegressionSummary {
 }
 
 /// Agent regression detector
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 pub struct AgentRegressionDetector;
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-regression-rs.md#source
 impl AgentRegressionDetector {
     /// Detect regressions by comparing current results against baseline
     pub fn detect_regressions(
@@ -504,7 +510,7 @@ mod tests {
 changes:
   - path: projects/meter/src/agent_eval/regression.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/agent_eval/regression.rs` captured during meter full-codegen standardization.

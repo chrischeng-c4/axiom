@@ -38,10 +38,8 @@ Public API manifest for `projects/meter/src/agent_eval/cost.rs` generated from A
 | `registry_mut` | projects/meter/src/agent_eval/cost.rs | function | pub | 226 | registry_mut(&mut self) -> &mut PricingRegistry |
 | `with_registry` | projects/meter/src/agent_eval/cost.rs | function | pub | 162 | with_registry(registry: PricingRegistry) -> Self |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/agent_eval/cost.rs -->
 ````rust
 //! Cost calculation system for LLM model pricing
 
@@ -50,6 +48,7 @@ use std::collections::HashMap;
 
 /// Model pricing information
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 pub struct ModelPricing {
     /// Model identifier
     pub model: String,
@@ -64,6 +63,7 @@ pub struct ModelPricing {
     pub completion_price_per_1m: f64,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl ModelPricing {
     /// Create a new model pricing entry
     pub fn new(
@@ -83,16 +83,19 @@ impl ModelPricing {
 
 /// Registry of model pricing information
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 pub struct PricingRegistry {
     prices: HashMap<String, ModelPricing>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl Default for PricingRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl PricingRegistry {
     /// Create a new pricing registry with pre-populated common models
     pub fn new() -> Self {
@@ -175,16 +178,19 @@ impl PricingRegistry {
 }
 
 /// Cost calculator
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 pub struct CostCalculator {
     registry: PricingRegistry,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl Default for CostCalculator {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 impl CostCalculator {
     /// Create a new cost calculator with default pricing registry
     pub fn new() -> Self {
@@ -265,6 +271,7 @@ impl CostCalculator {
 
 /// Detailed cost breakdown
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-cost-rs.md#source
 pub struct CostBreakdown {
     /// Model used
     pub model: String,
@@ -542,7 +549,7 @@ mod tests {
 changes:
   - path: projects/meter/src/agent_eval/cost.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/agent_eval/cost.rs` captured during meter full-codegen standardization.

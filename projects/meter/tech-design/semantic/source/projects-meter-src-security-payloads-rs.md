@@ -36,10 +36,8 @@ Public API manifest for `projects/meter/src/security/payloads.rs` generated from
 | `template_injection` | projects/meter/src/security/payloads.rs | function | pub | 105 | template_injection(&self) -> &[String] |
 | `unicode_tricks` | projects/meter/src/security/payloads.rs | function | pub | 75 | unicode_tricks(&self) -> &[String] |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/security/payloads.rs -->
 ````rust
 //! Payload database for security testing
 //!
@@ -48,6 +46,7 @@ Public API manifest for `projects/meter/src/security/payloads.rs` generated from
 
 /// Category of security payloads
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-payloads-rs.md#source
 pub enum PayloadCategory {
     /// SQL injection attacks
     SqlInjection,
@@ -71,6 +70,7 @@ pub enum PayloadCategory {
 
 /// Database of security test payloads
 #[derive(Debug)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-payloads-rs.md#source
 pub struct PayloadDatabase {
     sql_injection_payloads: Vec<String>,
     identifier_injection_payloads: Vec<String>,
@@ -83,6 +83,7 @@ pub struct PayloadDatabase {
     template_injection_payloads: Vec<String>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-payloads-rs.md#source
 impl PayloadDatabase {
     /// Create a new payload database with all payloads
     pub fn new() -> Self {
@@ -606,6 +607,7 @@ impl PayloadDatabase {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-payloads-rs.md#source
 impl Default for PayloadDatabase {
     fn default() -> Self {
         Self::new()
@@ -899,7 +901,7 @@ mod tests {
 changes:
   - path: projects/meter/src/security/payloads.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/security/payloads.rs` captured during meter full-codegen standardization.

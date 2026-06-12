@@ -36,10 +36,8 @@ Public API manifest for `projects/meter/src/security/sql_injection.rs` generated
 | `test_unicode` | projects/meter/src/security/sql_injection.rs | function | pub | 133 | test_unicode(&self, validator: F) -> Vec<InjectionTest> |
 | `test_values` | projects/meter/src/security/sql_injection.rs | function | pub | 122 | test_values(&self, validator: F) -> Vec<InjectionTest> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/security/sql_injection.rs -->
 ````rust
 //! SQL injection testing utilities
 //!
@@ -49,6 +47,7 @@ use super::payloads::PayloadDatabase;
 
 /// Result of an injection test
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-sql-injection-rs.md#source
 pub enum InjectionResult {
     /// Input was blocked (validator returned error)
     Blocked,
@@ -62,6 +61,7 @@ pub enum InjectionResult {
 
 /// A single injection test case
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-sql-injection-rs.md#source
 pub struct InjectionTest {
     /// Name/description of the test
     pub name: String,
@@ -73,6 +73,7 @@ pub struct InjectionTest {
     pub actual: Option<InjectionResult>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-sql-injection-rs.md#source
 impl InjectionTest {
     /// Create a new injection test
     pub fn new(
@@ -95,10 +96,12 @@ impl InjectionTest {
 }
 
 /// SQL injection tester
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-sql-injection-rs.md#source
 pub struct SqlInjectionTester {
     payload_db: PayloadDatabase,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-sql-injection-rs.md#source
 impl SqlInjectionTester {
     /// Create a new SQL injection tester
     pub fn new() -> Self {
@@ -229,6 +232,7 @@ impl SqlInjectionTester {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-security-sql-injection-rs.md#source
 impl Default for SqlInjectionTester {
     fn default() -> Self {
         Self::new()
@@ -489,7 +493,7 @@ mod tests {
 changes:
   - path: projects/meter/src/security/sql_injection.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/security/sql_injection.rs` captured during meter full-codegen standardization.
