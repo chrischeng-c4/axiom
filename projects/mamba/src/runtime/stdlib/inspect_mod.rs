@@ -177,6 +177,71 @@ fn kind_value(v: MbValue) -> Option<i64> {
     }
 }
 
+fn raise_exc(exc: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Class-like check for the errors-dimension validators: a registered user
+/// class name, a builtin type name, or a type-object Instance.
+fn classify_for_introspection(v: MbValue) -> Introspected {
+    if v.is_none() {
+        return Introspected::Scalar("NoneType");
+    }
+    if v.is_float() {
+        return Introspected::Scalar("float");
+    }
+    if v.as_bool().is_some() {
+        return Introspected::Scalar("bool");
+    }
+    if v.as_int().is_some() {
+        // May still be a closure handle — callers decide after probing.
+        return Introspected::Int;
+    }
+    if v.as_func().is_some() {
+        return Introspected::NativeFunc;
+    }
+    if let Some(name) = extract_str(v) {
+        if super::super::class::class_is_registered(&name) {
+            return Introspected::UserClass(name);
+        }
+        if super::super::builtins::is_type_name(&name) {
+            return Introspected::BuiltinType(name);
+        }
+        return Introspected::Other;
+    }
+    if let Some(ptr) = v.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "type" {
+                    if let Some(n) = fields.read().unwrap().get("__name__")
+                        .copied()
+                        .and_then(extract_str)
+                    {
+                        if super::super::class::class_is_registered(&n) {
+                            return Introspected::UserClass(n);
+                        }
+                        return Introspected::BuiltinType(n);
+                    }
+                }
+            }
+        }
+    }
+    Introspected::Other
+}
+
+enum Introspected {
+    Scalar(&'static str),
+    Int,
+    NativeFunc,
+    UserClass(String),
+    BuiltinType(String),
+    Other,
+}
+
 /// True iff `v` is the shared empty sentinel.
 fn is_empty_sentinel(v: MbValue) -> bool {
     v.to_bits() == empty_singleton().to_bits()
@@ -232,7 +297,7 @@ pub fn register() {
         ("currentframe", d_currentframe as *const () as usize),
         ("stack", d_empty_list as *const () as usize),
         ("trace", d_empty_list as *const () as usize),
-        ("getmro", d_empty_list as *const () as usize),
+        ("getmro", d_getmro as *const () as usize),
         ("getclasstree", d_empty_list as *const () as usize),
         ("getargvalues", d_argvalues as *const () as usize),
         ("getouterframes", d_empty_list as *const () as usize),
@@ -325,14 +390,28 @@ pub fn register() {
         "findsource", "formatannotation",
         "formatannotationrelativeto", "get_annotations", "getabsfile",
         "getargs", "getasyncgenlocals", "getasyncgenstate",
-        "getblock", "getcallargs", "getclosurevars", "getcoroutinelocals",
-        "getcoroutinestate", "getframeinfo", "getgeneratorlocals",
+        "getblock", "getcallargs", "getcoroutinelocals",
+        "getcoroutinestate", "getgeneratorlocals",
         "getgeneratorstate", "getlineno", "getmembers_static", "getmodulename",
         "indentsize", "markcoroutinefunction", "namedtuple", "walktree",
     ];
     for name in plain_fns {
         let addr = d_none as *const () as usize;
         attrs.insert((*name).to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+    {
+        let addr = d_getclosurevars as *const () as usize;
+        attrs.insert("getclosurevars".to_string(), MbValue::from_func(addr));
+        super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+            s.borrow_mut().insert(addr as u64);
+        });
+    }
+    {
+        let addr = d_getframeinfo as *const () as usize;
+        attrs.insert("getframeinfo".to_string(), MbValue::from_func(addr));
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
         });
@@ -373,8 +452,45 @@ unsafe extern "C" fn d_none(_a: *const MbValue, _n: usize) -> MbValue {
     MbValue::none()
 }
 
+/// CPython getfile/getsource reject builtins and non-code objects with
+/// TypeError. Closures and user functions/classes keep the stub answers.
+fn source_object_rejects(a: &[MbValue]) -> Option<MbValue> {
+    let v = a.first().copied().unwrap_or_else(MbValue::none);
+    match classify_for_introspection(v) {
+        Introspected::Scalar(label) => Some(raise_exc(
+            "TypeError",
+            &format!(
+                "module, class, method, function, traceback, frame, or code object expected, got {label}"
+            ),
+        )),
+        Introspected::Int => {
+            // A live closure handle is a real function; a bare int is not.
+            if super::super::closure::mb_closure_get_func(v).is_none() {
+                Some(raise_exc(
+                    "TypeError",
+                    "module, class, method, function, traceback, frame, or code object expected, got int",
+                ))
+            } else {
+                None
+            }
+        }
+        Introspected::NativeFunc => Some(raise_exc(
+            "TypeError",
+            "source code is not available for builtin functions",
+        )),
+        Introspected::BuiltinType(name) => Some(raise_exc(
+            "TypeError",
+            &format!("source code is not available for builtin type {name}"),
+        )),
+        _ => None,
+    }
+}
+
 unsafe extern "C" fn d_getsourcelines(args_ptr: *const MbValue, nargs: usize) -> MbValue {
-    let _ = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    if let Some(err) = source_object_rejects(a) {
+        return err;
+    }
     // CPython returns (list[str], int). Provide a non-empty placeholder so
     // callers that assert shape (list, positive int) work.
     let placeholder = MbValue::from_ptr(MbObject::new_str("<source unavailable>\n".to_string()));
@@ -383,11 +499,123 @@ unsafe extern "C" fn d_getsourcelines(args_ptr: *const MbValue, nargs: usize) ->
     MbValue::from_ptr(MbObject::new_tuple(vec![lines, lineno]))
 }
 
-unsafe extern "C" fn d_getsource(_a: *const MbValue, _n: usize) -> MbValue {
+unsafe extern "C" fn d_getsource(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    if let Some(err) = source_object_rejects(a) {
+        return err;
+    }
     MbValue::from_ptr(MbObject::new_str("<source unavailable>\n".to_string()))
 }
 
-unsafe extern "C" fn d_getsourcefile(_a: *const MbValue, _n: usize) -> MbValue {
+unsafe extern "C" fn d_getsourcefile(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    if let Some(err) = source_object_rejects(a) {
+        return err;
+    }
+    MbValue::none()
+}
+
+/// inspect.getmro(cls) -> the class's MRO as a tuple of type objects;
+/// non-classes raise AttributeError (CPython reads cls.__mro__).
+unsafe extern "C" fn d_getmro(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let v = a.first().copied().unwrap_or_else(MbValue::none);
+    let type_obj = |name: &str| -> MbValue {
+        let inst = MbObject::new_instance("type".to_string());
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*inst).data {
+                fields.write().unwrap().insert(
+                    "__name__".to_string(),
+                    MbValue::from_ptr(MbObject::new_str(name.to_string())),
+                );
+            }
+        }
+        MbValue::from_ptr(inst)
+    };
+    match classify_for_introspection(v) {
+        Introspected::UserClass(name) => {
+            let mro = super::super::class::class_mro_list(&name);
+            let mut names: Vec<String> = if mro.is_empty() { vec![name] } else { mro };
+            if names.last().map(String::as_str) != Some("object") {
+                names.push("object".to_string());
+            }
+            let items: Vec<MbValue> = names.iter().map(|n| type_obj(n)).collect();
+            MbValue::from_ptr(MbObject::new_tuple(items))
+        }
+        Introspected::BuiltinType(name) => {
+            let mut names = vec![name.clone()];
+            if name != "object" {
+                if name == "bool" {
+                    names.push("int".to_string());
+                }
+                names.push("object".to_string());
+            }
+            let items: Vec<MbValue> = names.iter().map(|n| type_obj(n)).collect();
+            MbValue::from_ptr(MbObject::new_tuple(items))
+        }
+        _ => {
+            let label = if v.as_int().is_some() { "int" } else { "object" };
+            raise_exc(
+                "AttributeError",
+                &format!("'{label}' object has no attribute '__mro__'"),
+            )
+        }
+    }
+}
+
+/// inspect.getframeinfo(frame) — None (and other non-frames) raise
+/// AttributeError (CPython reads frame.f_lineno).
+unsafe extern "C" fn d_getframeinfo(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let v = a.first().copied().unwrap_or_else(MbValue::none);
+    if v.is_none() {
+        return raise_exc(
+            "AttributeError",
+            "'NoneType' object has no attribute 'f_lineno'",
+        );
+    }
+    MbValue::none()
+}
+
+/// inspect.getclosurevars(func) — non-functions raise TypeError; functions
+/// keep the stub None answer.
+unsafe extern "C" fn d_getclosurevars(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let v = a.first().copied().unwrap_or_else(MbValue::none);
+    let is_function = match classify_for_introspection(v) {
+        Introspected::Int => !super::super::closure::mb_closure_get_func(v).is_none(),
+        Introspected::NativeFunc => false,
+        _ => false,
+    } || super::super::closure::func_params(v).is_some();
+    if !is_function {
+        let label = match classify_for_introspection(v) {
+            Introspected::UserClass(n) | Introspected::BuiltinType(n) => n,
+            Introspected::Scalar(l) => l.to_string(),
+            Introspected::Int => "int".to_string(),
+            _ => "object".to_string(),
+        };
+        return raise_exc("TypeError", &format!("'{label}' is not a Python function"));
+    }
     MbValue::none()
 }
 
@@ -1046,6 +1274,21 @@ fn parameter_ctor_fields(
 }
 
 unsafe extern "C" fn p_init(slf: MbValue, args: MbValue) -> MbValue {
+    // kind=N outside the 0..=4 ordinal range raises (CPython _ParameterKind).
+    {
+        let mut probe = arg_items(args);
+        let kwargs = pop_trailing_kwargs(&mut probe, &["name", "kind", "default", "annotation"]);
+        if let Some((_, kv)) = kwargs.iter().find(|(k, _)| k == "kind") {
+            if let Some(i) = kv.as_int() {
+                if !(0..=4).contains(&i) {
+                    return raise_exc(
+                        "ValueError",
+                        &format!("value {i} is not a valid Parameter.kind"),
+                    );
+                }
+            }
+        }
+    }
     let (name, kind, default, annotation) = parameter_ctor_fields(args, None);
     inst_set_field(slf, "name", MbValue::from_ptr(MbObject::new_str(name)));
     inst_set_field(slf, "kind", kind_singleton(kind));
@@ -1304,6 +1547,25 @@ unsafe extern "C" fn s_eq(slf: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn s_hash(slf: MbValue, _args: MbValue) -> MbValue {
+    // An unhashable parameter default makes the whole signature unhashable.
+    for p in signature_params(slf) {
+        if let Some(d) = inst_field(p, "default") {
+            if let Some(ptr) = d.as_ptr() {
+                let label = unsafe {
+                    match (*ptr).data {
+                        ObjData::List(_) => Some("list"),
+                        ObjData::Dict(_) => Some("dict"),
+                        ObjData::Set(_) => Some("set"),
+                        ObjData::ByteArray(_) => Some("bytearray"),
+                        _ => None,
+                    }
+                };
+                if let Some(label) = label {
+                    return raise_exc("TypeError", &format!("unhashable type: '{label}'"));
+                }
+            }
+        }
+    }
     let mut h: i64 = 7;
     for p in signature_params(slf) {
         h = h.wrapping_mul(31).wrapping_add(param_hash_value(p));
@@ -1651,6 +1913,27 @@ pub fn mb_inspect_signature(func: MbValue) -> MbValue {
                 .collect();
             return signature_from_infos(&infos, None);
         }
+    }
+    // Validation tail (errors-dimension contracts): non-callables raise
+    // TypeError, builtin types raise ValueError — matching CPython.
+    match classify_for_introspection(func) {
+        Introspected::Scalar(_) | Introspected::Int => {
+            let shown = if let Some(i) = func.as_int() {
+                i.to_string()
+            } else if let Some(f) = func.as_float() {
+                f.to_string()
+            } else {
+                "None".to_string()
+            };
+            return raise_exc("TypeError", &format!("{shown} is not a callable object"));
+        }
+        Introspected::BuiltinType(name) => {
+            return raise_exc(
+                "ValueError",
+                &format!("no signature found for builtin type <class '{name}'>"),
+            );
+        }
+        _ => {}
     }
     signature_from_infos(&[], None)
 }
