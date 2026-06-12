@@ -118,3 +118,12 @@ e2e_tests:
       - "optimized payloads fall back to the original command when the optimized command exits unsuccessfully"
       - "cap run labels preserve the original command even when bash payload is optimized"
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Applicability covers the optimizer decision path, tool availability gate, cap-run wrapping, and optimized-command failure fallback to original command semantics.
+- [changes] Change plan is scoped to hook rewrite behavior, focused tests, and user-facing docs; daemon throttling and non-hook cap run behavior stay out of scope.
+- [e2e-test] Verification targets the focused hook tests that own rewrite payload behavior.
