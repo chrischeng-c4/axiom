@@ -291,6 +291,14 @@ fn make_handle(algo: &str) -> MbValue {
 /// Borrow `&[u8]` from an MbValue holding bytes/bytearray/str. Returns
 /// an empty slice for other shapes. The slice does not outlive `f`.
 #[inline]
+fn raise_exc(exc: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 fn with_bytes<R>(val: MbValue, f: impl FnOnce(&[u8]) -> R) -> R {
     if let Some(ptr) = val.as_ptr() {
         unsafe {
@@ -352,6 +360,24 @@ pub fn mb_hashlib_new_handle(algo: &str, initial: MbValue) -> MbValue {
 
 /// `h.update(data)` — stream more bytes into the hasher state.
 pub fn mb_hashlib_update(handle: MbValue, data: MbValue) -> MbValue {
+    // CPython contracts: str must be encoded first; non-buffer types raise.
+    let is_str = data.as_ptr().map(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+        .unwrap_or(false);
+    if is_str {
+        return raise_exc(
+            "TypeError",
+            "Strings must be encoded before hashing",
+        );
+    }
+    let is_buffer = data.as_ptr().map(|p| unsafe {
+        matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+    }).unwrap_or(false);
+    if !is_buffer {
+        return raise_exc(
+            "TypeError",
+            "object supporting the buffer API required",
+        );
+    }
     if let Some(id) = handle.as_int() {
         let id = id as u64;
         HASHES.with(|m| {
@@ -365,6 +391,16 @@ pub fn mb_hashlib_update(handle: MbValue, data: MbValue) -> MbValue {
 
 /// `h.hexdigest()` — finalize a clone, return lowercase hex string.
 pub fn mb_hashlib_hexdigest(handle: MbValue) -> MbValue {
+    // SHAKE XOFs require an explicit output length.
+    let algo = handle.as_int()
+        .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
+        .unwrap_or_default();
+    if algo.starts_with("shake_") {
+        return raise_exc(
+            "TypeError",
+            "hexdigest() missing required argument 'length' (pos 1)",
+        );
+    }
     let digest_bytes = handle.as_int().and_then(|id| {
         HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone()))
     });
@@ -462,6 +498,12 @@ unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbV
             algo = s.to_string();
         }
     });
+    // CPython normalizes the algorithm name case (new("SHA256") works).
+    let normalized = algo.to_lowercase();
+    if !ALGOS.contains(&normalized.as_str()) {
+        return raise_exc("ValueError", &format!("unsupported hash type {algo}"));
+    }
+    let algo = normalized;
     // CPython: new(name, data=b'', *, usedforsecurity=True). `usedforsecurity`
     // is keyword-only, but the native flat-args ABI flattens a keyword value
     // into the positional slice when `data` is omitted (e.g. `new(name,
@@ -567,7 +609,7 @@ unsafe extern "C" fn dispatch_pbkdf2_hmac(args_ptr: *const MbValue, nargs: usize
     }
     let rounds = a.get(3).and_then(|v| v.as_int()).unwrap_or(0);
     if rounds < 1 {
-        return raise_type_error("pbkdf2_hmac() iterations must be a positive integer");
+        return raise_exc("ValueError", "iteration value must be greater than 0.");
     }
     // 5th positional (rare) — dklen. Keyword `dklen=` is dropped before here.
     let dklen = a.get(4).and_then(|v| v.as_int()).filter(|&n| n > 0).map(|n| n as usize);
@@ -576,7 +618,7 @@ unsafe extern "C" fn dispatch_pbkdf2_hmac(args_ptr: *const MbValue, nargs: usize
     });
     match result {
         Some(bytes) => MbValue::from_ptr(MbObject::new_bytes(bytes)),
-        None => raise_type_error("pbkdf2_hmac() unsupported hash type"),
+        None => raise_exc("ValueError", &format!("unsupported hash type {hash_name}")),
     }
 }
 
