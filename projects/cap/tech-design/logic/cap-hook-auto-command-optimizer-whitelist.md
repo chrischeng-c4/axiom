@@ -140,3 +140,12 @@ e2e_tests:
       - "optimized payloads keep cap run --label equal to the original command"
       - "optimized payloads run the original command if the optimized command exits non-zero"
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Contract explicitly rejects compound shell syntax, checks replacement availability, keeps cap-run wrapping, and routes optimized-command failure to original-command execution.
+- [changes] Contract identifies implementation touch points and preserves current non-hook/daemon behavior.
+- [e2e-test] Focused hook tests are sufficient for the whitelist and fallback behavior because the daemon only sees the resulting cap-run shell payload.
