@@ -284,8 +284,14 @@ fn run_apply_inner(
     // route a section's CODEGEN block to exactly one file rather than
     // duplicating the same block into all N. See `should_emit_section_to_entry`.
     let all_entries: Vec<ChangeEntry> = change_entries.clone();
-    let source_from_target_replays_whole_file =
-        source_from_target_directive(&spec_content).is_some();
+    // Whole-file regeneration covers both legacy source-from-target replay and
+    // the rust-source-unit (td_ast) path: in either case the `## Source` section
+    // owns the entire file, so apply must REPLACE the whole file rather than
+    // append a managed block beside pre-existing (unmanaged) content. Without
+    // this, a virgin file with no markers would be duplicated.
+    let source_from_target_replays_whole_file = source_from_target_directive(&spec_content)
+        .is_some()
+        || source_is_rust_source_unit(&spec_content);
     let whole_file_source_targets: std::collections::BTreeSet<String> = all_entries
         .iter()
         .filter(|entry| {
@@ -879,7 +885,8 @@ fn is_whole_file_codegen_section(
     source_from_target_replays_whole_file: bool,
 ) -> bool {
     matches!(section, Some("runtime-image" | "deployment"))
-        || (source_from_target_replays_whole_file && matches!(section, Some("source")))
+        || (source_from_target_replays_whole_file
+            && matches!(section, Some("source" | "rust-source-unit")))
 }
 
 fn is_whole_file_codegen_content(
