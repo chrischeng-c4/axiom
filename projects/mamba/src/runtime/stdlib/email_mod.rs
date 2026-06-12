@@ -779,6 +779,13 @@ unsafe extern "C" fn m_get_payload(this: MbValue, args: MbValue) -> MbValue {
         retain(payload);
         return payload;
     }
+    if let Some(_i) = idx {
+        // Non-multipart with an index: CPython raises.
+        return raise(
+            "TypeError",
+            "Expected list, got <class 'str'>".to_string(),
+        );
+    }
     if !decode {
         retain(payload);
         return payload;
@@ -1121,8 +1128,17 @@ unsafe extern "C" fn dispatch_message_from_string(a: *const MbValue, n: usize) -
 unsafe extern "C" fn dispatch_message_from_bytes(a: *const MbValue, n: usize) -> MbValue {
     let items = args_slice(a, n);
     let pos = positional(items);
+    // CPython BytesParser calls text.decode(...) — a str argument dies with
+    // AttributeError ('str' object has no attribute 'decode').
+    if pos.first().map(|v| {
+        v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) })
+    }).unwrap_or(false) {
+        return raise(
+            "AttributeError",
+            "'str' object has no attribute 'decode'".to_string(),
+        );
+    }
     let bytes = pos.first().and_then(|v| extract_bytes(*v))
-        .or_else(|| pos.first().and_then(|v| extract_str(*v)).map(|s| s.into_bytes()))
         .unwrap_or_default();
     // Decode as latin1 to preserve high bytes
     let text: String = bytes.iter().map(|&b| b as char).collect();
@@ -1340,6 +1356,16 @@ unsafe extern "C" fn dispatch_header_ctor(a: *const MbValue, n: usize) -> MbValu
     let s = pos.first().copied().unwrap_or_else(|| new_str(""));
     let charset = pos.get(1).and_then(|v| extract_str(*v))
         .or_else(|| kwarg(items, "charset").and_then(extract_str));
+    if let Some(c) = &charset {
+        let norm = c.trim().to_lowercase().replace('_', "-");
+        const KNOWN: [&str; 12] = [
+            "us-ascii", "ascii", "utf-8", "utf8", "latin-1", "latin1",
+            "iso-8859-1", "iso-8859-2", "utf-16", "utf-32", "big5", "gbk",
+        ];
+        if !KNOWN.contains(&norm.as_str()) {
+            return raise("LookupError", format!("unknown encoding: {c}"));
+        }
+    }
     let m = make_instance("Header", vec![]);
     field_set(m, "_text", s);
     match charset {
