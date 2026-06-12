@@ -135,17 +135,8 @@ e2e_tests:
     category: behavior
     command: "cargo test -p cap hook -- --nocapture"
     assertions:
-      - "simple recursive grep commands can be optimized to rg when rg is available"
-      - "unsupported grep forms keep the original command payload"
-      - "optimized payloads fall back to the original command when the optimized command exits unsuccessfully"
-      - "cap run labels preserve the original command even when bash payload is optimized"
+      - "simple whole-command grep -R/-r inputs use rg when rg is installed"
+      - "missing rg, unsupported grep flags, non-recursive grep, and shell metacharacters keep the original payload"
+      - "optimized payloads keep cap run --label equal to the original command"
+      - "optimized payloads run the original command if the optimized command exits non-zero"
 ```
-
-# Reviews
-
-### Review 1
-**Verdict:** approved
-
-- [logic] Applicability covers the optimizer decision path, tool availability gate, cap-run wrapping, and optimized-command failure fallback to original command semantics.
-- [changes] Change plan is scoped to hook rewrite behavior, focused tests, and user-facing docs; daemon throttling and non-hook cap run behavior stay out of scope.
-- [e2e-test] Verification targets the focused hook tests that own rewrite payload behavior.
