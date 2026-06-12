@@ -28,41 +28,49 @@ id: cap-hook-auto-command-optimizer-whitelist-logic
 entry: start
 nodes:
   start: { kind: start, label: "PreToolUse Bash command" }
-  check_cap: { kind: decision, label: "already cap or empty?" }
-  unchanged: { kind: terminal, label: "leave unchanged" }
-  match_whitelist: { kind: decision, label: "matches optimizer whitelist?" }
-  wrap_original: { kind: process, label: "wrap original command with cap run" }
-  check_tool: { kind: decision, label: "replacement binary installed?" }
-  build_optimized: { kind: process, label: "build optimized read-only command" }
-  wrap_fallback: { kind: process, label: "wrap fallback script with cap run" }
-  run_optimized: { kind: decision, label: "optimized command succeeds?" }
-  optimized_result: { kind: terminal, label: "return optimized result" }
-  original_result: { kind: terminal, label: "run original command and return original result" }
+  check_cap: { kind: decision, label: "empty or already cap?" }
+  unchanged: { kind: terminal, label: "no hook rewrite" }
+  reject_shell: { kind: decision, label: "contains pipeline, redirection, heredoc, or command chaining?" }
+  parse_grep: { kind: decision, label: "simple recursive grep whitelist match?" }
+  check_rg: { kind: decision, label: "rg executable is available on PATH?" }
+  wrap_original: { kind: process, label: "cap run --label=original -- bash -c original" }
+  build_rg: { kind: process, label: "translate safe grep args to rg args" }
+  build_fallback: { kind: process, label: "build shell script: rg command || original command" }
+  wrap_optimized: { kind: process, label: "cap run --label=original -- bash -c fallback-script" }
+  run_rg: { kind: decision, label: "optimized rg command exits zero?" }
+  return_rg: { kind: terminal, label: "return rg output/status" }
+  run_original: { kind: terminal, label: "run original grep and return original status" }
 edges:
   - { from: start, to: check_cap }
   - { from: check_cap, to: unchanged, label: "yes" }
-  - { from: check_cap, to: match_whitelist, label: "no" }
-  - { from: match_whitelist, to: wrap_original, label: "no" }
-  - { from: match_whitelist, to: check_tool, label: "yes" }
-  - { from: check_tool, to: wrap_original, label: "no" }
-  - { from: check_tool, to: build_optimized, label: "yes" }
-  - { from: build_optimized, to: wrap_fallback }
-  - { from: wrap_fallback, to: run_optimized }
-  - { from: run_optimized, to: optimized_result, label: "yes" }
-  - { from: run_optimized, to: original_result, label: "no" }
+  - { from: check_cap, to: reject_shell, label: "no" }
+  - { from: reject_shell, to: wrap_original, label: "yes" }
+  - { from: reject_shell, to: parse_grep, label: "no" }
+  - { from: parse_grep, to: wrap_original, label: "no" }
+  - { from: parse_grep, to: check_rg, label: "yes" }
+  - { from: check_rg, to: wrap_original, label: "no" }
+  - { from: check_rg, to: build_rg, label: "yes" }
+  - { from: build_rg, to: build_fallback }
+  - { from: build_fallback, to: wrap_optimized }
+  - { from: wrap_optimized, to: run_rg }
+  - { from: run_rg, to: return_rg, label: "success" }
+  - { from: run_rg, to: run_original, label: "failure" }
 ---
 flowchart TD
-    start([PreToolUse Bash command]) --> check_cap{already cap or empty?}
-    check_cap -- yes --> unchanged([leave unchanged])
-    check_cap -- no --> match_whitelist{matches optimizer whitelist?}
-    match_whitelist -- no --> wrap_original[wrap original command with cap run]
-    match_whitelist -- yes --> check_tool{replacement binary installed?}
-    check_tool -- no --> wrap_original
-    check_tool -- yes --> build_optimized[build optimized read-only command]
-    build_optimized --> wrap_fallback[wrap fallback script with cap run]
-    wrap_fallback --> run_optimized{optimized command succeeds?}
-    run_optimized -- yes --> optimized_result([return optimized result])
-    run_optimized -- no --> original_result([run original command and return original result])
+    start([PreToolUse Bash command]) --> check_cap{empty or already cap?}
+    check_cap -- yes --> unchanged([no hook rewrite])
+    check_cap -- no --> reject_shell{contains pipeline, redirection, heredoc, or command chaining?}
+    reject_shell -- yes --> wrap_original[cap run --label=original -- bash -c original]
+    reject_shell -- no --> parse_grep{simple recursive grep whitelist match?}
+    parse_grep -- no --> wrap_original
+    parse_grep -- yes --> check_rg{rg executable is available on PATH?}
+    check_rg -- no --> wrap_original
+    check_rg -- yes --> build_rg[translate safe grep args to rg args]
+    build_rg --> build_fallback[build shell script: rg command || original command]
+    build_fallback --> wrap_optimized[cap run --label=original -- bash -c fallback-script]
+    wrap_optimized --> run_rg{optimized rg command exits zero?}
+    run_rg -- success --> return_rg([return rg output/status])
+    run_rg -- failure --> run_original([run original grep and return original status])
 ```
 ## Changes
 <!-- type: changes lang: yaml -->
