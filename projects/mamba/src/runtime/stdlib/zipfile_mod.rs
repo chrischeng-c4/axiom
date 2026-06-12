@@ -574,6 +574,16 @@ unsafe extern "C" fn d_zipfile_new(args_ptr: *const MbValue, nargs: usize) -> Mb
         .or_else(|| pos.get(2).copied().filter(|v| v.as_int().is_some()))
         .and_then(|v| v.as_int())
         .unwrap_or(0);
+    if !matches!(mode, 'r' | 'w' | 'x' | 'a') {
+        return raise_str("ValueError", "ZipFile requires mode 'r', 'w', 'x', or 'a'");
+    }
+    // STORED / DEFLATED / BZIP2 / LZMA are the known methods.
+    if !matches!(compression, 0 | 8 | 12 | 14) {
+        return raise_str(
+            "NotImplementedError",
+            "That compression method is not supported",
+        );
+    }
 
     let mut entries = Vec::new();
     let mut comment = Vec::new();
@@ -591,7 +601,13 @@ unsafe extern "C" fn d_zipfile_new(args_ptr: *const MbValue, nargs: usize) -> Mb
                     }
                 }
             },
-            _ => {
+            Some(_) => {
+                // The target exists but is empty — not a zip archive.
+                if mode == 'r' {
+                    return raise_str("zipfile.BadZipFile", "File is not a zip file");
+                }
+            }
+            None => {
                 if mode == 'r' {
                     return raise_str(
                         "OSError",
@@ -639,6 +655,18 @@ fn compress_payload(data: &[u8], comp: i64) -> Vec<u8> {
     } else {
         data.to_vec()
     }
+}
+
+/// ValueError when the archive handle is already closed (CPython contract).
+fn ensure_zf_open(zf: MbValue) -> Option<MbValue> {
+    let closed = with_zf(zf, |st| st.closed).unwrap_or(true);
+    if closed {
+        return Some(raise_str(
+            "ValueError",
+            "Attempt to use ZIP archive that was already closed",
+        ));
+    }
+    None
 }
 
 /// Core writestr: name_or_info + raw data (+ force_zip64 from open('w')).
@@ -716,6 +744,9 @@ fn decompress_entry(info: MbValue, cdata: &[u8]) -> Vec<u8> {
 }
 
 unsafe extern "C" fn method_read(self_v: MbValue, args: MbValue) -> MbValue {
+    if let Some(err) = ensure_zf_open(self_v) {
+        return err;
+    }
     let items = seq_items(args);
     let name = items.first().copied().and_then(extract_str).unwrap_or_default();
     let Some((info, cdata)) = find_entry_payload(self_v, &name) else {
@@ -756,6 +787,9 @@ unsafe extern "C" fn method_getinfo(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 unsafe extern "C" fn method_testzip(self_v: MbValue, _args: MbValue) -> MbValue {
+    if let Some(err) = ensure_zf_open(self_v) {
+        return err;
+    }
     let bad: Option<String> = with_zf(self_v, |st| {
         for e in &st.entries {
             let data = decompress_entry(e.info, &e.cdata);
@@ -774,6 +808,9 @@ unsafe extern "C" fn method_testzip(self_v: MbValue, _args: MbValue) -> MbValue 
 // ── open() — read and write member streams ──
 
 unsafe extern "C" fn method_open(self_v: MbValue, args: MbValue) -> MbValue {
+    if let Some(err) = ensure_zf_open(self_v) {
+        return err;
+    }
     let items = seq_items(args);
     let kw = items.iter().copied().find(|v| is_dict_value(*v)).unwrap_or_else(MbValue::none);
     let name = items.first().copied().and_then(extract_str).unwrap_or_default();
@@ -781,6 +818,9 @@ unsafe extern "C" fn method_open(self_v: MbValue, args: MbValue) -> MbValue {
         .or_else(|| items.get(1).copied().filter(|v| !is_dict_value(*v)))
         .and_then(extract_str)
         .unwrap_or_else(|| "r".to_string());
+    if mode != "r" && mode != "w" {
+        return raise_str("ValueError", "open() requires mode \"r\" or \"w\"");
+    }
     if mode.starts_with('w') {
         let force_zip64 = kwarg(kw, "force_zip64")
             .and_then(|v| v.as_bool())
