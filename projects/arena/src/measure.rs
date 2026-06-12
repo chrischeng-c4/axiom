@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/arena/tech-design/semantic/source/projects-arena-src-measure-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Per-(cell, target) measurement. Dispatches on the target's transport and
 //! drives it through rig's ONE open-loop scheduler ([`run_transport`]), so
 //! every target — HTTP or Postgres — is measured by the same thin Rust client
@@ -17,6 +19,7 @@ use crate::spec::{CellTarget, LoadShape, TargetSpec};
 /// opaque payload (http `request` or postgres `query`) and drive it under the
 /// shared schedule. `Err` only on a connect/template abort (per-op failures
 /// surface as `error_rate`/`failed` inside the returned stats).
+/// @spec projects/arena/tech-design/semantic/source/projects-arena-src-measure-rs.md#source
 pub fn measure(
     target: &TargetSpec,
     cell: &CellTarget,
@@ -66,6 +69,7 @@ pub fn measure(
 /// `true` when the offered load was actually achieved (so the latency
 /// percentiles are trustworthy). Below the honesty ratio the target saturated
 /// and its tail is a queueing artifact, not a real measurement.
+/// @spec projects/arena/tech-design/semantic/source/projects-arena-src-measure-rs.md#source
 pub fn load_is_honest(load: &LoadShape, stats: &LoadStats) -> bool {
     let target = load.target_qps.max(1) as f64;
     stats.achieved_qps >= target * rig::scenario::load::ACHIEVED_QPS_HONESTY_RATIO
@@ -73,6 +77,8 @@ pub fn load_is_honest(load: &LoadShape, stats: &LoadStats) -> bool {
 
 /// `true` when every request failed — the target is effectively unreachable and
 /// its scalar is meaningless.
+/// @spec projects/arena/tech-design/semantic/source/projects-arena-src-measure-rs.md#source
 pub fn fully_failed(stats: &LoadStats) -> bool {
     stats.total > 0 && stats.failed == stats.total
 }
+// CODEGEN-END

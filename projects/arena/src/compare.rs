@@ -1,9 +1,12 @@
+// SPEC-MANAGED: projects/arena/tech-design/semantic/source/projects-arena-src-compare-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! Ratio classification — a direct port of lumen's `judge()`
 //! (projects/lumen/tests/perf_gate_vs_db.rs). `ratio = peer / base` over a
 //! lower-is-better metric, so `ratio > 1` means the base target wins.
 
 /// The outcome of classifying one (cell, peer) ratio against its gate.
 #[derive(Debug, Clone, PartialEq)]
+/// @spec projects/arena/tech-design/semantic/source/projects-arena-src-compare-rs.md#source
 pub enum Classification {
     /// `gate = "win"`: the base must beat the peer by `req = max(1, ratchet*baseline)`.
     Win { req: f64, ok: bool },
@@ -13,6 +16,7 @@ pub enum Classification {
     Exempt,
 }
 
+/// @spec projects/arena/tech-design/semantic/source/projects-arena-src-compare-rs.md#source
 impl Classification {
     /// A short human verdict label for the comparison table.
     pub fn label(&self) -> String {
@@ -39,6 +43,7 @@ impl Classification {
 
 /// Classify one peer's `ratio` for a cell. `baseline` is the recorded ratcheted
 /// ratio (None ⇒ first run, treated as floor 1.0); `floor` applies to `target`.
+/// @spec projects/arena/tech-design/semantic/source/projects-arena-src-compare-rs.md#source
 pub fn classify(
     gate: &str,
     ratio: f64,
@@ -106,3 +111,4 @@ mod tests {
         );
     }
 }
+// CODEGEN-END

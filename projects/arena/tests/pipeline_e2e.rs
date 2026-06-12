@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/arena/tech-design/semantic/source/projects-arena-tests-pipeline_e2e-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! End-to-end pipeline proof: measure → compare → gate → report → exit, driven
 //! against two in-test stub HTTP servers (fast base, slow peer). No real
 //! lumen/pg/OS needed — this is the CI guard for arena's whole contract.
@@ -269,3 +271,4 @@ query = "SELECT 1"
     assert!(db.ratio.is_finite(), "ratio computed across transports");
     assert_eq!(db.verdict, "exempt");
 }
+// CODEGEN-END

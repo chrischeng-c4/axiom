@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/arena/tech-design/semantic/source/projects-arena-src-lib-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! arena — an N-target competitive comparison runner above rig/meter.
 //!
 //! arena runs the SAME logical "cell" against N targets, reduces each to one
@@ -22,3 +24,4 @@ pub mod spec;
 pub use engine::{run, RunOpts};
 pub use report::ArenaReport;
 pub use spec::Spec;
+// CODEGEN-END
