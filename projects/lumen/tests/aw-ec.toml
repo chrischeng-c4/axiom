@@ -2,7 +2,7 @@
 # CODEGEN-BEGIN
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:9aeefc77d74da104c34f9460bff40de8f320766067b5f2645e6364316f6c06d9"
+generated_from_td_digest = "sha256:832c7cbd7893e8cfd4d8c9d924f8e0120a994f9a669f1c5552ed0486dee694da"
 
 [[cases]]
 id = "lumen-agentic-integration-offline-cli"
@@ -29,5 +29,31 @@ command = "cargo test -p lumen --release --test perf_gate_vs_db -- --ignored --t
 assertions = [
     "lumen wins the contracted search-latency cells against Postgres (text_bm25 WIN; ratcheted floor holds).",
     "floor-dominated cells (pg btree point-lookup) stay EXEMPT, not gated.",
+]
+
+[[cases]]
+id = "lumen-security-auth-bearer-rbac"
+capability_id = "security-auth"
+contract_id = "security-auth-bearer-rbac-enforced"
+category = "security"
+td_ref = "projects/lumen/tech-design/logic/external-contracts.md#lumen-security-auth-bearer-rbac"
+test_path = "projects/lumen/tests/security_lumen_security_auth_bearer_rbac.rs"
+command = "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
+assertions = [
+    "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens.",
+    "Per-route RBAC authz matrix enforces each token's role permissions on every API route (read vs write vs admin).",
+]
+
+[[cases]]
+id = "lumen-stability-resilience-survival"
+capability_id = "resilience"
+contract_id = "resilience-survival-under-fault"
+category = "stability"
+td_ref = "projects/lumen/tech-design/logic/external-contracts.md#lumen-stability-resilience-survival"
+test_path = "projects/lumen/tests/stability_lumen_stability_resilience_survival.rs"
+command = "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture"
+assertions = [
+    "Search p99 stays within 2x baseline under 5% packet loss (toxiproxy timeout toxic; rig resilience scenario).",
+    "Search survives a full network partition and recovers within budget; post-recovery p99 stays within 2x baseline.",
 ]
 # CODEGEN-END
