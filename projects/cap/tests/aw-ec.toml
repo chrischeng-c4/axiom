@@ -2,7 +2,7 @@
 # CODEGEN-BEGIN
 version = 1
 project = "cap"
-generated_from_td_digest = "sha256:c03444346424a751bc75114bbaa0e93021e9563e50e7ef06d48849aa38591b13"
+generated_from_td_digest = "sha256:b7f5dbf6d5de0a80018893a496d7bce7b56b33d4985a600cc271198137fc87c2"
 
 [[cases]]
 id = "cap-agent-hook-installation"
@@ -58,5 +58,20 @@ assertions = [
     "daemon lifecycle and liveness surfaces remain callable",
     "status and wait CLI surfaces use the daemon contract without blocking agent commands",
     "command leases stay isolated by process group",
+]
+
+[[cases]]
+id = "cap-hook-auto-command-optimizer-whitelist"
+capability_id = "agent-hook-installation"
+contract_id = "hook-payload-rewrite-adapters"
+category = "behavior"
+td_ref = "projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#cap-hook-auto-command-optimizer-whitelist"
+test_path = "projects/cap/tests/behavior_cap_hook_auto_command_optimizer_whitelist.rs"
+command = "cargo test -p cap hook -- --nocapture"
+assertions = [
+    "simple whole-command grep -R/-r inputs use rg when rg is installed",
+    "missing rg, unsupported grep flags, non-recursive grep, and shell metacharacters keep the original payload",
+    "optimized payloads keep cap run --label equal to the original command",
+    "optimized payloads run the original command if the optimized command exits non-zero",
 ]
 # CODEGEN-END

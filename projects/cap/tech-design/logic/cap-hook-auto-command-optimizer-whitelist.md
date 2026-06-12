@@ -115,7 +115,7 @@ changes:
 
   - path: projects/cap/README.md
     action: modify
-    section: docs
+    section: overview
     impl_mode: hand-written
     description: >
       Document the auto optimizer as a small installed-tool-dependent
