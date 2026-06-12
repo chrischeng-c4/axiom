@@ -52,11 +52,32 @@ unsafe extern "C" fn dispatch_reduce(args_ptr: *const MbValue, nargs: usize) -> 
     )
 }
 
+fn raise_exc(exc: &str, msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str(exc.to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+fn is_callable_value(v: MbValue) -> bool {
+    super::super::builtins::mb_callable(v).as_bool() == Some(true)
+}
+
 unsafe extern "C" fn dispatch_partial(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     // Trailing dict (if present) carries the construction-time keyword args.
     let (positional, kwargs) = split_kwargs(args);
+    if positional.is_empty() {
+        return raise_exc(
+            "TypeError",
+            "type 'functools.partial' takes at least one argument",
+        );
+    }
     let func = positional.first().copied().unwrap_or_else(MbValue::none);
+    if !is_callable_value(func) {
+        return raise_exc("TypeError", "the first argument must be callable");
+    }
     let bound: Vec<MbValue> = positional.iter().skip(1).copied().collect();
     let keywords = kwargs.unwrap_or_else(|| MbValue::from_ptr(MbObject::new_dict()));
     build_partial(func, bound, keywords)
@@ -183,6 +204,19 @@ fn dispatch_lru_cache_impl(args: &[MbValue]) -> MbValue {
         MbValue::from_int(128)
     };
     let typed = typed_kw.unwrap_or_else(|| MbValue::from_bool(false));
+    // An explicit maxsize= keyword must be an int or None — a string like
+    // "all" must NOT be resolved as the builtin callable of the same name.
+    let from_kwarg = maxsize_kw.is_some();
+    let maxsize_ok = maxsize.is_none()
+        || maxsize.as_int().is_some()
+        || maxsize.as_bool().is_some()
+        || (!from_kwarg && is_callable_value(maxsize));
+    if !maxsize_ok {
+        return raise_exc(
+            "TypeError",
+            "Expected first argument to be an integer, a callable, or None",
+        );
+    }
     mb_functools_lru_cache_factory(maxsize, typed)
 }
 
@@ -222,7 +256,48 @@ unsafe extern "C" fn dispatch_total_ordering(args_ptr: *const MbValue, nargs: us
     // comparison operators can synthesize the missing ordering ops from the
     // single seed op the class actually defines. Returns the class unchanged.
     if let Some(name) = extract_str(cls) {
+        let has_op = ["__lt__", "__le__", "__gt__", "__ge__"].iter().any(|op| {
+            !super::super::class::lookup_method(&name, op).is_none()
+        });
+        if !has_op {
+            return raise_exc(
+                "ValueError",
+                "must define at least one ordering operation: < > <= >=",
+            );
+        }
         TOTAL_ORDERING_CLASSES.with(|s| { s.borrow_mut().insert(name); });
+    } else if let Some(ptr) = cls.as_ptr() {
+        // type("E", (), {...}) products arrive as type-object Instances.
+        unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "type" {
+                    let has_op = {
+                        let f = fields.read().unwrap();
+                        ["__lt__", "__le__", "__gt__", "__ge__"]
+                            .iter()
+                            .any(|op| f.contains_key(*op))
+                    };
+                    let registered = fields
+                        .read()
+                        .unwrap()
+                        .get("__name__")
+                        .copied()
+                        .and_then(extract_str)
+                        .map(|n| {
+                            ["__lt__", "__le__", "__gt__", "__ge__"].iter().any(|op| {
+                                !super::super::class::lookup_method(&n, op).is_none()
+                            })
+                        })
+                        .unwrap_or(false);
+                    if !has_op && !registered {
+                        return raise_exc(
+                            "ValueError",
+                            "must define at least one ordering operation: < > <= >=",
+                        );
+                    }
+                }
+            }
+        }
     }
     cls
 }
@@ -373,6 +448,48 @@ unsafe extern "C" fn dispatch_update_wrapper(args_ptr: *const MbValue, nargs: us
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let wrapper = args.get(0).copied().unwrap_or_else(MbValue::none);
     let wrapped = args.get(1).copied().unwrap_or_else(MbValue::none);
+    // updated=("name",...) entries must exist on the wrapper — CPython does
+    // getattr(wrapper, attr).update(...) and lets the AttributeError out.
+    let (_, kwargs) = split_kwargs(args);
+    if let Some(kw) = kwargs {
+        if let Some(kptr) = kw.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*kptr).data {
+                    let updated = lock
+                        .read()
+                        .unwrap()
+                        .get(&super::super::dict_ops::DictKey::Str("updated".into()))
+                        .copied();
+                    if let Some(upd) = updated {
+                        if let Some(uptr) = upd.as_ptr() {
+                            let names: Vec<String> = match &(*uptr).data {
+                                ObjData::Tuple(items) => {
+                                    items.iter().filter_map(|v| extract_str(*v)).collect()
+                                }
+                                ObjData::List(lock) => lock
+                                    .read()
+                                    .unwrap()
+                                    .iter()
+                                    .filter_map(|v| extract_str(*v))
+                                    .collect(),
+                                _ => Vec::new(),
+                            };
+                            for name in names {
+                                if name != "__dict__" {
+                                    return raise_exc(
+                                        "AttributeError",
+                                        &format!(
+                                            "'function' object has no attribute '{name}'"
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     mb_functools_update_wrapper(wrapper, wrapped)
 }
 
@@ -394,6 +511,12 @@ unsafe extern "C" fn dispatch_singledispatchmethod(args_ptr: *const MbValue, nar
 unsafe extern "C" fn dispatch_partialmethod(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let func = args.first().copied().unwrap_or_else(MbValue::none);
+    if !is_callable_value(func) {
+        return raise_exc(
+            "TypeError",
+            "the first argument must be a callable or a descriptor",
+        );
+    }
     let bound: Vec<MbValue> = args.iter().skip(1).copied().collect();
     let bound_list = MbValue::from_ptr(MbObject::new_list(bound));
     let mut fields = FxHashMap::default();
