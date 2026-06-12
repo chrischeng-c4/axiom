@@ -224,10 +224,16 @@ fn run_fixture(path: &std::path::Path) -> datatest_stable::Result<()> {
     Ok(())
 }
 
-// Same dimension allowlist as runner.rs: keep `.cache/` (oracle-env venv)
-// and `tools/` out of the collected case universe.
+// `# RUN:`-directive fixtures only exist under _regression/core/{grammar,
+// jit,parse,typecheck} (verified by `grep -rl '# RUN:' tests/cpython`).
+// Collecting just that subtree instead of the whole 46k-fixture universe
+// drops this harness's startup from ~80s to seconds — every other fixture
+// was read and skipped one by one. If a new RUN: directory appears outside
+// this subtree, extend the regex (run_fixture still hard-skips non-RUN
+// files, so an omission fails loud in the directory's own runner, not
+// silently here).
 harness!(
     run_fixture,
     "tests/cpython",
-    r"tests/cpython/(behavior|type|surface|_regression|real_world|errors|security|security-matrix|perf|concurrency)/.*\.py$"
+    r"tests/cpython/_regression/core/(grammar|jit|parse|typecheck)/.*\.py$"
 );
