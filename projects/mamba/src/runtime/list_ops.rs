@@ -358,6 +358,15 @@ pub fn mb_list_getitem(list: MbValue, index: MbValue) -> MbValue {
                             super::rc::retain_if_ptr(val);
                             return val;
                         }
+                        drop(items);
+                        // CPython: out-of-range list index raises (#32).
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "list index out of range".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
                     }
                     ObjData::Tuple(ref items) => {
                         let len = items.len() as i64;
@@ -367,6 +376,13 @@ pub fn mb_list_getitem(list: MbValue, index: MbValue) -> MbValue {
                             super::rc::retain_if_ptr(val);
                             return val;
                         }
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "tuple index out of range".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
                     }
                     _ => {}
                 }
