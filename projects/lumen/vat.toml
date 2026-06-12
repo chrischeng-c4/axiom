@@ -56,6 +56,90 @@ requires = ["lumen"]
 cmd = ["../../target/debug/rig", "run", "--dir", "tests/rig/scenarios/load", "--pins", "tests/rig/config/pins"]
 timeout_s = 300
 
+# Competitive comparison runners: vat owns the serving lumen process; arena
+# fans the workload across lumen and the external peer named by the spec.
+[[runners]]
+id = "arena-pg"
+requires = ["lumen"]
+cmd = [
+  "sh",
+  "-c",
+  """
+python3 - <<'PY'
+import json, urllib.request
+
+upstream = "127.0.0.1:7373"
+headers = {"content-type": "application/json"}
+
+def send(method, path, payload):
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(f"http://{upstream}{path}", data=body, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        if resp.status >= 400:
+            raise SystemExit(resp.status)
+
+send("PUT", "/collections/docs", {
+    "fields": {
+        "bio": {"type": "text"},
+        "city": {"type": "keyword"},
+        "age": {"type": "number"}
+    }
+})
+items = []
+for i in range(2000):
+    external_id = f"doc-{i}"
+    city = "taipei" if i % 3 == 0 else "tokyo"
+    items.append({"external_id": external_id, "field": "bio", "value": f"engineer search document {i} in {city}"})
+    items.append({"external_id": external_id, "field": "city", "value": city})
+    items.append({"external_id": external_id, "field": "age", "value": 20 + (i % 50)})
+send("POST", "/collections/docs/index", {"items": items})
+PY
+exec ../../target/debug/arena run --spec ../../projects/arena/examples/lumen-vs-pg.toml
+""",
+]
+timeout_s = 900
+
+[[runners]]
+id = "arena-opensearch"
+requires = ["lumen"]
+cmd = [
+  "sh",
+  "-c",
+  """
+python3 - <<'PY'
+import json, urllib.request
+
+upstream = "127.0.0.1:7373"
+headers = {"content-type": "application/json"}
+
+def send(method, path, payload):
+    body = json.dumps(payload).encode()
+    req = urllib.request.Request(f"http://{upstream}{path}", data=body, method=method, headers=headers)
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        if resp.status >= 400:
+            raise SystemExit(resp.status)
+
+send("PUT", "/collections/docs", {
+    "fields": {
+        "bio": {"type": "text"},
+        "city": {"type": "keyword"},
+        "age": {"type": "number"}
+    }
+})
+items = []
+for i in range(2000):
+    external_id = f"doc-{i}"
+    city = "taipei" if i % 3 == 0 else "tokyo"
+    items.append({"external_id": external_id, "field": "bio", "value": f"engineer search document {i} in {city}"})
+    items.append({"external_id": external_id, "field": "city", "value": city})
+    items.append({"external_id": external_id, "field": "age", "value": 20 + (i % 50)})
+send("POST", "/collections/docs/index", {"items": items})
+PY
+exec ../../target/debug/arena run --spec ../../projects/arena/examples/lumen-vs-opensearch.toml
+""",
+]
+timeout_s = 900
+
 # Concurrent-profiling companion: `vat run rig-load meter-profile` drives
 # load against the serving lumen WHILE meter samples an engine workload in
 # the same workspace. (Attaching meter to the serving pid itself needs a
