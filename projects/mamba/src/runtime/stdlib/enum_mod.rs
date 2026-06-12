@@ -153,6 +153,15 @@ fn enum_create_with_opts(
     let mut member_list = Vec::new();
 
     for (member_name, actual_val) in parse_member_specs(members, start) {
+        if member_name.is_empty() {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "encountered an invalid (empty) enum member name".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
         let member_val = match mixin {
             MixinKind::Int | MixinKind::Str => {
                 // Data-type mixin: the member IS its raw value. Retain once
@@ -332,10 +341,107 @@ unsafe extern "C" fn dispatch_enum_identity(args: *const MbValue, n: usize) -> M
     a.first().copied().unwrap_or_else(MbValue::none)
 }
 
-/// `enum.verify(*checks)` — returns an identity decorator (see module docs).
+/// `enum.verify(*checks)` — records the requested checks and returns the
+/// applying decorator. The native-func convention has no closures, so the
+/// checks ride a thread_local between the two immediately-consecutive calls
+/// (`@verify(UNIQUE)` evaluates verify() then applies the decorator).
 unsafe extern "C" fn dispatch_enum_verify(args: *const MbValue, n: usize) -> MbValue {
-    let _ = (args, n);
-    MbValue::from_func(dispatch_enum_identity as *const () as usize)
+    let a: &[MbValue] = if n == 0 || args.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args, n) }
+    };
+    let checks: Vec<String> = a.iter().filter_map(|v| extract_str_local(*v)).collect();
+    PENDING_VERIFY_CHECKS.with(|c| *c.borrow_mut() = checks);
+    let addr = dispatch_enum_verify_apply as *const () as usize;
+    super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+        s.borrow_mut().insert(addr as u64);
+    });
+    MbValue::from_func(addr)
+}
+
+thread_local! {
+    static PENDING_VERIFY_CHECKS: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn extract_str_local(v: MbValue) -> Option<String> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Str(ref s) = (*ptr).data {
+            return Some(s.clone());
+        }
+    }
+    None
+}
+
+fn verify_raise(msg: String) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg)),
+    );
+    MbValue::none()
+}
+
+unsafe extern "C" fn dispatch_enum_verify_apply(args: *const MbValue, n: usize) -> MbValue {
+    let a: &[MbValue] = if n == 0 || args.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args, n) }
+    };
+    let cls = a.first().copied().unwrap_or_else(MbValue::none);
+    let checks = PENDING_VERIFY_CHECKS.with(|c| c.borrow().clone());
+    let Some(name) = extract_str_local(cls) else { return cls };
+    for check in checks {
+        match check.as_str() {
+            "UNIQUE" => {
+                if let Some((alias, canonical)) = super::enum_class::class_first_alias(&name) {
+                    return verify_raise(format!(
+                        "aliases found in <enum '{name}'>: {alias} -> {canonical}"
+                    ));
+                }
+            }
+            "CONTINUOUS" => {
+                if let Some(vals) = super::enum_class::class_member_int_values(&name) {
+                    let mut ints: Vec<i64> = vals.iter().map(|(_, i)| *i).collect();
+                    ints.sort_unstable();
+                    ints.dedup();
+                    if let (Some(&lo), Some(&hi)) = (ints.first(), ints.last()) {
+                        if hi - lo + 1 != ints.len() as i64 {
+                            let missing: Vec<String> = (lo..=hi)
+                                .filter(|i| !ints.contains(i))
+                                .map(|i| i.to_string())
+                                .collect();
+                            return verify_raise(format!(
+                                "invalid enum '{name}': missing values {}",
+                                missing.join(", ")
+                            ));
+                        }
+                    }
+                }
+            }
+            "NAMED_FLAGS" => {
+                if let Some(vals) = super::enum_class::class_member_int_values(&name) {
+                    // Single-bit named values form the alphabet; any member
+                    // using a bit outside it is invalid.
+                    let named_bits: i64 = vals
+                        .iter()
+                        .map(|(_, i)| *i)
+                        .filter(|i| *i > 0 && (i & (i - 1)) == 0)
+                        .fold(0, |acc, i| acc | i);
+                    for (mname, v) in &vals {
+                        if v & !named_bits != 0 {
+                            return verify_raise(format!(
+                                "invalid Flag '{name}': alias {mname} is missing a named flag"
+                            ));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    cls
 }
 
 /// Global repr/str helpers — surface stubs returning an empty string.
@@ -471,6 +577,19 @@ pub fn mb_enum_member_value(member: MbValue) -> MbValue {
 /// dispatch path can map it to the standard exception envelope without
 /// dragging the exception machinery into a stdlib module.
 pub fn mb_enum_unique(enum_class: MbValue) -> MbValue {
+    // Class-body enums arrive as registered class-name strings.
+    if let Some(name) = extract_str_local(enum_class) {
+        if let Some((alias, canonical)) = super::enum_class::class_first_alias(&name) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "duplicate values found in <enum '{name}'>: {alias} -> {canonical}"
+                ))),
+            );
+            return MbValue::none();
+        }
+        return enum_class;
+    }
     if let Some(ptr) = enum_class.as_ptr() {
         unsafe {
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {

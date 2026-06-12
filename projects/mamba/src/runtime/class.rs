@@ -6508,6 +6508,23 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     return MbValue::none();
                 }
                 super::rc::ObjData::Instance { ref class_name, ref fields } => {
+                    // Functional-API enum classes: Color['RED'] is a
+                    // name lookup; a missing name raises KeyError.
+                    if class_name == "_MambaFunctionalEnum" {
+                        if let Some(name) = extract_str(key) {
+                            if let Some(member) =
+                                fields.read().unwrap().get(name.as_str()).copied()
+                            {
+                                super::rc::retain_if_ptr(member);
+                                return member;
+                            }
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(format!("'{name}'"))),
+                            );
+                            return MbValue::none();
+                        }
+                    }
                     // time.struct_time is a named 9-tuple: integer index and
                     // slice subscripts read the tm_* fields in CPython order.
                     if class_name == "struct_time" {

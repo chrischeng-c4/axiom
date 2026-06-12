@@ -785,3 +785,48 @@ pub fn member_repr(v: MbValue) -> Option<String> {
     let vr = repr_string(member_value(v));
     Some(format!("<{cls}.{name}: {vr}>"))
 }
+
+/// First alias found: (alias_name, canonical_name) — `@enum.unique` support.
+/// An alias is a by_name entry whose member pointer already appeared under an
+/// earlier name.
+pub fn class_first_alias(class_name: &str) -> Option<(String, String)> {
+    if !have_enum_classes() {
+        return None;
+    }
+    ENUM_CLASSES.with(|m| {
+        let map = m.borrow();
+        let info = map.get(class_name)?;
+        let mut seen: Vec<(u64, &str)> = Vec::new();
+        for (name, member) in &info.by_name {
+            let bits = member.to_bits();
+            if let Some((_, first)) = seen.iter().find(|(b, _)| *b == bits) {
+                return Some((name.clone(), (*first).to_string()));
+            }
+            seen.push((bits, name));
+        }
+        None
+    })
+}
+
+/// Canonical member (name, int value) pairs — `@enum.verify` support.
+pub fn class_member_int_values(class_name: &str) -> Option<Vec<(String, i64)>> {
+    if !have_enum_classes() {
+        return None;
+    }
+    ENUM_CLASSES.with(|m| {
+        let map = m.borrow();
+        let info = map.get(class_name)?;
+        let mut out = Vec::new();
+        let canonical_bits: Vec<u64> = info.canonical.iter().map(|v| v.to_bits()).collect();
+        for (name, member) in &info.by_name {
+            if !canonical_bits.contains(&member.to_bits()) {
+                continue;
+            }
+            let v = member_value(*member);
+            if let Some(i) = v.as_int() {
+                out.push((name.clone(), i));
+            }
+        }
+        Some(out)
+    })
+}

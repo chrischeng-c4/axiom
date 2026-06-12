@@ -3543,6 +3543,9 @@ impl<'a> HirToMir<'a> {
                                 });
                             }
                         }
+                        // A raising decorator (@enum.unique on an aliased
+                        // class) must reach an enclosing try's handler.
+                        self.emit_try_exception_guard();
                         cls_vreg = result_vreg;
                     }
                 }
