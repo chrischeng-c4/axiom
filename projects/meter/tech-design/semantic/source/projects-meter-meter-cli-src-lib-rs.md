@@ -24,10 +24,8 @@ Public API manifest for `projects/meter/meter-cli/src/lib.rs` generated from AST
 | `MeterCli` | projects/meter/meter-cli/src/lib.rs | struct | pub | 34 |  |
 | `dispatch` | projects/meter/meter-cli/src/lib.rs | module | pub | 24 |  |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/meter-cli/src/lib.rs -->
 ````rust
 //! Agent-first CLI surface for `meter`, registered as a [`CliModule`].
 //!
@@ -128,7 +126,7 @@ mod tests {
 changes:
   - path: projects/meter/meter-cli/src/lib.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/meter-cli/src/lib.rs` captured during meter full-codegen standardization.

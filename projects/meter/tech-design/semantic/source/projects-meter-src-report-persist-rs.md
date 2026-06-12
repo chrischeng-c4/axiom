@@ -28,10 +28,8 @@ Public API manifest for `projects/meter/src/report/persist.rs` generated from AS
 | `write_last_report` | projects/meter/src/report/persist.rs | function | pub | 28 | write_last_report(report: &MeterReport) -> std::io::Result<PathBuf> |
 | `write_last_report_in` | projects/meter/src/report/persist.rs | function | pub | 35 | write_last_report_in(base: impl AsRef<Path>, report: &MeterReport) -> std::io::Result<PathBuf> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/persist.rs -->
 ````rust
 //! Persistence of the last report to `.meter/last-report.json`.
 //!
@@ -145,7 +143,7 @@ mod tests {
 changes:
   - path: projects/meter/src/report/persist.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/persist.rs` captured during meter full-codegen standardization.

@@ -36,10 +36,8 @@ Public API manifest for `projects/meter/src/security/async_fuzzer.rs` generated 
 | `with_seed` | projects/meter/src/security/async_fuzzer.rs | function | pub | 62 | with_seed(mut self, seed: u64) -> Self |
 | `with_timeout_ms` | projects/meter/src/security/async_fuzzer.rs | function | pub | 74 | with_timeout_ms(mut self, timeout: u64) -> Self |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/security/async_fuzzer.rs -->
 ````rust
 //! Async fuzzing framework for security testing
 //!
@@ -538,7 +536,7 @@ mod tests {
 changes:
   - path: projects/meter/src/security/async_fuzzer.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/security/async_fuzzer.rs` captured during meter full-codegen standardization.

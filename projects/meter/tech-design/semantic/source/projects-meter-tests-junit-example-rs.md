@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/tests/junit_example.rs` generated from A
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/tests/junit_example.rs -->
 ````rust
 use meter::reporter::{Reporter, TestReport};
 use meter::runner::{TestMeta, TestResult, TestStatus};
@@ -78,7 +76,7 @@ fn show_enhanced_junit_xml() {
 changes:
   - path: projects/meter/tests/junit_example.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/tests/junit_example.rs` captured during meter full-codegen standardization.

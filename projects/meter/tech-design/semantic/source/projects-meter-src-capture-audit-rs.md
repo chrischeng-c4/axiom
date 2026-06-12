@@ -23,10 +23,8 @@ Public API manifest for `projects/meter/src/capture/audit.rs` generated from AST
 |------|--------|------|------------|------|-----------|
 | `audit` | projects/meter/src/capture/audit.rs | function | pub | 25 | audit(target: impl AsRef<Path>) -> Result<AuditResult, String> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/capture/audit.rs -->
 ````rust
 //! `meter audit` capture — run `cargo audit --json` against a target crate.
 //!
@@ -49,6 +47,7 @@ use crate::rust_runner::{AuditResult, RustRunner};
 /// `Err(msg)` means cargo-audit could not be spawned (absent) or its output was
 /// unparseable (e.g. the advisory DB could not be fetched) — the caller maps
 /// this to a tool error, never a clean result.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-audit-rs.md#source
 pub fn audit(target: impl AsRef<Path>) -> Result<AuditResult, String> {
     RustRunner::for_project(target.as_ref().to_path_buf()).run_audit()
 }
@@ -74,7 +73,7 @@ mod tests {
 changes:
   - path: projects/meter/src/capture/audit.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/capture/audit.rs` captured during meter full-codegen standardization.

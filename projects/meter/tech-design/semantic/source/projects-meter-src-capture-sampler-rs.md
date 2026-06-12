@@ -32,10 +32,8 @@ Public API manifest for `projects/meter/src/capture/sampler.rs` generated from A
 | `sample_target` | projects/meter/src/capture/sampler.rs | function | pub | 138 | sample_target(     target: &Target,     extra_args: &[String],     duration_secs: u64,     hz: Option<u64>, ) -> Result<SampleRun, SampleError> |
 | `to_folded_line` | projects/meter/src/capture/sampler.rs | function | pub | 55 | to_folded_line(&self) -> String |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/capture/sampler.rs -->
 ````rust
 //! Platform stack sampler — the net-new C1 capture-mode producer.
 //!
@@ -907,7 +905,7 @@ fn process_output_preview(bytes: &[u8]) -> String {
 changes:
   - path: projects/meter/src/capture/sampler.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/capture/sampler.rs` captured during meter full-codegen standardization.

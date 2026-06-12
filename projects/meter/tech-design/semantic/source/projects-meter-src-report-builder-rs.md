@@ -35,10 +35,8 @@ Public API manifest for `projects/meter/src/report/builder.rs` generated from AS
 | `with_environment` | projects/meter/src/report/builder.rs | function | pub | 86 | with_environment(&mut self, env: EnvBlock) -> &mut Self |
 | `with_last_run` | projects/meter/src/report/builder.rs | function | pub | 80 | with_last_run(&mut self, record: RunnerRecord) -> &mut Self |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/builder.rs -->
 ````rust
 //! [`ReportBuilder`] — the SINGLE assembly point for a [`MeterReport`].
 //!
@@ -746,7 +744,7 @@ mod run_fold_tests {
 changes:
   - path: projects/meter/src/report/builder.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/builder.rs` captured during meter full-codegen standardization.

@@ -35,10 +35,8 @@ Public API manifest for `projects/meter/src/report/finding.rs` generated from AS
 | `id_prefix` | projects/meter/src/report/finding.rs | function | pub | 169 | id_prefix(&self) -> &'static str |
 | `rank` | projects/meter/src/report/finding.rs | function | pub | 95 | rank(&self) -> u8 |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/finding.rs -->
 ````rust
 //! Finding schema — the per-issue unit inside a [`MeterReport`](super::MeterReport).
 //!
@@ -312,7 +310,7 @@ mod tests {
 changes:
   - path: projects/meter/src/report/finding.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/finding.rs` captured during meter full-codegen standardization.

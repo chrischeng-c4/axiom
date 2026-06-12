@@ -26,10 +26,8 @@ Public API manifest for `projects/meter/src/capture/fold.rs` generated from AST 
 | `fold_hotspots` | projects/meter/src/capture/fold.rs | function | pub | 129 | fold_hotspots(     stacks: &[FoldedStack],     effective_hz: f64,     fail_hot: Option<f64>, ) -> Vec<Finding> |
 | `to_flamegraph` | projects/meter/src/capture/fold.rs | function | pub | 193 | to_flamegraph(stacks: &[FoldedStack]) -> FlamegraphData |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/capture/fold.rs -->
 ````rust
 //! Fold folded stacks into ranked per-symbol hot spots — the C1 contract.
 //!
@@ -491,7 +489,7 @@ mod tests {
 changes:
   - path: projects/meter/src/capture/fold.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/capture/fold.rs` captured during meter full-codegen standardization.

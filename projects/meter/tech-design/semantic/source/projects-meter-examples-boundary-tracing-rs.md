@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/examples/boundary_tracing.rs` generated 
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/examples/boundary_tracing.rs -->
 ````rust
 //! Example demonstrating binding boundary tracing
 //!
@@ -199,7 +197,7 @@ fn concurrent_tracing_example() {
 changes:
   - path: projects/meter/examples/boundary_tracing.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/examples/boundary_tracing.rs` captured during meter full-codegen standardization.

@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/examples/async_fuzzing_example.rs` gener
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/examples/async_fuzzing_example.rs -->
 ````rust
 use meter::{AsyncFuzzConfig, AsyncFuzzer};
 
@@ -216,7 +214,7 @@ async fn main() {
 changes:
   - path: projects/meter/examples/async_fuzzing_example.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/examples/async_fuzzing_example.rs` captured during meter full-codegen standardization.

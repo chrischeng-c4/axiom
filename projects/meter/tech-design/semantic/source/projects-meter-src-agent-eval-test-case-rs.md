@@ -38,10 +38,8 @@ Public API manifest for `projects/meter/src/agent_eval/test_case.rs` generated f
 | `with_quality_criterion` | projects/meter/src/agent_eval/test_case.rs | function | pub | 116 | with_quality_criterion(mut self, criterion: QualityCriterion) -> Self |
 | `with_weight` | projects/meter/src/agent_eval/test_case.rs | function | pub | 199 | with_weight(mut self, weight: f64) -> Self |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/agent_eval/test_case.rs -->
 ````rust
 //! Agent test case definitions and expected outputs
 
@@ -50,6 +48,7 @@ use std::collections::HashMap;
 
 /// An agent test case with input, expected outputs, and constraints
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 pub struct AgentTestCase {
     /// Unique test case identifier
     pub id: String,
@@ -93,6 +92,7 @@ pub struct AgentTestCase {
     pub metadata: HashMap<String, serde_json::Value>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 impl Default for AgentTestCase {
     fn default() -> Self {
         Self {
@@ -111,6 +111,7 @@ impl Default for AgentTestCase {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 impl AgentTestCase {
     /// Create a new test case with id, name, and input
     pub fn new(id: impl Into<String>, name: impl Into<String>, input: impl Into<String>) -> Self {
@@ -167,6 +168,7 @@ impl AgentTestCase {
 
 /// Expected tool call specification
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 pub struct ExpectedToolCall {
     /// Tool name (e.g., "calculate", "search_web")
     pub name: String,
@@ -180,6 +182,7 @@ pub struct ExpectedToolCall {
     pub optional: bool,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 impl ExpectedToolCall {
     /// Create a new expected tool call
     pub fn new(name: impl Into<String>) -> Self {
@@ -205,6 +208,7 @@ impl ExpectedToolCall {
 
 /// Quality criterion for LLM-as-judge evaluation
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 pub struct QualityCriterion {
     /// Criterion name (e.g., "relevance", "clarity", "accuracy")
     pub name: String,
@@ -221,6 +225,7 @@ fn default_weight() -> f64 {
     1.0
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-test-case-rs.md#source
 impl QualityCriterion {
     /// Create a new quality criterion
     pub fn new(name: impl Into<String>, description: impl Into<String>) -> Self {
@@ -305,7 +310,7 @@ mod tests {
 changes:
   - path: projects/meter/src/agent_eval/test_case.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/agent_eval/test_case.rs` captured during meter full-codegen standardization.

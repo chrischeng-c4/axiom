@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/benches/discovery_benchmark.rs` generate
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/benches/discovery_benchmark.rs -->
 ````rust
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use meter::discovery::{walk_files, DiscoveryConfig};
@@ -69,7 +67,7 @@ criterion_main!(benches);
 changes:
   - path: projects/meter/benches/discovery_benchmark.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/benches/discovery_benchmark.rs` captured during meter full-codegen standardization.

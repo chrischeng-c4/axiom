@@ -25,10 +25,8 @@ Public API manifest for `projects/meter/src/hooks.rs` generated from AST during 
 | `is_setup` | projects/meter/src/hooks.rs | function | pub | 59 | is_setup(&self) -> bool |
 | `is_teardown` | projects/meter/src/hooks.rs | function | pub | 51 | is_teardown(&self) -> bool |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/hooks.rs -->
 ````rust
 //! Test lifecycle hooks system
 //!
@@ -45,6 +43,7 @@ use serde::{Deserialize, Serialize};
 
 /// Types of lifecycle hooks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-hooks-rs.md#source
 pub enum HookType {
     /// Run once before all tests in a class
     SetupClass,
@@ -60,6 +59,7 @@ pub enum HookType {
     TeardownMethod,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-hooks-rs.md#source
 impl std::fmt::Display for HookType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -73,6 +73,7 @@ impl std::fmt::Display for HookType {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-hooks-rs.md#source
 impl HookType {
     /// Check if this is a teardown hook
     pub fn is_teardown(&self) -> bool {
@@ -131,7 +132,7 @@ mod tests {
 changes:
   - path: projects/meter/src/hooks.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/hooks.rs` captured during meter full-codegen standardization.

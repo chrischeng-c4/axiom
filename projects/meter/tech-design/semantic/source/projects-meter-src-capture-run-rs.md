@@ -24,10 +24,8 @@ Public API manifest for `projects/meter/src/capture/run.rs` generated from AST d
 | `RunOptions` | projects/meter/src/capture/run.rs | struct | pub | 50 |  |
 | `run_sweep` | projects/meter/src/capture/run.rs | function | pub | 88 | run_sweep(opts: &RunOptions) -> MeterReport |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/capture/run.rs -->
 ````rust
 //! `meter run` composite — the dual-mode sweep that folds every sub-verb into ONE
 //! [`MeterReport`].
@@ -403,7 +401,7 @@ mod tests {
 changes:
   - path: projects/meter/src/capture/run.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/capture/run.rs` captured during meter full-codegen standardization.

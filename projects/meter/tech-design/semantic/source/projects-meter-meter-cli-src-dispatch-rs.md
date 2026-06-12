@@ -35,10 +35,8 @@ Public API manifest for `projects/meter/meter-cli/src/dispatch.rs` generated fro
 | `dispatch` | projects/meter/meter-cli/src/dispatch.rs | function | pub | 273 | dispatch(cmd: MeterCommand, out: &OutputOpts) -> Dispatched |
 | `print_report` | projects/meter/meter-cli/src/dispatch.rs | function | pub | 909 | print_report(report: &MeterReport, out: &OutputOpts) |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/meter-cli/src/dispatch.rs -->
 ````rust
 //! Shared verb parse + dispatch for the `meter` agent-first CLI.
 //!
@@ -1435,7 +1433,7 @@ mod tests {
 changes:
   - path: projects/meter/meter-cli/src/dispatch.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/meter-cli/src/dispatch.rs` captured during meter full-codegen standardization.

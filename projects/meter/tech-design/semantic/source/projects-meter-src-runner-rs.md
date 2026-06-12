@@ -62,10 +62,8 @@ Public API manifest for `projects/meter/src/runner.rs` generated from AST during
 | `with_timeout` | projects/meter/src/runner.rs | function | pub | 159 | with_timeout(mut self, timeout: f64) -> Self |
 | `with_type` | projects/meter/src/runner.rs | function | pub | 147 | with_type(mut self, test_type: TestType) -> Self |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/runner.rs -->
 ````rust
 //! Test runner - discovery, execution, and scheduling
 
@@ -722,7 +720,7 @@ mod tests {
 changes:
   - path: projects/meter/src/runner.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/runner.rs` captured during meter full-codegen standardization.

@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/examples/baseline_demo.rs` generated fro
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/examples/baseline_demo.rs -->
 ````rust
 use meter::baseline::{
     FileBaselineStore, PercentileType, RegressionDetector, RegressionThresholds,
@@ -188,7 +186,7 @@ fn main() {
 changes:
   - path: projects/meter/examples/baseline_demo.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/examples/baseline_demo.rs` captured during meter full-codegen standardization.
