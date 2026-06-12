@@ -168,11 +168,17 @@ name = "lumen"
 path = "projects/lumen"
 cap_path = "projects/lumen/README.md"
 label = "project:lumen"
-# EC tool binding (contract before implementation). `aw health --verify-ec`
-# dispatches the benchmark dimension to arena (lumen vs pg); other categories
-# fall back to test_cmd. Reuses the arena project's example spec, also driven as
-# the `arena-pg` vat runner in projects/lumen/vat.toml (one spec, two surfaces).
+# EC tool bindings (contract before implementation). `aw health --verify-ec`
+# dispatches each bound dimension to its external tool; unbound categories
+# (e.g. behavior, security) fall back to the manifest command. One spec, two
+# surfaces: the same workload is driven both as a vat runner (self-provisioning)
+# and as the verify-ec command (host-provisioned).
+#   benchmark (效能) -> arena: lumen vs pg search-latency, ratcheting gate.
+#   stability (穩定性) -> rig: resilience scenarios (partition recovery + 5%
+#                        packet-loss p99 budget) over toxiproxy.
+# behavior (功能) and security (安全) stay cargo gates per the EC-gatekeeper map.
 ec.benchmark = { tool = "arena", spec = "projects/arena/examples/lumen-vs-pg.toml" }
+ec.stability = { tool = "rig", dir = "projects/lumen/tests/rig/scenarios/resilience" }
 
 [[projects.workspaces]]
 name = "lumen"

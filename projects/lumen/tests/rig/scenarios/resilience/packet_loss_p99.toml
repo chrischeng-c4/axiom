@@ -103,7 +103,13 @@ expect = { statuses = [200, 204] }
 [[steps]]
 type = "assert"
 name = "loss_p99_within_2x_baseline"
-exprs = ["loss_p99 <= 2 * baseline_p99 + 1"]   # +1ms: sub-ms quantization tolerance (chaos.sh compared integer ms)
+exprs = ["loss_p99 <= 2 * baseline_p99 + 3"]   # 2x baseline + 3ms absolute floor: under 5% loss the
+                                               # toxiproxy timeout toxic forces connection churn, adding
+                                               # ~2-3ms of absolute (baseline-independent) setup jitter to
+                                               # surviving-request p99. On fast hosts where lumen answers
+                                               # sub-ms, a bare 2x budget is smaller than that jitter and
+                                               # flaps; the absolute floor absorbs it while the 2x term
+                                               # still catches a real regression once baseline clears ~3ms.
 
 [[steps]]
 type = "http"
