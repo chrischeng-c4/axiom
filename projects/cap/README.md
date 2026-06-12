@@ -133,6 +133,16 @@ run log (otherwise every entry would read `bash -c …`). The hook uses
 cap's **absolute path** (not a bare `cap`), so it works regardless of
 the agent shell's `PATH`.
 
+The hook also has a small automatic optimizer for read-only commands. When
+it can prove a safe whitelist rewrite and the faster tool is installed, it
+uses the original command as the `--label` but runs an optimized payload
+with original-command fallback. For example, simple whole-command
+recursive grep forms can run through `rg` when `rg` is on `PATH`; if the
+optimized command exits unsuccessfully, the shell payload immediately runs
+the original command and returns that result. Ambiguous commands,
+pipelines, redirections, unsupported flags, or missing replacement tools
+stay on the original command.
+
 Narrowing it down:
 
 ```bash

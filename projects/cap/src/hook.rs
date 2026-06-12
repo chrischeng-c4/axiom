@@ -30,7 +30,7 @@
 //!
 //! Always exits 0 — a hook crash must never wedge the agent.
 
-use std::io::Read;
+use std::{env, io::Read};
 
 use serde::{Deserialize, Serialize};
 
@@ -165,6 +165,14 @@ fn hook_specific_for_rewrite(agent: HookAgent, rewrite: ModifiedInput) -> HookSp
 /// absolute path of the running binary; tests pass `"cap"` for stable
 /// expectations.
 fn maybe_rewrite(command: &str, cap_bin: &str) -> Option<String> {
+    maybe_rewrite_with_tool_resolver(command, cap_bin, command_on_path)
+}
+
+fn maybe_rewrite_with_tool_resolver(
+    command: &str,
+    cap_bin: &str,
+    tool_available: impl Fn(&str) -> bool,
+) -> Option<String> {
     let trimmed = command.trim();
     if trimmed.is_empty() {
         return None;
@@ -172,6 +180,7 @@ fn maybe_rewrite(command: &str, cap_bin: &str) -> Option<String> {
     if first_program_is_cap(trimmed) {
         return None;
     }
+    let payload = optimized_payload(command, tool_available).unwrap_or_else(|| command.to_string());
     // `cap run --label=<orig> -- bash -c <orig>`:
     //   * the `bash -c` layer is what actually runs (so cap sees one
     //     process group for the whole shell line — pipes, &&, builtins),
@@ -179,11 +188,171 @@ fn maybe_rewrite(command: &str, cap_bin: &str) -> Option<String> {
     //     records `ls -la | wc -l`, not `bash -c ls -la | wc -l`.
     // `--label=` (attached form) sidesteps clap treating a command that
     // starts with `-` as a flag.
-    let quoted = shell_single_quote(command);
+    let label = shell_single_quote(command);
+    let payload = shell_single_quote(&payload);
     Some(format!(
-        "{} run --label={quoted} -- bash -c {quoted}",
+        "{} run --label={label} -- bash -c {payload}",
         shell_quote_arg(cap_bin),
     ))
+}
+
+fn optimized_payload(command: &str, tool_available: impl Fn(&str) -> bool) -> Option<String> {
+    let optimized = optimize_recursive_grep_to_rg(command, tool_available)?;
+    Some(format!("{optimized} || {command}"))
+}
+
+fn optimize_recursive_grep_to_rg(
+    command: &str,
+    tool_available: impl Fn(&str) -> bool,
+) -> Option<String> {
+    if !tool_available("rg") || has_shell_control_syntax(command) {
+        return None;
+    }
+
+    let words = split_simple_shell_words(command)?;
+    if words.first().map(|w| basename(w)) != Some("grep") {
+        return None;
+    }
+
+    let mut recursive = false;
+    let mut rg_args = vec!["--hidden".to_string(), "--no-ignore".to_string()];
+    let mut positional = Vec::new();
+    let mut flags_done = false;
+
+    for word in words.iter().skip(1) {
+        if !flags_done && word == "--" {
+            flags_done = true;
+            continue;
+        }
+        if !flags_done && word.starts_with("--") {
+            match word.as_str() {
+                "--recursive" | "--dereference-recursive" => recursive = true,
+                "--line-number" => rg_args.push("--line-number".to_string()),
+                "--ignore-case" => rg_args.push("--ignore-case".to_string()),
+                "--fixed-strings" => rg_args.push("--fixed-strings".to_string()),
+                "--word-regexp" => rg_args.push("--word-regexp".to_string()),
+                _ => return None,
+            }
+            continue;
+        }
+        if !flags_done && word.starts_with('-') && word.len() > 1 {
+            for flag in word[1..].chars() {
+                match flag {
+                    'R' | 'r' => recursive = true,
+                    'n' => rg_args.push("-n".to_string()),
+                    'i' => rg_args.push("-i".to_string()),
+                    'F' => rg_args.push("-F".to_string()),
+                    'w' => rg_args.push("-w".to_string()),
+                    'H' => rg_args.push("-H".to_string()),
+                    'l' => rg_args.push("-l".to_string()),
+                    'q' => rg_args.push("-q".to_string()),
+                    _ => return None,
+                }
+            }
+            continue;
+        }
+        positional.push(word.to_string());
+    }
+
+    if !recursive || positional.len() < 2 {
+        return None;
+    }
+    if positional
+        .iter()
+        .any(|arg| arg.is_empty() || arg.contains(['*', '?', '[', ']']))
+    {
+        return None;
+    }
+    if positional.iter().skip(1).any(|path| path.starts_with('-')) {
+        return None;
+    }
+
+    rg_args.push("--".to_string());
+    rg_args.extend(positional);
+    Some(shell_command("rg", &rg_args))
+}
+
+fn has_shell_control_syntax(command: &str) -> bool {
+    command
+        .chars()
+        .any(|c| matches!(c, '\n' | '\r' | '|' | '&' | ';' | '<' | '>' | '`' | '$'))
+}
+
+fn split_simple_shell_words(command: &str) -> Option<Vec<String>> {
+    #[derive(Clone, Copy)]
+    enum State {
+        Normal,
+        Single,
+        Double,
+    }
+
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.chars();
+    let mut state = State::Normal;
+    let mut in_token = false;
+
+    while let Some(ch) = chars.next() {
+        match state {
+            State::Normal => match ch {
+                '\'' => {
+                    in_token = true;
+                    state = State::Single;
+                }
+                '"' => {
+                    in_token = true;
+                    state = State::Double;
+                }
+                '\\' => {
+                    in_token = true;
+                    current.push(chars.next()?);
+                }
+                c if c.is_whitespace() => {
+                    if in_token {
+                        words.push(std::mem::take(&mut current));
+                        in_token = false;
+                    }
+                }
+                c => {
+                    in_token = true;
+                    current.push(c);
+                }
+            },
+            State::Single => match ch {
+                '\'' => state = State::Normal,
+                c => current.push(c),
+            },
+            State::Double => match ch {
+                '"' => state = State::Normal,
+                '\\' => current.push(chars.next()?),
+                c => current.push(c),
+            },
+        }
+    }
+
+    match state {
+        State::Normal => {
+            if in_token {
+                words.push(current);
+            }
+            Some(words)
+        }
+        State::Single | State::Double => None,
+    }
+}
+
+fn shell_command(program: &str, args: &[String]) -> String {
+    std::iter::once(program.to_string())
+        .chain(args.iter().map(|arg| shell_quote_arg(arg)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn command_on_path(program: &str) -> bool {
+    let Some(paths) = env::var_os("PATH") else {
+        return false;
+    };
+    env::split_paths(&paths).any(|dir| dir.join(program).is_file())
 }
 
 /// Quote the cap binary path for use as the first word of a shell
@@ -381,6 +550,14 @@ mod tests {
         maybe_rewrite(command, "cap")
     }
 
+    fn rewrite_with_rg(command: &str) -> Option<String> {
+        maybe_rewrite_with_tool_resolver(command, "cap", |tool| tool == "rg")
+    }
+
+    fn rewrite_without_rg(command: &str) -> Option<String> {
+        maybe_rewrite_with_tool_resolver(command, "cap", |_| false)
+    }
+
     #[test]
     fn wraps_plain_command() {
         assert_eq!(
@@ -427,6 +604,59 @@ mod tests {
         assert!(
             got.ends_with("-- bash -c 'pytest -k foo'"),
             "the bash -c payload is still the original command, got {got}"
+        );
+    }
+
+    #[test]
+    fn recursive_grep_uses_rg_when_available() {
+        assert_eq!(
+            rewrite_with_rg("grep -R TODO .").unwrap(),
+            "cap run --label='grep -R TODO .' -- bash -c 'rg --hidden --no-ignore -- TODO . || grep -R TODO .'"
+        );
+        assert_eq!(
+            rewrite_with_rg("grep -inR TODO projects/cap").unwrap(),
+            "cap run --label='grep -inR TODO projects/cap' -- bash -c 'rg --hidden --no-ignore -i -n -- TODO projects/cap || grep -inR TODO projects/cap'"
+        );
+    }
+
+    #[test]
+    fn recursive_grep_keeps_original_label_and_fallback_script() {
+        let got = rewrite_with_rg("grep -R TODO .").unwrap();
+        assert!(
+            got.contains("--label='grep -R TODO .'"),
+            "label must stay original, got {got}"
+        );
+        assert!(
+            got.ends_with("-- bash -c 'rg --hidden --no-ignore -- TODO . || grep -R TODO .'"),
+            "payload must fall back to original grep, got {got}"
+        );
+    }
+
+    #[test]
+    fn recursive_grep_falls_back_when_rg_is_unavailable() {
+        assert_eq!(
+            rewrite_without_rg("grep -R TODO .").unwrap(),
+            "cap run --label='grep -R TODO .' -- bash -c 'grep -R TODO .'"
+        );
+    }
+
+    #[test]
+    fn grep_optimizer_rejects_uncertain_semantics() {
+        assert_eq!(
+            rewrite_with_rg("grep TODO file.txt").unwrap(),
+            "cap run --label='grep TODO file.txt' -- bash -c 'grep TODO file.txt'"
+        );
+        assert_eq!(
+            rewrite_with_rg("grep --include '*.rs' -R TODO .").unwrap(),
+            "cap run --label='grep --include '\\''*.rs'\\'' -R TODO .' -- bash -c 'grep --include '\\''*.rs'\\'' -R TODO .'"
+        );
+        assert_eq!(
+            rewrite_with_rg("grep -R TODO . | head").unwrap(),
+            "cap run --label='grep -R TODO . | head' -- bash -c 'grep -R TODO . | head'"
+        );
+        assert_eq!(
+            rewrite_with_rg("grep -R 'TODO.*' .").unwrap(),
+            "cap run --label='grep -R '\\''TODO.*'\\'' .' -- bash -c 'grep -R '\\''TODO.*'\\'' .'"
         );
     }
 
