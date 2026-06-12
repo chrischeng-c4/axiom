@@ -29,10 +29,7 @@ Public API manifest for `projects/meter/src/capture/mod.rs` generated from AST d
 | `run` | projects/meter/src/capture/mod.rs | module | pub | 25 |  |
 | `sampler` | projects/meter/src/capture/mod.rs | module | pub | 26 |  |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
-
-<!-- source-snapshot: path=projects/meter/src/capture/mod.rs -->
+<!-- type: rust-source-unit lang: rust -->
 ````rust
 //! Capture-mode populators (擷取) — observe a workload from the outside.
 //!
@@ -66,7 +63,7 @@ pub mod vitals;
 changes:
   - path: projects/meter/src/capture/mod.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/capture/mod.rs` captured during meter full-codegen standardization.
