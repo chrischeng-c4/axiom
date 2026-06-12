@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/vat/tech-design/semantic/source/projects-vat-tests-vat_concurrent_runners-rs.md#rust-source-unit
+// CODEGEN-BEGIN
 //! `vat run a b` — concurrent runners share one workspace + service union,
 //! run side by side, and fold into one result with worst-wins exit.
 
@@ -156,3 +158,4 @@ fn single_runner_keeps_legacy_log_names_and_result_shape() {
     let runners = result["runners"].as_array().unwrap();
     assert_eq!(runners.len(), 1);
 }
+// CODEGEN-END
