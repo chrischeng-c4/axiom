@@ -7,12 +7,12 @@ interface = "cli"
 
 [agentic_workflow.issue_platform]
 type = "github"
-repo = "chrischeng-c4/cclab"
+repo = "chrischeng-c4/axiom"
 auth_method = "cli"
 
 [agentic_workflow.repo_platform]
 type = "github"
-repo = "chrischeng-c4/cclab"
+repo = "chrischeng-c4/axiom"
 default_branch = "main"
 auto_commit = true
 auto_pr = false
