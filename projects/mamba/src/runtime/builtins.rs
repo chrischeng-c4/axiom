@@ -1512,8 +1512,19 @@ pub fn mb_abs(val: MbValue) -> MbValue {
         unsafe {
             match &(*ptr).data {
                 ObjData::Complex(re, im) => {
-                    // abs(complex) = sqrt(re^2 + im^2)
-                    return MbValue::from_float((re * re + im * im).sqrt());
+                    // abs(complex) = hypot(re, im); a finite input overflowing
+                    // to inf raises OverflowError (CPython c_abs).
+                    let m = re.hypot(*im);
+                    if m.is_infinite() && re.is_finite() && im.is_finite() {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "absolute value too large".to_string(),
+                            )),
+                        );
+                        return MbValue::none();
+                    }
+                    return MbValue::from_float(m);
                 }
                 ObjData::BigInt(big) => {
                     use num_traits::Signed;
