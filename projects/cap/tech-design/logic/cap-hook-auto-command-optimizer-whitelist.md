@@ -105,5 +105,16 @@ changes:
 <!-- type: e2e-test lang: yaml -->
 
 ```yaml
-e2e_tests: []
+e2e_tests:
+  - id: cap-hook-auto-command-optimizer-whitelist
+    name: "cap hook auto command optimizer whitelist"
+    capability_id: agent-hook-installation
+    contract_id: hook-payload-rewrite-adapters
+    category: behavior
+    command: "cargo test -p cap hook -- --nocapture"
+    assertions:
+      - "simple recursive grep commands can be optimized to rg when rg is available"
+      - "unsupported grep forms keep the original command payload"
+      - "optimized payloads fall back to the original command when the optimized command exits unsuccessfully"
+      - "cap run labels preserve the original command even when bash payload is optimized"
 ```
