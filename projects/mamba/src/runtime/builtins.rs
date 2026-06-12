@@ -1144,7 +1144,25 @@ pub fn mb_int(val: MbValue) -> MbValue {
     if val.is_int() {
         val
     } else if let Some(f) = val.as_float() {
-        MbValue::from_int(f as i64)
+        if f.is_nan() {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "cannot convert float NaN to integer".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+        if f.is_infinite() {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "cannot convert float infinity to integer".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+        super::bigint_ops::int_from_f64_trunc(f)
     } else if let Some(b) = val.as_bool() {
         MbValue::from_int(b as i64)
     } else if let Some(ptr) = val.as_ptr() {
@@ -1152,22 +1170,36 @@ pub fn mb_int(val: MbValue) -> MbValue {
         unsafe {
             if let ObjData::Str(ref s) = (*ptr).data {
                 let trimmed = s.trim();
-                let try_parse = |t: &str| -> Option<i64> {
-                    if let Ok(i) = t.parse::<i64>() { return Some(i); }
+                let try_parse = |t: &str| -> Option<MbValue> {
+                    if let Ok(i) = t.parse::<i64>() {
+                        return Some(super::bigint_ops::int_from_i64(i));
+                    }
                     // PEP 515: digit-separator underscores. Strip optional
                     // sign, validate underscore placement on the remaining
                     // digits, then parse.
-                    let (sign, digits) = match t.as_bytes().first() {
-                        Some(b'-') => (-1i64, &t[1..]),
-                        Some(b'+') => (1, &t[1..]),
-                        _ => (1, t),
+                    let (negative, digits) = match t.as_bytes().first() {
+                        Some(b'-') => (true, &t[1..]),
+                        Some(b'+') => (false, &t[1..]),
+                        _ => (false, t),
                     };
                     let stripped = strip_pep515_underscores(digits, false)?;
-                    let mag = stripped.parse::<i64>().ok()?;
-                    Some(sign * mag)
+                    if let Ok(mag) = stripped.parse::<i64>() {
+                        return Some(super::bigint_ops::int_from_i64(
+                            if negative { -mag } else { mag },
+                        ));
+                    }
+                    // Beyond i64 — arbitrary precision.
+                    if !stripped.is_empty() && stripped.bytes().all(|b| b.is_ascii_digit()) {
+                        let mut big: num_bigint::BigInt = stripped.parse().ok()?;
+                        if negative {
+                            big = -big;
+                        }
+                        return Some(super::bigint_ops::normalize_bigint(big));
+                    }
+                    None
                 };
-                if let Some(i) = try_parse(trimmed) {
-                    return MbValue::from_int(i);
+                if let Some(v) = try_parse(trimmed) {
+                    return v;
                 }
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
@@ -1187,7 +1219,7 @@ pub fn mb_int(val: MbValue) -> MbValue {
             if let Some(body) = bytes_body {
                 let text = String::from_utf8_lossy(&body).to_string();
                 if let Ok(i) = text.trim().parse::<i64>() {
-                    return MbValue::from_int(i);
+                    return super::bigint_ops::int_from_i64(i);
                 }
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
@@ -3862,8 +3894,27 @@ pub fn mb_not(a: MbValue) -> MbValue {
 
 // ── Aggregation builtins (#378) ──
 
+/// CPython: a lone scalar argument to min/max/sum must be iterable.
+/// Returns true (and raises TypeError) when `args` cannot be iterated.
+fn raise_if_not_iterable(args: MbValue) -> bool {
+    if args.as_ptr().is_none()
+        && !super::iter::mb_is_iterator_handle(args)
+        && !super::generator::is_known_generator(args)
+    {
+        raise_type_error(format!(
+            "'{}' object is not iterable",
+            value_type_name(args)
+        ));
+        return true;
+    }
+    false
+}
+
 /// min(iterable) or min(a, b) — return the smallest value.
 pub fn mb_min(args: MbValue) -> MbValue {
+    if raise_if_not_iterable(args) {
+        return MbValue::none();
+    }
     let items = extract_items(args);
     if items.is_empty() {
         // CPython: min(()) raises ValueError (no silent None default).
@@ -3877,6 +3928,9 @@ pub fn mb_min(args: MbValue) -> MbValue {
 
 /// max(iterable) or max(a, b) — return the largest value.
 pub fn mb_max(args: MbValue) -> MbValue {
+    if raise_if_not_iterable(args) {
+        return MbValue::none();
+    }
     let items = extract_items(args);
     if items.is_empty() {
         // CPython: max(()) raises ValueError (no silent None default).
@@ -3890,34 +3944,81 @@ pub fn mb_max(args: MbValue) -> MbValue {
 
 /// sum(iterable) — sum all numeric values.
 pub fn mb_sum(args: MbValue) -> MbValue {
-    if args.as_ptr().is_none()
-        && !super::iter::mb_is_iterator_handle(args)
-        && !super::generator::is_known_generator(args)
-    {
-        super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str("object is not iterable".to_string())),
-        );
+    sum_from(args, MbValue::from_int(0))
+}
+
+/// One sum() fold step. mb_add covers numerics, sequences, and the stdlib
+/// handle types; instances dispatch __add__/__radd__; anything mb_add
+/// declines (returns None without a pending exception) is a TypeError.
+fn sum_fold_add(acc: MbValue, item: MbValue) -> MbValue {
+    let r = mb_add(acc, item);
+    if !r.is_none() || eval_pending() {
+        return r;
+    }
+    for (recv, arg, dunder) in [(acc, item, "__add__"), (item, acc, "__radd__")] {
+        if let Some(ptr) = recv.as_ptr() {
+            if let ObjData::Instance { ref class_name, .. } = unsafe { &(*ptr).data } {
+                let method = super::class::lookup_method(class_name, dunder);
+                if !method.is_none() {
+                    let name = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
+                    let call_args = MbValue::from_ptr(MbObject::new_list(vec![arg]));
+                    let out = super::class::mb_call_method(recv, name, call_args);
+                    if !out.is_none() || eval_pending() {
+                        return out;
+                    }
+                }
+            }
+        }
+    }
+    raise_type_error(format!(
+        "unsupported operand type(s) for +: '{}' and '{}'",
+        value_type_name(acc),
+        value_type_name(item)
+    ));
+    MbValue::none()
+}
+
+fn sum_from(args: MbValue, start: MbValue) -> MbValue {
+    if raise_if_not_iterable(args) {
         return MbValue::none();
     }
     let items = extract_items(args);
-    let mut total: i64 = 0;
-    let mut is_float = false;
-    let mut ftotal: f64 = 0.0;
-    for item in &items {
-        // bool is a subclass of int in Python, so sum([True, True]) == 2.
-        // NaN-boxed bools are distinct from ints, so coerce them first.
-        if let Some(b) = item.as_bool() {
-            let i = b as i64;
-            if is_float { ftotal += i as f64; } else { total += i; }
-        } else if let Some(i) = item.as_int() {
-            if is_float { ftotal += i as f64; } else { total += i; }
-        } else if let Some(f) = item.as_float() {
-            if !is_float { ftotal = total as f64; is_float = true; }
-            ftotal += f;
+    // Fast path: numeric start and all-numeric items (i128 accumulator so
+    // inline-int sums can never overflow; result normalizes to BigInt).
+    let numeric_start = start.as_int_pyint().is_some() || start.is_float();
+    if numeric_start
+        && items
+            .iter()
+            .all(|v| v.as_int_pyint().is_some() || v.is_float())
+    {
+        let mut total: i128 = start.as_int_pyint().unwrap_or(0) as i128;
+        let mut is_float = start.is_float();
+        let mut ftotal: f64 = start.as_float().unwrap_or(0.0);
+        for item in &items {
+            if let Some(i) = item.as_int_pyint() {
+                if is_float { ftotal += i as f64; } else { total += i as i128; }
+            } else if let Some(f) = item.as_float() {
+                if !is_float { ftotal = total as f64; is_float = true; }
+                ftotal += f;
+            }
+        }
+        if is_float {
+            return MbValue::from_float(ftotal);
+        }
+        if let Ok(small) = i64::try_from(total) {
+            return super::bigint_ops::int_from_i64(small);
+        }
+        return super::bigint_ops::bigint_from_i128(total);
+    }
+    // Generic fold: covers BigInt, str-in-list TypeError, instances, etc.
+    let mut acc = start;
+    for item in items {
+        acc = sum_fold_add(acc, item);
+        if eval_pending() {
+            return MbValue::none();
         }
     }
-    if is_float { MbValue::from_float(ftotal) } else { MbValue::from_int(total) }
+    acc
 }
 
 /// sorted(iterable, reverse=False) — return a new sorted list.
@@ -4872,17 +4973,22 @@ fn mod_inverse_i128(a: i128, m: i128) -> Option<i128> {
 /// CPython 3.8+: when `exp < 0`, computes the modular inverse of `base`
 /// then raises it to `-exp`; valid only when `gcd(base, mod) == 1`.
 pub fn mb_pow_mod(base: MbValue, exp: MbValue, modulus: MbValue) -> MbValue {
-    match (base.as_int(), exp.as_int(), modulus.as_int()) {
+    match (base.as_int_pyint(), exp.as_int_pyint(), modulus.as_int_pyint()) {
         (Some(b), Some(e), Some(m)) => {
             if m == 0 {
-                return MbValue::none(); // ValueError in Python
+                raise_value_error("pow() 3rd argument cannot be 0".to_string());
+                return MbValue::none();
             }
             let m128 = m as i128;
             let (mut base_val, exp_pos): (i128, u64) = if e < 0 {
                 match mod_inverse_i128(b as i128, m128) {
                     Some(inv) => (inv, (-e) as u64),
-                    // gcd(base, mod) != 1 — CPython raises ValueError.
-                    None => return MbValue::none(),
+                    None => {
+                        raise_value_error(
+                            "base is not invertible for the given modulus".to_string(),
+                        );
+                        return MbValue::none();
+                    }
                 }
             } else {
                 ((b as i128).rem_euclid(m128), e as u64)
@@ -4898,7 +5004,12 @@ pub fn mb_pow_mod(base: MbValue, exp: MbValue, modulus: MbValue) -> MbValue {
             }
             MbValue::from_int(result as i64)
         }
-        _ => MbValue::none(),
+        _ => {
+            raise_type_error(
+                "pow() 3rd argument not allowed unless all arguments are integers".to_string(),
+            );
+            MbValue::none()
+        }
     }
 }
 
@@ -5319,7 +5430,25 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
     if let Some(f) = val.as_float() {
         if !ndigits_given {
             // round(f) → int (banker's rounding).
-            return MbValue::from_int(bankers_round(f) as i64);
+            if f.is_nan() {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "cannot convert float NaN to integer".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+            if f.is_infinite() {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "cannot convert float infinity to integer".to_string(),
+                    )),
+                );
+                return MbValue::none();
+            }
+            return super::bigint_ops::int_from_f64_trunc(bankers_round(f));
         }
         if n > 0 {
             // Use format/parse to avoid FP multiply artifacts (e.g. 2.675*100=267.5 in f64).
@@ -5336,16 +5465,77 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
         if n >= 0 {
             MbValue::from_int(i)
         } else {
-            let factor = 10_i64.pow((-n) as u32);
-            MbValue::from_int((i / factor) * factor)
+            // Rounding up at the inline boundary can exceed 48 bits.
+            super::bigint_ops::int_from_i64(round_int_half_even(i, -n))
+        }
+    } else if let Some(big) = unsafe { super::bigint_ops::extract_bigint(val) } {
+        if n >= 0 {
+            unsafe { super::rc::retain_if_ptr(val); }
+            val
+        } else {
+            super::bigint_ops::normalize_bigint(round_bigint_half_even(big, -n))
         }
     } else {
-        super::exception::mb_raise(
-            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-            MbValue::from_ptr(MbObject::new_str("type str doesn't define __round__ method".to_string())),
-        );
+        // round(instance[, ndigits]) — dispatch the __round__ dunder.
+        if let Some(ptr) = val.as_ptr() {
+            if let ObjData::Instance { ref class_name, .. } = unsafe { &(*ptr).data } {
+                let method = super::class::lookup_method(class_name, "__round__");
+                if !method.is_none() {
+                    let name = MbValue::from_ptr(MbObject::new_str("__round__".to_string()));
+                    let call_args = if ndigits_given { vec![ndigits] } else { vec![] };
+                    let args = MbValue::from_ptr(MbObject::new_list(call_args));
+                    return super::class::mb_call_method(val, name, args);
+                }
+            }
+        }
+        raise_type_error(format!(
+            "type {} doesn't define __round__ method",
+            value_type_name(val)
+        ));
         MbValue::none()
     }
+}
+
+/// round(i, -digits) for inline ints — CPython rounds half to even at the
+/// 10^digits boundary (round(1350, -2) == 1400, round(1250, -2) == 1200).
+/// Inline ints are < 2^47 so i128 intermediates never overflow.
+fn round_int_half_even(i: i64, digits: i64) -> i64 {
+    // 10^16 already exceeds twice the inline range, so everything rounds to 0.
+    if digits > 16 {
+        return 0;
+    }
+    let factor = 10i128.pow(digits as u32);
+    let v = i as i128;
+    let q = v.div_euclid(factor);
+    let r = v.rem_euclid(factor);
+    let q = match (2 * r).cmp(&factor) {
+        std::cmp::Ordering::Greater => q + 1,
+        std::cmp::Ordering::Equal if q % 2 != 0 => q + 1,
+        _ => q,
+    };
+    (q * factor) as i64
+}
+
+/// round(bigint, -digits) — the same half-to-even rule over arbitrary precision.
+fn round_bigint_half_even(v: num_bigint::BigInt, digits: i64) -> num_bigint::BigInt {
+    use num_bigint::BigInt;
+    use num_traits::Zero;
+    // More digits than the number has → 0 (guards absurd factors too).
+    if digits as usize > v.magnitude().to_string().len() + 1 {
+        return BigInt::zero();
+    }
+    let factor = BigInt::from(10).pow(digits as u32);
+    let mut q = &v / &factor;
+    let mut r = &v % &factor;
+    if r < BigInt::zero() {
+        q -= 1;
+        r += &factor;
+    }
+    let twice = 2 * &r;
+    if twice > factor || (twice == factor && (&q % 2) != BigInt::zero()) {
+        q += 1;
+    }
+    q * factor
 }
 
 /// divmod(a, b) — return (a // b, a % b) as a tuple.
@@ -5584,22 +5774,22 @@ fn escape_non_ascii(s: &str) -> String {
 
 /// sum(iterable, start) — sum with an initial value.
 pub fn mb_sum_with_start(iterable: MbValue, start: MbValue) -> MbValue {
-    let base = mb_sum(iterable);
-    // Add start to base result
-    if let Some(sv) = start.as_int() {
-        if let Some(bv) = base.as_int() {
-            return MbValue::from_int(bv + sv);
-        } else if let Some(bf) = base.as_float() {
-            return MbValue::from_float(bf + sv as f64);
-        }
-    } else if let Some(sf) = start.as_float() {
-        if let Some(bv) = base.as_int() {
-            return MbValue::from_float(bv as f64 + sf);
-        } else if let Some(bf) = base.as_float() {
-            return MbValue::from_float(bf + sf);
+    // CPython rejects text/bytes starts up front with a dedicated message.
+    if let Some(ptr) = start.as_ptr() {
+        let reject = unsafe {
+            match &(*ptr).data {
+                ObjData::Str(_) => Some("strings [use ''.join(seq) instead]"),
+                ObjData::Bytes(_) => Some("bytes [use b''.join(seq) instead]"),
+                ObjData::ByteArray(_) => Some("bytearray [use b''.join(seq) instead]"),
+                _ => None,
+            }
+        };
+        if let Some(kind) = reject {
+            raise_type_error(format!("sum() can't sum {kind}"));
+            return MbValue::none();
         }
     }
-    base
+    sum_from(iterable, start)
 }
 
 /// Resolve a callable MbValue to a raw function pointer address (usize).

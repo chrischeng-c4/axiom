@@ -949,6 +949,10 @@ pub fn mb_reversed(seq: MbValue) -> MbValue {
                 ObjData::Bytes(ref data) => data.iter().rev()
                     .map(|&b| MbValue::from_int(b as i64))
                     .collect(),
+                // reversed(dict) yields keys in reverse insertion order (3.8+).
+                ObjData::Dict(ref lock) => lock.read().unwrap().keys().rev()
+                    .map(|k| super::dict_ops::dict_key_to_mbvalue(k))
+                    .collect(),
                 ObjData::Instance { ref class_name, .. } => {
                     // User __reversed__ dunder returns its own iterator;
                     // without one, reversed(obj) is a TypeError, not None.

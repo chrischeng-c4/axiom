@@ -139,8 +139,31 @@ pub unsafe fn mb_int_mul(a: MbValue, b: MbValue) -> MbValue {
     normalize_bigint(ba * bb)
 }
 
+/// Make an int MbValue from an i64 — inline when it fits, heap BigInt otherwise.
+pub fn int_from_i64(v: i64) -> MbValue {
+    if fits_inline(v) {
+        MbValue::from_int(v)
+    } else {
+        bigint_from_i128(v as i128)
+    }
+}
+
+/// Make an int MbValue from a finite f64, truncating toward zero.
+/// Exact for every finite f64 magnitude via the BigInt fallback.
+/// Callers must reject NaN/infinity first (CPython raises there).
+pub fn int_from_f64_trunc(f: f64) -> MbValue {
+    if f >= INT48_MIN as f64 && f <= INT48_MAX as f64 {
+        return MbValue::from_int(f as i64);
+    }
+    use num_traits::FromPrimitive;
+    match BigInt::from_f64(f.trunc()) {
+        Some(b) => normalize_bigint(b),
+        None => MbValue::from_int(0),
+    }
+}
+
 /// Normalize a BigInt result: if it fits inline, return an inline MbValue.
-fn normalize_bigint(v: BigInt) -> MbValue {
+pub fn normalize_bigint(v: BigInt) -> MbValue {
     if let Some(small) = v.to_i64() {
         if fits_inline(small) {
             return MbValue::from_int(small);

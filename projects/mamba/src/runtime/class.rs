@@ -2907,6 +2907,54 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                                 if class_slot_names(s).iter().any(|n| n == &attr_name) {
                                     return make_member_descriptor(s, &attr_name);
                                 }
+                                // CPython: class attribute lookup continues
+                                // through the metaclass (a @property or plain
+                                // method on the metaclass answers Class.attr).
+                                let meta = CLASS_REGISTRY.with(|reg| {
+                                    reg.borrow()
+                                        .get(s.as_str())
+                                        .and_then(|c| c.metaclass.clone())
+                                });
+                                if let Some(meta) = meta {
+                                    let mmethod = lookup_method(&meta, &attr_name);
+                                    if !mmethod.is_none() {
+                                        let is_descriptor = mmethod.as_ptr().is_some_and(|p| {
+                                            matches!(
+                                                &(*p).data,
+                                                ObjData::Instance { class_name, .. }
+                                                    if class_name == "__property__"
+                                                        || class_name == "__cached_property__"
+                                            )
+                                        });
+                                        if is_descriptor {
+                                            let cls_val = MbValue::from_ptr(
+                                                MbObject::new_str(s.clone()),
+                                            );
+                                            return invoke_descriptor_get(mmethod, cls_val);
+                                        }
+                                        let (unwrapped, _) = unwrap_descriptor_method(mmethod);
+                                        super::rc::retain_if_ptr(unwrapped);
+                                        return unwrapped;
+                                    }
+                                    if let Some(val) = mro_lookup_class_attr(&meta, &attr_name) {
+                                        super::rc::retain_if_ptr(val);
+                                        return val;
+                                    }
+                                }
+                                // Every lookup missed: CPython raises. Dunders
+                                // are exempt — names like __doc__/__module__
+                                // exist on every class but aren't modeled here.
+                                if !(attr_name.starts_with("__") && attr_name.ends_with("__")) {
+                                    super::exception::mb_raise(
+                                        MbValue::from_ptr(MbObject::new_str(
+                                            "AttributeError".to_string(),
+                                        )),
+                                        MbValue::from_ptr(MbObject::new_str(format!(
+                                            "type object '{s}' has no attribute '{attr_name}'"
+                                        ))),
+                                    );
+                                    return MbValue::none();
+                                }
                             }
                         }
                     }
@@ -3609,7 +3657,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
         ],
         "dict" => vec![
             "keys", "values", "items", "get", "pop", "popitem",
-            "setdefault", "update", "clear", "copy",
+            "setdefault", "update", "clear", "copy", "fromkeys",
             "__iter__", "__len__", "__contains__", "__getitem__",
             "__setitem__", "__delitem__",
         ],
@@ -3621,21 +3669,43 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "encode", "format", "format_map", "isdigit", "isalpha",
             "isalnum", "isspace", "isupper", "islower", "istitle",
             "zfill", "ljust", "rjust", "center",
+            "removeprefix", "removesuffix", "casefold", "expandtabs",
+            "partition", "rpartition", "translate", "maketrans",
+            "isidentifier", "isprintable", "isascii", "isdecimal", "isnumeric",
             "__iter__", "__len__", "__contains__", "__getitem__",
         ],
-        "set" | "frozenset" => vec![
+        "set" => vec![
             "add", "discard", "remove", "pop", "clear", "copy",
             "union", "intersection", "difference", "symmetric_difference",
             "update", "intersection_update", "difference_update",
+            "symmetric_difference_update",
             "isdisjoint", "issubset", "issuperset",
             "__iter__", "__len__", "__contains__",
+        ],
+        // frozenset is immutable: no add/discard/remove/pop/clear/*_update.
+        "frozenset" => vec![
+            "copy", "union", "intersection", "difference",
+            "symmetric_difference", "isdisjoint", "issubset", "issuperset",
+            "__iter__", "__len__", "__contains__",
+        ],
+        "complex" => vec![
+            "conjugate", "real", "imag",
+            "__add__", "__sub__", "__mul__", "__truediv__", "__pow__",
+            "__neg__", "__abs__", "__eq__", "__hash__", "__repr__", "__str__",
         ],
         "tuple" => vec![
             "count", "index",
             "__iter__", "__len__", "__contains__", "__getitem__",
         ],
-        "int" | "float" => vec![
-            "bit_length", "to_bytes", "from_bytes",
+        "int" => vec![
+            "bit_length", "bit_count", "to_bytes", "from_bytes",
+            "as_integer_ratio", "conjugate",
+            "__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
+            "__mod__", "__pow__", "__neg__", "__abs__", "__eq__", "__lt__",
+            "__le__", "__gt__", "__ge__", "__hash__", "__repr__", "__str__",
+        ],
+        "float" => vec![
+            "hex", "fromhex", "is_integer", "as_integer_ratio", "conjugate",
             "__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
             "__mod__", "__pow__", "__neg__", "__abs__", "__eq__", "__lt__",
             "__le__", "__gt__", "__ge__", "__hash__", "__repr__", "__str__",
@@ -3643,11 +3713,31 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
         "bool" => vec![
             "__and__", "__or__", "__xor__", "__bool__", "__repr__", "__str__",
         ],
-        "bytes" | "bytearray" => vec![
-            "hex", "decode", "count", "find", "index", "startswith",
-            "endswith", "split", "strip", "lstrip", "rstrip", "replace",
-            "upper", "lower", "join",
+        "bytes" => vec![
+            "hex", "fromhex", "decode", "count", "find", "rfind", "index",
+            "rindex", "startswith", "endswith", "split", "rsplit",
+            "splitlines", "strip", "lstrip", "rstrip", "replace",
+            "removeprefix", "removesuffix", "upper", "lower", "title",
+            "capitalize", "swapcase", "join", "center", "ljust", "rjust",
+            "zfill", "translate", "maketrans", "partition", "rpartition",
+            "isalnum", "isalpha", "isascii", "isdigit", "islower", "isspace",
+            "istitle", "isupper",
             "__iter__", "__len__", "__contains__", "__getitem__",
+        ],
+        // bytearray = bytes surface + the mutable-sequence mutators.
+        "bytearray" => vec![
+            "hex", "fromhex", "decode", "count", "find", "rfind", "index",
+            "rindex", "startswith", "endswith", "split", "rsplit",
+            "splitlines", "strip", "lstrip", "rstrip", "replace",
+            "removeprefix", "removesuffix", "upper", "lower", "title",
+            "capitalize", "swapcase", "join", "center", "ljust", "rjust",
+            "zfill", "translate", "maketrans", "partition", "rpartition",
+            "isalnum", "isalpha", "isascii", "isdigit", "islower", "isspace",
+            "istitle", "isupper",
+            "append", "extend", "insert", "pop", "remove", "clear",
+            "reverse", "copy",
+            "__iter__", "__len__", "__contains__", "__getitem__",
+            "__setitem__", "__delitem__",
         ],
         _ => Vec::new(),
     }
@@ -4350,6 +4440,36 @@ pub fn mb_hasattr(obj: MbValue, attr: MbValue) -> MbValue {
             }
         }
     }
+    // Bare builtin type names (`hasattr(frozenset, "add")`), whether spelled
+    // as a class-name string or a type-object Instance: answer from the
+    // per-type method tables instead of mb_getattr, which synthesizes an
+    // unbound-method wrapper for ANY name and would report everything present.
+    {
+        let builtin_name: Option<String> = unsafe {
+            obj.as_ptr().and_then(|ptr| {
+                if let ObjData::Str(ref s) = (*ptr).data {
+                    Some(s.clone())
+                } else {
+                    type_object_name(obj)
+                }
+            })
+        }
+        .filter(|s| super::builtins::is_type_name(s))
+        .filter(|s| !CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(s.as_str())));
+        if let Some(s) = builtin_name {
+            let names = builtin_type_method_names_by_name(&s);
+            if !names.is_empty() {
+                let attr_name = extract_str(attr).unwrap_or_default();
+                return MbValue::from_bool(
+                    names.contains(&attr_name.as_str())
+                        || builtin_type_has_dunder(&s, &attr_name)
+                        || matches!(attr_name.as_str(), "__name__" | "__doc__"
+                            | "__module__" | "__qualname__" | "__mro__"
+                            | "__bases__" | "__dict__"),
+                );
+            }
+        }
+    }
     let result = mb_getattr(obj, attr);
     // A `__getattr__` that raises AttributeError means the attribute is absent;
     // hasattr swallows *only* AttributeError and reports False (CPython
@@ -4914,6 +5034,19 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
         }
         return MbValue::from_bool(false);
     }
+    // CPython: arg 2 must be a type, a tuple of types, or a union. Inline
+    // scalars (int, float, bool, None) can never name a class. TAG_INT also
+    // carries closure handles, but a function is equally not a type.
+    if class_name.is_none()
+        || class_name.as_int().is_some()
+        || class_name.is_float()
+        || class_name.as_bool().is_some()
+    {
+        super::builtins::raise_type_error(
+            "isinstance() arg 2 must be a type, a tuple of types, or a union".to_string(),
+        );
+        return MbValue::none();
+    }
     // Handle type objects (returned by type()): Instance with class_name="type"
     // and __name__ field containing the actual type name.
     let target = if let Some(ptr) = class_name.as_ptr() {
@@ -4941,6 +5074,30 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
     } else {
         extract_str(class_name).unwrap_or_default()
     };
+    // Metaclass __instancecheck__: isinstance(x, C) defers to
+    // type(C).__instancecheck__(C, x) when the metaclass defines it.
+    let meta_check = CLASS_REGISTRY.with(|reg| {
+        reg.borrow()
+            .get(target.as_str())
+            .and_then(|c| c.metaclass.clone())
+            .filter(|m| m != "type" && m != "ABCMeta")
+            .map(|m| lookup_method(&m, "__instancecheck__"))
+            .filter(|m| !m.is_none())
+    });
+    if let Some(method) = meta_check {
+        let cls_val = MbValue::from_ptr(MbObject::new_str(target.clone()));
+        let out = call_method_value2(method, cls_val, obj);
+        if super::exception::mb_has_exception().as_bool() == Some(true) || out.is_none() {
+            // The user dunder hit a runtime gap (e.g. cls.__dict__ /
+            // metaclass-bound methods) — fall back to the nominal check
+            // rather than reporting a wrong False.
+            super::exception::mb_clear_exception();
+        } else {
+            return MbValue::from_bool(
+                super::builtins::mb_bool(out).as_bool() == Some(true),
+            );
+        }
+    }
     // abc: isinstance(obj, ABC) defers to ABCMeta.__subclasscheck__ semantics —
     // nominal subclass, custom __subclasshook__ (structural), or registered
     // virtual subclass. Handles both instances and builtin objects (e.g.
@@ -5073,6 +5230,8 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
                     // Without this, isinstance(2**64, int) returns False and
                     // plistlib's UID range check / test_int round-trips break.
                     ObjData::BigInt(_) => "int",
+                    ObjData::Complex(..) => "complex",
+                    ObjData::CodeObject { .. } => "code",
                     _ => "",
                 }
             }
@@ -5289,6 +5448,32 @@ pub fn mb_class_set_match_args(class_name: MbValue, args_list: MbValue) {
 
 /// issubclass check — first checks CLASS_REGISTRY, then falls back to
 /// the built-in exception hierarchy.
+/// Builtin (non-exception) type names that count as classes for the
+/// issubclass arg-1 "must be a class" validation.
+fn is_builtin_type_name(name: &str) -> bool {
+    matches!(
+        name,
+        "int" | "float" | "complex" | "str" | "bool" | "bytes" | "bytearray"
+            | "list" | "tuple" | "dict" | "set" | "frozenset" | "object"
+            | "type" | "NoneType" | "range" | "slice" | "memoryview"
+            | "property" | "staticmethod" | "classmethod" | "super"
+            | "function" | "method" | "module" | "generator" | "enumerate"
+            | "zip" | "map" | "filter" | "reversed" | "code" | "ellipsis"
+    )
+}
+
+/// True iff `name` denotes a class the runtime knows about: a registered
+/// user/native class, a builtin type, or a builtin exception.
+fn is_known_class_name(name: &str) -> bool {
+    if is_builtin_type_name(name) {
+        return true;
+    }
+    if CLASS_REGISTRY.with(|reg| reg.borrow().contains_key(name)) {
+        return true;
+    }
+    super::exception::is_subclass_of(name, "BaseException")
+}
+
 pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
     // Tuple of types: issubclass(C, (A, B, ...)) — true iff any element matches.
     if let Some(ptr) = parent.as_ptr() {
@@ -5311,11 +5496,71 @@ pub fn mb_issubclass(child: MbValue, parent: MbValue) -> MbValue {
         }
         return MbValue::from_bool(false);
     }
+    // CPython: arg 1 must be a class. Inline scalars never are; strings are
+    // the runtime's class representation, so a string only fails when it
+    // names no known class (e.g. issubclass("x", object)).
+    if child.is_none()
+        || child.as_int().is_some()
+        || child.is_float()
+        || child.as_bool().is_some()
+    {
+        super::builtins::raise_type_error("issubclass() arg 1 must be a class".to_string());
+        return MbValue::none();
+    }
+    // Arg 2 has the same scalar restriction (tuple/union handled above).
+    if parent.is_none()
+        || parent.as_int().is_some()
+        || parent.is_float()
+        || parent.as_bool().is_some()
+    {
+        super::builtins::raise_type_error(
+            "issubclass() arg 2 must be a class, a tuple of classes, or a union".to_string(),
+        );
+        return MbValue::none();
+    }
     // Resolve type objects (Instance with class_name="type" and __name__ field)
     // in addition to plain strings. This matches the resolution logic in mb_isinstance
     // so that issubclass(type_obj, base_type_obj) works correctly (#974).
     let child_name = resolve_class_name(child).unwrap_or_default();
     let parent_name = resolve_class_name(parent).unwrap_or_default();
+    // Reflexivity holds for any class; in the string model two equal names
+    // are the same class, so answer before the known-class validation.
+    if !child_name.is_empty() && child_name == parent_name {
+        return MbValue::from_bool(true);
+    }
+    if child.as_ptr().is_some()
+        && unsafe {
+            child.as_ptr().map(|p| matches!(&(*p).data, ObjData::Str(_))).unwrap_or(false)
+        }
+        && !is_known_class_name(&child_name)
+        && !is_user_abc(&child_name)
+        && !collections_abc_type_or_virtual_match(&child_name, &child_name)
+    {
+        super::builtins::raise_type_error("issubclass() arg 1 must be a class".to_string());
+        return MbValue::none();
+    }
+    // Metaclass __subclasscheck__: issubclass(S, C) defers to
+    // type(C).__subclasscheck__(C, S) when the metaclass defines it.
+    let meta_check = CLASS_REGISTRY.with(|reg| {
+        reg.borrow()
+            .get(parent_name.as_str())
+            .and_then(|c| c.metaclass.clone())
+            .filter(|m| m != "type" && m != "ABCMeta")
+            .map(|m| lookup_method(&m, "__subclasscheck__"))
+            .filter(|m| !m.is_none())
+    });
+    if let Some(method) = meta_check {
+        let cls_val = MbValue::from_ptr(MbObject::new_str(parent_name.clone()));
+        let out = call_method_value2(method, cls_val, child);
+        if super::exception::mb_has_exception().as_bool() == Some(true) || out.is_none() {
+            // User dunder hit a runtime gap — fall back to the nominal check.
+            super::exception::mb_clear_exception();
+        } else {
+            return MbValue::from_bool(
+                super::builtins::mb_bool(out).as_bool() == Some(true),
+            );
+        }
+    }
     // contextlib.AbstractContextManager / AbstractAsyncContextManager use a
     // structural __subclasshook__: a class is a virtual subclass iff it defines
     // both __enter__ and __exit__ (sync) / __aenter__ and __aexit__ (async),
@@ -6170,6 +6415,24 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                 }
                 super::rc::ObjData::Bytes(_) | super::rc::ObjData::ByteArray(_) => {
                     return super::bytes_ops::mb_bytes_getitem(obj, key);
+                }
+                super::rc::ObjData::Set(_) => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "'set' object is not subscriptable".to_string(),
+                        )),
+                    );
+                    return MbValue::none();
+                }
+                super::rc::ObjData::FrozenSet(_) => {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "'frozenset' object is not subscriptable".to_string(),
+                        )),
+                    );
+                    return MbValue::none();
                 }
                 super::rc::ObjData::Instance { ref class_name, ref fields } => {
                     // Builtin type objects: PEP 585 generics subscript into
