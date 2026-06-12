@@ -57,3 +57,17 @@ flowchart TD
     ir --> emit[emit: unchanged lossless / edited re-render]
     emit --> done([byte-identical regen td_ast origin])
 ```
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Logic section is a valid Mermaid Plus block (id rust-source-unit-roundtrip; nodes/edges cover parse -> classify item/trivia -> ordered RustSourceUnit IR -> segment emit -> byte-identical regen). Matches the proven POC pipeline (lossless CST capture, structured item extraction, surgical re-render). Applicability is correct for this atomic library WI: the unit owns parse->IR->emit only; dispatch and health-metric wiring are out of scope.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] Logic section is a valid Mermaid Plus block (id rust-source-unit-roundtrip; nodes/edges cover parse -> classify item/trivia -> ordered RustSourceUnit IR -> segment emit -> byte-identical regen). Matches the proven POC pipeline (lossless CST capture, structured item extraction, surgical re-render). Applicability is correct for this atomic library WI: the unit owns parse->IR->emit only; dispatch and health-metric wiring are out of scope.
