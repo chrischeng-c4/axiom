@@ -620,16 +620,38 @@ pub fn mb_fraction_eq(a: MbValue, b: MbValue) -> MbValue {
 pub fn mb_fraction_ne(a: MbValue, b: MbValue) -> MbValue {
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) != std::cmp::Ordering::Equal)
 }
+/// CPython Fraction ordering returns NotImplemented for partners it does not
+/// understand (e.g. a Decimal) so the reflected dunder can run.
+fn fraction_orderable(b: MbValue) -> bool {
+    !(super::super::builtins::is_decimal_handle_value(b)
+        || b.is_none()
+        || b.as_ptr().map(|p| unsafe {
+            matches!((*p).data, ObjData::Str(_) | ObjData::Complex(..))
+        }).unwrap_or(false))
+}
+
 pub fn mb_fraction_lt(a: MbValue, b: MbValue) -> MbValue {
+    if !fraction_orderable(b) {
+        return MbValue::not_implemented();
+    }
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) == std::cmp::Ordering::Less)
 }
 pub fn mb_fraction_le(a: MbValue, b: MbValue) -> MbValue {
+    if !fraction_orderable(b) {
+        return MbValue::not_implemented();
+    }
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) != std::cmp::Ordering::Greater)
 }
 pub fn mb_fraction_gt(a: MbValue, b: MbValue) -> MbValue {
+    if !fraction_orderable(b) {
+        return MbValue::not_implemented();
+    }
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) == std::cmp::Ordering::Greater)
 }
 pub fn mb_fraction_ge(a: MbValue, b: MbValue) -> MbValue {
+    if !fraction_orderable(b) {
+        return MbValue::not_implemented();
+    }
     MbValue::from_bool(cmp_states(coerce(a), coerce(b)) != std::cmp::Ordering::Less)
 }
 pub fn mb_fraction_bool(handle: MbValue) -> MbValue {

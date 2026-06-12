@@ -1293,7 +1293,18 @@ pub fn mb_decimal_round(d: MbValue, ndigits: MbValue, ndigits_given: bool) -> Mb
         let q = round_half_even_abs(&c_abs, s as u32);
         return big_to_mb_int(if neg { -q } else { q });
     }
-    let n = ndigits.as_int().unwrap_or(0);
+    let n = match ndigits.as_int() {
+        Some(n) => n,
+        None => {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "'str' object cannot be interpreted as an integer".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    };
     quantize_to_scale(&st, n.min(MAX_SCALE).max(-64), Rounding::HalfEven)
         .map(make_state_handle)
         .unwrap_or_else(|| make_handle(Decimal::ZERO))
@@ -2436,9 +2447,42 @@ unsafe extern "C" fn dispatch_decimal_setcontext(
 }
 
 unsafe extern "C" fn dispatch_decimal_localcontext(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
+    args_ptr: *const MbValue,
+    nargs: usize,
 ) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    // kwargs ride a trailing dict: capitals/clamp accept only 0 or 1.
+    if let Some(last) = a.last() {
+        if let Some(ptr) = last.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let guard = lock.read().unwrap();
+                    for key in ["capitals", "clamp"] {
+                        if let Some(v) = guard.get(key) {
+                            let ok = matches!(v.as_int(), Some(0) | Some(1))
+                                || v.as_bool().is_some();
+                            if !ok {
+                                drop(guard);
+                                super::super::exception::mb_raise(
+                                    MbValue::from_ptr(MbObject::new_str(
+                                        "ValueError".to_string(),
+                                    )),
+                                    MbValue::from_ptr(MbObject::new_str(format!(
+                                        "{key} must be 0 or 1"
+                                    ))),
+                                );
+                                return MbValue::none();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     MbValue::none()
 }
 
@@ -2537,22 +2581,30 @@ pub fn register() {
     // (surface) and `except decimal.InvalidOperation:` / `raise
     // InvalidOperation` (errors) resolve correctly: `mb_exception_matches`
     // compares the raised type-name string against the resolved attribute.
-    for name in [
-        "DecimalException",
-        "Clamped",
-        "InvalidOperation",
-        "ConversionSyntax",
-        "DivisionByZero",
-        "DivisionImpossible",
-        "DivisionUndefined",
-        "Inexact",
-        "InvalidContext",
-        "Rounded",
-        "Subnormal",
-        "Overflow",
-        "Underflow",
-        "FloatOperation",
-    ] {
+    // Register the signal tree with CPython's bases so issubclass()
+    // resolves the full hierarchy through the class-registry MRO.
+    let signal_tree: &[(&str, &[&str])] = &[
+        ("DecimalException", &["ArithmeticError"]),
+        ("Clamped", &["DecimalException"]),
+        ("InvalidOperation", &["DecimalException"]),
+        ("ConversionSyntax", &["InvalidOperation"]),
+        ("DivisionByZero", &["DecimalException", "ZeroDivisionError"]),
+        ("DivisionImpossible", &["InvalidOperation"]),
+        ("DivisionUndefined", &["InvalidOperation", "ZeroDivisionError"]),
+        ("Inexact", &["DecimalException"]),
+        ("InvalidContext", &["InvalidOperation"]),
+        ("Rounded", &["DecimalException"]),
+        ("Subnormal", &["DecimalException"]),
+        ("Overflow", &["Inexact", "Rounded"]),
+        ("Underflow", &["Inexact", "Rounded", "Subnormal"]),
+        ("FloatOperation", &["DecimalException", "TypeError"]),
+    ];
+    for (name, bases) in signal_tree {
+        super::super::class::mb_class_register(
+            name,
+            bases.iter().map(|b| b.to_string()).collect(),
+            std::collections::HashMap::new(),
+        );
         attrs.insert(name.to_string(), str_val(name));
     }
 
