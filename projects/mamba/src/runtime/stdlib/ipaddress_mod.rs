@@ -419,12 +419,32 @@ fn build_network(arg: MbValue, strict: bool) -> MbValue {
         Some(idx) => (&s[..idx], &s[idx + 1..]),
         None => (s.as_str(), "32"),
     };
-    // Only IPv4 networks are modeled by the integer-handle shell. Non-v4
-    // address parts (IPv6, garbage) keep the legacy None return so we don't
-    // newly raise on the IPv6-network path.
+    // Only IPv4 networks carry full IpState. An IPv6 network gets a minimal
+    // field-only Instance (version/compressed/prefixlen) so cross-version
+    // comparisons and subnet_of/supernet_of see a real partner; other v6
+    // network behavior stays unmodeled. Garbage keeps the legacy None.
     let addr = match parse_ipv4(addr_part) {
         Some(a) => a,
-        None => return MbValue::none(),
+        None => {
+            if let Some(_b) = parse_ipv6(addr_part) {
+                let prefix: u32 = prefix_part.parse().unwrap_or(128).min(128);
+                let inst = MbObject::new_instance("IPv6Network".to_string());
+                unsafe {
+                    if let ObjData::Instance { ref fields, .. } = (*inst).data {
+                        let mut f = fields.write().unwrap();
+                        f.insert("version".to_string(), MbValue::from_int(6));
+                        f.insert("max_prefixlen".to_string(), MbValue::from_int(128));
+                        f.insert("prefixlen".to_string(), MbValue::from_int(prefix as i64));
+                        f.insert(
+                            "compressed".to_string(),
+                            estr(&format!("{addr_part}/{prefix}")),
+                        );
+                    }
+                }
+                return MbValue::from_ptr(inst);
+            }
+            return MbValue::none();
+        }
     };
     // Integer prefix length. A dotted-netmask form (e.g. "0.0.0.255") is not an
     // integer, so keep the legacy None for it; an in-range parse continues, and
@@ -730,7 +750,49 @@ unsafe extern "C" fn ip_dunder_eq(self_v: MbValue, args: MbValue) -> MbValue {
     )
 }
 
+fn inst_int_field(v: MbValue, key: &str) -> Option<i64> {
+    let ptr = v.as_ptr()?;
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(key).copied().and_then(|x| x.as_int())
+        } else {
+            None
+        }
+    }
+}
+
+/// Version from the seeded field, falling back to the class name — the V6
+/// network constructor is still stateless and seeds no fields at all.
+fn version_of(v: MbValue) -> Option<i64> {
+    inst_int_field(v, "version").or_else(|| {
+        class_of(v).and_then(|c| {
+            if c.starts_with("IPv4") {
+                Some(4)
+            } else if c.starts_with("IPv6") {
+                Some(6)
+            } else {
+                None
+            }
+        })
+    })
+}
+
 fn ip_compare(self_v: MbValue, other: MbValue) -> Option<std::cmp::Ordering> {
+    // Cross-version check FIRST — V6 networks have no IpState yet, so
+    // sort_key alone would silently bail.
+    if let (Some(va), Some(vb)) = (version_of(self_v), version_of(other)) {
+        if va != vb {
+            raise(
+                "TypeError",
+                &format!(
+                    "{} and {} are not of the same version",
+                    inst_str_field(self_v, "compressed").unwrap_or_default(),
+                    inst_str_field(other, "compressed").unwrap_or_default(),
+                ),
+            );
+            return None;
+        }
+    }
     let a = sort_key(self_v)?;
     let b = sort_key(other)?;
     // CPython: ordering across IP versions raises TypeError.
@@ -866,10 +928,55 @@ unsafe extern "C" fn ip_dunder_format(self_v: MbValue, args: MbValue) -> MbValue
     estr(&prefixed)
 }
 
+/// network.subnet_of(other) / supernet_of(other): cross-version raises
+/// TypeError; same-version V4 networks do real containment. V6 networks
+/// (stateless today) answer False on the same-version path.
+fn net_relation(self_v: MbValue, other: MbValue, as_subnet: bool) -> MbValue {
+    if let (Some(va), Some(vb)) = (version_of(self_v), version_of(other)) {
+        if va != vb {
+            return raise(
+                "TypeError",
+                &format!("{va} and {vb} are not of the same version"),
+            );
+        }
+    }
+    let (inner, outer) = if as_subnet { (self_v, other) } else { (other, self_v) };
+    if let (Some(IpState::V4Net { addr: ia, prefix: ip_ }), Some(IpState::V4Net { addr: oa, prefix: op })) =
+        (load(inner), load(outer))
+    {
+        if op > ip_ {
+            return MbValue::from_bool(false);
+        }
+        let mask = if op == 0 { 0u32 } else { u32::MAX << (32 - op) };
+        return MbValue::from_bool(ia & mask == oa & mask);
+    }
+    MbValue::from_bool(false)
+}
+
+unsafe extern "C" fn net_subnet_of(self_v: MbValue, args: MbValue) -> MbValue {
+    net_relation(self_v, args_first(args), true)
+}
+
+unsafe extern "C" fn net_supernet_of(self_v: MbValue, args: MbValue) -> MbValue {
+    net_relation(self_v, args_first(args), false)
+}
+
 /// Register the IP classes' shared dunder tables.
 fn register_ip_classes() {
-    for class in ["IPv4Address", "IPv6Address", "IPv4Network"] {
+    for class in ["IPv4Address", "IPv6Address", "IPv4Network", "IPv6Network"] {
         let mut methods: HashMap<String, MbValue> = HashMap::new();
+        if class.ends_with("Network") {
+            for (name, addr) in [
+                ("subnet_of", net_subnet_of as *const () as usize),
+                ("supernet_of", net_supernet_of as *const () as usize),
+            ] {
+                super::super::module::register_variadic_func(addr as u64);
+                super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
+                    s.borrow_mut().insert(addr as u64);
+                });
+                methods.insert(name.to_string(), MbValue::from_func(addr));
+            }
+        }
         for (name, addr) in [
             ("__str__", ip_dunder_str as *const () as usize),
             ("__repr__", ip_dunder_repr as *const () as usize),
