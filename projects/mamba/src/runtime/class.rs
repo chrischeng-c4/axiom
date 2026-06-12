@@ -8828,16 +8828,84 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     } else { None }
                 })
                 .unwrap_or_default();
+            // block/timeout arrive positionally or in a trailing kwargs dict.
+            let kw_dict = arg_items.last().copied().filter(|v| {
+                v.as_ptr()
+                    .map(|p| unsafe { matches!((*p).data, ObjData::Dict(_)) })
+                    .unwrap_or(false)
+            });
+            let kw = |key: &str| -> Option<MbValue> {
+                let ptr = kw_dict?.as_ptr()?;
+                unsafe {
+                    if let ObjData::Dict(ref lock) = (*ptr).data {
+                        return lock.read().unwrap().get(key).copied();
+                    }
+                }
+                None
+            };
+            let positional: &[MbValue] = if kw_dict.is_some() {
+                &arg_items[..arg_items.len() - 1]
+            } else {
+                &arg_items[..]
+            };
+            let as_timeout = |v: MbValue| -> Option<f64> {
+                if v.is_none() {
+                    None
+                } else {
+                    v.as_float().or_else(|| v.as_int().map(|i| i as f64))
+                }
+            };
             match name.as_str() {
                 "put" | "put_nowait" => {
-                    let item = arg_items.first().copied().unwrap_or(MbValue::none());
-                    return super::stdlib::queue_mod::mb_queue_put(receiver, item);
+                    let item = positional.first().copied().unwrap_or(MbValue::none());
+                    let (blocking, timeout) = if name == "put_nowait" {
+                        (false, None)
+                    } else {
+                        let block = positional
+                            .get(1)
+                            .copied()
+                            .or_else(|| kw("block"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
+                        let timeout = positional
+                            .get(2)
+                            .copied()
+                            .or_else(|| kw("timeout"))
+                            .and_then(as_timeout);
+                        (block, timeout)
+                    };
+                    return super::stdlib::queue_mod::mb_queue_put_checked(
+                        receiver, item, blocking, timeout,
+                    );
                 }
-                "get" | "get_nowait" => return super::stdlib::queue_mod::mb_queue_get(receiver),
+                "get" | "get_nowait" => {
+                    let (blocking, timeout) = if name == "get_nowait" {
+                        (false, None)
+                    } else {
+                        let block = positional
+                            .first()
+                            .copied()
+                            .or_else(|| kw("block"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
+                        let timeout = positional
+                            .get(1)
+                            .copied()
+                            .or_else(|| kw("timeout"))
+                            .and_then(as_timeout);
+                        (block, timeout)
+                    };
+                    return super::stdlib::queue_mod::mb_queue_get_checked(
+                        receiver, blocking, timeout,
+                    );
+                }
                 "empty" => return super::stdlib::queue_mod::mb_queue_empty(receiver),
                 "qsize" => return super::stdlib::queue_mod::mb_queue_qsize(receiver),
                 "full" => return super::stdlib::queue_mod::mb_queue_full(receiver),
-                "task_done" | "join" => return MbValue::none(),
+                "task_done" => {
+                    return super::stdlib::queue_mod::mb_queue_task_done(receiver)
+                }
+                "join" => return MbValue::none(),
                 _ => {}
             }
         }
