@@ -13,6 +13,11 @@
 #
 # Exit code is non-zero if any target failed; per-target results and the
 # combined log directory are printed at the end.
+#
+# This is the FULL gate (~3 min). For the fix-iteration inner loop — re-running
+# only the failing fixtures or a regression canary in seconds — use
+# tests/harness/cpython/tools/sweep.py (gate-parity verdicts, shared oracle
+# cache): `sweep.py --failures --filter <cluster>` / `sweep.py --sample 3000`.
 set -uo pipefail
 cd "$(dirname "$0")/../../../.."
 
