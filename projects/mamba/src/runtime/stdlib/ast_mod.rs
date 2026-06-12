@@ -188,8 +188,39 @@ fn make_ast_node(node_type: &str, fields: FxHashMap<String, MbValue>) -> MbValue
 pub fn mb_ast_parse(source: MbValue) -> MbValue {
     let src = extract_str(source).unwrap_or_default();
     let mut fields = FxHashMap::default();
+    // One stub statement node per top-level statement, typed by its leading
+    // keyword, each carrying an empty body of its own. Not a real AST — just
+    // enough shape that `module.body[0]` resolves to a node (since list
+    // subscripts now raise IndexError instead of silently yielding None).
+    let mut body_nodes: Vec<MbValue> = Vec::new();
+    for line in src.lines() {
+        let t = line.trim_start();
+        if t.is_empty() || line.starts_with(|c: char| c.is_whitespace()) {
+            continue; // nested lines belong to the previous statement
+        }
+        if t.starts_with('#') {
+            continue;
+        }
+        let kind = if t.starts_with("def ") {
+            "FunctionDef"
+        } else if t.starts_with("async def ") {
+            "AsyncFunctionDef"
+        } else if t.starts_with("class ") {
+            "ClassDef"
+        } else if t.starts_with("import ") || t.starts_with("from ") {
+            "Import"
+        } else if t.contains('=') && !t.starts_with("if ") {
+            "Assign"
+        } else {
+            "Expr"
+        };
+        let mut nf = FxHashMap::default();
+        nf.insert("body".to_string(),
+            MbValue::from_ptr(MbObject::new_list(vec![])));
+        body_nodes.push(make_ast_node(kind, nf));
+    }
     fields.insert("body".to_string(),
-        MbValue::from_ptr(MbObject::new_list(vec![])));
+        MbValue::from_ptr(MbObject::new_list(body_nodes)));
     fields.insert("type_ignores".to_string(),
         MbValue::from_ptr(MbObject::new_list(vec![])));
     fields.insert("_source".to_string(),

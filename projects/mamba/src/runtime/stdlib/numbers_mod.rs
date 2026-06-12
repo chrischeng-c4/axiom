@@ -36,53 +36,58 @@ pub fn register() {
 }
 
 pub fn mb_numbers_Number() -> MbValue {
-    let dict = MbObject::new_dict();
-    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
-        let mut map = lock.write().unwrap();
-        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Number".to_string())));
-        map.insert("__abstract__".into(), MbValue::from_bool(true));
-    }}
-    MbValue::from_ptr(dict)
+    // The numeric-tower ABCs cannot be instantiated (CPython ABCMeta).
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "Can't instantiate abstract class Number".to_string(),
+        )),
+    );
+    MbValue::none()
 }
 
 pub fn mb_numbers_Complex() -> MbValue {
-    let dict = MbObject::new_dict();
-    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
-        let mut map = lock.write().unwrap();
-        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Complex".to_string())));
-        map.insert("__abstract__".into(), MbValue::from_bool(true));
-    }}
-    MbValue::from_ptr(dict)
+    // The numeric-tower ABCs cannot be instantiated (CPython ABCMeta).
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "Can't instantiate abstract class Complex with abstract methods __abs__, __add__, __complex__, __eq__, __mul__, __neg__, __pos__, __pow__, __radd__, __rmul__, __rpow__, __rtruediv__, __truediv__, conjugate, imag, real".to_string(),
+        )),
+    );
+    MbValue::none()
 }
 
 pub fn mb_numbers_Real() -> MbValue {
-    let dict = MbObject::new_dict();
-    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
-        let mut map = lock.write().unwrap();
-        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Real".to_string())));
-        map.insert("__abstract__".into(), MbValue::from_bool(true));
-    }}
-    MbValue::from_ptr(dict)
+    // The numeric-tower ABCs cannot be instantiated (CPython ABCMeta).
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "Can't instantiate abstract class Real with abstract methods __abs__, __add__, __ceil__, __eq__, __float__, __floor__, __floordiv__, __le__, __lt__, __mod__, __mul__, __neg__, __pos__, __pow__, __radd__, __rfloordiv__, __rmod__, __rmul__, __round__, __rpow__, __rtruediv__, __truediv__, __trunc__, conjugate, imag, real".to_string(),
+        )),
+    );
+    MbValue::none()
 }
 
 pub fn mb_numbers_Rational() -> MbValue {
-    let dict = MbObject::new_dict();
-    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
-        let mut map = lock.write().unwrap();
-        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Rational".to_string())));
-        map.insert("__abstract__".into(), MbValue::from_bool(true));
-    }}
-    MbValue::from_ptr(dict)
+    // The numeric-tower ABCs cannot be instantiated (CPython ABCMeta).
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "Can't instantiate abstract class Rational with abstract methods denominator, numerator".to_string(),
+        )),
+    );
+    MbValue::none()
 }
 
 pub fn mb_numbers_Integral() -> MbValue {
-    let dict = MbObject::new_dict();
-    unsafe { if let ObjData::Dict(ref lock) = (*dict).data {
-        let mut map = lock.write().unwrap();
-        map.insert("__name__".into(), MbValue::from_ptr(MbObject::new_str("Integral".to_string())));
-        map.insert("__abstract__".into(), MbValue::from_bool(true));
-    }}
-    MbValue::from_ptr(dict)
+    // The numeric-tower ABCs cannot be instantiated (CPython ABCMeta).
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "Can't instantiate abstract class Integral with abstract methods __abs__, __add__, __and__, __ceil__, __eq__, __floor__, __index__, __int__, __invert__, __le__, __lshift__, __lt__, __mod__, __mul__, __neg__, __or__, __pos__, __pow__, __rshift__, __trunc__, __xor__".to_string(),
+        )),
+    );
+    MbValue::none()
 }
 
 
