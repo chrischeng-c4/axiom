@@ -1,8 +1,8 @@
 version = 1
 project = "meter"
 td_path = "projects/meter/tech-design"
-generated_at = "2026-06-07T22:48:03.931311+00:00"
-digest = "sha256:fbe7463f6c5b0eae5cc96dafa578b572ed9e98a400544c357252932990e8ff29"
+generated_at = "2026-06-12T09:13:30.550092+00:00"
+digest = "sha256:b38f99df3dfaf9493711ecfcdc532465e33ef42906bcc92ee9cd0a8d897ab629"
 
 [[files]]
 path = ".gitkeep"
@@ -13,281 +13,281 @@ path = "logic/external-contracts.md"
 digest = "sha256:2f0b65b4f4d1349faab5a3120f6d431f8e3a7ab90ade77cb7fe0236f412cb795"
 
 [[files]]
+path = "logic/single-knob-meter-toml-level-gate-l1-vitals-in-capture-until-exi.md"
+digest = "sha256:b79850ae0401374a1dc9b73b2b18e6d23c50587f7a91a9d2bcfcb3c3b553db60"
+
+[[files]]
 path = "semantic/meter-projects-meter.md"
 digest = "sha256:f7bdc8d956c683ff19663827f31c16d3541d00904b43a7fe1bfb5572fd687243"
 
 [[files]]
 path = "semantic/source/projects-meter-benches-discovery-benchmark-rs.md"
-digest = "sha256:7950e25a05ee29d68490fbbe533a313e2c40ab474bd41f8797031d24bbf8a47c"
+digest = "sha256:a5f467059d14b74c3296d66c3ec180f5f66da0afdf9f4c23bc1674e8f8959a81"
 
 [[files]]
 path = "semantic/source/projects-meter-benches-serialization-benchmark-rs.md"
-digest = "sha256:2b2208a2616ed51c480d7794ab8e8c10fe8295c7ef10e4b7c74160451b6e4dfc"
+digest = "sha256:4784904b9b7565b7c64eff01d60b70fbfe0fa546c66f793db27a4070713b03df"
 
 [[files]]
 path = "semantic/source/projects-meter-examples-adaptive-benchmark-demo-rs.md"
-digest = "sha256:2ba8b3b63741284862ddaec7d68ff3d1c6b31ba5d68def60295267da16086f94"
+digest = "sha256:3ffe463e5d95af18c3263b1e65b82389b9328b6fe1be6452c883f5e1bd79e872"
 
 [[files]]
 path = "semantic/source/projects-meter-examples-async-fuzzing-example-rs.md"
-digest = "sha256:93f3b80bf88cfbb90753797dad97bf39d04f9be03e4b5eac8a6ae4e17e8a2b04"
+digest = "sha256:7756b91473f69838a966e75896ee62ef6e099fb4b21e9438503ee15eac51607d"
 
 [[files]]
 path = "semantic/source/projects-meter-examples-baseline-demo-rs.md"
-digest = "sha256:446ff97ee649f9f2e5daab96b7fbf204e24059357d7f01d641136d950918fcab"
+digest = "sha256:d3a5a4307303d2376669dc32cb11752c66801a29cc987eb23e41f04992629b86"
 
 [[files]]
 path = "semantic/source/projects-meter-examples-boundary-tracing-rs.md"
-digest = "sha256:d9b845b9b688542f05dfb795dd70ae5b387544b04f46387ef9326b5e44b93eee"
+digest = "sha256:fc85f6d5c4ef7a7cca926f6708bff3771e4690c351b1c9c82e9951634bc0e6e9"
 
 [[files]]
 path = "semantic/source/projects-meter-examples-junit-reporter-example-rs.md"
-digest = "sha256:5e4008d1d6a9e2a803acf35aaaabcb0b9f549d9272bc8ec1647dc12855014c29"
+digest = "sha256:89164c496d2b7ba790c907419bcd5e21beee009b30a331aa3443a1a78d32031e"
 
 [[files]]
 path = "semantic/source/projects-meter-examples-latency-percentiles-demo-rs.md"
-digest = "sha256:c18e2e5973b032755e6d4b623a1b1c0f05b432214f1aff98861c3e334f6b4d8c"
+digest = "sha256:ececda842d99ea4aaa634ce14b0c5f430188a2178e1b34b390d2e745592ff8f7"
 
 [[files]]
 path = "semantic/source/projects-meter-examples-payload-database-example-rs.md"
-digest = "sha256:056a54c5ef038ed024e35f856238894e19840259042023599c8b8e04756a486f"
+digest = "sha256:e3a9690da0afd0150c3503c31a4930209bb3e32c36e97264229986e534ff0d6c"
 
 [[files]]
 path = "semantic/source/projects-meter-examples-profile-target-rs.md"
-digest = "sha256:7769ac09e5f2f5324f59292b16ad708c98a022af2bd73ac4ebd3550348a81067"
+digest = "sha256:ae99b624982169adf356e10b66f2260f71fe0f9ed3d63f758fa1ad461842d523"
 
 [[files]]
 path = "semantic/source/projects-meter-meter-cli-src-bin-meter-rs.md"
-digest = "sha256:1b7223ee8a7cb94e6e38a9fd53fd7c5999932051dd41e57a47711f01636aa38d"
+digest = "sha256:e899b98b63afee153c1e8de7c3e0fd78ca7295c8a78b9006fcce93c0b8581c27"
 
 [[files]]
 path = "semantic/source/projects-meter-meter-cli-src-dispatch-rs.md"
-digest = "sha256:0fb02e779d6e59ed5d06d1fd63e2c00fa79dbeb32a2310f0500bd48ffadf8b9b"
+digest = "sha256:b8caeada717df00e74e3deca4ced799a27505efbf8a443019ddd5026c2ea4ff2"
 
 [[files]]
 path = "semantic/source/projects-meter-meter-cli-src-lib-rs.md"
-digest = "sha256:c2c1378bbb364fe51e38d355abc66aa02bac0c5946216f393195f014ef454b5c"
+digest = "sha256:1d7947b1742b658c24c65f5704f56b32fc10f879ccd195e3e1d7272de23dd2c2"
 
 [[files]]
 path = "semantic/source/projects-meter-scripts-ts-harness-js.md"
-digest = "sha256:eb9b305dd559a2fd1c4de2c01f55afd8197721266918c0747ab77ffadb69e380"
+digest = "sha256:2990f0744276f5121588be9c3cd3b2f9bc887e38e33bb4575e01b3cfbf4405f7"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-cost-rs.md"
-digest = "sha256:638829d6e61742544e4a045586c840123815b3c7731b6913292057e066f13010"
+digest = "sha256:7b7e2099043907538fb310dfc7c05e34481398ec7bffa3bb62633826527b3b9e"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-dataset-rs.md"
-digest = "sha256:d280560f554b7a5567fcd972a66320c19261e5ad0c793978f8fd3b68e11f4e85"
+digest = "sha256:92cab2650bc65752fa74292bac0ac44bdfed0db918d408e3b187d8c8fd0a6bbc"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-evaluator-rs.md"
-digest = "sha256:9394ca8f261da47cca59018a72f22d42116e1818886e247bfb30e1906a9031b8"
+digest = "sha256:52e65ce851e358fa9bc7c39b1f5d5ac697c9da8916ef711196399c925263ce45"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-llm-judge-rs.md"
-digest = "sha256:4f4a8c03ce7e6aed74a0d4fc0b851c479f1b7dfc307486e5b7f811e99bc66dda"
+digest = "sha256:15297aa04b385f6fd6f75a016ca2ddf7110b0638370f6c3803c21ff12e8d8316"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-mod-rs.md"
-digest = "sha256:18652f0d8fff8ee4f1c159da69d877a1dd703b31b198fff5db439981b9d6e8b3"
+digest = "sha256:ffa72b75f32d77f287410e53f4b8086fd2e476a4010e62ca0a413651f678da89"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-prompt-engine-rs.md"
-digest = "sha256:13a68ca73be7c96df701a58502d8051b2c5d611698c25c0534e8fd47c6904289"
+digest = "sha256:86f77df9e31ef5857a768804d8fc5cf75a234ad41663614e3f8401768ec12fbd"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-prompt-mod-rs.md"
-digest = "sha256:838942cffaf0429f33b2e9b3e6a55e2f3ccbecbb722b590fb83855dfc408145d"
+digest = "sha256:41fc1dc37d4b4db879b8cd1de964bd21ff32ba52c91fce557f2ddc7142ede9d7"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-prompt-registry-rs.md"
-digest = "sha256:e8c81fc3f61ed64c7a9e9295d0ca52d8451c2cb4c89b9eb3241de8c7c9c5848a"
+digest = "sha256:0d367fed4cb4901e938399e52b3a515059d58b513585d53ee0335f7985ea378f"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-prompt-template-rs.md"
-digest = "sha256:92c93d4cbbdd0dea615e12429f25778d34cfd49772267b83a8b25317f09ed54d"
+digest = "sha256:cd8d8a25b649e63dcb85caaf6b237cb3eaff156a0ee6439fdb1840da0ab1b9ac"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-regression-rs.md"
-digest = "sha256:8d0ee94644cfdd5e94637580df3969a96f335ecd7a2316f95c388928b18db64f"
+digest = "sha256:2ccb14fb574ab1804f46f440d7c0e529661beb13abaf30c4d0632c706fc844f3"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-result-rs.md"
-digest = "sha256:2412c46d7f8d1ab338563383630799541438339c7fe5e5bfb58f89c1344fe975"
+digest = "sha256:afb46068c2ab4fc80036e38df0b1cbac1e6db9efb993640524ace927f395ca6e"
 
 [[files]]
 path = "semantic/source/projects-meter-src-agent-eval-test-case-rs.md"
-digest = "sha256:d39aa16fff467bdc39c4482eb7f1de68be5f3430e34e08f1c1a8afe4b34fc09c"
+digest = "sha256:878038d49fcc63d6ac1f44b70465b9a107963618d44d5e6c4c4a45a8cb2e932c"
 
 [[files]]
 path = "semantic/source/projects-meter-src-assertions-rs.md"
-digest = "sha256:c0af81d91a87a5fda6e30b1f2ab0a990161f4835bd2c80628958981d9d16f277"
+digest = "sha256:65d4088dbb922b02546389de725a794df28152519e592c5f420866ced9bfa54b"
 
 [[files]]
 path = "semantic/source/projects-meter-src-baseline-rs.md"
-digest = "sha256:3d3ec617e952b853d98b73106284efb37935c31612691a9a413da8a8c4fa7369"
+digest = "sha256:6a74a7f17516b6599d85f29a92717c98dd1812450472d7c44ace7f3dbfeb3561"
 
 [[files]]
 path = "semantic/source/projects-meter-src-benchmark-rs.md"
-digest = "sha256:3e15c2d801407495a63d16b6b83311260048533d179168458cff3e9d3d34ca05"
+digest = "sha256:f77c39044b3f45a51b5e2be403cc69435dfbd5c5536c45c209827f2012c27d8c"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-audit-rs.md"
-digest = "sha256:38d2390147fc567bbc81f092995b1a4cc95ac9c23fb819115446a814811fa8c7"
+digest = "sha256:f087a47a77ee180c841d392e94dbf52c69837f2447c948a65212c563d636c5f2"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-bench-rs.md"
-digest = "sha256:598bea66f2b41177a5aff9bdb07ed621b932dd553ca8e602bb315498f43d1cbe"
+digest = "sha256:79d10b33bbcd2853fe226ae8004780cdcb1fd6447bf3fbc127a51ae1e9a9a931"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-delegate-rs.md"
-digest = "sha256:cd14e45b9168798816be6227ad199a646c3d87c69f9245e93cf37b1aac052ebc"
+digest = "sha256:e417213dd8373817ccbc19a4156478720f8a1a54d8bd1d9299f4231f0a0137d0"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-fold-rs.md"
-digest = "sha256:732365c3e585c5e33792765433cd5622d7389d8bc0296f9d5282c359bbb6788f"
-
-[[files]]
-path = "semantic/source/projects-meter-src-capture-fuzz-rs.md"
-digest = "sha256:abc5287022107f514bd1aadf1442e5355385bdc938d1bbddebd76773164a5edc"
+digest = "sha256:a7182bff03d088ae3abec4c0bac110e85f9847e5fe3e5c912766865d5e438316"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-mod-rs.md"
-digest = "sha256:f5f2f70ea0b017ad7df61095951c204df91925d7ec6a36553b135f469b75c01e"
+digest = "sha256:2130d25ced182971b0ed4a80302317bd079052a4a23019476bbce876112e3a2d"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-run-rs.md"
-digest = "sha256:a3a0218346c39c1347500e2a09be61faa8f0f6b8f3f4c4acb8ae8bf63d789082"
+digest = "sha256:f76dd34adeb8e92122bd4c04430c1210d660d081af6dc7ec49347c72da8d238e"
 
 [[files]]
 path = "semantic/source/projects-meter-src-capture-sampler-rs.md"
-digest = "sha256:1cb0e5a5f9e4ec64f9c2e23192bea8c162ed6e70637196e030c97e2f2f36d892"
+digest = "sha256:0a2871b94432aac0c8863e600917a2a1faf9fd7ffb4fd5fd4e06755d40f684cf"
 
 [[files]]
 path = "semantic/source/projects-meter-src-discovery-rs.md"
-digest = "sha256:3b7b8f5d27f1897cace082ffa918fefa02747ffa958baf54c89415ce229c0ea7"
+digest = "sha256:38f851a96b543461d430e3f412f393dfa03391e7da61cb908ab379290ee362a8"
 
 [[files]]
 path = "semantic/source/projects-meter-src-fixtures-rs.md"
-digest = "sha256:bbae6ffd424908364ddfa19eef17a56bb65b4ce41dc3ddf432fba1943fe53874"
+digest = "sha256:8ec6bdad2eba2f56d1a1750c9954e168e8163fa9b53132f5738c71e81e7bde65"
 
 [[files]]
 path = "semantic/source/projects-meter-src-hooks-rs.md"
-digest = "sha256:32336067301bc10ed58cee72cf1ef28d65aa8acf0fa9bc8271ef78c2f2822afb"
+digest = "sha256:85ff8b171cfee5f401b4ff2f80859921c486ee602c7ea6bf27bf609f0c71f2ff"
 
 [[files]]
 path = "semantic/source/projects-meter-src-http-server-rs.md"
-digest = "sha256:7b4a561902ffb2fcecaaa3fd6c2df582b48097e5b658f594e3d85caab309be44"
+digest = "sha256:8baa5efba5aae62ae6752741a0c5b2d7ccc16a9cb295d641bac03c6a36aa36df"
 
 [[files]]
 path = "semantic/source/projects-meter-src-lib-rs.md"
-digest = "sha256:254e3739a066cdbee164e47a552879953d219b5b483a3991ced27a41e8dd8db0"
+digest = "sha256:039756e12a2f21a63cb1d53e2a7ab5a481870356505e72981260bbe3a5539c07"
 
 [[files]]
 path = "semantic/source/projects-meter-src-parametrize-rs.md"
-digest = "sha256:ab080c3c40f6871aa3c026f80deb60be3b94db7705b1e761757110a6f5856043"
+digest = "sha256:263d8f985a2d473e1f331f7675e17bc2a4d82dd172022682c73b6af5473ee9f9"
 
 [[files]]
 path = "semantic/source/projects-meter-src-performance-boundary-rs.md"
-digest = "sha256:e968ad6a536108b82cae11e8feaa4ab0f597211d20134521e03d6222af622b51"
+digest = "sha256:0cf6eca6427df8551ae1b72a64b3fd0640b101b8fc98bbf3f052b52b82f91c52"
 
 [[files]]
 path = "semantic/source/projects-meter-src-performance-mod-rs.md"
-digest = "sha256:f4dc5079b110eba1682515ea81a5b40a0043cc7160a726db7ff0599e68a97e71"
+digest = "sha256:02bfc5ccd96bc069788648c3f6e312a5267362791d7210ca483936fbc39f8d3c"
 
 [[files]]
 path = "semantic/source/projects-meter-src-performance-profiler-rs.md"
-digest = "sha256:88c4da69e01b3d2302a8a9f089cb737b7e7c02094ceab50ba1a8fa45755391e0"
+digest = "sha256:6fda5c21355c461c38223ce57d09196b07eb0c2fc0b40b0826a263b2d71b5971"
 
 [[files]]
 path = "semantic/source/projects-meter-src-plugin-rs.md"
-digest = "sha256:42035ecd908a86bf307b7aac793b72e39767f4ba6625308aae0e015877a00462"
+digest = "sha256:caaff456b90d982b5ebfda46d9694340b487a5fdf5ae7f89e79e9e357e86fde4"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-builder-rs.md"
-digest = "sha256:3f7024f44aad4984e1204e11df65d49dc0f7c7db341d77bb2b1c980acbbf88cc"
+digest = "sha256:3695a929ea76052fddb087404f5008c408f45b5270960cb13e0635e601514820"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-emit-rs.md"
-digest = "sha256:976de79a2fb2f4ecc8b98c44dd7f8680fbc787bca5a3623e1195fe2b1b146c18"
+digest = "sha256:9988668f780a8b83252d7605295bc74938f7180943d5bfe7c4488c8df12b8b5e"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-env-rs.md"
-digest = "sha256:bc4a2038ad2ce0dbe073994a0f954b987da47cfc205adb8687f658dee2a49d25"
+digest = "sha256:3c85e1cf7d74345b7da2157925927727f7fc5dd9e93baf915535b7e28b301688"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-envelope-rs.md"
-digest = "sha256:2228d1291c1d7ba9d1734384c4a329112e8dfe16669b8275acfec3f561a83fd1"
+digest = "sha256:67387b26e609c57f030cbf4d61085ada14a3d80e39ce8d3bcc8b22e617720874"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-finding-rs.md"
-digest = "sha256:fcf4f45f2e630c741cac224f062b2f7048ff9da7961f6efcc7a2791866b404a7"
+digest = "sha256:76c5a0c284e4beaee5c2256068cf9699a55554a489a4df444895fa74b4080be1"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-mod-rs.md"
-digest = "sha256:ae8703d4d7389b522857783ea3259793d03b48010158035fbb150c4960ae44eb"
+digest = "sha256:75a8913702cfbd265a27a5d53dd93e69dba6697e4d2ad6a74dedf80e52e4f47d"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-persist-rs.md"
-digest = "sha256:bac9b6622830f65eaa4ad547f6035f8c8237ac1141394a50da2730d16c2028ce"
+digest = "sha256:bd497c430b92016057a2168eac4354da4e2cb81ef888f59dcc0e8aec60fffe19"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-producer-rs.md"
-digest = "sha256:ef662a8c990993104f89cc98541845eaaed2747f94279531e683f8690a9347cf"
+digest = "sha256:7a1b0dca7a3b3c974334dbc2681ea85d033de9d974d5eca204f6f808695d7310"
 
 [[files]]
 path = "semantic/source/projects-meter-src-report-schema-rs.md"
-digest = "sha256:9a4bf81fe2b8a90ed1d3bcb1c6d03b47906fd292c15e3015ef8074fd458fa6df"
+digest = "sha256:2de91475fd4b2d3f61eda7f0117aa240388784500c3b05b741e8582965eb7a4a"
 
 [[files]]
 path = "semantic/source/projects-meter-src-reporter-rs.md"
-digest = "sha256:89bf3d00dc96c06d0b2d3b15580aa8ca444b08bcc6f097b512fed8ee03933617"
+digest = "sha256:729b19e3af800cc83bf032067d894ce9d744541c7799b00ce266428ddec3388b"
 
 [[files]]
 path = "semantic/source/projects-meter-src-runner-rs.md"
-digest = "sha256:dde654078605bee64178dbd086ed0c981c35effd973fd167433518c6e31daca8"
+digest = "sha256:c5a139243eeef44314a5bdc17b3a1aba7356b5e3eaf609055c163d70f61f806b"
 
 [[files]]
 path = "semantic/source/projects-meter-src-rust-runner-rs.md"
-digest = "sha256:cc4b3643aeba7b59e5e882cd2f27ab049a3eae364c74116e1b194c913a48cf36"
+digest = "sha256:e1c5916f9aa37052ce8b920d4e6b683b783d9793b6598b6695c563a66a9aa6d4"
 
 [[files]]
 path = "semantic/source/projects-meter-src-security-async-fuzzer-rs.md"
-digest = "sha256:8eb612ffac8430d0db8c6018fddb295f8fd4fddf37c6f2f4d96559c1647aab30"
+digest = "sha256:a0cfc6d3680e042df7db11731fac4256af6064debc81c4ff3c4aa7e3876756f2"
 
 [[files]]
 path = "semantic/source/projects-meter-src-security-fuzzer-rs.md"
-digest = "sha256:8b91e1c89138f602fc80dd5490255b56d5082fe9688926bc969a2eb9c3eb8586"
+digest = "sha256:a18d5a28bcc7f5b1eabe6a4e8c6cd90b552ad912d7c3849e500cbf976ff4fc41"
 
 [[files]]
 path = "semantic/source/projects-meter-src-security-mod-rs.md"
-digest = "sha256:c175ae21d4b15275c7d7bced094fc59efdb5ebc4eb09970186d9d205f0f79792"
+digest = "sha256:89682a2ad00451cb06144208065a1fcea0ad4ce31a7f1e8bba0973f7407c8ac8"
 
 [[files]]
 path = "semantic/source/projects-meter-src-security-payloads-rs.md"
-digest = "sha256:9db505ca642f3209f3a3c6f5328d5717fdac86a16b8959c99b24797cf0b20124"
+digest = "sha256:2fee722225dfc9f5bc582779c7bd440876f9e5fb49a5942ed290d33e57441445"
 
 [[files]]
 path = "semantic/source/projects-meter-src-security-sql-injection-rs.md"
-digest = "sha256:87af69a2859d07c6593b049b801ce89d1c265bff23bc2a80b31335c8991c964d"
+digest = "sha256:016366b373a41b67a6dca861a4dced6c2fa3b47f1db0547c200ab71de421422d"
 
 [[files]]
 path = "semantic/source/projects-meter-src-ts-runner-rs.md"
-digest = "sha256:41877127abb0db5d219a43f9bca3f3cba542fc6099687d483138845f56e69fff"
+digest = "sha256:783f99823618dcaeb509aacb13fee8dc281d6734c9808a6482ba1038cb3a827d"
 
 [[files]]
 path = "semantic/source/projects-meter-tests-async-fuzzing-test-rs.md"
-digest = "sha256:ea136d09e1b7bf274c44cf92c01dad0868b7754865150121e034226824ecdc10"
+digest = "sha256:9a689a43dd453982ce43738ed748fb151685c30d59be63449256f4a527e543bf"
 
 [[files]]
 path = "semantic/source/projects-meter-tests-audit-trust-bug-rs.md"
-digest = "sha256:8bd78716bf0dfcd8aa8fc752756b73cfdf87ceae883760e07ccec82ce5226db2"
+digest = "sha256:6102347d99d5c78670eb44c4bc76e9f59a401f91c1898e14de5fa1eae131487e"
 
 [[files]]
 path = "semantic/source/projects-meter-tests-fixtures-vuln-crate-src-main-rs.md"
-digest = "sha256:311e53df79ebec245532f2d2243d168d20071622be7c86c8d92972435fa41388"
+digest = "sha256:263fafff91706c2f5d08a5cbf5ecda39fe54171251c7cc5611a0a6f582a69a7b"
 
 [[files]]
 path = "semantic/source/projects-meter-tests-junit-example-rs.md"
-digest = "sha256:b9a90ffbe3bfa760e9fdcded6c6952b3ebc5e7b9cd415065c9b9f06fe4a492f1"
+digest = "sha256:1675b75566ef5bf6e51e639e5674c6d4b2c8b0585cb96395b8f8d3d578decef9"
