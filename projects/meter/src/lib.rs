@@ -120,8 +120,3 @@ pub use report::{
     SCHEMA_VERSION,
 };
 // CODEGEN-END
-
-// HANDWRITE-BEGIN gap="missing-generator:meter-ast-instrumentation" reason="AST-assisted probe-point discovery (feature `ast`) backed by compass (libs/compass), filling the README's 'AST-assisted instrumentation is planned but not implemented' gap. Promote to CODEGEN by adding the instrument module to the lib.rs TD Source snapshot + symbols table."
-#[cfg(feature = "ast")]
-pub mod instrument;
-// HANDWRITE-END
