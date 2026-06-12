@@ -148,6 +148,8 @@ name = "arena"
 paths = ["projects/arena/**", ".github/workflows/arena-release.yml"]
 target = "rust"
 test_cmd = "cargo test -p arena"
+verify_cold = true
+codegen.profile = "rust/score-crate"
 
 
 [[projects]]
