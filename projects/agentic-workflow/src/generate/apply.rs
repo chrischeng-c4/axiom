@@ -291,7 +291,8 @@ fn run_apply_inner(
     // this, a virgin file with no markers would be duplicated.
     let source_from_target_replays_whole_file = source_from_target_directive(&spec_content)
         .is_some()
-        || source_is_rust_source_unit(&spec_content);
+        || source_is_rust_source_unit(&spec_content)
+        || source_is_text_source_unit(&spec_content);
     let whole_file_source_targets: std::collections::BTreeSet<String> = all_entries
         .iter()
         .filter(|entry| {
@@ -610,12 +611,14 @@ fn run_apply_inner(
                 Some("e2e-test") if target_lang == crate::generate::marker::Lang::Rust => {
                     crate::generate::gen::rust::tests_gen::generate_e2e_tests(&spec_content).code
                 }
-                Some("source" | "rust-source-unit") => generate_source_section_code(
-                    &spec_content,
-                    &spec_path_str,
-                    Some(&entry.path),
-                    root,
-                ),
+                Some("source" | "rust-source-unit" | "text-source-unit") => {
+                    generate_source_section_code(
+                        &spec_content,
+                        &spec_path_str,
+                        Some(&entry.path),
+                        root,
+                    )
+                }
                 Some("runtime-image" | "deployment") => {
                     let section = entry.section_id.as_deref().unwrap_or("changes");
                     try_generate_operations_artifact(&spec_content, &entry, td_ast.as_ref())
@@ -886,7 +889,10 @@ fn is_whole_file_codegen_section(
 ) -> bool {
     matches!(section, Some("runtime-image" | "deployment"))
         || (source_from_target_replays_whole_file
-            && matches!(section, Some("source" | "rust-source-unit")))
+            && matches!(
+                section,
+                Some("source" | "rust-source-unit" | "text-source-unit")
+            ))
 }
 
 fn is_whole_file_codegen_content(
@@ -3264,6 +3270,35 @@ pub struct Widget {
         assert!(source.contains("pub struct Widget {"));
         // Rust target → per-item @spec breadcrumb is added.
         assert!(source.contains("#source"));
+    }
+
+    #[test]
+    fn text_source_unit_section_emits_td_fence_verbatim() {
+        // A `## Source` marked text-source-unit (opaque text, e.g. a shell
+        // script) emits the TD-embedded fence VERBATIM — no parsing, no Rust
+        // annotation, no target read. The TD is the source of truth.
+        let spec = r#"
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+echo "build ${1:-debug}"   # kept exactly
+```
+"#;
+        let source = generate_source_section_code(
+            spec,
+            ".aw/tech-design/projects/lumen/build-sh.md",
+            Some("projects/lumen/build.sh"),
+            std::path::Path::new("/nonexistent-root"),
+        );
+        // Fence content is emitted verbatim, trailing newline included (the
+        // file's final newline is preserved for byte-equivalence).
+        let expected = "#!/usr/bin/env bash\nset -euo pipefail\necho \"build ${1:-debug}\"   # kept exactly\n";
+        assert_eq!(source, expected);
+        // No Rust @spec breadcrumbs injected into shell.
+        assert!(!source.contains("@spec"));
     }
 
     #[test]
@@ -6658,8 +6693,8 @@ pub(crate) fn generate_code_for_entry(
     // produces correct byte-equivalent output instead of a marker-only TODO
     // stub. The rust-source-unit path reads the TD fence, not the target, so the
     // root argument is unused here.
-    if matches!(target_section, Some("source" | "rust-source-unit"))
-        && source_is_rust_source_unit(spec_content)
+    if matches!(target_section, Some("source" | "rust-source-unit" | "text-source-unit"))
+        && (source_is_rust_source_unit(spec_content) || source_is_text_source_unit(spec_content))
     {
         return generate_source_section_code(
             spec_content,
@@ -7676,6 +7711,14 @@ fn target_language(path: &Path, section: Option<&str>) -> Option<crate::generate
     if is_rust_source(path) {
         return Some(Lang::Rust);
     }
+    // NOTE: shell scripts are intentionally NOT mapped here. A whole-file CODEGEN
+    // wrap puts the `# SPEC-MANAGED`/`# CODEGEN-BEGIN` markers above the content,
+    // which would push the `#!` shebang off line 1 and break `exec`-invoked
+    // scripts (build.sh / install.sh). Making shell a text-source-unit needs
+    // shebang-aware managed-block insertion (markers after the shebang, with the
+    // shebang still inside the regenerable region) — a separate feature. Until
+    // then shell stays HANDWRITE, matching the reference project (lumen build.sh
+    // gap=project-root-build-script tracker=#4158).
     if supports_source_backed_replay_path(path, section) {
         return Some(Lang::TypeScript);
     }
@@ -8640,6 +8683,15 @@ pub(crate) fn generate_source_section_code(
         };
     }
 
+    // text-source-unit (td_ast): the language-agnostic sibling of rust-source-unit
+    // for opaque text with no structured AST (shell, dockerfile, plain config).
+    // The TD-embedded fence is the source of truth and is emitted VERBATIM — TD
+    // edits regenerate, which is exactly what source-replay snapshots fail to do.
+    // No parsing, no per-item annotation; byte-equivalent by construction.
+    if source_is_text_source_unit(spec_content) {
+        return embedded_source;
+    }
+
     let source = if let Some(directive) = source_from_target_directive(spec_content) {
         target_rel_path
             .and_then(|path| std::fs::read_to_string(root.join(path)).ok())
@@ -8663,6 +8715,20 @@ pub(crate) fn generate_source_section_code(
 /// TD-embedded fence is the source of truth and is regenerated through the
 /// structured item-tree instead of replayed.
 fn source_is_rust_source_unit(spec_content: &str) -> bool {
+    source_section_has_type_marker(spec_content, "type: rust-source-unit")
+}
+
+/// True when the `## Source` section opts into text-source-unit (td_ast)
+/// verbatim regeneration via a `<!-- type: text-source-unit ... -->` marker —
+/// the opaque-text counterpart of rust-source-unit (shell, dockerfile, etc.).
+fn source_is_text_source_unit(spec_content: &str) -> bool {
+    source_section_has_type_marker(spec_content, "type: text-source-unit")
+}
+
+/// Scan the `## Source` section for a `<!-- type: <marker> ... -->` annotation.
+/// `marker` must be the full `type: <kind>` token so `rust-source-unit` does not
+/// accidentally match `text-source-unit` or the legacy `source` probe.
+fn source_section_has_type_marker(spec_content: &str, marker: &str) -> bool {
     let mut in_source = false;
     for line in spec_content.lines() {
         let trimmed = line.trim();
@@ -8673,7 +8739,7 @@ fn source_is_rust_source_unit(spec_content: &str) -> bool {
                 .eq_ignore_ascii_case("Source");
             continue;
         }
-        if in_source && trimmed.starts_with("<!--") && trimmed.contains("type: rust-source-unit") {
+        if in_source && trimmed.starts_with("<!--") && trimmed.contains(marker) {
             return true;
         }
     }
