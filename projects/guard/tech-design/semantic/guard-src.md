@@ -1,6 +1,12 @@
 ---
 id: semantic-guard-src
 summary: Semantic coverage for "projects/guard/src"
+capability_refs:
+  - id: "static-security-scan"
+    role: primary
+    claim: "compass-backed-diagnostic-scan"
+    coverage: partial
+    rationale: "Semantic takeover coverage for existing source group `projects/guard/src`."
 fill_sections: [schema, unit-test, changes]
 ---
 
@@ -21,6 +27,9 @@ semantic_domain:
         ownership_state: "codegen"
         generator_primitives: ["source_unit"]
         symbols:
+          - name: "evidence"
+            kind: "module"
+            public: true
           - name: "report"
             kind: "module"
             public: true
@@ -86,6 +95,9 @@ semantic_domain:
           - name: "from_scan"
             kind: "function"
             public: true
+          - name: "from_scan_with_evidence"
+            kind: "function"
+            public: true
           - name: "stub"
             kind: "function"
             public: true
@@ -98,6 +110,9 @@ semantic_domain:
           - name: "read_last"
             kind: "function"
             public: true
+          - name: "missing_integrations"
+            kind: "function"
+            public: false
           - name: "finding_id"
             kind: "function"
             public: true
@@ -107,11 +122,82 @@ semantic_domain:
           role: "source"
           section_type: "schema"
           domain: "projects/guard/src"
+      - path: "projects/guard/src/evidence.rs"
+        language: "rust"
+        ownership_state: "codegen"
+        generator_primitives: ["data_model", "enum_model", "service_method"]
+        symbols:
+          - name: "EvidenceCommand"
+            kind: "struct"
+            public: true
+          - name: "argv"
+            kind: "function"
+            public: true
+          - name: "shell"
+            kind: "function"
+            public: true
+          - name: "display_command"
+            kind: "function"
+            public: true
+          - name: "with_cwd"
+            kind: "function"
+            public: true
+          - name: "with_env"
+            kind: "function"
+            public: true
+          - name: "EvidenceStatus"
+            kind: "enum"
+            public: true
+          - name: "ExternalEvidence"
+            kind: "struct"
+            public: true
+          - name: "to_guard_finding"
+            kind: "function"
+            public: true
+          - name: "run_evidence_commands"
+            kind: "function"
+            public: true
+          - name: "run_one"
+            kind: "function"
+            public: false
+          - name: "parse_json_payload"
+            kind: "function"
+            public: false
+          - name: "report_clean"
+            kind: "function"
+            public: false
+          - name: "finding_count"
+            kind: "function"
+            public: false
+          - name: "compact_report"
+            kind: "function"
+            public: false
+          - name: "tail_lossy"
+            kind: "function"
+            public: false
+          - name: "squash"
+            kind: "function"
+            public: false
+          - name: "tests"
+            kind: "module"
+            public: false
+        source_evidence_node:
+          layer: "backend"
+          ecosystem: "rust"
+          role: "source"
+          section_type: "schema"
+          domain: "projects/guard/src"
       - path: "projects/guard/src/scan.rs"
         language: "rust"
         ownership_state: "codegen"
-        generator_primitives: ["data_model", "service_method"]
+        generator_primitives: ["data_model", "enum_model", "service_method"]
         symbols:
+          - name: "PolicyProfile"
+            kind: "enum"
+            public: true
+          - name: "as_str"
+            kind: "function"
+            public: true
           - name: "ScanOptions"
             kind: "struct"
             public: true
@@ -127,7 +213,19 @@ semantic_domain:
           - name: "scan_path_with_options"
             kind: "function"
             public: true
+          - name: "one_based"
+            kind: "function"
+            public: false
+          - name: "include_diagnostic"
+            kind: "function"
+            public: false
+          - name: "security_lint_rule"
+            kind: "function"
+            public: false
           - name: "map_severity"
+            kind: "function"
+            public: false
+          - name: "sql_injection_language"
             kind: "function"
             public: false
           - name: "remediation_for_rule"
@@ -175,6 +273,12 @@ changes:
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
   - path: "projects/guard/src/report.rs"
+    action: modify
+    section: schema
+    description: |
+      Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/guard/src/evidence.rs"
     action: modify
     section: schema
     description: |
