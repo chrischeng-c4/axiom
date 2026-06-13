@@ -834,6 +834,29 @@ pub fn mb_count_iter(start: MbValue, step: MbValue) -> MbValue {
 
 /// Create a lazy `itertools.repeat(value[, times])` iterator handle.
 /// `times` of `None` (not an int) yields the infinite form.
+/// CPython-style repr for named itertools iterator handles. Returns None for
+/// any handle that is not a recognized named iterator (callers fall back to
+/// the default int formatting). Currently covers `repeat`.
+pub fn mb_iter_repr(handle: MbValue) -> Option<(String)> {
+    let id = handle.as_int()? as u64;
+    let repeat = ITERATORS.with(|iters| {
+        let iters = iters.borrow();
+        match iters.get(&id).map(|it| &it.kind) {
+            Some(IterKind::Repeat { val, remaining }) => Some((*val, *remaining)),
+            _ => None,
+        }
+    })?;
+    let (val, remaining) = repeat;
+    let vr = super::builtins::mb_repr(val);
+    let vr_s = vr.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+    }).unwrap_or_default();
+    Some(match remaining {
+        Some(n) => format!("repeat({vr_s}, {n})"),
+        None => format!("repeat({vr_s})"),
+    })
+}
+
 pub fn mb_repeat_iter(val: MbValue, times: MbValue) -> MbValue {
     let remaining = times.as_int().map(|n| n.max(0) as usize);
     unsafe { super::rc::retain_if_ptr(val); }

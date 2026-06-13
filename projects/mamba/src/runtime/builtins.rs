@@ -4289,6 +4289,11 @@ pub fn mb_repr(val: MbValue) -> MbValue {
         if super::stdlib::fractions_mod::is_fraction_handle(i as u64) {
             return super::stdlib::fractions_mod::mb_fraction_repr(val);
         }
+        // Named itertools iterators (repeat, …) have a CPython-style repr
+        // rather than their raw handle id.
+        if let Some(r) = super::iter::mb_iter_repr(val) {
+            return MbValue::from_ptr(MbObject::new_str(r));
+        }
         format!("{i}")
     } else if let Some(f) = val.as_float() {
         super::string_ops::python_float_repr(f)
