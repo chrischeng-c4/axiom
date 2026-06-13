@@ -1045,6 +1045,8 @@ pub fn register() {
         ("is_zipfile", d_is_zipfile as *const () as usize),
         ("BadZipFile", d_zipfile_badzipfile as *const () as usize),
         ("BadZipfile", d_zipfile_badzipfile as *const () as usize),
+        // CPython: `zipfile.error` is an alias for BadZipFile.
+        ("error", d_zipfile_badzipfile as *const () as usize),
         ("LargeZipFile", d_zipfile_badzipfile as *const () as usize),
         ("Path", d_zipfile_badzipfile as *const () as usize),
         ("PyZipFile", d_zipfile_new as *const () as usize),
@@ -1063,6 +1065,12 @@ pub fn register() {
     attrs.insert("DEFAULT_VERSION".into(), MbValue::from_int(20));
     attrs.insert("ZIP64_LIMIT".into(), MbValue::from_int((1i64 << 31) - 1));
     attrs.insert("ZIP_MAX_COMMENT".into(), MbValue::from_int(65535));
+    // Fixed on-disk structure sizes (CPython zipfile module constants).
+    attrs.insert("sizeEndCentDir".into(), MbValue::from_int(22));
+    attrs.insert("sizeCentralDir".into(), MbValue::from_int(46));
+    attrs.insert("sizeFileHeader".into(), MbValue::from_int(30));
+    attrs.insert("sizeEndCentDir64".into(), MbValue::from_int(56));
+    attrs.insert("sizeEndCentDir64Locator".into(), MbValue::from_int(20));
 
     // `except zipfile.BadZipFile` resolves the constructor func to the raised
     // type name through NATIVE_TYPE_NAMES.
