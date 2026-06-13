@@ -2735,6 +2735,22 @@ impl<'a> AstLowerer<'a> {
                         }
                     }
                 }
+                // statistics.quantiles has a keyword-only signature
+                // (`quantiles(data, *, n=4, method=...)`): its dispatcher must
+                // distinguish `quantiles(data, n=4)` (fine) from
+                // `quantiles(data, 4)` (TypeError), which requires keyword
+                // names to survive lowering via the trailing-kwargs-dict
+                // convention rather than flattening to positionals.
+                if module.len() == 1 && module[0] == "statistics" {
+                    if let Some(names) = names {
+                        for (orig, alias) in names {
+                            if orig == "quantiles" {
+                                self.dataclasses_kwarg_idents
+                                    .insert(alias.clone().unwrap_or_else(|| orig.clone()));
+                            }
+                        }
+                    }
+                }
                 Some(HirStmt::Import {
                     import: HirImport {
                         module: module.clone(),

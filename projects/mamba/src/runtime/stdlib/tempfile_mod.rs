@@ -21,9 +21,11 @@
 //! - `mkstemp` doesn't return a real fd — uses 0 placeholder.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use super::super::value::MbValue;
-use super::super::rc::{MbObject, ObjData};
+use super::super::rc::{MbObject, MbObjectHeader, ObjData, ObjKind};
+use crate::runtime::rc::MbRwLock as RwLock;
+use rustc_hash::FxHashMap;
 
 macro_rules! dispatch_nullary {
     ($name:ident, $fn:ident) => {
@@ -69,8 +71,9 @@ unsafe extern "C" fn dispatch_TemporaryFile(args_ptr: *const MbValue, nargs: usi
     mb_tempfile_temporary_file(a)
 }
 #[allow(non_snake_case)]
-unsafe extern "C" fn dispatch_SpooledTemporaryFile(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    mb_tempfile_spooled_temporary_file()
+unsafe extern "C" fn dispatch_SpooledTemporaryFile(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    mb_tempfile_spooled_temporary_file_v(a)
 }
 
 /// Register the tempfile module.
@@ -327,7 +330,22 @@ pub fn mb_tempfile_mkstemp_v(args: &[MbValue]) -> MbValue {
             ]);
             MbValue::from_ptr(tuple)
         }
-        Err(_) => MbValue::none(),
+        Err(e) => {
+            // CPython surfaces the OS error: a missing `dir` is FileNotFoundError.
+            let kind = if e.kind() == std::io::ErrorKind::NotFound {
+                "FileNotFoundError"
+            } else {
+                "OSError"
+            };
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str(kind.to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "[Errno 2] No such file or directory: '{}'",
+                    file_path.to_str().unwrap_or("")
+                ))),
+            );
+            MbValue::none()
+        }
     }
 }
 
@@ -369,21 +387,73 @@ fn normalize_temp_mode(mode: &str) -> String {
     if binary { "w+b".to_string() } else { "w+".to_string() }
 }
 
-/// tempfile.NamedTemporaryFile(mode='w+b', ...) -> writable file handle with
-/// `.name`. Honors `mode` and `dir`; the file is created on disk so reopen-by-
-/// name reads see the written bytes after flush.
+/// tempfile.NamedTemporaryFile(mode='w+b', ..., dir=None, delete=True, *,
+/// delete_on_close=True) -> a `_TemporaryFileWrapper`-style Instance with
+/// `.name`, real read/write delegation, and CPython 3.12 delete semantics:
+/// `delete=True, delete_on_close=True` removes the file at close();
+/// `delete_on_close=False` defers removal to context-manager exit.
 pub fn mb_tempfile_named_temp_file(args: &[MbValue]) -> MbValue {
-    open_temp_backing(args, "w+b", "mbtmp_named_")
+    let (pos, kwargs) = split_kwargs(args);
+    let mode = arg_or_kw(&pos, 0, &kwargs, "mode")
+        .and_then(as_text)
+        .unwrap_or_else(|| "w+b".to_string());
+    // CPython validates through io.open: stripped of 'b'/'t'/'+', the mode
+    // must be exactly one of r/w/x/a.
+    let base: String = mode.chars().filter(|c| !matches!(c, 'b' | 't' | '+')).collect();
+    let valid = matches!(base.as_str(), "r" | "w" | "x" | "a")
+        && !(mode.contains('b') && mode.contains('t'));
+    if !valid {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!("invalid mode: '{mode}'"))),
+        );
+        return MbValue::none();
+    }
+    let dir = arg_or_kw(&pos, 6, &kwargs, "dir")
+        .and_then(as_text)
+        .unwrap_or_else(|| std::env::temp_dir().to_str().unwrap_or("/tmp").to_string());
+    let suffix = arg_or_kw(&pos, 4, &kwargs, "suffix").and_then(as_text).unwrap_or_default();
+    let prefix = arg_or_kw(&pos, 5, &kwargs, "prefix").and_then(as_text)
+        .unwrap_or_else(|| "tmp".to_string());
+    let delete = arg_or_kw(&pos, 7, &kwargs, "delete")
+        .map(|v| truthy(v))
+        .unwrap_or(true);
+    let delete_on_close = kwargs
+        .as_ref()
+        .and_then(|kw| dict_get(*kw, "delete_on_close"))
+        .map(|v| truthy(v))
+        .unwrap_or(true);
+    let file_name = format!("{}{suffix}", temp_name(&prefix));
+    let path = std::path::Path::new(&dir).join(&file_name);
+    let path_str = path.to_str().unwrap_or("").to_string();
+    let handle = super::super::file_io::mb_open(
+        MbValue::from_ptr(MbObject::new_str(path_str.clone())),
+        MbValue::from_ptr(MbObject::new_str(normalize_temp_mode(&mode))),
+    );
+    if handle.is_none() {
+        return MbValue::none(); // mb_open already raised
+    }
+    let mut fields = FxHashMap::default();
+    fields.insert("_handle".to_string(), handle);
+    fields.insert("name".to_string(), MbValue::from_ptr(MbObject::new_str(path_str)));
+    fields.insert("mode".to_string(), MbValue::from_ptr(MbObject::new_str(mode)));
+    fields.insert("closed".to_string(), MbValue::from_bool(false));
+    fields.insert("_delete".to_string(), MbValue::from_bool(delete));
+    fields.insert("_delete_on_close".to_string(), MbValue::from_bool(delete_on_close));
+    make_instance("NamedTemporaryFile", fields)
 }
 
-/// tempfile.TemporaryDirectory(suffix=None, prefix=None, dir=None) -> str path
-/// to a freshly created temp dir.
-///
-/// Carve: CPython returns an object with `__enter__`/`__exit__` + `.name`;
-/// returning the path string lets `with ... as d:` bind the path and use it
-/// immediately. Cleanup-on-exit is not modeled.
+/// tempfile.TemporaryDirectory(suffix=None, prefix=None, dir=None) -> an
+/// Instance with `.name`; `__enter__` yields the path string and `__exit__` /
+/// `cleanup()` removes the tree (CPython context-manager semantics).
 pub fn mb_tempfile_temporary_directory(args: &[MbValue]) -> MbValue {
-    mb_tempfile_mkdtemp_v(args)
+    let path_val = mb_tempfile_mkdtemp_v(args);
+    if path_val.is_none() {
+        return MbValue::none();
+    }
+    let mut fields = FxHashMap::default();
+    fields.insert("name".to_string(), path_val);
+    make_instance("TemporaryDirectory", fields)
 }
 
 /// tempfile.gettempdirb() -> bytes (system temp directory, bytes form).
@@ -466,11 +536,408 @@ pub fn mb_tempfile_temporary_file(args: &[MbValue]) -> MbValue {
     open_temp_backing(args, "w+b", "mbtmp_anon_")
 }
 
-/// tempfile.SpooledTemporaryFile() — returns a writable file object backed by a
-/// real temp file (the in-memory-until-rollover spool is not modeled; behaves
-/// as an always-on-disk file, which is API-compatible for read/write/seek).
+/// Back-compat zero-arg entrypoint (kept for in-crate callers / tests).
 pub fn mb_tempfile_spooled_temporary_file() -> MbValue {
-    open_temp_backing(&[], "w+b", "mbtmp_spool_")
+    mb_tempfile_spooled_temporary_file_v(&[])
+}
+
+// ── Instance object model: SpooledTemporaryFile / NamedTemporaryFile /
+//    TemporaryDirectory ──
+//
+// All three are plain Instances; their methods are routed from
+// class.rs::mb_call_method (and the with-protocol from mb_context_enter /
+// mb_context_exit) into `tempfile_instance_method` below — the same pattern
+// as io.StringIO / threading.Lock.
+
+fn make_instance(class_name: &str, fields: FxHashMap<String, MbValue>) -> MbValue {
+    let obj = Box::new(MbObject {
+        header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
+        data: ObjData::Instance {
+            class_name: class_name.to_string(),
+            fields: RwLock::new(fields),
+        },
+    });
+    MbValue::from_ptr(Box::into_raw(obj))
+}
+
+fn truthy(v: MbValue) -> bool {
+    super::super::builtins::mb_is_truthy(v) != 0
+}
+
+fn field_get(recv: MbValue, name: &str) -> Option<MbValue> {
+    recv.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get(name).copied()
+        } else {
+            None
+        }
+    })
+}
+
+fn field_set(recv: MbValue, name: &str, val: MbValue) {
+    if let Some(ptr) = recv.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.write().unwrap().insert(name.to_string(), val);
+            }
+        }
+    }
+}
+
+fn instance_class_name(recv: MbValue) -> Option<String> {
+    recv.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn raise_value_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// tempfile.SpooledTemporaryFile(max_size=0, mode='w+b', buffering=-1,
+/// encoding=None, newline=None, suffix=None, prefix=None, dir=None,
+/// errors=None) — an in-memory spool (StringIO/BytesIO `_file`) that rolls
+/// over to a real on-disk temp file once `tell() > max_size` (max_size=0
+/// disables the threshold; a negative max_size rolls on the first write,
+/// matching CPython's `if self._max_size and tell > self._max_size`).
+pub fn mb_tempfile_spooled_temporary_file_v(args: &[MbValue]) -> MbValue {
+    let (pos, kwargs) = split_kwargs(args);
+    let max_size = arg_or_kw(&pos, 0, &kwargs, "max_size")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    let mode = arg_or_kw(&pos, 1, &kwargs, "mode")
+        .and_then(as_text)
+        .unwrap_or_else(|| "w+b".to_string());
+    let binary = mode.contains('b');
+    let inner = if binary {
+        super::io_mod::mb_bytesio_new()
+    } else {
+        super::io_mod::mb_stringio_new()
+    };
+    let mut fields = FxHashMap::default();
+    fields.insert("_file".to_string(), inner);
+    fields.insert("_rolled".to_string(), MbValue::from_bool(false));
+    fields.insert("_max_size".to_string(), MbValue::from_int(max_size));
+    fields.insert("_binary".to_string(), MbValue::from_bool(binary));
+    fields.insert("mode".to_string(), MbValue::from_ptr(MbObject::new_str(mode)));
+    fields.insert("name".to_string(), MbValue::none());
+    fields.insert("closed".to_string(), MbValue::from_bool(false));
+    if !binary {
+        // Text-only attributes; a binary spool must AttributeError on these,
+        // which absent fields already do.
+        let encoding = kwargs
+            .as_ref()
+            .and_then(|kw| dict_get(*kw, "encoding"))
+            .and_then(as_text)
+            .unwrap_or_else(|| "utf-8".to_string());
+        let errors = kwargs
+            .as_ref()
+            .and_then(|kw| dict_get(*kw, "errors"))
+            .and_then(as_text)
+            .unwrap_or_else(|| "strict".to_string());
+        fields.insert("encoding".to_string(), MbValue::from_ptr(MbObject::new_str(encoding)));
+        fields.insert("errors".to_string(), MbValue::from_ptr(MbObject::new_str(errors)));
+        fields.insert("newlines".to_string(), MbValue::none());
+    }
+    make_instance("SpooledTemporaryFile", fields)
+}
+
+/// Roll the in-memory spool to a real on-disk temp file: dump the buffer,
+/// restore the stream position, flip `_rolled`/`mode`/`name`.
+fn spooled_rollover(recv: MbValue) {
+    let inner = field_get(recv, "_file").unwrap_or_else(MbValue::none);
+    let binary = field_get(recv, "_binary").and_then(|v| v.as_bool()).unwrap_or(true);
+    let pos = if binary {
+        super::io_mod::mb_bytesio_tell(inner).as_int().unwrap_or(0)
+    } else {
+        super::io_mod::mb_stringio_tell(inner).as_int().unwrap_or(0)
+    };
+    let dir = std::env::temp_dir().to_str().unwrap_or("/tmp").to_string();
+    let path = std::path::Path::new(&dir).join(temp_name("mbtmp_spool_"));
+    let path_str = path.to_str().unwrap_or("").to_string();
+    let open_mode = if binary { "w+b" } else { "w+" };
+    let handle = super::super::file_io::mb_open(
+        MbValue::from_ptr(MbObject::new_str(path_str.clone())),
+        MbValue::from_ptr(MbObject::new_str(open_mode.to_string())),
+    );
+    if handle.is_none() {
+        return; // mb_open raised; leave the spool in memory
+    }
+    let content = if binary {
+        super::io_mod::mb_bytesio_getvalue(inner)
+    } else {
+        super::io_mod::mb_stringio_getvalue(inner)
+    };
+    super::super::file_io::mb_file_write(handle, content);
+    super::super::file_io::mb_file_seek(handle, MbValue::from_int(pos), MbValue::from_int(0));
+    field_set(recv, "_file", handle);
+    field_set(recv, "_rolled", MbValue::from_bool(true));
+    field_set(recv, "name", MbValue::from_ptr(MbObject::new_str(path_str)));
+    if binary {
+        // CPython: the rolled binary file reports the on-disk handle's mode.
+        field_set(recv, "mode", MbValue::from_ptr(MbObject::new_str("rb+".to_string())));
+    }
+}
+
+/// Strip a trailing kwargs-dict bundle from method args (method calls pack
+/// `f(n, seed=x)` as `[n, {"seed": x}]`).
+fn method_pos_args(args: &[MbValue]) -> Vec<MbValue> {
+    let (pos, _kw) = split_kwargs(args);
+    pos
+}
+
+/// Method dispatch for the three tempfile instance classes. Returns None for
+/// receivers/methods this module does not own (caller falls through).
+pub fn tempfile_instance_method(recv: MbValue, method: &str, args: &[MbValue]) -> Option<MbValue> {
+    let class = instance_class_name(recv)?;
+    match class.as_str() {
+        "SpooledTemporaryFile" => spooled_method(recv, method, args),
+        "NamedTemporaryFile" => namedfile_method(recv, method, args),
+        "TemporaryDirectory" => tempdir_method(recv, method, args),
+        _ => None,
+    }
+}
+
+fn spooled_method(recv: MbValue, method: &str, args: &[MbValue]) -> Option<MbValue> {
+    let closed = field_get(recv, "closed").and_then(|v| v.as_bool()).unwrap_or(false);
+    let rolled = field_get(recv, "_rolled").and_then(|v| v.as_bool()).unwrap_or(false);
+    let binary = field_get(recv, "_binary").and_then(|v| v.as_bool()).unwrap_or(true);
+    let inner = field_get(recv, "_file").unwrap_or_else(MbValue::none);
+    let pos = method_pos_args(args);
+    let arg0 = pos.first().copied().unwrap_or_else(MbValue::none);
+    use super::io_mod as io;
+    use super::super::file_io as f;
+    match method {
+        "__enter__" => {
+            if closed {
+                return Some(raise_value_error("Cannot enter context with closed file"));
+            }
+            unsafe { super::super::rc::retain_if_ptr(recv) };
+            Some(recv)
+        }
+        "__exit__" | "close" => {
+            if !closed {
+                if rolled {
+                    f::mb_file_close(inner);
+                } else if binary {
+                    io::mb_bytesio_close(inner);
+                } else {
+                    io::mb_stringio_close(inner);
+                }
+                field_set(recv, "closed", MbValue::from_bool(true));
+            }
+            Some(if method == "__exit__" { MbValue::from_bool(false) } else { MbValue::none() })
+        }
+        "write" => {
+            if closed {
+                return Some(raise_value_error("I/O operation on closed file"));
+            }
+            if rolled {
+                return Some(f::mb_file_write(inner, arg0));
+            }
+            let written = if binary {
+                io::mb_bytesio_write(inner, arg0)
+            } else {
+                io::mb_stringio_write(inner, arg0)
+            };
+            let max_size = field_get(recv, "_max_size").and_then(|v| v.as_int()).unwrap_or(0);
+            if max_size != 0 {
+                let tell = if binary {
+                    io::mb_bytesio_tell(inner).as_int().unwrap_or(0)
+                } else {
+                    io::mb_stringio_tell(inner).as_int().unwrap_or(0)
+                };
+                if tell > max_size {
+                    spooled_rollover(recv);
+                }
+            }
+            Some(written)
+        }
+        "read" => Some(if rolled {
+            if pos.is_empty() { f::mb_file_read(inner) } else { f::mb_file_read_n(inner, arg0) }
+        } else if binary {
+            if pos.is_empty() { io::mb_bytesio_read(inner) } else { io::mb_bytesio_read_n(inner, arg0) }
+        } else if pos.is_empty() {
+            io::mb_stringio_read(inner)
+        } else {
+            io::mb_stringio_read_n(inner, arg0)
+        }),
+        "readline" => Some(if rolled {
+            f::mb_file_readline(inner)
+        } else if binary {
+            io::mb_bytesio_readline(inner, MbValue::none())
+        } else {
+            io::mb_stringio_readline(inner)
+        }),
+        "readlines" => Some(if rolled {
+            f::mb_file_readlines(inner)
+        } else if binary {
+            io::mb_bytesio_readlines(inner)
+        } else {
+            io::mb_stringio_readlines(inner)
+        }),
+        "seek" => {
+            let whence = pos.get(1).copied().unwrap_or_else(|| MbValue::from_int(0));
+            Some(if rolled {
+                f::mb_file_seek(inner, arg0, whence)
+            } else if binary {
+                io::mb_bytesio_seek_with_whence(inner, arg0, whence)
+            } else {
+                io::mb_stringio_seek_whence(inner, arg0, whence)
+            })
+        }
+        "tell" => Some(if rolled {
+            f::mb_file_tell(inner)
+        } else if binary {
+            io::mb_bytesio_tell(inner)
+        } else {
+            io::mb_stringio_tell(inner)
+        }),
+        "truncate" => Some(if rolled {
+            f::mb_file_truncate(inner, arg0)
+        } else if binary {
+            io::mb_bytesio_truncate(inner, arg0)
+        } else {
+            io::mb_stringio_truncate(inner, arg0)
+        }),
+        "rollover" => {
+            if !rolled {
+                spooled_rollover(recv);
+            }
+            Some(MbValue::none())
+        }
+        "fileno" => {
+            // CPython: fileno() forces the rollover so a real descriptor
+            // exists; our on-disk handle id stands in for the fd.
+            if !rolled {
+                spooled_rollover(recv);
+            }
+            Some(field_get(recv, "_file").unwrap_or_else(MbValue::none))
+        }
+        "flush" => {
+            if rolled {
+                f::mb_file_flush(inner);
+            }
+            Some(MbValue::none())
+        }
+        "getvalue" => {
+            if rolled {
+                return None; // real files have no getvalue, fall through to AttributeError paths
+            }
+            Some(if binary { io::mb_bytesio_getvalue(inner) } else { io::mb_stringio_getvalue(inner) })
+        }
+        _ => None,
+    }
+}
+
+fn namedfile_method(recv: MbValue, method: &str, args: &[MbValue]) -> Option<MbValue> {
+    let closed = field_get(recv, "closed").and_then(|v| v.as_bool()).unwrap_or(false);
+    let handle = field_get(recv, "_handle").unwrap_or_else(MbValue::none);
+    let pos = method_pos_args(args);
+    let arg0 = pos.first().copied().unwrap_or_else(MbValue::none);
+    use super::super::file_io as f;
+    let name_str = || {
+        field_get(recv, "name").and_then(extract_str).unwrap_or_default()
+    };
+    let delete = field_get(recv, "_delete").and_then(|v| v.as_bool()).unwrap_or(true);
+    let delete_on_close =
+        field_get(recv, "_delete_on_close").and_then(|v| v.as_bool()).unwrap_or(true);
+    match method {
+        "__enter__" => {
+            if closed {
+                return Some(raise_value_error("Cannot enter context with closed file"));
+            }
+            unsafe { super::super::rc::retain_if_ptr(recv) };
+            Some(recv)
+        }
+        "close" => {
+            if !closed {
+                f::mb_file_close(handle);
+                field_set(recv, "closed", MbValue::from_bool(true));
+                if delete && delete_on_close {
+                    let _ = std::fs::remove_file(name_str());
+                }
+            }
+            Some(MbValue::none())
+        }
+        "__exit__" => {
+            if !closed {
+                f::mb_file_close(handle);
+                field_set(recv, "closed", MbValue::from_bool(true));
+                if delete && delete_on_close {
+                    let _ = std::fs::remove_file(name_str());
+                }
+            }
+            // CPython 3.12: delete_on_close=False defers removal to context exit.
+            if delete && !delete_on_close {
+                let _ = std::fs::remove_file(name_str());
+            }
+            Some(MbValue::from_bool(false))
+        }
+        "write" => Some(f::mb_file_write(handle, arg0)),
+        "writelines" => Some(f::mb_file_writelines(handle, arg0)),
+        "read" => Some(if pos.is_empty() {
+            f::mb_file_read(handle)
+        } else {
+            f::mb_file_read_n(handle, arg0)
+        }),
+        "readline" => Some(f::mb_file_readline(handle)),
+        "readlines" => Some(f::mb_file_readlines(handle)),
+        "seek" => {
+            let whence = pos.get(1).copied().unwrap_or_else(|| MbValue::from_int(0));
+            Some(f::mb_file_seek(handle, arg0, whence))
+        }
+        "tell" => Some(f::mb_file_tell(handle)),
+        "truncate" => Some(f::mb_file_truncate(handle, arg0)),
+        "flush" => Some(f::mb_file_flush(handle)),
+        "fileno" => Some(handle),
+        _ => None,
+    }
+}
+
+fn tempdir_method(recv: MbValue, method: &str, _args: &[MbValue]) -> Option<MbValue> {
+    let name = field_get(recv, "name").unwrap_or_else(MbValue::none);
+    match method {
+        "__enter__" => {
+            unsafe { super::super::rc::retain_if_ptr(name) };
+            Some(name)
+        }
+        "__exit__" | "cleanup" => {
+            if let Some(path) = extract_str(name) {
+                let _ = std::fs::remove_dir_all(path);
+            }
+            Some(if method == "__exit__" { MbValue::from_bool(false) } else { MbValue::none() })
+        }
+        _ => None,
+    }
+}
+
+/// With-protocol hooks for the tempfile instance classes — these run BEFORE
+/// the generic dunder lookup in mb_context_enter/exit (the class registry
+/// holds constructor-func stubs for dir() listing which must not be invoked).
+/// Returns None when `obj` is not a tempfile instance.
+pub fn tempfile_context_enter(obj: MbValue) -> Option<MbValue> {
+    let class = instance_class_name(obj)?;
+    if !matches!(class.as_str(), "SpooledTemporaryFile" | "NamedTemporaryFile" | "TemporaryDirectory") {
+        return None;
+    }
+    tempfile_instance_method(obj, "__enter__", &[])
+}
+
+pub fn tempfile_context_exit(obj: MbValue) -> Option<MbValue> {
+    let class = instance_class_name(obj)?;
+    if !matches!(class.as_str(), "SpooledTemporaryFile" | "NamedTemporaryFile" | "TemporaryDirectory") {
+        return None;
+    }
+    tempfile_instance_method(obj, "__exit__", &[])
 }
 
 #[cfg(test)]
@@ -527,12 +994,18 @@ mod tests {
 
     #[test]
     fn test_temporary_directory() {
+        // Returns a context-manager Instance whose `.name` is the dir path;
+        // `__exit__`/`cleanup` removes the tree.
         let result = mb_tempfile_temporary_directory(&[]);
-        let path = extract_str(result).unwrap();
+        let path = field_get(result, "name").and_then(extract_str).unwrap();
         assert!(
             std::path::Path::new(&path).is_dir(),
             "TemporaryDirectory should create a directory"
         );
-        let _ = std::fs::remove_dir(&path);
+        let _ = tempfile_instance_method(result, "cleanup", &[]);
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "cleanup() should remove the directory"
+        );
     }
 }

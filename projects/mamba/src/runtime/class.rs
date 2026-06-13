@@ -2181,6 +2181,29 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     }
     let attr_name = extract_str(attr).unwrap_or_default();
 
+    // SpooledTemporaryFile: a binary spool has no encoding/errors/newlines
+    // fields and CPython raises AttributeError for them (the generic Instance
+    // path would silently yield None). Scoped to exactly these text-only
+    // names so bound-method attribute access stays untouched.
+    if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "SpooledTemporaryFile"
+                    && matches!(attr_name.as_str(), "encoding" | "errors" | "newlines")
+                    && !fields.read().unwrap().contains_key(&attr_name)
+                {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'SpooledTemporaryFile' object has no attribute '{attr_name}'"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
+            }
+        }
+    }
+
     if obj.is_int() {
         let id = obj.as_int().unwrap_or(0) as u64;
         if super::file_io::is_file_handle(id) {
@@ -3647,6 +3670,19 @@ pub fn mb_getattr_default(obj: MbValue, attr: MbValue, default: MbValue) -> MbVa
 pub fn mb_vars(obj: MbValue) -> MbValue {
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
+            // statistics.NormalDist declares __slots__, so it has no
+            // instance __dict__ — CPython's vars() raises TypeError.
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "NormalDist" {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(super::rc::MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(super::rc::MbObject::new_str(
+                            "vars() argument must have __dict__ attribute".to_string(),
+                        )),
+                    );
+                    return MbValue::none();
+                }
+            }
             if let ObjData::Instance { ref fields, .. } = (*ptr).data {
                 let fields = fields.read().unwrap();
                 let dict = super::dict_ops::mb_dict_new();
@@ -6233,6 +6269,19 @@ pub fn mb_dispatch_unaryop(op_code: i64, obj: MbValue) -> MbValue {
             _ => {}
         }
     }
+    // statistics.NormalDist: -nd flips the mean (fresh object), +nd copies.
+    if matches!(op_code, 0 | 1) {
+        if let Some(nd) = super::stdlib::statistics_mod::normaldist_neg(obj) {
+            if op_code == 1 {
+                return nd;
+            }
+            // +nd: normaldist_neg already proved obj IS a NormalDist; negate
+            // back to a same-params fresh copy.
+            if let Some(copy) = super::stdlib::statistics_mod::normaldist_neg(nd) {
+                return copy;
+            }
+        }
+    }
     // ── Dunder method fallback ──
     let op_name = UNARYOP_DUNDERS.get(op_code as usize).copied().unwrap_or("neg");
     let dunder = format!("__{op_name}__");
@@ -6345,6 +6394,38 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                     }
                 }
             }
+        }
+    }
+    // PEP 585: subscripting a native constructor func used as a class
+    // (`tempfile.SpooledTemporaryFile[bytes]`, `deque[int]`) produces a
+    // types.GenericAlias-shaped Instance (class_name "GenericAlias", matching
+    // CPython's `type(list[int]).__name__`) carrying __origin__/__args__.
+    if let Some(addr) = obj.as_func() {
+        let known = super::module::NATIVE_TYPE_NAMES
+            .with(|m| m.borrow().contains_key(&(addr as u64)));
+        if known {
+            let args_tuple = if let Some(kp) = key.as_ptr() {
+                unsafe {
+                    if let ObjData::Tuple(_) = (*kp).data {
+                        super::rc::retain_if_ptr(key);
+                        key
+                    } else {
+                        super::rc::retain_if_ptr(key);
+                        MbValue::from_ptr(MbObject::new_tuple(vec![key]))
+                    }
+                }
+            } else {
+                MbValue::from_ptr(MbObject::new_tuple(vec![key]))
+            };
+            let inst_ptr = MbObject::new_instance("GenericAlias".to_string());
+            unsafe {
+                if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+                    let mut g = fields.write().unwrap();
+                    g.insert("__origin__".to_string(), obj);
+                    g.insert("__args__".to_string(), args_tuple);
+                }
+            }
+            return MbValue::from_ptr(inst_ptr);
         }
     }
     // bool is a subclass of int in Python (#1680) — `xs[True]` ≡ `xs[1]`.
@@ -7087,6 +7168,11 @@ pub fn mb_context_enter(obj: MbValue) -> MbValue {
     if super::dict_ops::dict_stub_class(obj).as_deref() == Some("TarFile") {
         return super::stdlib::tarfile_mod::tarfile_context_enter(obj);
     }
+    // tempfile instances: must run before the generic dunder lookup — their
+    // registered class methods are dir()-listing stubs, not real callables.
+    if let Some(r) = super::stdlib::tempfile_mod::tempfile_context_enter(obj) {
+        return r;
+    }
     // Class instances: look up __enter__
     if let Some(method) = try_get_dunder(obj, "__enter__") {
         let result = mb_call_method1(method, obj);
@@ -7255,6 +7341,14 @@ pub fn mb_context_exit(obj: MbValue, _has_exc: MbValue) -> MbValue {
             super::exception::mb_reraise(pending);
         }
         return MbValue::from_bool(false);
+    }
+    // tempfile instances: close/cleanup before the generic dunder lookup
+    // (registered class methods are dir()-listing stubs, not real callables).
+    if let Some(r) = super::stdlib::tempfile_mod::tempfile_context_exit(obj) {
+        if has_pending {
+            super::exception::mb_reraise(pending);
+        }
+        return r;
     }
     // Class instances: look up __exit__
     let result = if let Some(method) = try_get_dunder(obj, "__exit__") {
@@ -8057,6 +8151,64 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     if let Some(result) = super::stdlib::statistics_mod::mb_statistics_normaldist_method(
                         receiver, &name, &items,
                     ) {
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+    // NormalDist classmethod: `NormalDist.from_samples(data)` — the receiver
+    // is the native constructor dispatcher (mapped to "NormalDist" in
+    // NATIVE_TYPE_NAMES), not an instance.
+    if receiver.as_func().is_some()
+        && name == "from_samples"
+        && resolve_class_name(receiver).as_deref() == Some("NormalDist")
+    {
+        let items = super::builtins::extract_items(args);
+        let data = items.first().copied().unwrap_or_else(MbValue::none);
+        return super::stdlib::statistics_mod::mb_statistics_normaldist_from_samples(data);
+    }
+
+    // tempfile instance classes (SpooledTemporaryFile / NamedTemporaryFile /
+    // TemporaryDirectory): route their file-protocol methods to tempfile_mod.
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if matches!(
+                    class_name.as_str(),
+                    "SpooledTemporaryFile" | "NamedTemporaryFile" | "TemporaryDirectory"
+                ) {
+                    let items = super::builtins::extract_items(args);
+                    if let Some(result) = super::stdlib::tempfile_mod::tempfile_instance_method(
+                        receiver, &name, &items,
+                    ) {
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+
+    // User subclasses of calendar.HTMLCalendar: the native instances carry
+    // flat-args method fields (no self), which a subclass instance lacks and
+    // which cannot read css theme overrides off the receiver. Route subclass
+    // receivers to the receiver-aware implementations. Native instances
+    // (class_name == the base itself) keep their existing field path.
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name != "HTMLCalendar"
+                    && class_name != "LocaleHTMLCalendar"
+                    && class_mro_any(class_name, |c| {
+                        c == "HTMLCalendar" || c == "LocaleHTMLCalendar"
+                    })
+                {
+                    let items = super::builtins::extract_items(args);
+                    if let Some(result) =
+                        super::stdlib::calendar_mod::html_calendar_subclass_method(
+                            receiver, &name, &items,
+                        )
+                    {
                         return result;
                     }
                 }

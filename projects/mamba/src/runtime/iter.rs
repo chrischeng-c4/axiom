@@ -344,6 +344,19 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             // Remaining items from the reversed iterator.
             Some(items[index..].to_vec())
         }
+        IterKind::DictKeys(ref keys) => {
+            // Dict-key iterators (dict / Counter / defaultdict views) drain to
+            // the original key values.
+            Some(keys[iter.index..].iter().map(dict_key_to_mbvalue).collect())
+        }
+        IterKind::Str(ref chars) => {
+            Some(
+                chars[iter.index..]
+                    .iter()
+                    .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
+                    .collect(),
+            )
+        }
         _ => {
             // Put the iterator back for fallback protocol.
             ITERATORS.with(|iters| iters.borrow_mut().insert(id, iter));

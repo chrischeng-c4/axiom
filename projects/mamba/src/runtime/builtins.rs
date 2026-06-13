@@ -2368,6 +2368,10 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                             );
                         }
                     }
+                    // statistics.NormalDist translation / combination.
+                    if let Some(r) = super::stdlib::statistics_mod::normaldist_binop("+", a, b) {
+                        return r;
+                    }
                     if raise_datetime_op_type_error("+", a, b) {
                         return MbValue::none();
                     }
@@ -2443,6 +2447,10 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
         {
             return MbValue::from_ptr(MbObject::new_complex(ar - br, ai - bi));
         }
+    }
+    // statistics.NormalDist translation / combination.
+    if let Some(r) = super::stdlib::statistics_mod::normaldist_binop("-", a, b) {
+        return r;
     }
     if raise_datetime_op_type_error("-", a, b) {
         return MbValue::none();
@@ -2847,6 +2855,10 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
             match (af, bf) {
                 (Some(af), Some(bf)) => MbValue::from_float(af * bf),
                 _ => {
+                    // statistics.NormalDist scaling by a constant.
+                    if let Some(r) = super::stdlib::statistics_mod::normaldist_binop("*", a, b) {
+                        return r;
+                    }
                     if raise_datetime_op_type_error("*", a, b) {
                         return MbValue::none();
                     }
@@ -2960,6 +2972,10 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
             MbValue::none()
         }
         _ => {
+            // statistics.NormalDist scaling by a constant.
+            if let Some(r) = super::stdlib::statistics_mod::normaldist_binop("/", a, b) {
+                return r;
+            }
             if raise_datetime_op_type_error("/", a, b) {
                 return MbValue::none();
             }
@@ -3067,6 +3083,10 @@ pub fn mb_neg(a: MbValue) -> MbValue {
             // -timedelta — negate the exact microsecond total.
             if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(a) {
                 return super::stdlib::datetime_mod::timedelta_from_us(-us);
+            }
+            // -NormalDist — flipped mean, fresh object.
+            if let Some(r) = super::stdlib::statistics_mod::normaldist_neg(a) {
+                return r;
             }
         }
         MbValue::none()
@@ -4331,6 +4351,13 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                         return MbValue::from_ptr(MbObject::new_str(
                             super::stdlib::collections_mod::counter_repr(val),
                         ));
+                    }
+                    // statistics.NormalDist value-type repr round-trips the
+                    // constructor: `NormalDist(mu=37.5, sigma=5.625)`.
+                    if class_name == "NormalDist" {
+                        if let Some(s) = super::stdlib::statistics_mod::normaldist_repr(val) {
+                            return MbValue::from_ptr(MbObject::new_str(s));
+                        }
                     }
                     // defaultdict / deque also need CPython-style repr. (#1640)
                     if class_name == "collections.defaultdict" {

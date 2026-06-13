@@ -141,6 +141,18 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("x", CoreTy::Unknown)],
         enforceable: false,
     },
+    // NEGATIVE: calendar.setfirstweekday(firstweekday) — CPython's body is
+    // `if not MONDAY <= firstweekday <= SUNDAY`, so a str argument is a
+    // RUNTIME TypeError (from the int/str comparison), not a compile-time
+    // reject. The runtime dispatcher raises it; keep the wall out of the way.
+    StdlibSig {
+        module: "calendar",
+        qualifier: "",
+        name: "setfirstweekday",
+        kind: SigKind::ModuleFn,
+        params: &[p("firstweekday", CoreTy::Unknown)],
+        enforceable: false,
+    },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for
