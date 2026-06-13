@@ -3705,6 +3705,11 @@ pub fn mb_vars(obj: MbValue) -> MbValue {
                 let fields = fields.read().unwrap();
                 let dict = super::dict_ops::mb_dict_new();
                 for (k, v) in fields.iter() {
+                    // Hidden bookkeeping fields (e.g. SimpleNamespace's
+                    // insertion-order list) are not part of __dict__.
+                    if k == "__ns_order__" {
+                        continue;
+                    }
                     let key = MbValue::from_ptr(super::rc::MbObject::new_str(k.clone()));
                     super::dict_ops::mb_dict_setitem(dict, key, *v);
                 }
@@ -4254,6 +4259,28 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                                     )),
                                 );
                                 return;
+                            }
+                        }
+                    }
+                }
+                // SimpleNamespace insertion-order tracking: appending a NEW
+                // attribute name to the hidden `__ns_order__` list keeps repr()
+                // in insertion order. Runs before the generic insert below.
+                if class_name == "SimpleNamespace" {
+                    if let Some(attr_s) = extract_str(attr) {
+                        if attr_s != "__ns_order__" {
+                            let (is_new, order) = {
+                                let g = fields.read().unwrap();
+                                (!g.contains_key(&attr_s), g.get("__ns_order__").copied())
+                            };
+                            if is_new {
+                                if let Some(ol) = order.and_then(|v| v.as_ptr()) {
+                                    if let ObjData::List(ref lk) = (*ol).data {
+                                        lk.write().unwrap().push(
+                                            MbValue::from_ptr(MbObject::new_str(attr_s)),
+                                        );
+                                    }
+                                }
                             }
                         }
                     }

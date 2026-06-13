@@ -4473,20 +4473,46 @@ pub fn mb_repr(val: MbValue) -> MbValue {
                         return MbValue::from_ptr(MbObject::new_str(s));
                     }
                     if class_name == "SimpleNamespace" {
-                        // CPython renders `namespace(field=repr(value), ...)`,
-                        // with a direct self-reference shown as `namespace(...)`.
+                        // CPython renders `namespace(field=repr(value), ...)` in
+                        // INSERTION order (tracked in the hidden `__ns_order__`
+                        // list), with a direct self-reference shown as
+                        // `namespace(...)`.
                         let self_ptr = val.as_ptr();
                         let guard = fields.read().unwrap();
-                        let parts: Vec<String> = guard.iter().map(|(k, v)| {
-                            if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
+                        // Preferred order from `__ns_order__`; any field missing
+                        // from it (defensive) is appended in map order.
+                        let order: Vec<String> = guard.get("__ns_order__")
+                            .and_then(|v| v.as_ptr())
+                            .map(|p| unsafe {
+                                if let ObjData::List(ref lk) = (*p).data {
+                                    lk.read().unwrap().iter().filter_map(|k| {
+                                        k.as_ptr().and_then(|kp| {
+                                            if let ObjData::Str(ref s) = (*kp).data { Some(s.clone()) } else { None }
+                                        })
+                                    }).collect()
+                                } else { Vec::new() }
+                            })
+                            .unwrap_or_default();
+                        let mut keys: Vec<String> = order.iter()
+                            .filter(|k| guard.contains_key(*k))
+                            .cloned()
+                            .collect();
+                        for k in guard.keys() {
+                            if k != "__ns_order__" && !keys.contains(k) {
+                                keys.push(k.clone());
+                            }
+                        }
+                        let parts: Vec<String> = keys.iter().filter_map(|k| {
+                            let v = *guard.get(k)?;
+                            Some(if v.as_ptr().is_some() && v.as_ptr() == self_ptr {
                                 format!("{k}=namespace(...)")
                             } else {
-                                let r = mb_repr(*v);
+                                let r = mb_repr(v);
                                 let rs = r.as_ptr().and_then(|p| {
                                     if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
                                 }).unwrap_or_default();
                                 format!("{k}={rs}")
-                            }
+                            })
                         }).collect();
                         drop(guard);
                         return MbValue::from_ptr(MbObject::new_str(

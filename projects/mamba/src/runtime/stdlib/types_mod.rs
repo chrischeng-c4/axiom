@@ -87,6 +87,10 @@ unsafe extern "C" fn dispatch_simplenamespace(args_ptr: *const MbValue, nargs: u
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
     let mut fields = FxHashMap::default();
+    // Instance fields are unordered, but SimpleNamespace's repr must render
+    // attributes in insertion order. Track it in a hidden `__ns_order__` list
+    // (excluded from repr/vars); mb_setattr appends to it for new attributes.
+    let mut order: Vec<MbValue> = Vec::new();
     for arg in a {
         if let Some(ptr) = arg.as_ptr() {
             unsafe {
@@ -94,6 +98,9 @@ unsafe extern "C" fn dispatch_simplenamespace(args_ptr: *const MbValue, nargs: u
                     for (k, v) in lock.read().unwrap().iter() {
                         if let super::super::dict_ops::DictKey::Str(name) = k {
                             super::super::rc::retain_if_ptr(*v);
+                            if !fields.contains_key(name) {
+                                order.push(MbValue::from_ptr(MbObject::new_str(name.clone())));
+                            }
                             fields.insert(name.clone(), *v);
                         }
                     }
@@ -101,6 +108,10 @@ unsafe extern "C" fn dispatch_simplenamespace(args_ptr: *const MbValue, nargs: u
             }
         }
     }
+    fields.insert(
+        "__ns_order__".to_string(),
+        MbValue::from_ptr(MbObject::new_list(order)),
+    );
     let obj = Box::new(MbObject {
         header: MbObjectHeader { rc: AtomicU32::new(1), kind: ObjKind::Instance },
         data: ObjData::Instance {
