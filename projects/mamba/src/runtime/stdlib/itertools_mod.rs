@@ -754,9 +754,16 @@ fn mb_itertools_zip_longest_n(iters: &[MbValue], fill: MbValue) -> MbValue {
     if iters.is_empty() {
         return MbValue::from_ptr(MbObject::new_list(Vec::new()));
     }
-    let cols: Vec<Vec<MbValue>> = iters.iter().map(|it| extract_list(*it)).collect();
-    if real_exception_pending() {
-        return MbValue::none();
+    // Materialize each source in turn, stopping at the first that raises a
+    // real (non-StopIteration) error so it propagates instead of being padded
+    // over — and so a later source isn't drained after an upstream failure.
+    let mut cols: Vec<Vec<MbValue>> = Vec::with_capacity(iters.len());
+    for it in iters {
+        let col = extract_list(*it);
+        if real_exception_pending() {
+            return MbValue::none();
+        }
+        cols.push(col);
     }
     let len = cols.iter().map(|c| c.len()).max().unwrap_or(0);
     let mut result = Vec::with_capacity(len);

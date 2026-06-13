@@ -1604,8 +1604,35 @@ fn exception_message_str(v: MbValue) -> Option<String> {
 pub fn mb_raise_instance(instance: MbValue) {
     if let Some(ptr) = instance.as_ptr() {
         unsafe {
+            // A builtin exception class referenced as a value is carried as a
+            // bare type-name string (`e = StopIteration; raise e`). Raise it as
+            // that exception type rather than dropping to the generic Exception
+            // fallback — and flip the StopIteration iterator flag so a
+            // variable-spelled StopIteration is recognised as exhaustion.
+            if let ObjData::Str(ref type_name) = (*ptr).data {
+                let exc = super::exception::MbException::new(type_name, "");
+                super::exception::set_current_exception(exc);
+                if type_name == "StopIteration" {
+                    super::iter::signal_stop_iteration();
+                }
+                return;
+            }
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 let fields_guard = fields.read().unwrap();
+                // `raise SomeException` where the operand is a bare type OBJECT
+                // (class_name "type" carrying __name__, e.g. a class held in a
+                // variable: `e = StopIteration; raise e`) raises an instance of
+                // that class — the exception type is __name__, not the literal
+                // "type". Resolving it here is what lets the iterator protocol
+                // recognise a variable-raised StopIteration as exhaustion.
+                let resolved_type = if class_name == "type" {
+                    fields_guard
+                        .get("__name__")
+                        .and_then(|v| extract_str(*v))
+                        .unwrap_or_else(|| class_name.clone())
+                } else {
+                    class_name.clone()
+                };
                 let msg = fields_guard.get("message")
                     .and_then(|v| exception_message_str(*v))
                     .or_else(|| {
@@ -1615,9 +1642,15 @@ pub fn mb_raise_instance(instance: MbValue) {
                             .and_then(exception_message_str)
                     })
                     .unwrap_or_default();
-                let exc = super::exception::MbException::new(class_name, &msg);
+                let exc = super::exception::MbException::new(&resolved_type, &msg);
                 drop(fields_guard);
                 super::exception::set_current_exception(exc);
+                // Parity with mb_raise: a StopIteration (however it was spelled)
+                // must also flip the iterator-protocol flag so user __next__
+                // exhaustion is caught by the drive loop, not propagated.
+                if resolved_type == "StopIteration" {
+                    super::iter::signal_stop_iteration();
+                }
                 // Retain before storing: the caller's vreg may be released at function
                 // exit before the catcher retrieves it. Ownership is then transferred
                 // to mb_catch_exception_instance which takes from the cell.

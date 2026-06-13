@@ -2179,7 +2179,27 @@ fn advance_userdefined_if_applicable(id: u64) -> Option<MbValue> {
     let result = class::mb_call_method1(next_method, iter_obj);
 
     // Check StopIteration — set either by mb_stop_iteration() or signal_stop_iteration().
-    if check_stop_iteration() || result.is_none() {
+    let stopped = check_stop_iteration();
+    // A non-StopIteration exception raised inside __next__ (e.g. RuntimeError)
+    // is a real error: CPython propagates it out of the drive loop rather than
+    // treating it as end-of-iteration. Mark exhausted so the loop stops, but
+    // PRESERVE the pending exception so the caller (for-loop, list(),
+    // extract_list, zip_longest, ...) propagates it instead of silently
+    // truncating. Only StopIteration / a bare None result is normal exhaustion.
+    let real_exc = !stopped
+        && super::exception::current_exception_type()
+            .map(|t| t != "StopIteration")
+            .unwrap_or(false);
+    if real_exc {
+        ITERATORS.with(|iters| {
+            if let Some(iter) = iters.borrow_mut().get_mut(&id) {
+                iter.exhausted = true;
+            }
+        });
+        unsafe { super::rc::release_if_ptr(iter_obj); }
+        return Some(MbValue::none());
+    }
+    if stopped || result.is_none() {
         // Iterator exhausted — release our retained reference to iter_obj.
         // Also clear the pending exception slot: `raise StopIteration`
         // inside user __next__ sets BOTH the iterator flag and
