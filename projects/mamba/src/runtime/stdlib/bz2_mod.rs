@@ -136,6 +136,14 @@ fn raise_value_error(msg: &str) -> MbValue {
     MbValue::none()
 }
 
+fn raise_type_error(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
 fn raise_os_error(msg: &str) -> MbValue {
     super::super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("OSError".to_string())),
@@ -214,6 +222,20 @@ unsafe extern "C" fn dispatch_open(args_ptr: *const MbValue, nargs: usize) -> Mb
 /// valid construction).
 unsafe extern "C" fn dispatch_bz2file(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    // filename must be a str/bytes path or an open file object; a number / None
+    // (BZ2File(123.456)) is a TypeError, like CPython.
+    let filename = args.first().copied().unwrap_or_else(MbValue::none);
+    let filename_ok = filename.as_ptr().map_or(false, |p| {
+        matches!(
+            unsafe { &(*p).data },
+            ObjData::Str(_) | ObjData::Bytes(_) | ObjData::ByteArray(_) | ObjData::Instance { .. }
+        )
+    });
+    if !filename_ok {
+        return raise_type_error(
+            "filename must be a str, bytes, file or os.PathLike object",
+        );
+    }
     let mode = positional(args, 1)
         .and_then(as_str)
         .unwrap_or_else(|| "r".to_string());
@@ -240,7 +262,12 @@ unsafe extern "C" fn dispatch_bz2file(args_ptr: *const MbValue, nargs: usize) ->
 /// bz2.BZ2Decompressor() constructor — returns a stateful Instance whose
 /// `decompress` consumes one bz2 stream and then raises EOFError on any
 /// further call (mirrors zlib._ZlibDecompressor's single-use contract).
-unsafe extern "C" fn dispatch_bz2decompressor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+unsafe extern "C" fn dispatch_bz2decompressor(_args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    // BZ2Decompressor() takes no positional arguments; BZ2Decompressor(42) is
+    // a TypeError in CPython.
+    if nargs > 0 {
+        return raise_type_error("BZ2Decompressor() takes no arguments");
+    }
     let obj = MbObject::new_instance("bz2.BZ2Decompressor".to_string());
     let val = MbValue::from_ptr(obj);
     set_field(val, "eof", MbValue::from_bool(false));
@@ -295,11 +322,12 @@ extern "C" fn mb_bz2decompressor_decompress(self_obj: MbValue, args: MbValue) ->
         return raise_eof_error("End of stream already reached");
     }
     let items = method_args(args);
-    let data = items
-        .iter()
-        .copied()
-        .find(|v| !is_kwargs_dict(*v))
-        .unwrap_or_else(MbValue::none);
+    // decompress() requires the `data` argument; a bare call is a TypeError.
+    let Some(data) = items.iter().copied().find(|v| !is_kwargs_dict(*v)) else {
+        return raise_type_error(
+            "decompress() missing required argument 'data' (pos 1)",
+        );
+    };
     let out = with_bytes(data, |b| {
         let mut dec = BzDecoder::new(b);
         let mut buf = Vec::with_capacity(b.len().saturating_mul(4));
