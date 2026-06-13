@@ -405,7 +405,20 @@ pub fn current_exception_type() -> Option<String> {
 /// Get the type name of an exception value.
 fn get_exception_type(exc: MbValue) -> Option<String> {
     exc.as_ptr().and_then(|ptr| unsafe {
-        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+        if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+            // `raise SomeType` where SomeType is a type OBJECT (Instance
+            // class_name "type" carrying __name__): the exception's type is
+            // the named class, not the literal string "type".
+            if class_name == "type" {
+                if let Some(n) = fields
+                    .read()
+                    .unwrap()
+                    .get("__name__")
+                    .and_then(|v| extract_str(*v))
+                {
+                    return Some(n);
+                }
+            }
             Some(class_name.clone())
         } else {
             None
