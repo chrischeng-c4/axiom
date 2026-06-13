@@ -154,6 +154,13 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
         if let Some(n) = items.get(1).and_then(|v| v.as_int()) {
             return mb_json_dumps_pretty(val, MbValue::from_int(n));
         }
+        // Flattened string indent: json.dumps(obj, indent="\t") lowered to a
+        // trailing positional string.
+        if items.len() == 2 {
+            if let Some(s) = items.get(1).copied().and_then(extract_str_val) {
+                return mb_json_dumps_pretty_indent_str(val, &s);
+            }
+        }
         // Try to detect kwargs dict
         if let Some(ptr) = items.last().and_then(|v| v.as_ptr()) {
             unsafe {
@@ -173,6 +180,10 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
 
                     if let Some(n) = indent {
                         return mb_json_dumps_pretty(effective_val, MbValue::from_int(n));
+                    }
+                    // String indent (e.g. indent="\t") passed as a kwarg.
+                    if let Some(s) = map.get("indent").copied().and_then(extract_str_val) {
+                        return mb_json_dumps_pretty_indent_str(effective_val, &s);
                     }
 
                     // Handle custom separators
@@ -576,6 +587,24 @@ fn mbvalue_to_json(val: MbValue) -> serde_json::Value {
                         .collect();
                     serde_json::Value::Array(arr)
                 }
+                ObjData::BigInt(big) => {
+                    // Heap big integers (beyond the 48-bit inline range) must
+                    // survive json.dumps as a bare integer literal, not get
+                    // silently nulled. serde_json::Number holds i64/u64; values
+                    // beyond u64 fall back to f64 (no fixture exercises ints
+                    // that large through json, and serde_json lacks
+                    // arbitrary_precision here).
+                    use num_traits::ToPrimitive;
+                    if let Some(i) = big.to_i64() {
+                        serde_json::Value::Number(i.into())
+                    } else if let Some(u) = big.to_u64() {
+                        serde_json::Value::Number(u.into())
+                    } else {
+                        serde_json::Number::from_f64(big.to_f64().unwrap_or(0.0))
+                            .map(serde_json::Value::Number)
+                            .unwrap_or(serde_json::Value::Null)
+                    }
+                }
                 _ => serde_json::Value::Null,
             }
         }
@@ -592,7 +621,15 @@ fn json_to_mbvalue(val: &serde_json::Value) -> MbValue {
         serde_json::Value::Bool(b) => MbValue::from_bool(*b),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                MbValue::from_int(i)
+                // Promote out-of-inline-range integers to a heap BigInt rather
+                // than panicking in from_int (which asserts the 48-bit range).
+                if super::super::bigint_ops::fits_inline(i) {
+                    MbValue::from_int(i)
+                } else {
+                    super::super::bigint_ops::bigint_from_i128(i as i128)
+                }
+            } else if let Some(u) = n.as_u64() {
+                super::super::bigint_ops::bigint_from_i128(u as i128)
             } else if let Some(f) = n.as_f64() {
                 MbValue::from_float(f)
             } else {
@@ -652,9 +689,13 @@ pub fn mb_json_dumps_ensure_ascii(val: MbValue, ensure_ascii: bool) -> MbValue {
     // TypeError eagerly (the serializer below would silently null them).
     if let Some(ptr) = val.as_ptr() {
         unsafe {
-            let bad = match (*ptr).data {
-                ObjData::Bytes(_) | ObjData::ByteArray(_) => Some("bytes"),
-                ObjData::Set(_) | ObjData::FrozenSet(_) => Some("set"),
+            let bad: Option<String> = match (*ptr).data {
+                ObjData::Bytes(_) | ObjData::ByteArray(_) => Some("bytes".to_string()),
+                ObjData::Set(_) | ObjData::FrozenSet(_) => Some("set".to_string()),
+                // A bare instance (e.g. object()) has no JSON encoding and no
+                // default= hook here — CPython raises TypeError rather than
+                // silently emitting null.
+                ObjData::Instance { ref class_name, .. } => Some(class_name.clone()),
                 _ => None,
             };
             if let Some(kind) = bad {
@@ -766,6 +807,21 @@ pub fn mb_json_dumps_pretty(val: MbValue, indent: MbValue) -> MbValue {
         let s = String::from_utf8(buf).unwrap_or_else(|_| "null".to_string());
         MbValue::from_ptr(MbObject::new_str(s))
     }
+}
+
+/// json.dumps(obj, indent="<str>") — a string indent indents each nesting
+/// level with that literal string (e.g. a tab), the `json.tool --tab`
+/// equivalent. serde_json's PrettyFormatter already matches CPython's
+/// indented layout (`,\n` item separator, `": "` key separator).
+pub fn mb_json_dumps_pretty_indent_str(val: MbValue, indent: &str) -> MbValue {
+    let json_val = mbvalue_to_json(val);
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(indent.as_bytes());
+    let mut buf = Vec::new();
+    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+    use serde::Serialize;
+    json_val.serialize(&mut ser).ok();
+    let s = String::from_utf8(buf).unwrap_or_else(|_| "null".to_string());
+    MbValue::from_ptr(MbObject::new_str(s))
 }
 
 /// json.loads(s) → Mamba value
