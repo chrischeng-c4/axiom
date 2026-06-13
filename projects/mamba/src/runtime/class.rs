@@ -8221,6 +8221,23 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
         }
     }
 
+    // lzma incremental codec objects (LZMACompressor / LZMADecompressor):
+    // route compress/decompress/flush to the liblzma streaming state.
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name == "LZMACompressor" || class_name == "LZMADecompressor" {
+                    let items = super::builtins::extract_items(args);
+                    if let Some(result) = super::stdlib::lzma_mod::lzma_instance_method(
+                        receiver, &name, &items,
+                    ) {
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+
     // User subclasses of random.Random: implement randrange/randint through
     // the CPython `_randbelow` override contract (an overridden getrandbits /
     // random must be exercised), and delegate the rest to the instance's

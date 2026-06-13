@@ -150,15 +150,48 @@ unsafe extern "C" fn dispatch_compress(args_ptr: *const MbValue, nargs: usize) -
 /// raises `LZMAError` on an undecodable / truncated stream).
 unsafe extern "C" fn dispatch_decompress(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
-    let format = positional(args, 1)
-        .and_then(as_index)
-        .or_else(|| kwargs_index(args, "format"));
+    // A str format (positional or kwargs) is an integer-argument TypeError.
+    let format_val = positional(args, 1).or_else(|| {
+        args.last().and_then(|v| v.as_ptr()).and_then(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                lock.read().unwrap().get("format").copied()
+            } else {
+                None
+            }
+        })
+    });
+    if let Some(fv) = format_val {
+        if as_index(fv).is_none() {
+            let tn = if as_str(fv).is_some() { "str" } else { "object" };
+            return raise_type_error_lzma(&format!(
+                "'{tn}' object cannot be interpreted as an integer"
+            ));
+        }
+    }
+    let format = format_val.and_then(as_index);
     // FORMAT_RAW == 3 (matches the registered module constant). A memory limit
     // is meaningless for a raw stream, so CPython rejects the combination.
     if format == Some(3) && kwargs_has(args, "memlimit") {
         return raise_value_error("Cannot specify memory limit with FORMAT_RAW");
     }
-    mb_lzma_decompress(args.first().copied().unwrap_or_else(MbValue::none))
+    // The payload must be bytes-like (a list is the buffer TypeError).
+    let data = args.first().copied().unwrap_or_else(MbValue::none);
+    let is_buffer = data.as_ptr().is_some_and(|p| unsafe {
+        matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+    });
+    if !is_buffer {
+        let tn = if as_str(data).is_some() {
+            "str"
+        } else if data.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::List(_)) }) {
+            "list"
+        } else if data.as_int().is_some() {
+            "int"
+        } else {
+            "object"
+        };
+        return raise_type_error_lzma(&format!("a bytes-like object is required, not '{tn}'"));
+    }
+    mb_lzma_decompress(data)
 }
 
 /// lzma.LZMAFile(filename, mode="r", ...). CPython accepts only base modes
@@ -185,25 +218,430 @@ unsafe extern "C" fn dispatch_lzmafile(args_ptr: *const MbValue, nargs: usize) -
     )
 }
 
-/// Surface-only callable stubs. The streaming file/compressor/decompressor
-/// classes and `open` are not yet implemented, but CPython exposes them as
-/// callables (`callable(lzma.X) == True`). These return `None` when invoked;
-/// the bulk-work path uses `compress`/`decompress` exclusively. Registering
-/// them via `from_func` (instead of a sentinel string) is what makes
-/// `callable()` report True while `hasattr()` stays True.
-unsafe extern "C" fn dispatch_stub(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
-    MbValue::none()
+// ── Incremental compressor / decompressor objects ──
+//
+// Real liblzma streaming state (xz2::stream::Stream) keyed by a registry id;
+// the Python-visible objects are Instances whose method calls route through
+// `lzma_instance_method` (mb_call_method arm) and whose eof / unused_data /
+// needs_input attributes are plain fields refreshed after every call.
+
+struct DecompState {
+    stream: xz2::stream::Stream,
+    /// Decompressed output not yet handed to the caller (max_length).
+    out_buf: Vec<u8>,
+    /// Compressed input not yet consumed by liblzma.
+    in_buf: Vec<u8>,
+    eof: bool,
+    errored: bool,
 }
 
-/// lzma.is_check_supported(check) -> bool. Real CPython returns whether the
-/// liblzma build supports a given integrity check. We report True for every
-/// check id (the bundled liblzma supports NONE/CRC32/CRC64/SHA256); surface
-/// fixtures only assert presence + callability, not per-id behaviour.
+struct CompState {
+    stream: xz2::stream::Stream,
+    flushed: bool,
+}
+
+thread_local! {
+    static DECOMPRESSORS: std::cell::RefCell<HashMap<u64, DecompState>> =
+        std::cell::RefCell::new(HashMap::new());
+    static COMPRESSORS: std::cell::RefCell<HashMap<u64, CompState>> =
+        std::cell::RefCell::new(HashMap::new());
+    static NEXT_LZMA_ID: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+}
+
+fn next_lzma_id() -> u64 {
+    NEXT_LZMA_ID.with(|c| {
+        let v = c.get();
+        c.set(v + 1);
+        v
+    })
+}
+
+fn instance_with_handle(class_name: &str, id: u64) -> MbValue {
+    let inst = MbObject::new_instance(class_name.to_string());
+    unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*inst).data {
+            let mut g = fields.write().unwrap();
+            g.insert("_handle".to_string(), MbValue::from_int(id as i64));
+            if class_name == "LZMADecompressor" {
+                g.insert("eof".to_string(), MbValue::from_bool(false));
+                g.insert("needs_input".to_string(), MbValue::from_bool(true));
+                g.insert(
+                    "unused_data".to_string(),
+                    MbValue::from_ptr(MbObject::new_bytes(Vec::new())),
+                );
+                // CHECK_UNKNOWN until a stream header is seen.
+                g.insert("check".to_string(), MbValue::from_int(16));
+            }
+        }
+    }
+    MbValue::from_ptr(inst)
+}
+
+fn instance_handle(recv: MbValue) -> Option<u64> {
+    recv.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            fields.read().unwrap().get("_handle").and_then(|v| v.as_int()).map(|i| i as u64)
+        } else {
+            None
+        }
+    })
+}
+
+fn set_instance_field(recv: MbValue, name: &str, val: MbValue) {
+    if let Some(ptr) = recv.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                fields.write().unwrap().insert(name.to_string(), val);
+            }
+        }
+    }
+}
+
+unsafe extern "C" fn dispatch_lzma_compressor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    let Ok(stream) = xz2::stream::Stream::new_easy_encoder(6, xz2::stream::Check::Crc64)
+    else {
+        return raise_lzma_error("Failed to initialize encoder");
+    };
+    let id = next_lzma_id();
+    COMPRESSORS.with(|m| {
+        m.borrow_mut().insert(id, CompState { stream, flushed: false });
+    });
+    instance_with_handle("LZMACompressor", id)
+}
+
+unsafe extern "C" fn dispatch_lzma_decompressor(_args_ptr: *const MbValue, _nargs: usize) -> MbValue {
+    let Ok(stream) = xz2::stream::Stream::new_auto_decoder(u64::MAX, 0) else {
+        return raise_lzma_error("Failed to initialize decoder");
+    };
+    let id = next_lzma_id();
+    DECOMPRESSORS.with(|m| {
+        m.borrow_mut().insert(id, DecompState {
+            stream,
+            out_buf: Vec::new(),
+            in_buf: Vec::new(),
+            eof: false,
+            errored: false,
+        });
+    });
+    instance_with_handle("LZMADecompressor", id)
+}
+
+/// Drive the decoder over the buffered input, appending decompressed bytes
+/// to out_buf up to `target` bytes (None = unbounded). Stopping at the target
+/// is what keeps a decompression bomb from expanding past max_length.
+/// Returns Err on a corrupt stream.
+fn decomp_pump(st: &mut DecompState, target: Option<usize>) -> Result<(), ()> {
+    while !st.eof {
+        if let Some(t) = target {
+            if st.out_buf.len() >= t {
+                break;
+            }
+        }
+        let before_in = st.stream.total_in();
+        let before_len = st.out_buf.len();
+        // Bounded reserve: stay near the target instead of 64K leaps so a
+        // max_length read doesn't balloon the buffer.
+        let chunk = match target {
+            Some(t) => (t - st.out_buf.len()).clamp(1, 64 * 1024),
+            None => 64 * 1024,
+        };
+        st.out_buf.reserve(chunk);
+        let status = st
+            .stream
+            .process_vec(&st.in_buf, &mut st.out_buf, xz2::stream::Action::Run)
+            .map_err(|_| ())?;
+        let consumed = (st.stream.total_in() - before_in) as usize;
+        st.in_buf.drain(..consumed.min(st.in_buf.len()));
+        if matches!(status, xz2::stream::Status::StreamEnd) {
+            st.eof = true;
+            break;
+        }
+        // No progress on either side: need more input.
+        if consumed == 0 && st.out_buf.len() == before_len {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Method dispatch for LZMACompressor / LZMADecompressor instances.
+/// Returns None for unknown receivers/methods (caller falls through).
+pub fn lzma_instance_method(recv: MbValue, method: &str, args: &[MbValue]) -> Option<MbValue> {
+    let class_name = recv.as_ptr().and_then(|ptr| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })?;
+    let id = instance_handle(recv)?;
+    match (class_name.as_str(), method) {
+        ("LZMADecompressor", "decompress") => {
+            let data = args.first().copied().unwrap_or_else(MbValue::none);
+            // max_length: positional slot 1 or kwargs dict.
+            let mut max_length: i64 = -1;
+            for v in args.iter().skip(1) {
+                if let Some(i) = as_index(*v) {
+                    max_length = i;
+                }
+                if let Some(ptr) = v.as_ptr() {
+                    unsafe {
+                        if let ObjData::Dict(ref lock) = (*ptr).data {
+                            if let Some(m) =
+                                lock.read().unwrap().get("max_length").copied().and_then(as_index)
+                            {
+                                max_length = m;
+                            }
+                        }
+                    }
+                }
+            }
+            // Reject non-buffer payloads before touching the stream.
+            let is_buffer = data.as_ptr().is_some_and(|p| unsafe {
+                matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+            });
+            if !is_buffer {
+                let tn = if as_str(data).is_some() { "str" } else { "object" };
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "a bytes-like object is required, not '{tn}'"
+                    ))),
+                );
+                return Some(MbValue::none());
+            }
+            let result = DECOMPRESSORS.with(|m| {
+                let mut map = m.borrow_mut();
+                let Some(st) = map.get_mut(&id) else {
+                    return Err("internal: lost decompressor state".to_string());
+                };
+                if st.errored {
+                    // bug 28275: once errored, every reuse keeps raising.
+                    return Err("Input format not supported by decoder".to_string());
+                }
+                // .check: read the integrity-check id off the XZ stream
+                // header (magic[6] + flags; byte 7 low nibble) on first feed.
+                let header_check = if st.stream.total_in() == 0 && st.in_buf.is_empty() {
+                    let mut c: Option<i64> = None;
+                    with_bytes(data, |b| {
+                        if b.len() >= 8 && b.starts_with(b"\xfd7zXZ\x00") {
+                            c = Some((b[7] & 0x0F) as i64);
+                        }
+                    });
+                    c
+                } else {
+                    None
+                };
+                with_bytes(data, |b| st.in_buf.extend_from_slice(b));
+                let target = if max_length < 0 { None } else { Some(max_length as usize) };
+                if decomp_pump(st, target).is_err() {
+                    st.errored = true;
+                    return Err("Input format not supported by decoder".to_string());
+                }
+                let take = if max_length < 0 {
+                    st.out_buf.len()
+                } else {
+                    (max_length as usize).min(st.out_buf.len())
+                };
+                let chunk: Vec<u8> = st.out_buf.drain(..take).collect();
+                // unused_data: bytes left after stream end.
+                let unused = if st.eof { st.in_buf.clone() } else { Vec::new() };
+                // CPython: needs_input is False while unconsumed input or
+                // buffered output remains.
+                let needs_input = !st.eof && st.out_buf.is_empty() && st.in_buf.is_empty();
+                Ok((chunk, st.eof, unused, needs_input, header_check))
+            });
+            match result {
+                Err(msg) => Some(raise_lzma_error(&msg)),
+                Ok((chunk, eof, unused, needs_input, header_check)) => {
+                    set_instance_field(recv, "eof", MbValue::from_bool(eof));
+                    set_instance_field(recv, "needs_input", MbValue::from_bool(needs_input));
+                    set_instance_field(
+                        recv,
+                        "unused_data",
+                        MbValue::from_ptr(MbObject::new_bytes(unused)),
+                    );
+                    if let Some(c) = header_check {
+                        set_instance_field(recv, "check", MbValue::from_int(c));
+                    }
+                    Some(MbValue::from_ptr(MbObject::new_bytes(chunk)))
+                }
+            }
+        }
+        ("LZMACompressor", "compress") => {
+            let data = args.first().copied().unwrap_or_else(MbValue::none);
+            let out = COMPRESSORS.with(|m| {
+                let mut map = m.borrow_mut();
+                let Some(st) = map.get_mut(&id) else { return Err(()) };
+                if st.flushed {
+                    return Err(());
+                }
+                let mut out: Vec<u8> = Vec::new();
+                let res = with_bytes(data, |b| {
+                    let mut consumed_total = 0usize;
+                    while consumed_total < b.len() {
+                        let before_in = st.stream.total_in();
+                        out.reserve(64 * 1024);
+                        if st
+                            .stream
+                            .process_vec(&b[consumed_total..], &mut out, xz2::stream::Action::Run)
+                            .is_err()
+                        {
+                            return Err(());
+                        }
+                        let consumed = (st.stream.total_in() - before_in) as usize;
+                        if consumed == 0 {
+                            break;
+                        }
+                        consumed_total += consumed;
+                    }
+                    Ok(())
+                });
+                res.map(|()| out)
+            });
+            match out {
+                Err(()) => Some(raise_lzma_error("Compressor has been flushed")),
+                Ok(out) => Some(MbValue::from_ptr(MbObject::new_bytes(out))),
+            }
+        }
+        ("LZMACompressor", "flush") => {
+            let out = COMPRESSORS.with(|m| {
+                let mut map = m.borrow_mut();
+                let Some(st) = map.get_mut(&id) else { return Err(()) };
+                if st.flushed {
+                    return Err(());
+                }
+                st.flushed = true;
+                let mut out: Vec<u8> = Vec::new();
+                loop {
+                    out.reserve(64 * 1024);
+                    match st.stream.process_vec(&[], &mut out, xz2::stream::Action::Finish) {
+                        Ok(xz2::stream::Status::StreamEnd) => break,
+                        Ok(_) => continue,
+                        Err(_) => return Err(()),
+                    }
+                }
+                Ok(out)
+            });
+            match out {
+                Err(()) => Some(raise_lzma_error("Repeated call to flush()")),
+                Ok(out) => Some(MbValue::from_ptr(MbObject::new_bytes(out))),
+            }
+        }
+        _ => None,
+    }
+}
+
+/// lzma.is_check_supported(check) -> bool. The bundled liblzma supports
+/// NONE / CRC32 / CRC64 / SHA256; anything else (including ids above
+/// CHECK_ID_MAX) is unsupported.
 unsafe extern "C" fn dispatch_is_check_supported(
-    _args_ptr: *const MbValue,
-    _nargs: usize,
+    args_ptr: *const MbValue,
+    nargs: usize,
 ) -> MbValue {
-    MbValue::from_bool(true)
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let check = args.first().copied().and_then(as_index).unwrap_or(-1);
+    MbValue::from_bool(matches!(check, 0 | 1 | 4 | 10))
+}
+
+/// lzma.open(filename, mode="rb", ..., encoding=None, errors=None) — unlike
+/// LZMAFile, open() accepts text modes ('rt'/'wt') and wraps in a text layer.
+unsafe extern "C" fn dispatch_lzma_open(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let mode = positional(args, 1)
+        .and_then(as_str)
+        .unwrap_or_else(|| "rb".to_string());
+    let base = mode.trim_end_matches(['b', 't']);
+    if !matches!(base, "r" | "w" | "x" | "a") || (mode.contains('b') && mode.contains('t')) {
+        return raise_value_error(&format!("Invalid mode: {mode:?}"));
+    }
+    let kw_str = |name: &str| -> Option<String> {
+        args.last().and_then(|v| v.as_ptr()).and_then(|ptr| unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                lock.read().unwrap().get(name).copied().and_then(as_str)
+            } else {
+                None
+            }
+        })
+    };
+    super::compressed_file::make_file_opts(
+        "LZMAFile",
+        super::compressed_file::Codec::Xz,
+        args.first().copied().unwrap_or_else(MbValue::none),
+        &mode,
+        kw_str("encoding"),
+        kw_str("errors"),
+    )
+}
+
+/// lzma._encode_filter_properties(filter_spec) — LZMA1/LZMA2 property bytes.
+/// LZMA1: byte0 = (pb*5 + lp)*9 + lc, bytes1..5 = dict_size LE u32.
+/// LZMA2: single dict-size code byte.
+unsafe extern "C" fn dispatch_encode_filter_properties(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let spec = args.first().copied().unwrap_or_else(MbValue::none);
+    let Some(ptr) = spec.as_ptr() else {
+        return raise_type_error_lzma("filter specifier must be a dict or dict-like object");
+    };
+    let map = unsafe {
+        match &(*ptr).data {
+            ObjData::Dict(ref lock) => lock.read().unwrap().clone(),
+            _ => {
+                return raise_type_error_lzma(
+                    "filter specifier must be a dict or dict-like object",
+                )
+            }
+        }
+    };
+    let get_i = |k: &str, d: i64| map.get(k).copied().and_then(as_index).unwrap_or(d);
+    let lc = get_i("lc", 3);
+    let lp = get_i("lp", 0);
+    let pb = get_i("pb", 2);
+    let dict_size = get_i("dict_size", 8 << 20) as u32;
+    let mut out = Vec::with_capacity(5);
+    out.push(((pb * 5 + lp) * 9 + lc) as u8);
+    out.extend_from_slice(&dict_size.to_le_bytes());
+    MbValue::from_ptr(MbObject::new_bytes(out))
+}
+
+/// lzma._decode_filter_properties(filter_id, props) — inverse of the above.
+unsafe extern "C" fn dispatch_decode_filter_properties(
+    args_ptr: *const MbValue,
+    nargs: usize,
+) -> MbValue {
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let filter_id = args.first().copied().and_then(as_index).unwrap_or(0);
+    let props = args.get(1).copied().unwrap_or_else(MbValue::none);
+    let bytes: Vec<u8> = with_bytes(props, |b| b.to_vec());
+    let dict = super::super::dict_ops::mb_dict_new();
+    let set = |k: &str, v: MbValue| {
+        super::super::dict_ops::mb_dict_setitem(
+            dict,
+            MbValue::from_ptr(MbObject::new_str(k.to_string())),
+            v,
+        );
+    };
+    set("id", MbValue::from_int(filter_id));
+    if bytes.len() >= 5 {
+        let code = bytes[0] as i64;
+        set("lc", MbValue::from_int(code % 9));
+        set("lp", MbValue::from_int((code / 9) % 5));
+        set("pb", MbValue::from_int(code / 45));
+        let ds = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
+        set("dict_size", MbValue::from_int(ds as i64));
+    }
+    dict
+}
+
+fn raise_type_error_lzma(msg: &str) -> MbValue {
+    super::super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
 }
 
 /// Register the lzma module with mamba's stdlib registry.
@@ -221,10 +659,12 @@ pub fn register() {
         ("compress",          dispatch_compress          as usize),
         ("decompress",        dispatch_decompress        as usize),
         ("LZMAFile",          dispatch_lzmafile          as usize),
-        ("open",              dispatch_lzmafile          as usize),
-        ("LZMACompressor",    dispatch_stub              as usize),
-        ("LZMADecompressor",  dispatch_stub              as usize),
+        ("open",              dispatch_lzma_open         as usize),
+        ("LZMACompressor",    dispatch_lzma_compressor   as usize),
+        ("LZMADecompressor",  dispatch_lzma_decompressor as usize),
         ("is_check_supported", dispatch_is_check_supported as usize),
+        ("_encode_filter_properties", dispatch_encode_filter_properties as usize),
+        ("_decode_filter_properties", dispatch_decode_filter_properties as usize),
     ];
     for (name, addr) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
@@ -340,21 +780,70 @@ pub fn mb_lzma_compress(data: MbValue) -> MbValue {
 /// the realloc churn while leaving over-allocation bounded to the
 /// caller-supplied byte count.
 pub fn mb_lzma_decompress(data: MbValue) -> MbValue {
-    let out = with_bytes(data, |b| {
-        let mut dec = XzDecoder::new(b);
-        let mut buf = Vec::with_capacity(b.len().saturating_mul(12));
-        dec.read_to_end(&mut buf).map(|_| buf)
+    // CPython decodes back-to-back concatenated streams: after one stream
+    // ends, remaining bytes start a fresh decoder. Bytes that fail to start
+    // a NEW stream are ignored once at least one stream decoded (trailing
+    // junk); a failure on the FIRST stream is the LZMAError.
+    let out: Result<Vec<u8>, ()> = with_bytes(data, |b| {
+        let mut all = Vec::with_capacity(b.len().saturating_mul(4));
+        let mut rest = b;
+        let mut decoded_any = false;
+        while !rest.is_empty() {
+            let Ok(mut stream) = xz2::stream::Stream::new_auto_decoder(u64::MAX, 0) else {
+                return Err(());
+            };
+            let mut out_buf: Vec<u8> = Vec::new();
+            let mut ended = false;
+            loop {
+                let before_in = stream.total_in();
+                let before_len = out_buf.len();
+                out_buf.reserve(64 * 1024);
+                let consumed_so_far = stream.total_in() as usize;
+                let status = match stream.process_vec(
+                    &rest[consumed_so_far..],
+                    &mut out_buf,
+                    xz2::stream::Action::Run,
+                ) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        if decoded_any {
+                            // Trailing junk after a complete stream: ignore.
+                            return Ok(all);
+                        }
+                        return Err(());
+                    }
+                };
+                if matches!(status, xz2::stream::Status::StreamEnd) {
+                    ended = true;
+                    break;
+                }
+                let progressed = stream.total_in() != before_in || out_buf.len() != before_len;
+                if !progressed {
+                    break;
+                }
+            }
+            let consumed = stream.total_in() as usize;
+            if !ended && !decoded_any {
+                return Err(()); // truncated first stream
+            }
+            all.extend_from_slice(&out_buf);
+            decoded_any = true;
+            if consumed == 0 {
+                break;
+            }
+            rest = &rest[consumed.min(rest.len())..];
+            if !ended {
+                break;
+            }
+        }
+        Ok(all)
     });
     match out {
         Ok(buf) => MbValue::from_ptr(MbObject::new_bytes(buf)),
         // A truncated or non-xz stream fails the decode. CPython raises
-        // `LZMAError` in this case (e.g. "Input format not supported by
-        // decoder" / "Compressed data ended before the end-of-stream marker").
-        // We surface it through the pending-exception channel so that `except
-        // lzma.LZMAError:` catches it. A valid stream (including the xz framing
-        // of empty input, which decodes cleanly to b'') never reaches here, so
-        // this never fires on valid input.
-        Err(_) => raise_lzma_error("Input format not supported by decoder"),
+        // `LZMAError` in this case; surfaced through the pending-exception
+        // channel so `except lzma.LZMAError:` catches it.
+        Err(()) => raise_lzma_error("Input format not supported by decoder"),
     }
 }
 
