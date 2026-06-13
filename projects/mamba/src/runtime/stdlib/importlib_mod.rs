@@ -67,6 +67,18 @@ pub fn register() {
 /// importlib.import_module(name, package=None) -> module
 /// Imports the named module, returning its namespace dict.
 pub fn mb_importlib_import_module(name: MbValue) -> MbValue {
+    // An empty module name is a ValueError (CPython: "Empty module name").
+    if let Some(ptr) = name.as_ptr() {
+        if let super::super::rc::ObjData::Str(ref s) = unsafe { &(*ptr).data } {
+            if s.is_empty() {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str("Empty module name".to_string())),
+                );
+                return MbValue::none();
+            }
+        }
+    }
     // Delegate to the runtime's mb_import
     super::super::module::mb_import(name)
 }
@@ -74,6 +86,17 @@ pub fn mb_importlib_import_module(name: MbValue) -> MbValue {
 /// importlib.reload(module) -> module
 /// Reloads the module from disk. For now, returns the existing module.
 pub fn mb_importlib_reload(module: MbValue) -> MbValue {
+    // reload() requires a module object (mamba models modules as dicts —
+    // ptr-backed). A primitive like reload(42) is a TypeError.
+    if module.as_ptr().is_none() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "reload() argument must be a module".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     module // Stub: return the module unchanged
 }
 

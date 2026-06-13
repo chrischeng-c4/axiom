@@ -330,6 +330,26 @@ pub fn mb_fraction_new(num: MbValue, den: MbValue) -> MbValue {
     if !den.is_none() && coerce(den).num == 0 {
         return raise_zero_division_error("Fraction(n, 0)");
     }
+    // An argument that is not a number / string / Rational (e.g. a list)
+    // has no Fraction conversion: CPython raises TypeError rather than
+    // silently coercing to Fraction(0).
+    if let Some(p) = num.as_ptr() {
+        if matches!(
+            unsafe { &(*p).data },
+            ObjData::List(_) | ObjData::Tuple(_) | ObjData::Dict(_)
+                | ObjData::Set(_) | ObjData::FrozenSet(_)
+                | ObjData::Bytes(_) | ObjData::ByteArray(_)
+        ) {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "argument should be a string or a Rational instance, not '{}'",
+                    super::super::builtins::value_type_name(num)
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
     let a = coerce(num);
     // Single-argument form: `Fraction(5)` (den omitted → None) means
     // denominator 1, NOT `coerce(None)` (which is 0/1 and collapsed every
