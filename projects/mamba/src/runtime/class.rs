@@ -8940,8 +8940,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     let data = arg_items.first().copied().unwrap_or(MbValue::none());
                     return super::stdlib::hashlib_mod::mb_hashlib_update(receiver, data);
                 }
-                "hexdigest" => return super::stdlib::hashlib_mod::mb_hashlib_hexdigest(receiver),
-                "digest" => return super::stdlib::hashlib_mod::mb_hashlib_digest(receiver),
+                "hexdigest" => {
+                    let len = arg_items.first().and_then(|v| v.as_int());
+                    return super::stdlib::hashlib_mod::mb_hashlib_hexdigest_len(receiver, len);
+                }
+                "digest" => {
+                    let len = arg_items.first().and_then(|v| v.as_int());
+                    return super::stdlib::hashlib_mod::mb_hashlib_digest_len(receiver, len);
+                }
                 "copy" => return super::stdlib::hashlib_mod::mb_hashlib_copy(receiver),
                 _ => {}
             }

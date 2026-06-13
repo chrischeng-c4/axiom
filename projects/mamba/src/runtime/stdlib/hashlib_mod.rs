@@ -52,11 +52,14 @@ use super::super::rc::{MbObject, ObjData};
 use md5::Md5;
 use sha1::Sha1;
 use sha2::{Digest, Sha224, Sha256, Sha384, Sha512};
-use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512};
+use sha3::{Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256};
+// SHAKE XOF traits (variable-length extendable output).
+use sha3::digest::{ExtendableOutput, Update as XofUpdate, XofReader};
 // Real blake2 (RFC 7693). Default-size variants: blake2b → 64-byte digest,
-// blake2s → 32-byte digest. Previously these were faked with Sha512/Sha256,
-// which produced wrong digests for every blake2 known-vector caller.
-use blake2::{Blake2b512, Blake2s256};
+// blake2s → 32-byte digest. Blake2bVar/Blake2sVar carry a runtime
+// digest_size; Blake2bMac512/Blake2sMac256 are the keyed (MAC) construction.
+use blake2::{Blake2b512, Blake2bMac512, Blake2bVar, Blake2s256, Blake2sMac256, Blake2sVar};
+use blake2::digest::{VariableOutput, Update as VarUpdate};
 // PBKDF2 (RFC 8018) is hand-rolled over the RustCrypto `hmac` crate (already
 // a direct dependency) so `hashlib.pbkdf2_hmac(...)` needs no extra crate.
 use hmac::{Hmac, Mac};
@@ -119,6 +122,15 @@ enum HasherState {
     Sha3_512(Sha3_512),
     Blake2b(Blake2b512),
     Blake2s(Blake2s256),
+    // Variable-length / keyed / XOF variants for the parameterized
+    // constructors (`blake2b(digest_size=…)`, `blake2b(key=…)`,
+    // `shake_128`/`shake_256`).
+    Blake2bVar(Blake2bVar),
+    Blake2sVar(Blake2sVar),
+    Blake2bMac(Box<Blake2bMac512>),
+    Blake2sMac(Box<Blake2sMac256>),
+    Shake128(Shake128),
+    Shake256(Shake256),
 }
 
 impl HasherState {
@@ -134,39 +146,68 @@ impl HasherState {
             "sha3_256" => HasherState::Sha3_256(Sha3_256::new()),
             "sha3_384" => HasherState::Sha3_384(Sha3_384::new()),
             "sha3_512" => HasherState::Sha3_512(Sha3_512::new()),
-            // blake2 (b/s) — real RFC 7693 digest at default output size
-            // (blake2b → 64 bytes, blake2s → 32 bytes). Custom digest_size=
-            // / key= parameters are not yet wired through native dispatch
-            // (kwargs are dropped before reaching this thunk; tracked as a
-            // core call-lowering gap), so only the unkeyed default-size
-            // path is correct today.
             "blake2b" => HasherState::Blake2b(Blake2b512::new()),
             "blake2s" => HasherState::Blake2s(Blake2s256::new()),
+            "shake_128" => HasherState::Shake128(Shake128::default()),
+            "shake_256" => HasherState::Shake256(Shake256::default()),
             _ => HasherState::Md5(Md5::new()),
         }
     }
 
+    /// blake2 with optional `digest_size` / `key`. A key selects the keyed
+    /// MAC construction (default output size); otherwise a digest_size
+    /// selects the variable-output construction; absent both, the default.
+    fn new_blake2(algo: &str, digest_size: Option<usize>, key: &[u8]) -> Self {
+        let is_b = algo == "blake2b";
+        if !key.is_empty() {
+            return if is_b {
+                HasherState::Blake2bMac(Box::new(
+                    Blake2bMac512::new_from_slice(key).expect("blake2b key"),
+                ))
+            } else {
+                HasherState::Blake2sMac(Box::new(
+                    Blake2sMac256::new_from_slice(key).expect("blake2s key"),
+                ))
+            };
+        }
+        if let Some(n) = digest_size {
+            return if is_b {
+                HasherState::Blake2bVar(Blake2bVar::new(n).expect("blake2b size"))
+            } else {
+                HasherState::Blake2sVar(Blake2sVar::new(n).expect("blake2s size"))
+            };
+        }
+        HasherState::new(algo)
+    }
+
     fn update(&mut self, data: &[u8]) {
         match self {
-            HasherState::Md5(h) => h.update(data),
-            HasherState::Sha1(h) => h.update(data),
-            HasherState::Sha224(h) => h.update(data),
-            HasherState::Sha256(h) => h.update(data),
-            HasherState::Sha384(h) => h.update(data),
-            HasherState::Sha512(h) => h.update(data),
-            HasherState::Sha3_224(h) => h.update(data),
-            HasherState::Sha3_256(h) => h.update(data),
-            HasherState::Sha3_384(h) => h.update(data),
-            HasherState::Sha3_512(h) => h.update(data),
-            HasherState::Blake2b(h) => h.update(data),
-            HasherState::Blake2s(h) => h.update(data),
+            HasherState::Md5(h) => Digest::update(h, data),
+            HasherState::Sha1(h) => Digest::update(h, data),
+            HasherState::Sha224(h) => Digest::update(h, data),
+            HasherState::Sha256(h) => Digest::update(h, data),
+            HasherState::Sha384(h) => Digest::update(h, data),
+            HasherState::Sha512(h) => Digest::update(h, data),
+            HasherState::Sha3_224(h) => Digest::update(h, data),
+            HasherState::Sha3_256(h) => Digest::update(h, data),
+            HasherState::Sha3_384(h) => Digest::update(h, data),
+            HasherState::Sha3_512(h) => Digest::update(h, data),
+            HasherState::Blake2b(h) => Digest::update(h, data),
+            HasherState::Blake2s(h) => Digest::update(h, data),
+            HasherState::Blake2bVar(h) => VarUpdate::update(h, data),
+            HasherState::Blake2sVar(h) => VarUpdate::update(h, data),
+            HasherState::Blake2bMac(h) => Mac::update(h.as_mut(), data),
+            HasherState::Blake2sMac(h) => Mac::update(h.as_mut(), data),
+            HasherState::Shake128(h) => XofUpdate::update(h, data),
+            HasherState::Shake256(h) => XofUpdate::update(h, data),
         }
     }
 
-    /// Clone-then-finalize so the same hash object can be queried
-    /// multiple times — CPython invariant: `h.hexdigest()` does not
-    /// invalidate `h`.
-    fn finalize_clone(&self) -> Vec<u8> {
+    /// Clone-then-finalize so the same hash object can be queried multiple
+    /// times — CPython invariant: `h.hexdigest()` does not invalidate `h`.
+    /// `shake_len` is the requested output length for the XOF variants
+    /// (ignored by fixed/var/mac variants, whose size is intrinsic).
+    fn finalize_clone(&self, shake_len: Option<usize>) -> Vec<u8> {
         match self {
             HasherState::Md5(h) => h.clone().finalize().to_vec(),
             HasherState::Sha1(h) => h.clone().finalize().to_vec(),
@@ -180,6 +221,32 @@ impl HasherState {
             HasherState::Sha3_512(h) => h.clone().finalize().to_vec(),
             HasherState::Blake2b(h) => h.clone().finalize().to_vec(),
             HasherState::Blake2s(h) => h.clone().finalize().to_vec(),
+            HasherState::Blake2bVar(h) => {
+                let n = VariableOutput::output_size(h);
+                let mut out = vec![0u8; n];
+                h.clone().finalize_variable(&mut out).expect("blake2b finalize");
+                out
+            }
+            HasherState::Blake2sVar(h) => {
+                let n = VariableOutput::output_size(h);
+                let mut out = vec![0u8; n];
+                h.clone().finalize_variable(&mut out).expect("blake2s finalize");
+                out
+            }
+            HasherState::Blake2bMac(h) => h.as_ref().clone().finalize().into_bytes().to_vec(),
+            HasherState::Blake2sMac(h) => h.as_ref().clone().finalize().into_bytes().to_vec(),
+            HasherState::Shake128(h) => {
+                let mut reader = h.clone().finalize_xof();
+                let mut out = vec![0u8; shake_len.unwrap_or(32)];
+                reader.read(&mut out);
+                out
+            }
+            HasherState::Shake256(h) => {
+                let mut reader = h.clone().finalize_xof();
+                let mut out = vec![0u8; shake_len.unwrap_or(64)];
+                reader.read(&mut out);
+                out
+            }
         }
     }
 
@@ -197,6 +264,12 @@ impl HasherState {
             HasherState::Sha3_512(h) => HasherState::Sha3_512(h.clone()),
             HasherState::Blake2b(h) => HasherState::Blake2b(h.clone()),
             HasherState::Blake2s(h) => HasherState::Blake2s(h.clone()),
+            HasherState::Blake2bVar(h) => HasherState::Blake2bVar(h.clone()),
+            HasherState::Blake2sVar(h) => HasherState::Blake2sVar(h.clone()),
+            HasherState::Blake2bMac(h) => HasherState::Blake2bMac(h.clone()),
+            HasherState::Blake2sMac(h) => HasherState::Blake2sMac(h.clone()),
+            HasherState::Shake128(h) => HasherState::Shake128(h.clone()),
+            HasherState::Shake256(h) => HasherState::Shake256(h.clone()),
         }
     }
 }
@@ -277,15 +350,57 @@ pub fn release_handle(id: u64) -> bool {
 }
 
 fn make_handle(algo: &str) -> MbValue {
+    make_handle_state(algo, HasherState::new(algo))
+}
+
+fn make_handle_state(algo: &str, state: HasherState) -> MbValue {
     let id = alloc_hash_id();
     HASHES.with(|m| {
-        m.borrow_mut().insert(id, MbHash {
-            algo: algo.to_string(),
-            state: HasherState::new(algo),
-        });
+        m.borrow_mut().insert(id, MbHash { algo: algo.to_string(), state });
     });
     HASH_IDS.with(|s| { s.borrow_mut().insert(id); });
     MbValue::from_int(id as i64)
+}
+
+/// blake2b / blake2s constructor honoring `digest_size=` and `key=`. mamba's
+/// call lowering flattens those keyword VALUES into positional slots (blake2*
+/// is a bare-ident builtin), so the dispatcher classifies each trailing arg
+/// by type — an int is `digest_size`, a bytes-like value is `key` — and also
+/// reads a trailing kwargs dict when one is present.
+fn blake2_make(algo: &str, a: &[MbValue]) -> MbValue {
+    let data = a.first().copied().unwrap_or_else(MbValue::none);
+    if !data.is_none() && !is_bytes_like(data) {
+        return raise_type_error("blake2 argument must be bytes-like");
+    }
+    let mut digest_size: Option<usize> = None;
+    let mut key: Vec<u8> = Vec::new();
+    for &arg in a.iter().skip(1) {
+        if let Some(ptr) = arg.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let g = lock.read().unwrap();
+                    if let Some(v) = g.get(&super::super::dict_ops::DictKey::Str("digest_size".into())) {
+                        if let Some(n) = v.as_int() { digest_size = Some(n.max(0) as usize); }
+                    }
+                    if let Some(v) = g.get(&super::super::dict_ops::DictKey::Str("key".into())) {
+                        key = with_bytes(*v, |b| b.to_vec());
+                    }
+                    continue;
+                }
+            }
+        }
+        if let Some(n) = arg.as_int() {
+            digest_size = Some(n.max(0) as usize);
+        } else if is_bytes_like(arg) {
+            key = with_bytes(arg, |b| b.to_vec());
+        }
+    }
+    let state = HasherState::new_blake2(algo, digest_size, &key);
+    let h = make_handle_state(algo, state);
+    if !data.is_none() {
+        mb_hashlib_update(h, data);
+    }
+    h
 }
 
 /// Borrow `&[u8]` from an MbValue holding bytes/bytearray/str. Returns
@@ -389,22 +504,41 @@ pub fn mb_hashlib_update(handle: MbValue, data: MbValue) -> MbValue {
     MbValue::none()
 }
 
-/// `h.hexdigest()` — finalize a clone, return lowercase hex string.
-pub fn mb_hashlib_hexdigest(handle: MbValue) -> MbValue {
-    // SHAKE XOFs require an explicit output length.
-    let algo = handle.as_int()
-        .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.algo.clone())))
-        .unwrap_or_default();
-    if algo.starts_with("shake_") {
-        return raise_exc(
-            "TypeError",
-            "hexdigest() missing required argument 'length' (pos 1)",
-        );
-    }
-    let digest_bytes = handle.as_int().and_then(|id| {
-        HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone()))
+/// Resolve the requested SHAKE output length: a SHAKE handle requires the
+/// caller to pass a `length`. Returns Err (after raising) when a SHAKE handle
+/// has no length, Ok(Some(n)) for a SHAKE call with a length, Ok(None) for a
+/// fixed/var/mac handle (length intrinsic).
+fn shake_length(handle: MbValue, length: Option<i64>, method: &str) -> Result<Option<usize>, ()> {
+    let is_shake = handle.as_int().is_some_and(|id| {
+        HASHES.with(|m| {
+            m.borrow().get(&(id as u64)).map(|h| h.algo.starts_with("shake_")).unwrap_or(false)
+        })
     });
-    let bytes = digest_bytes.unwrap_or_default();
+    if is_shake {
+        match length {
+            Some(n) if n >= 0 => Ok(Some(n as usize)),
+            _ => {
+                raise_exc(
+                    "TypeError",
+                    &format!("{method}() missing required argument 'length' (pos 1)"),
+                );
+                Err(())
+            }
+        }
+    } else {
+        Ok(None)
+    }
+}
+
+/// `h.hexdigest([length])` — finalize a clone, return lowercase hex string.
+pub fn mb_hashlib_hexdigest_len(handle: MbValue, length: Option<i64>) -> MbValue {
+    let shake_len = match shake_length(handle, length, "hexdigest") {
+        Ok(n) => n,
+        Err(()) => return MbValue::none(),
+    };
+    let bytes = handle.as_int().and_then(|id| {
+        HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone(shake_len)))
+    }).unwrap_or_default();
     let mut hex = String::with_capacity(bytes.len() * 2);
     for byte in &bytes {
         use std::fmt::Write;
@@ -413,12 +547,26 @@ pub fn mb_hashlib_hexdigest(handle: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_str(hex))
 }
 
-/// `h.digest()` — finalize a clone, return raw digest bytes.
-pub fn mb_hashlib_digest(handle: MbValue) -> MbValue {
+/// `h.hexdigest()` — back-compat zero-arg entry (non-SHAKE handles).
+pub fn mb_hashlib_hexdigest(handle: MbValue) -> MbValue {
+    mb_hashlib_hexdigest_len(handle, None)
+}
+
+/// `h.digest([length])` — finalize a clone, return raw digest bytes.
+pub fn mb_hashlib_digest_len(handle: MbValue, length: Option<i64>) -> MbValue {
+    let shake_len = match shake_length(handle, length, "digest") {
+        Ok(n) => n,
+        Err(()) => return MbValue::none(),
+    };
     let bytes = handle.as_int()
-        .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone())))
+        .and_then(|id| HASHES.with(|m| m.borrow().get(&(id as u64)).map(|h| h.state.finalize_clone(shake_len))))
         .unwrap_or_default();
     MbValue::from_ptr(MbObject::new_bytes(bytes))
+}
+
+/// `h.digest()` — back-compat zero-arg entry (non-SHAKE handles).
+pub fn mb_hashlib_digest(handle: MbValue) -> MbValue {
+    mb_hashlib_digest_len(handle, None)
 }
 
 /// `h.copy()` — return an independent hash handle with the same internal state.
@@ -485,15 +633,27 @@ disp_algo!(dispatch_sha3_224, "sha3_224");
 disp_algo!(dispatch_sha3_256, "sha3_256");
 disp_algo!(dispatch_sha3_384, "sha3_384");
 disp_algo!(dispatch_sha3_512, "sha3_512");
-disp_algo!(dispatch_blake2b, "blake2b");
-disp_algo!(dispatch_blake2s, "blake2s");
+unsafe extern "C" fn dispatch_blake2b(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    blake2_make("blake2b", a)
+}
+unsafe extern "C" fn dispatch_blake2s(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    blake2_make("blake2s", a)
+}
 disp_algo!(dispatch_shake_128, "shake_128");
 disp_algo!(dispatch_shake_256, "shake_256");
 
 unsafe extern "C" fn dispatch_new(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    // CPython: the name must be a str — a non-str (`new(1)`) is a TypeError.
+    let name_v = a.first().copied().unwrap_or_else(MbValue::none);
+    let is_str = name_v.as_ptr().is_some_and(|p| unsafe { matches!((*p).data, ObjData::Str(_)) });
+    if !is_str {
+        return raise_type_error("new() argument 1 must be str, not int");
+    }
     let mut algo = String::from("md5");
-    with_str(a.first().copied().unwrap_or_else(MbValue::none), |s| {
+    with_str(name_v, |s| {
         if !s.is_empty() {
             algo = s.to_string();
         }
@@ -560,13 +720,13 @@ macro_rules! pbkdf2_for {
         for block_index in 1..=blocks as u32 {
             // U1 = HMAC(password, salt || INT_32_BE(block_index))
             let mut mac = prf.clone();
-            mac.update(salt);
-            mac.update(&block_index.to_be_bytes());
+            Mac::update(&mut mac, salt);
+            Mac::update(&mut mac, &block_index.to_be_bytes());
             let mut u = mac.finalize().into_bytes();
             let mut t = u;
             for _ in 1..rounds {
                 let mut mac = prf.clone();
-                mac.update(&u);
+                Mac::update(&mut mac, &u);
                 u = mac.finalize().into_bytes();
                 for (ti, ui) in t.iter_mut().zip(u.iter()) {
                     *ti ^= *ui;
@@ -611,8 +771,30 @@ unsafe extern "C" fn dispatch_pbkdf2_hmac(args_ptr: *const MbValue, nargs: usize
     if rounds < 1 {
         return raise_exc("ValueError", "iteration value must be greater than 0.");
     }
-    // 5th positional (rare) — dklen. Keyword `dklen=` is dropped before here.
-    let dklen = a.get(4).and_then(|v| v.as_int()).filter(|&n| n > 0).map(|n| n as usize);
+    // dklen: a 5th positional, OR a `dklen=` keyword arriving as a trailing
+    // kwargs dict (the convention for `hashlib.pbkdf2_hmac(...)` attribute
+    // calls).
+    let dklen = {
+        let mut d: Option<i64> = None;
+        for &arg in a.iter().skip(4) {
+            if let Some(ptr) = arg.as_ptr() {
+                unsafe {
+                    if let ObjData::Dict(ref lock) = (*ptr).data {
+                        if let Some(v) = lock.read().unwrap()
+                            .get(&super::super::dict_ops::DictKey::Str("dklen".into()))
+                        {
+                            d = v.as_int();
+                        }
+                        continue;
+                    }
+                }
+            }
+            if let Some(n) = arg.as_int() {
+                d = Some(n);
+            }
+        }
+        d.filter(|&n| n > 0).map(|n| n as usize)
+    };
     let result = with_bytes(password, |pw| {
         with_bytes(salt, |st| pbkdf2_dispatch_impl(&hash_name, pw, st, rounds as u32, dklen))
     });

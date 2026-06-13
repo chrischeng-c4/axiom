@@ -163,6 +163,17 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("pat", CoreTy::Unknown)],
         enforceable: false,
     },
+    // NEGATIVE: hashlib.new(name, data=b'') — `new(1)` is a RUNTIME
+    // TypeError raised by the dispatcher (CPython: 'name must be a string'),
+    // which the fixture catches; keep the type wall from rejecting it early.
+    StdlibSig {
+        module: "hashlib",
+        qualifier: "",
+        name: "new",
+        kind: SigKind::ModuleFn,
+        params: &[p("name", CoreTy::Unknown), p("data", CoreTy::Unknown)],
+        enforceable: false,
+    },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for
