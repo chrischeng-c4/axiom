@@ -3243,6 +3243,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             let guard = fields.read().unwrap();
                             let dict = super::dict_ops::mb_dict_new();
                             for (k, v) in guard.iter() {
+                                // `__ns_order__` is SimpleNamespace's hidden
+                                // insertion-order list; it must not surface in
+                                // __dict__ (vars() already excludes it).
+                                if k == "__ns_order__" {
+                                    continue;
+                                }
                                 let key = MbValue::from_ptr(
                                     super::rc::MbObject::new_str(k.clone()),
                                 );
