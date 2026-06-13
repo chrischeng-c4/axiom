@@ -228,10 +228,31 @@ unsafe extern "C" fn dispatch_chainmap_new(args_ptr: *const MbValue, nargs: usiz
 }
 
 /// Register the collections module.
+/// `collections._count_elements(mapping, iterable)` — the C accelerator behind
+/// Counter: increment `mapping[elem]` by one for each element of `iterable`,
+/// starting missing keys at zero. Mutates `mapping` in place, returns None.
+unsafe extern "C" fn dispatch_count_elements(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { args_as_slice(args_ptr, nargs) };
+    let mapping = a.first().copied().unwrap_or_else(MbValue::none);
+    let iterable = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let handle = super::super::iter::mb_iter(iterable);
+    if super::super::iter::is_iter_handle(handle) {
+        if let Some(items) = super::super::iter::drain_iter_to_vec(handle) {
+            for elem in items {
+                let cur = super::super::dict_ops::mb_dict_get(mapping, elem, MbValue::from_int(0));
+                let next = MbValue::from_int(cur.as_int().unwrap_or(0) + 1);
+                super::super::dict_ops::mb_dict_setitem(mapping, elem, next);
+            }
+        }
+    }
+    MbValue::none()
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
 
-    let dispatchers: [(&str, usize); 15] = [
+    let dispatchers: [(&str, usize); 16] = [
+        ("_count_elements", dispatch_count_elements as *const () as usize),
         ("Counter", dispatch_counter_new as *const () as usize),
         ("counter_most_common", dispatch_counter_most_common as *const () as usize),
         ("deque", dispatch_deque_new as *const () as usize),
