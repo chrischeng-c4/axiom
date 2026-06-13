@@ -365,6 +365,56 @@ fn make_class_object(name: &str, extra: &[(&str, MbValue)]) -> MbValue {
     new_instance("type", fields)
 }
 
+/// First positional element of a method-call args list (the variadic method
+/// ABI delivers args as a list).
+fn method_arg0(args: MbValue) -> Option<MbValue> {
+    args.as_ptr().and_then(|p| unsafe {
+        if let ObjData::List(ref lk) = (*p).data {
+            lk.read().unwrap().first().copied()
+        } else {
+            None
+        }
+    })
+}
+
+// Variadic instance-method wrappers (ABI: `fn(self_v, args_list)`) so that the
+// unbound forms `ContextVar.get`/`set`/`reset` resolve to callable methods via
+// the func->native-class bridge. They produce the same result as the inline
+// `class.rs` ContextVar dispatch, so registering the class is safe regardless
+// of which path instance calls (`cv.get()`) take.
+unsafe extern "C" fn cv_method_get(self_v: MbValue, args: MbValue) -> MbValue {
+    mb_contextvar_get(self_v, method_arg0(args))
+}
+unsafe extern "C" fn cv_method_set(self_v: MbValue, args: MbValue) -> MbValue {
+    mb_contextvar_set(self_v, method_arg0(args).unwrap_or_else(MbValue::none))
+}
+unsafe extern "C" fn cv_method_reset(self_v: MbValue, args: MbValue) -> MbValue {
+    mb_contextvar_reset(self_v, method_arg0(args).unwrap_or_else(MbValue::none))
+}
+
+// Native dispatchers exposed as callable attributes on the `Context` type
+// object so `Context.run` / `Context.copy` resolve to callables (and work as
+// unbound forms `Context.run(ctx, fn)`).
+unsafe extern "C" fn dispatch_context_run(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    let ctx = a.first().copied().unwrap_or_else(MbValue::none);
+    let func = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let rest = a.get(2..).map(|s| s.to_vec()).unwrap_or_default();
+    mb_context_run(ctx, func, rest)
+}
+unsafe extern "C" fn dispatch_context_copy(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a: &[MbValue] = if nargs == 0 || args_ptr.is_null() {
+        &[]
+    } else {
+        unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
+    };
+    mb_context_copy(a.first().copied().unwrap_or_else(MbValue::none))
+}
+
 /// Register the contextvars module.
 pub fn register() {
     let mut attrs = HashMap::new();
@@ -385,6 +435,19 @@ pub fn register() {
             "ContextVar".to_string(),
         );
     });
+    // Register the ContextVar class with its instance methods so the unbound
+    // forms `ContextVar.get`/`set`/`reset` resolve to callable methods (the
+    // func->native-class bridge does lookup_method against this table).
+    let mut cv_methods: HashMap<String, MbValue> = HashMap::new();
+    for (name, addr) in [
+        ("get", cv_method_get as usize),
+        ("set", cv_method_set as usize),
+        ("reset", cv_method_reset as usize),
+    ] {
+        super::super::module::register_variadic_func(addr as u64);
+        cv_methods.insert(name.to_string(), MbValue::from_func(addr));
+    }
+    super::super::class::mb_class_register("ContextVar", vec![], cv_methods);
 
     // `Token` is a type-singleton exposing the MISSING sentinel;
     // `Context` is a type-singleton so isinstance(ctx, contextvars.Context)
@@ -393,7 +456,20 @@ pub fn register() {
         "Token".to_string(),
         make_class_object("Token", &[("MISSING", missing_sentinel())]),
     );
-    attrs.insert("Context".to_string(), make_class_object("Context", &[]));
+    let ctx_run_addr = dispatch_context_run as usize;
+    let ctx_copy_addr = dispatch_context_copy as usize;
+    register_native_addr(ctx_run_addr);
+    register_native_addr(ctx_copy_addr);
+    attrs.insert(
+        "Context".to_string(),
+        make_class_object(
+            "Context",
+            &[
+                ("run", MbValue::from_func(ctx_run_addr)),
+                ("copy", MbValue::from_func(ctx_copy_addr)),
+            ],
+        ),
+    );
 
     super::register_module("contextvars", attrs);
 }
