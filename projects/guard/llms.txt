@@ -24,7 +24,7 @@
 - Build debug: `./build.sh debug`.
 - Build release: `./build.sh release`.
 - Install: repo root `install.sh --project=guard` dispatches to `./install.sh`.
-- Test: `cargo test -p guard -p guard-cli`.
+- Test: `CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -p guard-cli`.
 
 ## Root Artifacts
 
