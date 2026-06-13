@@ -275,7 +275,7 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
     // Remove the iterator from storage to avoid borrowing issues.
     let iter = ITERATORS.with(|iters| iters.borrow_mut().remove(&id))?;
 
-    match iter.kind {
+    let result = match iter.kind {
         IterKind::Range { current, stop, step } => {
             // Compute the number of elements and build Vec in one allocation.
             let count = if step > 0 {
@@ -362,7 +362,27 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             ITERATORS.with(|iters| iters.borrow_mut().insert(id, iter));
             None
         }
+    };
+
+    // A CPython iterator re-iterates to empty once exhausted rather than
+    // raising on the (now stale) handle. The eagerly-drained kinds above
+    // consumed the registry entry; re-insert an exhausted empty placeholder
+    // under the same id so a second `list(it)` / `tuple(it)` yields `[]`
+    // instead of treating the bare int handle as a non-iterable. This matches
+    // the incremental `mb_next` path, which marks `exhausted` and keeps the
+    // entry. (The `_` fallback arm re-inserted the live iterator and returned
+    // None, so only re-place when we actually drained — `result.is_some()`.)
+    if result.is_some() {
+        ITERATORS.with(|iters| {
+            iters.borrow_mut().insert(id, MbIterator {
+                kind: IterKind::Str(Vec::new()),
+                index: 0,
+                exhausted: true,
+                peeked: None,
+            });
+        });
     }
+    result
 }
 
 // ── Iterator Creation ──
