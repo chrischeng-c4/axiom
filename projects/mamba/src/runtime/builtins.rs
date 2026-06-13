@@ -956,6 +956,18 @@ pub fn mb_len(val: MbValue) -> MbValue {
                     {
                         return mb_len(data);
                     }
+                    // collections.deque: len() is its backing `_items` list.
+                    if class_name == "collections.deque" {
+                        let items = fields.read().unwrap().get("_items").copied();
+                        if let Some(d) = items {
+                            if let Some(dp) = d.as_ptr() {
+                                if let ObjData::List(ref lock) = (*dp).data {
+                                    return MbValue::from_int(lock.read().unwrap().len() as i64);
+                                }
+                            }
+                        }
+                        return MbValue::from_int(0);
+                    }
                     // dict-like collections (defaultdict, Counter, OrderedDict):
                     // forward len() to the backing `_data` dict.
                     if class_name == "collections.defaultdict"

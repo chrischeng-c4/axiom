@@ -450,7 +450,14 @@ pub fn mb_counter_most_common(
 ) -> MbValue {
     use crate::runtime::dict_ops::DictKey;
     let map = counter_data(counter);
-    let limit = n.as_int().unwrap_or(map.len() as i64) as usize;
+    // CPython: most_common(None) returns all; most_common(n) is nlargest(n),
+    // so n <= 0 returns an empty list (a negative n must NOT wrap to a huge
+    // `usize` and return everything).
+    let limit = match n.as_int() {
+        Some(i) if i < 0 => 0,
+        Some(i) => i as usize,
+        None => map.len(),
+    };
 
     let mut entries: Vec<(DictKey, i64)> = map
         .iter()
