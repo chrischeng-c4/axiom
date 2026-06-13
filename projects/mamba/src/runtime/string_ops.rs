@@ -2899,6 +2899,58 @@ pub fn value_to_string(val: MbValue) -> String {
 
 // ── Method Dispatch ──
 
+/// Parse a C99 hexadecimal floating-point string (CPython `float.fromhex`):
+/// optional sign, optional `0x`/`0X` prefix, hex mantissa with an optional
+/// fractional `.`, optional binary exponent `p±ddd` (decimal); plus the
+/// case-insensitive specials `inf`/`infinity`/`nan`. Returns `None` for any
+/// malformed input so the caller can raise ValueError.
+fn parse_hex_float(input: &str) -> Option<f64> {
+    let s = input.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let (sign, rest) = match s.as_bytes()[0] {
+        b'+' => (1.0_f64, &s[1..]),
+        b'-' => (-1.0_f64, &s[1..]),
+        _ => (1.0_f64, s),
+    };
+    let lower = rest.to_ascii_lowercase();
+    match lower.as_str() {
+        "inf" | "infinity" => return Some(sign * f64::INFINITY),
+        "nan" => return Some(f64::NAN),
+        _ => {}
+    }
+    let body = lower.strip_prefix("0x").unwrap_or(&lower);
+    // Split off the optional binary exponent.
+    let (mantissa, exp) = match body.split_once('p') {
+        Some((m, e)) => {
+            // Exponent must be a (possibly signed) decimal integer.
+            if e.is_empty() {
+                return None;
+            }
+            (m, e.parse::<i32>().ok()?)
+        }
+        None => (body, 0),
+    };
+    let (int_part, frac_part) = match mantissa.split_once('.') {
+        Some((i, f)) => (i, f),
+        None => (mantissa, ""),
+    };
+    if int_part.is_empty() && frac_part.is_empty() {
+        return None;
+    }
+    let mut value = 0.0_f64;
+    for c in int_part.chars() {
+        value = value * 16.0 + c.to_digit(16)? as f64;
+    }
+    let mut scale = 1.0_f64 / 16.0;
+    for c in frac_part.chars() {
+        value += c.to_digit(16)? as f64 * scale;
+        scale /= 16.0;
+    }
+    Some(sign * value * 2f64.powi(exp))
+}
+
 /// Dispatch a method call on a string object.
 /// `name` is the method name, `receiver` is the string, `args` is a list of arguments.
 pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbValue {
@@ -3116,6 +3168,23 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
                     if let ObjData::Str(ref s) = (*ptr).data { s.clone() } else { String::new() }
                 } else { String::new() }
             };
+            // float.fromhex parses a C99 hexadecimal floating-point string and
+            // raises ValueError on malformed input — distinct from the
+            // bytes/bytearray hex-pair decoder below.
+            if recv_str == "float" {
+                return match parse_hex_float(&hex_s) {
+                    Some(f) => MbValue::from_float(f),
+                    None => {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(
+                                "invalid hexadecimal floating-point string".to_string(),
+                            )),
+                        );
+                        MbValue::none()
+                    }
+                };
+            }
             let bytes_data: Vec<u8> = (0..hex_s.len() / 2)
                 .filter_map(|i| u8::from_str_radix(&hex_s[i*2..i*2+2], 16).ok())
                 .collect();

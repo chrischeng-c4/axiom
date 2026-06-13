@@ -2387,6 +2387,30 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                     if raise_datetime_op_type_error("+", a, b) {
                         return MbValue::none();
                     }
+                    // Genuinely unsupported operand pair (e.g. `1.0 + "x"`):
+                    // CPython raises TypeError. Preserve the None fallback when
+                    // an operand is a user Instance (whose __add__/__radd__ is
+                    // resolved by the binop dispatcher — None = "not handled")
+                    // OR None: mamba's `__file__`/missing-attr values surface as
+                    // None and several stdlib paths (os.path.join(None,...),
+                    // linecache) lean on `None + str` staying lenient until that
+                    // is fixed properly.
+                    let a_inst = a.is_none() || a.as_ptr().map_or(false, |p| {
+                        matches!(unsafe { &(*p).data }, ObjData::Instance { .. })
+                    });
+                    let b_inst = b.is_none() || b.as_ptr().map_or(false, |p| {
+                        matches!(unsafe { &(*p).data }, ObjData::Instance { .. })
+                    });
+                    if !a_inst && !b_inst {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "unsupported operand type(s) for +: '{}' and '{}'",
+                                value_type_name(a),
+                                value_type_name(b)
+                            ))),
+                        );
+                    }
                     MbValue::none()
                 },
             }
@@ -2976,10 +3000,17 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
     match (af, bf) {
         (Some(af), Some(bf)) if bf != 0.0 => MbValue::from_float(af / bf),
         (Some(_), Some(_)) => {
-            // ZeroDivisionError: division by zero
+            // CPython distinguishes float true-division ("float division by
+            // zero") from int true-division ("division by zero") by whether
+            // either operand is a float.
+            let msg = if a.as_float().is_some() || b.as_float().is_some() {
+                "float division by zero"
+            } else {
+                "division by zero"
+            };
             super::exception::mb_raise(
                 MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
-                MbValue::from_ptr(MbObject::new_str("division by zero".to_string())),
+                MbValue::from_ptr(MbObject::new_str(msg.to_string())),
             );
             MbValue::none()
         }
@@ -4955,6 +4986,18 @@ pub fn mb_bin(val: MbValue) -> MbValue {
     MbValue::none()
 }
 
+/// Raise `ZeroDivisionError: 0.0 cannot be raised to a negative power` — the
+/// CPython error for `0 ** -n` / `0.0 ** -n`.
+fn raise_zero_neg_pow() -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "0.0 cannot be raised to a negative power".to_string(),
+        )),
+    );
+    MbValue::none()
+}
+
 /// pow(base, exp) — power operator.
 pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("**", base, exp) {
@@ -5029,6 +5072,10 @@ pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
                     super::bigint_ops::bigint_from_big(big)
                 }
             } else {
+                // 0 ** -n: zero to a negative power has no finite value.
+                if b == 0 {
+                    return raise_zero_neg_pow();
+                }
                 MbValue::from_float((b as f64).powi(e as i32))
             }
         }
@@ -5036,7 +5083,14 @@ pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
             let bf = base.as_int().map(|i| i as f64).or(base.as_float());
             let ef = exp.as_int().map(|i| i as f64).or(exp.as_float());
             match (bf, ef) {
-                (Some(b), Some(e)) => MbValue::from_float(b.powf(e)),
+                (Some(b), Some(e)) => {
+                    // 0.0 ** -n raises ZeroDivisionError in CPython rather than
+                    // returning inf.
+                    if b == 0.0 && e < 0.0 {
+                        return raise_zero_neg_pow();
+                    }
+                    MbValue::from_float(b.powf(e))
+                }
                 _ => {
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
@@ -5521,6 +5575,26 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
     // `MbValue::none()` when ndigits was omitted, which is how we tell the
     // two forms apart.
     let ndigits_given = !ndigits.is_none();
+    // round(x, ndigits): a given ndigits must be an integer (int / bool /
+    // bignum). A str / float / other raises TypeError rather than being
+    // silently coerced to 0.
+    if ndigits_given {
+        let is_intish = ndigits.as_int().is_some()
+            || ndigits.as_bool().is_some()
+            || ndigits
+                .as_ptr()
+                .map_or(false, |p| matches!(unsafe { &(*p).data }, ObjData::BigInt(_)));
+        if !is_intish {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(format!(
+                    "'{}' object cannot be interpreted as an integer",
+                    value_type_name(ndigits)
+                ))),
+            );
+            return MbValue::none();
+        }
+    }
     if is_decimal_handle_value(val) {
         return super::stdlib::decimal_mod::mb_decimal_round(val, ndigits, ndigits_given);
     }
