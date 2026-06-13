@@ -86,6 +86,23 @@ unsafe extern "C" fn dispatch_simplenamespace(args_ptr: *const MbValue, nargs: u
     } else {
         unsafe { std::slice::from_raw_parts(args_ptr, nargs) }
     };
+    // SimpleNamespace takes keyword arguments only (kwargs arrive as a trailing
+    // dict; a positional mapping is tolerated). A non-mapping positional, e.g.
+    // SimpleNamespace(1, 2), is a TypeError in CPython, not a silent no-op.
+    for arg in a {
+        let is_dict = arg
+            .as_ptr()
+            .map_or(false, |p| matches!(unsafe { &(*p).data }, ObjData::Dict(_)));
+        if !is_dict {
+            super::super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "no positional arguments expected".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
+    }
     let mut fields = FxHashMap::default();
     // Instance fields are unordered, but SimpleNamespace's repr must render
     // attributes in insertion order. Track it in a hidden `__ns_order__` list

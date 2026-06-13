@@ -305,6 +305,11 @@ fn mb_unicodedata_decimal_impl(c: MbValue, default: MbValue, has_default: bool) 
 }
 
 pub fn mb_unicodedata_normalize(form: MbValue, s: MbValue) -> MbValue {
+    // normalize(form, unistr) requires both arguments; a bare normalize() (or
+    // a missing unistr) is a TypeError, not a silent empty result.
+    if form.is_none() || s.is_none() {
+        return raise_exc("TypeError", "normalize() missing required arguments");
+    }
     // Raise ValueError for an unrecognised normalization form, matching
     // CPython. Only fires when `form` extracts to a string that is not one of
     // the four valid forms; a non-str `form` (None / wrong type) falls through
