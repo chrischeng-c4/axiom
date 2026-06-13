@@ -860,6 +860,28 @@ pub fn namedtuple_values(v: MbValue) -> Option<Vec<MbValue>> {
     }
 }
 
+/// True iff `v` is a namedtuple instance and `attr` is one of its declared
+/// fields — used by mb_setattr to make namedtuple fields read-only
+/// (`p.x = 5` raises AttributeError, matching CPython's __slots__ = ()).
+pub fn namedtuple_is_field(v: MbValue, attr: &str) -> bool {
+    v.as_ptr().is_some_and(|ptr| unsafe {
+        if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+            if let Ok(f) = fields.read() {
+                if let Some(nt) = f.get("_namedtuple_fields").and_then(|x| x.as_ptr()) {
+                    if let ObjData::List(ref lk) = (*nt).data {
+                        return lk.read().unwrap().iter().any(|fv| {
+                            fv.as_ptr().is_some_and(|pp| {
+                                matches!(&(*pp).data, ObjData::Str(s) if s == attr)
+                            })
+                        });
+                    }
+                }
+            }
+        }
+        false
+    })
+}
+
 /// True iff `v` is a `collections.Counter` Instance.
 pub fn is_counter_instance(v: MbValue) -> bool {
     if let Some(ptr) = v.as_ptr() {

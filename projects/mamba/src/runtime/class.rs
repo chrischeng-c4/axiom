@@ -4629,6 +4629,18 @@ pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
                         }
                     }
                 }
+                // namedtuple fields are read-only (CPython: __slots__ = ()).
+                // Setting a declared field raises AttributeError; a non-field
+                // name on a subclass-with-__dict__ still flows to the insert.
+                if let Some(attr_s) = extract_str(attr) {
+                    if super::stdlib::collections_mod::namedtuple_is_field(obj, &attr_s) {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str("can't set attribute".to_string())),
+                        );
+                        return;
+                    }
+                }
                 // SimpleNamespace insertion-order tracking: appending a NEW
                 // attribute name to the hidden `__ns_order__` list keeps repr()
                 // in insertion order. Runs before the generic insert below.
