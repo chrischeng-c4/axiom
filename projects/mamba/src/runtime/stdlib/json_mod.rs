@@ -161,6 +161,7 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                     let map = lock.read().unwrap();
                     let indent = map.get("indent").and_then(|v| v.as_int());
                     let sort_keys = map.get("sort_keys").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let ensure_ascii = map.get("ensure_ascii").and_then(|v| v.as_bool()).unwrap_or(true);
                     let separators = map.get("separators");
 
                     // Sort keys if requested
@@ -187,7 +188,7 @@ unsafe extern "C" fn dispatch_dumps(args_ptr: *const MbValue, nargs: usize) -> M
                         }
                     }
 
-                    return mb_json_dumps(effective_val);
+                    return mb_json_dumps_ensure_ascii(effective_val, ensure_ascii);
                 }
             }
         }
@@ -491,7 +492,7 @@ fn format_json_custom(val: &serde_json::Value, item_sep: &str, key_sep: &str) ->
         serde_json::Value::Null => "null".to_string(),
         serde_json::Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        serde_json::Value::String(s) => format!("\"{}\"", json_escape_body(s, true)),
         serde_json::Value::Array(arr) => {
             let items: Vec<String> = arr.iter().map(|v| format_json_custom(v, item_sep, key_sep)).collect();
             format!("[{}]", items.join(item_sep))
@@ -499,7 +500,7 @@ fn format_json_custom(val: &serde_json::Value, item_sep: &str, key_sep: &str) ->
         serde_json::Value::Object(obj) => {
             let items: Vec<String> = obj.iter().map(|(k, v)| {
                 format!("\"{}\"{}{}",
-                    k.replace('\\', "\\\\").replace('"', "\\\""),
+                    json_escape_body(k, true),
                     key_sep,
                     format_json_custom(v, item_sep, key_sep))
             }).collect();
@@ -640,6 +641,13 @@ fn json_to_mbvalue(val: &serde_json::Value) -> MbValue {
 
 /// json.dumps(obj) → JSON string (matches CPython default: ", " and ": " separators)
 pub fn mb_json_dumps(val: MbValue) -> MbValue {
+    mb_json_dumps_ensure_ascii(val, true)
+}
+
+/// json.dumps honoring `ensure_ascii`. With `ensure_ascii=true` (CPython
+/// default) every non-ASCII scalar is `\uXXXX`-escaped; with `false` they are
+/// emitted verbatim as UTF-8.
+pub fn mb_json_dumps_ensure_ascii(val: MbValue, ensure_ascii: bool) -> MbValue {
     // CPython: bytes / bytearray / set are not JSON serializable — raise
     // TypeError eagerly (the serializer below would silently null them).
     if let Some(ptr) = val.as_ptr() {
@@ -662,13 +670,13 @@ pub fn mb_json_dumps(val: MbValue) -> MbValue {
     }
     // CPython default uses (", ", ": ") separators — serde_json::to_string uses no spaces.
     // Special-case top-level float to handle Infinity/NaN (CPython outputs these directly).
-    let s = serialize_mbvalue_cpython(val);
+    let s = serialize_mbvalue_cpython(val, ensure_ascii);
     MbValue::from_ptr(MbObject::new_str(s))
 }
 
 /// Serialize an MbValue to JSON matching CPython's default format.
 /// Handles Infinity/NaN as non-standard JSON (CPython behavior).
-fn serialize_mbvalue_cpython(val: MbValue) -> String {
+fn serialize_mbvalue_cpython(val: MbValue, ensure_ascii: bool) -> String {
     // Handle top-level special floats (Infinity, -Infinity, NaN)
     if let Some(f) = val.as_float() {
         if f.is_infinite() {
@@ -681,23 +689,58 @@ fn serialize_mbvalue_cpython(val: MbValue) -> String {
     // For compound types, we need to recurse through the MbValue tree
     // to handle nested inf/nan. For now, delegate to serde_json for normal values.
     let json_val = mbvalue_to_json(val);
-    serialize_json_cpython(&json_val)
+    serialize_json_cpython(&json_val, ensure_ascii)
+}
+
+/// Escape a string's body the way CPython's `json` encoder does (no
+/// surrounding quotes). Always escapes the JSON control set
+/// (`"`, `\`, `\b`, `\f`, `\n`, `\r`, `\t`) and any other C0 control char as
+/// `\uXXXX`. When `ensure_ascii` (CPython default), every non-ASCII scalar is
+/// emitted as a `\uXXXX` escape — astral chars become a UTF-16 surrogate pair.
+fn json_escape_body(s: &str, ensure_ascii: bool) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{0008}' => out.push_str("\\b"),
+            '\u{000c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c if ensure_ascii && (c as u32) > 0x7f => {
+                let cp = c as u32;
+                if cp > 0xffff {
+                    // Encode as a UTF-16 surrogate pair.
+                    let v = cp - 0x10000;
+                    let hi = 0xd800 + (v >> 10);
+                    let lo = 0xdc00 + (v & 0x3ff);
+                    out.push_str(&format!("\\u{hi:04x}\\u{lo:04x}"));
+                } else {
+                    out.push_str(&format!("\\u{cp:04x}"));
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Serialize JSON matching CPython's default format: `{"key": value, "key2": value2}`
-fn serialize_json_cpython(val: &serde_json::Value) -> String {
+fn serialize_json_cpython(val: &serde_json::Value, ensure_ascii: bool) -> String {
     match val {
         serde_json::Value::Null => "null".to_string(),
         serde_json::Value::Bool(b) => if *b { "true" } else { "false" }.to_string(),
         serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        serde_json::Value::String(s) => format!("\"{}\"", json_escape_body(s, ensure_ascii)),
         serde_json::Value::Array(arr) => {
-            let items: Vec<String> = arr.iter().map(serialize_json_cpython).collect();
+            let items: Vec<String> = arr.iter().map(|v| serialize_json_cpython(v, ensure_ascii)).collect();
             format!("[{}]", items.join(", "))
         }
         serde_json::Value::Object(obj) => {
             let items: Vec<String> = obj.iter()
-                .map(|(k, v)| format!("\"{}\": {}", k, serialize_json_cpython(v)))
+                .map(|(k, v)| format!("\"{}\": {}", json_escape_body(k, ensure_ascii), serialize_json_cpython(v, ensure_ascii)))
                 .collect();
             format!("{{{}}}", items.join(", "))
         }
