@@ -1315,10 +1315,17 @@ pub fn mb_re_compile(pattern: MbValue, flags: MbValue) -> MbValue {
         Err(e) => { raise_re_error(&e.to_string()); return MbValue::none(); }
     };
     let flag_int = flags.as_int().unwrap_or(0);
+    // Remember whether the pattern was compiled from bytes — a bytes pattern
+    // rejects a str subject (and vice versa) at match time (CPython TypeError).
+    // The decoded `pat_str` loses this, so record it explicitly.
+    let pat_is_bytes = pattern.as_ptr().map_or(false, |p| unsafe {
+        matches!((*p).data, ObjData::Bytes(_) | ObjData::ByteArray(_))
+    });
     let mut fields = FxHashMap::default();
     fields.insert("pattern".to_string(),
         MbValue::from_ptr(MbObject::new_str(pat_str)));
     fields.insert("flags".to_string(), MbValue::from_int(flag_int));
+    fields.insert("_is_bytes".to_string(), MbValue::from_bool(pat_is_bytes));
     // .groups — number of capturing groups. (#1624)
     let num_groups = re.captures_len().saturating_sub(1) as i64;
     fields.insert("groups".to_string(), MbValue::from_int(num_groups));

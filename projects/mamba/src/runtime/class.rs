@@ -10518,6 +10518,45 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                     let a0 = arg_items.first().copied().unwrap_or(MbValue::none());
                     let a1 = arg_items.get(1).copied().unwrap_or(MbValue::none());
                     let a2 = arg_items.get(2).copied().unwrap_or(MbValue::none());
+                    // A bytes-compiled pattern rejects a str subject and a
+                    // str-compiled pattern rejects a bytes subject (CPython
+                    // TypeError). The stored `pat` is always a str, so the
+                    // module helpers can't see a bytes pattern — validate here
+                    // against the compiled pattern's `_is_bytes` flag. (For
+                    // sub/subn the subject is the 2nd arg, not the 1st.)
+                    let pat_is_bytes = fields.read().unwrap()
+                        .get("_is_bytes").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let subject = match name.as_str() {
+                        "sub" | "subn" => a1,
+                        "match" | "match_" | "fullmatch" | "search" | "findall"
+                        | "finditer" | "split" => a0,
+                        _ => MbValue::none(),
+                    };
+                    if let Some(sp) = subject.as_ptr() {
+                        let (sub_bytes, sub_str) = match &(*sp).data {
+                            ObjData::Bytes(_) | ObjData::ByteArray(_) => (true, false),
+                            ObjData::Str(_) => (false, true),
+                            _ => (false, false),
+                        };
+                        if pat_is_bytes && sub_str {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "cannot use a bytes pattern on a string-like object".to_string(),
+                                )),
+                            );
+                            return MbValue::none();
+                        }
+                        if !pat_is_bytes && sub_bytes {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(
+                                    "cannot use a string pattern on a bytes-like object".to_string(),
+                                )),
+                            );
+                            return MbValue::none();
+                        }
+                    }
                     match name.as_str() {
                         "match" | "match_" =>
                             return super::stdlib::re_mod::mb_re_match(pat, a0),
