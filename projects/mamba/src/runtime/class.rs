@@ -10469,6 +10469,17 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             // Context built from this one's fields.
                             return super::stdlib::contextvars_mod::mb_context_copy(receiver);
                         }
+                        ("Context", "create_decimal") => {
+                            // decimal.Context.create_decimal(x) constructs a
+                            // Decimal (shares Decimal()'s parsing/validation, so
+                            // a non-numeric arg like ['%'] raises ValueError).
+                            // contextvars.Context has no such method, so this
+                            // case is decimal-Context only in practice.
+                            let arg = arg_items.first().copied().unwrap_or_else(|| {
+                                MbValue::from_ptr(MbObject::new_str("0".to_string()))
+                            });
+                            return super::stdlib::decimal_mod::mb_decimal_new(arg);
+                        }
                         _ => {}
                     }
                 }
