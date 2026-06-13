@@ -10216,6 +10216,20 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             Some(lk.read().unwrap().to_vec())
                         } else { None })
                         .unwrap_or_default();
+                    // CPython: update/subtract take at most ONE positional
+                    // (`update(iterable=None, /, **kwds)`); a second positional
+                    // is a TypeError. Keyword args arrive as a single trailing
+                    // kwargs dict, so a >1 arg slice means 2+ positionals.
+                    if matches!(name.as_str(), "update" | "subtract") && arg_items.len() > 1 {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "{name}() takes at most 1 positional argument ({} given)",
+                                arg_items.len()
+                            ))),
+                        );
+                        return MbValue::none();
+                    }
                     match name.as_str() {
                         "update" => return super::stdlib::collections_mod::mb_counter_update_args(receiver, &arg_items, 1),
                         "subtract" => return super::stdlib::collections_mod::mb_counter_update_args(receiver, &arg_items, -1),
