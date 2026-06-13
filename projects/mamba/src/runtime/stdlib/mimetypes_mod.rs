@@ -441,6 +441,18 @@ fn url_scheme_path(url: &str) -> (String, String) {
 ///   4. The encoding map (`.gz` -> gzip) is consulted case-SENSITIVELY.
 ///   5. The final extension is lowercased before the types-map lookup.
 pub fn mb_mimetypes_guess_type(url: MbValue, strict: MbValue) -> MbValue {
+    // guess_type requires a str/bytes/PathLike; a bare scalar (int/None/float)
+    // is a TypeError (os.fspath rejects it), not a silent ("", None) result.
+    if url.as_ptr().is_none() {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "expected str, bytes or os.PathLike object, not {}",
+                super::super::builtins::value_type_name(url)
+            ))),
+        );
+        return MbValue::none();
+    }
     let url_s = extract_pathlike(url).unwrap_or_default();
     let strict_flag = !matches!(strict.as_bool(), Some(false));
     let none_pair =
