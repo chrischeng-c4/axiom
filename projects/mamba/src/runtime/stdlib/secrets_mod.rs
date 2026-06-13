@@ -333,7 +333,16 @@ pub fn mb_secrets_choice(seq: MbValue) -> MbValue {
     seq.as_ptr().and_then(|ptr| unsafe {
         if let ObjData::List(ref lock) = (*ptr).data {
             let items = lock.read().unwrap();
-            if items.is_empty() { return None; }
+            if items.is_empty() {
+                // CPython: secrets.choice([]) -> IndexError, not None.
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(
+                        "Cannot choose from an empty sequence".to_string(),
+                    )),
+                );
+                return None;
+            }
             let mut b = [0u8; 8];
             OsRng.fill_bytes(&mut b);
             let idx = u64::from_le_bytes(b) as usize % items.len();
