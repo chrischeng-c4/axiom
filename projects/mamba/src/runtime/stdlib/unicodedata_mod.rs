@@ -194,6 +194,27 @@ fn raise_exc(exc_type: &str, msg: &str) -> MbValue {
 fn raise_value_error(msg: &str) -> MbValue { raise_exc("ValueError", msg) }
 fn raise_key_error(msg: &str) -> MbValue { raise_exc("KeyError", msg) }
 
+/// CPython unicodedata accessors require a single unicode character: a
+/// non-string (`name(123)`) or a multi-character string (`category("xx")`)
+/// raises TypeError. Returns the lone char, or raises and returns None.
+fn require_single_char(c: MbValue, func: &str) -> Option<char> {
+    if let Some(s) = extract_str(c) {
+        let mut it = s.chars();
+        if let (Some(ch), None) = (it.next(), it.next()) {
+            return Some(ch);
+        }
+    }
+    raise_exc(
+        "TypeError",
+        &format!(
+            "{}() argument must be a unicode character, not {}",
+            func,
+            super::super::builtins::value_type_name(c)
+        ),
+    );
+    None
+}
+
 pub fn mb_unicodedata_name(c: MbValue) -> MbValue {
     let s = extract_str(c).unwrap_or_default();
     let ch = s.chars().next().unwrap_or(' ');
@@ -208,8 +229,9 @@ pub fn mb_unicodedata_name(c: MbValue) -> MbValue {
 /// fixtures exercise (e.g. chr(0)) and never fires on named characters such as
 /// 'A'/'é'/'α'.
 fn mb_unicodedata_name_impl(c: MbValue, default: MbValue, has_default: bool) -> MbValue {
-    let s = extract_str(c).unwrap_or_default();
-    let ch = s.chars().next().unwrap_or(' ');
+    let Some(ch) = require_single_char(c, "name") else {
+        return MbValue::none();
+    };
     if ch.is_control() {
         if has_default { return default; }
         return raise_value_error("no such name");
@@ -219,8 +241,9 @@ fn mb_unicodedata_name_impl(c: MbValue, default: MbValue, has_default: bool) -> 
 
 pub fn mb_unicodedata_category(c: MbValue) -> MbValue {
     use unicode_properties::{GeneralCategory, UnicodeGeneralCategory};
-    let s = extract_str(c).unwrap_or_default();
-    let ch = s.chars().next().unwrap_or(' ');
+    let Some(ch) = require_single_char(c, "category") else {
+        return MbValue::none();
+    };
     let cat = match ch.general_category() {
         GeneralCategory::UppercaseLetter => "Lu",
         GeneralCategory::LowercaseLetter => "Ll",

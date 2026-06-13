@@ -174,6 +174,26 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("name", CoreTy::Unknown), p("data", CoreTy::Unknown)],
         enforceable: false,
     },
+    // NEGATIVE: unicodedata.name(chr[, default]) / category(chr) — a non-str
+    // or multi-character argument is a RUNTIME TypeError (the dispatcher
+    // requires a single unicode character: `name(123)`), which the fixture
+    // catches; keep the type wall from rejecting it at compile time.
+    StdlibSig {
+        module: "unicodedata",
+        qualifier: "",
+        name: "name",
+        kind: SigKind::ModuleFn,
+        params: &[p("chr", CoreTy::Unknown), p("default", CoreTy::Unknown)],
+        enforceable: false,
+    },
+    StdlibSig {
+        module: "unicodedata",
+        qualifier: "",
+        name: "category",
+        kind: SigKind::ModuleFn,
+        params: &[p("chr", CoreTy::Unknown)],
+        enforceable: false,
+    },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for
