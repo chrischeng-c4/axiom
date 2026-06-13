@@ -387,7 +387,21 @@ pub fn mb_bytes_decode_with(bytes: MbValue, encoding: MbValue, errors: MbValue) 
                     decode_utf32(&data, false)
                 }
             }
-            _ => decode_utf8(&data, err),
+            _ => {
+                // A known non-text codec (quopri, base64, ...) is a LookupError
+                // via bytes.decode; unrecognised names keep the lenient utf-8
+                // fallback.
+                if let Some(canon) = super::string_ops::nontext_codec_name(&enc) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{canon}' is not a text encoding; use codecs.decode() to handle arbitrary codecs"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
+                decode_utf8(&data, err)
+            }
         };
         MbValue::from_ptr(MbObject::new_str(s))
     }

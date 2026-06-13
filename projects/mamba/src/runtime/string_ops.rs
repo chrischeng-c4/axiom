@@ -981,6 +981,25 @@ pub fn mb_str_encode(s: MbValue) -> MbValue {
 /// Supported encodings: `utf-8` / `utf8` (no errors needed) and `ascii`
 /// (errors may be `strict` / `ignore` / `replace`). Other encodings fall
 /// back to UTF-8 to keep behaviour permissive rather than panicking.
+/// Canonical name of a known CPython *non-text* codec (bytes-transform codecs
+/// like base64/rot_13/zlib), normalised across `-`/`_` and the `_codec`
+/// suffix. `str.encode` / `bytes.decode` reject these with LookupError ("not a
+/// text encoding"); they are only usable via `codecs.encode()`/`decode()`.
+pub(crate) fn nontext_codec_name(enc: &str) -> Option<&'static str> {
+    let norm = enc.replace('-', "_");
+    let norm = norm.strip_suffix("_codec").unwrap_or(&norm);
+    Some(match norm {
+        "base64" | "base_64" => "base64",
+        "bz2" => "bz2",
+        "hex" => "hex",
+        "quopri" => "quopri",
+        "rot13" | "rot_13" => "rot_13",
+        "uu" => "uu",
+        "zlib" => "zlib",
+        _ => return None,
+    })
+}
+
 pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbValue {
     unsafe {
         let st = match as_str(s) { Some(t) => t, None => return MbValue::none() };
@@ -1067,7 +1086,21 @@ pub fn mb_str_encode_with(s: MbValue, encoding: MbValue, errors: MbValue) -> MbV
                 for ch in st.chars() { out.extend_from_slice(&(ch as u32).to_le_bytes()); }
                 out
             }
-            _ => st.as_bytes().to_vec(),
+            _ => {
+                // A known non-text codec (rot_13, base64, ...) is a LookupError
+                // via str.encode; unrecognised names keep the lenient utf-8
+                // fallback (covers valid text codecs not enumerated above).
+                if let Some(canon) = nontext_codec_name(&enc) {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("LookupError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "'{canon}' is not a text encoding; use codecs.encode() to handle arbitrary codecs"
+                        ))),
+                    );
+                    return MbValue::none();
+                }
+                st.as_bytes().to_vec()
+            }
         };
         MbValue::from_ptr(MbObject::new_bytes(bytes))
     }
