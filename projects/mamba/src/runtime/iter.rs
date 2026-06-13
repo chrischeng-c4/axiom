@@ -456,6 +456,13 @@ pub fn mb_iter(obj: MbValue) -> MbValue {
                     )
                 }
                 ObjData::Instance { ref class_name, ref fields } => {
+                    // tempfile NamedTemporaryFile / SpooledTemporaryFile
+                    // iterate their remaining lines, like a real file object.
+                    if let Some(lines) =
+                        super::stdlib::tempfile_mod::tempfile_iter_lines(obj)
+                    {
+                        IterKind::List(lines)
+                    } else
                     // namedtuple instances iterate over declared field values
                     // in order, matching CPython tuple-iter semantics. Built
                     // from a fresh tuple so the values stay alive via the

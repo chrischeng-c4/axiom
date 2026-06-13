@@ -920,6 +920,25 @@ fn tempdir_method(recv: MbValue, method: &str, _args: &[MbValue]) -> Option<MbVa
     }
 }
 
+/// Iteration support: `for line in f` over a NamedTemporaryFile /
+/// SpooledTemporaryFile yields the remaining lines (like a real file object).
+/// Returns the lines as a fresh List, or None when `obj` is not an iterable
+/// tempfile instance. mb_iter wraps the list in a list-iterator.
+pub fn tempfile_iter_lines(obj: MbValue) -> Option<MbValue> {
+    let class = instance_class_name(obj)?;
+    match class.as_str() {
+        "NamedTemporaryFile" => {
+            let handle = field_get(obj, "_handle")?;
+            Some(super::super::file_io::mb_file_readlines(handle))
+        }
+        "SpooledTemporaryFile" => {
+            // Drain the spool's remaining lines via its own readlines method.
+            Some(tempfile_instance_method(obj, "readlines", &[])?)
+        }
+        _ => None,
+    }
+}
+
 /// With-protocol hooks for the tempfile instance classes — these run BEFORE
 /// the generic dunder lookup in mb_context_enter/exit (the class registry
 /// holds constructor-func stubs for dir() listing which must not be invoked).

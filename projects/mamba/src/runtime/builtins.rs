@@ -3732,6 +3732,19 @@ fn complex_ordering_guard(a: MbValue, b: MbValue, op: &str) -> bool {
     false
 }
 
+/// The elements of a set-like value (`set` or `frozenset`), or None for any
+/// other value. Used so subset/superset comparisons treat the two types
+/// interchangeably, matching CPython.
+fn setlike_items(v: MbValue) -> Option<Vec<MbValue>> {
+    v.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::Set(lock) => Some(lock.read().unwrap().iter().copied().collect()),
+            ObjData::FrozenSet(items) => Some(items.iter().copied().collect()),
+            _ => None,
+        }
+    })
+}
+
 pub fn mb_lt(a: MbValue, b: MbValue) -> MbValue {
     MbValue::from_bool(mb_values_lt(a, b))
 }
@@ -3798,6 +3811,13 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
     let bf = b.as_int_pyint().map(|i| i as f64).or(b.as_float());
     if let (Some(af), Some(bf)) = (af, bf) {
         return af < bf;
+    }
+    // Strict subset for set/frozenset (either side may be either type):
+    // `a < b` iff every element of a is in b AND |a| < |b|. CPython treats
+    // set and frozenset interchangeably for subset/superset comparisons.
+    if let (Some(sa), Some(sb)) = (setlike_items(a), setlike_items(b)) {
+        return sa.len() < sb.len()
+            && sa.iter().all(|x| sb.iter().any(|y| mb_values_eq(*x, *y)));
     }
     // Lexicographic comparison for sequences
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
