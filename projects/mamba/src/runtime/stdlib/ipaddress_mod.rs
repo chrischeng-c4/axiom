@@ -198,6 +198,15 @@ fn make_handle(state: IpState) -> MbValue {
             let private = b[0] & 0xFE == 0xFC || loopback || unspecified;
             fields.insert("is_private".to_string(), MbValue::from_bool(private));
             fields.insert("is_global".to_string(), MbValue::from_bool(!private));
+            // IPv4-mapped (::ffff:a.b.c.d): the first 10 bytes are zero and
+            // bytes 10..12 are 0xffff; .ipv4_mapped exposes the embedded v4.
+            let mapped = b[..10].iter().all(|&x| x == 0) && b[10] == 0xff && b[11] == 0xff;
+            if mapped {
+                let v4 = u32::from_be_bytes([b[12], b[13], b[14], b[15]]);
+                fields.insert("ipv4_mapped".to_string(), make_handle(IpState::V4(v4)));
+            } else {
+                fields.insert("ipv4_mapped".to_string(), MbValue::none());
+            }
             "IPv6Address"
         }
         IpState::V4Net { addr, prefix } => {
@@ -410,10 +419,67 @@ pub fn mb_ipaddress_ip_network(arg: MbValue) -> MbValue {
 /// Shared IPv4 network/interface parse. `strict` rejects host-bits-set
 /// addresses (the CPython default for the Network constructors); interfaces
 /// pass `strict=false` because they legitimately carry a host part.
+/// Convert a dotted netmask (`255.255.255.0` → 24) or hostmask
+/// (`0.0.0.255` → 24) integer to a prefix length. None if the mask is not a
+/// contiguous run of bits (an illegal netmask).
+fn netmask_to_prefix(mask: u32) -> Option<u8> {
+    // Netmask: contiguous leading ones.
+    if mask.leading_ones() + mask.trailing_zeros() == 32 {
+        return Some(mask.leading_ones() as u8);
+    }
+    // Hostmask: contiguous trailing ones.
+    if mask.trailing_ones() + mask.leading_zeros() == 32 {
+        return Some((32 - mask.trailing_ones()) as u8);
+    }
+    None
+}
+
 fn build_network(arg: MbValue, strict: bool) -> MbValue {
-    let s = match extract_str(arg) {
-        Some(s) => s,
-        None => return MbValue::none(),
+    // A 2-tuple/list `(addr, prefix_or_mask)` — CPython accepts this form.
+    // The address may be a str or a packed int; the second element is an int
+    // prefix or a dotted netmask/hostmask string.
+    let tuple_parts: Option<(String, String)> = arg.as_ptr().and_then(|p| unsafe {
+        let items: Vec<MbValue> = match &(*p).data {
+            ObjData::Tuple(ref t) => t.to_vec(),
+            ObjData::List(ref lk) => lk.read().unwrap().to_vec(),
+            _ => return None,
+        };
+        if items.len() != 2 {
+            return None;
+        }
+        let addr_s = extract_str(items[0])
+            .or_else(|| items[0].as_int().map(|i| ipv4_to_str(i as u32)))?;
+        let spec_s = extract_str(items[1])
+            .or_else(|| items[1].as_int().map(|i| i.to_string()))?;
+        Some((addr_s, spec_s))
+    });
+    let s = match tuple_parts {
+        Some((a, p)) => format!("{a}/{p}"),
+        None => match extract_str(arg) {
+            Some(s) => s,
+            None => {
+                // A bare packed int → /32 host network.
+                if let Some(i) = arg.as_int() {
+                    format!("{}/32", ipv4_to_str(i as u32))
+                } else if let Some(bytes) = arg.as_ptr().and_then(|p| unsafe {
+                    match &(*p).data {
+                        ObjData::Bytes(ref b) => Some(b.clone()),
+                        ObjData::ByteArray(ref lk) => Some(lk.read().unwrap().clone()),
+                        _ => None,
+                    }
+                }) {
+                    // 4 packed bytes → an IPv4 /32 host network.
+                    if bytes.len() == 4 {
+                        let a = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        format!("{}/32", ipv4_to_str(a))
+                    } else {
+                        return MbValue::none();
+                    }
+                } else {
+                    return MbValue::none();
+                }
+            }
+        },
     };
     let (addr_part, prefix_part) = match s.find('/') {
         Some(idx) => (&s[..idx], &s[idx + 1..]),
@@ -452,7 +518,16 @@ fn build_network(arg: MbValue, strict: bool) -> MbValue {
     let prefix: u8 = match prefix_part.parse::<u32>() {
         Ok(p) if p <= 32 => p as u8,
         Ok(p) => return raise("NetmaskValueError", &format!("'{}' is not a valid netmask", p)),
-        Err(_) => return MbValue::none(),
+        // A dotted spelling: either a netmask (contiguous leading 1s, e.g.
+        // 255.255.255.0) or a hostmask (contiguous trailing 1s, e.g.
+        // 0.255.255.255). Convert to a prefix length.
+        Err(_) => match parse_ipv4(prefix_part).and_then(netmask_to_prefix) {
+            Some(p) => p,
+            None => return raise(
+                "NetmaskValueError",
+                &format!("'{prefix_part}' is not a valid netmask"),
+            ),
+        },
     };
     // strict (the CPython default for the network constructors): host bits must
     // be clear. host_mask = the low (32 - prefix) bits.
@@ -604,12 +679,83 @@ unsafe extern "C" fn dispatch_v6_int_to_packed(args_ptr: *const MbValue, nargs: 
 // from a generator without leaking the IP_IDS set. Shipped as stubs
 // returning None to satisfy surface coverage; will revisit when the
 // score-stdlib-shim section type emits iterable-return helpers.
-unsafe extern "C" fn dispatch_collapse_addresses(_args: *const MbValue, _n: usize) -> MbValue {
-    MbValue::none()
+/// Minimal set of V4 networks exactly covering the inclusive integer range
+/// [first, last] — the engine behind summarize_address_range / collapse.
+fn summarize_v4(mut first: u32, last: u32) -> Vec<(u32, u8)> {
+    let mut out = Vec::new();
+    loop {
+        // Largest block that starts at `first` and fits within the range:
+        // limited by `first`'s trailing zero bits and the remaining span.
+        let tz = if first == 0 { 32 } else { first.trailing_zeros() };
+        let span = (last - first) as u64 + 1;
+        let span_bits = 63 - span.leading_zeros(); // floor(log2(span))
+        let nbits = tz.min(span_bits);
+        out.push((first, (32 - nbits) as u8));
+        let step = 1u64 << nbits;
+        let next = first as u64 + step;
+        if next > last as u64 {
+            break;
+        }
+        first = next as u32;
+    }
+    out
 }
 
-unsafe extern "C" fn dispatch_summarize_address_range(_args: *const MbValue, _n: usize) -> MbValue {
-    MbValue::none()
+unsafe extern "C" fn dispatch_collapse_addresses(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let seq = a.first().copied().unwrap_or_else(MbValue::none);
+    // Gather (network, broadcast) integer ranges from the input networks /
+    // addresses.
+    let items: Vec<MbValue> = seq.as_ptr().and_then(|p| unsafe {
+        match &(*p).data {
+            ObjData::List(ref lk) => Some(lk.read().unwrap().to_vec()),
+            ObjData::Tuple(ref t) => Some(t.to_vec()),
+            _ => None,
+        }
+    }).unwrap_or_default();
+    let mut ranges: Vec<(u32, u32)> = Vec::new();
+    for it in items {
+        if let Some((addr, prefix)) = v4net_bounds(it) {
+            ranges.push((addr, v4_broadcast(addr, prefix)));
+        } else if let Some(ip) = inst_int_field(it, "_ip") {
+            ranges.push((ip as u32, ip as u32));
+        }
+    }
+    ranges.sort();
+    // Merge overlapping / adjacent ranges.
+    let mut merged: Vec<(u32, u32)> = Vec::new();
+    for (lo, hi) in ranges {
+        if let Some(last) = merged.last_mut() {
+            if lo as u64 <= last.1 as u64 + 1 {
+                last.1 = last.1.max(hi);
+                continue;
+            }
+        }
+        merged.push((lo, hi));
+    }
+    let mut out = Vec::new();
+    for (lo, hi) in merged {
+        for (addr, prefix) in summarize_v4(lo, hi) {
+            out.push(make_handle(IpState::V4Net { addr, prefix }));
+        }
+    }
+    MbValue::from_ptr(MbObject::new_list(out))
+}
+
+unsafe extern "C" fn dispatch_summarize_address_range(args_ptr: *const MbValue, nargs: usize) -> MbValue {
+    let a = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
+    let first_v = a.first().copied().unwrap_or_else(MbValue::none);
+    let last_v = a.get(1).copied().unwrap_or_else(MbValue::none);
+    let first = inst_int_field(first_v, "_ip").map(|i| i as u32);
+    let last = inst_int_field(last_v, "_ip").map(|i| i as u32);
+    let (Some(first), Some(last)) = (first, last) else {
+        return MbValue::from_ptr(MbObject::new_list(vec![]));
+    };
+    let out: Vec<MbValue> = summarize_v4(first, last)
+        .into_iter()
+        .map(|(addr, prefix)| make_handle(IpState::V4Net { addr, prefix }))
+        .collect();
+    MbValue::from_ptr(MbObject::new_list(out))
 }
 
 unsafe extern "C" fn dispatch_get_mixed_type_key(_args: *const MbValue, _n: usize) -> MbValue {
@@ -961,6 +1107,122 @@ unsafe extern "C" fn net_supernet_of(self_v: MbValue, args: MbValue) -> MbValue 
     net_relation(self_v, args_first(args), false)
 }
 
+/// The (network_address, prefix) of a V4 network handle.
+fn v4net_bounds(v: MbValue) -> Option<(u32, u8)> {
+    match load(v) {
+        Some(IpState::V4Net { addr, prefix }) => Some((addr, prefix)),
+        _ => None,
+    }
+}
+
+fn v4_broadcast(addr: u32, prefix: u8) -> u32 {
+    let mask = if prefix == 0 { 0 } else { u32::MAX << (32 - prefix as u32) };
+    addr | !mask
+}
+
+fn args_items(args: MbValue) -> Vec<MbValue> {
+    args.as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref lk) = (*p).data {
+                Some(lk.read().unwrap().to_vec())
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default()
+}
+
+/// `network.hosts()` — the usable host addresses. For a prefix ≤ /30 this
+/// excludes the network and broadcast addresses; /31 yields both addresses;
+/// /32 yields the single address (CPython semantics).
+unsafe extern "C" fn net_hosts(self_v: MbValue, _args: MbValue) -> MbValue {
+    let Some((addr, prefix)) = v4net_bounds(self_v) else {
+        return MbValue::from_ptr(MbObject::new_list(vec![]));
+    };
+    let broadcast = v4_broadcast(addr, prefix);
+    let (lo, hi) = match prefix {
+        32 => (addr, addr),
+        31 => (addr, broadcast),
+        _ => (addr.wrapping_add(1), broadcast.wrapping_sub(1)),
+    };
+    let mut out = Vec::new();
+    let mut cur = lo;
+    loop {
+        out.push(make_handle(IpState::V4(cur)));
+        if cur == hi {
+            break;
+        }
+        cur = cur.wrapping_add(1);
+    }
+    MbValue::from_ptr(MbObject::new_list(out))
+}
+
+/// `network.subnets(prefixlen_diff=1, new_prefix=None)` — split into the
+/// child networks one (or `prefixlen_diff`) prefix bits longer.
+unsafe extern "C" fn net_subnets(self_v: MbValue, args: MbValue) -> MbValue {
+    let Some((addr, prefix)) = v4net_bounds(self_v) else {
+        return MbValue::from_ptr(MbObject::new_list(vec![]));
+    };
+    let items = args_items(args);
+    let mut diff: u8 = 1;
+    let mut new_prefix: Option<u8> = None;
+    for v in &items {
+        if let Some(ptr) = v.as_ptr() {
+            unsafe {
+                if let ObjData::Dict(ref lock) = (*ptr).data {
+                    let g = lock.read().unwrap();
+                    if let Some(d) = g.get(&super::super::dict_ops::DictKey::Str("prefixlen_diff".into())) {
+                        if let Some(n) = d.as_int() { diff = n.max(0) as u8; }
+                    }
+                    if let Some(d) = g.get(&super::super::dict_ops::DictKey::Str("new_prefix".into())) {
+                        new_prefix = d.as_int().map(|n| n as u8);
+                    }
+                    continue;
+                }
+            }
+        }
+        if let Some(n) = v.as_int() { diff = n.max(0) as u8; }
+    }
+    let target = new_prefix.unwrap_or_else(|| prefix.saturating_add(diff)).min(32);
+    if target <= prefix {
+        return MbValue::from_ptr(MbObject::new_list(vec![make_handle(IpState::V4Net { addr, prefix })]));
+    }
+    let count = 1u64 << (target - prefix);
+    let step = 1u64 << (32 - target as u32);
+    let mut out = Vec::with_capacity(count as usize);
+    for i in 0..count {
+        let sub_addr = addr.wrapping_add((i * step) as u32);
+        out.push(make_handle(IpState::V4Net { addr: sub_addr, prefix: target }));
+    }
+    MbValue::from_ptr(MbObject::new_list(out))
+}
+
+/// `network.overlaps(other)` — True when the two address ranges intersect.
+unsafe extern "C" fn net_overlaps(self_v: MbValue, args: MbValue) -> MbValue {
+    let other = args_first(args);
+    let (Some((na, np)), Some((oa, op))) = (v4net_bounds(self_v), v4net_bounds(other)) else {
+        return MbValue::from_bool(false);
+    };
+    let (nb, ob) = (v4_broadcast(na, np), v4_broadcast(oa, op));
+    MbValue::from_bool(na <= ob && oa <= nb)
+}
+
+/// `addr in network` / `subnet in network` — `__contains__`.
+unsafe extern "C" fn net_contains(self_v: MbValue, args: MbValue) -> MbValue {
+    let Some((addr, prefix)) = v4net_bounds(self_v) else {
+        return MbValue::from_bool(false);
+    };
+    let broadcast = v4_broadcast(addr, prefix);
+    let other = args_first(args);
+    let other_ip = inst_int_field(other, "_ip")
+        .map(|i| i as u32)
+        .or_else(|| v4net_bounds(other).map(|(a, _)| a));
+    match other_ip {
+        Some(ip) => MbValue::from_bool(addr <= ip && ip <= broadcast),
+        None => MbValue::from_bool(false),
+    }
+}
+
 /// Register the IP classes' shared dunder tables.
 fn register_ip_classes() {
     for class in ["IPv4Address", "IPv6Address", "IPv4Network", "IPv6Network"] {
@@ -969,6 +1231,10 @@ fn register_ip_classes() {
             for (name, addr) in [
                 ("subnet_of", net_subnet_of as *const () as usize),
                 ("supernet_of", net_supernet_of as *const () as usize),
+                ("hosts", net_hosts as *const () as usize),
+                ("subnets", net_subnets as *const () as usize),
+                ("overlaps", net_overlaps as *const () as usize),
+                ("__contains__", net_contains as *const () as usize),
             ] {
                 super::super::module::register_variadic_func(addr as u64);
                 super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
