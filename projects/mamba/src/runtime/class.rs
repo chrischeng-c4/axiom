@@ -703,6 +703,16 @@ pub fn mb_class_register(
             });
         }
     }
+    // collections.abc mixins: a class deriving from MutableSequence (etc.)
+    // gets the mixin methods (append/extend/pop/__iadd__/…) installed so they
+    // resolve through normal method + dunder dispatch.
+    {
+        let mro = CLASS_REGISTRY.with(|reg| {
+            reg.borrow().get(name).map(|c| c.mro.clone()).unwrap_or_default()
+        });
+        install_abc_mixins(name, &mro);
+    }
+
     // R10: Retrieve class keyword arguments (set by mb_class_set_kwargs before registration).
     let class_kwargs: HashMap<String, MbValue> = KWARGS_REGISTRY.with(|reg| {
         reg.borrow_mut().remove(name).unwrap_or_default()
@@ -1912,6 +1922,362 @@ fn user_abc_subclasshook(parent: &str, child_name: &str) -> Option<bool> {
         return None;
     }
     result.as_bool()
+}
+
+// ── collections.abc mixin methods, installed on user subclasses ──
+//
+// A class deriving from collections.abc.MutableSequence (and implementing the
+// abstract methods __getitem__/__setitem__/__delitem__/__len__/insert) gets
+// these mixins for free, exactly like CPython. Each is a native (self, args)
+// method that delegates to the abstract methods via mb_call_method.
+
+fn ms_call(recv: MbValue, method: &str, args: Vec<MbValue>) -> MbValue {
+    let nm = MbValue::from_ptr(MbObject::new_str(method.to_string()));
+    let arglist = MbValue::from_ptr(MbObject::new_list(args));
+    mb_call_method(recv, nm, arglist)
+}
+
+unsafe extern "C" fn ms_append(self_v: MbValue, args: MbValue) -> MbValue {
+    let v = super::builtins::extract_items(args).first().copied().unwrap_or_else(MbValue::none);
+    let len = super::builtins::mb_len(self_v);
+    ms_call(self_v, "insert", vec![len, v]);
+    MbValue::none()
+}
+
+/// Append every element of `iterable` to `self` via insert(len, v).
+fn ms_extend_with(self_v: MbValue, iterable: MbValue) {
+    let handle = super::iter::mb_iter(iterable);
+    if super::iter::is_iter_handle(handle) {
+        if let Some(items) = super::iter::drain_iter_to_vec(handle) {
+            for v in items {
+                let len = super::builtins::mb_len(self_v);
+                ms_call(self_v, "insert", vec![len, v]);
+            }
+        }
+    }
+}
+
+// `seq.extend(it)` — the method-call ABI wraps the arg in a list.
+unsafe extern "C" fn ms_extend(self_v: MbValue, args: MbValue) -> MbValue {
+    let it = super::builtins::extract_items(args).first().copied().unwrap_or_else(MbValue::none);
+    ms_extend_with(self_v, it);
+    MbValue::none()
+}
+
+// `seq += it` — reached via mb_iadd / invoke_binop_method, which passes the
+// rhs iterable directly (not wrapped in a list).
+unsafe extern "C" fn ms_iadd(self_v: MbValue, iterable: MbValue) -> MbValue {
+    ms_extend_with(self_v, iterable);
+    super::rc::retain_if_ptr(self_v);
+    self_v
+}
+
+unsafe extern "C" fn ms_reverse(self_v: MbValue, args: MbValue) -> MbValue {
+    dispatch_mutable_sequence_mixin(self_v, "reverse", args).unwrap_or_else(MbValue::none)
+}
+
+/// Sequence.__iter__ — yield self[0], self[1], … via __getitem__ up to
+/// __len__. Materialized into a list whose iterator is returned (so
+/// `for x in seq` / `list(seq)` work).
+unsafe extern "C" fn ms_iter(self_v: MbValue, _args: MbValue) -> MbValue {
+    let len = super::builtins::mb_len(self_v).as_int().unwrap_or(0);
+    let mut items = Vec::with_capacity(len.max(0) as usize);
+    for i in 0..len {
+        items.push(ms_call(self_v, "__getitem__", vec![MbValue::from_int(i)]));
+    }
+    super::iter::mb_iter(MbValue::from_ptr(MbObject::new_list(items)))
+}
+
+/// Sequence.__contains__ — membership via iteration + equality.
+unsafe extern "C" fn ms_contains(self_v: MbValue, args: MbValue) -> MbValue {
+    let target = super::builtins::extract_items(args).first().copied().unwrap_or_else(MbValue::none);
+    let len = super::builtins::mb_len(self_v).as_int().unwrap_or(0);
+    for i in 0..len {
+        let v = ms_call(self_v, "__getitem__", vec![MbValue::from_int(i)]);
+        if super::builtins::mb_eq(v, target).as_bool() == Some(true) {
+            return MbValue::from_bool(true);
+        }
+    }
+    MbValue::from_bool(false)
+}
+
+unsafe extern "C" fn ms_pop(self_v: MbValue, args: MbValue) -> MbValue {
+    let items = super::builtins::extract_items(args);
+    let idx = items.first().and_then(|v| v.as_int()).unwrap_or(-1);
+    let v = ms_call(self_v, "__getitem__", vec![MbValue::from_int(idx)]);
+    ms_call(self_v, "__delitem__", vec![MbValue::from_int(idx)]);
+    v
+}
+
+unsafe extern "C" fn ms_index(self_v: MbValue, args: MbValue) -> MbValue {
+    let target = super::builtins::extract_items(args).first().copied().unwrap_or_else(MbValue::none);
+    let len = super::builtins::mb_len(self_v).as_int().unwrap_or(0);
+    for i in 0..len {
+        let v = ms_call(self_v, "__getitem__", vec![MbValue::from_int(i)]);
+        if super::builtins::mb_eq(v, target).as_bool() == Some(true) {
+            return MbValue::from_int(i);
+        }
+    }
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+        MbValue::from_ptr(MbObject::new_str("value not in sequence".to_string())),
+    );
+    MbValue::none()
+}
+
+unsafe extern "C" fn ms_remove(self_v: MbValue, args: MbValue) -> MbValue {
+    let idx = ms_index(self_v, args);
+    if let Some(i) = idx.as_int() {
+        ms_call(self_v, "__delitem__", vec![MbValue::from_int(i)]);
+    }
+    MbValue::none()
+}
+
+// ── MutableSet mixins (delegate to add / discard / __contains__ / __iter__) ──
+
+/// Drain self's current elements into a Vec via the __iter__ mixin path.
+fn mset_elements(self_v: MbValue) -> Vec<MbValue> {
+    let it = ms_call(self_v, "__iter__", vec![]);
+    if super::iter::is_iter_handle(it) {
+        super::iter::drain_iter_to_vec(it).unwrap_or_default()
+    } else {
+        Vec::new()
+    }
+}
+
+fn iter_to_vec(iterable: MbValue) -> Vec<MbValue> {
+    let h = super::iter::mb_iter(iterable);
+    if super::iter::is_iter_handle(h) {
+        super::iter::drain_iter_to_vec(h).unwrap_or_default()
+    } else {
+        Vec::new()
+    }
+}
+
+unsafe extern "C" fn mset_pop(self_v: MbValue, _args: MbValue) -> MbValue {
+    let elems = mset_elements(self_v);
+    match elems.first().copied() {
+        Some(v) => {
+            ms_call(self_v, "discard", vec![v]);
+            v
+        }
+        None => {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("KeyError".to_string())),
+                MbValue::from_ptr(MbObject::new_str("pop from an empty set".to_string())),
+            );
+            MbValue::none()
+        }
+    }
+}
+
+unsafe extern "C" fn mset_ior(self_v: MbValue, iterable: MbValue) -> MbValue {
+    for v in iter_to_vec(iterable) {
+        ms_call(self_v, "add", vec![v]);
+    }
+    super::rc::retain_if_ptr(self_v);
+    self_v
+}
+
+unsafe extern "C" fn mset_isub(self_v: MbValue, iterable: MbValue) -> MbValue {
+    for v in iter_to_vec(iterable) {
+        ms_call(self_v, "discard", vec![v]);
+    }
+    super::rc::retain_if_ptr(self_v);
+    self_v
+}
+
+unsafe extern "C" fn mset_ixor(self_v: MbValue, iterable: MbValue) -> MbValue {
+    for v in iter_to_vec(iterable) {
+        let present = ms_call(self_v, "__contains__", vec![v]).as_bool() == Some(true);
+        if present {
+            ms_call(self_v, "discard", vec![v]);
+        } else {
+            ms_call(self_v, "add", vec![v]);
+        }
+    }
+    super::rc::retain_if_ptr(self_v);
+    self_v
+}
+
+unsafe extern "C" fn mset_iand(self_v: MbValue, iterable: MbValue) -> MbValue {
+    let keep = iter_to_vec(iterable);
+    for v in mset_elements(self_v) {
+        let in_other = keep.iter().any(|k| super::builtins::mb_eq(*k, v).as_bool() == Some(true));
+        if !in_other {
+            ms_call(self_v, "discard", vec![v]);
+        }
+    }
+    super::rc::retain_if_ptr(self_v);
+    self_v
+}
+
+// ── Set algebra mixins (delegate to __contains__ / __iter__ / __len__) ──
+
+fn set_instance_class(self_v: MbValue) -> Option<String> {
+    self_v.as_ptr().and_then(|p| unsafe {
+        if let ObjData::Instance { ref class_name, .. } = (*p).data {
+            Some(class_name.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Set._from_iterable(it) — build a new instance of self's class from `items`.
+/// CPython's default is `cls(iterable)`.
+fn set_from_iterable(self_v: MbValue, items: Vec<MbValue>) -> MbValue {
+    let Some(class) = set_instance_class(self_v) else {
+        return MbValue::from_ptr(MbObject::new_list(items));
+    };
+    let list = MbValue::from_ptr(MbObject::new_list(items));
+    let args = MbValue::from_ptr(MbObject::new_list(vec![list]));
+    mb_instance_new_with_init(MbValue::from_ptr(MbObject::new_str(class)), args)
+}
+
+fn set_contains(container: MbValue, v: MbValue) -> bool {
+    ms_call(container, "__contains__", vec![v]).as_bool() == Some(true)
+}
+
+unsafe extern "C" fn set_and(self_v: MbValue, other: MbValue) -> MbValue {
+    let items: Vec<MbValue> = mset_elements(self_v)
+        .into_iter()
+        .filter(|v| set_contains(other, *v))
+        .collect();
+    set_from_iterable(self_v, items)
+}
+
+unsafe extern "C" fn set_or(self_v: MbValue, other: MbValue) -> MbValue {
+    let mut items = mset_elements(self_v);
+    for v in iter_to_vec(other) {
+        if !items.iter().any(|x| super::builtins::mb_eq(*x, v).as_bool() == Some(true)) {
+            items.push(v);
+        }
+    }
+    set_from_iterable(self_v, items)
+}
+
+unsafe extern "C" fn set_sub(self_v: MbValue, other: MbValue) -> MbValue {
+    let items: Vec<MbValue> = mset_elements(self_v)
+        .into_iter()
+        .filter(|v| !set_contains(other, *v))
+        .collect();
+    set_from_iterable(self_v, items)
+}
+
+unsafe extern "C" fn set_xor(self_v: MbValue, other: MbValue) -> MbValue {
+    let self_items = mset_elements(self_v);
+    let other_items = iter_to_vec(other);
+    let mut items: Vec<MbValue> = self_items
+        .iter()
+        .copied()
+        .filter(|v| !set_contains(other, *v))
+        .collect();
+    for v in other_items {
+        if !self_items.iter().any(|x| super::builtins::mb_eq(*x, v).as_bool() == Some(true)) {
+            items.push(v);
+        }
+    }
+    set_from_iterable(self_v, items)
+}
+
+/// self <= other: every element of self is in other.
+fn set_subset(self_v: MbValue, other: MbValue) -> bool {
+    mset_elements(self_v).iter().all(|v| set_contains(other, *v))
+}
+
+fn set_len(v: MbValue) -> i64 {
+    super::builtins::mb_len(v).as_int().unwrap_or(0)
+}
+
+unsafe extern "C" fn set_le(self_v: MbValue, other: MbValue) -> MbValue {
+    MbValue::from_bool(set_subset(self_v, other))
+}
+unsafe extern "C" fn set_lt(self_v: MbValue, other: MbValue) -> MbValue {
+    MbValue::from_bool(set_len(self_v) < set_len(other) && set_subset(self_v, other))
+}
+unsafe extern "C" fn set_ge(self_v: MbValue, other: MbValue) -> MbValue {
+    MbValue::from_bool(set_subset(other, self_v))
+}
+unsafe extern "C" fn set_gt(self_v: MbValue, other: MbValue) -> MbValue {
+    MbValue::from_bool(set_len(self_v) > set_len(other) && set_subset(other, self_v))
+}
+unsafe extern "C" fn set_eq(self_v: MbValue, other: MbValue) -> MbValue {
+    MbValue::from_bool(set_len(self_v) == set_len(other) && set_subset(self_v, other))
+}
+
+unsafe extern "C" fn set_isdisjoint(self_v: MbValue, args: MbValue) -> MbValue {
+    let other = super::builtins::extract_items(args).first().copied().unwrap_or_else(MbValue::none);
+    let disjoint = !mset_elements(self_v).iter().any(|v| set_contains(other, *v));
+    MbValue::from_bool(disjoint)
+}
+
+/// Install the MutableSequence / MutableSet / Set mixin methods on a class
+/// (skipping any the class defines itself), called from mb_class_register when
+/// the class's MRO includes a collections.abc sequence/set ABC.
+fn install_abc_mixins(name: &str, mro: &[String]) {
+    let derives = |abc: &str| mro.iter().any(|c| c == abc);
+    if derives("MutableSequence") {
+        let methods: &[(&str, usize)] = &[
+            ("append", ms_append as *const () as usize),
+            ("extend", ms_extend as *const () as usize),
+            ("reverse", ms_reverse as *const () as usize),
+            ("pop", ms_pop as *const () as usize),
+            ("remove", ms_remove as *const () as usize),
+            ("index", ms_index as *const () as usize),
+            ("__iadd__", ms_iadd as *const () as usize),
+            ("__iter__", ms_iter as *const () as usize),
+            ("__contains__", ms_contains as *const () as usize),
+        ];
+        for (m, addr) in methods {
+            if class_defines_own_method(name, m) {
+                continue;
+            }
+            super::module::register_variadic_func(*addr as u64);
+            class_replace_method(name, m, MbValue::from_func(*addr));
+        }
+    }
+    // Set (and MutableSet, which is a Set) algebra + comparisons.
+    if derives("Set") || derives("MutableSet") {
+        let methods: &[(&str, usize)] = &[
+            ("__and__", set_and as *const () as usize),
+            ("__rand__", set_and as *const () as usize),
+            ("__or__", set_or as *const () as usize),
+            ("__ror__", set_or as *const () as usize),
+            ("__sub__", set_sub as *const () as usize),
+            ("__xor__", set_xor as *const () as usize),
+            ("__rxor__", set_xor as *const () as usize),
+            ("__le__", set_le as *const () as usize),
+            ("__lt__", set_lt as *const () as usize),
+            ("__ge__", set_ge as *const () as usize),
+            ("__gt__", set_gt as *const () as usize),
+            ("__eq__", set_eq as *const () as usize),
+            ("isdisjoint", set_isdisjoint as *const () as usize),
+        ];
+        for (m, addr) in methods {
+            if class_defines_own_method(name, m) {
+                continue;
+            }
+            super::module::register_variadic_func(*addr as u64);
+            class_replace_method(name, m, MbValue::from_func(*addr));
+        }
+    }
+    if derives("MutableSet") {
+        let methods: &[(&str, usize)] = &[
+            ("pop", mset_pop as *const () as usize),
+            ("__ior__", mset_ior as *const () as usize),
+            ("__iand__", mset_iand as *const () as usize),
+            ("__ixor__", mset_ixor as *const () as usize),
+            ("__isub__", mset_isub as *const () as usize),
+        ];
+        for (m, addr) in methods {
+            if class_defines_own_method(name, m) {
+                continue;
+            }
+            super::module::register_variadic_func(*addr as u64);
+            class_replace_method(name, m, MbValue::from_func(*addr));
+        }
+    }
 }
 
 fn dispatch_mutable_sequence_mixin(
