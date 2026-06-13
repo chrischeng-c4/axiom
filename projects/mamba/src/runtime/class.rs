@@ -4150,6 +4150,19 @@ pub fn mb_dir(obj: MbValue) -> MbValue {
 /// If the class defines `__setattr__`, compiled code should dispatch through it;
 /// this function implements the default `object.__setattr__` behavior (direct field write).
 pub fn mb_setattr(obj: MbValue, attr: MbValue, value: MbValue) {
+    // uuid.UUID is immutable: setattr raises TypeError. Handles are
+    // int-tagged, so intercept before any pointer path.
+    if let Some(id) = obj.as_int() {
+        if super::stdlib::uuid_mod::is_uuid_handle(id as u64) {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "UUID objects are immutable".to_string(),
+                )),
+            );
+            return;
+        }
+    }
     if let Some(ptr) = obj.as_ptr() {
         unsafe {
             // Fast path for Instance objects (most common case: self.x = value in __init__).

@@ -743,6 +743,40 @@ fn decompress_entry(info: MbValue, cdata: &[u8]) -> Vec<u8> {
     }
 }
 
+// ── shutil bridge: whole-archive pack/unpack over (name, data) pairs ──
+
+/// Build a ZIP byte blob (ZIP_STORED) from (arcname, contents) pairs.
+/// Used by shutil.make_archive.
+pub(crate) fn zip_pack(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let mut entries: Vec<Entry> = Vec::with_capacity(files.len());
+    for (name, data) in files {
+        let zi = make_zipinfo(name, &[1980, 1, 1, 0, 0, 0]);
+        set_field(zi, "compress_type", MbValue::from_int(0));
+        set_field(zi, "file_size", MbValue::from_int(data.len() as i64));
+        set_field(zi, "compress_size", MbValue::from_int(data.len() as i64));
+        set_field(zi, "CRC", MbValue::from_int(crc32(data) as i64));
+        entries.push(Entry { info: zi, cdata: data.clone(), force_zip64: false });
+    }
+    serialize_zip(&entries, &[])
+}
+
+/// Parse a ZIP byte blob into (arcname, contents) pairs (decompressed).
+/// Used by shutil.unpack_archive. None when the blob is not a zip.
+pub(crate) fn zip_unpack(buf: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
+    let (entries, _comment) = parse_zip(buf).ok()?;
+    Some(
+        entries
+            .iter()
+            .map(|e| {
+                (
+                    zi_str(e.info, "filename"),
+                    decompress_entry(e.info, &e.cdata),
+                )
+            })
+            .collect(),
+    )
+}
+
 unsafe extern "C" fn method_read(self_v: MbValue, args: MbValue) -> MbValue {
     if let Some(err) = ensure_zf_open(self_v) {
         return err;

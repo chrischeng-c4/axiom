@@ -153,6 +153,16 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("firstweekday", CoreTy::Unknown)],
         enforceable: false,
     },
+    // NEGATIVE: fnmatch.translate(pat) — `translate(123)` is a RUNTIME
+    // TypeError (normcase raises it); the dispatcher models that contract.
+    StdlibSig {
+        module: "fnmatch",
+        qualifier: "",
+        name: "translate",
+        kind: SigKind::ModuleFn,
+        params: &[p("pat", CoreTy::Unknown)],
+        enforceable: false,
+    },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for
