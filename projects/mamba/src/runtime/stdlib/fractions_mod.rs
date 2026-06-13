@@ -506,10 +506,18 @@ pub fn mb_fraction_mul(a: MbValue, b: MbValue) -> MbValue {
     make_handle(mul_states(coerce(a), coerce(b)))
 }
 pub fn mb_fraction_truediv(a: MbValue, b: MbValue) -> MbValue {
-    make_handle(div_states(coerce(a), coerce(b)))
+    let bv = coerce(b);
+    if bv.num == 0 {
+        return raise_zero_division_error("Fraction(1, 0)");
+    }
+    make_handle(div_states(coerce(a), bv))
 }
 pub fn mb_fraction_rtruediv(a: MbValue, b: MbValue) -> MbValue {
-    make_handle(div_states(coerce(b), coerce(a)))
+    let av = coerce(a);
+    if av.num == 0 {
+        return raise_zero_division_error("Fraction(1, 0)");
+    }
+    make_handle(div_states(coerce(b), av))
 }
 
 pub fn mb_fraction_floordiv(a: MbValue, b: MbValue) -> MbValue {
