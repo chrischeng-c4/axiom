@@ -4749,6 +4749,17 @@ fn type_object_name(obj: MbValue) -> Option<String> {
 /// entry, returning nothing. Used by unittest.mock patch.object to swap a
 /// method for a mock and restore it. Invalidates the method cache.
 pub(crate) fn class_replace_method(class_name: &str, method_name: &str, value: MbValue) {
+    // Register the function address as a callable so instance-method dispatch
+    // invokes it with the `(self, args_list)` ABI (mb_call_method gates that
+    // path on CALLABLE_REGISTRY membership). Without this a freshly-installed
+    // native method (e.g. functools.total_ordering's synthesized comparison
+    // ops) is dispatched with the wrong ABI and returns garbage.
+    let (unwrapped, _dk) = unwrap_descriptor_method(value);
+    for addr in [extract_func_addr(unwrapped), extract_func_addr(value)] {
+        if addr != 0 {
+            CALLABLE_REGISTRY.with(|reg| { reg.borrow_mut().insert(addr); });
+        }
+    }
     CLASS_REGISTRY.with(|reg| {
         let mut reg = reg.borrow_mut();
         if let Some(cls) = reg.get_mut(class_name) {

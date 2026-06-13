@@ -6367,14 +6367,13 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                     };
                 }
                 if class_name == "functools.partial" {
-                    let f = fields.read().unwrap();
-                    let inner_func = f.get("func").copied().unwrap_or_else(MbValue::none);
-                    let bound_args_val = f.get("args").copied().unwrap_or_else(MbValue::none);
-                    drop(f);
-                    let mut combined = extract_items(bound_args_val);
-                    combined.extend_from_slice(&items);
-                    let combined_list = MbValue::from_ptr(MbObject::new_list(combined));
-                    return mb_call_spread(inner_func, combined_list);
+                    let _ = fields; // partial fields read inside the kwargs path
+                    // Route through the kwargs-aware path so a partial's
+                    // stored keyword arguments forward to the wrapped callable
+                    // (this call site carries only positional args).
+                    let pos_list = MbValue::from_ptr(MbObject::new_list(items));
+                    let empty_kw = MbValue::from_ptr(MbObject::new_dict());
+                    return mb_call_spread_kwargs(func, pos_list, empty_kw);
                 }
                 // functools.cmp_to_key(mycmp)(value) → build a key object.
                 if class_name == "functools.cmp_to_key" {
@@ -6544,6 +6543,199 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
     } else {
         MbValue::none()
     }
+}
+
+/// Read a kwargs `ObjData::Dict` into ordered (name, value) pairs (Str keys
+/// only — keyword names are always strings).
+fn kwargs_dict_pairs(dict: MbValue) -> Vec<(String, MbValue)> {
+    let mut out = Vec::new();
+    if let Some(ptr) = dict.as_ptr() {
+        unsafe {
+            if let ObjData::Dict(ref lock) = (*ptr).data {
+                for (k, v) in lock.read().unwrap().iter() {
+                    if let super::dict_ops::DictKey::Str(ref s) = k {
+                        out.push((s.clone(), *v));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Merge two kwargs dicts into a fresh dict; `b` (call-time) wins on key
+/// collisions.
+fn merge_kwargs_dicts(a: MbValue, b: MbValue) -> MbValue {
+    let out = super::dict_ops::mb_dict_new();
+    for src in [a, b] {
+        for (k, v) in kwargs_dict_pairs(src) {
+            unsafe { super::rc::retain_if_ptr(v); }
+            super::dict_ops::mb_dict_setitem(out, MbValue::from_ptr(MbObject::new_str(k)), v);
+        }
+    }
+    out
+}
+
+/// Invoke `func` with a structurally-separated positional args list and
+/// kwargs dict, honoring the compiled variadic/kwargs ABI. Used by
+/// `mb_call_spread_kwargs` for `(*args, **kw)` targets.
+fn invoke_args_kwargs(func: MbValue, args_list: MbValue, kwargs_dict: MbValue) -> MbValue {
+    let Some(raw_addr) = resolve_callable(func) else {
+        return mb_call_spread(func, args_list);
+    };
+    // Native dispatchers take (args_ptr, nargs); append kwargs as a trailing
+    // dict (the established native-kwargs convention).
+    if super::module::is_native_func(raw_addr as u64) {
+        let mut items = extract_items(args_list);
+        items.push(kwargs_dict);
+        let f: unsafe extern "C" fn(*const MbValue, usize) -> MbValue =
+            unsafe { std::mem::transmute(raw_addr) };
+        return unsafe { f(items.as_ptr(), items.len()) };
+    }
+    let is_boxed_ret = super::module::is_boxed_return_func(raw_addr as u64);
+    let has_star = super::module::is_variadic_func(raw_addr as u64);
+    let has_kwargs = super::module::is_kwargs_func(raw_addr as u64);
+    let raw_result = unsafe {
+        if has_star && has_kwargs {
+            let f: extern "C" fn(MbValue, MbValue) -> MbValue = std::mem::transmute(raw_addr);
+            f(args_list, kwargs_dict)
+        } else if has_kwargs {
+            let f: extern "C" fn(MbValue) -> MbValue = std::mem::transmute(raw_addr);
+            f(kwargs_dict)
+        } else {
+            // No declared kwargs slot: fall back to positional spread.
+            return mb_call_spread(func, args_list);
+        }
+    };
+    if is_boxed_ret {
+        return raw_result;
+    }
+    let bits = raw_result.to_bits();
+    const NAN_PREFIX: u64 = 0xFFF8_0000_0000_0000;
+    if bits & NAN_PREFIX == NAN_PREFIX {
+        raw_result
+    } else {
+        mb_box_int(bits as i64)
+    }
+}
+
+/// Dynamic call with positional args AND keyword args kept structurally
+/// separate. Closes the "kwargs dropped for dynamically-dispatched callables"
+/// gap: a value held in a variable (functools.partial, a closure, a method
+/// reference) called with `kw=v` now binds those keywords to the target's
+/// named parameters at runtime via the FUNC_PARAMS registry, instead of
+/// flattening keyword values into positionals and losing the names.
+pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbValue) -> MbValue {
+    let pos = extract_items(pos_list);
+    // 1. functools.partial: prepend stored args, merge stored keywords
+    //    (call-time wins), and forward to the wrapped callable.
+    if let Some(ptr) = func.as_ptr() {
+        let nested = unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "functools.partial" {
+                    let f = fields.read().unwrap();
+                    Some((
+                        f.get("func").copied().unwrap_or_else(MbValue::none),
+                        f.get("args").copied().unwrap_or_else(MbValue::none),
+                        f.get("keywords").copied().unwrap_or_else(MbValue::none),
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some((inner, bound_args, bound_kw)) = nested {
+            let mut combined = extract_items(bound_args);
+            combined.extend(pos);
+            let merged_kw = merge_kwargs_dicts(bound_kw, kwargs_dict);
+            return mb_call_spread_kwargs(
+                inner,
+                MbValue::from_ptr(MbObject::new_list(combined)),
+                merged_kw,
+            );
+        }
+    }
+    let kw_pairs = kwargs_dict_pairs(kwargs_dict);
+    // 2. No keywords → plain positional spread.
+    if kw_pairs.is_empty() {
+        return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(pos)));
+    }
+    let addr = resolve_callable(func);
+    let is_native = addr.map(|a| super::module::is_native_func(a as u64)).unwrap_or(false);
+    let has_star = addr.map(|a| super::module::is_variadic_func(a as u64)).unwrap_or(false);
+    let has_kw = addr.map(|a| super::module::is_kwargs_func(a as u64)).unwrap_or(false);
+
+    // 3. `*args`-style user target: all positionals pack into one args list;
+    //    the keywords pack into the kwargs dict. (Leading regular params
+    //    before `*args` are uncommon and not bound here — the args list
+    //    already carries them positionally.) Native dispatchers are excluded:
+    //    they expect the flattened-positional convention (step 5).
+    if has_star && !is_native {
+        if has_kw {
+            return invoke_args_kwargs(
+                func,
+                MbValue::from_ptr(MbObject::new_list(pos)),
+                kwargs_dict,
+            );
+        }
+        // *args without **kwargs: keywords cannot bind — fall through to the
+        // flatten fallback below.
+    }
+
+    // 4. Regular / keyword-only user target with declared parameters: bind
+    //    keyword args to their named positional slots, filling defaults.
+    if !has_star && !is_native {
+        if let Some(params) = super::closure::func_params(func) {
+            let regulars: Vec<&super::closure::MbParamInfo> =
+                params.iter().filter(|p| p.kind <= 1).collect();
+            let mut items: Vec<MbValue> = Vec::with_capacity(regulars.len() + pos.len());
+            let mut used = std::collections::HashSet::new();
+            let mut pos_iter = pos.iter().copied();
+            for p in &regulars {
+                if let Some(v) = pos_iter.next() {
+                    items.push(v);
+                } else if let Some((k, v)) = kw_pairs.iter().find(|(k, _)| *k == p.name) {
+                    used.insert(k.clone());
+                    items.push(*v);
+                } else if p.has_default {
+                    items.push(p.default);
+                } else {
+                    items.push(MbValue::none());
+                }
+            }
+            items.extend(pos_iter);
+            if has_kw {
+                let extra = super::dict_ops::mb_dict_new();
+                for (k, v) in &kw_pairs {
+                    if !used.contains(k) {
+                        unsafe { super::rc::retain_if_ptr(*v); }
+                        super::dict_ops::mb_dict_setitem(
+                            extra,
+                            MbValue::from_ptr(MbObject::new_str(k.clone())),
+                            *v,
+                        );
+                    }
+                }
+                items.push(extra);
+                // ABI for (regulars..., **kw): regulars individual + trailing
+                // kwargs dict. Invoke positionally including the dict slot.
+                return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(items)));
+            }
+            return mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(items)));
+        }
+    }
+
+    // 5. Fallback (native / unknown target): append the kwargs dict as a
+    //    trailing positional — the established native-dispatcher convention
+    //    (`split_kwargs` recovers it). This matches what the prior lowering
+    //    produced for a `**mapping` splat, so native module functions reached
+    //    as bare idents (`textwrap.shorten(t, w, **kw)`) keep working. The
+    //    keyword-binding path above already handles user functions/partials.
+    let mut items = pos;
+    items.push(kwargs_dict);
+    mb_call_spread(func, MbValue::from_ptr(MbObject::new_list(items)))
 }
 
 /// floor division: a // b

@@ -155,6 +155,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_map_n", iter::mb_map_n as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_filter", builtins::mb_filter as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_call_spread", builtins::mb_call_spread as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_call_spread_kwargs", builtins::mb_call_spread_kwargs as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue, [I64, I64, I64], I64),
         // ── String ops ──
         rt_sym!("mb_str_concat", string_ops::mb_str_concat as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_str_upper", string_ops::mb_str_upper as fn(super::MbValue) -> super::MbValue, [I64], I64),

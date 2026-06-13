@@ -249,138 +249,166 @@ fn parse_lru_kwargs(kwargs: Option<MbValue>) -> (Option<MbValue>, Option<MbValue
     (None, None)
 }
 
+/// The four synthesized comparison methods, one per derived op. Each reads the
+/// receiver class's recorded seed, calls it, and derives the target op —
+/// propagating NotImplemented exactly like CPython's `_le_from_lt` family.
+unsafe extern "C" fn synth_lt(self_v: MbValue, args: MbValue) -> MbValue {
+    synth_compare(self_v, first_arg(args), "__lt__")
+}
+unsafe extern "C" fn synth_le(self_v: MbValue, args: MbValue) -> MbValue {
+    synth_compare(self_v, first_arg(args), "__le__")
+}
+unsafe extern "C" fn synth_gt(self_v: MbValue, args: MbValue) -> MbValue {
+    synth_compare(self_v, first_arg(args), "__gt__")
+}
+unsafe extern "C" fn synth_ge(self_v: MbValue, args: MbValue) -> MbValue {
+    synth_compare(self_v, first_arg(args), "__ge__")
+}
+
+fn first_arg(args: MbValue) -> MbValue {
+    args.as_ptr()
+        .and_then(|p| unsafe {
+            if let ObjData::List(ref lk) = (*p).data {
+                lk.read().unwrap().first().copied()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(MbValue::none)
+}
+
 unsafe extern "C" fn dispatch_total_ordering(args_ptr: *const MbValue, nargs: usize) -> MbValue {
     let args = unsafe { std::slice::from_raw_parts(args_ptr, nargs) };
     let cls = args.get(0).copied().unwrap_or_else(MbValue::none);
-    // total_ordering is a class decorator: record the class so the runtime
-    // comparison operators can synthesize the missing ordering ops from the
-    // single seed op the class actually defines. Returns the class unchanged.
-    if let Some(name) = extract_str(cls) {
-        let has_op = ["__lt__", "__le__", "__gt__", "__ge__"].iter().any(|op| {
-            !super::super::class::lookup_method(&name, op).is_none()
+    // Resolve the class name (bare-name string from class-body decoration, or
+    // a `type` object from `type("E", (), {...})`).
+    let name = extract_str(cls).or_else(|| {
+        cls.as_ptr().and_then(|ptr| unsafe {
+            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                if class_name == "type" {
+                    return fields.read().unwrap().get("__name__").copied().and_then(extract_str);
+                }
+            }
+            None
+        })
+    });
+    match name {
+        Some(name) => install_total_ordering(&name, cls),
+        None => cls,
+    }
+}
+
+/// Apply total_ordering to a registered class: find the seed op DEFINED on the
+/// class itself, install synthesized methods for the missing ops, and raise
+/// only when no ordering exists anywhere in the MRO.
+fn install_total_ordering(name: &str, cls: MbValue) -> MbValue {
+    const OPS: [&str; 4] = ["__lt__", "__le__", "__gt__", "__ge__"];
+    // Seed precedence: CPython picks the lexicographic max of the roots
+    // (`__gt__` > `__ge__` > `__lt__` > `__le__`); matching that order keeps
+    // single-root classes (the common case) seeded by their sole op.
+    let own_seed = ["__gt__", "__ge__", "__lt__", "__le__"]
+        .into_iter()
+        .find(|op| super::super::class::class_defines_own_method(name, op));
+    let Some(seed) = own_seed else {
+        // No ordering op defined on the class itself. If it inherits one from
+        // a base — a user base that defines an op, OR an ordered builtin base
+        // (`class MyInt(int)`) — total_ordering is a no-op and must NOT
+        // overwrite the inherited ops. Only a class with no ordering anywhere
+        // is an error.
+        const ORDERED_BUILTINS: [&str; 9] = [
+            "int", "float", "bool", "str", "bytes", "bytearray", "tuple", "list", "frozenset",
+        ];
+        let inherits = super::super::class::class_mro_any(name, |c| {
+            c != name
+                && (ORDERED_BUILTINS.contains(&c)
+                    || OPS.iter().any(|op| super::super::class::class_defines_own_method(c, op)))
         });
-        if !has_op {
+        if !inherits {
             return raise_exc(
                 "ValueError",
                 "must define at least one ordering operation: < > <= >=",
             );
         }
-        TOTAL_ORDERING_CLASSES.with(|s| { s.borrow_mut().insert(name); });
-    } else if let Some(ptr) = cls.as_ptr() {
-        // type("E", (), {...}) products arrive as type-object Instances.
-        unsafe {
-            if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
-                if class_name == "type" {
-                    let has_op = {
-                        let f = fields.read().unwrap();
-                        ["__lt__", "__le__", "__gt__", "__ge__"]
-                            .iter()
-                            .any(|op| f.contains_key(*op))
-                    };
-                    let registered = fields
-                        .read()
-                        .unwrap()
-                        .get("__name__")
-                        .copied()
-                        .and_then(extract_str)
-                        .map(|n| {
-                            ["__lt__", "__le__", "__gt__", "__ge__"].iter().any(|op| {
-                                !super::super::class::lookup_method(&n, op).is_none()
-                            })
-                        })
-                        .unwrap_or(false);
-                    if !has_op && !registered {
-                        return raise_exc(
-                            "ValueError",
-                            "must define at least one ordering operation: < > <= >=",
-                        );
-                    }
-                }
-            }
+        return cls;
+    };
+    TOTAL_ORDERING_SEEDS.with(|m| m.borrow_mut().insert(name.to_string(), seed.to_string()));
+    // Install synthesized methods for every op the class does NOT define
+    // itself (native `(self, args)` dispatchers added to the method table).
+    for op in OPS {
+        if super::super::class::class_defines_own_method(name, op) {
+            continue;
         }
+        let addr = match op {
+            "__lt__" => synth_lt as *const () as usize,
+            "__le__" => synth_le as *const () as usize,
+            "__gt__" => synth_gt as *const () as usize,
+            _ => synth_ge as *const () as usize,
+        };
+        super::super::module::register_variadic_func(addr as u64);
+        super::super::class::class_replace_method(name, op, MbValue::from_func(addr));
     }
     cls
 }
 
 thread_local! {
-    /// Class names decorated with `functools.total_ordering`. The runtime
-    /// comparison operators consult this set to derive missing ordering ops.
-    static TOTAL_ORDERING_CLASSES: std::cell::RefCell<std::collections::HashSet<String>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
+    /// Class name → the seed ordering dunder it defines, recorded by
+    /// total_ordering so the synthesized methods know which op to derive from.
+    static TOTAL_ORDERING_SEEDS: std::cell::RefCell<std::collections::HashMap<String, String>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
-/// Which seed ordering dunder a total_ordering class defines, in CPython's
-/// precedence order (`__lt__`, `__gt__`, `__le__`, `__ge__`).
-fn total_ordering_seed(class_name: &str) -> Option<&'static str> {
-    for seed in ["__lt__", "__gt__", "__le__", "__ge__"] {
-        if !super::super::class::lookup_method(class_name, seed).is_none() {
-            return Some(seed);
-        }
-    }
-    None
-}
-
-/// Derive the rich-comparison result `op` (one of "lt","le","gt","ge") for an
-/// instance of a `total_ordering`-decorated class, using whatever single seed
-/// op the class defines plus `__eq__`. Returns `None` when `a` is not an
-/// instance of a registered total_ordering class, or when the requested op is
-/// itself the seed op (so the caller uses the class's own method).
-pub fn mb_functools_total_ordering_richcmp(a: MbValue, b: MbValue, op: &str) -> Option<bool> {
-    let class_name = a.as_ptr().and_then(|p| unsafe {
+/// Compute a synthesized comparison `target` for `self_v` against `other`,
+/// deriving from the receiver class's recorded seed op. Propagates
+/// NotImplemented when the seed call does, matching CPython's _ordering.
+fn synth_compare(self_v: MbValue, other: MbValue, target: &str) -> MbValue {
+    let class_name = self_v.as_ptr().and_then(|p| unsafe {
         if let ObjData::Instance { ref class_name, .. } = (*p).data {
             Some(class_name.clone())
-        } else { None }
-    })?;
-    let is_registered = TOTAL_ORDERING_CLASSES.with(|s| s.borrow().contains(&class_name));
-    if !is_registered {
-        return None;
+        } else {
+            None
+        }
+    });
+    let Some(class_name) = class_name else { return MbValue::not_implemented(); };
+    let seed = TOTAL_ORDERING_SEEDS.with(|m| m.borrow().get(&class_name).cloned());
+    let Some(seed) = seed else { return MbValue::not_implemented(); };
+    let seed_m = super::super::class::lookup_method(&class_name, &seed);
+    if seed_m.is_none() {
+        return MbValue::not_implemented();
     }
-    let seed = total_ordering_seed(&class_name)?;
-    let seed_op = match seed {
-        "__lt__" => "lt",
-        "__gt__" => "gt",
-        "__le__" => "le",
-        "__ge__" => "ge",
-        _ => return None,
-    };
-    // The class defines this op natively — let the normal dispatch handle it.
-    if op == seed_op {
-        return None;
+    let mname = MbValue::from_ptr(MbObject::new_str(seed.clone()));
+    let arglist = MbValue::from_ptr(MbObject::new_list(vec![other]));
+    let op_result = super::super::class::mb_call_method(self_v, mname, arglist);
+    if op_result.is_not_implemented() {
+        return MbValue::not_implemented();
     }
-    // Call the seed op (returns its bool result) and __eq__.
-    let call_dunder = |dunder: &str, x: MbValue, y: MbValue| -> Option<bool> {
-        let m = super::super::class::lookup_method(&class_name, dunder);
-        if m.is_none() { return None; }
-        let mname = MbValue::from_ptr(MbObject::new_str(dunder.to_string()));
-        let args = MbValue::from_ptr(MbObject::new_list(vec![y]));
-        let r = super::super::class::mb_call_method(x, mname, args);
-        // NotImplemented propagates as "fall back"; treat as None.
-        if r.is_not_implemented() { return None; }
-        Some(truthy(r))
+    let opb = truthy(op_result);
+    // eq / ne via the equality protocol (handles __eq__ + identity fallback).
+    let eq = super::super::builtins::mb_eq(self_v, other).as_bool().unwrap_or(false);
+    let ne = !eq;
+    let derived = match (seed.as_str(), target) {
+        ("__lt__", "__le__") => opb || eq,
+        ("__lt__", "__gt__") => !opb && ne,
+        ("__lt__", "__ge__") => !opb,
+        ("__le__", "__lt__") => opb && ne,
+        ("__le__", "__gt__") => !opb,
+        ("__le__", "__ge__") => !opb || eq,
+        ("__gt__", "__ge__") => opb || eq,
+        ("__gt__", "__lt__") => !opb && ne,
+        ("__gt__", "__le__") => !opb,
+        ("__ge__", "__le__") => !opb || eq,
+        ("__ge__", "__lt__") => !opb,
+        ("__ge__", "__gt__") => opb && ne,
+        _ => return MbValue::not_implemented(),
     };
-    let seed_val = call_dunder(seed, a, b);
-    // Derive per CPython's _ordering rules. Each branch maps (seed, target) →
-    // boolean expression over the seed call and __eq__.
-    let result = match (seed, op) {
-        // Seeded from __lt__.
-        ("__lt__", "le") => seed_val? || call_dunder("__eq__", a, b)?,
-        ("__lt__", "gt") => !(seed_val? || call_dunder("__eq__", a, b)?),
-        ("__lt__", "ge") => !seed_val?,
-        // Seeded from __gt__.
-        ("__gt__", "ge") => seed_val? || call_dunder("__eq__", a, b)?,
-        ("__gt__", "lt") => !(seed_val? || call_dunder("__eq__", a, b)?),
-        ("__gt__", "le") => !seed_val?,
-        // Seeded from __le__.
-        ("__le__", "ge") => !seed_val? || call_dunder("__eq__", a, b)?,
-        ("__le__", "lt") => seed_val? && !call_dunder("__eq__", a, b)?,
-        ("__le__", "gt") => !seed_val?,
-        // Seeded from __ge__.
-        ("__ge__", "le") => !seed_val? || call_dunder("__eq__", a, b)?,
-        ("__ge__", "gt") => seed_val? && !call_dunder("__eq__", a, b)?,
-        ("__ge__", "lt") => !seed_val?,
-        _ => return None,
-    };
-    Some(result)
+    MbValue::from_bool(derived)
+}
+
+/// Legacy operator hook. total_ordering now installs real synthesized methods
+/// on the class (see `install_total_ordering`), which the comparison operators
+/// resolve via normal method dispatch *before* reaching this hook. Kept as a
+/// no-op so the call sites in builtins.rs continue to compile.
+pub fn mb_functools_total_ordering_richcmp(_a: MbValue, _b: MbValue, _op: &str) -> Option<bool> {
+    None
 }
 
 /// Truthiness helper for dunder results (bool / int / float / None).
@@ -400,11 +428,13 @@ fn truthy(v: MbValue) -> bool {
     }
 }
 
-/// True when `v` is an instance of a `total_ordering`-decorated class.
+/// True when `v` is an instance of a `total_ordering`-decorated class. The
+/// synthesized methods now serve the comparison operators directly, so this is
+/// only consulted by the (now-redundant) operator hook.
 pub fn is_total_ordering_instance(v: MbValue) -> bool {
     v.as_ptr().map(|p| unsafe {
         if let ObjData::Instance { ref class_name, .. } = (*p).data {
-            TOTAL_ORDERING_CLASSES.with(|s| s.borrow().contains(class_name))
+            TOTAL_ORDERING_SEEDS.with(|s| s.borrow().contains_key(class_name))
         } else { false }
     }).unwrap_or(false)
 }
