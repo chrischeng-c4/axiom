@@ -133,6 +133,20 @@ unsafe extern "C" fn dispatch_chain_from_iterable(
 ) -> MbValue {
     let a = unsafe { args_slice(args_ptr, nargs) };
     let source = a.first().copied().unwrap_or_else(MbValue::none);
+    // The argument to chain.from_iterable must itself be iterable; a bare
+    // scalar (e.g. chain.from_iterable(123)) raises TypeError like CPython.
+    // Scalars carry no pointer; iterator handles / generators are bare ints
+    // too, so exempt those before flagging.
+    if source.as_ptr().is_none()
+        && !super::super::iter::mb_is_iterator_handle(source)
+        && !super::super::generator::is_known_generator(source)
+    {
+        raise_type_error(&format!(
+            "'{}' object is not iterable",
+            super::super::builtins::value_type_name(source)
+        ));
+        return MbValue::none();
+    }
     let mut items: Vec<MbValue> = Vec::new();
     for sub in extract_list(source) {
         if real_exception_pending() {

@@ -8550,7 +8550,7 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             if matches!(
                 nt.as_str(),
                 "date" | "datetime" | "datetime.time" | "StackSummary" | "TracebackException"
-                    | "patch" | "zipfile.ZipInfo"
+                    | "patch" | "zipfile.ZipInfo" | "chain"
             ) {
                 let m = lookup_method(&nt, &name);
                 if let Some(maddr) = m.as_func() {
