@@ -6893,6 +6893,16 @@ pub fn mb_obj_getitem(obj: MbValue, key: MbValue) -> MbValue {
                         super::rc::retain_if_ptr(v);
                         return v;
                     }
+                    // A non-int, non-slice index (e.g. Element[None]) is a
+                    // TypeError, like list subscripting.
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "list indices must be integers or slices, not {}",
+                            super::builtins::value_type_name(key)
+                        ))),
+                    );
+                    return MbValue::none();
                 }
             }
         }
