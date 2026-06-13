@@ -1770,6 +1770,18 @@ pub fn dispatch_method(handle: MbValue, method: &str, args: &[MbValue]) -> Optio
                 _ => MbValue::not_implemented(),
             }
         }
+        "__format__" => {
+            // CPython: the format spec must be a str — a bytes (or other
+            // non-str) spec is a TypeError, raised before any formatting.
+            let spec = a0.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Str(ref s) = (*p).data { Some(s.clone()) } else { None }
+            });
+            match spec {
+                Some(s) => mb_numeric_handle_format(handle, &s)
+                    .unwrap_or_else(|| mb_decimal_str(handle)),
+                None => raise_type_error("__format__() argument 1 must be str, not bytes"),
+            }
+        }
         "__str__" | "str_" | "to_eng_string" => mb_decimal_str(handle),
         "__repr__" => mb_decimal_repr(handle),
         "__bool__" => mb_decimal_bool(handle),
