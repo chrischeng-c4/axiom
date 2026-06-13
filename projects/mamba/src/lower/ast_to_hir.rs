@@ -2518,6 +2518,18 @@ impl<'a> AstLowerer<'a> {
             ast::Stmt::Assign { target, value } => {
                 // Ident assignments: define locally if new, reassign if exists
                 if let ast::Expr::Ident(name) = &target.node {
+                    // Alias tracking for the kwargs-dict call convention:
+                    // `quantiles = statistics.quantiles` must keep keyword
+                    // names at bare-ident call sites, like the import form.
+                    if let ast::Expr::Attr { object, attr } = &value.node {
+                        if attr == "quantiles" {
+                            if let ast::Expr::Ident(m) = &object.node {
+                                if m == "statistics" {
+                                    self.dataclasses_kwarg_idents.insert(name.clone());
+                                }
+                            }
+                        }
+                    }
                     let val = self.lower_expr(value)?;
                     // Python scoping: inside a function body, an assignment
                     // to a name that's NOT already local defines a new local
@@ -2573,8 +2585,65 @@ impl<'a> AstLowerer<'a> {
             }
             ast::Stmt::AugAssign { target, op, value } => {
                 // Desugar: x += e → x = x + e
-                let lv = self.lower_lvalue(target)?;
-                let lhs = self.lower_expr(target)?;
+                //
+                // CPython evaluates the target's receiver (and index) exactly
+                // ONCE in `a[i] += v` / `a.b += v`. The naive desugar lowers
+                // `target` twice (lvalue setitem + rvalue getitem), re-running
+                // any side effects — `faces[rng.randint(1,6)-1] += 1` drew TWO
+                // indices (read one slot, write another, corrupting the tally).
+                // For non-atomic receiver/index sub-exprs, bind them to fresh
+                // temps via Walrus inside the RVALUE (Assign lowers the value
+                // before the target, so the temps are live when the setitem
+                // path reads them as plain Vars).
+                fn hir_atomic(e: &HirExpr) -> bool {
+                    matches!(
+                        e,
+                        HirExpr::Var(..) | HirExpr::IntLit(..) | HirExpr::FloatLit(..)
+                            | HirExpr::StrLit(..) | HirExpr::BoolLit(..) | HirExpr::NoneLit(..)
+                            // Slice nodes are special-cased at Index sites
+                            // (packed to (start, stop, step)); hoisting one
+                            // into a Walrus temp would bypass that packing.
+                            // Cloning keeps the pre-fix behavior for slices.
+                            | HirExpr::Slice { .. }
+                    )
+                }
+                let is_index_or_attr = matches!(
+                    target.node,
+                    ast::Expr::Index { .. } | ast::Expr::Attr { .. }
+                );
+                let (lv, lhs) = if is_index_or_attr {
+                    let mut lhs = self.lower_expr(target)?;
+                    let mut hoist = |slot: &mut Box<HirExpr>, tag: &str, this: &mut Self| {
+                        if hir_atomic(slot) {
+                            return (**slot).clone();
+                        }
+                        let ty = slot.ty();
+                        let name = format!("__aug_{tag}_{}", this.next_local_sym);
+                        let sym = this.define_local(&name, ty);
+                        let orig = std::mem::replace(&mut **slot, HirExpr::NoneLit(ty));
+                        **slot = HirExpr::Walrus { target: sym, value: Box::new(orig), ty };
+                        HirExpr::Var(sym, ty)
+                    };
+                    let lv = match &mut lhs {
+                        HirExpr::Index { object, index, .. } => {
+                            let lv_obj = hoist(object, "obj", self);
+                            let lv_idx = hoist(index, "idx", self);
+                            HirLValue::Index { object: Box::new(lv_obj), index: Box::new(lv_idx) }
+                        }
+                        HirExpr::Attr { object, attr, .. } => {
+                            let lv_obj = hoist(object, "obj", self);
+                            HirLValue::Attr { object: Box::new(lv_obj), attr: attr.clone() }
+                        }
+                        _ => self.lower_lvalue(target)?,
+                    };
+                    (lv, lhs)
+                } else {
+                    // Var/unpack targets: keep the original order — lower_lvalue
+                    // first so an unbound name is defined before the read.
+                    let lv = self.lower_lvalue(target)?;
+                    let lhs = self.lower_expr(target)?;
+                    (lv, lhs)
+                };
                 let rhs = self.lower_expr(value)?;
                 let hir_op = lower_aug_op(*op);
                 // Python truediv always returns float: x /= 2 → float even if both are int.

@@ -5977,6 +5977,17 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
             // produced by mb_getattr when invoked on a type-name string.
             // Dispatch as `args[0].method(args[1:])`.
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
+                // Bound native method (`f = gen.uniform; f(10, 10)`): the
+                // Instance carries the receiver + method name; dispatch as a
+                // normal method call.
+                if class_name == "__bound_native_method__" {
+                    let g = fields.read().unwrap();
+                    let recv = g.get("__self__").copied().unwrap_or_else(MbValue::none);
+                    let mname = g.get("__method__").copied().unwrap_or_else(MbValue::none);
+                    drop(g);
+                    let rest = MbValue::from_ptr(MbObject::new_list(items));
+                    return super::class::mb_call_method(recv, mname, rest);
+                }
                 if class_name == "__unbound_method__" {
                     let guard = fields.read().unwrap();
                     let method_name = guard.get("__method__").copied()
@@ -6013,6 +6024,25 @@ pub fn mb_call_spread(func: MbValue, args_list: MbValue) -> MbValue {
                                     std::mem::transmute(addr);
                                 return f(items.as_ptr(), items.len());
                             }
+                        }
+                    }
+                    // `random.Random.getrandbits(self, n)` — unbound calls on
+                    // the Random base must reach the NATIVE generator (the
+                    // user's override delegates here; re-dispatching on self
+                    // would recurse forever). Resolve self to its handle and
+                    // go through the handle protocol.
+                    if (type_name == "Random" || type_name == "SystemRandom")
+                        && !items.is_empty()
+                    {
+                        let recv = items[0];
+                        let handle = if recv.is_int() {
+                            recv
+                        } else {
+                            super::stdlib::random_mod::handle_for_instance(recv)
+                        };
+                        if handle.is_int() {
+                            let rest = MbValue::from_ptr(MbObject::new_list(items[1..].to_vec()));
+                            return super::class::mb_call_method(handle, method_name, rest);
                         }
                     }
                     // Pathlib classmethods (`Path.cwd()` / `Path.home()`)

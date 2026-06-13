@@ -2437,10 +2437,11 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
     }
 
     // Random handles are int-tagged values registered by random_mod.
-    // Method lookup goes through mb_call_method; attribute lookup
-    // returns the same handle so `r.random` etc. is callable as a
-    // bound method (`r.random()` then dispatches via the call-method
-    // protocol below).
+    // Method lookup goes through mb_call_method; an attribute READ
+    // (`variate = gen.uniform; variate(10, 10)`) produces a bound-method
+    // Instance carrying the receiver + method name, dispatched by
+    // mb_call_spread / mb_call0 / mb_call1_val. `__name__` is a field so
+    // `variate.__name__` reads it like CPython's bound method.
     if obj.is_int() {
         let id = obj.as_int().unwrap_or(0) as u64;
         if super::stdlib::random_mod::is_random_handle(id) {
@@ -2451,7 +2452,24 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 | "vonmisesvariate" | "gammavariate" | "betavariate"
                 | "paretovariate" | "weibullvariate" | "getrandbits"
                 | "randbytes" | "getstate" | "setstate"
-                | "binomialvariate" => return obj,
+                | "binomialvariate" => {
+                    let inst_ptr = MbObject::new_instance("__bound_native_method__".to_string());
+                    unsafe {
+                        if let ObjData::Instance { ref fields, .. } = (*inst_ptr).data {
+                            let mut g = fields.write().unwrap();
+                            g.insert("__self__".to_string(), obj);
+                            g.insert(
+                                "__method__".to_string(),
+                                MbValue::from_ptr(MbObject::new_str(attr_name.clone())),
+                            );
+                            g.insert(
+                                "__name__".to_string(),
+                                MbValue::from_ptr(MbObject::new_str(attr_name.clone())),
+                            );
+                        }
+                    }
+                    return MbValue::from_ptr(inst_ptr);
+                }
                 _ => {}
             }
         }
@@ -7693,6 +7711,7 @@ pub fn mb_call0(func: MbValue) -> MbValue {
                     || class_name == "functools.lru_cache_wrapper"
                     || class_name == "functools.lru_cache_factory"
                     || class_name == "__unbound_method__"
+                    || class_name == "__bound_native_method__"
                     || class_name == "collections.namedtuple_factory"
                 {
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![]));
@@ -7789,7 +7808,7 @@ pub fn mb_call1_val(func: MbValue, arg: MbValue) -> MbValue {
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 // Unbound method wrapper: route through mb_call_spread so
                 // the 1-arg form `str.lower("HELLO")` dispatches correctly.
-                if class_name == "__unbound_method__" {
+                if class_name == "__unbound_method__" || class_name == "__bound_native_method__" {
                     let _ = fields; // suppressed — dispatch via call_spread
                     let args_list = MbValue::from_ptr(MbObject::new_list(vec![arg]));
                     return super::builtins::mb_call_spread(func, args_list);
@@ -8180,6 +8199,29 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                 ) {
                     let items = super::builtins::extract_items(args);
                     if let Some(result) = super::stdlib::tempfile_mod::tempfile_instance_method(
+                        receiver, &name, &items,
+                    ) {
+                        return result;
+                    }
+                }
+            }
+        }
+    }
+
+    // User subclasses of random.Random: implement randrange/randint through
+    // the CPython `_randbelow` override contract (an overridden getrandbits /
+    // random must be exercised), and delegate the rest to the instance's
+    // native generator handle. User-overridden methods fall through to the
+    // generic dispatch (None return).
+    if let Some(ptr) = receiver.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*ptr).data {
+                if class_name != "Random"
+                    && class_name != "SystemRandom"
+                    && class_mro_any(class_name, |c| c == "Random" || c == "SystemRandom")
+                {
+                    let items = super::builtins::extract_items(args);
+                    if let Some(result) = super::stdlib::random_mod::random_subclass_method(
                         receiver, &name, &items,
                     ) {
                         return result;
