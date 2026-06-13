@@ -4775,6 +4775,16 @@ pub fn mb_hash(val: MbValue) -> MbValue {
                             return h;
                         }
                     }
+                    // PEP 557: a plain dataclass (eq=True, not frozen, not
+                    // unsafe_hash) has __hash__ set to None — its instances are
+                    // unhashable, so hash() raises rather than pointer-hashing.
+                    if super::stdlib::dataclasses_mod::is_unhashable_dataclass(class_name) {
+                        raise_type_error(format!(
+                            "unhashable type: '{}'",
+                            value_type_name(val)
+                        ));
+                        return MbValue::none();
+                    }
                     MbValue::from_int((ptr as u64 >> 17) as i64)
                 }
                 // Mutable containers are unhashable in CPython — raise the

@@ -566,6 +566,15 @@ pub(crate) fn dc_hash_field_names(class_name: &str) -> Option<Vec<String>> {
     Some(compare_field_names(&d))
 }
 
+/// builtins.rs hook: PEP 557 sets `__hash__ = None` for a dataclass with
+/// `eq=True` (default) that is neither `frozen` nor `unsafe_hash` — its
+/// instances are unhashable, so `hash()` raises TypeError. (eq=False leaves
+/// the inherited object.__hash__ in place, so it stays hashable.)
+pub(crate) fn is_unhashable_dataclass(class_name: &str) -> bool {
+    lookup_dc(class_name)
+        .map_or(false, |d| d.opts.eq && !d.opts.frozen && !d.opts.unsafe_hash)
+}
+
 fn compare_field_names(d: &DcClass) -> Vec<String> {
     d.fields.iter()
         .filter(|f| !f.is_classvar && !f.is_initvar && f.compare)
