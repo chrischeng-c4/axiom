@@ -5151,6 +5151,45 @@ pub fn mb_dispatch_binop(op_code: i64, lhs: MbValue, rhs: MbValue) -> MbValue {
     MbValue::none() // NotImplemented
 }
 
+/// Augmented-assignment in-place dispatch: `a <op>= b`. When `a` is an
+/// instance defining the in-place dunder (`__iadd__`, `__ior__`, …), call it
+/// (CPython tries the in-place form first); otherwise fall back to the normal
+/// binary op (which itself tries `__op__` / `__rop__` / the primitive path).
+/// Returning the (possibly same) object is the caller's new binding. Only
+/// instance receivers can carry an in-place dunder, so primitives/str/list
+/// take the fast fallback unchanged.
+fn mb_inplace(a: MbValue, b: MbValue, idunder: &str, fallback: fn(MbValue, MbValue) -> MbValue) -> MbValue {
+    if a.as_ptr().is_some() {
+        if let Some(method) = try_get_dunder(a, idunder) {
+            if let Some(result) = invoke_binop_method(method, a, b) {
+                if !result.is_not_implemented() {
+                    return result;
+                }
+            }
+        }
+    }
+    fallback(a, b)
+}
+
+pub fn mb_iadd(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__iadd__", super::builtins::mb_add)
+}
+pub fn mb_isub(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__isub__", super::builtins::mb_sub)
+}
+pub fn mb_imul(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__imul__", super::builtins::mb_mul)
+}
+pub fn mb_iand(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__iand__", super::builtins::mb_bitand)
+}
+pub fn mb_ior(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__ior__", super::builtins::mb_bitor)
+}
+pub fn mb_ixor(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__ixor__", super::builtins::mb_bitxor)
+}
+
 /// Invoke a 2-arg method value with (self, arg). Handles both TAG_FUNC direct
 /// addresses (JIT-compiled methods) and CALLABLE_REGISTRY heap pointers.
 /// Returns None only when the address is unresolvable.

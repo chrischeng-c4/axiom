@@ -2646,6 +2646,45 @@ impl<'a> AstLowerer<'a> {
                 };
                 let rhs = self.lower_expr(value)?;
                 let hir_op = lower_aug_op(*op);
+                // In-place dunder dispatch (CPython tries `__iadd__` etc. before
+                // `__add__`): for a non-primitive (instance) target, route
+                // `a <op>= b` through a runtime helper that calls the in-place
+                // dunder when present and otherwise falls back to the normal
+                // binary op. Primitive targets (int/float/bool) keep the fast
+                // BinOp path below. Only the six ops with an in-place helper
+                // are rerouted; others fall through.
+                {
+                    use crate::types::Ty;
+                    let lhs_primitive = matches!(
+                        self.checker.tcx.get(lhs.ty()),
+                        Ty::Int | Ty::Float | Ty::Bool
+                    );
+                    let helper = if lhs_primitive {
+                        None
+                    } else {
+                        match op {
+                            ast::AugOp::Add => Some("mb_iadd"),
+                            ast::AugOp::Sub => Some("mb_isub"),
+                            ast::AugOp::Mul => Some("mb_imul"),
+                            ast::AugOp::BitAnd => Some("mb_iand"),
+                            ast::AugOp::BitOr => Some("mb_ior"),
+                            ast::AugOp::BitXor => Some("mb_ixor"),
+                            _ => None,
+                        }
+                    };
+                    if let Some(helper) = helper {
+                        let any_ty = self.checker.tcx.any();
+                        let call = HirExpr::Call {
+                            func: Box::new(HirExpr::StrLit(helper.to_string(), any_ty)),
+                            args: vec![lhs, rhs],
+                            ty: any_ty,
+                        };
+                        if let HirLValue::Var(sym) = &lv {
+                            self.local_types.insert(*sym, any_ty);
+                        }
+                        return Some(HirStmt::Assign { target: lv, value: call, span: stmt.span });
+                    }
+                }
                 // Python truediv always returns float: x /= 2 → float even if both are int.
                 // Widen variable type to Any so subsequent reads don't double-box.
                 let is_truediv = matches!(op, ast::AugOp::Div);

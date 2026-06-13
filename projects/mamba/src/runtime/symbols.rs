@@ -156,6 +156,12 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_filter", builtins::mb_filter as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_call_spread", builtins::mb_call_spread as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_call_spread_kwargs", builtins::mb_call_spread_kwargs as fn(super::MbValue, super::MbValue, super::MbValue) -> super::MbValue, [I64, I64, I64], I64),
+        rt_sym!("mb_iadd", class::mb_iadd as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_isub", class::mb_isub as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_imul", class::mb_imul as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_iand", class::mb_iand as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_ior", class::mb_ior as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
+        rt_sym!("mb_ixor", class::mb_ixor as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         // ── String ops ──
         rt_sym!("mb_str_concat", string_ops::mb_str_concat as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_str_upper", string_ops::mb_str_upper as fn(super::MbValue) -> super::MbValue, [I64], I64),
