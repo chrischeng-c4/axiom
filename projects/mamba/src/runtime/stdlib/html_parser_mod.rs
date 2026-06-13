@@ -1489,7 +1489,18 @@ extern "C" fn hp_reset(self_obj: MbValue) -> MbValue {
 /// `HTMLParser.feed(self, data)` — buffer + tokenize incrementally.
 extern "C" fn hp_feed(self_obj: MbValue, data: MbValue) -> MbValue {
     ensure_state(self_obj);
-    let d = extract_str(data).unwrap_or_default();
+    // feed() concatenates `data` onto the str rawdata buffer; a non-str arg
+    // (e.g. feed(123)) is a TypeError in CPython, not a silent no-op.
+    let Some(d) = extract_str(data) else {
+        super::super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(format!(
+                "can only concatenate str (not \"{}\") to str",
+                super::super::builtins::value_type_name(data)
+            ))),
+        );
+        return MbValue::none();
+    };
     let buf = str_field(self_obj, "rawdata") + &d;
     inst_set(self_obj, "rawdata", name_val(&buf));
     goahead(self_obj, false);

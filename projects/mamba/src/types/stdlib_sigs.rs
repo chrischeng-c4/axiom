@@ -194,6 +194,21 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("chr", CoreTy::Unknown)],
         enforceable: false,
     },
+    // NEGATIVE: colorsys conversions take three real numbers; a non-numeric
+    // channel (`rgb_to_hsv("x", 0, 0)`) is a RUNTIME TypeError raised by the
+    // dispatcher, so keep the type wall from rejecting it at compile time.
+    StdlibSig { module: "colorsys", qualifier: "", name: "rgb_to_hsv", kind: SigKind::ModuleFn,
+        params: &[p("r", CoreTy::Unknown), p("g", CoreTy::Unknown), p("b", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "hsv_to_rgb", kind: SigKind::ModuleFn,
+        params: &[p("h", CoreTy::Unknown), p("s", CoreTy::Unknown), p("v", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "rgb_to_hls", kind: SigKind::ModuleFn,
+        params: &[p("r", CoreTy::Unknown), p("g", CoreTy::Unknown), p("b", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "hls_to_rgb", kind: SigKind::ModuleFn,
+        params: &[p("h", CoreTy::Unknown), p("l", CoreTy::Unknown), p("s", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "rgb_to_yiq", kind: SigKind::ModuleFn,
+        params: &[p("r", CoreTy::Unknown), p("g", CoreTy::Unknown), p("b", CoreTy::Unknown)], enforceable: false },
+    StdlibSig { module: "colorsys", qualifier: "", name: "yiq_to_rgb", kind: SigKind::ModuleFn,
+        params: &[p("y", CoreTy::Unknown), p("i", CoreTy::Unknown), p("q", CoreTy::Unknown)], enforceable: false },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for
