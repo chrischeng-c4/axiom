@@ -266,15 +266,18 @@ unsafe extern "C" fn synth_ge(self_v: MbValue, args: MbValue) -> MbValue {
 }
 
 fn first_arg(args: MbValue) -> MbValue {
-    args.as_ptr()
-        .and_then(|p| unsafe {
-            if let ObjData::List(ref lk) = (*p).data {
-                lk.read().unwrap().first().copied()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(MbValue::none)
+    // A comparison dunder is reached two ways: the binop path (`a <= b`) invokes
+    // it via invoke_binop_method, which passes the RAW right-hand operand; the
+    // method-call path (`a.__le__(b)`) wraps the args in a list. Accept both —
+    // a List arg yields its first element, anything else IS the rhs. (Without
+    // this, the binop path made `other` None, so the derived op compared the
+    // seed against None — TypeError mid-derivation.)
+    if let Some(p) = args.as_ptr() {
+        if let ObjData::List(ref lk) = unsafe { &(*p).data } {
+            return lk.read().unwrap().first().copied().unwrap_or_else(MbValue::none);
+        }
+    }
+    args
 }
 
 unsafe extern "C" fn dispatch_total_ordering(args_ptr: *const MbValue, nargs: usize) -> MbValue {
