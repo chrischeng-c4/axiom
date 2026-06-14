@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Segment-checkpoint persistence store (Stage 2 Phase 2f-2) — the disk engine
 //! wired in as the running binary's "RDB".
 //!
@@ -34,11 +36,13 @@ use crate::storage::Engine;
 /// Filesystem-backed segment-checkpoint store: `<root>/gen-<seq>/`. The newest
 /// `gen-*` (by sequence) is the latest. Parallels [`crate::rdb::LocalFsRdbStore`]
 /// but persists the columnar segment tree instead of a CBOR blob.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
 pub struct SegmentRdbStore {
     root: PathBuf,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl SegmentRdbStore {
     /// Open (creating) the checkpoint root directory.
     pub fn new(root: impl Into<PathBuf>) -> Result<Self> {
@@ -283,3 +287,4 @@ mod tests {
         assert_eq!(store.load_latest().unwrap().unwrap().1, 8);
     }
 }
+// CODEGEN-END

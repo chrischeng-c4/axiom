@@ -11,6 +11,9 @@
 #[test]
 #[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
 fn cap_config_logging_and_reap_policy() {
-    panic!("AW EC placeholder for cap-config-logging-and-reap-policy");
+    panic!(
+        "AW EC placeholder for {}",
+        "cap-config-logging-and-reap-policy"
+    );
 }
 // CODEGEN-END

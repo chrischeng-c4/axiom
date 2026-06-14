@@ -50,7 +50,7 @@ pub use generate::{call_tool, is_sdd_tool, JsonSchema, SddTools, SpecIR};
 pub use models::{Challenge, Change, Requirement, Scenario, Verification};
 pub use state::{StalenessReport, StateManager};
 
-// === Compass re-exports (code intelligence — see projects/compass) ===
+// === Compass re-exports (code intelligence — see libs/compass) ===
 //
 // These re-exports preserve the public API that existed before #1164 extracted
 // the lens cluster into cclab-compass.

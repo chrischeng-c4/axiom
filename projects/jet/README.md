@@ -57,24 +57,24 @@ oracle, fixture breadth, performance comparison, or replayable evidence is not
 complete; `red` means a known required behavior fails; `gray` means the gate was
 not run in the current environment.
 
-Last local status refresh: 2026-06-08.
+Last local status refresh: 2026-06-12.
 
 | Layer | Overall status | Local proof | Current interpretation |
 |---|---|---|---|
-| Basic FE-on-DOM | `red` for the expanded DOM production build corpus; phase 1 package replacement is green locally | Test fixtures under `projects/jet/tests/fixtures/dom-production-build/` drive the contract and own their tool/dependency roots. `projects/jet/scripts/verify-basic-dom-gates.sh --phase package` verifies Jet-managed fixture hydration, mutation/workspace contracts, and required cold/warm/disk benchmarks against isolated npm/pnpm copies. Browser Bridge replacement gates second; the expanded Jet/Vite/Webpack production build corpus gates third. | Basic completion proceeds in dependency order: package manager replacement first, Browser Bridge replacement second, and production build replacement third before any Vite/Webpack efficiency claim. |
-| Advanced FE-on-WASM | `yellow` overall | `projects/jet/scripts/verify-advanced-wasm-gates.sh` defines the current gate set for WASM build config, `jet-wasm`, WebGPU default output, WebGPU visual probe, library lowering fixtures, MUI DOM/WASM parity, and DOM oracle parity skeleton. | The path is implemented enough for focused WebGPU/WASM fixtures and Browser Bridge evidence, but it is not production-ready until typed frontend IR, TS/CSS/HTML lowering, layout, text, selection, clipboard, scroll, context menu, a11y, and post-load performance rows have replayable DOM-vs-WASM traces. |
+| Basic FE-on-DOM | `green` for the current production-readiness gate across package management, Browser Bridge, production build, serve, workspace, test, e2e, and trace | `JET_BASIC_DOM_BUILD_SAMPLES=3 JET_BASIC_DOM_RUNTIME_SMOKE=required projects/jet/scripts/verify-basic-dom-gates.sh --all` is green locally. Evidence files under `/tmp/jet-basic-dom-gate/` include `pkg-management-compare.json` (`basic.install.replacement` green), `browser-bridge-replacement.json` (`basic.browser-bridge.replacement` green), `basic-build-corpus.json` (`basic.build.production.corpus` green), and `prod-static-serve.json` (`basic.serve.prod-static` green). `jet serve --prod` beats the nginx container baseline in the local static-origin gate: first-byte p95 ratio `0.803`, throughput ratio `1.164`. | Basic is production-ready for the current FE-on-DOM replacement contract. Advanced FE-on-WASM remains a separate readiness track and must not be used to qualify or dilute the Basic production claim. |
+| Advanced FE-on-WASM | `yellow` overall | `projects/jet/scripts/verify-advanced-wasm-gates.sh` defines the current gate set for WASM build config, `jet-wasm`, WebGPU default output, WebGPU visual probe, library lowering fixtures, MUI/AntD DOM/WASM parity, and DOM oracle parity skeleton. | The path is implemented enough for focused WebGPU/WASM fixtures and Browser Bridge evidence, but it is not production-ready until typed frontend IR, TS/CSS/HTML lowering, layout, text, selection, clipboard, scroll, context menu, a11y, and post-load performance rows have replayable DOM-vs-WASM traces. |
 
 Basic command-family status:
 
 | Command family | Status | Required gate / evidence | Remaining gap before full green |
 |---|---|---|---|
-| `jet install/add/remove/update/audit` | `green` for local package-manager correctness, fixture hydration, executable bins, mutation behavior, workspace linking, workspace frozen-lockfile drift rejection, and required npm/pnpm baseline benchmark thresholds | `cargo test -p jet --lib pkg_manager -- --nocapture` plus `JET_BASIC_DOM_PACKAGE_BASELINES=npm,pnpm JET_BASIC_DOM_REQUIRE_BASELINES=1 projects/jet/scripts/verify-basic-dom-gates.sh --phase package` | Keep extending the Jet-owned package gate into broader lifecycle output, cache evidence, and workspace layouts. npm may run only as a host comparator against isolated benchmark copies; pnpm comparator runs from a temporary tool root provisioned by `jet install`. npm/pnpm artifacts remain oracle evidence, not the fixture management path. |
-| `jet build` | `red` for expanded DOM production build corpus; intentionally third after package and Browser Bridge gates | `node projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required` via `verify-basic-dom-gates.sh`; source fixtures live under `projects/jet/tests/fixtures/dom-production-build/`; direct Jet/Vite/Webpack comparisons are the production-build gate | Fix remaining DOM production build gaps, then keep runtime trace, speed, gzip size, CSS/public/static artifact, and contract self-test checks green. |
-| `jet serve` / `jet serve --prod` | `green` for current local serve/HMR unit gate; `yellow` for baseline server replacement | `cargo test -p jet --lib dev_server -- --nocapture` through `verify-basic-dom-gates.sh` | Add Vite dev-start/HMR comparisons and Node/nginx-style production static serving comparisons for startup, first-byte latency, throughput, cache headers, SPA fallback, and proxy behavior. |
-| `jet bb` / `jet browser` | `green` for detached agent-first browser automation used by gates; `yellow` for full Playwright/Cypress replacement surface | `cargo test -p jet --lib browser -- --nocapture`; `projects/jet/scripts/verify-basic-dom-gates.sh --phase browser`; production comparator drives runtime smoke through `jet bb launch/eval/shutdown` | Expand command coverage into Playwright/Cypress-style locator/actionability parity, richer failure diagnostics, trace replay hooks, and WASM browser-API bridge coverage before broadening build claims. |
-| `jet test` | `green` for Rust-side runner/reporter gates; `yellow` for full built-in TS test API promise | `cargo test -p jet --lib test_runner -- --nocapture`; `cargo test -p jet --lib reporter -- --nocapture` | Finish and dogfood the Jet-native TS test API as an auto-available virtual module without npm package installation, then compare against Vitest/Jest fixture behavior and reporting. |
-| `jet e2e` | `green` for current product-flow gate; `yellow` for broad e2e replacement | `cargo test -p jet --lib e2e -- --nocapture` | Add browser action fidelity comparisons, artifact replayability, failure diagnostics, and DOM/WASM matrix support across larger real fixtures. |
-| `jet trace` | `green` for trace artifact unit gate; `yellow` for full replay/compare evidence system | `cargo test -p jet --lib trace -- --nocapture` | Add end-to-end trace replay and comparison evidence for serve, browser actions, network/console state, DOM snapshots, WASM capture, screenshots, and pHash deltas. |
+| `jet install/add/remove/update/audit` | `green` for local package-manager correctness, fixture hydration, executable bins, mutation behavior, workspace linking, workspace frozen-lockfile drift rejection, and required npm/pnpm baseline benchmark thresholds | `cargo test -p jet --lib pkg_manager -- --nocapture` plus `JET_BASIC_DOM_PACKAGE_BASELINES=npm,pnpm JET_BASIC_DOM_REQUIRE_BASELINES=1 projects/jet/scripts/verify-basic-dom-gates.sh --phase package` | Extend the Jet-owned package gate into downloaded bytes, cache hit evidence, lifecycle output breadth, and broader workspace layouts. npm may run only as a host comparator against isolated benchmark copies; pnpm comparator runs from a temporary tool root provisioned by `jet install`. npm/pnpm artifacts remain oracle evidence, not the fixture management path. |
+| `jet build` | `green` for the expanded DOM production build corpus; intentionally third after package and Browser Bridge gates | `JET_BASIC_DOM_BUILD_SAMPLES=3 JET_BASIC_DOM_RUNTIME_SMOKE=required projects/jet/scripts/verify-basic-dom-gates.sh --all`; `basic-build-corpus.json` is green across react-bench, DOM production assets, MUI, AntD, Tailwind, and styled-components fixtures with runtime smoke required | Current tightest visual-library slice remains green: MUI duration ratio `1.184` and gzip ratio `1.041` against Vite; AntD duration ratio `0.736` and gzip ratio `0.608` against Vite. Continue broadening fixture coverage, but there is no red Basic production-build blocker in the current gate. |
+| `jet dev` / `jet serve --prod` | `green` for local serve/HMR and nginx-class production static-origin replacement | `cargo test -p jet --lib dev_server -- --nocapture` through `verify-basic-dom-gates.sh`; `compare-prod-static-serve.mjs` writes `/tmp/jet-basic-dom-gate/prod-static-serve.json` and checks startup, first-byte latency, throughput, cache headers, SPA fallback, conditional/range requests, health/readiness, shutdown, and logs | Dev serving is the client-connected control plane for HMR, browser log intake, and proxying local API/WebSocket backends. `jet serve --prod` is the data plane: optimize memory footprint, response-copy cost, and RPS as an app-container static origin behind a load balancer; it does not own TLS termination, public virtual hosts, cert management, WAF/CDN, or cross-service ingress routing. |
+| `jet bb` / `jet browser` | `green` for detached agent-first core gesture automation plus isolated Playwright baseline comparison; `yellow` for full Playwright/Cypress replacement surface | `cargo test -p jet --lib browser -- --nocapture`; `JET_BASIC_DOM_BROWSER_BASELINES=playwright JET_BASIC_DOM_REQUIRE_BROWSER_BASELINES=1 projects/jet/scripts/verify-basic-dom-gates.sh --phase browser`; production comparator drives runtime smoke through `jet bb launch/eval/shutdown` | Semantic snapshot/ref interaction (`snapshot/click/fill/type/hover/select/check` by ref or locator selector), navigation (`goto/back/forward/reload/resize/wait`), and console/fetch observability (`console/requests`) now ship on both `jet bb` and `jet bb mcp`. Next: tabs/multi-session, storage state + route interception on the bb surface, richer failure diagnostics, trace replay hooks, and WASM browser-API bridge coverage before broadening build claims. |
+| `jet test` | `green` for the Basic native runner/reporter gate | `cargo test -p jet --lib test_runner -- --nocapture`; `cargo test -p jet --lib reporter -- --nocapture` through `verify-basic-dom-gates.sh --all` | Continue broadening Vitest/Jest comparison fixtures and dogfood coverage, but the current Basic gate is green. |
+| `jet e2e` | `green` for the Basic product-flow e2e gate | `cargo test -p jet --lib e2e -- --nocapture` through `verify-basic-dom-gates.sh --all` | Add larger real-app fixtures and DOM/WASM matrix support as follow-up breadth, not as a current Basic production blocker. |
+| `jet trace` | `green` for the Basic trace evidence gate | `cargo test -p jet --lib trace -- --nocapture` through `verify-basic-dom-gates.sh --all` | Add richer trace replay and comparison evidence across network/console, DOM snapshots, WASM capture, screenshots, and pHash deltas as follow-up breadth. |
 
 Advanced WASM contract-family status:
 
@@ -82,8 +82,8 @@ Advanced WASM contract-family status:
 |---|---|---|---|
 | Typed frontend IR and WASM build | `yellow` | `cargo test -p jet --lib wasm_build:: -- --nocapture`; `cargo test -p jet --test wasm_build_end_to_end wasm_build_selects_webgpu_scaffold_by_default -- --nocapture` | Typed TS/HTML/CSS frontend IR snapshots proving type facts, host tree intent, CSS IR, and resource graph survive before target emission. |
 | Type-to-Rust lowering | `yellow` | `cargo test -p jet --test tsx_to_rust_imports -- --nocapture` plus focused TSX-to-Rust tests | More library and app fixtures covering object/array/union/state/event payload shapes and memory layout decisions. |
-| Wrapper shell and browser bridge | `yellow` | `jet bb capture --surface dom`, `jet bb capture --surface wasm`, Browser Bridge unit gates, MUI visual fixture gate | Prove wrapper JS is only a loader/bridge and that app semantics live in WASM for supported fixtures. |
-| WebGPU renderer and visual probe | `yellow` | `cargo test -p jet --test wasm_build_end_to_end webgpu_renderer_reports_runtime_status_and_visual_probe_when_available -- --nocapture`; MUI visual regression gate | Broaden to replayable layout/paint/text traces, screenshot/pHash thresholds, glyph atlas evidence, and large-table steady-state rendering. |
+| Wrapper shell and browser bridge | `yellow` | `jet bb capture --surface dom`, `jet bb capture --surface wasm`, Browser Bridge unit gates, MUI/AntD visual fixture gates | Prove wrapper JS is only a loader/bridge and that app semantics live in WASM for supported fixtures. |
+| WebGPU renderer and visual probe | `yellow` | `cargo test -p jet --test wasm_build_end_to_end webgpu_renderer_reports_runtime_status_and_visual_probe_when_available -- --nocapture`; MUI/AntD visual regression gates | Broaden to replayable layout/paint/text traces, screenshot/pHash thresholds, glyph atlas evidence, and large-table steady-state rendering. |
 | Layout, table, text, and fonts | `yellow` | Renderer layout/paint/text tests under `projects/jet/wasm/tests/` and grid renderer crates | DOM oracle traces for table geometry, text runs, clipping, glyph counts, and font policy with explicit tolerances. |
 | Pointer, wheel, scroll, and overlay scrollbars | `yellow` | Browser Bridge input commands and WASM renderer/runtime tests | DOM-vs-WASM traces showing hit targets, scroll offsets, clamping, scrollbar visible/idle-hidden states, thumb geometry, and repaint coalescing. |
 | Selection and clipboard | `yellow` | WASM selection renderer source/tests are present in the worktree | DOM-vs-WASM drag/key/copy traces proving selected range, copied TSV/text, visual highlight, and clipboard status. |
@@ -119,12 +119,23 @@ Within Basic, the replacement order is strict:
    first-class gates does `jet build` compete with Vite/Webpack on correctness,
    speed, and bundle size.
 
-Jet-owned fixture hydration stays separate from incumbent benchmarks:
-`compare-pkg-management.mjs` defaults to required npm/pnpm isolated baselines
-and may run comparator package managers only inside benchmark copies, never as
-the source fixture manager. No gate may use `npm ci` or Playwright as Jet's
-fixture/runtime path. Phase 3 build work stays behind those replacement
-contracts.
+The current phase-gate state is: phase 1 package replacement is green for the
+current corpus, phase 2 Browser Bridge core actions plus the isolated Playwright
+baseline are green for the current gesture contract, phase 3 production build is
+green for the expanded DOM corpus, and the serve/workspace/test/e2e/trace gates
+are green in `verify-basic-dom-gates.sh --all`. Jet-owned fixture hydration stays
+separate from incumbent benchmarks: `compare-pkg-management.mjs` defaults to required npm/pnpm isolated
+baselines and may run comparator package managers only inside benchmark copies,
+never as the source fixture manager. Phase 2 applies the same rule to browser
+automation: `jet bb` is the executor and Playwright/Cypress are comparison
+targets. Package-manager baselines may use host `npm` only against isolated
+benchmark copies; the pnpm comparator is installed into a temporary tool root
+by `jet install`.
+Browser Bridge baselines may use Playwright only from an explicit
+`JET_PLAYWRIGHT_PACKAGE_ROOT` or from a temporary tool root provisioned by
+`jet install`; repo-root Playwright resolution is intentionally ignored. No gate
+may use `npm ci` or Playwright as Jet's fixture/runtime path. Phase 3 build work
+stays behind those replacement contracts.
 
 Five command families make those two toolchains work:
 
@@ -132,7 +143,8 @@ Five command families make those two toolchains work:
 |---|---|---|---|---|
 | Package management | `jet install/add/remove/update/audit` | same | Dependency lifecycle | Mature package install, lockfile, workspace, registry, bin, lifecycle, and integrity behavior |
 | Build | `jet build [--wasm]` | same | Artifact creation | DOM builds, WASM builds, static assets, `dist/jet-target.json`, reproducible build metadata |
-| Serve | `jet serve [--prod] [--wasm]` | same; legacy `jet dev` remains | Local and production serving | Agent-first serving. Default mode is detached/background with machine-readable URL/session metadata. Without `--prod`: full dev serving with hot reload, HMR, proxy, and test/debug hooks. With `--prod`: production static serving suitable to replace a tuned nginx-style frontend deployment. With `--wasm`: serve the Advanced FE-on-WASM target. |
+| Dev | `jet dev [--proxy PATH=URL]`; `jet dev --wasm` | same | Local development serving | Foreground dev control plane with hot reload, HMR, browser client connection, console/log intake, reverse proxy rules, and test/debug hooks. DOM dev proxy rules come from `[dev.proxy]` in `jet.toml` and repeatable `--proxy` CLI overrides; `jet dev --wasm` keeps its separate WASM loop until its proxy path is wired. |
+| Serve | `jet serve [--prod] [--wasm]` | same; dev mode delegates to the dev serving surface for now | Detached and production serving | Agent-first serving returns machine-readable URL/session metadata. With `--prod`: production static serving suitable to replace a tuned nginx-style frontend deployment. Without `--prod`: detached dev serving compatibility. With `--wasm`: serve the Advanced FE-on-WASM target. |
 | Browser Bridge | `jet bb ...` | same; legacy `jet browser ...` remains | Browser automation and WASM bridge | Agent-first browser control. Default launch mode is headless and detached, returning a controllable browser/session handle. Explicit attach/headful modes are for human inspection. Owns click/drag/key/wheel/eval/screenshot/capture, DOM oracle capture, WASM runtime capture, and browser API bridge into FE-on-WASM |
 | Test, e2e, trace | `jet test`, `jet e2e`, `jet trace` | same | Verification and evidence | Basic validates TS/DOM toolchain behavior with a Jet-owned TS test runtime that is auto-available under `jet test` and does not need an npm package. Advanced reuses the same surfaces for WASM runtime checks, DOM-oracle parity, Browser Bridge evidence, trace replay, and diagnostics. |
 
@@ -256,14 +268,56 @@ work, `jet bb capture --surface dom` is the DOM oracle and `jet bb capture
 - **Axum HTTP server** — static file serving, SPA fallback
 - **WebSocket HMR** — `/__jet_hmr` endpoint with auto-reconnect
 - **File watching** — `notify` crate with smart filtering
-- **Development serving** — target command `jet serve` starts full dev serving
-  with hot reload, HMR, proxy, and test/debug hooks
+- **Development serving** — target command `jet dev` starts full foreground dev
+  serving with hot reload, HMR, browser client connection, console/log intake,
+  proxy, and test/debug hooks
 - **Agent-first default** — serving starts as a detached/background session and
   returns machine-readable URL/session metadata for follow-up commands
 - **Production serving** — target command `jet serve --prod` serves production
-  artifacts as an nginx-style frontend server replacement surface
+  artifacts as a Kubernetes/GKE static frontend origin server behind a load
+  balancer
 - **WASM serving** — target command `jet serve --wasm` builds and serves the
   Advanced FE-on-WASM target with runtime inspection hooks
+
+#### Dev Proxy
+
+`jet dev` supports reverse proxy rules for API, webhook, MCP, and WebSocket
+backends during DOM local development:
+
+```toml
+[dev.proxy]
+"/api" = "http://127.0.0.1:3200"
+"/mcp" = "http://127.0.0.1:3210"
+```
+
+One-off CLI overrides are repeatable and override matching config prefixes:
+
+```bash
+jet dev --proxy /api=http://127.0.0.1:3200 --proxy /events=http://127.0.0.1:3300
+```
+
+Proxy matching is path-segment aware, so `/api` matches `/api/users` but not
+`/apidocs`. The dev proxy preserves HTTP methods and headers, streams SSE, and
+tunnels WebSocket connections; it is intentionally a dev-only control-plane
+feature, not part of the `jet serve --prod` static data plane.
+
+#### Production Serving Boundary
+
+`jet serve --prod` is scoped as the app-container origin for frontend static
+assets in a Kubernetes cluster, not as the public edge proxy. In a GKE-style
+deployment, the external load balancer, Ingress, Gateway, CDN, or service mesh
+owns TLS termination, certificate rotation, public virtual-host/SNI routing,
+cross-service path routing, WAF/auth policy, and HTTP/2 or HTTP/3 edge
+negotiation.
+
+Jet owns the behavior that remains inside the pod: fast startup, predictable
+bind/port behavior, health/readiness and graceful shutdown, static file serving
+from `dist/`, content-type correctness, HTML no-cache policy, immutable cache
+policy for hashed assets, SPA fallback, 404 behavior, conditional requests,
+range requests for large assets, structured access/error logs, low CPU/memory
+overhead, and nginx-class latency/throughput for the same static artifact set.
+The comparison target is an nginx container serving the same `dist/` as an
+origin, under the same cluster/LB shape; it is not nginx's full edge feature set.
 
 ### Browser Bridge
 
@@ -271,11 +325,23 @@ work, `jet bb capture --surface dom` is the DOM oracle and `jet bb capture
   keyboard, wheel, eval, and screenshot operations through Jet-owned CDP code
 - **Agent-first default** — launch is headless and detached by default, returning
   a browser/session handle that follow-up `jet bb` commands can target
+- **Semantic snapshot + refs** — `jet bb snapshot` prints a role-annotated tree
+  of the live DOM and mints element refs (`e1`, `e2`, …); `click`, `fill`,
+  `type`, `hover`, `select`, and `check`/`uncheck` accept a ref or a locator
+  selector (CSS, `text=…`, `role=…[name="…"]`), mirroring playwright-mcp's
+  snapshot/ref interaction model
+- **Navigation** — `goto`, `back`, `forward`, `reload`, `resize`, and `wait`
+  (selector / text / delay) against the attached session
+- **Page observability** — launch installs init-script rings for console
+  output, page errors, and fetch/XHR activity; `jet bb console` and
+  `jet bb requests` read (and optionally drain) them from any later command
 - **DOM oracle capture** — inspect live DOM targets without Playwright
 - **WASM observation bundle** — inspect `window.__jet_debug`, WebGPU status,
   layout tree, element tree, paint ops, hooks, and build manifest
 - **Parity diagnostics** — capture comparable screenshots, pHash probes,
   runtime metadata, and browser-semantics evidence
+- **MCP server** — `jet bb mcp` serves the full `bb` surface (gestures,
+  semantic actions, navigation, observability, capture) as MCP stdio tools
 - **Command target** — `jet bb ...`; legacy-compatible `jet browser ...`
   remains available during migration
 
@@ -324,11 +390,12 @@ jet add <package> [--dev]         # Add a dependency
 jet remove <package>              # Remove a dependency
 jet run [script]                  # Run package scripts/tasks
 jet exec <cmd>                    # Run with node_modules/.bin on PATH
-jet serve                         # Detached FE-on-DOM dev server for agents
+jet serve                         # Detached FE-on-DOM dev server compatibility
 jet serve --prod                  # Detached production static server replacement
 jet serve --wasm                  # Detached FE-on-WASM server with debug bridge
 jet serve shutdown                # Stop the active detached Jet serve session
-jet dev [-p <port>]               # Legacy foreground FE-on-DOM dev server
+jet dev [-p <port>]               # Foreground FE-on-DOM dev server
+jet dev --proxy /api=http://127.0.0.1:3200
 jet dev --wasm --debug            # Legacy foreground FE-on-WASM dev server
 jet dev shutdown -p <port>        # Legacy stop command for a Jet dev server
 jet build                         # Build production DOM target
@@ -337,9 +404,14 @@ jet test                          # Basic: Jet-native TS tests with built-in tes
 jet e2e                           # Basic/Advanced: product-flow and parity e2e
 jet trace                         # Basic/Advanced: inspect/replay/compare trace evidence
 jet bb launch <url>               # Headless detached Browser Bridge session
+jet bb snapshot                   # Ref-annotated semantic DOM snapshot (e1, e2, …)
+jet bb click e7                   # Act on snapshot refs or selectors (fill/type/hover/select too)
+jet bb goto <url>                 # Navigate; back/forward/reload/resize/wait also available
+jet bb console                    # Console/error history; jet bb requests for fetch/XHR
 jet bb drag ...                   # Drive browser input without Playwright
 jet bb capture --surface dom      # Capture DOM oracle evidence
 jet bb capture --surface wasm     # Capture WASM runtime evidence
+jet bb mcp                        # Serve the whole bb surface as MCP stdio tools
 jet browser ...                   # Legacy-compatible Browser Bridge surface
 ```
 
@@ -422,26 +494,51 @@ benchmarks, not microbenchmarks. Each run must record cold and warm timings,
 artifact size, machine metadata, dependency cache state, command stdout/stderr,
 and the exact fixture revision.
 
-First-pass production build comparison:
+Current Basic gate order:
 
 ```bash
-node projects/jet/scripts/compare-basic-builds.mjs --runtime-smoke required --build-samples 3
+# Default local goal gate: phase 1 package management, then phase 2 Browser Bridge
+# with isolated npm/pnpm and Playwright baselines required.
+projects/jet/scripts/verify-basic-dom-gates.sh
+
+# Full phase-1 replacement benchmark; npm/pnpm baselines are required by default.
+projects/jet/scripts/verify-basic-dom-gates.sh --phase package
+
+# Full phase-2 replacement benchmark; Playwright baseline is required by default.
+projects/jet/scripts/verify-basic-dom-gates.sh --phase browser
+
+# Third-stage build gate, only after package and Browser Bridge are green.
+projects/jet/scripts/verify-basic-dom-gates.sh --phase build
 ```
 
-This compares `examples/react-bench` across `jet build`, `vite build`, and
-`webpack --mode production`-equivalent output. It records static artifact
-function checks, JS syntax checks, browser runtime fixture assertions, Jet vs
-Vite runtime trace parity, and performance evidence. The Basic FE-on-DOM gate
-runs this comparator with `--runtime-smoke required --build-samples 3`, so a
-runtime parity miss or red best-of-N build comparison is a red build gate, not
+The `jet-basic-dom` CI workflow mirrors this as three dependent jobs:
+`1 package management replacement` -> `2 browser bridge replacement` ->
+`3 DOM production build comparison`. The third job is allowed to run only after
+the first two replacement contracts pass, so a build comparison can never stand
+in for package-manager or browser-automation replacement.
+
+Third-stage production build comparison:
+
+```bash
+projects/jet/scripts/verify-basic-dom-gates.sh --phase build
+```
+
+This compares the DOM production build corpus across `jet build`, `vite build`,
+and `webpack --mode production`-equivalent output. The corpus currently covers
+the interactive React bench plus CSS side-effect import, production define
+replacement, public asset copying, and CSS-linked HTML output. It records static
+artifact function checks, JS syntax checks, browser runtime fixture assertions,
+Jet vs Vite runtime trace parity, and performance evidence. The Basic FE-on-DOM
+gate runs this comparator with `--runtime-smoke required --build-samples 3`, so
+a runtime parity miss or red best-of-N build comparison is a red build gate, not
 a benchmark note.
 
 | Jet surface | External baseline | Required comparison | Green condition | Red condition |
 |---|---|---|---|---|
-| `jet install` | `npm`, `pnpm` | Cold install time, warm install time, lockfile determinism, `node_modules` correctness, downloaded bytes, disk bytes, lifecycle/bin behavior | Jet is correct and within the accepted time/space envelope for the fixture class. | Install output differs semantically, lockfile is unstable, lifecycle/bin behavior diverges, or time/space exceeds the accepted envelope. |
+| `jet install` | `npm`, `pnpm` | Cold install time, warm install time, lockfile determinism, `node_modules` correctness, downloaded bytes, disk bytes, lifecycle/bin behavior | Jet is correct and within the accepted time/space envelope for the fixture class. The fixture dependency root is created by Jet package management. | Install output differs semantically, lockfile is unstable, lifecycle/bin behavior diverges, or time/space exceeds the accepted envelope. |
 | `jet build` | Vite, Webpack | Cold build time, warm rebuild time where supported, JS/CSS asset count, raw/gzip/brotli bundle size, sourcemap presence, public asset output, runtime smoke | Jet output runs correctly and build time/size are within the accepted envelope for the fixture class. | Runtime output differs, required artifacts are missing, or time/size exceeds the accepted envelope. |
-| `jet serve` | Vite dev server, Node static server, nginx-style static serving | Dev startup time, HMR latency, proxy behavior, static first-byte latency, static throughput, cache headers, SPA fallback, production startup time | Jet dev/prod serving matches required behavior and is within the accepted latency/throughput envelope. | HMR/proxy/static behavior diverges, prod serving cannot replace the baseline fixture, or latency/throughput exceeds the accepted envelope. |
-| `jet test/e2e/trace` | Vitest/Jest plus Playwright/Cypress-style flows | Test startup, watchless run time, browser action fidelity, trace completeness, failure diagnostics, artifact replayability | Jet can run the fixture with equivalent assertions and better or accepted diagnostics/evidence. | Assertions cannot be represented, browser actions diverge, or trace artifacts are insufficient to reproduce the failure. |
+| `jet dev` / `jet serve --prod` | Vite dev server, Node static server, nginx container as static origin | Dev startup time, HMR latency, proxy behavior, static first-byte latency, static throughput, cache headers, SPA fallback, production startup time, health/readiness, graceful shutdown, conditional/range requests, access/error logs | Jet dev/prod serving matches required behavior and is within the accepted latency/throughput envelope. For `jet serve --prod`, nginx parity means static-origin behavior inside a Kubernetes pod behind a load balancer. | HMR/proxy/static behavior diverges, prod serving cannot replace the static-origin baseline fixture, latency/throughput exceeds the accepted envelope, or Jet starts owning edge concerns such as TLS termination, public virtual hosts, or cross-service load-balancer routing. |
+| `jet test/e2e/trace` | Vitest/Jest plus Playwright/Cypress-style flows | Test startup, watchless run time, browser action fidelity, trace completeness, failure diagnostics, artifact replayability | Jet can run the fixture with equivalent assertions and better or accepted diagnostics/evidence. Browser actions are driven by `jet bb`. | Assertions cannot be represented, browser actions diverge, or trace artifacts are insufficient to reproduce the failure. |
 
 Basic benchmark gates must emit machine-readable summaries. A benchmark is
 `yellow`, not `green`, if it only prints timings without comparing against a
@@ -531,15 +628,15 @@ sourcemap, and asset evidence.
 
 | Contract ID | Jet command | Baseline command(s) | Functional oracle | Performance metrics |
 |---|---|---|---|---|
-| `basic.install.lockfile` | `jet install` | `npm ci`, `pnpm install --frozen-lockfile` | Resolved package versions, lock determinism, integrity, peer dependency behavior | Cold time, warm time, downloaded bytes, cache hits, disk bytes |
-| `basic.install.node-modules` | `jet install` | `npm ci`, `pnpm install --frozen-lockfile` | `node_modules` package tree, bin links, lifecycle output, script executability | Cold time, warm time, file count, hardlink/symlink count, disk bytes |
+| `basic.install.lockfile` | `jet install` | npm/pnpm lockfile oracle; isolated npm/pnpm benchmark evidence when explicitly run | Resolved package versions, lock determinism, integrity, peer dependency behavior | Cold time, warm time, downloaded bytes, cache hits, disk bytes |
+| `basic.install.node-modules` | `jet install` | npm/pnpm `node_modules` oracle; isolated npm/pnpm benchmark evidence when explicitly run | `node_modules` package tree, bin links, lifecycle output, script executability | Cold time, warm time, file count, hardlink/symlink count, disk bytes |
 | `basic.build.production` | `jet build` | `vite build`, `webpack --mode production` | Runtime smoke, asset graph, manifest, HTML shell, CSS bundle, sourcemap, public assets | Cold build time, warm build time where supported, raw/gzip/brotli bytes, asset count |
 | `basic.build.incremental` | `jet build` or watchless rebuild harness | Vite/Webpack rebuild harness | Changed module reflected correctly; unaffected outputs stable | Single-file edit rebuild time, changed artifact count |
-| `basic.serve.dev-start` | `jet serve` | `vite --host 127.0.0.1` | Serves app, SPA fallback, module graph, error overlay/diagnostic surface where supported | Startup-to-ready time, first request latency |
-| `basic.serve.hmr` | `jet serve` | Vite dev server | HMR update applies without full reload where supported; state preservation fixture passes | Edit-to-browser-update latency, reload count |
-| `basic.serve.prod-static` | `jet serve --prod` | Node static server, nginx-style static serving | Static assets, cache headers, compression policy, SPA fallback, 404 behavior | Startup time, first-byte latency, throughput, p95 latency |
+| `basic.serve.dev-start` | `jet dev` | `vite --host 127.0.0.1` | Serves app, SPA fallback, module graph, error overlay/diagnostic surface where supported | Startup-to-ready time, first request latency |
+| `basic.serve.hmr` | `jet dev` | Vite dev server | HMR update applies without full reload where supported; state preservation fixture passes | Edit-to-browser-update latency, reload count |
+| `basic.serve.prod-static` | `jet serve --prod` | Node static server, nginx container as static origin behind the same load-balancer shape | Static assets, content types, cache headers, compression/precompressed asset policy, SPA fallback, 404 behavior, conditional requests, range requests, health/readiness, graceful shutdown, structured logs. TLS termination, public virtual hosts/SNI, cert management, WAF/auth policy, CDN, and cross-service routing are owned by GKE/LB/Ingress/Gateway and are out of Jet scope. | Startup time, first-byte latency, throughput, p95 latency, CPU/memory envelope |
 | `basic.test.runner` | `jet test` | Vitest/Jest fixture command | Same pass/fail assertions, snapshots where supported, reporter semantics | Test discovery time, run time, reporter artifact bytes |
-| `basic.e2e.browser` | `jet e2e` / `jet bb` | Playwright/Cypress-style fixture | Same product-flow assertions and browser actions; replayable failure evidence | Browser startup time, action latency, trace artifact size |
+| `basic.e2e.browser` | `jet e2e` / `jet bb` | Playwright/Cypress-style fixture oracle | Same product-flow assertions and browser actions; replayable failure evidence; no Playwright executor in Jet-owned gates | Browser startup time, action latency, trace artifact size |
 | `basic.trace.artifacts` | `jet trace` | Playwright trace / custom fixture baseline | Replays or explains the same failure with enough logs/screenshots/network/state | Capture overhead, artifact size, replay time |
 
 Initial green thresholds are intentionally explicit and can be tightened per
@@ -550,7 +647,7 @@ fixture class:
 | Install | Jet functional parity is green and median cold/warm time is not slower than the fastest baseline by more than `25%`; disk bytes are not larger than the smallest correct baseline by more than `15%`. |
 | Build | Jet functional parity is green, median cold build time is not slower than the fastest baseline by more than `25%`, and gzip output is not larger than the smallest correct baseline by more than `5%`. |
 | Dev serve | Jet functional parity is green, startup-to-ready is not slower than Vite by more than `25%`, and HMR edit-to-update p95 is not slower than Vite by more than `25%`. |
-| Prod serve | Jet functional parity is green, first-byte p95 and throughput are within `10%` of the configured Node/nginx-style static baseline. |
+| Prod serve | Jet functional parity is green, first-byte p95 is no more than `10%` slower than the configured nginx static-origin baseline, throughput is at least `90%` of that baseline, and CPU/memory stay within the accepted fixture envelope. |
 | Test/e2e/trace | Jet functional parity is green, run time is within `25%` of the baseline, and trace artifacts are complete enough to replay or diagnose the seeded failure. |
 
 These thresholds are not claims that Jet is currently green. They define how a
@@ -697,7 +794,8 @@ Parity means Advanced FE-on-WASM must match the Basic FE-on-DOM oracle for:
 - selection and clipboard behavior, including browser `Selection` observable
   state where the DOM oracle exposes it;
 - controlled input and form-control behavior;
-- library fixture behavior for supported component surfaces such as MUI;
+- library fixture behavior for supported component surfaces such as MUI and
+  AntD;
 - Browser Bridge capture output across DOM and WASM surfaces.
 
 The focused WASM and Browser Bridge gates are:
@@ -709,24 +807,31 @@ cargo test -p jet --test tsx_to_rust_imports -- --nocapture
 cargo test -p jet --test mui_visual_regression -- --nocapture
 ```
 
-The real-package visual regression fixture is `examples/mui-visual-demo`. It is
-intentionally outside the simplified unit gates and exercises both FE-on-DOM
-and FE-on-WASM with real MUI source plus Browser Bridge screenshots and runtime
-captures:
+The real-package visual regression fixtures are `examples/mui-visual-demo` and
+`examples/antd-visual-demo`. They are intentionally outside the simplified unit
+gates and exercise both FE-on-DOM and FE-on-WASM with real MUI/AntD source plus
+`jet bb capture --surface dom`, `jet bb capture --surface wasm`, and
+`jet bb screenshot` CLI evidence:
 
 ```bash
 cd examples/mui-visual-demo
 jet install
 cd ../..
 cargo test -p jet --test mui_visual_regression -- --nocapture
+
+cd examples/antd-visual-demo
+jet install
+cd ../..
+cargo test -p jet --test mui_visual_regression -- --nocapture
 ```
 
 The fixture is managed through Jet end to end. Primary vocabulary is
-`jet install`, `jet serve`, `jet serve --wasm`, `jet bb launch`, `jet bb
-capture`, `jet bb screenshot`, and shutdown through the serving layer. Legacy
-`jet dev`, `jet dev --wasm --debug`, `jet browser ...`, and
-`jet dev shutdown -p <port>` commands remain compatibility surfaces while tests
-and fixtures migrate to the primary command names.
+`jet install`, `jet dev`, `jet serve --prod`, `jet serve --wasm`, `jet bb
+launch`, `jet bb capture`, `jet bb screenshot`, and shutdown through the
+serving layer. `jet dev` owns the local client-connected control plane;
+`jet serve --prod` owns the production static data plane. Legacy
+`jet browser ...` commands remain compatibility surfaces while tests and
+fixtures migrate to the primary command names.
 
 ## Dependencies
 
@@ -751,35 +856,35 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
-| Rust-Native Frontend Toolchain Replacement | #3778 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready | Jet can replace the Vite/Turbopack + pnpm/npm/Bun + Playwright-style frontend toolchain for real projects, including FE-on-DOM and FE-on-WASM targets. |
-| Package Manager | #3779 | implemented | verified | smoke, conformance, corpus, negative | ready | Jet can replace npm/pnpm/Bun package-management flows for real projects. |
-| Bundler And Production Build | #3782 | implemented | verified | smoke, conformance, corpus, negative | ready | Jet can produce production frontend builds with Vite/Webpack-class behavior for real projects. |
-| Dev Server And HMR | #3780 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready | Jet can replace Vite-style local development serving and HMR for real projects. |
-| Workspace And Task Runner | #3781 | implemented | verified | smoke, conformance, corpus, negative | ready | Jet can replace npm scripts, pnpm workspaces, and common Nx/Turborepo task-runner flows. |
-| Native Test And Product-Flow E2E | #3785 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready | Jet can replace Jest/Vitest plus Playwright/Cypress-style product-flow testing with a built-in TS test runtime, Jet-owned browser automation, and evidence capture. |
-| WASM And Multi-Target Execution | #3783 | implemented | verified | smoke, conformance, corpus, negative | ready | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
-| Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready | Jet can provide Browser Bridge automation, DOM oracle capture, WASM runtime capture, trace artifacts, and parity diagnostics. |
+| Rust-Native Frontend Toolchain Replacement | #3778 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready_for_basic | The Basic all-in-one replacement gate is green across package manager, Browser Bridge, production build, serve, workspace, test, e2e, and trace. |
+| Package Manager | #3779 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet owns fixture hydration and mutation gates; required isolated npm/pnpm benchmark evidence is green for the current Basic corpus. |
+| Bundler And Production Build | #3782 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | The expanded DOM production build corpus is green with required runtime smoke and Vite/Webpack comparisons. |
+| Dev Server And HMR | #3780 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready | `jet dev` can replace Vite-style local development serving, HMR, browser log intake, and local API/WebSocket proxying for real projects. |
+| Workspace And Task Runner | #3781 | implemented | verified | smoke, conformance, corpus, negative | ready | Jet can replace npm scripts, pnpm workspaces, and common Nx/Turborepo task-runner flows through the canonical `jet.toml` configuration surface. |
+| Native Test And Product-Flow E2E | #3785 | implemented | verified | smoke, conformance, corpus, negative, dogfood | ready_for_basic | Jet native runner, reporter, product-flow e2e, and trace gates are green for the Basic production-readiness contract. |
+| WASM And Multi-Target Execution | #3783 | implemented | passing | smoke, conformance, corpus, negative | partial | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. |
+| Browser, Trace, And Parity Infrastructure | #3786 | implemented | verified | smoke, conformance, corpus, negative | ready_for_basic | Jet BB is the executor for current gates, with isolated Playwright baseline evidence and trace substrate tests green. |
 
 ## Rust-Native Frontend Toolchain Replacement
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| rust-native-frontend-toolchain | #3778 | verified | Jet can replace the Vite/Turbopack + pnpm/npm/Bun + Playwright-style frontend toolchain for real projects, including FE-on-DOM and FE-on-WASM targets. | smoke, conformance, corpus, negative, dogfood | projects/jet/fixtures/dogfood/full-toolchain<br>`projects/jet/scripts/verify-health-gate.sh` |
+| rust-native-frontend-toolchain | #3778 | verified | Jet is gated as an all-in-one Basic frontend replacement in dependency order: package manager, Browser Bridge, production build, serve, workspace, test, e2e, and trace. The current production-readiness gate is green. | smoke, conformance, corpus, negative, dogfood | `projects/jet/scripts/verify-basic-dom-gates.sh --all`<br>projects/jet/tests/fixtures/dom-production-build |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Production replacement readiness | epic | #3778 | implemented | verified | none | - |
-| Full Toolchain Dogfood Flow | epic | #3778 | implemented | verified | dogfood | `projects/jet/scripts/verify-health-gate.sh`<br>projects/jet/fixtures/dogfood/full-toolchain |
+| Production replacement readiness | epic | #3778 | implemented | verified | corpus | package manager -> Browser Bridge -> build -> serve/workspace/test/e2e/trace are green in `verify-basic-dom-gates.sh --all` |
+| Full Toolchain Dogfood Flow | epic | #3778 | implemented | verified | dogfood | `projects/jet/scripts/verify-basic-dom-gates.sh --all`<br>projects/jet/tests/fixtures/dom-production-build |
 
 ### Package Manager
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| package-manager | #3779 | verified | Jet can replace npm/pnpm/Bun package-management flows for real projects. | smoke, conformance, corpus, negative | projects/jet/fixtures/pkg-manager/lockfile<br>projects/jet/fixtures/pkg-manager/workspace<br>projects/jet/fixtures/pkg-manager/registry<br>`cargo test -p jet --lib pkg_manager::lockfile -- --nocapture` |
+| package-manager | #3779 | verified | Jet owns fixture hydration, mutation, workspace, and frozen-lockfile checks; isolated npm/pnpm benchmark evidence is green for the current Basic corpus. | smoke, conformance, corpus, negative | `cargo test -p jet --lib pkg_manager -- --nocapture`<br>`projects/jet/scripts/compare-pkg-management.mjs --baseline-tools npm,pnpm --require-baselines` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Package manager readiness | epic | #3779 | implemented | verified | none | - |
+| Package manager readiness | epic | #3779 | implemented | verified | corpus | `projects/jet/scripts/compare-pkg-management.mjs` |
 | Package Manager Lockfile Parity | epic | #3779 | implemented | verified | conformance | `cargo test -p jet --lib pkg_manager::lockfile -- --nocapture`<br>projects/jet/fixtures/pkg-manager/lockfile |
 | Package Manager Workspace Parity | epic | #3779 | implemented | verified | conformance | `cargo test -p jet --lib pkg_manager::workspace -- --nocapture`<br>projects/jet/fixtures/pkg-manager/workspace |
 | Package Manager Registry Integrity | epic | #3779 | implemented | verified | negative | `cargo test -p jet --lib pkg_manager -- --nocapture`<br>projects/jet/fixtures/pkg-manager/registry |
@@ -788,11 +893,11 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| bundler-production-build | #3782 | verified | Jet can produce production frontend builds with Vite/Webpack-class behavior for real projects. | smoke, conformance, corpus, negative | projects/jet/fixtures/bundler/production<br>projects/jet/fixtures/bundler/transform-resolver<br>projects/jet/fixtures/bundler/assets<br>`cargo test -p jet --lib bundler -- --nocapture` |
+| bundler-production-build | #3782 | verified | Jet production build replacement is green after package manager and Browser Bridge gates. The expanded DOM production build corpus has green static checks, runtime smoke, and performance/size comparisons for the current fixture set. | smoke, conformance, corpus, negative | `projects/jet/scripts/compare-dom-build-corpus.mjs --runtime-smoke required --build-samples 3`<br>projects/jet/tests/fixtures/dom-production-build |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Bundler production readiness | epic | #3782 | implemented | verified | none | - |
+| Bundler production readiness | epic | #3782 | implemented | verified | corpus | DOM production build corpus is green with required runtime smoke and Vite/Webpack comparisons |
 | Production Bundle Output Parity | epic | #3782 | implemented | verified | conformance | `cargo test -p jet --lib bundler -- --nocapture`<br>projects/jet/fixtures/bundler/production |
 | Transform Resolver Parity | epic | #3782 | implemented | verified | corpus | `cargo test -p jet --lib transform -- --nocapture`<br>projects/jet/fixtures/bundler/transform-resolver |
 | Asset Sourcemap Negative Paths | epic | #3782 | implemented | verified | negative | `cargo test -p jet --lib asset -- --nocapture`<br>projects/jet/fixtures/bundler/assets |
@@ -801,12 +906,14 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| dev-server-hmr | #3780 | verified | Jet can replace Vite-style local development serving and HMR for real projects. | smoke, conformance, corpus, negative, dogfood | projects/jet/fixtures/dev-server/basic-hmr<br>projects/jet/fixtures/dev-server/react-refresh/state-preserved<br>projects/jet/fixtures/dev-server/prebundle-importmap<br>`cargo test -p jet --lib dev_server -- --nocapture` |
+| dev-server-hmr | #3780 | verified | `jet dev` can replace Vite-style local development serving and HMR for real projects. Dev mode prioritizes a connected browser client, HMR, browser log intake, and dev-only reverse proxy rules from `[dev.proxy]` in `jet.toml` or repeatable `--proxy PATH=URL` CLI overrides. `jet serve --prod` is a separate Kubernetes/GKE static frontend data plane behind a load balancer, with nginx-class static serving behavior and a hot path tuned for low memory-copy overhead and high RPS; it does not own TLS termination, public virtual hosts, cert management, WAF/CDN, or cross-service ingress routing. Current local proof includes prod static serving versus nginx with first-byte p95 ratio `0.803` and throughput ratio `1.164`. | smoke, conformance, corpus, negative, dogfood | projects/jet/fixtures/dev-server/basic-hmr<br>projects/jet/fixtures/dev-server/react-refresh/state-preserved<br>projects/jet/fixtures/dev-server/prebundle-importmap<br>`cargo test -p jet --lib dev_server -- --nocapture`<br>`cargo test -p jet --lib dev_server::proxy -- --nocapture`<br>`cargo test -p jet --lib cli::e2e_command_contract_tests -- --nocapture`<br>`projects/jet/scripts/compare-prod-static-serve.mjs --jet-bin target/release/jet` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Dev server replacement readiness | epic | #3780 | implemented | verified | none | - |
+| Dev server replacement readiness | epic | #3780 | implemented | verified | dogfood | jet dev is the client-connected dev control plane; jet serve --prod is the static data plane |
 | Dev Server Local Serving Hmr | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib dev_server -- --nocapture`<br>projects/jet/fixtures/dev-server/basic-hmr |
+| Dev Server Proxy Contract | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib dev_server::proxy -- --nocapture` |
+| Dev Server Cli Contract | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib cli::e2e_command_contract_tests -- --nocapture` |
 | React Refresh State Preserved | epic | #3780 | implemented | verified | conformance | `cargo test -p jet --lib dev_server::hmr -- --nocapture`<br>projects/jet/fixtures/dev-server/react-refresh/state-preserved |
 | Prebundle Importmap Parity | epic | #3780 | implemented | verified | corpus | `cargo test -p jet --lib dev_server::prebundle -- --nocapture`<br>projects/jet/fixtures/dev-server/prebundle-importmap |
 
@@ -814,11 +921,11 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| workspace-task-runner | #3781 | verified | Jet can replace npm scripts, pnpm workspaces, and common Nx/Turborepo task-runner flows. | smoke, conformance, corpus, negative | projects/jet/fixtures/task-runner/graph-cache<br>projects/jet/fixtures/workspace/package-selection<br>projects/jet/fixtures/task-runner/nx<br>`cargo test -p jet --lib task_runner -- --nocapture` |
+| workspace-task-runner | #3781 | verified | Jet workspace/task-runner replacement remains part of the package-management replacement track before build claims. The canonical project configuration file is `jet.toml`, and the active schema artifact is `schemas/jet.schema.json`. | smoke, conformance, corpus, negative | projects/jet/fixtures/task-runner/graph-cache<br>projects/jet/fixtures/workspace/package-selection<br>projects/jet/fixtures/task-runner/nx<br>`cargo test -p jet --lib task_runner -- --nocapture`<br>`cargo test -p jet --lib task_runner::config::tests -- --nocapture`<br>`cargo run -p jet -- config schema --check` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Workspace task runner readiness | epic | #3781 | implemented | verified | none | - |
+| Workspace task runner readiness | epic | #3781 | implemented | verified | corpus | package/workspace replacement track plus canonical jet.toml config, lint, and schemas/jet.schema.json schema artifact |
 | Task Runner Graph Cache | epic | #3781 | implemented | verified | conformance | `cargo test -p jet --lib task_runner -- --nocapture`<br>projects/jet/fixtures/task-runner/graph-cache |
 | Workspace Package Selection | epic | #3781 | implemented | verified | conformance | `cargo test -p jet --lib pkg_manager::workspace -- --nocapture`<br>projects/jet/fixtures/workspace/package-selection |
 | Nx Graph Parity | epic | #3781 | implemented | verified | corpus | `cargo test -p jet --lib pkg_manager::nx -- --nocapture`<br>projects/jet/fixtures/task-runner/nx |
@@ -827,12 +934,12 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| native-test-product-flow-e2e | #3785 | verified | Jet can replace Jest/Vitest plus Playwright/Cypress-style product-flow testing with a built-in TS test runtime, Jet-owned browser automation, and evidence capture. | smoke, conformance, corpus, negative, dogfood | projects/jet/fixtures/test-runner/native<br>projects/jet/fixtures/test-runner/reporters<br>projects/jet/fixtures/e2e/product-flow<br>projects/jet/fixtures/e2e/trace-replay<br>`cargo test -p jet --lib test_runner -- --nocapture`<br>`cargo test -p jet --lib e2e -- --nocapture` |
+| native-test-product-flow-e2e | #3785 | verified | Jet native tests, reporter artifacts, product-flow e2e, and trace evidence are green in the Basic production-readiness gate. | smoke, conformance, corpus, negative, dogfood | projects/jet/fixtures/test-runner/native<br>projects/jet/fixtures/test-runner/reporters<br>projects/jet/fixtures/e2e/product-flow<br>projects/jet/fixtures/e2e/trace-replay<br>`cargo test -p jet --lib test_runner -- --nocapture`<br>`cargo test -p jet --lib reporter -- --nocapture`<br>`cargo test -p jet --lib e2e -- --nocapture`<br>`cargo test -p jet --lib trace -- --nocapture` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Native test runner readiness | epic | #3785 | implemented | verified | none | - |
-| Product flow e2e readiness | epic | #3784 | implemented | verified | none | - |
+| Product flow e2e readiness | epic | #3784 | implemented | verified | dogfood | Browser Bridge replacement gate plus `cargo test -p jet --lib e2e -- --nocapture` |
 | Native Test Runner Core | epic | #3785 | implemented | verified | conformance | `cargo test -p jet --lib test_runner -- --nocapture` |
 | Built In Ts Test Runtime | epic | #3785 | implemented | verified | conformance | `cargo test -p jet --lib test_runner -- --nocapture`<br>projects/jet/fixtures/test-runner/native |
 | Reporter Artifacts | epic | #3785 | implemented | verified | negative | `cargo test -p jet --lib reporter -- --nocapture`<br>projects/jet/fixtures/test-runner/reporters |
@@ -843,11 +950,11 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| wasm-multi-target | #3783 | verified | Jet can sink the frontend app model into WASM, render it through canvas/WebGPU, and preserve browser-observable semantics through bridges. | smoke, conformance, corpus, negative | projects/jet/fixtures/wasm/build-dev<br>projects/jet/fixtures/wasm/runtime-subset<br>projects/jet/fixtures/wasm/renderer-targets<br>`projects/jet/scripts/verify-advanced-wasm-gates.sh` |
+| wasm-multi-target | #3783 | auditing | Jet can sink the frontend app model into WASM only after Basic package management, Browser Bridge, and DOM production build contracts are stable enough to reuse. | smoke, conformance, corpus, negative | projects/jet/fixtures/wasm/build-dev<br>projects/jet/fixtures/wasm/runtime-subset<br>projects/jet/fixtures/wasm/renderer-targets<br>`projects/jet/scripts/verify-advanced-wasm-gates.sh` |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Wasm multi target readiness | epic | #3783 | implemented | verified | none | - |
+| Wasm multi target readiness | epic | #3783 | implemented | planned | none | Basic phase 1 -> phase 2 -> phase 3 |
 | Wasm Build Dev Core | epic | #3783 | implemented | verified | conformance | `cargo test -p jet --lib wasm_build:: -- --nocapture`<br>projects/jet/fixtures/wasm/build-dev |
 | Wasm Runtime Subset | epic | #3783 | implemented | verified | corpus | `cargo test -p jet-wasm -- --nocapture`<br>projects/jet/fixtures/wasm/runtime-subset |
 | Renderer Target Output | epic | #3783 | implemented | verified | conformance | `cargo test -p jet-wasm renderer -- --nocapture`<br>projects/jet/fixtures/wasm/renderer-targets |
@@ -857,17 +964,18 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 | DOM Renderer Controlled Textarea Parity | change | #4015 | implemented | verified | conformance | `cargo test -p jet --test react_dom_oracle_conformance dom_renderer_controlled_textarea_parity -- --nocapture` |
 | Library WASM Lowering Fixtures | change | #4072 | implemented | verified | conformance | `cargo test -p jet --test tsx_to_rust_imports -- --nocapture`<br>projects/jet/parity/data/fixtures/libraries |
 | Library DOM/WASM Parity Fixtures | change | #4072 | implemented | verified | conformance | `cargo test -p jet --test react_dom_oracle_conformance library_dom_wasm_parity -- --nocapture`<br>projects/jet/parity/data/fixtures/libraries |
-| MUI Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>examples/mui-visual-demo |
+| MUI Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/mui-visual-demo |
+| AntD Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression antd_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/antd-visual-demo |
 
 ### Browser, Trace, And Parity Infrastructure
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| browser-trace-parity | #3786 | verified | Jet can provide Browser Bridge automation, DOM oracle capture, WASM runtime capture, trace artifacts, and parity diagnostics. | smoke, conformance, corpus, negative | projects/jet/fixtures/trace/artifacts<br>projects/jet/fixtures/browser/automation-diagnostics<br>projects/jet/parity/**<br>`projects/jet/scripts/verify-advanced-wasm-gates.sh` |
+| browser-trace-parity | #3786 | auditing | Jet Browser Bridge, trace, and parity diagnostics are the second Basic replacement gate and the evidence substrate for later DOM/WASM parity. | smoke, conformance, corpus, negative | `projects/jet/scripts/verify-browser-bridge-replacement.mjs --jet-bin target/release/jet`<br>projects/jet/fixtures/trace/artifacts<br>projects/jet/fixtures/browser/automation-diagnostics<br>projects/jet/parity/** |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
-| Browser trace parity readiness | epic | #3786 | implemented | verified | none | - |
+| Browser trace parity readiness | epic | #3786 | implemented | passing | corpus | `projects/jet/scripts/verify-browser-bridge-replacement.mjs` |
 | Trace Evidence Artifacts | epic | #3786 | implemented | verified | conformance | `cargo test -p jet --lib trace -- --nocapture`<br>projects/jet/fixtures/trace/artifacts |
 | Browser Automation Diagnostics | epic | #3786 | implemented | verified | negative | `cargo test -p jet --lib browser -- --nocapture`<br>projects/jet/fixtures/browser/automation-diagnostics |
 | Parity Corpus Gates | epic | #3786 | implemented | verified | corpus | `projects/jet/scripts/verify-parity-oracle-gate.sh`<br>projects/jet/parity/** |
@@ -877,4 +985,5 @@ Full spec with JSON Schema, OpenAPI, and Mermaid diagrams: `.aw/tech-design/jet/
 | DOM Renderer Controlled Textarea Parity | change | #4015 | implemented | verified | conformance | `cargo test -p jet --test react_dom_oracle_conformance dom_renderer_controlled_textarea_parity -- --nocapture` |
 | Library WASM Lowering Fixtures | change | #4072 | implemented | verified | conformance | `cargo test -p jet --test tsx_to_rust_imports -- --nocapture`<br>projects/jet/parity/data/fixtures/libraries |
 | Library DOM/WASM Parity Fixtures | change | #4072 | implemented | verified | conformance | `cargo test -p jet --test react_dom_oracle_conformance library_dom_wasm_parity -- --nocapture`<br>projects/jet/parity/data/fixtures/libraries |
-| MUI Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>examples/mui-visual-demo |
+| MUI Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression mui_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/mui-visual-demo |
+| AntD Visual Table DOM/WASM Parity | change | #3783 | implemented | verified | conformance | `cargo test -p jet --test mui_visual_regression antd_visual_fixture_renders_on_react_dom_and_jet_wasm -- --nocapture`<br>Browser Bridge CLI capture/screenshot evidence<br>examples/antd-visual-demo |

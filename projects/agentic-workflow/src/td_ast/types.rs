@@ -67,8 +67,8 @@ pub enum TypedBody {
     /// Mermaid Plus block (state-machine, logic, interaction, dependency,
     /// db-model, scenarios, unit-test). Hash covers frontmatter only (R4, R8).
     MermaidPlus(MermaidPlusPayload),
-    /// JSON Schema document (schema, config, wireframe, component,
-    /// design-token, manifest, e2e-test). Typed in Stage 1B (sdd-td-ast-payloads).
+    /// JSON Schema/YAML document (schema, config, wireframe, component,
+    /// design-token, manifest, tool-contract, e2e-test). Typed in Stage 1B (sdd-td-ast-payloads).
     JsonSchema(super::payloads::JsonSchemaPayload),
     /// OpenRPC 1.3 document (rpc-api). Typed in Stage 1B.
     OpenRpc(super::payloads::OpenRpcPayload),
@@ -134,7 +134,7 @@ pub enum SectionKind {
     /// db-model, scenarios, unit-test, mindmap, requirements.
     MermaidFamily,
     /// JSON Schema family — schema, wireframe, component, design-token,
-    /// manifest, e2e-test.
+    /// manifest, tool-contract, e2e-test.
     JsonSchemaFamily,
     /// OpenRPC 1.3 family — rpc-api.
     OpenRpcFamily,
@@ -179,6 +179,7 @@ impl SectionKind {
             | SectionType::RuntimeImage
             | SectionType::Deployment
             | SectionType::Manifest
+            | SectionType::ToolContract
             | SectionType::E2eTest => SectionKind::JsonSchemaFamily,
 
             SectionType::RpcApi => SectionKind::OpenRpcFamily,
@@ -188,6 +189,7 @@ impl SectionKind {
             SectionType::Config => SectionKind::ConfigFamily,
             SectionType::Changes => SectionKind::ChangesFamily,
             SectionType::Doc | SectionType::Overview => SectionKind::MarkdownFamily,
+            SectionType::RustSourceUnit | SectionType::TextSourceUnit => SectionKind::Unsupported,
         }
     }
 }

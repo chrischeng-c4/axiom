@@ -2,7 +2,7 @@
 // CODEGEN-BEGIN
 //! HTTP reverse proxy handler for the Jet dev server.
 //!
-//! Reads `dev.proxy` map from `jet.config.toml` (path prefix → target URL),
+//! Reads `dev.proxy` map from `jet.toml` (path prefix → target URL),
 //! matches incoming requests using longest-prefix matching, and forwards them
 //! to the configured target while:
 //!

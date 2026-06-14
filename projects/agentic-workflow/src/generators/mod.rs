@@ -160,6 +160,9 @@ pub fn get_generator(section_type: SectionType) -> Option<Box<dyn Generator>> {
         | SectionType::RuntimeImage
         | SectionType::Deployment
         | SectionType::Manifest
+        | SectionType::ToolContract
+        | SectionType::RustSourceUnit
+        | SectionType::TextSourceUnit
         | SectionType::E2eTest => None,
         // Frontend / Doc
         SectionType::Wireframe => Some(Box::new(frontend::FrontendGenerator {})),

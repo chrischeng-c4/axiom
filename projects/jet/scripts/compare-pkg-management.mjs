@@ -359,11 +359,16 @@ function provisionPnpmWithJet(args) {
     },
   });
   console.error("[pkg-compare] provisioning pnpm baseline tool with jet install");
-  const install = run(path.resolve(repoRoot, args.jetBin), ["install"], root, args.commandTimeoutMs);
+  const jet = path.resolve(repoRoot, args.jetBin);
+  const lockfile = run(jet, ["install", "--no-install"], root, args.commandTimeoutMs);
+  const install = lockfile.exit_code === 0
+    ? run(jet, ["install", "--frozen-lockfile", "--no-prebundle"], root, args.commandTimeoutMs)
+    : lockfile;
   const bin = path.join(root, "node_modules", ".bin", "pnpm");
   pnpmBaselineTool = {
     root,
     bin,
+    lockfile,
     install,
     ok: install.exit_code === 0 && fs.existsSync(bin),
   };
@@ -386,6 +391,7 @@ function baselineCommandForTool(tool, args) {
         result: setup.ok ? "green" : "red",
         root: rel(setup.root),
         bin: rel(setup.bin),
+        lockfile: setup.lockfile,
         install: setup.install,
       },
     };
@@ -473,9 +479,9 @@ function runJetInstallBenchmark(fixture, args, directNames) {
   const nodeModules = path.join(benchmarkRoot, "node_modules");
   const jet = path.resolve(repoRoot, args.jetBin);
   console.error(`[pkg-compare] jet benchmark cold install ${rel(fixture)}`);
-  const coldInstall = run(jet, ["install", "--frozen-lockfile"], benchmarkRoot, args.commandTimeoutMs);
+  const coldInstall = run(jet, ["install", "--frozen-lockfile", "--no-prebundle"], benchmarkRoot, args.commandTimeoutMs);
   const warmInstall = coldInstall.exit_code === 0
-    ? (console.error(`[pkg-compare] jet benchmark warm install ${rel(fixture)}`), run(jet, ["install", "--frozen-lockfile"], benchmarkRoot, args.commandTimeoutMs))
+    ? (console.error(`[pkg-compare] jet benchmark warm install ${rel(fixture)}`), run(jet, ["install", "--frozen-lockfile", "--no-prebundle"], benchmarkRoot, args.commandTimeoutMs))
     : null;
 
   const installedDirect = {};
@@ -644,7 +650,7 @@ function inspectFixture(fixtureArg, args) {
   const lockBefore = fileSha256(lockPath);
 
   if (args.hydrate) {
-    commands.push(run(path.resolve(repoRoot, args.jetBin), ["install", "--frozen-lockfile"], fixture, args.commandTimeoutMs));
+    commands.push(run(path.resolve(repoRoot, args.jetBin), ["install", "--frozen-lockfile", "--no-prebundle"], fixture, args.commandTimeoutMs));
   }
 
   const lockAfter = fileSha256(lockPath);
@@ -794,7 +800,7 @@ function runWorkspaceContract(args) {
   const appNodeModules = path.join(appRoot, "node_modules");
   const sharedLink = path.join(appNodeModules, "shared");
 
-  commands.push(run(jet, ["install"], root, args.commandTimeoutMs));
+  commands.push(run(jet, ["install", "--no-frozen-lockfile", "--no-prebundle"], root, args.commandTimeoutMs));
   checks.push({ name: "workspace_install_exit_zero", ok: commands.at(-1).exit_code === 0 });
   checks.push({ name: "workspace_lock_written", ok: fs.existsSync(lockPath) });
   checks.push({ name: "workspace_link_hydrated", ok: fs.existsSync(sharedLink) && fs.lstatSync(sharedLink).isSymbolicLink() });
@@ -803,7 +809,7 @@ function runWorkspaceContract(args) {
   checks.push({ name: "workspace_node_resolution_smoke", ok: commands.at(-1).exit_code === 0 });
 
   const lockBeforeFrozen = fs.existsSync(lockPath) ? fileSha256(lockPath) : null;
-  commands.push(run(jet, ["install", "--frozen-lockfile"], root, args.commandTimeoutMs));
+  commands.push(run(jet, ["install", "--frozen-lockfile", "--no-prebundle"], root, args.commandTimeoutMs));
   const lockAfterFrozen = fs.existsSync(lockPath) ? fileSha256(lockPath) : null;
   checks.push({ name: "workspace_frozen_install_exit_zero_without_drift", ok: commands.at(-1).exit_code === 0 });
   checks.push({ name: "workspace_frozen_install_keeps_lock_unchanged", ok: lockBeforeFrozen && lockBeforeFrozen === lockAfterFrozen });
@@ -812,7 +818,7 @@ function runWorkspaceContract(args) {
   const appPackage = readJson(appPackagePath);
   appPackage.dependencies["is-number"] = "^7.0.0";
   writeJson(appPackagePath, appPackage);
-  commands.push(run(jet, ["install", "--frozen-lockfile"], root, args.commandTimeoutMs));
+  commands.push(run(jet, ["install", "--frozen-lockfile", "--no-prebundle"], root, args.commandTimeoutMs));
   const lockAfterDriftAttempt = fs.existsSync(lockPath) ? fileSha256(lockPath) : null;
   checks.push({ name: "workspace_frozen_install_rejects_dep_drift", ok: commands.at(-1).exit_code !== 0 });
   checks.push({ name: "workspace_frozen_drift_keeps_lock_unchanged", ok: lockBeforeFrozen && lockBeforeFrozen === lockAfterDriftAttempt });

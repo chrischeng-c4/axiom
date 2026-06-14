@@ -1,3 +1,5 @@
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-overlays-prod.md#deployment
+# CODEGEN-BEGIN
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -117,3 +119,4 @@ patches:
       - op: replace
         path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
         value: "100Gi"
+# CODEGEN-END

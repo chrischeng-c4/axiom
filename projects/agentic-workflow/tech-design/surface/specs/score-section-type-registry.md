@@ -29,7 +29,7 @@ properties:
     description: Format-precedence tiers used when authoring TD sections; first wins.
     type: array
     items: { type: string }
-    const: [openrpc, openapi, asyncapi, json-schema, mermaid-plus, yaml-manifest, source-template, markdown]
+    const: [openrpc, openapi, asyncapi, json-schema, mermaid-plus, yaml-manifest, rust-source-unit, text-source-unit, source-template, markdown]
   families:
     description: SectionKind families and their format tier. Parser is shared.
     type: object
@@ -45,6 +45,8 @@ properties:
       ConfigFamily:     { tier: yaml-manifest, parser: projects/agentic-workflow/src/td_ast/parse.rs }
       ChangesFamily:    { tier: yaml-manifest, parser: projects/agentic-workflow/src/td_ast/parse.rs }
       SourceFamily:     { tier: source-template, parser: projects/agentic-workflow/src/td_ast/parse.rs }
+      RustSourceUnitFamily: { tier: rust-source-unit, parser: projects/agentic-workflow/src/generate/rust_source_unit.rs }
+      TextSourceUnitFamily: { tier: text-source-unit, parser: projects/agentic-workflow/src/generate/apply.rs }
   section_types:
     description: Approved section types that may appear in `fill_sections`. heading_match is the canonical Title-Case H2 form.
     type: array
@@ -60,6 +62,8 @@ properties:
     const:
       - { name: changes,       family: ChangesFamily,    generator: projects/agentic-workflow/src/generators/changes.rs,        heading_match: "Changes",         use_for: "File-change manifest (path + action) consumed by td gen-code" }
       - { name: source,        family: SourceFamily,     generator: workspace-profile source-template,           heading_match: "Source",          use_for: "Whole-file or region source template; language-specific rendering is selected by workspace codegen.profile" }
+      - { name: rust-source-unit, family: RustSourceUnitFamily, generator: projects/agentic-workflow/src/generate/rust_source_unit.rs, heading_match: "Source", use_for: "Lossless Rust CST source-unit regeneration; this is the regenerable source path, unlike source-template or artifact replay" }
+      - { name: text-source-unit, family: TextSourceUnitFamily, generator: projects/agentic-workflow/src/generate/apply.rs, heading_match: "Source", use_for: "TD-owned verbatim shell/text source-unit regeneration; this is the regenerable source path for opaque scripts, unlike source-template or artifact replay" }
       - { name: scenarios,     family: MermaidFamily,    generator: projects/agentic-workflow/src/generators/scenarios.rs,      heading_match: "Scenarios",       use_for: "BDD acceptance — Given/When/Then" }
       - { name: unit-test,     family: MermaidFamily,    generator: projects/agentic-workflow/src/generators/test_plan.rs,      heading_match: "Unit Test",       use_for: "requirementDiagram of unit test coverage" }
       - { name: e2e-test,      family: JsonSchemaFamily, generator: projects/agentic-workflow/src/generate/gen/rust/tests.rs,   heading_match: "E2E Test",        use_for: "Product journey tests with CLI/API/web/script driver assertions and side effects" }

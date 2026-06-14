@@ -1,8 +1,8 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema
 // CODEGEN-BEGIN
-//! jet.config.toml configuration parser.
+//! jet.toml configuration parser.
 //!
-//! Defines the full configuration schema for `jet.config.toml`, including:
+//! Defines the full configuration schema for `jet.toml`, including:
 //! - `pipeline`   — task pipeline definitions (unchanged)
 //! - `dev`        — dev server settings (port, proxy map)
 //! - `alias`      — module path aliases (overrides tsconfig.json paths)
@@ -73,7 +73,7 @@ pub struct JetConfig {
     pub wasm: Option<WasmConfig>,
 }
 
-/// `[test]` section of `jet.config.toml`.
+/// `[test]` section of `jet.toml`.
 // @spec .aw/tech-design/projects/jet/logic/web-server.md#W1
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -114,7 +114,7 @@ fn default_web_server_timeout() -> u64 {
 
 /// Module resolution configuration block.
 ///
-/// Deserialized from the `[resolve]` section of `jet.config.toml`.
+/// Deserialized from the `[resolve]` section of `jet.toml`.
 ///
 /// Example:
 /// ```toml
@@ -220,7 +220,7 @@ impl JetConfig {
         self.resolve.conditions.as_deref()
     }
 
-    /// Load configuration from jet.config.toml in the project root.
+    /// Load configuration from jet.toml in the project root.
     ///
     /// On parse failure, the diagnostic includes:
     ///   * the file path,
@@ -231,7 +231,7 @@ impl JetConfig {
     ///     surface from `bug-jet-dev-ignores-jet-config-yaml-dev-port-
     ///     and-dev-p` — #1233 R2 / R4).
     pub fn load(project_root: &Path) -> Result<Self> {
-        let config_path = project_root.join("jet.config.toml");
+        let config_path = project_root.join("jet.toml");
 
         if !config_path.exists() {
             // Return empty config if no file exists
@@ -551,7 +551,7 @@ root_props = [0]
     #[test]
     fn jet_config_rejects_unknown_sub_section_key() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jet.config.toml");
+        let path = dir.path().join("jet.toml");
         std::fs::write(&path, "[dev]\nportt = 3000\n").unwrap();
 
         let err = JetConfig::load(dir.path())
@@ -590,7 +590,7 @@ port = 3212
         );
     }
 
-    /// #3069 regression — `[pipeline.*]` from `jet.config.toml` must
+    /// #3069 regression — `[pipeline.*]` from `jet.toml` must
     /// round-trip through `JetConfig::load` so `list_scripts()`
     /// (cli.rs:2192) can list them under "Pipeline tasks". The bug was
     /// upstream: cli.rs swallowed every load failure with
@@ -599,7 +599,7 @@ port = 3212
     #[test]
     fn jet_config_load_parses_pipeline_section_from_disk() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jet.config.toml");
+        let path = dir.path().join("jet.toml");
         std::fs::write(
             &path,
             r#"
@@ -626,7 +626,7 @@ depends_on = ["build"]
         assert_eq!(test.depends_on, vec!["build"]);
     }
 
-    /// #3065 regression — `[test.web_server]` from `jet.config.toml` must
+    /// #3065 regression — `[test.web_server]` from `jet.toml` must
     /// round-trip through `JetConfig::load` so the `jet test` path
     /// (cli.rs:1671) can wire the preamble web server into the runner.
     /// The bug was upstream: cli.rs swallowed every load failure with
@@ -635,7 +635,7 @@ depends_on = ["build"]
     #[test]
     fn jet_config_load_parses_test_web_server_from_disk() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jet.config.toml");
+        let path = dir.path().join("jet.toml");
         std::fs::write(
             &path,
             r#"
@@ -660,7 +660,7 @@ reuse_existing = true
     }
 
     /// #3061 regression — `[resolve.conditions]` and `[alias]` from
-    /// `jet.config.toml` must round-trip through `JetConfig::load` so the
+    /// `jet.toml` must round-trip through `JetConfig::load` so the
     /// `jet build` path (cli.rs:1395) can wire them into the bundler.
     /// The bug was upstream: cli.rs swallowed every load failure with
     /// `unwrap_or_default()`. This guard pins the contract the parser is
@@ -668,7 +668,7 @@ reuse_existing = true
     #[test]
     fn jet_config_load_parses_resolve_and_alias_from_disk() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jet.config.toml");
+        let path = dir.path().join("jet.toml");
         std::fs::write(
             &path,
             r#"
@@ -702,7 +702,7 @@ conditions = ["import", "node", "default"]
     #[test]
     fn jet_config_load_surfaces_did_you_mean_and_line_number() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("jet.config.toml");
+        let path = dir.path().join("jet.toml");
         std::fs::write(&path, "# leading comment\n[devv]\nport = 3000\n").unwrap();
 
         let err =
@@ -721,7 +721,7 @@ conditions = ["import", "node", "default"]
             "diagnostic must include 1-based line number, got: {msg}"
         );
         assert!(
-            msg.contains("jet.config.toml"),
+            msg.contains("jet.toml"),
             "diagnostic must include the file path, got: {msg}"
         );
     }

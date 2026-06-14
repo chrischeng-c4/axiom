@@ -204,7 +204,7 @@ changes:
     section: dependency
     impl_mode: hand-written
     description: Extend window.__jet_webgpu_status with lastTextGlyphCount mirroring lastTextRunCount; do not remove or rename any existing field. bridgeMode flips from "text-runs" to "text-glyphs" once the new path is wired.
-  - path: projects/jet/tests/wasm_build_end_to_end.rs
+  - path: projects/jet/tests/wasm/wasm_build_end_to_end.rs
     action: modify
     section: unit-test
     impl_mode: hand-written

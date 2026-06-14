@@ -5,6 +5,12 @@ members = [
     "projects/mamba/mambalibs/pgkit/pg",
     "projects/meter",
     "projects/meter/meter-cli",
+    "projects/rig",
+    "projects/rig/rig-cli",
+    "projects/arena",
+    "projects/arena/arena-cli",
+    "projects/guard",
+    "projects/guard/guard-cli",
     "crates/cclab-core",
     "crates/cclab-kv",
     "projects/mamba/mambalibs/queuekit",
@@ -22,7 +28,7 @@ members = [
     "projects/jet",
     "projects/jet/wasm",
     "projects/agentic-workflow",
-    "projects/compass",
+    "libs/compass",
     "projects/cap",
     "projects/vat",
     "projects/mamba/mambalibs/httpkit",
@@ -70,7 +76,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.61"
+version = "0.4.0"
 authors = ["Chris Cheng <chris.cheng.c4@gmail.com>"]
 edition = "2021"
 license = "MIT"
@@ -178,6 +184,16 @@ strip = true
 # rebuild cost, with no change to incremental rebuilds of our own crates.
 [profile.dev.package."*"]
 opt-level = 2
+
+[profile.release.package.cap]
+opt-level = "z"
+codegen-units = 1
+strip = true
+
+[profile.bench.package.cap]
+opt-level = "z"
+codegen-units = 1
+strip = true
 
 # Vendor patch: cranelift-jit memory allocator enforces a 256 MB minimum
 # chunk so all JIT'd functions stay within ±128 MB of each other on

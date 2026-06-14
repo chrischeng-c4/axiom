@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/tests/audit_trust_bug.rs` generated from
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/tests/audit_trust_bug.rs -->
 ````rust
 //! Best-effort, skip-aware integration test for the audit trust-bug fix.
 //!
@@ -100,7 +98,7 @@ fn run_audit_surfaces_known_advisory() {
 changes:
   - path: projects/meter/tests/audit_trust_bug.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/tests/audit_trust_bug.rs` captured during meter full-codegen standardization.

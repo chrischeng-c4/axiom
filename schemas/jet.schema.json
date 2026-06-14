@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "jet.toml",
+  "description": "Schema for the `jet.toml` file. Generated from the Rust source of truth in `projects/jet/src/wasm_build/config.rs`. Run `jet config schema --write` to regenerate.",
+  "type": "object",
+  "required": [
+    "wasm"
+  ],
+  "properties": {
+    "wasm": {
+      "$ref": "#/definitions/WasmConfig"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "RootPropValue": {
+      "description": "Prop value — numbers, booleans, strings, or homogeneous arrays. The generated factory takes `i64` / `bool` / `String` / `Vec<T>`, matching the prop interface's Rust lowering. Display impl emits valid Rust source that can be interpolated directly into the WASM-entry factory call. @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "description": "Homogeneous array — serializes as `vec![elem, ...]`. Inner elements reuse the `RootPropValue::Display` contract, so nested arrays also work (though the transpiler only lowers one level today).",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RootPropValue"
+          }
+        }
+      ]
+    },
+    "WasmConfig": {
+      "title": "jet.toml",
+      "description": "Schema for the `jet.toml` file. Generated from the Rust source of truth in `projects/jet/src/wasm_build/config.rs`. Run `jet config schema --write` to regenerate.",
+      "type": "object",
+      "required": [
+        "entry",
+        "root_component"
+      ],
+      "properties": {
+        "entry": {
+          "description": "Path to the TSX entry file, relative to the project root.",
+          "type": "string"
+        },
+        "renderer": {
+          "description": "Renderer backend used by the generated browser entrypoint.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WasmRenderer"
+            }
+          ]
+        },
+        "root_component": {
+          "description": "Root component name (PascalCase), must match an exported function component in `entry`.",
+          "type": "string"
+        },
+        "root_props": {
+          "description": "Props passed to the root component factory. Order matches the TS interface field order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RootPropValue"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "WasmRenderer": {
+      "description": "@spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema",
+      "type": "string",
+      "enum": [
+        "dom",
+        "web-gpu"
+      ]
+    }
+  }
+}

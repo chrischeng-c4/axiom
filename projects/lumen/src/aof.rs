@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Local append-only log (Stage 2 Phase 2f-3) — the binary's "AOF".
 //!
 //! The segment checkpoint ([`crate::segment_rdb`]) is the binary's "RDB": a
@@ -72,6 +74,7 @@ fn decode_payload(bytes: &[u8]) -> Result<WalRecord> {
 }
 
 /// When to fsync the AOF to durable storage. Mirrors Redis `appendfsync`.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsyncPolicy {
     /// fsync at most once per second, off the append hot path (the default).
@@ -80,6 +83,7 @@ pub enum FsyncPolicy {
     Always,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Default for FsyncPolicy {
     fn default() -> Self {
         FsyncPolicy::EverySec
@@ -89,6 +93,7 @@ impl Default for FsyncPolicy {
 /// Append-only writer keyed by applied seq. Frames are appended in seq order;
 /// `open` first truncates any torn tail left by a crash mid-append, so the file
 /// always starts in a clean, fully-decodable state.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub struct AofWriter {
     path: PathBuf,
     file: BufWriter<File>,
@@ -101,6 +106,7 @@ pub struct AofWriter {
     dirty: bool,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl AofWriter {
     /// Open `path` for appending with the default [`FsyncPolicy::EverySec`],
     /// first truncating any torn tail.
@@ -320,8 +326,10 @@ impl AofWriter {
 
 /// Replay frames from an AOF, applying each `(seq, WalRecord)` with `seq >
 /// from_seq` to a caller closure in order, stopping cleanly at a torn tail.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub struct AofReader;
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl AofReader {
     /// Iterate every frame in `path` in order, SKIP frames with `seq <=
     /// from_seq` (already covered by the RDB baseline), and call `apply(seq,
@@ -391,6 +399,7 @@ impl AofReader {
 /// via [`crate::storage::Engine::apply_raft_entry`], returning the max seq
 /// replayed. This is step 2 of cold start (RDB → **AOF** → NATS); the engine is
 /// already seeded to `from_seq` by the segment checkpoint.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn replay_aof_into(
     engine: &std::sync::Arc<crate::storage::Engine>,
     path: impl AsRef<Path>,
@@ -908,3 +917,4 @@ mod crux_recovery_tests {
         assert_eq!(std::fs::metadata(&aof_path).unwrap().len(), good_len);
     }
 }
+// CODEGEN-END

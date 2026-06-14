@@ -38,9 +38,11 @@ pub enum Commands {
     New(init::NewArgs),
 
     /// Aggregate project readiness, production gates, and blocker status.
+    #[command(alias = "hc")]
     Health(project::ProjectHealthArgs),
 
     /// Product capability completion loop: report/next/run/check.
+    #[command(alias = "caps")]
     Capability(capability::CapabilityArgs),
 
     /// Generator gap request surface after takeover readiness.
@@ -64,7 +66,7 @@ pub enum Commands {
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
     Cb(crate::cli::cb::CbArgs),
 
-    /// External-contract lifecycle: TD-derived E2E inventory and gate checks.
+    /// External-contract lifecycle: generate tests/tool configs and verify EC gates.
     Ec(ec::EcArgs),
 
     /// Existing-project workflow guidance and bounded remediation.

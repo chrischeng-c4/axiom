@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-bin.md#schema
+// CODEGEN-BEGIN
 //! Placeholder consumer binary. lumen does not bundle an event-pipeline
 //! subscriber — real adapters (AlloyDB CDC, Postgres logical replication,
 //! Kafka, application-direct) live under `examples/`. This binary boots
@@ -34,3 +36,4 @@ async fn main() -> Result<()> {
     std::future::pending::<()>().await;
     Ok(())
 }
+// CODEGEN-END

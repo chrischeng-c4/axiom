@@ -6,6 +6,9 @@ use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use tokio::process::{Child, Command};
 
+const WS_ENDPOINT_PROBE_ATTEMPTS: usize = 200;
+const WS_ENDPOINT_PROBE_INTERVAL_MS: u64 = 100;
+
 /// Options for launching a browser.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-browser.md#schema
 #[derive(Debug, Clone)]
@@ -66,11 +69,13 @@ impl BrowserLauncher {
 
         let mut cmd = Command::new(&executable);
         cmd.arg(format!("--remote-debugging-port={}", port))
+            .arg("--remote-debugging-address=127.0.0.1")
             .arg(format!("--user-data-dir={}", user_data_dir.display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg("--disable-background-networking")
             .arg("--disable-default-apps")
+            .arg("--disable-dev-shm-usage")
             .arg("--disable-extensions")
             .arg("--disable-sync")
             .arg("--disable-translate")
@@ -268,8 +273,11 @@ impl BrowserLauncher {
         // "Timed out" bail. Track the last symptom so the bail
         // message carries a breadcrumb to the actual failure.
         let mut last_symptom: Option<String> = None;
-        for _ in 0..50 {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        for _ in 0..WS_ENDPOINT_PROBE_ATTEMPTS {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                WS_ENDPOINT_PROBE_INTERVAL_MS,
+            ))
+            .await;
             for url in &urls {
                 match client.get(url).send().await {
                     Err(err) => {
@@ -506,6 +514,15 @@ mod gh3727_browser_ws_timeout_err_tests {
     fn helper_tags_gh_issue() {
         let msg = format_browser_ws_timeout_err(9222, Some("connect: refused"));
         assert!(msg.contains("GH #3727"), "must carry issue tag, got: {msg}");
+    }
+
+    #[test]
+    fn ws_probe_budget_covers_slow_ci_chrome_startup() {
+        let budget_ms = WS_ENDPOINT_PROBE_ATTEMPTS as u64 * WS_ENDPOINT_PROBE_INTERVAL_MS;
+        assert!(
+            budget_ms >= 20_000,
+            "GitHub Actions cold Chrome startup exceeded the old 5s budget"
+        );
     }
 
     #[test]

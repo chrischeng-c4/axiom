@@ -5,7 +5,7 @@
 //! Resolution order for `jet run <name>`:
 //! 1. Check package.json `scripts` → run via `sh -c` with `.bin` on PATH
 //! 2. Check if file exists on disk → JIT execute (ts/tsx/jsx) or direct (js)
-//! 3. Check jet.config.toml pipeline → task runner mode
+//! 3. Check jet.toml pipeline → task runner mode
 //! 4. Not found → error
 
 use anyhow::{Context, Result};

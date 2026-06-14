@@ -703,11 +703,30 @@ fn classify_codegen_origin_spec(spec_content: &str) -> CbCodegenOriginClass {
     if spec_content.contains("source-from-target") || spec_content.contains("<!-- source-snapshot:")
     {
         CbCodegenOriginClass::ArtifactReplay
+    } else if source_section_has_type_marker(spec_content, "type: rust-source-unit")
+        || source_section_has_type_marker(spec_content, "type: text-source-unit")
+    {
+        CbCodegenOriginClass::TdAst
     } else if spec_declares_source_section(spec_content) {
         CbCodegenOriginClass::SourceTemplate
     } else {
         CbCodegenOriginClass::TdAst
     }
+}
+
+fn source_section_has_type_marker(spec_content: &str, marker: &str) -> bool {
+    let mut in_source = false;
+    for line in spec_content.lines() {
+        if line.starts_with("## ") {
+            let heading = line.trim_start_matches('#').trim();
+            in_source = heading.eq_ignore_ascii_case("Source");
+            continue;
+        }
+        if in_source && line.trim().contains(marker) {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1196,6 +1215,33 @@ fn scope_root_from_pattern(pattern: &str) -> &str {
         .trim_end_matches('/')
 }
 
+fn should_skip_force_regen_scan_dir(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    matches!(
+        name,
+        ".aw"
+            | ".git"
+            | ".hg"
+            | ".mypy_cache"
+            | ".pytest_cache"
+            | ".ruff_cache"
+            | ".tox"
+            | ".venv"
+            | "__pycache__"
+            | "build"
+            | "coverage"
+            | "dist"
+            | "e2e-results"
+            | "node_modules"
+            | "playwright-report"
+            | "target"
+            | "test-results"
+            | "venv"
+    )
+}
+
 fn collect_force_regen_specs(
     cwd: &std::path::Path,
     scope: &ForceRegenScope,
@@ -1224,11 +1270,20 @@ fn collect_spec_managed_refs(
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if should_skip_force_regen_scan_dir(&path) {
+                continue;
+            }
             collect_spec_managed_refs(cwd, td_root, &path, out)?;
             continue;
         }
-        collect_spec_managed_refs_from_file(cwd, td_root, &path, out);
+        if file_type.is_file() {
+            collect_spec_managed_refs_from_file(cwd, td_root, &path, out);
+        }
     }
     Ok(())
 }
@@ -1273,8 +1328,18 @@ fn collect_force_regen_specs_from_td_changes_inner(
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_dir() {
+            if should_skip_force_regen_scan_dir(&path) {
+                continue;
+            }
             collect_force_regen_specs_from_td_changes_inner(cwd, scope, &path, out)?;
+            continue;
+        }
+        if !file_type.is_file() {
             continue;
         }
         if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
@@ -1345,7 +1410,15 @@ fn collect_canonical_spec_refs_by_target_inner(
     if path.is_dir() {
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
-            collect_canonical_spec_refs_by_target_inner(cwd, td_root, &entry.path(), refs)?;
+            let child = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() && should_skip_force_regen_scan_dir(&child) {
+                continue;
+            }
+            collect_canonical_spec_refs_by_target_inner(cwd, td_root, &child, refs)?;
         }
         return Ok(());
     }
@@ -1383,7 +1456,7 @@ fn is_aw_ec_generated_content(content: &str) -> bool {
 fn extract_spec_managed_ref(content: &str) -> Option<String> {
     extract_spec_managed_refs_with_sections(content)
         .into_iter()
-        .find(|(_, section)| section.as_deref() == Some("source"))
+        .find(|(_, section)| section.as_deref().is_some_and(is_source_unit_section_name))
         .map(|(spec, _)| spec)
         .or_else(|| extract_spec_managed_refs(content).into_iter().next())
 }
@@ -1440,6 +1513,10 @@ fn parse_spec_managed_path_section(spec_ref: &str) -> Option<(String, Option<Str
     })
 }
 
+fn is_source_unit_section_name(section: &str) -> bool {
+    matches!(section, "source" | "rust-source-unit" | "text-source-unit")
+}
+
 fn sync_force_regen_public_api_manifests(
     cwd: &std::path::Path,
     scope: &ForceRegenScope,
@@ -1464,7 +1541,12 @@ fn sync_force_regen_public_api_manifests(
         let source_refs = parse_codegen_blocks(&content)
             .into_iter()
             .filter_map(|block| parse_spec_ref(&block.spec_ref))
-            .filter(|spec_ref| spec_ref.section.as_deref() == Some("source"))
+            .filter(|spec_ref| {
+                spec_ref
+                    .section
+                    .as_deref()
+                    .is_some_and(is_source_unit_section_name)
+            })
             .collect::<Vec<_>>();
         for spec_ref in source_refs {
             let spec_path = cwd.join(&spec_ref.path);
@@ -1975,7 +2057,12 @@ fn verify_force_regen_conformance(
                     &rel_path,
                     &mut report,
                 );
-                if valid && block_ref.section.as_deref() == Some("source") {
+                if valid
+                    && block_ref
+                        .section
+                        .as_deref()
+                        .is_some_and(is_source_unit_section_name)
+                {
                     classify_source_template(
                         cwd,
                         &block_ref,
@@ -2213,7 +2300,10 @@ fn classify_source_template(
 }
 
 fn spec_declares_source_section(spec_content: &str) -> bool {
-    spec_content.contains("<!-- type: source") || spec_content.contains("section: source")
+    spec_content.contains("<!-- type: source")
+        || spec_content.contains("<!-- type: rust-source-unit")
+        || spec_content.contains("section: source")
+        || spec_content.contains("section: rust-source-unit")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2759,6 +2849,19 @@ mod tests {
             CbCodegenOriginClass::SourceTemplate
         );
 
+        let rust_source_unit =
+            "## Source\n<!-- type: rust-source-unit lang: rust -->\n```rust\npub fn demo() {}\n```";
+        assert_eq!(
+            classify_codegen_origin_spec(rust_source_unit),
+            CbCodegenOriginClass::TdAst
+        );
+
+        let text_source_unit = "## Source\n<!-- type: text-source-unit lang: bash -->\n```bash\n#!/usr/bin/env bash\n```\n";
+        assert_eq!(
+            classify_codegen_origin_spec(text_source_unit),
+            CbCodegenOriginClass::TdAst
+        );
+
         let artifact_replay = "## Source\n<!-- type: source lang: rust -->\n<!-- source-from-target: strip-managed-markers -->";
         assert_eq!(
             classify_codegen_origin_spec(artifact_replay),
@@ -3100,6 +3203,38 @@ paths = ["examples/fixture_platform/backend/**"]
                 td_root.join("interfaces/src/schema.md")
             ]
         );
+    }
+
+    #[test]
+    fn cb_gen_force_regen_skips_dependency_dirs_under_project_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let td_root = root.join("tech-design");
+        let source_root = root.to_path_buf();
+        std::fs::create_dir_all(&td_root).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        std::fs::write(td_root.join("app.md"), "# app\n").unwrap();
+        std::fs::write(td_root.join("dependency.md"), "# dependency\n").unwrap();
+        std::fs::write(
+            root.join("src/app.ts"),
+            "// SPEC-MANAGED: tech-design/app.md#source\n// CODEGEN-BEGIN\n// CODEGEN-END\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("node_modules/pkg/index.ts"),
+            "// SPEC-MANAGED: tech-design/dependency.md#source\n// CODEGEN-BEGIN\n// CODEGEN-END\n",
+        )
+        .unwrap();
+
+        let scope = ForceRegenScope {
+            td_root: td_root.clone(),
+            source_roots: vec![source_root],
+        };
+        let mut specs = Vec::new();
+        collect_force_regen_specs(root, &scope, &mut specs).unwrap();
+
+        assert_eq!(specs, vec![td_root.join("app.md")]);
     }
 
     #[test]

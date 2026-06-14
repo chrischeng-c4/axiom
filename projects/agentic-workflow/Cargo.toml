@@ -16,7 +16,7 @@ path = "src/bin/aw.rs"
 
 [dependencies]
 # Code intelligence (extracted to separate crate in #1164)
-cclab-compass = { path = "../compass" }
+cclab-compass = { path = "../../libs/compass" }
 
 # LLM agent framework
 agent = { path = "../mamba/mambalibs/agentkit/core" }
@@ -82,6 +82,12 @@ tree-sitter-sequel = "0.3"
 tree-sitter-proto = "0.4"
 tree-sitter-graphql = "0.1"
 tree-sitter-toml-ng = "0.7"
+
+# Lossless Rust CST (rust-analyzer syntax) — byte-identical round-trip with
+# full comment/whitespace preservation. Backs the rust-source-unit generator
+# (td_ast codegen for arbitrary Rust); syn 2 is comment-lossy and tree-sitter
+# is not an editable item-tree, so neither can byte-round-trip a source unit.
+ra_ap_syntax = "0.0.296"
 
 # Git (vendored-openssl for cross-platform builds)
 git2 = { version = "0.20", features = ["vendored-openssl"] }

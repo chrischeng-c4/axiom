@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/examples/profile_target.rs` generated fr
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/examples/profile_target.rs -->
 ````rust
 //! A tiny CPU-bound profiling target for the `meter profile` LIVE gate.
 //!
@@ -79,7 +77,7 @@ fn main() {
 changes:
   - path: projects/meter/examples/profile_target.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/examples/profile_target.rs` captured during meter full-codegen standardization.

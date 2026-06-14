@@ -2,7 +2,7 @@
 project: lumen
 branch: project-lumen
 label: "project:lumen"
-repo: chrischeng-c4/cclab
+repo: chrischeng-c4/axiom
 pick_order: priority
 build: skip
 verify:

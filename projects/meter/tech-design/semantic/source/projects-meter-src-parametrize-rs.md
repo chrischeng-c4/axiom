@@ -39,10 +39,8 @@ Public API manifest for `projects/meter/src/parametrize.rs` generated from AST d
 | `new` | projects/meter/src/parametrize.rs | function | pub | 175 | new(base_name: impl Into<String>) -> Self |
 | `validate` | projects/meter/src/parametrize.rs | function | pub | 149 | validate(&self) -> Result<(), String> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/parametrize.rs -->
 ````rust
 //! Parametrize system for test framework
 //!
@@ -56,6 +54,7 @@ use std::collections::HashMap;
 
 /// A single parameter value with its type information
 #[derive(Debug, Clone, PartialEq)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 pub enum ParameterValue {
     /// Integer value
     Int(i64),
@@ -73,6 +72,7 @@ pub enum ParameterValue {
     Dict(HashMap<String, ParameterValue>),
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 impl ParameterValue {
     /// Format the value for test name display
     pub fn format_for_name(&self) -> String {
@@ -102,6 +102,7 @@ impl ParameterValue {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 impl std::fmt::Display for ParameterValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.format_for_name())
@@ -110,11 +111,13 @@ impl std::fmt::Display for ParameterValue {
 
 /// A set of parameter name-value mappings for a single test instance
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 pub struct ParameterSet {
     /// Map of parameter names to their values
     pub params: HashMap<String, ParameterValue>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 impl ParameterSet {
     /// Create a new empty parameter set
     pub fn new() -> Self {
@@ -157,6 +160,7 @@ impl ParameterSet {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 impl Default for ParameterSet {
     fn default() -> Self {
         Self::new()
@@ -165,6 +169,7 @@ impl Default for ParameterSet {
 
 /// Parameter definition with name and values
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 pub struct Parameter {
     /// Parameter name
     pub name: String,
@@ -172,6 +177,7 @@ pub struct Parameter {
     pub values: Vec<ParameterValue>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 impl Parameter {
     /// Create a new parameter
     pub fn new(name: impl Into<String>, values: Vec<ParameterValue>) -> Self {
@@ -197,6 +203,7 @@ impl Parameter {
 
 /// Parametrized test configuration
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 pub struct ParametrizedTest {
     /// Base test name (without parameter suffix)
     pub base_name: String,
@@ -204,6 +211,7 @@ pub struct ParametrizedTest {
     pub parameters: Vec<Parameter>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-parametrize-rs.md#source
 impl ParametrizedTest {
     /// Create a new parametrized test
     pub fn new(base_name: impl Into<String>) -> Self {
@@ -487,7 +495,7 @@ mod tests {
 changes:
   - path: projects/meter/src/parametrize.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/parametrize.rs` captured during meter full-codegen standardization.

@@ -11,8 +11,8 @@ name = "cap"
 path = "src/lib.rs"
 
 [[bin]]
-name = "cap"
-path = "src/main.rs"
+name = "cap-full"
+path = "src/full_main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "color"] }
@@ -34,3 +34,7 @@ tempfile = "3"
 # `test-util` enables `tokio::time::pause`, `tokio::time::advance`, and
 # the `start_paused` attribute used by Slice 4 grace-period tests.
 tokio = { workspace = true, features = ["full", "test-util"] }
+
+[[bench]]
+name = "command_resources"
+harness = false

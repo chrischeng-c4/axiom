@@ -1,7 +1,7 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
 // CODEGEN-BEGIN
 //! `jet config lint` — structured diagnostic formatter for
-//! `jet.config.toml` validation.
+//! `jet.toml` validation.
 //!
 //! @spec `.aw/tech-design/projects/jet/config/jet-config-validation.md`
 //!     §"Slice 4 — `jet config lint` subcommand".
@@ -50,12 +50,12 @@ impl LintOutcome {
     }
 }
 
-/// CLI entry point. Resolves `<project_root>/jet.config.toml`,
+/// CLI entry point. Resolves `<project_root>/jet.toml`,
 /// runs typed validation, and prints diagnostics in the requested
 /// format. Returns the process exit code.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema
 pub fn run(project_root: &Path, format: &str, strict_warn: bool) -> i32 {
-    let path = project_root.join("jet.config.toml");
+    let path = project_root.join("jet.toml");
     let report = lint_path(&path);
     print_report(&report, format);
     report.outcome().to_exit_code(strict_warn)
@@ -68,7 +68,7 @@ pub fn lint_path(path: &Path) -> LintReport {
         Ok(b) => b,
         // GH #3456 — distinguish a truly missing config from a chmod
         // / EIO / mid-write read failure. Lumping both into NotFound
-        // produced misleading "no jet.config.toml" diagnostics when the
+        // produced misleading "no jet.toml" diagnostics when the
         // file existed but was unreadable.
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return LintReport {
@@ -278,7 +278,7 @@ mod tests {
     use super::*;
 
     fn write(dir: &std::path::Path, body: &str) -> PathBuf {
-        let p = dir.join("jet.config.toml");
+        let p = dir.join("jet.toml");
         std::fs::write(&p, body).unwrap();
         p
     }
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn missing_file_classifies_as_not_found_error() {
         let tmp = tempfile::tempdir().unwrap();
-        let report = lint_path(&tmp.path().join("jet.config.toml"));
+        let report = lint_path(&tmp.path().join("jet.toml"));
         assert_eq!(report.outcome(), LintOutcome::Errors);
         match report.error.as_ref().unwrap() {
             ConfigError::NotFound(_) => {}
@@ -351,21 +351,21 @@ mod tests {
     #[test]
     fn human_format_renders_ok_summary() {
         let report = LintReport {
-            path: PathBuf::from("/x/jet.config.toml"),
+            path: PathBuf::from("/x/jet.toml"),
             error: None,
             warnings: Vec::new(),
         };
         let out = format_human(&report);
         assert!(out.contains("ok:"));
-        assert!(out.contains("/x/jet.config.toml"));
+        assert!(out.contains("/x/jet.toml"));
     }
 
     #[test]
     fn human_format_renders_error_block() {
         let report = LintReport {
-            path: PathBuf::from("/x/jet.config.toml"),
+            path: PathBuf::from("/x/jet.toml"),
             error: Some(ConfigError::UnknownKey {
-                path: PathBuf::from("/x/jet.config.toml"),
+                path: PathBuf::from("/x/jet.toml"),
                 key: "root_propz".into(),
                 suggestion: Some("root_props".into()),
                 span: ConfigSpan { line: 4, column: 1 },
@@ -381,10 +381,10 @@ mod tests {
     #[test]
     fn human_format_renders_warning_block_and_count() {
         let report = LintReport {
-            path: PathBuf::from("/x/jet.config.toml"),
+            path: PathBuf::from("/x/jet.toml"),
             error: None,
             warnings: vec![DeprecatedKeyWarning {
-                path: PathBuf::from("/x/jet.config.toml"),
+                path: PathBuf::from("/x/jet.toml"),
                 key: "dev-port".into(),
                 replacement: "dev.port".into(),
                 removal_version: "0.4.0".into(),
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn json_format_envelope_for_ok_report() {
         let report = LintReport {
-            path: PathBuf::from("/x/jet.config.toml"),
+            path: PathBuf::from("/x/jet.toml"),
             error: None,
             warnings: Vec::new(),
         };
@@ -413,9 +413,9 @@ mod tests {
     #[test]
     fn json_format_envelope_for_unknown_key_error() {
         let report = LintReport {
-            path: PathBuf::from("/x/jet.config.toml"),
+            path: PathBuf::from("/x/jet.toml"),
             error: Some(ConfigError::UnknownKey {
-                path: PathBuf::from("/x/jet.config.toml"),
+                path: PathBuf::from("/x/jet.toml"),
                 key: "root_propz".into(),
                 suggestion: Some("root_props".into()),
                 span: ConfigSpan { line: 4, column: 1 },
@@ -433,10 +433,10 @@ mod tests {
     #[test]
     fn json_format_envelope_for_deprecated_warning() {
         let report = LintReport {
-            path: PathBuf::from("/x/jet.config.toml"),
+            path: PathBuf::from("/x/jet.toml"),
             error: None,
             warnings: vec![DeprecatedKeyWarning {
-                path: PathBuf::from("/x/jet.config.toml"),
+                path: PathBuf::from("/x/jet.toml"),
                 key: "dev-port".into(),
                 replacement: "dev.port".into(),
                 removal_version: "0.4.0".into(),
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn gh3456_lint_path_missing_file_classifies_as_not_found() {
         let tmp = tempfile::tempdir().unwrap();
-        let report = lint_path(&tmp.path().join("jet.config.toml"));
+        let report = lint_path(&tmp.path().join("jet.toml"));
         match report.error.as_ref().unwrap() {
             ConfigError::NotFound(_) => {}
             other => panic!("expected NotFound for missing file, got {other:?}"),

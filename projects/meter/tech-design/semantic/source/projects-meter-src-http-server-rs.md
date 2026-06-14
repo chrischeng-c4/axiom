@@ -38,10 +38,8 @@ Public API manifest for `projects/meter/src/http_server.rs` generated from AST d
 | `stop` | projects/meter/src/http_server.rs | function | pub | 114 | stop(mut self) |
 | `url` | projects/meter/src/http_server.rs | function | pub | 104 | url(&self) -> &str |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/http_server.rs -->
 ````rust
 //! Minimal HTTP test server for benchmarking
 //!
@@ -67,6 +65,7 @@ use tokio::sync::oneshot;
 
 /// Configuration for a test server route
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 pub struct RouteConfig {
     /// HTTP method (GET, POST, etc.)
     pub method: String,
@@ -78,6 +77,7 @@ pub struct RouteConfig {
     pub echo_body: bool,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 impl Default for RouteConfig {
     fn default() -> Self {
         Self {
@@ -97,6 +97,7 @@ struct ServerState {
 
 /// Configuration for a Python application test server
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 pub struct TestServerConfig {
     /// Python module to import (e.g., "tests.fixtures.test_app")
     pub app_module: String,
@@ -110,6 +111,7 @@ pub struct TestServerConfig {
     pub health_endpoint: Option<String>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 impl Default for TestServerConfig {
     fn default() -> Self {
         Self {
@@ -123,6 +125,7 @@ impl Default for TestServerConfig {
 }
 
 /// Handle for a running test server
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 pub struct TestServerHandle {
     /// Server address (e.g., "http://127.0.0.1:8765")
     pub url: String,
@@ -136,6 +139,7 @@ pub struct TestServerHandle {
     client: Option<reqwest::Client>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 impl TestServerHandle {
     /// Get the base URL for this server
     pub fn url(&self) -> &str {
@@ -161,6 +165,7 @@ impl TestServerHandle {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 impl Drop for TestServerHandle {
     fn drop(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
@@ -173,6 +178,7 @@ impl Drop for TestServerHandle {
 }
 
 /// Test HTTP server for benchmarking
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 pub struct TestServer {
     routes: HashMap<String, RouteConfig>,
     port: Option<u16>,
@@ -180,6 +186,7 @@ pub struct TestServer {
     app_config: Option<TestServerConfig>,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 impl TestServer {
     /// Create a new test server builder
     pub fn new() -> Self {
@@ -416,6 +423,7 @@ impl TestServer {
     }
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-http-server-rs.md#source
 impl Default for TestServer {
     fn default() -> Self {
         Self::new()
@@ -544,7 +552,7 @@ mod tests {
 changes:
   - path: projects/meter/src/http_server.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/http_server.rs` captured during meter full-codegen standardization.

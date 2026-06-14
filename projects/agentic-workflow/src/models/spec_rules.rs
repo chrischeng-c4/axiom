@@ -44,6 +44,9 @@ pub enum SectionType {
     Deployment,
     Doc,
     Manifest,
+    ToolContract,
+    RustSourceUnit,
+    TextSourceUnit,
 }
 
 /// Mermaid diagram types that can be used in specs.
@@ -230,12 +233,15 @@ impl SectionType {
             SectionType::Manifest => 18,
             SectionType::RuntimeImage => 19,
             SectionType::Deployment => 20,
-            // 21-22: executable verification designs
+            // 21-25: executable verification designs and source units
             SectionType::UnitTest => 21,
             SectionType::E2eTest => 22,
-            // 23-24: delta and doc (last)
-            SectionType::Changes => 23,
-            SectionType::Doc => 24,
+            SectionType::ToolContract => 23,
+            SectionType::RustSourceUnit => 24,
+            SectionType::TextSourceUnit => 25,
+            // 26-27: delta and doc (last)
+            SectionType::Changes => 26,
+            SectionType::Doc => 27,
         }
     }
 
@@ -280,7 +286,10 @@ impl SectionType {
             | SectionType::RuntimeImage
             | SectionType::Deployment
             | SectionType::Manifest
+            | SectionType::ToolContract
             | SectionType::E2eTest => "yaml",
+            SectionType::RustSourceUnit => "rust",
+            SectionType::TextSourceUnit => "bash",
         }
     }
 
@@ -311,6 +320,9 @@ impl SectionType {
             SectionType::Deployment => "deployment",
             SectionType::Doc => "doc",
             SectionType::Manifest => "manifest",
+            SectionType::ToolContract => "tool-contract",
+            SectionType::RustSourceUnit => "rust-source-unit",
+            SectionType::TextSourceUnit => "text-source-unit",
         }
     }
 
@@ -339,9 +351,12 @@ impl SectionType {
             SectionType::Component,
             SectionType::DesignToken,
             SectionType::Manifest,
+            SectionType::ToolContract,
             SectionType::RuntimeImage,
             SectionType::Deployment,
             SectionType::Doc,
+            SectionType::RustSourceUnit,
+            SectionType::TextSourceUnit,
         ];
         types.sort_by_key(|t| t.fill_order());
         types
@@ -387,6 +402,11 @@ impl FromStr for SectionType {
             }
             "doc" => Ok(SectionType::Doc),
             "manifest" => Ok(SectionType::Manifest),
+            "tool-contract" | "tool_contract" | "ec-tool-contract" | "ec_tool_contract" => {
+                Ok(SectionType::ToolContract)
+            }
+            "rust-source-unit" | "rust_source_unit" => Ok(SectionType::RustSourceUnit),
+            "text-source-unit" | "text_source_unit" => Ok(SectionType::TextSourceUnit),
             _ => Err(format!("Unknown section type: {}", s)),
         }
     }
@@ -1011,8 +1031,9 @@ mod tests {
     fn test_section_type_count() {
         // Updated as section types are added. Change together with
         // `AUTHORING.md`'s "Section Type Registry" header count.
-        // 21 → +Manifest → +UnitTest/+E2eTest → +RuntimeImage/+Deployment = 25.
-        assert_eq!(SectionType::all_in_fill_order().len(), 25);
+        // 21 → +Manifest → +UnitTest/+E2eTest → +RuntimeImage/+Deployment
+        // → +ToolContract → +RustSourceUnit/+TextSourceUnit = 28.
+        assert_eq!(SectionType::all_in_fill_order().len(), 28);
     }
 
     #[test]
@@ -1065,6 +1086,14 @@ mod tests {
         assert!(
             SectionType::E2eTest.fill_order() < SectionType::Changes.fill_order(),
             "e2e-test should fill before changes"
+        );
+        assert!(
+            SectionType::RustSourceUnit.fill_order() < SectionType::Changes.fill_order(),
+            "rust-source-unit should fill before changes"
+        );
+        assert!(
+            SectionType::TextSourceUnit.fill_order() < SectionType::Changes.fill_order(),
+            "text-source-unit should fill before changes"
         );
         assert!(
             SectionType::Changes.fill_order() < SectionType::Doc.fill_order(),

@@ -137,12 +137,20 @@ tar -C "${tmpdir}" -xzf "${tmpdir}/${asset}" \
   || die "extract failed: ${asset}"
 
 bin="${tmpdir}/cap-${target}/cap"
+fast_bin="${tmpdir}/cap-${target}/cap-fast"
+full_bin="${tmpdir}/cap-${target}/cap-full"
 [ -f "${bin}" ] || die "binary not found in archive: ${bin}"
+[ -f "${fast_bin}" ] || die "binary not found in archive: ${fast_bin}"
+[ -f "${full_bin}" ] || die "binary not found in archive: ${full_bin}"
 chmod +x "${bin}"
+chmod +x "${fast_bin}"
+chmod +x "${full_bin}"
 
 mkdir -p "${INSTALL_DIR}"
 mv "${bin}" "${INSTALL_DIR}/cap"
-say "installed: ${INSTALL_DIR}/cap"
+mv "${fast_bin}" "${INSTALL_DIR}/cap-fast"
+mv "${full_bin}" "${INSTALL_DIR}/cap-full"
+say "installed: ${INSTALL_DIR}/cap, ${INSTALL_DIR}/cap-fast, and ${INSTALL_DIR}/cap-full"
 
 # ---- PATH hint ---------------------------------------------------------
 case ":${PATH}:" in

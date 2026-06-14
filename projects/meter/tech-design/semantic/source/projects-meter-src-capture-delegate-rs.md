@@ -24,10 +24,8 @@ Public API manifest for `projects/meter/src/capture/delegate.rs` generated from 
 | `DelegateOutcome` | projects/meter/src/capture/delegate.rs | struct | pub | 24 |  |
 | `delegate_test` | projects/meter/src/capture/delegate.rs | function | pub | 42 | delegate_test(     passthrough: &[String],     nextest_present: bool, ) -> std::io::Result<DelegateOutcome> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/capture/delegate.rs -->
 ````rust
 //! `meter test` delegate — run the real test runner and FORWARD its exit code.
 //!
@@ -49,6 +47,7 @@ use crate::report::finding::Finding;
 use crate::report::producer::generic_test_failure;
 
 /// Outcome of a delegated test run.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-delegate-rs.md#source
 pub struct DelegateOutcome {
     /// The recorded child invocation (argv, timing, forwarded exit).
     pub record: RunnerRecord,
@@ -66,6 +65,7 @@ pub struct DelegateOutcome {
 /// Stderr is inherited (live output); stdout is captured for parsing. Returns a
 /// [`DelegateOutcome`] whose `record.delegated == true` and whose
 /// `record.exit_code == Some(child_exit_code)`.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-capture-delegate-rs.md#source
 pub fn delegate_test(
     passthrough: &[String],
     nextest_present: bool,
@@ -193,7 +193,7 @@ test result: ok. 1 passed; 0 failed
 changes:
   - path: projects/meter/src/capture/delegate.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/capture/delegate.rs` captured during meter full-codegen standardization.

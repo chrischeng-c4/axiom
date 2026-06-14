@@ -36,6 +36,10 @@ pub mod from_td_ast;
 // @spec projects/agentic-workflow/tech-design/core/generate/handwrite-marker.md#schema
 pub mod handwrite;
 pub mod handwrite_scaffold;
+// rust-source-unit: lossless-CST parse to a structured item-tree with
+// byte-identical emit — the td_ast codegen primitive for arbitrary Rust units.
+// @spec projects/agentic-workflow/tech-design/validate/rust-source-unit-ir-lossless-cst-parse-to-structured-item-tree-b.md#logic
+pub mod rust_source_unit;
 
 #[cfg(test)]
 #[path = "tests/handwrite_scaffold_test.rs"]

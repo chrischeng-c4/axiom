@@ -36,6 +36,7 @@ jwalk.workspace = true
 tracing.workspace = true
 rand = "0.8"
 libc = "0.2"
+toml = "0.8"
 
 # Flamegraph generation
 inferno = "0.12"
@@ -52,6 +53,11 @@ mambalibs-http = { path = "../../projects/mamba/mambalibs/httpkit", optional = t
 
 # Content hashing for carried fuzz/injection internals (not part of the public meter core).
 blake3 = { version = "1.8", optional = true }
+
+# Optional: AST-assisted instrumentation-point discovery via the compass
+# code-intelligence engine (libs/compass). Heavy (tree-sitter grammars), so it
+# is gated off by default; enable with `--features ast`.
+cclab-compass = { path = "../../libs/compass", optional = true }
 
 [dev-dependencies]
 reqwest.workspace = true
@@ -79,3 +85,7 @@ capture = ["dep:blake3"]
 # kept for symmetry with `capture`. The embed engines (performance/*) compile
 # unconditionally today, so this is currently a no-op marker feature.
 embed = []
+# `ast` enables AST-assisted probe-point discovery (src/instrument/) backed by
+# compass. Off by default so the lean capture/release binary stays free of
+# tree-sitter grammars.
+ast = ["dep:cclab-compass"]

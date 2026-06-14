@@ -51,7 +51,7 @@ pub struct RunnerConfig {
     // @spec .aw/changes/enhancement-auto-inject-page-fixture-for-playwright-compatible/specs/enhancement-auto-inject-page-fixture-for-playwright-compatible-spec.md#R5
     pub headless: bool,
     /// Web-server to spawn before the runner starts. Loaded from
-    /// `jet.config.toml` `[test.web_server]`. When `Some`, `test_runner::run`
+    /// `jet.toml` `[test.web_server]`. When `Some`, `test_runner::run`
     /// boots the server, waits for readiness, runs the specs, and kills it.
     // @spec .aw/tech-design/projects/jet/logic/web-server.md#W2
     pub web_server: Option<WebServerConfig>,

@@ -48,8 +48,42 @@ trap 'fail_hint "$MODE"' ERR
 
 install_cap() {
   local profile="$1"
+  local strip_flag="-Wl,--gc-sections"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    strip_flag="-Wl,-dead_strip"
+  fi
+  local cflags=(
+    -Oz
+    -ffunction-sections
+    -fdata-sections
+    -fno-stack-protector
+    -fno-unwind-tables
+    -fno-asynchronous-unwind-tables
+    "${strip_flag}"
+  )
+  local frontend_flags=("${cflags[@]}")
+  if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+    frontend_flags+=(
+      -ffreestanding
+      -fno-builtin
+      -nostartfiles
+      -Wl,-e,_start
+    )
+  fi
+  "${CC:-cc}" \
+    "${frontend_flags[@]}" \
+    projects/cap/src/cap_frontend.c \
+    -o "target/${profile}/cap"
+  "${CC:-cc}" \
+    "${cflags[@]}" \
+    projects/cap/src/cap_fast_frontend.c \
+    -o "target/${profile}/cap-fast"
   install -m 755 "target/${profile}/cap" "$HOME/.cargo/bin/cap"
-  codesign -s - -f "$HOME/.cargo/bin/cap" 2>/dev/null || true
+  install -m 755 "target/${profile}/cap-fast" "$HOME/.cargo/bin/cap-fast"
+  install -m 755 "target/${profile}/cap-full" "$HOME/.cargo/bin/cap-full"
+  codesign -s - -f --options runtime "$HOME/.cargo/bin/cap" 2>/dev/null || true
+  codesign -s - -f --options runtime "$HOME/.cargo/bin/cap-fast" 2>/dev/null || true
+  codesign -s - -f "$HOME/.cargo/bin/cap-full" 2>/dev/null || true
   echo "Installed: $("$HOME/.cargo/bin/cap" --version 2>/dev/null || echo 'cap')"
   echo "Verify with: ~/.cargo/bin/cap --version"
 }

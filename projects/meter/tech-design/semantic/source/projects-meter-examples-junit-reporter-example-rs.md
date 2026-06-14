@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/examples/junit_reporter_example.rs` gene
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/examples/junit_reporter_example.rs -->
 ````rust
 //! JUnit XML Reporter Example
 //!
@@ -129,7 +127,6 @@ fn create_example_test_results() -> Vec<TestResult> {
                         .to_string(),
                 ),
                 profile_metrics: None,
-                stress_metrics: None,
                 started_at: chrono::Utc::now().to_rfc3339(),
             }
         },
@@ -153,7 +150,6 @@ fn create_example_test_results() -> Vec<TestResult> {
                         .to_string(),
                 ),
                 profile_metrics: None,
-                stress_metrics: None,
                 started_at: chrono::Utc::now().to_rfc3339(),
             }
         },
@@ -172,7 +168,6 @@ fn create_example_test_results() -> Vec<TestResult> {
                 error: Some("Feature not yet implemented".to_string()),
                 stack_trace: None,
                 profile_metrics: None,
-                stress_metrics: None,
                 started_at: chrono::Utc::now().to_rfc3339(),
             }
         },
@@ -185,7 +180,7 @@ fn create_example_test_results() -> Vec<TestResult> {
         {
             let meta = TestMeta::new("test_concurrent_access")
                 .with_type(TestType::Unit)
-                .with_tags(vec!["concurrency".to_string(), "stress".to_string()]);
+                .with_tags(vec!["concurrency".to_string()]);
             TestResult::passed(meta, 3200)
         },
     ]
@@ -212,7 +207,7 @@ fn create_passing_example_test_results() -> Vec<TestResult> {
         {
             let meta = TestMeta::new("test_concurrent_access")
                 .with_type(TestType::Unit)
-                .with_tags(vec!["concurrency".to_string(), "stress".to_string()]);
+                .with_tags(vec!["concurrency".to_string()]);
             TestResult::passed(meta, 3200)
         },
     ]
@@ -265,7 +260,7 @@ fn demonstrate_other_formats(report: &TestReport) {
 changes:
   - path: projects/meter/examples/junit_reporter_example.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/examples/junit_reporter_example.rs` captured during meter full-codegen standardization.

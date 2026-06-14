@@ -329,12 +329,7 @@ impl Reporter {
         writeln!(output, "| Type | Passed | Failed | Skipped | Duration |").unwrap();
         writeln!(output, "|------|--------|--------|---------|----------|").unwrap();
 
-        for test_type in [
-            TestType::Unit,
-            TestType::Profile,
-            TestType::Stress,
-            TestType::Security,
-        ] {
+        for test_type in [TestType::Unit, TestType::Profile, TestType::Security] {
             let results = report.results_by_type(test_type);
             if !results.is_empty() {
                 let passed = results
@@ -494,45 +489,6 @@ impl Reporter {
                         metrics.avg_cpu_time_ms,
                         format_bytes(metrics.peak_memory_bytes),
                         metrics.boundary_overhead_ms
-                    )
-                    .unwrap();
-                }
-            }
-            writeln!(output).unwrap();
-        }
-
-        // Stress metrics section
-        let stress_results: Vec<_> = report
-            .results
-            .iter()
-            .filter(|r| r.stress_metrics.is_some())
-            .collect();
-
-        if !stress_results.is_empty() {
-            writeln!(output, "## Stress Test Results").unwrap();
-            writeln!(output).unwrap();
-            writeln!(
-                output,
-                "| Test | RPS | P50 (ms) | P95 (ms) | P99 (ms) | Error Rate |"
-            )
-            .unwrap();
-            writeln!(
-                output,
-                "|------|-----|----------|----------|----------|------------|"
-            )
-            .unwrap();
-
-            for result in stress_results {
-                if let Some(ref metrics) = result.stress_metrics {
-                    writeln!(
-                        output,
-                        "| {} | {:.1} | {} | {} | {} | {:.2}% |",
-                        result.meta.name,
-                        metrics.rps,
-                        metrics.latency_p50_ms,
-                        metrics.latency_p95_ms,
-                        metrics.latency_p99_ms,
-                        metrics.error_rate * 100.0
                     )
                     .unwrap();
                 }
@@ -1775,7 +1731,6 @@ mod tests {
                 error: Some("Runtime error".to_string()),
                 stack_trace: Some("stack trace".to_string()),
                 profile_metrics: None,
-                stress_metrics: None,
                 started_at: chrono::Utc::now().to_rfc3339(),
             },
         ];
