@@ -231,6 +231,41 @@ pub fn mb_raise(exc_type: MbValue, message: MbValue) {
 /// Raise with chaining: `raise X from Y`.
 /// Always sets __suppress_context__ = True (per Python semantics).
 /// If cause is None, __cause__ remains None.
+/// Convert an exception MbValue (an Instance carrying message/__cause__/
+/// __context__ fields) into an owned MbException, preserving its full
+/// cause/context chain. `raise X from Y` must keep Y's *own* __cause__ so a
+/// deep chain (`KeyError`←`LookupError`←`ValueError`) walks all the way down;
+/// rebuilding the cause from just its type+message dropped the inner links.
+/// Bounded depth guards a cyclic chain.
+fn mbvalue_to_mbexception(exc: MbValue, depth: u32) -> Option<MbException> {
+    if depth > 64 || exc.is_none() {
+        return None;
+    }
+    let ty = get_exception_type(exc)?;
+    let msg = get_exception_message(exc).unwrap_or_default();
+    let mut out = MbException::new(&ty, &msg);
+    if let Some(ptr) = exc.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref fields, .. } = (*ptr).data {
+                let (cause_v, ctx_v, suppress) = {
+                    let f = fields.read().unwrap();
+                    (
+                        f.get("__cause__").copied().unwrap_or_else(MbValue::none),
+                        f.get("__context__").copied().unwrap_or_else(MbValue::none),
+                        f.get("__suppress_context__")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false),
+                    )
+                };
+                out.suppress_context = suppress;
+                out.cause = mbvalue_to_mbexception(cause_v, depth + 1).map(Box::new);
+                out.context = mbvalue_to_mbexception(ctx_v, depth + 1).map(Box::new);
+            }
+        }
+    }
+    Some(out)
+}
+
 pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
     let type_name = extract_str(exc_type).unwrap_or_else(|| "Exception".to_string());
     let msg = message_display(message);
@@ -238,10 +273,9 @@ pub fn mb_raise_from(exc_type: MbValue, message: MbValue, cause: MbValue) {
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
     if !cause.is_none() {
-        let cause_type = get_exception_type(cause).unwrap_or_else(|| "Exception".to_string());
-        let cause_msg = get_exception_message(cause).unwrap_or_default();
-        let cause_exc = MbException::new(&cause_type, &cause_msg);
-        exc.cause = Some(Box::new(cause_exc));
+        // Preserve the cause's own chain (its __cause__/__context__) so deep
+        // `raise ... from ...` ladders walk correctly.
+        exc.cause = mbvalue_to_mbexception(cause, 0).map(Box::new);
     }
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
@@ -255,9 +289,7 @@ pub fn mb_raise_with_context(exc_type: MbValue, message: MbValue, context: MbVal
     let msg = message_display(message);
     let mut exc = MbException::new(&type_name, &msg);
     if !context.is_none() {
-        let ctx_type = get_exception_type(context).unwrap_or_else(|| "Exception".to_string());
-        let ctx_msg = get_exception_message(context).unwrap_or_default();
-        exc.context = Some(Box::new(MbException::new(&ctx_type, &ctx_msg)));
+        exc.context = mbvalue_to_mbexception(context, 0).map(Box::new);
     }
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
@@ -273,14 +305,10 @@ pub fn mb_raise_from_with_context(exc_type: MbValue, message: MbValue, cause: Mb
     // `raise X from Y` always sets suppress_context = True
     exc.suppress_context = true;
     if !cause.is_none() {
-        let cause_type = get_exception_type(cause).unwrap_or_else(|| "Exception".to_string());
-        let cause_msg = get_exception_message(cause).unwrap_or_default();
-        exc.cause = Some(Box::new(MbException::new(&cause_type, &cause_msg)));
+        exc.cause = mbvalue_to_mbexception(cause, 0).map(Box::new);
     }
     if !context.is_none() {
-        let ctx_type = get_exception_type(context).unwrap_or_else(|| "Exception".to_string());
-        let ctx_msg = get_exception_message(context).unwrap_or_default();
-        exc.context = Some(Box::new(MbException::new(&ctx_type, &ctx_msg)));
+        exc.context = mbvalue_to_mbexception(context, 0).map(Box::new);
     }
     CURRENT_EXCEPTION.with(|cell| {
         *cell.borrow_mut() = Some(exc);
