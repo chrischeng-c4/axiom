@@ -13234,6 +13234,34 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                             }
                         }
                     }
+                    // CPython: `obj.name(args)` where `name` is not a real
+                    // method/attribute falls back to type(obj).__getattr__(obj,
+                    // name); the returned value is then called. mb_getattr
+                    // already resolves the load form (`obj.name`) through
+                    // __getattr__ — mirror it for the fused call form so e.g.
+                    // `t.foo(x)` works when `foo` is supplied by __getattr__.
+                    // (Only the explicit __getattr__ dunder is consulted, not
+                    // the lenient mb_getattr path, so a genuinely-absent name on
+                    // a class without __getattr__ still raises AttributeError.)
+                    let getattr_dunder = lookup_method(class_name, "__getattr__");
+                    if !getattr_dunder.is_none() {
+                        let name_val = MbValue::from_ptr(MbObject::new_str(name.clone()));
+                        let resolved = if let Some(addr) = getattr_dunder.as_func() {
+                            let func: extern "C" fn(MbValue, MbValue) -> MbValue =
+                                std::mem::transmute(addr);
+                            func(receiver, name_val)
+                        } else {
+                            super::rc::retain_if_ptr(getattr_dunder);
+                            getattr_dunder
+                        };
+                        // __getattr__ may raise (e.g. AttributeError for a
+                        // genuinely-absent name); propagate it rather than
+                        // calling the None result.
+                        if super::exception::current_exception_type().is_some() {
+                            return MbValue::none();
+                        }
+                        return super::builtins::mb_call_spread(resolved, args);
+                    }
                     super::exception::mb_raise(
                         MbValue::from_ptr(MbObject::new_str("AttributeError".to_string())),
                         MbValue::from_ptr(MbObject::new_str(format!(
