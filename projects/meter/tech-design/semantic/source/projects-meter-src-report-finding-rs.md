@@ -27,12 +27,12 @@ Public API manifest for `projects/meter/src/report/finding.rs` generated from AS
 | `Location` | projects/meter/src/report/finding.rs | struct | pub | 71 |  |
 | `Severity` | projects/meter/src/report/finding.rs | enum | pub | 84 |  |
 | `all` | projects/meter/src/report/finding.rs | function | pub | 117 | all() -> [Severity; 5] |
-| `all` | projects/meter/src/report/finding.rs | function | pub | 183 | all() -> [Kind; 8] |
+| `all` | projects/meter/src/report/finding.rs | function | pub | 191 | all() -> [Kind; 5] |
 | `as_str` | projects/meter/src/report/finding.rs | function | pub | 106 | as_str(&self) -> &'static str |
-| `as_str` | projects/meter/src/report/finding.rs | function | pub | 155 | as_str(&self) -> &'static str |
+| `as_str` | projects/meter/src/report/finding.rs | function | pub | 159 | as_str(&self) -> &'static str |
 | `command` | projects/meter/src/report/finding.rs | function | pub | 60 | command(command: impl Into<String>) -> Self |
-| `finding_id` | projects/meter/src/report/finding.rs | function | pub | 200 | finding_id(kind: Kind, slug: impl AsRef<str>) -> String |
-| `id_prefix` | projects/meter/src/report/finding.rs | function | pub | 169 | id_prefix(&self) -> &'static str |
+| `finding_id` | projects/meter/src/report/finding.rs | function | pub | 205 | finding_id(kind: Kind, slug: impl AsRef<str>) -> String |
+| `id_prefix` | projects/meter/src/report/finding.rs | function | pub | 174 | id_prefix(&self) -> &'static str |
 | `rank` | projects/meter/src/report/finding.rs | function | pub | 95 | rank(&self) -> u8 |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
