@@ -9228,8 +9228,10 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             if let ObjData::Instance { ref class_name, ref fields } = (*ptr).data {
                 if class_name == "slice" && name == "indices" {
                     let arg_items = super::builtins::extract_items(args);
+                    // length accepts any SupportsIndex (int / bool / object with
+                    // __index__), matching CPython's PySlice_GetIndices.
                     let length = arg_items.first()
-                        .and_then(|v| v.as_int())
+                        .and_then(|v| super::builtins::resolve_index_value(*v))
                         .unwrap_or(0);
                     let (start_v, stop_v, step_v) = {
                         let f = fields.read().unwrap();

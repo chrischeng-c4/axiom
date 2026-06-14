@@ -5271,7 +5271,7 @@ pub fn mb_input(prompt: MbValue) -> MbValue {
 /// `__index__`-accepting builtins (chr/hex/oct/bin) do: ints and bools pass
 /// through, instances dispatch their `__index__` dunder. Returns None (no
 /// exception raised) when the value cannot be interpreted as an integer.
-fn resolve_index_value(val: MbValue) -> Option<i64> {
+pub(crate) fn resolve_index_value(val: MbValue) -> Option<i64> {
     if let Some(i) = val.as_int() {
         return Some(i);
     }
