@@ -543,22 +543,24 @@ pub enum TokenKind {
     // the sibling Float regexes so `3.5e-20j` / `.5e-2J` / `2E5j` all
     // tokenize as Complex (#1676). Without the exponent, the Float
     // regex consumed the numeric body and `j` fell through to Ident.
-    #[regex(r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?[jJ]", |lex| {
+    // Digit runs allow PEP 515 underscores (`2_0j`, `1_000.5`, `1_0e3`); the
+    // `_` separators are stripped before `parse::<f64>()`, which rejects them.
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| {
         let s = lex.slice();
-        s[..s.len()-1].parse::<f64>().ok()
+        s[..s.len()-1].replace('_', "").parse::<f64>().ok()
     }, priority = 4)]
-    #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?[jJ]", |lex| {
+    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| {
         let s = lex.slice();
-        s[..s.len()-1].parse::<f64>().ok()
+        s[..s.len()-1].replace('_', "").parse::<f64>().ok()
     }, priority = 4)]
-    #[regex(r"[0-9]+([eE][+-]?[0-9]+)?[jJ]", |lex| {
+    #[regex(r"[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[jJ]", |lex| {
         let s = lex.slice();
-        s[..s.len()-1].parse::<f64>().ok()
+        s[..s.len()-1].replace('_', "").parse::<f64>().ok()
     }, priority = 3)]
     Complex(f64),
-    #[regex(r"[0-9]+\.[0-9]*([eE][+-]?[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
-    #[regex(r"\.[0-9]+([eE][+-]?[0-9]+)?", |lex| lex.slice().parse::<f64>().ok())]
-    #[regex(r"[0-9]+[eE][+-]?[0-9]+", |lex| lex.slice().parse::<f64>().ok())]
+    #[regex(r"[0-9][0-9_]*\.[0-9_]*([eE][+-]?[0-9][0-9_]*)?", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
+    #[regex(r"\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
+    #[regex(r"[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*", |lex| lex.slice().replace('_', "").parse::<f64>().ok())]
     Float(f64),
     #[regex(r"0[xX][0-9a-fA-F][0-9a-fA-F_]*", |lex| {
         i64::from_str_radix(&lex.slice()[2..].replace('_', ""), 16).ok()

@@ -1640,6 +1640,20 @@ fn is_complex_obj(val: MbValue) -> bool {
 /// Surrounding whitespace and a single layer of outer `(...)` are tolerated.
 /// Returns `(real, imag)` on success, `None` if the string is not a valid
 /// complex literal.
+/// Parse one real/imag coefficient: validate+strip PEP 515 underscores
+/// (`1_000.5`), then preserve the sign of a parsed NaN (`complex("-nan")`
+/// → negative-signed NaN; `f64::from_str` does not reliably set the NaN
+/// sign bit).
+fn parse_complex_part(part: &str) -> Option<f64> {
+    let t = part.trim();
+    let v = strip_float_underscores(t)?.parse::<f64>().ok()?;
+    if v.is_nan() && t.starts_with('-') {
+        Some(v.copysign(-1.0))
+    } else {
+        Some(v)
+    }
+}
+
 fn parse_complex_str(input: &str) -> Option<(f64, f64)> {
     let mut s = input.trim();
     if s.starts_with('(') && s.ends_with(')') {
@@ -1649,7 +1663,7 @@ fn parse_complex_str(input: &str) -> Option<(f64, f64)> {
     // No 'j'/'J' → real-only number.
     let has_imag = s.ends_with('j') || s.ends_with('J');
     if !has_imag {
-        return s.parse::<f64>().ok().map(|r| (r, 0.0));
+        return parse_complex_part(s).map(|r| (r, 0.0));
     }
     // Strip the trailing 'j'/'J'.
     let body = &s[..s.len() - 1];
@@ -1675,18 +1689,18 @@ fn parse_complex_str(input: &str) -> Option<(f64, f64)> {
         Some(idx) => {
             let real_part = body[..idx].trim();
             let imag_part = body[idx..].trim();
-            let re = real_part.parse::<f64>().ok()?;
+            let re = parse_complex_part(real_part)?;
             // Bare "+"/"-" prefix on imag means ±1j.
             let im = if imag_part == "+" { 1.0 }
                 else if imag_part == "-" { -1.0 }
-                else { imag_part.parse::<f64>().ok()? };
+                else { parse_complex_part(imag_part)? };
             Some((re, im))
         }
         None => {
             // Whole body is the imag coefficient.
             let im = if body == "+" { 1.0 }
                 else if body == "-" { -1.0 }
-                else { body.parse::<f64>().ok()? };
+                else { parse_complex_part(body)? };
             Some((0.0, im))
         }
     }
