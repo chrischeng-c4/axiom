@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-bin.md#schema
+// CODEGEN-BEGIN
 //! `lumen-bench` — the performance + correctness harness from PERF-GOAL.md.
 //!
 //! Produces the (search-type × data-volume) matrix: for each cell it builds a
@@ -1155,3 +1157,4 @@ fn report_regressions(prev: &[Cell], cur: &[Cell]) -> bool {
     }
     any
 }
+// CODEGEN-END

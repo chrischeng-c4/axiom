@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/examples/payload_database_example.rs` ge
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/examples/payload_database_example.rs -->
 ````rust
 use meter::{PayloadCategory, PayloadDatabase};
 
@@ -105,7 +103,7 @@ fn main() {
 changes:
   - path: projects/meter/examples/payload_database_example.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/examples/payload_database_example.rs` captured during meter full-codegen standardization.

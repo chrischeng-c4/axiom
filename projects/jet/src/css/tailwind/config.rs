@@ -3,7 +3,7 @@
 //! Tailwind CSS configuration model.
 //!
 //! Supports loading from `tailwind.config.js` (minimal JS object literal parser)
-//! and from the `css.tailwind` section of `jet.config.toml`.
+//! and from the `css.tailwind` section of `jet.toml`.
 //! JS config takes precedence when both files exist.
 
 use anyhow::Result;
@@ -64,11 +64,11 @@ impl TailwindConfig {
     // ── loaders ─────────────────────────────────────────────────────────
 
     /// Load config from `project_root`, preferring `tailwind.config.js` over
-    /// the `css.tailwind` section in `jet.config.toml`.  Falls back to
+    /// the `css.tailwind` section in `jet.toml`.  Falls back to
     /// `TailwindConfig::default()` if neither file exists.
     pub fn load(project_root: &Path) -> Result<Self> {
         let js_path = project_root.join("tailwind.config.js");
-        let toml_path = project_root.join("jet.config.toml");
+        let toml_path = project_root.join("jet.toml");
 
         if js_path.exists() {
             return Self::from_js(&js_path);
@@ -88,7 +88,7 @@ impl TailwindConfig {
         parse_js_config(&source)
     }
 
-    /// Parse the `css.tailwind` section from `jet.config.toml`.
+    /// Parse the `css.tailwind` section from `jet.toml`.
     pub fn from_toml(path: &Path) -> Result<Self> {
         let source = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Cannot read {:?}: {}", path, e))?;
@@ -534,7 +534,7 @@ mod tests {
     /// YAML parse errors as `Err` instead of swallowing them. The historical
     /// bug was that three callsites (`dev_server::serve_module`,
     /// `dev_server::rebuild_css`, `bundler::process_css_entry`) wrapped this
-    /// call in `.unwrap_or_default()`, so a broken `jet.config.toml`
+    /// call in `.unwrap_or_default()`, so a broken `jet.toml`
     /// `[css.tailwind]` block silently disabled the user's Tailwind config.
     /// We can't catch the silent-swallow at the callsite without spinning up
     /// a dev server, but we can guard the API contract: if this test starts
@@ -545,7 +545,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         // Malformed YAML — unterminated string after `content:`.
         fs::write(
-            dir.path().join("jet.config.toml"),
+            dir.path().join("jet.toml"),
             "css:\n  tailwind:\n    content: \"unterminated\n",
         )
         .unwrap();

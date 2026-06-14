@@ -637,6 +637,9 @@ pub fn fixture_diff_message(
     actual: &Value,
 ) -> String {
     let payload = json!({
+        "failure_kind": "dom_wasm_parity_mismatch",
+        "expected_source": "react_dom",
+        "actual_source": "jet_wasm",
         "fixture_id": fixture_id,
         "phase": phase,
         "expected": expected,
@@ -657,6 +660,9 @@ pub fn library_fixture_diff_message(
     actual: &Value,
 ) -> String {
     let payload = json!({
+        "failure_kind": "library_dom_wasm_parity_mismatch",
+        "expected_source": "react_dom",
+        "actual_source": "jet_wasm",
         "library_id": library_id,
         "fixture_id": fixture_id,
         "phase": phase,
@@ -703,6 +709,7 @@ pub fn layout_diff_message(
     actual: &Value,
 ) -> String {
     let payload = json!({
+        "failure_kind": "layout_dom_wasm_parity_mismatch",
         "fixture_id": fixture_id,
         "phase": phase,
         "tolerance_css_px": LAYOUT_TOLERANCE_CSS_PX,
@@ -1063,6 +1070,7 @@ pub fn screenshot_diff_message(
     actual: &Value,
 ) -> String {
     let payload = json!({
+        "failure_kind": "screenshot_dom_wasm_parity_mismatch",
         "fixture_id": fixture_id,
         "phase": phase,
         "tolerance": {
@@ -1086,6 +1094,9 @@ pub fn paint_diff_message(
     actual_methods: &[String],
 ) -> String {
     let payload = json!({
+        "failure_kind": "paint_dom_wasm_parity_mismatch",
+        "expected_source": "jet_wasm_paint_ops",
+        "actual_source": "canvas_runtime_calls",
         "fixture_id": fixture_id,
         "phase": phase,
         "expected_methods": expected_methods,

@@ -180,7 +180,8 @@ fn kind_catalog() -> Value {
         { "kind": "hotspot", "verb": "profile", "evidence": ["symbol", "self_ns", "total_ns", "pct", "samples", "rank"] },
         { "kind": "boundary_cost", "verb": "profile", "evidence": ["phase", "self_ns", "total_ns", "pct", "samples"] },
         { "kind": "regression", "verb": "bench", "evidence": ["bench", "baseline_ms", "current_ms", "percent_change", "severity", "ci_overlap"] },
-        { "kind": "test_failure", "verb": "test", "evidence": ["name", "stdout_tail"] }
+        { "kind": "test_failure", "verb": "test", "evidence": ["name", "stdout_tail"] },
+        { "kind": "vital", "verb": "profile", "evidence": ["cpu_time_ms", "wall_time_ms", "peak_rss_bytes"] }
     ])
 }
 

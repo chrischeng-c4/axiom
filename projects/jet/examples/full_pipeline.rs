@@ -157,6 +157,7 @@ async fn demo_bundler(root: &Path) {
         resolve_options: resolve_options(),
         transform_options: transform_options(),
         asset_options: AssetOptions::default(),
+        css_bundle: false,
         externals: HashSet::new(),
         externalize_all_packages: false,
         defines: std::collections::HashMap::new(),

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-operator.md#schema
+// CODEGEN-BEGIN
 //! The `Lumen` custom resource (`lumen.dev/v1alpha1`).
 //!
 //! One `Lumen` object declares a full deployment: a stateless, autoscaled
@@ -29,6 +31,7 @@ use serde::{Deserialize, Serialize};
     printcolumn = r#"{"name":"Shards","type":"integer","jsonPath":".status.shardCount"}"#,
     printcolumn = r#"{"name":"Age","type":"date","jsonPath":".metadata.creationTimestamp"}"#
 )]
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[serde(rename_all = "camelCase")]
 pub struct LumenSpec {
     /// Serving + (managed) NATS-sidecar-free container image, e.g.
@@ -79,6 +82,7 @@ pub struct LumenSpec {
 }
 
 /// Log output format.
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LogFormat {
@@ -89,6 +93,7 @@ pub enum LogFormat {
     Pretty,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 impl LogFormat {
     /// The `LUMEN_LOG_FORMAT` value the serving binary expects.
     pub fn as_env(self) -> &'static str {
@@ -100,6 +105,7 @@ impl LogFormat {
 }
 
 /// Whether the client API requires a bearer token.
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum AuthMode {
@@ -113,6 +119,7 @@ pub enum AuthMode {
     Required,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 impl AuthMode {
     /// The `LUMEN_AUTH` value the serving binary expects.
     pub fn as_env(self) -> &'static str {
@@ -124,6 +131,7 @@ impl AuthMode {
 }
 
 /// Stateless serving-fleet shape: autoscaling bounds + per-pod resources.
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ServingSpec {
@@ -142,6 +150,7 @@ pub struct ServingSpec {
     pub grace_secs: u64,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 impl Default for ServingSpec {
     fn default() -> Self {
         Self {
@@ -154,6 +163,7 @@ impl Default for ServingSpec {
 }
 
 /// HPA bounds for the serving fleet.
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Autoscaling {
@@ -165,6 +175,7 @@ pub struct Autoscaling {
     pub target_cpu_utilization: i32,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 impl Default for Autoscaling {
     fn default() -> Self {
         Self {
@@ -176,6 +187,7 @@ impl Default for Autoscaling {
 }
 
 /// NATS write-log broker: either managed (StatefulSet) or external (BYO).
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct NatsSpec {
@@ -203,6 +215,7 @@ pub struct NatsSpec {
     pub memory: String,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 impl NatsSpec {
     /// True when the broker is operator-managed (no `externalUrl`).
     pub fn is_managed(&self) -> bool {
@@ -210,6 +223,7 @@ impl NatsSpec {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 impl Default for NatsSpec {
     fn default() -> Self {
         Self {
@@ -224,6 +238,7 @@ impl Default for NatsSpec {
 }
 
 /// Status subresource, written back by the reconcile loop.
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 #[derive(Clone, Debug, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LumenStatus {
@@ -274,3 +289,4 @@ fn default_nats_cpu() -> String {
 fn default_nats_memory() -> String {
     "1Gi".into()
 }
+// CODEGEN-END

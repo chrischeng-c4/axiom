@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! The write-log entry vocabulary: the committed-mutation enum that flows
 //! through the active write path (NATS/embedded WAL → `WriteCoordinator` →
 //! `Engine::apply_raft_entry`) and the apply-step response marker.
@@ -16,6 +18,7 @@ use crate::types::{CreateCollectionRequest, FieldSpec, IndexRequest};
 ///
 /// Every variant maps 1:1 to the matching `Engine::*` method; see
 /// [`crate::storage::Engine::apply_raft_entry`].
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RaftLogEntry {
     CreateCollection {
@@ -50,5 +53,7 @@ pub enum RaftLogEntry {
 /// Response type returned by the state-machine apply step. The engine's RwLock
 /// makes a write visible to subsequent reads, so nothing needs to come back —
 /// this is a unit-shaped marker (the `R` of the consensus type config).
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RaftLogResponse;
+// CODEGEN-END

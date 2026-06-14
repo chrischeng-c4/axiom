@@ -719,6 +719,16 @@ fn section_fill_guidance(section: &str) -> &'static str {
                 "Declare package manifest entries (Cargo.toml dependencies, etc.) in YAML.\n\
                  Shape: `dependencies: [{ name, spec: workspace|version|path, features?: [..] }]`.\n\
                  Begin with `<!-- type: manifest lang: yaml -->`.",
+            SectionType::ToolContract =>
+                "Declare AW-managed native tool manifests for vat, rig, meter, guard, or arena.\n\
+                 Shape: `tool_contracts: [{ id, tool, manifest, command?, native? | toml? }]`.\n\
+                 Begin with `<!-- type: tool-contract lang: yaml -->`.",
+            SectionType::RustSourceUnit =>
+                "Write a full Rust source unit in a rust fence for lossless CST-backed regeneration.\n\
+                 Begin with `<!-- type: rust-source-unit lang: rust -->`.",
+            SectionType::TextSourceUnit =>
+                "Write a full shell/text source unit in a bash fence for TD-owned verbatim regeneration.\n\
+                 Begin with `<!-- type: text-source-unit lang: bash -->`.",
         };
     }
 

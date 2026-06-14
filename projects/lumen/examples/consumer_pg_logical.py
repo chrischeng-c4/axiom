@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-examples.md#schema
+# CODEGEN-BEGIN
 """Illustrative DIY ingestion recipe: Postgres logical replication -> lumen.
 
 lumen bundles no connector. Getting data in is the caller's own pub/sub into
@@ -116,3 +118,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+# CODEGEN-END

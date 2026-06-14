@@ -2,7 +2,7 @@
 // CODEGEN-BEGIN
 //! Task runner: parallel script orchestration with dependency graph and caching.
 //!
-//! Reads `jet.config.toml` pipeline definitions, builds a task DAG,
+//! Reads `jet.toml` pipeline definitions, builds a task DAG,
 //! and executes tasks in topological order with content-hash caching.
 
 use anyhow::{Context, Result};
@@ -53,9 +53,9 @@ pub struct TaskRunner {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-task-runner.md#schema
 impl TaskRunner {
     /// Create a task runner from the project root.
-    /// Loads jet.config.toml and builds the task graph.
+    /// Loads jet.toml and builds the task graph.
     pub fn new(project_root: &Path) -> Result<Self> {
-        let config = JetConfig::load(project_root).context("Failed to load jet.config.toml")?;
+        let config = JetConfig::load(project_root).context("Failed to load jet.toml")?;
         let graph = TaskGraph::from_config(&config.pipeline)?;
         let cache = TaskCache::new(project_root)?;
 

@@ -1,7 +1,7 @@
 // SPEC-MANAGED: .aw/tech-design/projects/jet/semantic/jet-pkg-manager.md#schema
 // CODEGEN-BEGIN
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -291,8 +291,25 @@ impl PackageManager {
     /// Install with frozen lockfile support.
     /// In CI (CI=true, GITHUB_ACTIONS, etc.) frozen lockfile is auto-enabled.
     pub async fn install_with_options(&self, frozen_lockfile: bool) -> Result<()> {
+        self.install_with_ci_policy(frozen_lockfile, true).await
+    }
+
+    /// Install after an explicit package graph mutation.
+    ///
+    /// `jet add` and `jet remove` are mutating commands: they must be able to
+    /// resolve, hydrate, and rewrite `jet-lock.yaml` even when CI variables are
+    /// present. Plain `jet install` keeps the CI auto-frozen guard.
+    pub async fn install_after_mutation(&self) -> Result<()> {
+        self.install_with_ci_policy(false, false).await
+    }
+
+    /// Install with optional CI auto-frozen policy.
+    pub(crate) async fn install_with_ci_policy(
+        &self,
+        frozen_lockfile: bool,
+        auto_ci_frozen: bool,
+    ) -> Result<()> {
         tracing::info!("Installing dependencies...");
-        let frozen = frozen_lockfile || Self::is_ci_env();
 
         // Detect workspace mode first. Jet workspaces use a separate install
         // path that handles workspace: protocol deps via relative symlinks and
@@ -300,9 +317,11 @@ impl PackageManager {
         if let workspace::WorkspaceMode::Jet(mut ws_mgr) =
             workspace::WorkspaceMode::detect(&self.root_dir)?
         {
+            let frozen = frozen_lockfile || (auto_ci_frozen && Self::is_ci_env());
             return self.workspace_install_all(&mut ws_mgr, frozen).await;
         }
 
+        let frozen = frozen_lockfile || (auto_ci_frozen && Self::is_ci_env());
         let package_json = self.read_package_json()?;
         let mut all_deps = package_json.dependencies.clone();
         all_deps.extend(package_json.dev_dependencies.clone());
@@ -334,8 +353,36 @@ impl PackageManager {
                 }
             }
 
+            // Frozen warm path: when the store, root node_modules links,
+            // and the GH #3211 marker all still match the verified
+            // lockfile, relinking every package is pure waste — npm/pnpm
+            // warm installs no-op here and the basic.install.replacement
+            // performance gate measures exactly this run. Same hydration
+            // contract as the non-frozen ultra-fast path (GH #1930,
+            // GH #1941): a stale marker must never hide a wiped store or
+            // a broken root symlink.
+            let nm_marker = node_modules.join(".jet-marker");
+            if lockfile.verify_hydrated(&self.store, &node_modules).is_ok()
+                && lockfile.is_valid(&self.store)
+                && nm_marker.exists()
+            {
+                if let Ok(stored) = std::fs::read_to_string(&nm_marker) {
+                    if stored.trim() == current_hash
+                        && lockfile_root_links_valid(&node_modules, &lockfile)
+                    {
+                        tracing::info!("Already up to date");
+                        println!("Already up to date");
+                        return Ok(());
+                    }
+                }
+            }
+
             let resolved = lockfile.to_resolved();
             self.install_resolved(&resolved).await?;
+            // GH #3211 — marker write so the next frozen run can take the
+            // warm path above; warn-only on failure, install already
+            // succeeded.
+            write_jet_marker(&node_modules, &nm_marker, &current_hash);
             tracing::info!("Dependencies installed (frozen lockfile)");
             return Ok(());
         }
@@ -423,6 +470,7 @@ impl PackageManager {
         let registry_bg = self.registry.clone();
         let semaphore_bg = self.semaphore.clone();
         let prefetch_handle = tokio::spawn(async move {
+            let mut prefetch_tasks = tokio::task::JoinSet::new();
             while let Some(pkg) = prefetch_rx.recv().await {
                 if store_bg.has_package(&pkg.name, &pkg.version, &pkg.shasum) {
                     tracing::debug!("Prefetch: store hit {}@{}", pkg.name, pkg.version);
@@ -431,7 +479,7 @@ impl PackageManager {
                 let store_inner = store_bg.clone();
                 let reg_inner = registry_bg.clone();
                 let sema_inner = semaphore_bg.clone();
-                tokio::spawn(async move {
+                prefetch_tasks.spawn(async move {
                     let _permit = sema_inner.acquire().await.unwrap();
                     match reg_inner.download_package(&pkg.name, &pkg.version).await {
                         Ok(tarball) => {
@@ -442,7 +490,6 @@ impl PackageManager {
                                 &tarball,
                                 &pkg.shasum,
                             );
-                            tracing::debug!("Prefetch: downloaded {}@{}", pkg.name, pkg.version);
                         }
                         Err(e) => {
                             tracing::warn!(
@@ -455,6 +502,17 @@ impl PackageManager {
                     }
                 });
             }
+
+            while let Some(join_result) = prefetch_tasks.join_next().await {
+                if let Err(join_err) = join_result {
+                    tracing::warn!(
+                        target: "jet::pkg_manager::prefetch",
+                        error = %join_err,
+                        "{}",
+                        format_prefetch_join_warn(&join_err)
+                    );
+                }
+            }
         });
 
         let resolved = self
@@ -462,10 +520,13 @@ impl PackageManager {
             .resolve_with_prefetch(&all_deps, &self.registry, &overrides, Some(prefetch_tx))
             .await?;
 
-        // Wait for the background prefetch dispatcher to drain.
-        // GH #3518 — surface JoinError (panic / cancellation) so the
-        // dev sees the partial-store consequence in the log instead of
-        // misattributing later cold installs to "first-run slowness".
+        // Wait for the background prefetch dispatcher and all child
+        // download/install tasks to drain. If the detached children are still
+        // extracting when foreground install starts, both paths can race on the
+        // same store entry and leave a partial package with a valid marker.
+        // GH #3518 — surface JoinError (panic / cancellation) so the dev sees
+        // the partial-store consequence in the log instead of misattributing
+        // later cold installs to "first-run slowness".
         if let Err(join_err) = prefetch_handle.await {
             tracing::warn!(
                 target: "jet::pkg_manager::prefetch",
@@ -523,14 +584,10 @@ impl PackageManager {
 
     /// Update packages to latest matching versions.
     pub async fn update(&self, package: Option<&str>, latest: bool) -> Result<()> {
-        let mut package_json = self.read_package_json()?;
-
         if let Some(pkg_name) = package {
-            // Update a single package
             let new_version = if latest {
                 self.registry.get_latest_version(pkg_name).await?
             } else {
-                // Get latest matching current range
                 self.registry.get_latest_version(pkg_name).await?
             };
             let range = if latest {
@@ -539,19 +596,14 @@ impl PackageManager {
                 format!("^{}", new_version)
             };
 
-            if package_json.dependencies.contains_key(pkg_name) {
-                package_json
-                    .dependencies
-                    .insert(pkg_name.to_string(), range);
-            } else if package_json.dev_dependencies.contains_key(pkg_name) {
-                package_json
-                    .dev_dependencies
-                    .insert(pkg_name.to_string(), range);
+            let (mut doc, indent, trailing_newline) = self.read_package_json_raw()?;
+            if replace_existing_dep_entry(&mut doc, pkg_name, &range) {
+                self.write_package_json_raw(&doc, &indent, trailing_newline)?;
             }
-            self.write_package_json(&package_json)?;
         }
 
         // Re-install with fresh resolution
+        let package_json = self.read_package_json()?;
         let mut all_deps = package_json.dependencies.clone();
         all_deps.extend(package_json.dev_dependencies.clone());
         let overrides = package_json.overrides.clone();
@@ -651,7 +703,7 @@ impl PackageManager {
         }
         self.write_package_json_raw(&doc, &indent, trailing_newline)?;
 
-        self.install().await?;
+        self.install_after_mutation().await?;
         Ok(())
     }
 
@@ -675,28 +727,17 @@ impl PackageManager {
     /// Remove a package from both dependencies and devDependencies.
     pub async fn remove(&self, package: &str) -> Result<()> {
         tracing::info!("Removing package: {}", package);
-        let lockfile_before = Lockfile::read(&self.root_dir.join("jet-lock.yaml")).ok();
-        let bins_to_remove = lockfile_before
-            .as_ref()
-            .map(|lockfile| lockfile_root_bin_names_for_package(lockfile, package))
-            .unwrap_or_default();
 
         let (mut doc, indent, trailing_newline) = self.read_package_json_raw()?;
-        let mut changed = false;
-        if let Some(obj) = doc.as_object_mut() {
-            for group in ["dependencies", "devDependencies", "optionalDependencies"] {
-                if let Some(entry) = obj.get_mut(group).and_then(|v| v.as_object_mut()) {
-                    if entry.shift_remove(package).is_some() {
-                        changed = true;
-                    }
-                }
-            }
-        }
+        let changed = remove_dep_entry(&mut doc, package);
         if changed {
             self.write_package_json_raw(&doc, &indent, trailing_newline)?;
-            self.install().await?;
-            remove_node_modules_package(&self.root_dir.join("node_modules"), package)?;
-            remove_node_modules_bins(&self.root_dir.join("node_modules/.bin"), &bins_to_remove)?;
+            self.install_after_mutation().await?;
+            let lockfile_path = self.root_dir.join("jet-lock.yaml");
+            if lockfile_path.exists() {
+                let lockfile = Lockfile::read(&lockfile_path)?;
+                prune_node_modules_to_lockfile(&self.root_dir.join("node_modules"), &lockfile)?;
+            }
         }
 
         Ok(())
@@ -706,49 +747,13 @@ impl PackageManager {
     async fn install_resolved(&self, resolved: &HashMap<String, ResolvedPackage>) -> Result<()> {
         let node_modules = self.root_dir.join("node_modules");
         std::fs::create_dir_all(&node_modules)?;
+        let mut resolved = resolved.clone();
 
         // Phase 1: Download + extract + hardlink (parallel)
-        let futures: Vec<_> = resolved
-            .values()
-            .map(|pkg| {
-                let store = self.store.clone();
-                let registry = self.registry.clone();
-                let semaphore = self.semaphore.clone();
-                let node_modules = node_modules.clone();
-                let pkg = pkg.clone();
-
-                async move {
-                    // Fast-path: skip link if already installed
-                    let link_target = if let Some(ref parent) = pkg.nested_in {
-                        let nested_nm = node_modules.join(parent).join("node_modules");
-                        nested_nm
-                    } else {
-                        node_modules.clone()
-                    };
-
-                    // Ensure store has the package
-                    if !store.has_package(&pkg.name, &pkg.version, &pkg.shasum) {
-                        let _permit = semaphore.acquire().await.unwrap();
-                        let tarball = registry.download_package(&pkg.name, &pkg.version).await?;
-                        store.install_package(&pkg.name, &pkg.version, &tarball, &pkg.shasum)?;
-                    }
-
-                    if is_pkg_installed(&link_target, &pkg.name, &pkg.version) {
-                        return Ok::<_, anyhow::Error>(());
-                    }
-
-                    // Link from store into node_modules
-                    if pkg.nested_in.is_some() {
-                        std::fs::create_dir_all(&link_target)?;
-                    }
-                    store.link_package(&pkg.name, &pkg.version, &link_target)?;
-
-                    Ok::<_, anyhow::Error>(())
-                }
-            })
-            .collect();
-
-        futures::future::try_join_all(futures).await?;
+        self.download_and_link_resolved(&resolved, &node_modules)
+            .await?;
+        self.hydrate_current_platform_optional_deps(&mut resolved, &node_modules)
+            .await?;
 
         // Phase 2: Create nested node_modules for transitive dep resolution
         {
@@ -793,7 +798,181 @@ impl PackageManager {
             }
         }
 
+        prune_third_party_node_modules_layout(&node_modules)?;
+
         Ok(())
+    }
+
+    async fn download_and_link_resolved(
+        &self,
+        resolved: &HashMap<String, ResolvedPackage>,
+        node_modules: &Path,
+    ) -> Result<()> {
+        let futures: Vec<_> = resolved
+            .values()
+            .map(|pkg| {
+                let store = self.store.clone();
+                let registry = self.registry.clone();
+                let semaphore = self.semaphore.clone();
+                let node_modules = node_modules.to_path_buf();
+                let pkg = pkg.clone();
+
+                async move {
+                    // Fast-path: skip link if already installed
+                    let link_target = if let Some(ref parent) = pkg.nested_in {
+                        let nested_nm = node_modules.join(parent).join("node_modules");
+                        nested_nm
+                    } else {
+                        node_modules.clone()
+                    };
+
+                    // Ensure store has the package
+                    if !store.has_package(&pkg.name, &pkg.version, &pkg.shasum) {
+                        let _permit = semaphore.acquire().await.unwrap();
+                        let tarball = registry.download_package(&pkg.name, &pkg.version).await?;
+                        store.install_package(&pkg.name, &pkg.version, &tarball, &pkg.shasum)?;
+                    }
+
+                    if is_pkg_installed(&link_target, &pkg.name, &pkg.version) {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+
+                    // Link from store into node_modules
+                    if pkg.nested_in.is_some() {
+                        std::fs::create_dir_all(&link_target)?;
+                    }
+                    store.link_package(&pkg.name, &pkg.version, &link_target)?;
+
+                    Ok::<_, anyhow::Error>(())
+                }
+            })
+            .collect();
+
+        futures::future::try_join_all(futures).await?;
+        Ok(())
+    }
+
+    async fn hydrate_current_platform_optional_deps(
+        &self,
+        resolved: &mut HashMap<String, ResolvedPackage>,
+        node_modules: &Path,
+    ) -> Result<()> {
+        let overrides = HashMap::new();
+        let mut attempted = HashSet::new();
+
+        loop {
+            let mut missing = Vec::new();
+            for pkg in resolved.values() {
+                for (dep_name, dep_range) in self.store_optional_dependencies(pkg)? {
+                    if resolved.contains_key(&dep_name) || !attempted.insert(dep_name.clone()) {
+                        continue;
+                    }
+                    missing.push((dep_name, dep_range));
+                }
+            }
+
+            if missing.is_empty() {
+                break;
+            }
+
+            let missing_deps: HashMap<String, String> = missing.into_iter().collect();
+            let mut extra = HashMap::new();
+            match self
+                .resolver
+                .resolve(&missing_deps, &self.registry, &overrides)
+                .await
+            {
+                Ok(resolved_optional) => {
+                    for (name, pkg) in resolved_optional {
+                        if !resolved.contains_key(&name) {
+                            extra.insert(name, pkg);
+                        }
+                    }
+                }
+                Err(batch_err) => {
+                    tracing::warn!(
+                        target: "jet::pkg_manager::install",
+                        error = %batch_err,
+                        "Optional dependency batch could not be resolved for current-platform hydration; retrying individually"
+                    );
+                    for (dep_name, dep_range) in missing_deps {
+                        let optional_dep = HashMap::from([(dep_name.clone(), dep_range)]);
+                        match self
+                            .resolver
+                            .resolve(&optional_dep, &self.registry, &overrides)
+                            .await
+                        {
+                            Ok(resolved_optional) => {
+                                for (name, pkg) in resolved_optional {
+                                    if !resolved.contains_key(&name) {
+                                        extra.insert(name, pkg);
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                tracing::warn!(
+                                    target: "jet::pkg_manager::install",
+                                    package = %dep_name,
+                                    error = %err,
+                                    "Optional dependency could not be resolved for current-platform hydration; continuing install"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            if extra.is_empty() {
+                continue;
+            }
+
+            self.download_and_link_resolved(&extra, node_modules)
+                .await?;
+            resolved.extend(extra);
+        }
+        Ok(())
+    }
+
+    fn store_optional_dependencies(
+        &self,
+        pkg: &ResolvedPackage,
+    ) -> Result<HashMap<String, String>> {
+        let pkg_json_path = self
+            .store
+            .get_package_path(&pkg.name, &pkg.version)
+            .join("package.json");
+        let content = match std::fs::read_to_string(&pkg_json_path) {
+            Ok(content) => content,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "Failed to read optional dependencies from {}",
+                        pkg_json_path.display()
+                    )
+                });
+            }
+        };
+        let value: serde_json::Value = serde_json::from_str(&content).with_context(|| {
+            format!(
+                "Failed to parse optional dependencies from {}",
+                pkg_json_path.display()
+            )
+        })?;
+        let Some(optional_deps) = value
+            .get("optionalDependencies")
+            .and_then(|deps| deps.as_object())
+        else {
+            return Ok(HashMap::new());
+        };
+        Ok(optional_deps
+            .iter()
+            .filter_map(|(name, range)| {
+                range
+                    .as_str()
+                    .map(|range| (name.clone(), range.to_string()))
+            })
+            .collect())
     }
 
     fn read_package_json(&self) -> Result<PackageJson> {
@@ -802,14 +981,6 @@ impl PackageManager {
             std::fs::read_to_string(&path).with_context(|| format!("Failed to read {:?}", path))?;
         let package: PackageJson = serde_json::from_str(&content)?;
         Ok(package)
-    }
-
-    fn write_package_json(&self, package: &PackageJson) -> Result<()> {
-        let path = self.root_dir.join("package.json");
-        let content = serde_json::to_string_pretty(package)
-            .with_context(|| package_json_serialize_ctx(&path))?;
-        std::fs::write(&path, content).with_context(|| package_json_write_io_ctx(&path))?;
-        Ok(())
     }
 
     /// Raw read variant used by mutating operations (`add`, `remove`,
@@ -953,7 +1124,8 @@ impl PackageManager {
     ) -> Result<()> {
         let order = ws_mgr.topological_order()?;
         let ws_root = &self.root_dir;
-        let workspace_deps_hash = compute_workspace_deps_hash(ws_mgr, &order)?;
+        let deps_hash = workspace_deps_hash(ws_mgr);
+
         if frozen_lockfile {
             let lockfile_path = ws_root.join("jet-lock.yaml");
             if !lockfile_path.exists() {
@@ -963,20 +1135,19 @@ impl PackageManager {
                 );
             }
             let lockfile = Lockfile::read(&lockfile_path)?;
-            if !lockfile
-                .deps_hash
-                .as_deref()
-                .is_some_and(|stored| stored == workspace_deps_hash)
-            {
-                anyhow::bail!(
-                    "Frozen lockfile drift detected: \
-                     workspace package.json deps changed since lockfile was written. \
-                     Run 'jet install' locally and commit jet-lock.yaml."
-                );
+            match lockfile.deps_hash.as_deref() {
+                Some(stored) if stored == deps_hash => {}
+                _ => {
+                    anyhow::bail!(
+                        "Frozen lockfile drift detected: workspace package deps changed since \
+                         lockfile was written. Run 'jet install' locally and commit jet-lock.yaml."
+                    );
+                }
             }
         }
 
         let mut lockfile = Lockfile::new();
+        lockfile.deps_hash = Some(deps_hash);
 
         for pkg_name in &order {
             let pkg = ws_mgr
@@ -1091,7 +1262,6 @@ impl PackageManager {
             }
         }
 
-        lockfile.deps_hash = Some(workspace_deps_hash);
         if !frozen_lockfile {
             let lf_path = ws_root.join("jet-lock.yaml");
             lockfile.write(&lf_path)?;
@@ -1160,6 +1330,8 @@ impl PackageManager {
             }
         }
 
+        prune_third_party_node_modules_layout(&node_modules)?;
+
         Ok(())
     }
 }
@@ -1208,82 +1380,20 @@ fn lockfile_hash_matches_current_deps(
         .is_some_and(|stored| stored == Lockfile::compute_deps_hash(all_deps))
 }
 
-fn compute_workspace_deps_hash(
-    ws_mgr: &workspace::WorkspaceManager,
-    order: &[String],
-) -> Result<String> {
-    let mut all_deps = HashMap::new();
-    for pkg_name in order {
-        let pkg = ws_mgr
-            .get_package(pkg_name)
-            .ok_or_else(|| anyhow::anyhow!("Workspace package '{}' not found", pkg_name))?;
-        for (dep_name, dep_spec) in &pkg.dependencies {
-            all_deps.insert(
-                format!("{pkg_name}:dependencies:{dep_name}"),
-                dep_spec.clone(),
-            );
+fn workspace_deps_hash(ws_mgr: &workspace::WorkspaceManager) -> String {
+    let mut deps = HashMap::new();
+    for pkg in &ws_mgr.packages {
+        for (name, spec) in &pkg.dependencies {
+            deps.insert(format!("{}:dependencies:{}", pkg.name, name), spec.clone());
         }
-        for (dep_name, dep_spec) in &pkg.dev_dependencies {
-            all_deps.insert(
-                format!("{pkg_name}:devDependencies:{dep_name}"),
-                dep_spec.clone(),
+        for (name, spec) in &pkg.dev_dependencies {
+            deps.insert(
+                format!("{}:devDependencies:{}", pkg.name, name),
+                spec.clone(),
             );
         }
     }
-    Ok(Lockfile::compute_deps_hash(&all_deps))
-}
-
-fn lockfile_root_bin_names_for_package(lockfile: &Lockfile, package: &str) -> Vec<String> {
-    lockfile
-        .to_resolved()
-        .values()
-        .filter(|pkg| pkg.name == package && pkg.nested_in.is_none())
-        .flat_map(|pkg| pkg.bin.keys().cloned())
-        .collect()
-}
-
-fn remove_node_modules_package(node_modules: &Path, package: &str) -> Result<()> {
-    let entry = node_modules.join(package);
-    match entry.symlink_metadata() {
-        Ok(meta) if meta.file_type().is_symlink() || meta.is_file() => {
-            std::fs::remove_file(&entry)?;
-        }
-        Ok(meta) if meta.is_dir() => {
-            std::fs::remove_dir_all(&entry)?;
-        }
-        Ok(_) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => return Err(err).with_context(|| format!("Failed to stat {:?}", entry)),
-    }
-
-    if let Some((scope, _)) = package.split_once('/') {
-        let scope_dir = node_modules.join(scope);
-        if std::fs::read_dir(&scope_dir)
-            .map(|mut entries| entries.next().is_none())
-            .unwrap_or(false)
-        {
-            std::fs::remove_dir(&scope_dir).ok();
-        }
-    }
-    Ok(())
-}
-
-fn remove_node_modules_bins(bin_dir: &Path, bins: &[String]) -> Result<()> {
-    for bin in bins {
-        let entry = bin_dir.join(bin);
-        match entry.symlink_metadata() {
-            Ok(meta) if meta.file_type().is_symlink() || meta.is_file() => {
-                std::fs::remove_file(&entry)?;
-            }
-            Ok(meta) if meta.is_dir() => {
-                std::fs::remove_dir_all(&entry)?;
-            }
-            Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err).with_context(|| format!("Failed to stat {:?}", entry)),
-        }
-    }
-    Ok(())
+    Lockfile::compute_deps_hash(&deps)
 }
 
 /// GH #3211 — write the `.jet-marker` file containing the current
@@ -1408,6 +1518,155 @@ fn update_dep_entry(doc: &mut serde_json::Value, package: &str, range: &str, dev
             serde_json::Value::String(range.to_string()),
         );
     }
+}
+
+fn replace_existing_dep_entry(doc: &mut serde_json::Value, package: &str, range: &str) -> bool {
+    let Some(obj) = doc.as_object_mut() else {
+        return false;
+    };
+
+    for group in ["dependencies", "devDependencies", "optionalDependencies"] {
+        if let Some(entry) = obj.get_mut(group).and_then(|v| v.as_object_mut()) {
+            if entry.contains_key(package) {
+                entry.insert(
+                    package.to_string(),
+                    serde_json::Value::String(range.to_string()),
+                );
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn remove_dep_entry(doc: &mut serde_json::Value, package: &str) -> bool {
+    let Some(obj) = doc.as_object_mut() else {
+        return false;
+    };
+
+    let mut changed = false;
+    for group in ["dependencies", "devDependencies", "optionalDependencies"] {
+        if let Some(entry) = obj.get_mut(group).and_then(|v| v.as_object_mut()) {
+            changed |= entry.shift_remove(package).is_some();
+        }
+    }
+    changed
+}
+
+fn lockfile_root_package_names(lockfile: &Lockfile) -> HashSet<String> {
+    lockfile
+        .to_resolved()
+        .into_values()
+        .filter(|pkg| pkg.nested_in.is_none())
+        .map(|pkg| pkg.name)
+        .collect()
+}
+
+fn lockfile_bin_names(lockfile: &Lockfile) -> HashSet<String> {
+    lockfile
+        .packages
+        .values()
+        .flat_map(|entry| entry.bin.keys().cloned())
+        .collect()
+}
+
+fn prune_node_modules_to_lockfile(node_modules: &Path, lockfile: &Lockfile) -> Result<()> {
+    if !node_modules.exists() {
+        return Ok(());
+    }
+
+    let desired = lockfile_root_package_names(lockfile);
+    for (name, path) in list_root_node_modules_packages(node_modules)? {
+        if !desired.contains(&name) {
+            remove_node_modules_entry(&path)
+                .with_context(|| format!("Failed to remove stale node_modules entry {}", name))?;
+        }
+    }
+
+    let desired_bins = lockfile_bin_names(lockfile);
+    let bin_dir = node_modules.join(".bin");
+    if bin_dir.is_dir() {
+        for entry in std::fs::read_dir(&bin_dir)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !desired_bins.contains(&name) {
+                let path = entry.path();
+                std::fs::remove_file(&path).with_context(|| {
+                    format!("Failed to remove stale bin shim {}", path.display())
+                })?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn prune_third_party_node_modules_layout(node_modules: &Path) -> Result<()> {
+    for name in [
+        ".pnpm",
+        ".package-lock.json",
+        ".modules.yaml",
+        ".yarn-state.yml",
+        ".bun-tag",
+    ] {
+        let path = node_modules.join(name);
+        if path.exists() || path.is_symlink() {
+            remove_node_modules_entry(&path)
+                .with_context(|| format!("Failed to remove stale package-manager layout {name}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn list_root_node_modules_packages(node_modules: &Path) -> Result<Vec<(String, PathBuf)>> {
+    let mut packages = Vec::new();
+    for entry in std::fs::read_dir(node_modules)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if matches!(
+            name.as_str(),
+            ".bin" | ".jet" | ".jet-marker" | ".vite-temp"
+        ) {
+            continue;
+        }
+
+        let path = entry.path();
+        if name.starts_with('@') && path.is_dir() {
+            for scoped_entry in std::fs::read_dir(&path)? {
+                let scoped_entry = scoped_entry?;
+                let scoped_name = scoped_entry.file_name().to_string_lossy().to_string();
+                packages.push((format!("{name}/{scoped_name}"), scoped_entry.path()));
+            }
+        } else {
+            packages.push((name, path));
+        }
+    }
+    Ok(packages)
+}
+
+fn remove_node_modules_entry(path: &Path) -> Result<()> {
+    let metadata = path.symlink_metadata()?;
+    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+        std::fs::remove_dir_all(path)?;
+    } else {
+        std::fs::remove_file(path)?;
+    }
+
+    if let Some(scope_dir) = path.parent().filter(|p| {
+        p.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('@'))
+    }) {
+        if scope_dir
+            .read_dir()
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_dir(scope_dir);
+        }
+    }
+
+    Ok(())
 }
 
 /// GH #3522 — build the warn message for a `Lockfile::read` failure
@@ -1555,37 +1814,6 @@ pub(crate) fn prefetch_install_one(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn gh4160_remove_node_modules_package_prunes_direct_and_scoped_entries() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let node_modules = dir.path().join("node_modules");
-        std::fs::create_dir_all(node_modules.join("@scope/pkg")).unwrap();
-        std::fs::write(node_modules.join("@scope/pkg/package.json"), "{}").unwrap();
-        std::fs::create_dir_all(node_modules.join("plain")).unwrap();
-        std::fs::write(node_modules.join("plain/package.json"), "{}").unwrap();
-
-        remove_node_modules_package(&node_modules, "@scope/pkg").unwrap();
-        remove_node_modules_package(&node_modules, "plain").unwrap();
-
-        assert!(!node_modules.join("@scope/pkg").exists());
-        assert!(!node_modules.join("@scope").exists());
-        assert!(!node_modules.join("plain").exists());
-    }
-
-    #[test]
-    fn gh4160_remove_node_modules_bins_prunes_stale_shims() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let bin_dir = dir.path().join("node_modules/.bin");
-        std::fs::create_dir_all(&bin_dir).unwrap();
-        std::fs::write(bin_dir.join("tool"), "#!/bin/sh\n").unwrap();
-        std::fs::write(bin_dir.join("keep"), "#!/bin/sh\n").unwrap();
-
-        remove_node_modules_bins(&bin_dir, &["tool".to_string(), "missing".to_string()]).unwrap();
-
-        assert!(!bin_dir.join("tool").exists());
-        assert!(bin_dir.join("keep").exists());
-    }
 
     // ─── GH #3522: corrupt jet-lock.yaml silent fall-through ─────────────
 
@@ -1874,6 +2102,158 @@ mod tests {
     }
 
     #[test]
+    fn test_replace_existing_dep_entry_preserves_group_and_unknown_fields() {
+        let json = r#"{
+  "private": true,
+  "scripts": {
+    "build": "jet build"
+  },
+  "dependencies": {
+    "react": "^18.0.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}"#;
+        let mut doc: serde_json::Value = serde_json::from_str(json).unwrap();
+
+        assert!(replace_existing_dep_entry(&mut doc, "vite", "^5.4.19"));
+        assert!(!replace_existing_dep_entry(&mut doc, "missing", "^1.0.0"));
+
+        let obj = doc.as_object().unwrap();
+        assert_eq!(obj.get("private").and_then(|v| v.as_bool()), Some(true));
+        assert!(obj.get("scripts").is_some());
+        assert_eq!(
+            obj.get("dependencies")
+                .and_then(|v| v.as_object())
+                .and_then(|deps| deps.get("react"))
+                .and_then(|v| v.as_str()),
+            Some("^18.0.0"),
+        );
+        assert_eq!(
+            obj.get("devDependencies")
+                .and_then(|v| v.as_object())
+                .and_then(|deps| deps.get("vite"))
+                .and_then(|v| v.as_str()),
+            Some("^5.4.19"),
+        );
+    }
+
+    #[test]
+    fn test_remove_dep_entry_clears_all_dependency_groups() {
+        let json = r#"{
+  "dependencies": {
+    "is-number": "7.0.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  },
+  "optionalDependencies": {
+    "is-number": "7.0.0"
+  }
+}"#;
+        let mut doc: serde_json::Value = serde_json::from_str(json).unwrap();
+
+        assert!(remove_dep_entry(&mut doc, "is-number"));
+        assert!(!remove_dep_entry(&mut doc, "is-number"));
+
+        let obj = doc.as_object().unwrap();
+        for group in ["dependencies", "optionalDependencies"] {
+            assert!(
+                !obj.get(group)
+                    .and_then(|v| v.as_object())
+                    .unwrap()
+                    .contains_key("is-number"),
+                "{group} still contains removed package"
+            );
+        }
+        assert!(
+            obj.get("devDependencies")
+                .and_then(|v| v.as_object())
+                .unwrap()
+                .contains_key("vite"),
+            "unrelated devDependency should remain"
+        );
+    }
+
+    #[test]
+    fn test_prune_node_modules_to_lockfile_removes_stale_packages_and_bins() {
+        let dir = tempfile::tempdir().unwrap();
+        let node_modules = dir.path().join("node_modules");
+        std::fs::create_dir_all(node_modules.join(".bin")).unwrap();
+        std::fs::create_dir_all(node_modules.join("react")).unwrap();
+        std::fs::create_dir_all(node_modules.join("is-number")).unwrap();
+        std::fs::create_dir_all(node_modules.join("@mui").join("material")).unwrap();
+        std::fs::create_dir_all(node_modules.join("@types").join("stale")).unwrap();
+        std::fs::write(node_modules.join(".bin").join("vite"), "#!/bin/sh\n").unwrap();
+        std::fs::write(node_modules.join(".bin").join("stale-cli"), "#!/bin/sh\n").unwrap();
+
+        let mut lockfile = Lockfile::new();
+        lockfile.packages.insert(
+            "/react@18.2.0".to_string(),
+            LockfileEntry {
+                version: "18.2.0".to_string(),
+                resolution: Resolution {
+                    tarball: "https://example.com/react.tgz".to_string(),
+                    shasum: "react-sha".to_string(),
+                    integrity: None,
+                },
+                workspace: false,
+                local_path: None,
+                dependencies: HashMap::new(),
+                peer_dependencies: HashMap::new(),
+                bin: HashMap::from([("vite".to_string(), "bin/vite.js".to_string())]),
+                has_install_script: false,
+                nested_in: None,
+            },
+        );
+        lockfile.packages.insert(
+            "/@mui/material@5.15.0".to_string(),
+            LockfileEntry {
+                version: "5.15.0".to_string(),
+                resolution: Resolution {
+                    tarball: "https://example.com/mui.tgz".to_string(),
+                    shasum: "mui-sha".to_string(),
+                    integrity: None,
+                },
+                workspace: false,
+                local_path: None,
+                dependencies: HashMap::new(),
+                peer_dependencies: HashMap::new(),
+                bin: HashMap::new(),
+                has_install_script: false,
+                nested_in: None,
+            },
+        );
+
+        prune_node_modules_to_lockfile(&node_modules, &lockfile).unwrap();
+
+        assert!(node_modules.join("react").exists());
+        assert!(node_modules.join("@mui").join("material").exists());
+        assert!(!node_modules.join("is-number").exists());
+        assert!(!node_modules.join("@types").exists());
+        assert!(node_modules.join(".bin").join("vite").exists());
+        assert!(!node_modules.join(".bin").join("stale-cli").exists());
+    }
+
+    #[test]
+    fn test_prune_third_party_node_modules_layout_removes_manager_residue() {
+        let dir = tempfile::tempdir().unwrap();
+        let node_modules = dir.path().join("node_modules");
+        std::fs::create_dir_all(node_modules.join(".pnpm")).unwrap();
+        std::fs::write(node_modules.join(".package-lock.json"), "{}\n").unwrap();
+        std::fs::write(node_modules.join(".modules.yaml"), "layoutVersion: 5\n").unwrap();
+        std::fs::write(node_modules.join("react"), "not touched\n").unwrap();
+
+        prune_third_party_node_modules_layout(&node_modules).unwrap();
+
+        assert!(!node_modules.join(".pnpm").exists());
+        assert!(!node_modules.join(".package-lock.json").exists());
+        assert!(!node_modules.join(".modules.yaml").exists());
+        assert!(node_modules.join("react").exists());
+    }
+
+    #[test]
     fn test_lockfile_hash_matches_current_deps() {
         let mut deps = HashMap::from([("react".to_string(), "^18.2.0".to_string())]);
         let mut lockfile = Lockfile::new();
@@ -1883,6 +2263,33 @@ mod tests {
 
         deps.insert("@playwright/test".to_string(), "^1.59.1".to_string());
         assert!(!lockfile_hash_matches_current_deps(&lockfile, &deps));
+    }
+
+    #[test]
+    fn test_workspace_deps_hash_tracks_workspace_member_dep_specs() {
+        let mut ws_mgr = workspace::WorkspaceManager {
+            root: PathBuf::from("/repo"),
+            config: workspace::WorkspaceConfig::default(),
+            packages: vec![workspace::WorkspacePackage {
+                name: "app".to_string(),
+                version: "0.0.0".to_string(),
+                path: PathBuf::from("packages/app"),
+                dependencies: HashMap::from([
+                    ("shared".to_string(), "workspace:*".to_string()),
+                    ("react".to_string(), "^18.2.0".to_string()),
+                ]),
+                dev_dependencies: HashMap::from([("vite".to_string(), "^6.0.0".to_string())]),
+                deps_on_workspace: Vec::new(),
+            }],
+        };
+
+        let before = workspace_deps_hash(&ws_mgr);
+        ws_mgr.packages[0]
+            .dependencies
+            .insert("react".to_string(), "^19.0.0".to_string());
+        let after = workspace_deps_hash(&ws_mgr);
+
+        assert_ne!(before, after);
     }
 
     fn lockfile_with_scoped_prop_types() -> Lockfile {

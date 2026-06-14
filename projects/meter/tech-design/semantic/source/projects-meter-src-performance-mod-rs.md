@@ -24,10 +24,8 @@ Public API manifest for `projects/meter/src/performance/mod.rs` generated from A
 | `boundary` | projects/meter/src/performance/mod.rs | module | pub | 47 |  |
 | `profiler` | projects/meter/src/performance/mod.rs | module | pub | 48 |  |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/performance/mod.rs -->
 ````rust
 //! Performance testing and profiling infrastructure
 //!
@@ -92,7 +90,7 @@ pub use profiler::{
 changes:
   - path: projects/meter/src/performance/mod.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/performance/mod.rs` captured during meter full-codegen standardization.

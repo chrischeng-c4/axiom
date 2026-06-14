@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Coverage-driven test pass — drives the HTTP surface through every
 //! status code the engine can produce, plus a few cross-feature scenarios
 //! the per-feature tests don't hit. Pure additive; no production
@@ -476,3 +478,4 @@ async fn drop_field_requires_admin() {
         .await;
     resp.assert_status(StatusCode::FORBIDDEN);
 }
+// CODEGEN-END

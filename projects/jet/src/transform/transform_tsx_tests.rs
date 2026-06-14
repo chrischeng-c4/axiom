@@ -713,4 +713,131 @@ export function helper(x: number): number { return x * 2; }"#;
         result.code
     );
 }
+
+#[test]
+fn strips_exported_function_overload_signature() {
+    let source = r#"export function withTheme<C>(Component: C): C;
+export function withTheme(Component) { return Component; }"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        !result.code.contains("withTheme<C>") && !result.code.contains("Component: C"),
+        "must strip overload-only type syntax: {}",
+        result.code
+    );
+    assert_eq!(
+        result.code.matches("export function withTheme").count(),
+        1,
+        "must preserve only the implementation export: {}",
+        result.code
+    );
+}
+
+#[test]
+fn strips_exported_type_namespace() {
+    let source = r#"import { Interpolation } from '@emotion/serialize'
+import { Theme } from './theming'
+export namespace ReactJSX {
+  export type ElementType = string
+  export interface Element {}
+}
+export const value = 1"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        !result.code.contains("namespace")
+            && !result.code.contains("Interpolation")
+            && !result.code.contains("Theme"),
+        "must strip type-only namespace and imports: {}",
+        result.code
+    );
+    assert!(
+        result.code.contains("export const value = 1"),
+        "must preserve value export: {}",
+        result.code
+    );
+}
+
+#[test]
+fn drops_named_imports_that_are_type_only_after_strip() {
+    let source = r#"import createCache, { EmotionCache } from '@emotion/cache'
+import { Theme, ThemeContext } from './theming'
+const cache = createCache()
+export const value = ThemeContext"#;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result
+            .code
+            .contains("import createCache from '@emotion/cache';"),
+        "must preserve default value import: {}",
+        result.code
+    );
+    assert!(
+        result
+            .code
+            .contains("import { ThemeContext } from './theming';"),
+        "must preserve used named value import: {}",
+        result.code
+    );
+    assert!(
+        !result.code.contains("EmotionCache") && !result.code.contains("Theme,"),
+        "must remove unused type-only named imports: {}",
+        result.code
+    );
+}
+
+#[test]
+fn preserves_styled_components_value_imports_used_as_template_tags() {
+    let source = r##"import React, { useState } from "react";
+import { createRoot } from "react-dom/client";
+import styled, { createGlobalStyle, css } from "styled-components";
+
+const GlobalStyle = createGlobalStyle`
+  body { margin: 0; }
+`;
+const Matrix = styled.main`
+  min-height: 100vh;
+`;
+const Button = styled.button`
+  ${(props) => css`
+    background: ${props.$accent || "#2563eb"};
+  `}
+`;
+
+function App() {
+  const [active] = useState(0);
+  return <Matrix><GlobalStyle /><Button $accent="#2563eb">{active}</Button></Matrix>;
+}
+
+createRoot(document.getElementById("root")!).render(<App />);"##;
+    let options = TransformOptions::default();
+    let result = transform_tsx(source, &options).unwrap();
+
+    assert!(
+        result.code.contains("import { useState } from \"react\"")
+            || result
+                .code
+                .contains("import React, { useState } from \"react\""),
+        "must preserve React value import: {}",
+        result.code
+    );
+    assert!(
+        result
+            .code
+            .contains("import { createRoot } from \"react-dom/client\""),
+        "must preserve createRoot value import: {}",
+        result.code
+    );
+    assert!(
+        result
+            .code
+            .contains("import styled, { createGlobalStyle, css } from \"styled-components\""),
+        "must preserve styled-components default and named value imports: {}",
+        result.code
+    );
+}
 // CODEGEN-END

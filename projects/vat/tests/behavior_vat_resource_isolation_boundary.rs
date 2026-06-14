@@ -11,6 +11,9 @@
 #[test]
 #[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
 fn vat_resource_isolation_boundary() {
-    panic!("AW EC placeholder for vat-resource-isolation-boundary");
+    panic!(
+        "AW EC placeholder for {}",
+        "vat-resource-isolation-boundary"
+    );
 }
 // CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-benches.md#schema
+// CODEGEN-BEGIN
 //! Duplicate-detection bench.
 //!
 //! Builds a 100k-doc keyword field with ~10% duplicate rate
@@ -21,6 +23,7 @@ const HOT_KEYS: usize = 5_000;
 
 struct Lcg(u64);
 
+/// @spec projects/lumen/tech-design/semantic/lumen-benches.md#schema
 impl Lcg {
     fn new(seed: u64) -> Self {
         Self(seed)
@@ -110,3 +113,4 @@ fn bench_duplicates(c: &mut Criterion) {
 
 criterion_group!(benches, bench_duplicates);
 criterion_main!(benches);
+// CODEGEN-END

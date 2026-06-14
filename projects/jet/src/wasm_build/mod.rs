@@ -2,14 +2,14 @@
 // CODEGEN-BEGIN
 //! `jet build --wasm` — frontend source graph → Rust/WASM build pipeline.
 //!
-//! Takes an app directory containing a `jet.config.toml` `[wasm]`
+//! Takes an app directory containing a `jet.toml` `[wasm]`
 //! section, a TS/TSX entry file, an HTML shell, and CSS side-effect
 //! imports, then produces a ready-to-open `dist/index.html` with
 //! `dist/app_bg.wasm` + `dist/boot.js`.
 //!
 //! Pipeline:
 //!
-//! 1. Read `jet.config.toml` → entry file + root component name + root props.
+//! 1. Read `jet.toml` → entry file + root component name + root props.
 //! 2. Read the shared frontend source set (`TS/TSX`, `HTML`, `CSS`) through
 //!    `frontend::FrontendSources`.
 //! 3. Run `jet::tsx_to_rust::transpile` on the typed entry source → Rust source.
@@ -91,8 +91,7 @@ pub fn build_with_profile(
             target
         );
     }
-    let cfg =
-        config::WasmConfig::load(root_dir).context("failed to read [wasm] from jet.config.toml")?;
+    let cfg = config::WasmConfig::load(root_dir).context("failed to read [wasm] from jet.toml")?;
 
     let frontend = crate::frontend::FrontendSources::load(root_dir, PathBuf::from(&cfg.entry))
         .context("failed to read frontend sources")?;
@@ -344,7 +343,7 @@ fn write_target_manifest(
     cargo_features: Vec<String>,
     tsx_lowering: &'static str,
 ) -> Result<()> {
-    let jet_config_path = root_dir.join("jet.config.toml");
+    let jet_config_path = root_dir.join("jet.toml");
     let m = manifest::Manifest::build(manifest::ManifestInputs {
         target,
         profile_mode: match profile {
@@ -872,7 +871,7 @@ mod tests {
     use super::*;
 
     fn wasm_config(src: &str) -> config::WasmConfig {
-        config::WasmConfig::parse_str(src, Path::new("/tmp/jet.config.toml")).unwrap()
+        config::WasmConfig::parse_str(src, Path::new("/tmp/jet.toml")).unwrap()
     }
 
     #[test]

@@ -1,9 +1,9 @@
 ---
 project:
-  name: cclab
+  name: axiom
   owner: chrischeng-c4
-  url: https://github.com/chrischeng-c4/cclab
-  ssh: git@github.com:chrischeng-c4/cclab.git
+  url: https://github.com/chrischeng-c4/axiom
+  ssh: git@github.com:chrischeng-c4/axiom.git
   default_branch: main
 ---
 
@@ -14,7 +14,7 @@ project:
 ```
 Layer 1: Runtime    — mamba, jet, kv, core, cli
 Layer 2: Libraries  — pg, fetch, log, schema, array, frame, sci, learn, plot, media, text, grid
-Layer 3: Framework  — api, queue, agent, qc, server
+Layer 3: Framework  — api, queue, agent, guard, meter, server
 Layer 4: Agkit      — agkit (domain models + UI + prompts), @cclab/ui, spec-viewer, pipeline
 Projects            — agentic-workflow, cue
 ```
@@ -54,7 +54,7 @@ explicitly asks for Claude-specific behavior.
 | `aw cb` | Code-artifact lifecycle: `gen`, `check`, `claim`, `fill`, `review`, `revise`, `arbitrate`. |
 | `aw standardize` | Existing-project takeover workflow and remediation guidance. Run `aw standardize <project>` first and follow its `next.command`; targeted layer commands are `audit`, `managed`, `semantic`, and `traceability`. Capability remediation routes through `aw capability`; readiness and regenerability metrics live in `aw health`. |
 | `aw capability` | Product capability completion loop. Verbs are `report`, `next`, `run`, and `check`; use `check --verify` when capability proof should include configured test gates. README is the default `cap_path` and uses Markdown H1-Hn capability headings plus contract/work-root tables. YAML `## Capability:` sections and legacy capability tables are migration input only. |
-| `aw health` | Aggregate project readiness metrics: capability readiness, managed/semantic/traceability coverage, command traceability, regenerable maturity, cb verify, cold verify, configured test gates, and HITL status. Run `aw health <project>` for production readiness; add targeted `--verify-*` flags only when intentionally debugging a subset. |
+| `aw health` | Aggregate project readiness metrics: capability readiness, managed/semantic/traceability coverage, command traceability, regenerable maturity, cb verify, cold verify, configured test gates, and HITL status. Run `aw health --project <project>` for production readiness; add focused sections such as `regenerable`, `gates`, or `blockers` only when detail is needed. Add `-v/--verbose` only when progress events are useful. Add targeted `--verify-*` flags only when intentionally debugging a subset. |
 
 ### Support CLI
 

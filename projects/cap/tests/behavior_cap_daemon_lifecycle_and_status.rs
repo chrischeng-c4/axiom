@@ -11,6 +11,9 @@
 #[test]
 #[ignore = "AW EC placeholder: implement this external contract test or keep the manifest command authoritative"]
 fn cap_daemon_lifecycle_and_status() {
-    panic!("AW EC placeholder for cap-daemon-lifecycle-and-status");
+    panic!(
+        "AW EC placeholder for {}",
+        "cap-daemon-lifecycle-and-status"
+    );
 }
 // CODEGEN-END

@@ -141,7 +141,7 @@ pub struct JetTestApp {
 /// @spec .aw/tech-design/projects/jet/semantic/jet-tests-common.md#tests
 impl JetTestApp {
     /// `example_name` is a dir under the workspace's `examples/`.
-    /// Must contain a `jet.config.toml` with a `[wasm]` section +
+    /// Must contain a `jet.toml` with a `[wasm]` section +
     /// the matching entry file (`.tsx` today; `.vue` / `.ng.ts` in
     /// future adapter branches).
     pub async fn launch(example_name: &str) -> Result<Self> {

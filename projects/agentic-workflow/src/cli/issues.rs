@@ -1136,6 +1136,15 @@ fn check_broken_references(issues: &[Issue], project_root: &std::path::Path) {
 // fail loud, since the config may legitimately lack managed projects
 // (fresh repo, pre-Phase-C tree, etc.).
 fn read_known_project_labels(project_root: &Path) -> Vec<String> {
+    if let Ok(rows) = crate::services::project_registry::load_project_config_rows(project_root) {
+        let labels = rows
+            .into_iter()
+            .map(|row| row.label_or_default())
+            .collect::<Vec<_>>();
+        if !labels.is_empty() {
+            return labels;
+        }
+    }
     let path = project_root.join(".aw/config.toml");
     let Ok(body) = std::fs::read_to_string(&path) else {
         return Vec::new();
@@ -1187,6 +1196,21 @@ fn read_name_label_pairs(project_root: &Path, table: &str) -> Vec<(String, Strin
 // triples. Each entry's optional `aliases` array is a list of shorthand
 // names that resolve to the same `label` as the canonical `name`.
 fn read_name_aliases_label(project_root: &Path, table: &str) -> Vec<(String, Vec<String>, String)> {
+    if table == "projects" {
+        if let Ok(rows) = crate::services::project_registry::load_project_config_rows(project_root)
+        {
+            let entries = rows
+                .into_iter()
+                .map(|row| {
+                    let label = row.label_or_default();
+                    (row.name, row.aliases, label)
+                })
+                .collect::<Vec<_>>();
+            if !entries.is_empty() {
+                return entries;
+            }
+        }
+    }
     let path = project_root.join(".aw/config.toml");
     let Ok(body) = std::fs::read_to_string(&path) else {
         return Vec::new();

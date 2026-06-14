@@ -201,7 +201,8 @@ fn has_placeholder(lines: &[&str], start: usize, window: usize) -> bool {
 
 /// Locate an opening fenced code block within `lines[start..start+window]`.
 /// Returns `(line_idx_of_opening_fence, lang_label)` on the first hit.
-/// The opening fence is the first line whose trim starts with ```` ``` ````.
+/// The opening fence is the first line whose trim starts with at least three
+/// backticks or tildes.
 fn find_fence_in_window(lines: &[&str], start: usize, window: usize) -> Option<(usize, String)> {
     let end = (start + window).min(lines.len());
     if start >= end {
@@ -209,9 +210,17 @@ fn find_fence_in_window(lines: &[&str], start: usize, window: usize) -> Option<(
     }
     for (offset, line) in lines.iter().enumerate().take(end).skip(start) {
         let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("```") {
+        let Some(marker) = trimmed.chars().next() else {
+            continue;
+        };
+        if marker != '`' && marker != '~' {
+            continue;
+        }
+        let marker_len = trimmed.chars().take_while(|c| *c == marker).count();
+        if marker_len >= 3 {
             // Strip any trailing fence-attribute info; lang label is the
-            // first whitespace-separated token after the backticks.
+            // first whitespace-separated token after the fence marker.
+            let rest = trimmed.get(marker_len..).unwrap_or("");
             let lang = rest.split_whitespace().next().unwrap_or("").to_string();
             return Some((offset, lang));
         }
@@ -563,6 +572,25 @@ mod tests {
         assert!(
             report.is_empty(),
             "expected no findings for schema+yaml fence, got: {:?}",
+            report.findings,
+        );
+    }
+
+    #[test]
+    fn structural_pass_rust_source_unit_with_long_fence() {
+        let spec = "## Source\n\
+                    <!-- type: rust-source-unit lang: rust -->\n\
+                    \n\
+                    ````rust\n\
+                    /// ```ignore\n\
+                    /// nested doc fence\n\
+                    /// ```\n\
+                    pub fn demo() {}\n\
+                    ````\n";
+        let report = run(spec);
+        assert!(
+            report.is_empty(),
+            "expected no findings for long rust fence, got: {:?}",
             report.findings,
         );
     }

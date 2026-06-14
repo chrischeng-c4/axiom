@@ -209,9 +209,7 @@ fn run_apply_inner(
     quiet: bool,
 ) -> crate::generate::Result<ApplyReport> {
     use crate::generate::frontmatter::extract_mermaid_plus_blocks;
-    use crate::generate::marker::{
-        insert_codegen_block, parse_codegen_blocks, replace_codegen_block,
-    };
+    use crate::generate::marker::{parse_codegen_blocks, replace_codegen_block};
     let _diagnostic_guard = ApplyDiagnosticsQuietGuard::enter(quiet);
     macro_rules! apply_diagnostic {
         ($($arg:tt)*) => {
@@ -284,8 +282,15 @@ fn run_apply_inner(
     // route a section's CODEGEN block to exactly one file rather than
     // duplicating the same block into all N. See `should_emit_section_to_entry`.
     let all_entries: Vec<ChangeEntry> = change_entries.clone();
-    let source_from_target_replays_whole_file =
-        source_from_target_directive(&spec_content).is_some();
+    // Whole-file regeneration covers both legacy source-from-target replay and
+    // the rust-source-unit (td_ast) path: in either case the `## Source` section
+    // owns the entire file, so apply must REPLACE the whole file rather than
+    // append a managed block beside pre-existing (unmanaged) content. Without
+    // this, a virgin file with no markers would be duplicated.
+    let source_from_target_replays_whole_file = source_from_target_directive(&spec_content)
+        .is_some()
+        || source_is_rust_source_unit(&spec_content)
+        || source_is_text_source_unit(&spec_content);
     let whole_file_source_targets: std::collections::BTreeSet<String> = all_entries
         .iter()
         .filter(|entry| {
@@ -596,18 +601,22 @@ fn run_apply_inner(
                 Some("manifest") => {
                     crate::generate::gen::rust::manifest::generate_manifest(&spec_content).code
                 }
-                Some("unit-test" | "tests") => {
+                Some("unit-test" | "tests")
+                    if target_lang == crate::generate::marker::Lang::Rust =>
+                {
                     crate::generate::gen::rust::tests_gen::generate_tests(&spec_content).code
                 }
-                Some("e2e-test") => {
+                Some("e2e-test") if target_lang == crate::generate::marker::Lang::Rust => {
                     crate::generate::gen::rust::tests_gen::generate_e2e_tests(&spec_content).code
                 }
-                Some("source") => generate_source_section_code(
-                    &spec_content,
-                    &spec_path_str,
-                    Some(&entry.path),
-                    root,
-                ),
+                Some("source" | "rust-source-unit" | "text-source-unit") => {
+                    generate_source_section_code(
+                        &spec_content,
+                        &spec_path_str,
+                        Some(&entry.path),
+                        root,
+                    )
+                }
                 Some("runtime-image" | "deployment") => {
                     let section = entry.section_id.as_deref().unwrap_or("changes");
                     try_generate_operations_artifact(&spec_content, &entry, td_ast.as_ref())
@@ -652,6 +661,12 @@ fn run_apply_inner(
             } else {
                 generated_codegen_body(&generated_code, &spec_ref)
             };
+            let prepared_codegen = prepare_codegen_body_for_target(
+                &target_path,
+                entry.section_id.as_deref(),
+                &generated_body,
+            );
+            let generated_body = prepared_codegen.body.clone();
 
             if let Some(existing_block) = matching_block {
                 if is_whole_file_codegen_section(
@@ -661,8 +676,12 @@ fn run_apply_inner(
                     && entry.action == "modify"
                     && !is_whole_file_codegen_content(&file_content, &blocks)
                 {
-                    let with_block =
-                        insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    let with_block = insert_codegen_block_for_target(
+                        "",
+                        &spec_ref,
+                        &prepared_codegen,
+                        target_lang,
+                    );
                     (with_block, 1)
                 } else {
                     // CODEGEN block exists. First, if the entry has a non-empty
@@ -708,7 +727,7 @@ fn run_apply_inner(
                 && entry.action == "modify"
             {
                 let with_block =
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang);
                 (with_block, 1)
             } else if is_whole_file_codegen_section(
                 entry.section_id.as_deref(),
@@ -722,7 +741,7 @@ fn run_apply_inner(
                 // If `replaces:` is present, keep the symbol-level path below
                 // so large files can be split into multiple source fragments.
                 let with_block =
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang);
                 (with_block, 1)
             } else if entry.section_id.as_deref() == Some("source")
                 && entry.replaces.is_empty()
@@ -734,7 +753,7 @@ fn run_apply_inner(
                 // promote it to a whole-file CODEGEN block even without the
                 // source-from-target directive used for preserve-body replay.
                 let with_block =
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang);
                 (with_block, 1)
             } else if !entry.replaces.is_empty() && entry.action == "modify" {
                 // `action: modify` + explicit `replaces:` — remove the named
@@ -756,11 +775,10 @@ fn run_apply_inner(
                         // lists names that don't exist or the file was
                         // already migrated. Fall back to ordinary append so
                         // gen-code is idempotent.
-                        let with_block = insert_codegen_block(
+                        let with_block = insert_codegen_block_for_target(
                             &file_content,
                             &spec_ref,
-                            &generated_body,
-                            None,
+                            &prepared_codegen,
                             target_lang,
                         );
                         (with_block, 1)
@@ -774,11 +792,10 @@ fn run_apply_inner(
                 {
                     insert_cargo_deps_block(&file_content, &spec_ref, &generated_body)
                 } else {
-                    insert_codegen_block(
+                    insert_codegen_block_for_target(
                         &file_content,
                         &spec_ref,
-                        &generated_body,
-                        None,
+                        &prepared_codegen,
                         target_lang,
                     )
                 };
@@ -791,13 +808,18 @@ fn run_apply_inner(
                 entry.section_id.as_deref().unwrap_or("changes")
             );
             let generated_body = generated_codegen_body(&generated_code, &spec_ref);
+            let prepared_codegen = prepare_codegen_body_for_target(
+                &target_path,
+                entry.section_id.as_deref(),
+                &generated_body,
+            );
             let new_content =
                 if entry.section_id.as_deref() == Some("manifest") && is_cargo_toml(&target_path) {
                     // Seed a minimal Cargo.toml skeleton so the block has a home.
                     let skeleton = "[dependencies]\n";
-                    insert_cargo_deps_block(skeleton, &spec_ref, &generated_body)
+                    insert_cargo_deps_block(skeleton, &spec_ref, &prepared_codegen.body)
                 } else {
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang)
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang)
                 };
             (new_content, 1)
         };
@@ -877,7 +899,11 @@ fn is_whole_file_codegen_section(
     source_from_target_replays_whole_file: bool,
 ) -> bool {
     matches!(section, Some("runtime-image" | "deployment"))
-        || (source_from_target_replays_whole_file && matches!(section, Some("source")))
+        || (source_from_target_replays_whole_file
+            && matches!(
+                section,
+                Some("source" | "rust-source-unit" | "text-source-unit")
+            ))
 }
 
 fn is_whole_file_codegen_content(
@@ -3222,6 +3248,114 @@ pub struct MermaidPlusPayload;
 
         assert_eq!(source.matches("@spec ").count(), 1);
         assert!(!source.contains("#[derive(Debug)]\n/// @spec"));
+    }
+
+    #[test]
+    fn rust_source_unit_section_regenerates_from_td_fence_via_item_tree() {
+        // A `## Source` marked rust-source-unit (td_ast) regenerates the
+        // TD-embedded fence through the structured item-tree, WITHOUT reading
+        // the live target — the TD is the source of truth. Pass a target path
+        // that does not exist to prove no target read occurs.
+        let spec = r#"
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+```rust
+//! kept module doc
+pub struct Widget {
+    pub id: u64, // kept comment
+}
+```
+"#;
+        let source = generate_source_section_code(
+            spec,
+            ".aw/tech-design/projects/lumen/widget.md",
+            Some("projects/lumen/src/does-not-exist.rs"),
+            std::path::Path::new("/nonexistent-root"),
+        );
+
+        // Code round-tripped through the IR byte-for-byte (comments preserved),
+        // proving regeneration goes through rust_source_unit::regenerate.
+        assert!(source.contains("//! kept module doc"));
+        assert!(source.contains("pub id: u64, // kept comment"));
+        assert!(source.contains("pub struct Widget {"));
+        // Rust target → per-item @spec breadcrumb is added.
+        assert!(source.contains("#source"));
+    }
+
+    #[test]
+    fn text_source_unit_section_emits_td_fence_verbatim() {
+        // A `## Source` marked text-source-unit (opaque text, e.g. a shell
+        // script) emits the TD-embedded fence VERBATIM — no parsing, no Rust
+        // annotation, no target read. The TD is the source of truth.
+        let spec = r#"
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+echo "build ${1:-debug}"   # kept exactly
+```
+"#;
+        let source = generate_source_section_code(
+            spec,
+            ".aw/tech-design/projects/lumen/build-sh.md",
+            Some("projects/lumen/build.sh"),
+            std::path::Path::new("/nonexistent-root"),
+        );
+        // Fence content is emitted verbatim, trailing newline included (the
+        // file's final newline is preserved for byte-equivalence).
+        let expected =
+            "#!/usr/bin/env bash\nset -euo pipefail\necho \"build ${1:-debug}\"   # kept exactly\n";
+        assert_eq!(source, expected);
+        // No Rust @spec breadcrumbs injected into shell.
+        assert!(!source.contains("@spec"));
+    }
+
+    #[test]
+    fn text_source_unit_apply_preserves_script_shebang_line_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/build.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: build-script
+fill_sections: [text-source-unit, changes]
+---
+
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+echo "build ${1:-debug}"
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: build.sh
+    action: modify
+    section: text-source-unit
+    impl_mode: codegen
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply_scoped_targets(&spec_path, root, false, &[root.to_path_buf()]).unwrap();
+
+        let generated = std::fs::read_to_string(root.join("build.sh")).unwrap();
+        assert!(generated.starts_with("#!/usr/bin/env bash\n# SPEC-MANAGED:"));
+        assert_eq!(generated.matches("#!/usr/bin/env bash").count(), 1);
+        assert_eq!(generated.matches("# CODEGEN-BEGIN").count(), 1);
+        assert!(generated.contains("echo \"build ${1:-debug}\""));
     }
 
     #[test]
@@ -6610,8 +6744,41 @@ pub(crate) fn generate_code_for_entry(
         return source.trim_end().to_string();
     }
 
+    // rust-source-unit (td_ast): regenerate the whole file through the
+    // structured item-tree from the TD-embedded `## Source` fence. Mirrors the
+    // dispatch in the main apply loop so the standardize/gen-apply entry point
+    // produces correct byte-equivalent output instead of a marker-only TODO
+    // stub. The rust-source-unit path reads the TD fence, not the target, so the
+    // root argument is unused here.
+    if matches!(
+        target_section,
+        Some("source" | "rust-source-unit" | "text-source-unit")
+    ) && (source_is_rust_source_unit(spec_content) || source_is_text_source_unit(spec_content))
+    {
+        return generate_source_section_code(
+            spec_content,
+            spec_path,
+            Some(&entry.path),
+            Path::new("."),
+        );
+    }
+
     if matches!(target_section, Some("runtime-image" | "deployment")) {
         if let Some(code) = try_generate_operations_artifact(spec_content, entry, td_ast) {
+            return code;
+        }
+    }
+
+    if matches!(target_section, Some("wireframe")) {
+        if let Some(code) = try_generate_react_wireframe_file(spec_content, entry, td_ast) {
+            return code;
+        }
+    }
+
+    if matches!(target_section, Some("rest-api" | "logic" | "interaction")) {
+        if let Some(code) =
+            try_generate_python_router_module(spec_content, spec_path, entry, td_ast)
+        {
             return code;
         }
     }
@@ -6669,25 +6836,29 @@ pub(crate) fn generate_code_for_entry(
         }
     }
 
+    let target_is_rust = is_rust_source(Path::new(&entry.path));
+
     // 1. Schema (JSON Schema YAML → Rust structs)
-    if matches!(target_section, None | Some("schema")) {
+    if target_is_rust && matches!(target_section, None | Some("schema")) {
         if let Some(code) = try_generate_schema(spec_content, spec_path, td_ast) {
             code_parts.push(code);
         }
     }
 
     // 2. CLI (CLI YAML → clap Subcommand enum)
-    if matches!(target_section, None | Some("cli")) {
+    if target_is_rust && matches!(target_section, None | Some("cli")) {
         if let Some(code) = try_generate_cli(spec_content, td_ast) {
             code_parts.push(code);
         }
     }
 
     // 2b. Unit test (Mermaid/table/YAML → #[test] stubs)
-    if matches!(
-        target_section,
-        None | Some("unit-test" | "test-plan" | "tests")
-    ) {
+    if target_is_rust
+        && matches!(
+            target_section,
+            None | Some("unit-test" | "test-plan" | "tests")
+        )
+    {
         if let Some(code) = try_generate_unit_test_mermaid(spec_content, spec_path) {
             code_parts.push(code);
         }
@@ -6700,7 +6871,7 @@ pub(crate) fn generate_code_for_entry(
     }
 
     // 2c. E2E test (YAML journey + side-effect assertions → integration tests)
-    if matches!(target_section, None | Some("e2e-test")) {
+    if target_is_rust && matches!(target_section, None | Some("e2e-test")) {
         let output = crate::generate::gen::rust::tests_gen::generate_e2e_tests(spec_content);
         if output.emitted {
             code_parts.push(output.code);
@@ -6708,14 +6879,14 @@ pub(crate) fn generate_code_for_entry(
     }
 
     // 2d. RPC API (OpenRPC YAML → async fn signatures)
-    if matches!(target_section, None | Some("rpc-api")) {
+    if target_is_rust && matches!(target_section, None | Some("rpc-api")) {
         if let Some(code) = try_generate_rpc_api(spec_content, spec_path, td_ast) {
             code_parts.push(code);
         }
     }
 
     // 2e. Config (Config JSON Schema → struct + Default impl)
-    if matches!(target_section, None | Some("config")) {
+    if target_is_rust && matches!(target_section, None | Some("config")) {
         if let Some(code) = try_generate_config(spec_content, td_ast) {
             code_parts.push(code);
         }
@@ -6871,6 +7042,41 @@ fn operation_section_yaml(spec_content: &str, section: &str) -> Option<String> {
     extract_section_yaml(spec_content, heading)
 }
 
+fn try_generate_react_wireframe_file(
+    spec_content: &str,
+    entry: &ChangeEntry,
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+) -> Option<String> {
+    if !is_typescript_source(Path::new(&entry.path)) {
+        return None;
+    }
+    let spec = react_wireframe_spec_from_td_ast(td_ast).or_else(|| {
+        let yaml = extract_section_yaml(spec_content, "Wireframe")?;
+        serde_yaml::from_str::<crate::generate::spec_ir::WireframeSpec>(&yaml).ok()
+    })?;
+
+    crate::generate::generators::render_react_wireframe_file(&spec, Path::new(&entry.path))
+}
+
+fn react_wireframe_spec_from_td_ast(
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+) -> Option<crate::generate::spec_ir::WireframeSpec> {
+    let td_ast = td_ast?;
+    td_ast
+        .sections
+        .iter()
+        .filter(|section| section.section_type == crate::models::spec_rules::SectionType::Wireframe)
+        .filter_map(|section| match &section.body {
+            crate::td_ast::types::TypedBody::JsonSchema(payload) => serde_yaml::to_value(payload)
+                .ok()
+                .and_then(|value| serde_yaml::from_value(value).ok()),
+            _ => None,
+        })
+        .find(|spec: &crate::generate::spec_ir::WireframeSpec| {
+            !spec.name.trim().is_empty() || !spec.layout.is_empty()
+        })
+}
+
 fn try_generate_python_pydantic_module(
     spec_content: &str,
     spec_path: &str,
@@ -6881,10 +7087,11 @@ fn try_generate_python_pydantic_module(
         return None;
     }
     let section = entry.section_id.as_deref()?;
-    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path).or_else(|| {
-        let yaml = python_section_yaml(spec_content, section)?;
-        crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
-    })?;
+    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path, Some(&entry.path))
+        .or_else(|| {
+            let yaml = python_section_yaml(spec_content, section)?;
+            crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
+        })?;
 
     if spec.pydantic_models.is_empty() {
         return None;
@@ -6906,10 +7113,11 @@ fn try_generate_python_module(
         return None;
     }
     let section = entry.section_id.as_deref()?;
-    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path).or_else(|| {
-        let yaml = python_section_yaml(spec_content, section)?;
-        crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
-    })?;
+    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path, Some(&entry.path))
+        .or_else(|| {
+            let yaml = python_section_yaml(spec_content, section)?;
+            crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
+        })?;
     let module = spec
         .python_modules
         .iter()
@@ -6918,15 +7126,78 @@ fn try_generate_python_module(
     Some(crate::generate::gen::python::emit_python_module(&spec.spec_id, module).content)
 }
 
+fn try_generate_python_router_module(
+    spec_content: &str,
+    spec_path: &str,
+    entry: &ChangeEntry,
+    td_ast: Option<&crate::td_ast::types::TDAst>,
+) -> Option<String> {
+    if !is_python_source(Path::new(&entry.path)) {
+        return None;
+    }
+    let section = entry.section_id.as_deref()?;
+    let spec = python_backend_spec_from_td_ast(td_ast, section, spec_path, Some(&entry.path))
+        .or_else(|| {
+            let yaml = python_section_yaml(spec_content, section)?;
+            crate::generate::gen::python::lower_backend_spec_yaml(&yaml, spec_path)
+        })?;
+    let router = select_python_router(&spec, &entry.path)?;
+
+    Some(crate::generate::gen::python::emit_router(&spec.spec_id, router).content)
+}
+
+fn select_python_router<'a>(
+    spec: &'a crate::generate::gen::python::PythonBackendSpec,
+    target_path: &str,
+) -> Option<&'a crate::generate::gen::python::RouterIr> {
+    if spec.routers.len() == 1 {
+        return spec.routers.first();
+    }
+
+    let path = Path::new(target_path);
+    let file_stem = path.file_stem().and_then(|name| name.to_str());
+    let parent_name = path
+        .parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|name| name.to_str());
+
+    spec.routers.iter().find(|router| {
+        let generated_router_path = format!("{}/router.py", router.name);
+        target_path.ends_with(&generated_router_path)
+            || file_stem == Some(router.name.as_str())
+            || parent_name == Some(router.name.as_str())
+    })
+}
+
 fn python_backend_spec_from_td_ast(
     td_ast: Option<&crate::td_ast::types::TDAst>,
     section: &str,
     spec_path: &str,
+    target_path: Option<&str>,
 ) -> Option<crate::generate::gen::python::PythonBackendSpec> {
+    let td_ast = td_ast?;
+    if matches!(section, "rest-api") {
+        return td_ast
+            .sections
+            .iter()
+            .filter(|section| {
+                section.section_type == crate::models::spec_rules::SectionType::RestApi
+            })
+            .filter_map(|section| match &section.body {
+                crate::td_ast::types::TypedBody::OpenApi(payload) => {
+                    crate::generate::gen::python::lower_openapi_payload(
+                        payload,
+                        spec_path,
+                        target_path,
+                    )
+                }
+                _ => None,
+            })
+            .find(|spec| !spec.routers.is_empty());
+    }
     if !matches!(section, "models" | "schema") {
         return None;
     }
-    let td_ast = td_ast?;
     td_ast
         .sections
         .iter()
@@ -7472,6 +7743,10 @@ fn is_python_source(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("py")
 }
 
+fn is_shell_source(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("sh")
+}
+
 fn is_cargo_toml(path: &Path) -> bool {
     path.file_name().and_then(|s| s.to_str()) == Some("Cargo.toml")
 }
@@ -7499,17 +7774,16 @@ fn target_language(path: &Path, section: Option<&str>) -> Option<crate::generate
     if is_rust_source(path) {
         return Some(Lang::Rust);
     }
+    if section == Some("text-source-unit") && is_shell_source(path) {
+        return Some(Lang::Toml);
+    }
     if supports_source_backed_replay_path(path, section) {
         return Some(Lang::TypeScript);
     }
     if section == Some("source") && is_typescript_source(path) {
         return Some(Lang::TypeScript);
     }
-    if matches!(
-        section,
-        Some("source" | "models" | "schema" | "logic" | "tests")
-    ) && is_python_source(path)
-    {
+    if is_python_source(path) && is_python_codegen_section(section) {
         return Some(Lang::Python);
     }
     if section == Some("runtime-image") && is_docker_artifact(path) {
@@ -7525,6 +7799,68 @@ fn target_language(path: &Path, section: Option<&str>) -> Option<crate::generate
         return Some(Lang::Toml);
     }
     None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreparedCodegenBody {
+    shebang: Option<String>,
+    body: String,
+}
+
+fn prepare_codegen_body_for_target(
+    path: &Path,
+    section: Option<&str>,
+    generated_body: &str,
+) -> PreparedCodegenBody {
+    if section == Some("text-source-unit") && is_shell_source(path) {
+        if let Some((shebang, body)) = split_shebang(generated_body) {
+            return PreparedCodegenBody {
+                shebang: Some(shebang.to_string()),
+                body: body.to_string(),
+            };
+        }
+    }
+    PreparedCodegenBody {
+        shebang: None,
+        body: generated_body.to_string(),
+    }
+}
+
+fn split_shebang(body: &str) -> Option<(&str, &str)> {
+    if !body.starts_with("#!") {
+        return None;
+    }
+    match body.find('\n') {
+        Some(idx) => Some((&body[..idx], &body[idx + 1..])),
+        None => Some((body, "")),
+    }
+}
+
+fn insert_codegen_block_for_target(
+    file_content: &str,
+    spec_ref: &str,
+    prepared: &PreparedCodegenBody,
+    lang: crate::generate::marker::Lang,
+) -> String {
+    if let Some(shebang) = prepared.shebang.as_deref() {
+        if file_content.trim().is_empty() {
+            let block = crate::generate::marker::insert_codegen_block(
+                "",
+                spec_ref,
+                &prepared.body,
+                None,
+                lang,
+            );
+            return format!("{shebang}\n{block}");
+        }
+    }
+    crate::generate::marker::insert_codegen_block(
+        file_content,
+        spec_ref,
+        &prepared.body,
+        None,
+        lang,
+    )
 }
 
 /// Insert a CODEGEN block for a Cargo `[dependencies]` manifest fragment.
@@ -7602,9 +7938,7 @@ fn check_workspace_language(
     if section == Some("source") {
         return None;
     }
-    if is_python_source(target_path)
-        && matches!(section, Some("models" | "schema" | "logic" | "tests"))
-    {
+    if is_python_source(target_path) && is_python_codegen_section(section) {
         return None;
     }
     if matches!(section, Some("runtime-image" | "deployment")) {
@@ -7656,6 +7990,24 @@ fn check_workspace_language(
     None
 }
 
+fn is_python_codegen_section(section: Option<&str>) -> bool {
+    matches!(
+        section,
+        Some(
+            "source"
+                | "models"
+                | "schema"
+                | "logic"
+                | "interaction"
+                | "rest-api"
+                | "config"
+                | "unit-test"
+                | "e2e-test"
+                | "tests"
+        )
+    )
+}
+
 /// @spec projects/agentic-workflow/tech-design/core/generate/apply.md#source
 pub(crate) fn supports_source_backed_replay(target_rel_path: &str, section: Option<&str>) -> bool {
     supports_source_backed_replay_path(Path::new(target_rel_path), section)
@@ -7693,6 +8045,14 @@ fn is_semantic_spec_path(spec_rel_path: &str) -> bool {
 fn supports_source_backed_replay_path(path: &Path, section: Option<&str>) -> bool {
     if section.is_none() {
         return false;
+    }
+    if matches!(section, Some("schema"))
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "llms.txt")
+    {
+        return true;
     }
     if matches!(section, Some("unit-test" | "e2e-test" | "tests")) && is_rust_source(path) {
         return true;
@@ -7746,6 +8106,238 @@ fn has_whole_file_source_codegen_block(content: &str) -> bool {
 }
 
 #[cfg(test)]
+mod python_and_frontend_codegen_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn python_rest_api_apply_generates_fastapi_router() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/api.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r##"---
+id: api
+fill_sections: [rest-api, changes]
+---
+
+## Rest API
+<!-- type: rest-api lang: yaml -->
+
+```yaml
+openapi: 3.1.0
+info:
+  title: Project API
+  version: "0.1.0"
+paths:
+  /projects:
+    post:
+      operationId: create_project
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectRequest"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectResponse"
+components:
+  schemas:
+    ProjectRequest:
+      type: object
+    ProjectResponse:
+      type: object
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/api/router.py
+    action: create
+    section: rest-api
+    description: Generate project API router.
+```
+"##,
+        )
+        .unwrap();
+
+        let report =
+            run_apply_scoped_targets(&spec_path, root, false, &[root.join("src")]).unwrap();
+
+        assert_eq!(report.files_created(), 1);
+        assert_eq!(report.total_blocks_updated(), 1);
+        let generated = std::fs::read_to_string(root.join("src/api/router.py")).unwrap();
+        assert!(generated.contains("# SPEC-MANAGED: tech-design/api.md#rest-api"));
+        assert!(generated.contains("from .models import ProjectRequest"));
+        assert!(generated.contains("from .models import ProjectResponse"));
+        assert!(generated.contains("router = APIRouter(prefix=\"\", tags=[\"Project API\"])"));
+        assert!(generated.contains("@router.post(\"/projects\", response_model=ProjectResponse)"));
+        assert!(generated
+            .contains("async def create_project(payload: ProjectRequest) -> ProjectResponse:"));
+        assert!(!generated.contains("#[test]"));
+    }
+
+    #[test]
+    fn python_unit_test_targets_use_marker_fallback_not_rust_tests() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/test.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: test
+fill_sections: [unit-test, changes]
+---
+
+## Unit Test
+<!-- type: unit-test lang: yaml -->
+
+```yaml
+tests:
+  - name: creates_project_issue
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: tests/test_projects.py
+    action: create
+    section: unit-test
+    description: Verify project creation.
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply_scoped_targets(&spec_path, root, false, &[root.join("tests")]).unwrap();
+
+        let generated = std::fs::read_to_string(root.join("tests/test_projects.py")).unwrap();
+        assert!(generated.contains("# SPEC-REF: tech-design/test.md#unit-test"));
+        assert!(generated.contains("# TODO: Verify project creation."));
+        assert!(!generated.contains("#[test]"));
+        assert!(!generated.contains("fn creates_project_issue"));
+    }
+
+    #[test]
+    fn react_wireframe_apply_generates_tsx_component() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/ui.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: ui
+fill_sections: [wireframe, changes]
+---
+
+## Wireframe
+<!-- type: wireframe lang: yaml -->
+
+```yaml
+name: ProjectList
+component_type: page
+props:
+  - name: projectCount
+    prop_type: number
+    required: true
+layout:
+  - kind: section
+    label: projects
+    children:
+      - kind: text
+        label: Projects
+      - kind: button
+        label: New project
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/ProjectList.tsx
+    action: create
+    section: wireframe
+    description: Generate project list screen.
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply_scoped_targets(&spec_path, root, false, &[root.join("src")]).unwrap();
+
+        let generated = std::fs::read_to_string(root.join("src/ProjectList.tsx")).unwrap();
+        assert!(generated.contains("// SPEC-MANAGED: tech-design/ui.md#wireframe"));
+        assert!(generated.contains("export function ProjectList"));
+        assert!(generated.contains("<span>Projects</span>"));
+        assert!(generated.contains("<button type=\"button\">New project</button>"));
+        assert!(!generated.contains("#[test]"));
+    }
+
+    #[test]
+    fn workspace_guard_allows_python_backend_and_frontend_sections() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("pyproject.toml"), "[project]\nname = \"app\"\n").unwrap();
+        let python_target = root.join("src/api/router.py");
+        for section in [
+            "schema",
+            "models",
+            "rest-api",
+            "logic",
+            "interaction",
+            "config",
+            "unit-test",
+            "e2e-test",
+            "tests",
+        ] {
+            assert_eq!(
+                target_language(&python_target, Some(section)),
+                Some(crate::generate::marker::Lang::Python),
+                "python section {section} should have a marker language"
+            );
+            assert!(
+                check_workspace_language(root, &python_target, Some(section)).is_none(),
+                "python section {section} should not be rejected by workspace guard"
+            );
+        }
+
+        let frontend_root = tempfile::tempdir().unwrap();
+        let frontend = frontend_root.path();
+        std::fs::write(frontend.join("package.json"), "{}\n").unwrap();
+        let tsx_target = frontend.join("src/App.tsx");
+        for section in [
+            "wireframe",
+            "component",
+            "design-token",
+            "unit-test",
+            "e2e-test",
+        ] {
+            assert_eq!(
+                target_language(&tsx_target, Some(section)),
+                Some(crate::generate::marker::Lang::TypeScript),
+                "frontend section {section} should have a marker language"
+            );
+            assert!(
+                check_workspace_language(frontend, &tsx_target, Some(section)).is_none(),
+                "frontend section {section} should not be rejected by workspace guard"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod source_backed_replay_tests {
     use super::*;
 
@@ -7764,6 +8356,15 @@ mod source_backed_replay_tests {
             "projects/jet/tools/manifest/src/lib.rs",
             Some("schema"),
             ".aw/tech-design/projects/jet/specs/jet-tools-manifest-src.md",
+        ));
+    }
+
+    #[test]
+    fn project_root_llms_txt_schema_uses_source_backed_replay() {
+        assert!(supports_source_backed_replay_for_spec(
+            "projects/lumen/llms.txt",
+            Some("schema"),
+            "projects/lumen/tech-design/semantic/lumen-projects-lumen.md",
         ));
     }
 
@@ -8184,6 +8785,33 @@ pub(crate) fn generate_source_section_code(
 ) -> String {
     let spec_ref = format!("{spec_path}#source");
     let embedded_source = extract_section_fence(spec_content, "Source").unwrap_or_default();
+
+    // rust-source-unit (td_ast): regenerate the file by routing the TD-embedded
+    // source through the structured lossless item-tree, NOT by replaying a
+    // stored snapshot or re-reading the live target. The TD fence is the source
+    // of truth: for unedited input this is byte-identical; for an edited TD the
+    // structured edit regenerates. A parse failure means the TD fence is not
+    // clean Rust — fall back to the raw embedded source so apply still writes
+    // something inspectable rather than silently dropping the section.
+    if source_is_rust_source_unit(spec_content) {
+        let regenerated = crate::generate::rust_source_unit::regenerate(&embedded_source)
+            .unwrap_or_else(|_| embedded_source.clone());
+        return if target_rel_path.is_some_and(is_rust_path_str) {
+            annotate_rust_source_items(&regenerated, &spec_ref)
+        } else {
+            regenerated
+        };
+    }
+
+    // text-source-unit (td_ast): the language-agnostic sibling of rust-source-unit
+    // for opaque text with no structured AST (shell, dockerfile, plain config).
+    // The TD-embedded fence is the source of truth and is emitted VERBATIM — TD
+    // edits regenerate, which is exactly what source-replay snapshots fail to do.
+    // No parsing, no per-item annotation; byte-equivalent by construction.
+    if source_is_text_source_unit(spec_content) {
+        return embedded_source;
+    }
+
     let source = if let Some(directive) = source_from_target_directive(spec_content) {
         target_rel_path
             .and_then(|path| std::fs::read_to_string(root.join(path)).ok())
@@ -8199,6 +8827,43 @@ pub(crate) fn generate_source_section_code(
     } else {
         source
     }
+}
+
+/// True when the `## Source` section opts into rust-source-unit (td_ast)
+/// regeneration via a `<!-- type: rust-source-unit ... -->` marker. Such a
+/// section carries no `source-snapshot:`/`source-from-target:` directive — the
+/// TD-embedded fence is the source of truth and is regenerated through the
+/// structured item-tree instead of replayed.
+fn source_is_rust_source_unit(spec_content: &str) -> bool {
+    source_section_has_type_marker(spec_content, "type: rust-source-unit")
+}
+
+/// True when the `## Source` section opts into text-source-unit (td_ast)
+/// verbatim regeneration via a `<!-- type: text-source-unit ... -->` marker —
+/// the opaque-text counterpart of rust-source-unit (shell, dockerfile, etc.).
+fn source_is_text_source_unit(spec_content: &str) -> bool {
+    source_section_has_type_marker(spec_content, "type: text-source-unit")
+}
+
+/// Scan the `## Source` section for a `<!-- type: <marker> ... -->` annotation.
+/// `marker` must be the full `type: <kind>` token so `rust-source-unit` does not
+/// accidentally match `text-source-unit` or the legacy `source` probe.
+fn source_section_has_type_marker(spec_content: &str, marker: &str) -> bool {
+    let mut in_source = false;
+    for line in spec_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") {
+            in_source = trimmed
+                .trim_start_matches('#')
+                .trim()
+                .eq_ignore_ascii_case("Source");
+            continue;
+        }
+        if in_source && trimmed.starts_with("<!--") && trimmed.contains(marker) {
+            return true;
+        }
+    }
+    false
 }
 
 enum SourceFromTargetDirective {

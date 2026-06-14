@@ -36,6 +36,22 @@
     "pure_sort": {
       "pg": { "gate": "win", "baseline": 22.9 },
       "os": { "gate": "win", "baseline": 3.0, "note": "Latest N=1M in-memory 3.88x and disk 5.20x vs OS; qps1000 strict report 3.18x. 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "exists": {
+      "pg": { "gate": "exempt", "reason": "pg btree `note IS NOT NULL` presence home turf on loopback binary protocol — same class as kw_term/range; lumen ties/wins over a real network. Selective presence on a 25%-sparse field. Latest N=1M measured 0.70x e2e (pg faster on loopback, as expected for the cheap-predicate class)." },
+      "os": { "gate": "win", "baseline": 3.0, "note": "lumen roaring posting-union vs OS `exists` query. Latest N=1M in-memory 4.19x e2e vs OS (N=200k 12.25x). 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "duplicated": {
+      "pg": { "gate": "win", "baseline": 3.0, "note": "lumen posting-cardinality (O(distinct terms)) vs pg GROUP BY/HAVING (O(n) full-table aggregation). Ratio swings WIDELY with pg cache + concurrency: cold ~349x, warm serial ~12.5x, disk ~36x, qps1000 ~5.7x. Conservative 3.0 baseline (2.4x floor after ratchet) so the gate never flaps on pg cache state — the architectural win is that lumen stays flat as N grows, not a single headline multiple." },
+      "os": { "gate": "win", "baseline": 3.0, "note": "OpenSearch has NO composable duplicate-doc query — closest is a terms aggregation returning the colliding VALUES (buckets), not a doc-set you can AND/OR/NOT. This cell times that agg as OS's nearest equivalent. Latest N=1M in-memory 6.35x e2e (N=200k 12.23x). 0.8 ratchet keeps the failure floor at 2.4x." }
+    },
+    "knn": {
+      "pg": { "gate": "target", "floor": 0.5, "note": "Pure CPU HNSW kNN vs pgvector HNSW (m=16, ef_construction=64, ef_search=100). Latest N=100k uniform-random 11.53x e2e — but kept a TARGET, not a WIN: a real (clustered) corpus, N=1M, or a faster pgvector config can flip plain kNN over-the-wire (HTTP/JSON floor + graph density). Only runs with LUMEN_GATE_VECTOR=1. OS has no k-NN plugin on this host (skipped). GPU-native vector is a separate future chapter." },
+      "os": { "gate": "exempt", "reason": "OpenSearch k-NN plugin not installed on the bench host; vector cells compare against pgvector only." }
+    },
+    "filtered_knn": {
+      "pg": { "gate": "win", "baseline": 3.0, "note": "kNN AND a selective filter (city=taipei) — lumen's moat: it filters THEN runs kNN over survivors (filter-correct, no recall loss; verified in tests/vector_e2e.rs filtered_knn_returns_nearest_within_filter_no_recall_collapse). pgvector's HNSW post-filters (ANN top-k then drop non-matching) and collapses recall on selective filters. lumen wins on latency AND correctness here. Latest N=100k 9.23x e2e; 3.0 baseline (2.4x floor after ratchet). Only runs with LUMEN_GATE_VECTOR=1." },
+      "os": { "gate": "exempt", "reason": "OpenSearch k-NN plugin not installed on the bench host; vector cells compare against pgvector only." }
     }
   },
   "qps_cells": {

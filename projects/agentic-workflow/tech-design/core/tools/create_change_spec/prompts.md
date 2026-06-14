@@ -228,6 +228,9 @@ fn section_fill_guidance(section: &str) -> &'static str {
                 "Declare package manifest entries (Cargo.toml dependencies, etc.) in YAML.\n\
                  Shape: `dependencies: [{ name, spec: workspace|version|path, features?: [..] }]`.\n\
                  Begin with `<!-- type: manifest lang: yaml -->`.",
+            SectionType::RustSourceUnit =>
+                "Write a full Rust source unit in a rust fence for lossless CST-backed regeneration.\n\
+                 Begin with `<!-- type: rust-source-unit lang: rust -->`.",
         };
     }
 

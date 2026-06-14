@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Property-based tests — Contract 3 of the coverage goal.
 //!
 //! Each invariant is fuzzed with proptest over randomized
@@ -301,3 +303,4 @@ proptest! {
         }
     }
 }
+// CODEGEN-END

@@ -12,6 +12,7 @@ use walkdir::WalkDir;
 /// Prevents runaway build scripts from hanging the install indefinitely on
 /// large or misbehaving projects.
 const BUILD_SCRIPT_TIMEOUT: Duration = Duration::from_secs(60);
+const STORE_INTEGRITY_MARKER_VERSION: &str = "jet-store-v2";
 
 /// Global store manager for content-addressable package storage.
 /// Packages are stored at `~/.jet-store/{name}@{version}/` and
@@ -35,16 +36,13 @@ impl StoreManager {
         if !pkg_dir.exists() {
             return false;
         }
-        if !pkg_dir.join("package.json").exists() {
-            return false;
-        }
         let integrity_file = pkg_dir.join(".jet-integrity");
         // GH #3445 — split silent NotFound (legitimate missing-cache;
         // mirrors the !pkg_dir.exists() early-out above) from any other
         // IO error. A chmod-locked or partially-written integrity file
         // used to cause an invisible reinstall loop with no diagnostic.
         match std::fs::read_to_string(&integrity_file) {
-            Ok(stored) => stored.trim() == shasum,
+            Ok(stored) => stored.trim() == integrity_marker_value(shasum),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
             Err(err) => {
                 tracing::warn!(
@@ -87,7 +85,7 @@ impl StoreManager {
 
         // Remove stale directory if present
         if package_dir.exists() {
-            std::fs::remove_dir_all(&package_dir)
+            Self::remove_stale_package_dir(&package_dir)
                 .with_context(|| format!("Failed to remove stale dir {:?}", package_dir))?;
         }
 
@@ -105,9 +103,6 @@ impl StoreManager {
         // Extract tarball
         extract_tarball(tarball, &package_dir)
             .with_context(|| format!("Failed to extract tarball for {}@{}", name, version))?;
-        normalize_extracted_package_root(&package_dir).with_context(|| {
-            format!("Failed to normalize package root for {}@{}", name, version)
-        })?;
 
         // GH #3568 — the .jet-integrity marker is what `is_package_installed`
         // uses to short-circuit re-installs. If this write silently fails the
@@ -116,9 +111,27 @@ impl StoreManager {
         // consequence so a "why is install always slow" diagnosis lands on
         // a single log line.
         let integrity_file = package_dir.join(".jet-integrity");
-        std::fs::write(&integrity_file, shasum)
+        std::fs::write(&integrity_file, integrity_marker_value(shasum))
             .with_context(|| format_integrity_write_err(&integrity_file, name, version))?;
 
+        Ok(())
+    }
+
+    fn remove_stale_package_dir(package_dir: &Path) -> Result<()> {
+        const MAX_ATTEMPTS: usize = 5;
+        for attempt in 0..MAX_ATTEMPTS {
+            match std::fs::remove_dir_all(package_dir) {
+                Ok(()) => return Ok(()),
+                Err(err)
+                    if attempt + 1 < MAX_ATTEMPTS
+                        && (err.kind() == std::io::ErrorKind::DirectoryNotEmpty
+                            || err.raw_os_error() == Some(66)) =>
+                {
+                    std::thread::sleep(Duration::from_millis(25 * (attempt as u64 + 1)));
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
         Ok(())
     }
 
@@ -185,8 +198,8 @@ impl StoreManager {
         Ok(())
     }
 
-    /// Create symlinks in `node_modules/.bin/` for each binary the package
-    /// exposes. `bins` maps command names to relative paths inside the
+    /// Create executable shims in `node_modules/.bin/` for each binary the
+    /// package exposes. `bins` maps command names to relative paths inside the
     /// package directory in `node_modules/`.
     pub fn link_bins(
         &self,
@@ -227,8 +240,21 @@ impl StoreManager {
             }
 
             #[cfg(unix)]
-            write_unix_bin_shim(&link, name, rel_path, &target)
-                .with_context(|| format!("Failed to write bin shim '{}'", cmd))?;
+            {
+                // Ensure the target is executable
+                use std::os::unix::fs::PermissionsExt;
+                if target.exists() {
+                    let mut perms = std::fs::metadata(&target)?.permissions();
+                    perms.set_mode(perms.mode() | 0o111);
+                    std::fs::set_permissions(&target, perms)?;
+                }
+                let shim = unix_bin_shim(name, rel_path);
+                std::fs::write(&link, shim)
+                    .with_context(|| format!("Failed to write bin shim '{}'", cmd))?;
+                let mut perms = std::fs::metadata(&link)?.permissions();
+                perms.set_mode(perms.mode() | 0o755);
+                std::fs::set_permissions(&link, perms)?;
+            }
             #[cfg(not(unix))]
             {
                 // On Windows, copy the file instead
@@ -532,6 +558,29 @@ impl StoreManager {
     }
 }
 
+#[cfg(unix)]
+fn unix_bin_shim(package_name: &str, rel_path: &str) -> String {
+    let target = format!("../{}/{}", package_name, rel_path);
+    let quoted_target = shell_single_quote(&target);
+    format!(
+        r#"#!/usr/bin/env sh
+basedir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+target="$basedir"/{quoted_target}
+case " ${{NODE_OPTIONS:-}} " in
+  *" --preserve-symlinks-main "*) ;;
+  *) NODE_OPTIONS="${{NODE_OPTIONS:+$NODE_OPTIONS }}--preserve-symlinks-main" ;;
+esac
+export NODE_OPTIONS
+exec "$target" "$@"
+"#
+    )
+}
+
+#[cfg(unix)]
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r#"'\''"#))
+}
+
 /// GH #3749 — read a `package.json` platform-filter field (`os` or
 /// `cpu`) as a `Vec<String>`. npm spec requires an array of strings;
 /// anything else (string scalar, object, array of non-strings) means
@@ -711,6 +760,10 @@ fn verify_shasum(data: &[u8], expected: &str) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn integrity_marker_value(shasum: &str) -> String {
+    format!("{STORE_INTEGRITY_MARKER_VERSION}:{shasum}")
+}
+
 /// GH #3637 — sanitise a tarball entry path against the destination
 /// directory. Rejects entries that would escape `dest` via:
 ///   * absolute paths (`/etc/passwd`)
@@ -722,23 +775,19 @@ fn verify_shasum(data: &[u8], expected: &str) -> Result<()> {
 /// surfaces a loud error instead of silently overwriting files
 /// outside `dest`.
 ///
-/// Also tightens the prior `path.strip_prefix("package").unwrap_or(&path)`
-/// fallback: an entry that does not start with `package/` is now rejected
-/// (npm convention is mandatory; non-conformant tarballs land outside the
-/// store layout the rest of `pkg_manager` assumes).
+/// Most npm tarballs use `package/` as the top-level directory, but some
+/// registry packages use the package basename instead (for example
+/// `react-transition-group/`). The first normal path component is treated as
+/// the archive root and stripped; bare root files are rejected because they
+/// cannot be mapped into the per-package store layout without guessing.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-pkg-manager.md#schema
 pub(crate) fn safe_tarball_entry_path(raw: &Path) -> Result<PathBuf, String> {
     use std::path::Component;
 
-    let stripped = raw
-        .strip_prefix("package")
-        .map_err(|_| format_safe_tarball_entry_path_err(raw, "missing-package-prefix"))?;
-    if stripped.as_os_str().is_empty() {
-        return Err(format_safe_tarball_entry_path_err(raw, "empty-after-strip"));
-    }
-    for comp in stripped.components() {
+    let mut normal_components = Vec::new();
+    for comp in raw.components() {
         match comp {
-            Component::Normal(_) => {}
+            Component::Normal(part) => normal_components.push(part.to_os_string()),
             Component::CurDir => {} // "./" is harmless
             Component::ParentDir => {
                 return Err(format_safe_tarball_entry_path_err(
@@ -751,7 +800,16 @@ pub(crate) fn safe_tarball_entry_path(raw: &Path) -> Result<PathBuf, String> {
             }
         }
     }
-    Ok(stripped.to_path_buf())
+
+    if normal_components.len() <= 1 {
+        return Err(format_safe_tarball_entry_path_err(raw, "empty-after-strip"));
+    }
+
+    let mut stripped = PathBuf::new();
+    for comp in normal_components.into_iter().skip(1) {
+        stripped.push(comp);
+    }
+    Ok(stripped)
 }
 
 /// GH #3637 — tagged error formatter for [`safe_tarball_entry_path`].
@@ -775,11 +833,14 @@ fn extract_tarball(tarball: &[u8], dest: &Path) -> Result<()> {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
 
-        // Strip the leading "package" or "package/" prefix
-        let stripped = path.strip_prefix("package").unwrap_or(&path);
-        if stripped.as_os_str().is_empty() {
-            continue;
-        }
+        let stripped = match safe_tarball_entry_path(&path) {
+            Ok(path) => path,
+            Err(msg) if entry.header().entry_type().is_dir() && top_level_tar_dir_entry(&path) => {
+                tracing::debug!("{}", msg);
+                continue;
+            }
+            Err(msg) => anyhow::bail!("{msg}"),
+        };
 
         let dest_path = dest.join(&stripped);
         if let Some(parent) = dest_path.parent() {
@@ -809,44 +870,18 @@ fn extract_tarball(tarball: &[u8], dest: &Path) -> Result<()> {
     Ok(())
 }
 
-fn normalize_extracted_package_root(dest: &Path) -> Result<()> {
-    if dest.join("package.json").exists() {
-        return Ok(());
-    }
+fn top_level_tar_dir_entry(path: &Path) -> bool {
+    use std::path::Component;
 
-    let mut dirs = Vec::new();
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(dest)? {
-        let entry = entry?;
-        let path = entry.path();
-        if entry.file_type()?.is_dir() {
-            dirs.push(path);
-        } else {
-            files.push(path);
+    let mut normal_count = 0;
+    for comp in path.components() {
+        match comp {
+            Component::Normal(_) => normal_count += 1,
+            Component::CurDir => {}
+            _ => return false,
         }
     }
-
-    if dirs.len() == 1 && files.is_empty() && dirs[0].join("package.json").exists() {
-        for child in std::fs::read_dir(&dirs[0])? {
-            let child = child?;
-            let target = dest.join(child.file_name());
-            if target.exists() {
-                anyhow::bail!(
-                    "cannot normalize extracted package root {}; target already exists: {}",
-                    dirs[0].display(),
-                    target.display()
-                );
-            }
-            std::fs::rename(child.path(), target)?;
-        }
-        std::fs::remove_dir(&dirs[0])?;
-        return Ok(());
-    }
-
-    anyhow::bail!(
-        "extracted package is missing package.json at store root {}",
-        dest.display()
-    )
+    normal_count == 1
 }
 
 /// Recursively hardlink all files from `src` into `dest`.
@@ -874,56 +909,6 @@ fn hardlink_dir(src: &Path, dest: &Path) -> Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn write_unix_bin_shim(
-    link: &Path,
-    package_name: &str,
-    rel_path: &str,
-    target: &Path,
-) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let target_from_bin_dir = format!("../{}/{}", package_name, rel_path);
-    let node_bin = is_node_bin_target(target);
-    let exec_line = if node_bin {
-        format!("exec node --preserve-symlinks-main \"$basedir/$target\" \"$@\"\n",)
-    } else {
-        "exec \"$basedir/$target\" \"$@\"\n".to_string()
-    };
-    let shim = format!(
-        "#!/bin/sh\n\
-         basedir=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n\
-         target={}\n\
-         {}",
-        shell_single_quote(&target_from_bin_dir),
-        exec_line
-    );
-
-    std::fs::write(link, shim)?;
-    let mut perms = std::fs::metadata(link)?.permissions();
-    perms.set_mode(perms.mode() | 0o111);
-    std::fs::set_permissions(link, perms)?;
-    Ok(())
-}
-
-#[cfg(unix)]
-fn is_node_bin_target(target: &Path) -> bool {
-    let Ok(bytes) = std::fs::read(target) else {
-        return false;
-    };
-    let first_line = bytes
-        .split(|byte| *byte == b'\n')
-        .next()
-        .unwrap_or(&[])
-        .to_ascii_lowercase();
-    first_line.starts_with(b"#!") && first_line.windows(4).any(|window| window == b"node")
-}
-
-#[cfg(unix)]
-fn shell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 #[cfg(test)]
@@ -954,34 +939,13 @@ mod tests {
         let pkg_dir = store.get_package_path("bar", "2.0.0");
         std::fs::create_dir_all(&pkg_dir).unwrap();
         std::fs::write(
-            pkg_dir.join("package.json"),
-            r#"{"name":"bar","version":"2.0.0"}"#,
+            pkg_dir.join(".jet-integrity"),
+            integrity_marker_value("sha1hash"),
         )
         .unwrap();
-        std::fs::write(pkg_dir.join(".jet-integrity"), "sha1hash").unwrap();
 
         assert!(store.has_package("bar", "2.0.0", "sha1hash"));
         assert!(!store.has_package("bar", "2.0.0", "wrong"));
-    }
-
-    #[test]
-    fn gh4160_has_package_rejects_integrity_without_root_package_json() {
-        let dir = tempdir().unwrap();
-        let store = StoreManager::new(dir.path().to_path_buf()).unwrap();
-
-        let pkg_dir = store.get_package_path("@types/react", "19.2.17");
-        std::fs::create_dir_all(pkg_dir.join("react")).unwrap();
-        std::fs::write(
-            pkg_dir.join("react/package.json"),
-            r#"{"name":"@types/react"}"#,
-        )
-        .unwrap();
-        std::fs::write(pkg_dir.join(".jet-integrity"), "sha1hash").unwrap();
-
-        assert!(
-            !store.has_package("@types/react", "19.2.17", "sha1hash"),
-            "a stale scoped-package store entry with package.json under a nested top-level dir must reinstall"
-        );
     }
 
     #[test]
@@ -1019,118 +983,6 @@ mod tests {
         assert!(extracted.exists());
         let text = std::fs::read_to_string(extracted).unwrap();
         assert_eq!(text, "console.log('hello');");
-    }
-
-    #[test]
-    fn gh4160_install_package_normalizes_single_top_level_tarball_dir() {
-        use flate2::write::GzEncoder;
-        use flate2::Compression;
-        use std::io::Write;
-
-        let dir = tempdir().unwrap();
-        let store = StoreManager::new(dir.path().to_path_buf()).unwrap();
-
-        let mut builder = tar::Builder::new(Vec::new());
-        let package_json = br#"{"name":"@types/react","version":"19.2.17"}"#;
-        let mut header = tar::Header::new_gnu();
-        header.set_size(package_json.len() as u64);
-        header.set_mode(0o644);
-        header.set_cksum();
-        builder
-            .append_data(&mut header, "react/package.json", &package_json[..])
-            .unwrap();
-        let tar_bytes = builder.into_inner().unwrap();
-
-        let mut gz = GzEncoder::new(Vec::new(), Compression::fast());
-        gz.write_all(&tar_bytes).unwrap();
-        let tgz_bytes = gz.finish().unwrap();
-
-        store
-            .install_package(
-                "@types/react",
-                "19.2.17",
-                &tgz_bytes,
-                "0000000000000000000000000000000000000000",
-            )
-            .unwrap();
-
-        let pkg_dir = store.get_package_path("@types/react", "19.2.17");
-        assert!(pkg_dir.join("package.json").exists());
-        assert!(!pkg_dir.join("react/package.json").exists());
-        assert!(store.has_package(
-            "@types/react",
-            "19.2.17",
-            "0000000000000000000000000000000000000000"
-        ));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn gh4160_node_bin_shim_preserves_fixture_node_modules_resolution() {
-        if !std::process::Command::new("node")
-            .arg("--version")
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-        {
-            return;
-        }
-
-        let dir = tempdir().unwrap();
-        let store = StoreManager::new(dir.path().join("store")).unwrap();
-        let node_modules = dir.path().join("project/node_modules");
-        std::fs::create_dir_all(&node_modules).unwrap();
-
-        let webpack_dir = store.get_package_path("webpack", "1.0.0");
-        std::fs::create_dir_all(webpack_dir.join("bin")).unwrap();
-        std::fs::write(
-            webpack_dir.join("package.json"),
-            r#"{"name":"webpack","version":"1.0.0","bin":{"webpack":"bin/webpack.js"}}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            webpack_dir.join("bin/webpack.js"),
-            r#"#!/usr/bin/env node
-const fs = require("fs");
-const path = require("path");
-let dir = __dirname;
-while (true) {
-  if (fs.existsSync(path.join(dir, "node_modules", "webpack-cli"))) {
-    console.log("found fixture-local cli");
-    process.exit(0);
-  }
-  const next = path.dirname(dir);
-  if (next === dir) break;
-  dir = next;
-}
-console.error(`missing fixture-local cli from ${__dirname}`);
-process.exit(1);
-"#,
-        )
-        .unwrap();
-        store
-            .link_package("webpack", "1.0.0", &node_modules)
-            .unwrap();
-        std::fs::create_dir_all(node_modules.join("webpack-cli")).unwrap();
-
-        let mut bins = std::collections::HashMap::new();
-        bins.insert("webpack".to_string(), "bin/webpack.js".to_string());
-        store.link_bins("webpack", &bins, &node_modules).unwrap();
-
-        let output = std::process::Command::new(node_modules.join(".bin/webpack"))
-            .output()
-            .unwrap();
-
-        assert!(
-            output.status.success(),
-            "node bin shim must preserve fixture-local resolution; stdout={}; stderr={}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(
-            String::from_utf8_lossy(&output.stdout).contains("found fixture-local cli"),
-            "expected the bin script to find the fixture-local peer"
-        );
     }
 
     // ── T47–T54: Store Nested Node Modules ──────────────────────────────────
@@ -1458,7 +1310,7 @@ process.exit(1);
 
     // ── GH #3445 has_package silent .jet-integrity read swallow ────────
 
-    /// GH #3445 — happy path: matching shasum returns true.
+    /// GH #3445 — happy path: matching versioned shasum returns true.
     #[test]
     fn gh3445_has_package_matching_shasum_returns_true() {
         let dir = tempdir().unwrap();
@@ -1466,12 +1318,27 @@ process.exit(1);
         let pkg_dir = store.get_package_path("ok", "1.0.0");
         std::fs::create_dir_all(&pkg_dir).unwrap();
         std::fs::write(
-            pkg_dir.join("package.json"),
-            r#"{"name":"ok","version":"1.0.0"}"#,
+            pkg_dir.join(".jet-integrity"),
+            format!("{}\n", integrity_marker_value("sha1abc")),
         )
         .unwrap();
-        std::fs::write(pkg_dir.join(".jet-integrity"), "sha1abc\n").unwrap();
         assert!(store.has_package("ok", "1.0.0", "sha1abc"));
+    }
+
+    /// GH #3809 — pre-v2 markers may have been written while detached
+    /// prefetch tasks were still racing with foreground install, so they
+    /// cannot be trusted as complete extracted packages.
+    #[test]
+    fn gh3809_has_package_rejects_legacy_integrity_marker() {
+        let dir = tempdir().unwrap();
+        let store = StoreManager::new(dir.path().to_path_buf()).unwrap();
+        let pkg_dir = store.get_package_path("stale", "1.0.0");
+        std::fs::create_dir_all(&pkg_dir).unwrap();
+        std::fs::write(pkg_dir.join(".jet-integrity"), "sha1abc").unwrap();
+        assert!(
+            !store.has_package("stale", "1.0.0", "sha1abc"),
+            "legacy bare shasum markers must force a clean re-extract"
+        );
     }
 
     /// GH #3445 — mismatched shasum returns false (no warn, just no match).
@@ -1511,7 +1378,7 @@ process.exit(1);
         let pkg_dir = store.get_package_path("locked", "1.0.0");
         std::fs::create_dir_all(&pkg_dir).unwrap();
         let integrity = pkg_dir.join(".jet-integrity");
-        std::fs::write(&integrity, "sha1abc").unwrap();
+        std::fs::write(&integrity, integrity_marker_value("sha1abc")).unwrap();
         std::fs::set_permissions(&integrity, std::fs::Permissions::from_mode(0o000)).unwrap();
 
         // Root may still read 000-mode files — skip if so.
@@ -1594,6 +1461,71 @@ process.exit(1);
             mtime_a, mtime_b,
             "GH #3486 idempotent fast-path: correct-target symlink must not be touched on the second call"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bin_shim_preserves_project_node_modules_for_peer_cli_lookup() {
+        use std::collections::HashMap;
+        use std::os::unix::fs::PermissionsExt;
+
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let store = StoreManager::new(tmp.path().join("store")).unwrap();
+        let nm = tmp.path().join("node_modules");
+        let bin_dir = nm.join("webpack/bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::create_dir_all(nm.join("webpack-cli")).unwrap();
+        std::fs::write(
+            nm.join("webpack-cli/package.json"),
+            r#"{"name":"webpack-cli"}"#,
+        )
+        .unwrap();
+        let bin_script = bin_dir.join("webpack.js");
+        std::fs::write(
+            &bin_script,
+            r#"#!/usr/bin/env node
+const fs = require("fs");
+const path = require("path");
+const expected = `${path.sep}node_modules${path.sep}webpack${path.sep}bin`;
+const seesProjectPath = __dirname.includes(expected);
+const seesCli = fs.existsSync(path.join(__dirname, "..", "..", "webpack-cli", "package.json"));
+if (!seesProjectPath || !seesCli) {
+  console.error(JSON.stringify({ dirname: __dirname, seesProjectPath, seesCli }));
+  process.exit(7);
+}
+process.stdout.write("ok");
+"#,
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&bin_script).unwrap().permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        std::fs::set_permissions(&bin_script, perms).unwrap();
+
+        let mut bins = HashMap::new();
+        bins.insert("webpack".to_string(), "bin/webpack.js".to_string());
+        store.link_bins("webpack", &bins, &nm).unwrap();
+
+        let shim = nm.join(".bin/webpack");
+        assert!(
+            !shim.symlink_metadata().unwrap().file_type().is_symlink(),
+            "bin entry must be a shim file so Node preserves project symlink paths"
+        );
+        let output = std::process::Command::new(&shim).output().unwrap();
+        assert!(
+            output.status.success(),
+            "shim must preserve project node_modules lookup; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "ok");
     }
 
     #[cfg(unix)]
@@ -1753,15 +1685,23 @@ process.exit(1);
         assert_eq!(out, PathBuf::from("lib/index.js"));
     }
 
-    /// GH #3637 — non-conformant entry (missing `package/` prefix) is
-    /// rejected. Previously the `unwrap_or(&path)` fallback silently
-    /// accepted it.
+    /// GH #3637 — real npm tarballs can use the package basename as the
+    /// top-level directory instead of the literal `package/`; strip that
+    /// archive root the same way.
     #[test]
-    fn gh3637_safe_tarball_entry_path_rejects_missing_prefix() {
-        let err = safe_tarball_entry_path(Path::new("lib/index.js"))
-            .expect_err("missing package/ prefix must reject");
+    fn gh3637_safe_tarball_entry_path_accepts_named_top_level_dir() {
+        let out = safe_tarball_entry_path(Path::new("react-transition-group/index.d.ts")).unwrap();
+        assert_eq!(out, PathBuf::from("index.d.ts"));
+    }
+
+    /// GH #3637 — a bare root file has no archive root to strip and is
+    /// rejected instead of being placed directly into the store root.
+    #[test]
+    fn gh3637_safe_tarball_entry_path_rejects_bare_root_file() {
+        let err =
+            safe_tarball_entry_path(Path::new("index.js")).expect_err("bare root file must reject");
         assert!(err.contains("GH #3637"), "msg: {err}");
-        assert!(err.contains("missing-package-prefix"), "msg: {err}");
+        assert!(err.contains("empty-after-strip"), "msg: {err}");
     }
 
     /// GH #3637 — `..` traversal anywhere in the path is rejected.

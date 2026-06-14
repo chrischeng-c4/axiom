@@ -35,10 +35,8 @@ Public API manifest for `projects/meter/src/report/builder.rs` generated from AS
 | `with_environment` | projects/meter/src/report/builder.rs | function | pub | 86 | with_environment(&mut self, env: EnvBlock) -> &mut Self |
 | `with_last_run` | projects/meter/src/report/builder.rs | function | pub | 80 | with_last_run(&mut self, record: RunnerRecord) -> &mut Self |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/builder.rs -->
 ````rust
 //! [`ReportBuilder`] — the SINGLE assembly point for a [`MeterReport`].
 //!
@@ -47,7 +45,7 @@ Public API manifest for `projects/meter/src/report/builder.rs` generated from AS
 //! so the exit-code contract has exactly one source of truth.
 
 use super::envelope::{
-    Completion, EnvBlock, FindingsSummary, OverallStatus, MeterReport, RunnerRecord, SCHEMA_VERSION,
+    Completion, EnvBlock, FindingsSummary, MeterReport, OverallStatus, RunnerRecord, SCHEMA_VERSION,
 };
 use super::finding::{Finding, Kind, Severity};
 
@@ -56,6 +54,7 @@ const DEFAULT_SAMPLE_N: usize = 20;
 
 /// Incrementally assemble a [`MeterReport`]; `finalize()` derives all
 /// status-dependent fields.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-builder-rs.md#source
 pub struct ReportBuilder {
     verb: String,
     target: String,
@@ -84,6 +83,7 @@ pub struct ReportBuilder {
     requires_hitl: bool,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-builder-rs.md#source
 impl ReportBuilder {
     /// Start a builder for `verb` against `target`.
     pub fn new(verb: impl Into<String>, target: impl Into<String>) -> Self {
@@ -744,7 +744,7 @@ mod run_fold_tests {
 changes:
   - path: projects/meter/src/report/builder.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/builder.rs` captured during meter full-codegen standardization.

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! lumen — standalone search and duplicate-detection index.
 //!
 //! Solves the gap B-tree indexes can't fill: keyword search (incl. Chinese
@@ -20,7 +22,6 @@ pub mod aof;
 pub mod api;
 pub mod auth;
 pub mod backup_sink;
-pub mod client;
 pub mod config;
 pub mod consumer;
 pub mod coordinator;
@@ -64,3 +65,4 @@ pub mod types;
 pub mod vector_index;
 pub mod wal;
 pub mod wal_nats;
+// CODEGEN-END

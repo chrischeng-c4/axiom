@@ -17,6 +17,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -42,8 +43,15 @@ pub fn command() -> Command {
                 .arg(
                     Arg::new("frozen-lockfile")
                         .long("frozen-lockfile")
+                        .conflicts_with("no-frozen-lockfile")
                         .action(ArgAction::SetTrue)
                         .help("Fail if lockfile drift detected (auto in CI)"),
+                )
+                .arg(
+                    Arg::new("no-frozen-lockfile")
+                        .long("no-frozen-lockfile")
+                        .action(ArgAction::SetTrue)
+                        .help("Disable CI auto-frozen lockfile for explicit bootstrap installs"),
                 )
                 .arg(
                     Arg::new("no-cache")
@@ -62,6 +70,12 @@ pub fn command() -> Command {
                             "Resolve dependency graph and update jet-lock.yaml \
                              without downloading or extracting tarballs",
                         ),
+                )
+                .arg(
+                    Arg::new("no-prebundle")
+                        .long("no-prebundle")
+                        .action(ArgAction::SetTrue)
+                        .help("Skip dev-server prebundle after dependency installation"),
                 )
                 .arg(
                     Arg::new("nx")
@@ -161,7 +175,7 @@ pub fn command() -> Command {
                     Arg::new("port")
                         .short('p')
                         .long("port")
-                        .help("Port to run on (default: from jet.config.toml or 3000)"),
+                        .help("Port to run on (default: from jet.toml or 3000)"),
                 )
                 .arg(
                     Arg::new("host")
@@ -170,9 +184,21 @@ pub fn command() -> Command {
                         .help("Host to bind to"),
                 )
                 .arg(
+                    Arg::new("proxy")
+                        .long("proxy")
+                        .value_name("PATH=URL")
+                        .action(ArgAction::Append)
+                        .conflicts_with("wasm")
+                        .help(
+                            "Add a dev-server proxy rule, e.g. \
+                             --proxy /api=http://localhost:3200. \
+                             Repeatable; overrides matching [dev.proxy] config entries.",
+                        ),
+                )
+                .arg(
                     // jet dev --wasm — one-command TSX→WASM dev loop.
                     // Runs wasm_build::build, serves dist/ via axum,
-                    // watches src/ + jet.config.toml and rebuilds on
+                    // watches src/ + jet.toml and rebuilds on
                     // change. Completely separate from the JS bundle
                     // dev server below.
                     Arg::new("wasm")
@@ -180,7 +206,7 @@ pub fn command() -> Command {
                         .action(ArgAction::SetTrue)
                         .help(
                             "WASM mode — build via [wasm] section of \
-                             jet.config.toml, serve dist/, and rebuild \
+                             jet.toml, serve dist/, and rebuild \
                              on src/**/*.tsx change.",
                         ),
                 )
@@ -329,7 +355,7 @@ pub fn command() -> Command {
                         .help(
                             "WASM mode — compile TSX → Rust → wasm32 and emit \
                              dist/app.wasm + dist/boot.js + dist/index.html. \
-                             Reads [wasm] section of jet.config.toml for \
+                             Reads [wasm] section of jet.toml for \
                              entry + root_component + root_props.",
                         ),
                 )
@@ -349,11 +375,11 @@ pub fn command() -> Command {
         .subcommand(Command::new("check").about("Type check TypeScript files"))
         .subcommand(
             Command::new("config")
-                .about("Inspect and lint jet.config.toml")
+                .about("Inspect and lint jet.toml")
                 .subcommand(
                     Command::new("lint")
                         .about(
-                            "Validate jet.config.toml against the typed \
+                            "Validate jet.toml against the typed \
                              schema. Reports unknown keys (with did-you-mean \
                              suggestions), invalid values, and deprecated \
                              keys (with migration hints).",
@@ -363,7 +389,7 @@ pub fn command() -> Command {
                                 .long("path")
                                 .help(
                                     "Project root directory containing \
-                                     jet.config.toml (default: current dir)",
+                                     jet.toml (default: current dir)",
                                 ),
                         )
                         .arg(
@@ -387,9 +413,9 @@ pub fn command() -> Command {
                 .subcommand(
                     Command::new("schema")
                         .about(
-                            "Generate the JSON Schema for jet.config.toml. \
+                            "Generate the JSON Schema for jet.toml. \
                              Default mode prints to stdout; --write updates \
-                             schemas/jet.config.schema.json; --check exits \
+                             schemas/jet.schema.json; --check exits \
                              non-zero on drift (CI gate).",
                         )
                         .arg(
@@ -407,7 +433,7 @@ pub fn command() -> Command {
                                 .conflicts_with("check")
                                 .help(
                                     "Write the schema to \
-                                     <root>/schemas/jet.config.schema.json.",
+                                     <root>/schemas/jet.schema.json.",
                                 ),
                         )
                         .arg(
@@ -1084,7 +1110,7 @@ fn serve_command() -> Command {
             Arg::new("port")
                 .short('p')
                 .long("port")
-                .help("Port to run on (default: from jet.config.toml or 3000; 0 asks the OS)"),
+                .help("Port to run on (default: from jet.toml or 3000; 0 asks the OS)"),
         )
         .arg(
             Arg::new("host")
@@ -1325,6 +1351,137 @@ fn browser_bridge_command() -> Command {
                 .arg(Arg::new("expr").required(true)),
         )
         .subcommand(
+            Command::new("mcp")
+                .about("Serve the Browser Bridge as an MCP stdio server for agents"),
+        )
+        .subcommand(
+            Command::new("snapshot")
+                .about("Print a ref-annotated semantic snapshot of the live DOM; refs (e1, e2, …) feed click/fill/type/hover/select")
+                .arg(
+                    Arg::new("json")
+                        .long("json")
+                        .action(ArgAction::SetTrue)
+                        .help("Print the full JSON payload instead of the snapshot text"),
+                ),
+        )
+        .subcommand(
+            Command::new("click")
+                .about("Click an element by snapshot ref (e12) or selector (CSS, text=…, role=…)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector"))
+                .arg(
+                    Arg::new("dblclick")
+                        .long("dblclick")
+                        .action(ArgAction::SetTrue)
+                        .help("Double-click instead of single click"),
+                ),
+        )
+        .subcommand(
+            Command::new("fill")
+                .about("Replace an input/textarea value (native setter + input/change events)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector"))
+                .arg(Arg::new("text").required(true).help("New value")),
+        )
+        .subcommand(
+            Command::new("type")
+                .about("Focus an element and type text through the real CDP input pipeline (appends; use fill to replace)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector"))
+                .arg(Arg::new("text").required(true).help("Text to type")),
+        )
+        .subcommand(
+            Command::new("hover")
+                .about("Hover an element (mouseenter + mousemove at its center)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector")),
+        )
+        .subcommand(
+            Command::new("select")
+                .about("Choose a <select> option by value or label")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector"))
+                .arg(Arg::new("option").required(true).help("Option value or label")),
+        )
+        .subcommand(
+            Command::new("check")
+                .about("Check a checkbox (idempotent)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector")),
+        )
+        .subcommand(
+            Command::new("uncheck")
+                .about("Uncheck a checkbox (idempotent)")
+                .arg(Arg::new("target").required(true).help("Snapshot ref (e12) or selector")),
+        )
+        .subcommand(
+            Command::new("goto")
+                .about("Navigate the attached session to a URL and wait for load")
+                .arg(Arg::new("url").required(true)),
+        )
+        .subcommand(Command::new("back").about("Go back one entry in session history"))
+        .subcommand(Command::new("forward").about("Go forward one entry in session history"))
+        .subcommand(Command::new("reload").about("Reload the current document"))
+        .subcommand(
+            Command::new("resize")
+                .about("Resize the viewport (CDP device-metrics override)")
+                .arg(Arg::new("width").required(true).help("Viewport width in CSS pixels"))
+                .arg(Arg::new("height").required(true).help("Viewport height in CSS pixels")),
+        )
+        .subcommand(
+            Command::new("wait")
+                .about("Wait for a selector to attach, text to appear, or a fixed delay")
+                .arg(
+                    Arg::new("selector")
+                        .long("selector")
+                        .help("Selector (CSS, text=…, role=…) that must attach"),
+                )
+                .arg(Arg::new("text").long("text").help("Visible text that must appear"))
+                .arg(
+                    Arg::new("ms")
+                        .long("ms")
+                        .help("Sleep this many milliseconds instead of polling"),
+                )
+                .arg(
+                    Arg::new("timeout")
+                        .long("timeout")
+                        .default_value("10000")
+                        .help("Polling budget in milliseconds"),
+                ),
+        )
+        .subcommand(
+            Command::new("console")
+                .about("Print console messages, page errors, and unhandled rejections captured since launch")
+                .arg(
+                    Arg::new("level")
+                        .long("level")
+                        .value_parser(["log", "info", "warn", "error", "debug"])
+                        .help("Only entries of this level"),
+                )
+                .arg(
+                    Arg::new("limit")
+                        .long("limit")
+                        .default_value("100")
+                        .help("Most-recent entry cap"),
+                )
+                .arg(
+                    Arg::new("clear")
+                        .long("clear")
+                        .action(ArgAction::SetTrue)
+                        .help("Drain the buffer after reading"),
+                ),
+        )
+        .subcommand(
+            Command::new("requests")
+                .about("Print fetch/XHR activity captured since launch")
+                .arg(
+                    Arg::new("limit")
+                        .long("limit")
+                        .default_value("100")
+                        .help("Most-recent entry cap"),
+                )
+                .arg(
+                    Arg::new("clear")
+                        .long("clear")
+                        .action(ArgAction::SetTrue)
+                        .help("Drain the buffer after reading"),
+                ),
+        )
+        .subcommand(
             Command::new("debug")
                 .about("Open a foreground Browser Bridge session for human inspection")
                 .arg(Arg::new("url").required(true)),
@@ -1396,8 +1553,10 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
 
         Some(("install", m)) => {
             let frozen = m.get_flag("frozen-lockfile");
+            let auto_ci_frozen = !m.get_flag("no-frozen-lockfile");
             let no_cache = m.get_flag("no-cache");
             let no_install = m.get_flag("no-install");
+            let prebundle = !m.get_flag("no-prebundle");
             let force_nx = m.get_flag("nx");
 
             // Detect workspace mode (Nx > Jet > Single).
@@ -1424,8 +1583,11 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     if no_install {
                         pm.install_lockfile_only().await
                     } else {
-                        pm.install_with_options(frozen).await?;
-                        prebundle_after_install(nx_mgr.root).await
+                        pm.install_with_ci_policy(frozen, auto_ci_frozen).await?;
+                        if prebundle {
+                            prebundle_after_install(nx_mgr.root).await?;
+                        }
+                        Ok(())
                     }
                 }
                 _ => {
@@ -1435,8 +1597,11 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     if no_install {
                         pm.install_lockfile_only().await
                     } else {
-                        pm.install_with_options(frozen).await?;
-                        prebundle_after_install(install_root).await
+                        pm.install_with_ci_policy(frozen, auto_ci_frozen).await?;
+                        if prebundle {
+                            prebundle_after_install(install_root).await?;
+                        }
+                        Ok(())
                     }
                 }
             }
@@ -1585,17 +1750,23 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 .await;
             }
 
-            // Load jet.config.toml for dev settings (port, proxy)
+            // Load jet.toml for dev settings (port, proxy)
             eprintln!(
                 "[jet] Loading config from {}",
-                root_dir.join("jet.config.toml").display()
+                root_dir.join("jet.toml").display()
             );
-            let jet_config =
-                crate::task_runner::config::JetConfig::load(&root_dir).unwrap_or_default();
+            let jet_config = crate::task_runner::config::JetConfig::load(&root_dir)?;
+            let dev_proxy = merge_dev_proxy_rules(
+                jet_config.dev.proxy.clone(),
+                m.get_many::<String>("proxy")
+                    .into_iter()
+                    .flatten()
+                    .map(String::as_str),
+            )?;
             eprintln!(
                 "[jet] Config loaded: dev.port={:?}, proxy keys={}",
                 jet_config.dev.port,
-                jet_config.dev.proxy.len()
+                dev_proxy.len()
             );
 
             let cli_port = m
@@ -1622,7 +1793,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 root_dir: root_dir.clone(),
                 public_dir: Some(root_dir.join("public")),
                 entry,
-                proxy: jet_config.dev.proxy,
+                proxy: dev_proxy,
                 aliases: jet_config.alias.clone(),
             };
             let bundle_opts = crate::bundler::BundleOptions {
@@ -1733,7 +1904,12 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // in production. esbuild errors out on missing `=`; mirror
             // that behaviour by bailing with a tagged message so CI
             // catches the typo.
-            let mut defines = production_build_defines(&root_dir);
+            let mut defines = crate::bundler::define::production_defines();
+            let env_vars = crate::runner::env::scan_env_files(&root_dir, "production");
+            defines.extend(crate::runner::env::import_meta_env_defines(
+                &env_vars,
+                "production",
+            ));
             if let Some(defs) = m.get_many::<String>("define") {
                 for def in defs {
                     let (key, value) = parse_define_arg(def).map_err(|msg| anyhow!("{}", msg))?;
@@ -1758,19 +1934,19 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 .context("Failed to read frontend sources")?;
 
             // @spec .aw/changes/enhancement-resolver-conditional-exports-import-require-browse/specs/enhancement-resolver-conditional-exports-import-require-browse-spec.md#R4
-            // Surface jet.config.toml parse errors instead of silently falling back to defaults.
+            // Surface jet.toml parse errors instead of silently falling back to defaults.
             // Mirrors the jet dev path fix (PR #2940); GH #3061.
             let build_config = match crate::task_runner::config::JetConfig::load(&root_dir) {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    eprintln!("[jet build] Failed to parse jet.config.toml: {e:#}");
+                    eprintln!("[jet build] Failed to parse jet.toml: {e:#}");
                     eprintln!(
                         "[jet build] Continuing with built-in defaults; [resolve.conditions] / [alias] from the file will NOT take effect until the parse error is fixed."
                     );
                     crate::task_runner::config::JetConfig::default()
                 }
             };
-            let mut resolve_options = crate::resolver::ResolveOptions::default();
+            let mut resolve_options = crate::resolver::ResolveOptions::for_browser_production();
             if let Some(conds) = build_config.resolve_conditions() {
                 resolve_options.conditions = conds.to_vec();
             }
@@ -1785,37 +1961,252 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 // Web app production builds must emit a browser-bootable bundle,
                 // not a "build complete" shell with bare React/MUI externals.
                 externalize_all_packages: false,
-                css_bundle: true,
                 transform_options: crate::transform::TransformOptions {
                     dev_mode: false,
                     ..Default::default()
                 },
+                defines: defines.clone(),
                 ..Default::default()
             };
 
             let bundler =
                 crate::bundler::Bundler::new(bundle_opts).context("Failed to create bundler")?;
-            let result = bundler
+            let mut result = bundler
                 .bundle(frontend.entry_path.clone())
                 .await
                 .context("Bundle failed")?;
+            append_css_side_effect_assets(
+                &root_dir,
+                &frontend.entry_path,
+                &frontend.css_side_effect_imports,
+                minify,
+                &mut result.assets,
+            )
+            .context("Failed to process CSS side-effect imports")?;
 
-            // Post-process: define replacement
-            let mut code = crate::bundler::define::replace_defines(&result.code, &defines);
+            // JET_BUNDLE_TIMING=1 extends the bundler's per-phase laps into
+            // the post-process/minify tail so the whole wall-clock is
+            // attributable from one run.
+            let timing = std::env::var_os("JET_BUNDLE_TIMING").is_some();
+            let mut last_lap = std::time::Instant::now();
+            let mut lap = move |label: &str| {
+                if timing {
+                    eprintln!("[bundle-timing] post/{label}: {:?}", last_lap.elapsed());
+                    last_lap = std::time::Instant::now();
+                }
+            };
 
-            // @spec .aw/tech-design/crates/jet/validate/add-production-jet-build-regression-coverage.md#changes
-            // The current brace-scanning DCE and root-scope optimizer are not
-            // safe for large third-party bundles. Keep production output
-            // browser-bootable until those passes become syntax-aware.
+            // Post-process: define replacement + syntax-aware static branch DCE.
+            // The transform step already ran both per module (parallel, small
+            // parses), so at bundle level replacement is a no-op unless a
+            // define pattern only materialized across module glue. Gate the
+            // DCE fixpoint (up to 8 full tree-sitter parses of the assembled
+            // bundle — ~2s on the mui corpus) on the replacement actually
+            // changing something.
+            let replaced = crate::bundler::define::replace_defines(&result.code, &defines);
+            lap("replace_defines");
+            // Fold expression-level define guards UNCONDITIONALLY. Per-module
+            // transforms already substitute `process.env.NODE_ENV` upstream, so
+            // `replace_defines` here is often a no-op while the assembled bundle
+            // still carries always-false `"production" !== "production" &&
+            // console.warn(...)` guards (styled-components ships several).
+            // fold_define_short_circuits collapses only literal-vs-literal
+            // compares — pure define residue — and is internally gated, so
+            // running it always is safe and cheap. eliminate_static_conditionals
+            // then strips any statement-position `if (false) {}` the fold left.
+            let oxc_minify_enabled = std::env::var_os("JET_DISABLE_OXC_MINIFY").is_none();
+            let folded = crate::bundler::fold::fold_define_short_circuits(&replaced);
+            let mut code = if folded == result.code || oxc_minify_enabled {
+                folded
+            } else {
+                crate::bundler::dce::eliminate_static_conditionals_syntax(&folded)
+            };
+            lap("static_conditionals_dce");
 
             // Post-process: minify
             if minify {
-                code = minify_build_js_internal(&code, &drops);
+                // JET_MINIFY_STAGE_DUMP=<dir> writes the bundle after each
+                // minify stage so a runtime-only breakage (parses fine,
+                // misbehaves in the browser) can be bisected to one pass.
+                let stage_dump = std::env::var_os("JET_MINIFY_STAGE_DUMP").map(PathBuf::from);
+                let dump_stage = |stage: &str, code: &str| {
+                    if let Some(dir) = &stage_dump {
+                        let _ = std::fs::create_dir_all(dir);
+                        let _ = std::fs::write(dir.join(format!("{stage}.js")), code);
+                    }
+                };
+                dump_stage("0-bundle", &code);
+                code = crate::bundler::minify::minify_js(&code, &drops);
+                lap("minify_js");
+                dump_stage("1-minify-js", &code);
+                code = crate::bundler::minify::replace_bool_literals(&code);
+                lap("bool_literals");
+                code = crate::bundler::minify::strip_use_client_directives(&code);
+                lap("strip_directives");
+                dump_stage("2-bool-literals", &code);
+                let mut module_glue_base = None;
+                {
+                    let optimized =
+                        crate::bundler::scope_hoist_opt::optimize_generated_module_glue(&code);
+                    if optimized.len() < code.len() {
+                        if oxc_minify_enabled {
+                            module_glue_base = Some(code);
+                            code = optimized;
+                        } else if crate::bundler::dce::js_parses_without_errors(&optimized) {
+                            code = optimized;
+                        }
+                    }
+                }
+                lap("module_glue");
+                if std::env::var_os("JET_ENABLE_DIRECT_EXPORT_READS").is_some() {
+                    let lowered = crate::bundler::scope_hoist_opt::lower_direct_export_reads(&code);
+                    if lowered != code && crate::bundler::dce::js_parses_without_errors(&lowered) {
+                        code = lowered;
+                    }
+                }
+                lap("direct_export_reads");
+                let mut oxc_applied = false;
+                if oxc_minify_enabled {
+                    if let Some(polished) = crate::bundler::minify::oxc_minify_js_candidate(&code) {
+                        if polished.len() < code.len() {
+                            code = polished;
+                            oxc_applied = true;
+                        }
+                    } else if let Some(base) = module_glue_base.take() {
+                        code = base;
+                    }
+                }
+                lap("oxc_minify");
+                // Optimistic guard scheme: run mangle → fold → semicolon
+                // compaction unguarded, then parse ONCE. Parsing the full
+                // bundle with tree-sitter is the third-largest build cost
+                // (~0.5-0.9s across the corpus when done per stage); on the
+                // happy path one parse certifies all three stages. Only when
+                // that single parse fails do we re-run the chain with the
+                // original per-stage guards to keep whichever stages are
+                // individually sound — same output as the old scheme, the
+                // extra parses are paid only on the rare corruption path.
+                // Compute mangle -> fold -> semicolon-compaction ONCE, then
+                // certify with as few full-bundle tree-sitter parses as
+                // possible. The happy path is a single parse of the most
+                // minified candidate. When that parse fails (a minify pass
+                // produced output tree-sitter flags), we DON'T recompute the
+                // expensive mangle: the already-computed `mangled`/`folded`
+                // values ARE the stagewise fallback results (fold operates on
+                // mangled, semicolon on folded), so we just probe them in
+                // size order and keep the first that parses — byte-identical
+                // to the old per-stage-guard scheme, minus the re-mangle and
+                // the redundant parses.
+                if !oxc_applied {
+                    let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
+                    lap("mangle");
+                    let folded = crate::bundler::fold::fold_constants(&mangled);
+                    lap("fold");
+                    let compacted =
+                        crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                            &folded,
+                        );
+                    lap("semicolon_compaction");
+                    let candidate = if compacted.len() < folded.len() {
+                        &compacted
+                    } else {
+                        &folded
+                    };
+                    if crate::bundler::dce::js_parses_without_errors(candidate) {
+                        code = candidate.clone();
+                        lap("single_parse_guard");
+                    } else if crate::bundler::dce::js_parses_without_errors(&folded) {
+                        // semicolon-compaction is the culprit; keep folded.
+                        code = folded;
+                        lap("reuse_parse_guard");
+                    } else if crate::bundler::dce::js_parses_without_errors(&mangled) {
+                        // fold broke parse; keep mangled, still try its compaction.
+                        let s =
+                            crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                                &mangled,
+                            );
+                        code = if s.len() < mangled.len()
+                            && crate::bundler::dce::js_parses_without_errors(&s)
+                        {
+                            s
+                        } else {
+                            mangled
+                        };
+                        tracing::warn!("Constant folding skipped: optimized bundle did not parse");
+                        lap("reuse_parse_guard");
+                    } else {
+                        // Mangle itself broke parse — fall all the way back to the
+                        // pre-mangle bundle and fold/compact that.
+                        tracing::warn!("Variable mangling skipped: optimized bundle did not parse");
+                        let f = crate::bundler::fold::fold_constants(&code);
+                        let base = if crate::bundler::dce::js_parses_without_errors(&f) {
+                            f
+                        } else {
+                            code.clone()
+                        };
+                        let s =
+                            crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                                &base,
+                            );
+                        code = if s.len() < base.len()
+                            && crate::bundler::dce::js_parses_without_errors(&s)
+                        {
+                            s
+                        } else {
+                            base
+                        };
+                        lap("remangle_fallback");
+                    }
+                    dump_stage("3-mangle", &code);
+                    dump_stage("4-fold", &code);
+                    // Post-mangle dead `var X=Y.exports;` alias removal — safe
+                    // here (name assignment is fixed; removing it pre-mangle
+                    // tripped a mangler collision). Parse-guarded; reverts on the
+                    // rare shape it can't handle.
+                    {
+                        let pruned = crate::bundler::minify::remove_dead_exports_aliases(&code);
+                        if pruned.len() < code.len()
+                            && crate::bundler::dce::js_parses_without_errors(&pruned)
+                        {
+                            code = pruned;
+                        }
+                    }
+                    lap("dead_exports_aliases");
+                    if oxc_minify_enabled {
+                        if let Some(polished) =
+                            crate::bundler::minify::oxc_minify_js_candidate(&code)
+                        {
+                            if polished.len() < code.len() {
+                                code = polished;
+                            }
+                        }
+                    }
+                    lap("oxc_minify_after_legacy");
+                }
+                // Extra polish (JET_EXTRA_MINIFY=1): residual-space squeeze,
+                // block-level empty-statement removal, bracket-to-dot
+                // properties. Worth ~0.3-2KB gzip per fixture but costs two
+                // extra full-bundle passes plus a tree-sitter guard parse —
+                // currently a net loss against the duration bar, so opt-in
+                // until the passes pay for themselves.
+                if std::env::var_os("JET_EXTRA_MINIFY").is_some() {
+                    let polished = crate::bundler::minify::squeeze_residual_spaces(&code);
+                    let polished =
+                        crate::bundler::dce::remove_redundant_empty_statements(&polished);
+                    let polished = crate::bundler::minify::bracket_to_dot_properties(&polished);
+                    if polished.len() < code.len()
+                        && crate::bundler::dce::js_parses_without_errors(&polished)
+                    {
+                        code = polished;
+                    }
+                }
+                dump_stage("5-squeeze", &code);
             }
 
             // Content hash for filename
             let hash = content_hash_prefix(&code);
             let out_filename = format!("main.{hash}.js");
+            lap("content_hash");
 
             std::fs::create_dir_all(&output_dir).context("Failed to create output directory")?;
 
@@ -1853,6 +2244,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 }
                 _ => {}
             }
+            lap("sourcemap");
 
             // Write output
             std::fs::write(output_dir.join(&out_filename), &code)
@@ -2065,7 +2457,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             let mut cfg = crate::test_runner::RunnerConfig::default_for_root(&root_dir)
                 .context("Failed to build test runner config")?;
 
-            // Load [test.web_server] from jet.config.toml if present.
+            // Load [test.web_server] from jet.toml if present.
             // Surface parse errors instead of silently dropping [test.web_server].
             // Mirrors the jet dev (#2940) and jet build (#3061) fixes; GH #3065.
             // @spec .aw/tech-design/projects/jet/logic/web-server.md#W2
@@ -2074,7 +2466,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     cfg.web_server = jet_cfg.test.web_server.clone();
                 }
                 Err(e) => {
-                    eprintln!("[jet test] Failed to parse jet.config.toml: {e:#}");
+                    eprintln!("[jet test] Failed to parse jet.toml: {e:#}");
                     eprintln!(
                         "[jet test] Continuing without a preamble web server; [test.web_server] from the file will NOT take effect until the parse error is fixed."
                     );
@@ -2361,6 +2753,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 let url = lm.get_one::<String>("url").expect("url required");
                 crate::browser_cli::launch_foreground(&root_dir, url).await
             }
+            Some(("mcp", _)) => crate::browser_cli::mcp::serve(&root_dir).await,
             Some(("shutdown", _)) => crate::browser_cli::shutdown(&root_dir).await,
             Some(("tree", tm)) => {
                 let which = tm
@@ -2535,9 +2928,146 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 let filter = tm.get_one::<String>("filter").map(|s| s.as_str());
                 crate::browser_cli::tsx(&root_dir, filter)
             }
+            Some(("snapshot", sm)) => {
+                let v = crate::browser_cli::interact::snapshot(&root_dir).await?;
+                if sm.get_flag("json") {
+                    println!("{}", serde_json::to_string_pretty(&v)?);
+                } else {
+                    let url = v["url"].as_str().unwrap_or("");
+                    let title = v["title"].as_str().unwrap_or("");
+                    println!("# {title} — {url}");
+                    if v["truncated"].as_bool() == Some(true) {
+                        println!("# (truncated at element cap — use a tighter page state)");
+                    }
+                    println!("{}", v["snapshot"].as_str().unwrap_or(""));
+                }
+                Ok(())
+            }
+            Some((verb @ ("click" | "hover" | "check" | "uncheck"), am)) => {
+                let raw = am.get_one::<String>("target").expect("target required");
+                let target = crate::browser_cli::interact::parse_target(raw)?;
+                let v = match verb {
+                    "click" => {
+                        crate::browser_cli::interact::click(
+                            &root_dir,
+                            &target,
+                            am.get_flag("dblclick"),
+                        )
+                        .await?
+                    }
+                    "hover" => crate::browser_cli::interact::hover(&root_dir, &target).await?,
+                    "check" => {
+                        crate::browser_cli::interact::set_checked(&root_dir, &target, true).await?
+                    }
+                    _ => {
+                        crate::browser_cli::interact::set_checked(&root_dir, &target, false).await?
+                    }
+                };
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some((verb @ ("fill" | "type"), am)) => {
+                let raw = am.get_one::<String>("target").expect("target required");
+                let text = am.get_one::<String>("text").expect("text required");
+                let target = crate::browser_cli::interact::parse_target(raw)?;
+                let v = if verb == "fill" {
+                    crate::browser_cli::interact::fill(&root_dir, &target, text).await?
+                } else {
+                    crate::browser_cli::interact::type_text(&root_dir, &target, text).await?
+                };
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("select", am)) => {
+                let raw = am.get_one::<String>("target").expect("target required");
+                let option = am.get_one::<String>("option").expect("option required");
+                let target = crate::browser_cli::interact::parse_target(raw)?;
+                let v = crate::browser_cli::interact::select(&root_dir, &target, option).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("goto", gm)) => {
+                let url = gm.get_one::<String>("url").expect("url required");
+                let v = crate::browser_cli::interact::goto(&root_dir, url).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("back", _)) => {
+                let v = crate::browser_cli::interact::history_step(&root_dir, -1).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("forward", _)) => {
+                let v = crate::browser_cli::interact::history_step(&root_dir, 1).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("reload", _)) => {
+                let v = crate::browser_cli::interact::reload(&root_dir).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("resize", rm)) => {
+                let width = rm
+                    .get_one::<String>("width")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("width", s))
+                    .context("width must be a number")?;
+                let height = rm
+                    .get_one::<String>("height")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("height", s))
+                    .context("height must be a number")?;
+                let v = crate::browser_cli::interact::resize(&root_dir, width, height).await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("wait", wm)) => {
+                let selector = wm.get_one::<String>("selector").map(String::as_str);
+                let text = wm.get_one::<String>("text").map(String::as_str);
+                let ms = wm
+                    .get_one::<String>("ms")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("--ms", s));
+                let timeout = wm
+                    .get_one::<String>("timeout")
+                    .and_then(|s| parse_cli_numeric_flag::<u64>("--timeout", s))
+                    .unwrap_or(10_000);
+                let v = crate::browser_cli::interact::wait(&root_dir, selector, text, ms, timeout)
+                    .await?;
+                println!("{}", serde_json::to_string(&v)?);
+                Ok(())
+            }
+            Some(("console", cm)) => {
+                let level = cm.get_one::<String>("level").map(String::as_str);
+                let limit = cm
+                    .get_one::<String>("limit")
+                    .and_then(|s| parse_cli_numeric_flag::<usize>("--limit", s))
+                    .unwrap_or(100);
+                let v = crate::browser_cli::interact::console(
+                    &root_dir,
+                    level,
+                    limit,
+                    cm.get_flag("clear"),
+                )
+                .await?;
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                Ok(())
+            }
+            Some(("requests", rm)) => {
+                let limit = rm
+                    .get_one::<String>("limit")
+                    .and_then(|s| parse_cli_numeric_flag::<usize>("--limit", s))
+                    .unwrap_or(100);
+                let v =
+                    crate::browser_cli::interact::requests(&root_dir, limit, rm.get_flag("clear"))
+                        .await?;
+                println!("{}", serde_json::to_string_pretty(&v)?);
+                Ok(())
+            }
             _ => {
                 anyhow::bail!(
-                    "Unknown browser subcommand. Try one of: install, launch, shutdown, debug, tree, pick, hooks, highlight, frame, perf, mouse, drag, key, capture, screenshot, eval."
+                    "Unknown browser subcommand. Try one of: install, launch, shutdown, debug, \
+                     tree, pick, hooks, highlight, frame, perf, mouse, drag, key, capture, \
+                     screenshot, eval, snapshot, click, fill, type, hover, select, check, \
+                     uncheck, goto, back, forward, reload, resize, wait, console, requests."
                 )
             }
         },
@@ -2671,8 +3201,7 @@ async fn run_nx_build(
             &result.code,
             &crate::bundler::define::production_defines(),
         );
-        // See the production app build path above: skip unsafe JS minification
-        // for workspace builds until the optimizer is syntax-aware.
+        let code = crate::bundler::dce::eliminate_static_conditionals_syntax(&code);
 
         // Content hash for output filename.
         let hash = content_hash_prefix(&code);
@@ -2863,6 +3392,45 @@ where
             None
         }
     }
+}
+
+fn merge_dev_proxy_rules<'a>(
+    mut config_proxy: HashMap<String, String>,
+    cli_rules: impl IntoIterator<Item = &'a str>,
+) -> Result<HashMap<String, String>> {
+    for raw in cli_rules {
+        let (prefix, target) = parse_dev_proxy_rule(raw)?;
+        config_proxy.insert(prefix, target);
+    }
+    Ok(config_proxy)
+}
+
+fn parse_dev_proxy_rule(raw: &str) -> Result<(String, String)> {
+    let Some((prefix_raw, target_raw)) = raw.split_once('=') else {
+        anyhow::bail!(
+            "invalid --proxy value {raw:?}; expected PATH=URL, e.g. --proxy /api=http://localhost:3200"
+        );
+    };
+    let prefix_trimmed = prefix_raw.trim();
+    let prefix = if prefix_trimmed == "/" {
+        "/".to_string()
+    } else {
+        prefix_trimmed.trim_end_matches('/').to_string()
+    };
+    let target = target_raw.trim().trim_end_matches('/').to_string();
+
+    if prefix.is_empty() || !prefix.starts_with('/') {
+        anyhow::bail!(
+            "invalid --proxy path {prefix_raw:?}; proxy paths must start with '/', e.g. /api"
+        );
+    }
+    if target.is_empty() || !(target.starts_with("http://") || target.starts_with("https://")) {
+        anyhow::bail!(
+            "invalid --proxy target {target_raw:?}; proxy targets must start with http:// or https://"
+        );
+    }
+
+    Ok((prefix, target))
 }
 
 async fn handle_serve_command(root_dir: &PathBuf, m: &ArgMatches) -> Result<()> {
@@ -3135,7 +3703,7 @@ pub(crate) fn coerce_sourcemap_entry_path_or_warn(entry: &std::path::Path) -> St
     }
 }
 
-/// List all available scripts from package.json and jet.config.toml pipeline.
+/// List all available scripts from package.json and jet.toml pipeline.
 /// Equivalent to `npm run` (no arguments).
 fn list_scripts(root_dir: &PathBuf) -> Result<()> {
     // package.json scripts
@@ -3172,13 +3740,13 @@ fn list_scripts(root_dir: &PathBuf) -> Result<()> {
         }
     }
 
-    // jet.config.toml pipeline tasks
+    // jet.toml pipeline tasks
     // Surface parse errors instead of silently dropping the pipeline listing.
     // Mirrors the jet dev (#2940), jet build (#3061), jet test (#3065) fixes; GH #3069.
     match crate::task_runner::config::JetConfig::load(root_dir) {
         Ok(config) => {
             if !config.pipeline.is_empty() {
-                println!("\nPipeline tasks (jet.config.toml):\n");
+                println!("\nPipeline tasks (jet.toml):\n");
                 for (name, def) in &config.pipeline {
                     let deps = if def.depends_on.is_empty() {
                         String::new()
@@ -3190,7 +3758,7 @@ fn list_scripts(root_dir: &PathBuf) -> Result<()> {
             }
         }
         Err(e) => {
-            eprintln!("[jet run] Failed to parse jet.config.toml: {e:#}");
+            eprintln!("[jet run] Failed to parse jet.toml: {e:#}");
             eprintln!(
                 "[jet run] Pipeline tasks from the file will NOT be listed until the parse error is fixed."
             );
@@ -3234,7 +3802,7 @@ async fn handle_run(
         return Ok(());
     }
 
-    // 3. Check task runner (jet.config.toml pipeline)
+    // 3. Check task runner (jet.toml pipeline)
     match crate::task_runner::TaskRunner::new(root_dir) {
         Ok(tr) => {
             if tr.has_task(target) {
@@ -3249,7 +3817,7 @@ async fn handle_run(
                 return Ok(());
             }
         }
-        Err(err) if root_dir.join("jet.config.toml").exists() => {
+        Err(err) if root_dir.join("jet.toml").exists() => {
             return Err(err).context("Failed to load task runner");
         }
         Err(_) => {}
@@ -3257,7 +3825,7 @@ async fn handle_run(
 
     anyhow::bail!(
         "Target '{}' not found as a script, file, or task. \
-         Check package.json scripts or jet.config.toml pipeline.",
+         Check package.json scripts or jet.toml pipeline.",
         target
     )
 }
@@ -3306,11 +3874,89 @@ fn write_bundle_assets(
         std::fs::write(&output_path, &asset.content)?;
 
         if asset.asset_type == crate::bundler::types::AssetType::Css {
-            css_filenames.push(asset.filename.clone());
+            if !css_filenames.contains(&asset.filename) {
+                css_filenames.push(asset.filename.clone());
+            }
         }
     }
 
     Ok(css_filenames)
+}
+
+fn append_css_side_effect_assets(
+    root_dir: &Path,
+    entry_path: &Path,
+    specifiers: &[String],
+    minify: bool,
+    assets: &mut Vec<crate::bundler::types::Asset>,
+) -> Result<()> {
+    if specifiers.is_empty() {
+        return Ok(());
+    }
+
+    let config = match crate::css::TailwindConfig::load(root_dir) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("[jet build] Failed to parse Tailwind config: {e:#}");
+            eprintln!("[jet build] Continuing with built-in Tailwind defaults; your tailwind.config.js / [css.tailwind] settings will NOT take effect until the parse error is fixed.");
+            crate::css::TailwindConfig::default()
+        }
+    };
+    let pipeline = crate::css::CssPipeline::new(root_dir.to_path_buf(), config, minify);
+    let mut seen_paths = std::collections::HashSet::new();
+
+    for specifier in specifiers {
+        let css_path = resolve_css_side_effect_import_path(root_dir, entry_path, specifier)?;
+        let css_path = std::fs::canonicalize(&css_path)
+            .with_context(|| format!("resolving CSS side-effect import `{specifier}`"))?;
+        if !seen_paths.insert(css_path.clone()) {
+            continue;
+        }
+
+        let output = pipeline
+            .process(&css_path)
+            .with_context(|| format!("processing CSS side-effect import `{specifier}`"))?;
+        let stem = css_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("style");
+        let filename = format!("{}.{}.css", stem, output.hash);
+        if assets.iter().any(|asset| asset.filename == filename) {
+            continue;
+        }
+        assets.push(crate::bundler::types::Asset {
+            filename,
+            content: output.css.into_bytes(),
+            asset_type: crate::bundler::types::AssetType::Css,
+        });
+    }
+
+    Ok(())
+}
+
+fn resolve_css_side_effect_import_path(
+    root_dir: &Path,
+    entry_path: &Path,
+    specifier: &str,
+) -> Result<PathBuf> {
+    let path = if let Some(root_relative) = specifier.strip_prefix('/') {
+        root_dir.join(root_relative)
+    } else if specifier.starts_with("./") || specifier.starts_with("../") {
+        entry_path.parent().unwrap_or(root_dir).join(specifier)
+    } else {
+        anyhow::bail!(
+            "CSS side-effect import `{specifier}` is not yet supported by jet build; use a relative or root-relative CSS path"
+        );
+    };
+
+    if path.is_file() {
+        return Ok(path);
+    }
+
+    anyhow::bail!(
+        "CSS side-effect import `{specifier}` from {} could not be resolved",
+        entry_path.display()
+    )
 }
 
 fn copy_public_dir(root_dir: &Path, output_dir: &Path) -> Result<()> {
@@ -3392,27 +4038,6 @@ fn build_flag_snapshot_from_matches(m: &ArgMatches) -> crate::build_target::Flag
 
 fn build_minify_enabled_from_matches(m: &ArgMatches) -> bool {
     !m.get_flag("no-minify")
-}
-
-fn production_build_defines(root_dir: &Path) -> std::collections::HashMap<String, String> {
-    let mut defines = crate::bundler::define::production_defines();
-    let env_vars = crate::runner::env::scan_env_files(root_dir, "production");
-    defines.extend(crate::runner::env::import_meta_env_defines(
-        &env_vars,
-        "production",
-    ));
-    defines
-}
-
-fn minify_build_js_internal(code: &str, drops: &[crate::bundler::minify::DropStatement]) -> String {
-    let mut code = crate::bundler::minify::minify_js(code, drops);
-    code = crate::bundler::minify::replace_bool_literals(&code);
-    if !code.contains('`') {
-        code = crate::bundler::dce::eliminate_dead_code(&code);
-        code = crate::bundler::mangle::mangle_variables(&code);
-        code = crate::bundler::fold::fold_constants(&code);
-    }
-    code
 }
 
 /// Produce the typed error returned by `jet check` until TypeScript
@@ -3552,6 +4177,38 @@ mod build_index_html_tests {
 
         assert!(html.contains(r#"<link rel="stylesheet" href="./main.deadbeef.css" />"#));
         assert!(html.find("./main.deadbeef.css").unwrap() < html.find("</head>").unwrap());
+    }
+
+    #[test]
+    fn css_side_effect_imports_emit_build_assets_once() {
+        let root = TempDir::new().unwrap();
+        let src = root.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let entry = src.join("main.tsx");
+        let css = src.join("main.css");
+        std::fs::write(&entry, "import './main.css';\n").unwrap();
+        std::fs::write(&css, ".status { color: rgb(20, 80, 120); }\n").unwrap();
+        let mut assets = Vec::new();
+
+        append_css_side_effect_assets(
+            root.path(),
+            &entry,
+            &["./main.css".to_string(), "./main.css".to_string()],
+            false,
+            &mut assets,
+        )
+        .unwrap();
+
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].asset_type, crate::bundler::types::AssetType::Css);
+        assert!(assets[0].filename.starts_with("main."));
+        assert!(assets[0].filename.ends_with(".css"));
+
+        let out = root.path().join("dist");
+        let css_filenames = write_bundle_assets(&out, &assets).unwrap();
+        assert_eq!(css_filenames, vec![assets[0].filename.clone()]);
+        let written = std::fs::read_to_string(out.join(&assets[0].filename)).unwrap();
+        assert!(written.contains("status"));
     }
 
     #[test]
@@ -3740,6 +4397,68 @@ mod e2e_command_contract_tests {
             shutdown.get_one::<String>("port").is_none(),
             "serve shutdown should allow session-file based shutdown"
         );
+    }
+
+    #[test]
+    fn dev_help_exposes_proxy_rules() {
+        let help = help_text(&["jet", "dev", "--help"]);
+        assert!(
+            help.contains("--proxy") && help.contains("PATH=URL") && help.contains("[dev.proxy]"),
+            "dev help must expose CLI proxy rules and config override behavior: {help}"
+        );
+    }
+
+    #[test]
+    fn dev_proxy_cli_rules_merge_over_config_rules() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("/api".to_string(), "http://localhost:3000".to_string());
+        config.insert("/auth".to_string(), "http://localhost:3001".to_string());
+
+        let merged = merge_dev_proxy_rules(
+            config,
+            [
+                "/api=http://localhost:4200",
+                "/events/=https://example.test/events/",
+            ],
+        )
+        .expect("valid proxy rules must merge");
+
+        assert_eq!(
+            merged.get("/api").map(String::as_str),
+            Some("http://localhost:4200"),
+            "CLI proxy rule must override the same config prefix"
+        );
+        assert_eq!(
+            merged.get("/auth").map(String::as_str),
+            Some("http://localhost:3001"),
+            "unrelated config proxy rule must be preserved"
+        );
+        assert_eq!(
+            merged.get("/events").map(String::as_str),
+            Some("https://example.test/events"),
+            "trailing slash normalization keeps segment-aware matching stable"
+        );
+    }
+
+    #[test]
+    fn dev_proxy_cli_rule_rejects_ambiguous_shapes() {
+        assert!(parse_dev_proxy_rule("api=http://localhost:3200").is_err());
+        assert!(parse_dev_proxy_rule("/api=localhost:3200").is_err());
+        assert!(parse_dev_proxy_rule("/api").is_err());
+    }
+
+    #[test]
+    fn dev_proxy_is_not_silently_accepted_in_wasm_mode() {
+        let err = command()
+            .try_get_matches_from([
+                "jet",
+                "dev",
+                "--wasm",
+                "--proxy",
+                "/api=http://localhost:3200",
+            ])
+            .expect_err("wasm dev does not currently wire proxy rules");
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
     }
 
     // @spec .aw/tech-design/projects/jet/specs/3941.md#unit-test
@@ -4096,88 +4815,6 @@ mod build_target_validation_table_tests {
     }
 
     #[test]
-    fn build_minifier_uses_jet_internal_pipeline() {
-        let out = minify_build_js_internal(
-            "const enabled = true;\nconsole.log(enabled);\n",
-            &[crate::bundler::minify::DropStatement::Console],
-        );
-
-        assert!(
-            !out.contains("console.log"),
-            "drop console should be handled internally, got: {out}"
-        );
-        assert!(
-            out.contains("!0") || !out.contains("true"),
-            "boolean replacement should be handled internally, got: {out}"
-        );
-    }
-
-    #[test]
-    fn build_minifier_eliminates_production_dead_else_branch() {
-        let out = minify_build_js_internal(
-            r#"if ("production" === "production") { module.exports = require(1); } else { module.exports = require("./dev.js"); }"#,
-            &[],
-        );
-
-        assert!(
-            !out.contains("./dev.js"),
-            "dead development branch should be removed internally, got: {out}"
-        );
-        assert!(
-            out.contains("require(1)"),
-            "live production branch should remain, got: {out}"
-        );
-    }
-
-    #[test]
-    fn build_minifier_preserves_default_export_function_expression_branch() {
-        let out = minify_build_js_internal(
-            r#"module.exports["default"] = "production" !== 'production' ? useRenderTimes : function () {};"#,
-            &[],
-        );
-
-        assert!(
-            out.contains(r#"module.exports["default"]=function()"#),
-            "production ternary false branch should keep function expression, got: {out}"
-        );
-        assert!(
-            !out.contains(r#"module.exports["default"]=;"#),
-            "minifier must not empty default export expression, got: {out}"
-        );
-    }
-
-    #[test]
-    fn production_build_defines_include_import_meta_env() {
-        let tmp = TempDir::new().unwrap();
-        std::fs::write(
-            tmp.path().join(".env.production"),
-            "VITE_PUBLIC_TITLE=Jet DOM\n",
-        )
-        .unwrap();
-
-        let defines = production_build_defines(tmp.path());
-
-        assert_eq!(
-            defines.get("import.meta.env.MODE").map(String::as_str),
-            Some("\"production\"")
-        );
-        assert_eq!(
-            defines.get("import.meta.env.DEV").map(String::as_str),
-            Some("false")
-        );
-        assert_eq!(
-            defines.get("import.meta.env.PROD").map(String::as_str),
-            Some("true")
-        );
-        assert_eq!(
-            defines
-                .get("import.meta.env.VITE_PUBLIC_TITLE")
-                .map(String::as_str),
-            Some("\"Jet DOM\"")
-        );
-    }
-
-    #[test]
     fn flag_snapshot_treats_default_sourcemap_as_unset() {
         let m = run_build(&["--sourcemap", "external"]).unwrap();
         let snap = build_flag_snapshot_from_matches(&m);
@@ -4397,14 +5034,14 @@ mod gh3509_handle_run_tests {
     //! GH #3509 — `handle_run` previously used
     //! `if let Ok(tr) = TaskRunner::new(root_dir)` and silently dropped
     //! every TaskRunner-construction error. Since `JetConfig::load`
-    //! returns Ok(default) for a missing `jet.config.toml`, the only
+    //! returns Ok(default) for a missing `jet.toml`, the only
     //! way `new` returns Err is if the file exists and contains a real
     //! config error (TOML parse, TaskGraph cycle, undefined task ref,
     //! cache-dir IO failure). The user saw a misleading "target not
     //! found" instead of the parser diagnostic.
     use tempfile::TempDir;
 
-    /// No `jet.config.toml` and no matching script/file: the function
+    /// No `jet.toml` and no matching script/file: the function
     /// must fall through to the "target not found" bail — the absence
     /// of a config is NOT a config error.
     #[tokio::test]
@@ -4421,7 +5058,7 @@ mod gh3509_handle_run_tests {
         );
     }
 
-    /// Malformed `jet.config.toml`: the function must surface the
+    /// Malformed `jet.toml`: the function must surface the
     /// TaskRunner-load error (which includes the parser-classified
     /// diagnostic) instead of silently fall-through to "target not found".
     #[tokio::test]
@@ -4430,7 +5067,7 @@ mod gh3509_handle_run_tests {
         // Unknown top-level key — `classify_jet_toml_error` produces a
         // structured "unknown field" diagnostic.
         std::fs::write(
-            dir.path().join("jet.config.toml"),
+            dir.path().join("jet.toml"),
             "[piepline.build]\ncommand = \"echo hi\"\n",
         )
         .unwrap();
@@ -4438,7 +5075,7 @@ mod gh3509_handle_run_tests {
 
         let err = super::handle_run(&root, "build", &[], false, None, false)
             .await
-            .expect_err("malformed jet.config.toml must Err");
+            .expect_err("malformed jet.toml must Err");
         let msg = format!("{:#}", err);
 
         assert!(

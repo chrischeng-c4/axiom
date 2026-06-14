@@ -5,7 +5,7 @@ use tree_sitter::{Node, Parser};
 
 use super::type_strip::{
     has_inline_type_specifiers, is_type_only_export, is_type_only_import,
-    transform_import_with_inline_types, transform_satisfies_expression,
+    strip_unused_named_imports, transform_import_with_inline_types, transform_satisfies_expression,
 };
 use super::{TransformOptions, TransformResult};
 
@@ -113,6 +113,7 @@ pub fn transform_tsx(source: &str, options: &TransformOptions) -> Result<Transfo
     if opts.dev_mode && has_jsx(&root) {
         transformed = super::react_refresh::inject_react_fast_refresh(&transformed, source, &root);
     }
+    transformed = strip_unused_named_imports(&transformed);
 
     Ok(TransformResult {
         code: transformed,
@@ -311,6 +312,8 @@ fn should_skip_node(node: &Node) -> bool {
             | "type_predicate_annotation"
             | "interface_declaration"
             | "type_alias_declaration"
+            | "function_signature"
+            | "internal_module"
             | "ambient_declaration"
     )
 }

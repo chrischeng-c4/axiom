@@ -24,10 +24,8 @@ Public API manifest for `projects/meter/src/report/schema.rs` generated from AST
 | `catalog` | projects/meter/src/report/schema.rs | function | pub | 152 | catalog() -> Value |
 | `json_schema` | projects/meter/src/report/schema.rs | function | pub | 20 | json_schema() -> Value |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/schema.rs -->
 ````rust
 //! Offline self-describers for `meter spec`.
 //!
@@ -45,6 +43,7 @@ use super::finding::{Kind, Severity};
 ///
 /// Deterministic by construction: built from object literals in a fixed order,
 /// so repeated `--compact` emissions are byte-identical.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-schema-rs.md#source
 pub fn json_schema() -> Value {
     json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -175,6 +174,7 @@ pub fn json_schema() -> Value {
 }
 
 /// A discovery catalog: closed severity/kind sets and per-kind evidence shapes.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-schema-rs.md#source
 pub fn catalog() -> Value {
     json!({
         "schema_version": SCHEMA_VERSION,
@@ -207,7 +207,8 @@ fn kind_catalog() -> Value {
         { "kind": "hotspot", "verb": "profile", "evidence": ["symbol", "self_ns", "total_ns", "pct", "samples", "rank"] },
         { "kind": "boundary_cost", "verb": "profile", "evidence": ["phase", "self_ns", "total_ns", "pct", "samples"] },
         { "kind": "regression", "verb": "bench", "evidence": ["bench", "baseline_ms", "current_ms", "percent_change", "severity", "ci_overlap"] },
-        { "kind": "test_failure", "verb": "test", "evidence": ["name", "stdout_tail"] }
+        { "kind": "test_failure", "verb": "test", "evidence": ["name", "stdout_tail"] },
+        { "kind": "vital", "verb": "profile", "evidence": ["cpu_time_ms", "wall_time_ms", "peak_rss_bytes"] }
     ])
 }
 
@@ -251,7 +252,7 @@ mod tests {
 changes:
   - path: projects/meter/src/report/schema.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/schema.rs` captured during meter full-codegen standardization.

@@ -516,6 +516,14 @@ impl Locator {
         format!("({})[0] ?? null", self.compile_collection_expr())
     }
 
+    /// JS expression resolving this locator's single matching element
+    /// (`null` when empty). Exposed crate-wide so the Browser Bridge can
+    /// compose element-targeted action JS for selector targets the same
+    /// way it does for snapshot refs.
+    pub(crate) fn single_element_expr(&self) -> String {
+        self.compile_single_expr()
+    }
+
     /// Compile JS that reads `suffix` (e.g. `.textContent`) from the single
     /// matching element. Returns empty/null if no match.
     fn compile_single_js(&self, suffix: &str) -> String {

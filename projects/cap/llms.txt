@@ -16,8 +16,8 @@
 ## Agent Workflow
 
 - Continue: `aw run --project cap`.
-- Next managed step: `aw standardize managed next cap`.
-- Readiness: `aw health cap`.
+- Next managed step: `aw standardize managed next --project cap`.
+- Readiness: `aw health --project cap`.
 
 ## Commands
 

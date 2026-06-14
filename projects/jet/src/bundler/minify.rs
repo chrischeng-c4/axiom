@@ -162,6 +162,84 @@ pub fn minify_js(source: &str, drops: &[DropStatement]) -> String {
     result.trim().to_string()
 }
 
+/// Remove statement terminators immediately before a block close.
+///
+/// The caller must parse-guard the result before shipping it. Semicolons can be
+/// meaningful as empty statement bodies (`while(x);}`), so this helper is a
+/// candidate shrink pass rather than an unconditional minifier rule.
+pub(crate) fn remove_semicolons_before_block_close_candidate(source: &str) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let mut result = String::with_capacity(source.len());
+    let mut prev_non_ws = '\0';
+    let mut in_string = false;
+    let mut string_char = '\0';
+    let mut in_regex = false;
+    let mut idx = 0usize;
+
+    while idx < chars.len() {
+        let ch = chars[idx];
+
+        if !in_string && !in_regex && ch == '`' {
+            idx = push_template_literal(&chars, idx, &mut result);
+            prev_non_ws = '`';
+            continue;
+        }
+
+        if !in_string && !in_regex && (ch == '"' || ch == '\'') {
+            in_string = true;
+            string_char = ch;
+            result.push(ch);
+            prev_non_ws = ch;
+            idx += 1;
+            continue;
+        }
+        if in_string {
+            result.push(ch);
+            if ch == string_char && !is_escaped(&chars, idx) {
+                in_string = false;
+            }
+            if !ch.is_whitespace() {
+                prev_non_ws = ch;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if !in_regex && ch == '/' && is_regex_start(prev_non_ws) {
+            in_regex = true;
+            result.push(ch);
+            prev_non_ws = ch;
+            idx += 1;
+            continue;
+        }
+        if in_regex {
+            result.push(ch);
+            if ch == '/' && !is_escaped(&chars, idx) {
+                in_regex = false;
+            }
+            if !ch.is_whitespace() {
+                prev_non_ws = ch;
+            }
+            idx += 1;
+            continue;
+        }
+
+        if ch == ';' && chars.get(idx + 1).copied() == Some('}') {
+            prev_non_ws = ';';
+            idx += 1;
+            continue;
+        }
+
+        result.push(ch);
+        if !ch.is_whitespace() {
+            prev_non_ws = ch;
+        }
+        idx += 1;
+    }
+
+    result
+}
+
 /// Minify CSS source code.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
 pub fn minify_css(source: &str) -> String {
@@ -655,6 +733,9 @@ fn should_insert_asi_semicolon(
     if previous_token_continues_expression(chars, next_idx) {
         return false;
     }
+    if previous_token_starts_variable_declaration(chars, next_idx) {
+        return false;
+    }
 
     true
 }
@@ -744,17 +825,25 @@ fn previous_token_continues_expression(chars: &[char], before_idx: usize) -> boo
     let keyword: String = chars[keyword_start..=keyword_end].iter().collect();
     matches!(
         keyword.as_str(),
-        "in" | "instanceof"
-            | "typeof"
-            | "void"
-            | "delete"
-            | "new"
-            | "await"
-            | "yield"
-            | "var"
-            | "let"
-            | "const"
+        "in" | "instanceof" | "typeof" | "void" | "delete" | "new" | "await" | "yield"
     )
+}
+
+fn previous_token_starts_variable_declaration(chars: &[char], before_idx: usize) -> bool {
+    let Some(keyword_end) = previous_non_ws_index(chars, before_idx) else {
+        return false;
+    };
+    if !is_identifier_char(chars[keyword_end]) {
+        return false;
+    }
+
+    let mut keyword_start = keyword_end;
+    while keyword_start > 0 && is_identifier_char(chars[keyword_start - 1]) {
+        keyword_start -= 1;
+    }
+
+    let keyword: String = chars[keyword_start..=keyword_end].iter().collect();
+    matches!(keyword.as_str(), "var" | "let" | "const")
 }
 
 fn previous_token_is_postfix_update(chars: &[char], before_idx: usize) -> bool {
@@ -830,6 +919,191 @@ fn is_no_space_before(ch: char) -> bool {
 /// Replace `true` with `!0` and `false` with `!1` (saves bytes).
 /// Only replaces standalone keyword occurrences outside strings.
 /// @spec .aw/tech-design/projects/jet/semantic/jet-bundler.md#schema
+/// Remove dead `var X=Y.exports;` alias declarations from the FINAL
+/// mangled bundle. The flat-bundle emitter writes one `var _mNe=_mN.exports;`
+/// per inlined module as the rename target for bare `exports.X` writes,
+/// but most modules assign `_mN.exports` directly and never read the
+/// alias — 338 of 341 are dead on the mui bundle. Dropping them BEFORE
+/// mangle shifts name assignment and trips a mangler collision (it broke
+/// dom-production-assets), so this runs AFTER mangle: name assignment is
+/// already fixed, and removing an unreferenced `var X=Y.exports;` is
+/// provably safe (reading `.exports` off a `{exports:{}}` slot has no
+/// side effect). A binding is removed only when its name occurs exactly
+/// once in the whole bundle — its own declaration.
+pub fn remove_dead_exports_aliases(source: &str) -> String {
+    use std::collections::HashMap;
+    let b = source.as_bytes();
+    // One pass: tally every identifier occurrence (whole-word).
+    let mut counts: HashMap<&str, u32> = HashMap::new();
+    {
+        let mut i = 0usize;
+        let is_id = |c: u8| c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+        while i < b.len() {
+            if is_id(b[i]) && !b[i].is_ascii_digit() {
+                let start = i;
+                while i < b.len() && is_id(b[i]) {
+                    i += 1;
+                }
+                *counts.entry(&source[start..i]).or_insert(0) += 1;
+            } else {
+                i += 1;
+            }
+        }
+    }
+    // Find `var <X>=<Y>.exports;` where X occurs exactly once (this decl).
+    let mut removals: Vec<(usize, usize)> = Vec::new();
+    let mut search = 0usize;
+    while let Some(rel) = source[search..].find(".exports;") {
+        let dot = search + rel;
+        search = dot + ".exports;".len();
+        // Walk back over `Y` (identifier) then `=` then `X` then `var `.
+        let mut p = dot;
+        let id_end = p;
+        while p > 0 && {
+            let c = b[p - 1];
+            c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+        } {
+            p -= 1;
+        }
+        if p == id_end {
+            continue; // no Y identifier
+        }
+        let y_start = p;
+        if y_start == 0 || b[y_start - 1] != b'=' {
+            continue;
+        }
+        let eq = y_start - 1;
+        let mut q = eq;
+        let x_end = q;
+        while q > 0 && {
+            let c = b[q - 1];
+            c.is_ascii_alphanumeric() || c == b'_' || c == b'$'
+        } {
+            q -= 1;
+        }
+        if q == x_end {
+            continue;
+        }
+        let x_start = q;
+        let x = &source[x_start..x_end];
+        // `var ` (or `;var `/`{var `) immediately before X.
+        if !source[..x_start].ends_with("var ") {
+            continue;
+        }
+        let decl_start = x_start - "var ".len();
+        if counts.get(x).copied().unwrap_or(0) != 1 {
+            continue; // referenced elsewhere — keep
+        }
+        removals.push((decl_start, dot + ".exports;".len()));
+    }
+    if removals.is_empty() {
+        return source.to_string();
+    }
+    let mut out = String::with_capacity(source.len());
+    let mut pos = 0usize;
+    for (s, e) in removals {
+        if s < pos {
+            continue;
+        }
+        out.push_str(&source[pos..s]);
+        pos = e;
+    }
+    out.push_str(&source[pos..]);
+    out
+}
+
+/// Strip standalone `'use client'` directive statements. They are React
+/// Server Components build markers with zero runtime effect once bundled
+/// (a bare string-expression statement evaluates to nothing) — MUI ships
+/// one per component file, 145 on the antd/mui bundles. `'use strict'`
+/// is intentionally NOT stripped: it changes scope semantics. Only a
+/// directive in statement position (preceded by `{`, `}`, `;`, or start)
+/// and followed by `;`/`}`/end is removed, so a `'use client'` substring
+/// inside a larger expression or string is never touched.
+pub fn strip_use_client_directives(source: &str) -> String {
+    if !source.contains("use client") {
+        return source.to_string();
+    }
+    let b = source.as_bytes();
+    let len = b.len();
+    let mut out: Vec<u8> = Vec::with_capacity(len);
+    let mut i = 0usize;
+    while i < len {
+        // Skip string/template literals wholesale so we never edit inside them.
+        if matches!(b[i], b'"' | b'\'') {
+            let q = b[i];
+            // Is this the start of a standalone `'use client'` statement?
+            let prev = out
+                .iter()
+                .rev()
+                .find(|c| !matches!(**c, b' ' | b'\t' | b'\r' | b'\n'))
+                .copied()
+                .unwrap_or(b'{');
+            let body_ok = i + 12 < len && &b[i + 1..i + 11] == b"use client" && b[i + 11] == q;
+            if body_ok && matches!(prev, b'{' | b'}' | b';') {
+                // Consume the literal + an optional trailing `;`.
+                let mut j = i + 12;
+                while j < len && matches!(b[j], b' ' | b'\t' | b'\r' | b'\n') {
+                    j += 1;
+                }
+                if j < len && b[j] == b';' {
+                    j += 1;
+                }
+                i = j;
+                continue;
+            }
+            // Otherwise copy the whole string literal verbatim.
+            out.push(q);
+            i += 1;
+            while i < len {
+                if b[i] == b'\\' {
+                    out.push(b[i]);
+                    i += 1;
+                    if i < len {
+                        out.push(b[i]);
+                        i += 1;
+                    }
+                    continue;
+                }
+                let c = b[i];
+                out.push(c);
+                i += 1;
+                if c == q {
+                    break;
+                }
+            }
+            continue;
+        }
+        if b[i] == b'`' {
+            i = push_template_literal_bytes(b, i, &mut out);
+            continue;
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+#[cfg(test)]
+mod use_client_tests {
+    use super::strip_use_client_directives as strip;
+
+    #[test]
+    fn removes_standalone_use_client() {
+        assert_eq!(strip("{'use client';var a=1;}"), "{var a=1;}");
+        assert_eq!(strip("{var a=1;\"use client\";f();}"), "{var a=1;f();}");
+        assert_eq!(strip("'use client';x()"), "x()");
+    }
+
+    #[test]
+    fn preserves_use_strict_and_non_directive_strings() {
+        assert_eq!(strip("{'use strict';a()}"), "{'use strict';a()}");
+        // 'use client' as a value, not a statement, is untouched.
+        assert_eq!(strip("var x='use client';"), "var x='use client';");
+        assert_eq!(strip("f('use client')"), "f('use client')");
+    }
+}
+
 pub fn replace_bool_literals(source: &str) -> String {
     let b = source.as_bytes();
     let len = b.len();
@@ -894,6 +1168,40 @@ pub fn replace_bool_literals(source: &str) -> String {
     }
 
     String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+/// Run OXC as a final AST-level minify candidate.
+///
+/// This is deliberately best-effort: parser errors, OXC-internal failures, or
+/// non-shrinking output all fall back to Jet's existing output. The caller still
+/// owns any project-specific parse/runtime guard before shipping the result.
+pub fn oxc_minify_js_candidate(source: &str) -> Option<String> {
+    let allocator = oxc_allocator::Allocator::default();
+    let source_type = oxc_span::SourceType::mjs();
+    let ret = oxc_parser::Parser::new(&allocator, source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return None;
+    }
+    let mut program = ret.program;
+    let options = oxc_minifier::MinifierOptions {
+        mangle: Some(oxc_minifier::MangleOptions::default()),
+        compress: Some(oxc_minifier::CompressOptions {
+            max_iterations: Some(2),
+            ..oxc_minifier::CompressOptions::smallest()
+        }),
+    };
+    let ret = oxc_minifier::Minifier::new(options).minify(&allocator, &mut program);
+    let code = oxc_codegen::Codegen::new()
+        .with_options(oxc_codegen::CodegenOptions {
+            minify: true,
+            comments: oxc_codegen::CommentOptions::disabled(),
+            ..oxc_codegen::CodegenOptions::default()
+        })
+        .with_scoping(ret.scoping)
+        .with_private_member_mappings(ret.class_private_mappings)
+        .build(&program)
+        .code;
+    (code.len() < source.len()).then_some(code)
 }
 
 fn push_template_literal_bytes(bytes: &[u8], start: usize, out: &mut Vec<u8>) -> usize {
@@ -1143,6 +1451,32 @@ mod tests {
     }
 
     #[test]
+    fn test_remove_semicolon_before_block_close_candidate_keeps_parseable_return() {
+        let source = "function f(){if(ok){return;}}";
+        let result = remove_semicolons_before_block_close_candidate(source);
+        assert_eq!(result, "function f(){if(ok){return}}");
+        assert!(crate::bundler::dce::js_parses_without_errors(&result));
+    }
+
+    #[test]
+    fn test_remove_semicolon_before_block_close_candidate_preserves_literals() {
+        let source = "function f(){const s=\";}\";const r=/;}/;const t=`;}`;return s+r+t;}";
+        let result = remove_semicolons_before_block_close_candidate(source);
+        assert!(result.contains("\";}\""), "got: {}", result);
+        assert!(result.contains("/;}/"), "got: {}", result);
+        assert!(result.contains("`;}`"), "got: {}", result);
+        assert!(crate::bundler::dce::js_parses_without_errors(&result));
+    }
+
+    #[test]
+    fn test_remove_semicolon_before_block_close_candidate_requires_parse_guard() {
+        let source = "function f(){while(x);}";
+        let result = remove_semicolons_before_block_close_candidate(source);
+        assert_eq!(result, "function f(){while(x)}");
+        assert!(!crate::bundler::dce::js_parses_without_errors(&result));
+    }
+
+    #[test]
     fn test_minify_inserts_semicolon_between_asi_statements() {
         let source = "const x = 1\nconst y = 2";
         let result = minify_js(source, &[]);
@@ -1207,9 +1541,9 @@ if (typeof
     }
 
     #[test]
-    fn test_minify_preserves_declaration_continuation_after_comment() {
+    fn test_minify_preserves_variable_declaration_after_stripped_comment() {
         let source = r#"
-function convertDataToEntities() {
+function convertDataToEntities(dataNodes) {
   var /** @deprecated Use config.externalGetKey instead */
   legacyExternalGetKey = arguments.length > 2 ? arguments[2] : undefined;
   return legacyExternalGetKey;
@@ -1217,13 +1551,13 @@ function convertDataToEntities() {
 "#;
         let result = minify_js(source, &[]);
         assert!(
-            !result.contains("var;legacyExternalGetKey"),
-            "got: {}",
+            result.contains("var legacyExternalGetKey="),
+            "declaration head must survive comment stripping: {}",
             result
         );
         assert!(
-            result.contains("var legacyExternalGetKey="),
-            "got: {}",
+            !result.contains("var;legacyExternalGetKey"),
+            "ASI must not split variable declaration: {}",
             result
         );
     }
@@ -1610,3 +1944,103 @@ var x = 1;"#;
     }
 }
 // CODEGEN-END
+
+/// Final whitespace squeeze: drop any remaining space where at least one
+/// side is a non-identifier character and no token could merge.
+///
+/// The conservative collapse pass keeps spaces like `) return x`,
+/// `} else`, and `case "x"` even though `)return`, `}else`, and
+/// `case"x"` are valid JS — ~1.6KB of residual spaces on the
+/// react-bench bundle. Dangerous pairs (`+ +`, `- -`, anything
+/// involving `/`) are preserved.
+pub fn squeeze_residual_spaces(source: &str) -> String {
+    use crate::bundler::fold::{is_id, is_regex_ctx, push_regex, push_string};
+    let b = source.as_bytes();
+    let len = b.len();
+    let mut out: Vec<u8> = Vec::with_capacity(len);
+    let mut i = 0usize;
+
+    while i < len {
+        match b[i] {
+            b'"' | b'\'' | b'`' => {
+                i = push_string(b, i, &mut out);
+                continue;
+            }
+            b'/' if is_regex_ctx(out.last().copied().unwrap_or(0)) => {
+                i = push_regex(b, i, &mut out);
+                continue;
+            }
+            b' ' => {
+                let prev = out.last().copied().unwrap_or(b'\n');
+                let next = b.get(i + 1).copied().unwrap_or(b'\n');
+                let removable = (!is_id(prev) || !is_id(next))
+                    && !(prev == b'+' && next == b'+')
+                    && !(prev == b'-' && next == b'-')
+                    && prev != b'/'
+                    && next != b'/';
+                if removable {
+                    i += 1;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+/// Convert bracket property access/assignment with identifier-safe string
+/// keys to dot form: `x["default"]` -> `x.default`, `exports["name"] =` ->
+/// `exports.name =`. Reserved-word keys are fine as properties in ES5.1+.
+pub fn bracket_to_dot_properties(source: &str) -> String {
+    use crate::bundler::fold::{is_id, is_regex_ctx, push_regex, push_string};
+    let b = source.as_bytes();
+    let len = b.len();
+    let mut out: Vec<u8> = Vec::with_capacity(len);
+    let mut i = 0usize;
+
+    while i < len {
+        match b[i] {
+            b'"' | b'\'' | b'`' => {
+                i = push_string(b, i, &mut out);
+                continue;
+            }
+            b'/' if is_regex_ctx(out.last().copied().unwrap_or(0)) => {
+                i = push_regex(b, i, &mut out);
+                continue;
+            }
+            b'[' if i + 3 < len && matches!(b[i + 1], b'"' | b'\'') => {
+                // Property bracket only when attached to a value (previous
+                // significant byte ends an expression).
+                let prev = out.last().copied().unwrap_or(b'\n');
+                let attached = is_id(prev) || matches!(prev, b')' | b']');
+                if attached {
+                    let quote = b[i + 1];
+                    let key_start = i + 2;
+                    let mut k = key_start;
+                    while k < len && b[k] != quote && is_id(b[k]) {
+                        k += 1;
+                    }
+                    let valid_key = k > key_start
+                        && k < len
+                        && b[k] == quote
+                        && k + 1 < len
+                        && b[k + 1] == b']'
+                        && !b[key_start].is_ascii_digit();
+                    if valid_key {
+                        out.push(b'.');
+                        out.extend_from_slice(&b[key_start..k]);
+                        i = k + 2;
+                        continue;
+                    }
+                }
+            }
+            _ => {}
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}

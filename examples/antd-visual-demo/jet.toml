@@ -1,0 +1,3 @@
+[wasm]
+entry = "src/AntdVisualFixture.tsx"
+root_component = "AntdVisualFixture"

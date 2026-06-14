@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Fills the e2e gaps surfaced by the README coverage audit.
 //!
 //! Each test is named after the README §-section + capability so the
@@ -427,3 +429,4 @@ async fn s1_oversized_payload_rejected_with_413_or_422() {
         "expected 413 (size) / 422 / 400, got {st}"
     );
 }
+// CODEGEN-END

@@ -8,7 +8,7 @@
 //! services, wait for readiness, execute the runner, capture evidence, and
 //! clean up services.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -21,8 +21,7 @@ use chrono::Utc;
 use walkdir::WalkDir;
 
 use crate::config::{
-    self, PortSpec, RetentionPolicy, RunnerConfig, RunnerSelectionReason, ServiceConfig,
-    ServicePreset, VatConfig,
+    self, PortSpec, RetentionPolicy, RunnerConfig, ServiceConfig, ServicePreset, VatConfig,
 };
 use crate::event::{Event, EventKind};
 use crate::gpu;
@@ -58,7 +57,8 @@ pub enum Target {
         program_args: Vec<String>,
     },
     Runner {
-        runner_id: Option<String>,
+        /// Empty = default selection; several = run CONCURRENTLY in one vat.
+        runner_ids: Vec<String>,
     },
 }
 
@@ -88,13 +88,13 @@ pub fn exec(args: Args) -> Result<ExitCode> {
             gpu,
             json,
         }),
-        Target::Runner { runner_id } => exec_runner(RunnerArgs {
+        Target::Runner { runner_ids } => exec_runner(RunnerArgs {
             base,
             from,
             name,
             isolation,
             gpu,
-            runner_id,
+            runner_ids,
         }),
     }
 }
@@ -105,7 +105,7 @@ struct RunnerArgs {
     name: Option<String>,
     isolation: Isolation,
     gpu: GpuRequest,
-    runner_id: Option<String>,
+    runner_ids: Vec<String>,
 }
 
 struct DirectArgs {
@@ -234,23 +234,50 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
             "vat run [runner-id] uses vat.toml workspace.base; --base/--from are direct mode only"
         );
     }
-    let (runner_ref, selection_reason) = match cfg.select_runner(args.runner_id.as_deref()) {
-        Ok(selection) => selection,
-        Err(err) => {
-            emit_jsonl(serde_json::json!({
-                "type": "error",
-                "code": "runner_required",
-                "message": err.to_string(),
-                "runners": cfg.runners.iter().map(|runner| runner.id.as_str()).collect::<Vec<_>>(),
-            }))?;
-            return Err(err);
+    let runners: Vec<RunnerConfig> = if args.runner_ids.len() > 1 {
+        // Explicit concurrent set: every id must resolve; duplicates rejected.
+        let mut seen = std::collections::BTreeSet::new();
+        let mut selected = Vec::new();
+        for id in &args.runner_ids {
+            if !seen.insert(id.clone()) {
+                bail!("runner `{id}` listed twice");
+            }
+            selected.push(cfg.runner(id)?.clone());
+        }
+        selected
+    } else {
+        match cfg.select_runner(args.runner_ids.first().map(String::as_str)) {
+            Ok((runner_ref, _reason)) => vec![runner_ref.clone()],
+            Err(err) => {
+                emit_jsonl(serde_json::json!({
+                    "type": "error",
+                    "code": "runner_required",
+                    "message": err.to_string(),
+                    "runners": cfg.runners.iter().map(|runner| runner.id.as_str()).collect::<Vec<_>>(),
+                }))?;
+                return Err(err);
+            }
         }
     };
-    let runner = runner_ref.clone();
+    let selection_reason = if args.runner_ids.len() > 1 {
+        "explicit_concurrent"
+    } else if args.runner_ids.len() == 1 {
+        "explicit"
+    } else if cfg.default_runner.is_some() {
+        "default_runner"
+    } else {
+        "single_runner"
+    };
+    let joined_ids = runners
+        .iter()
+        .map(|r| r.id.as_str())
+        .collect::<Vec<_>>()
+        .join("+");
     emit_jsonl(serde_json::json!({
         "type": "select",
-        "runner": runner.id.as_str(),
-        "reason": runner_selection_reason(selection_reason),
+        "runner": joined_ids.as_str(),
+        "runners": runners.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        "reason": selection_reason,
     }))?;
     let gpu_info = gpu::detect();
     if args.gpu == GpuRequest::Required && !gpu_info.accessible {
@@ -267,10 +294,16 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
 
     let source = std::fs::canonicalize(cfg.base_dir())
         .with_context(|| format!("resolve workspace base {}", cfg.base_dir().display()))?;
+    let mut env = cfg.env.clone();
+    env.entry("VAT_CONFIG_ROOT".to_string())
+        .or_insert_with(|| cfg.root.to_string_lossy().into_owned());
+    env.entry("VAT_WORKSPACE_BASE".to_string())
+        .or_insert_with(|| source.to_string_lossy().into_owned());
+
     let spec = EnvSpec {
         base: Some(Base::Dir(source.clone())),
         workdir: cfg.workspace.workdir.clone(),
-        env: cfg.env.clone(),
+        env,
         isolation: args.isolation,
         gpu: args.gpu,
         ..EnvSpec::default()
@@ -280,7 +313,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
     let name = args
         .name
         .or_else(|| cfg.name.clone())
-        .or(Some(runner.id.clone()));
+        .or(Some(joined_ids.clone()));
     let mut vat = store::create(&new_id, name, spec.clone(), Some(&source), Vec::new())
         .context("create vat")?;
     let logs_dir = vat.dir.join(crate::paths::file::LOGS);
@@ -292,19 +325,20 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
             path: cfg.path.to_string_lossy().into_owned(),
             digest: cfg.digest.clone(),
         },
-        runner_id: runner.id.clone(),
+        runner_id: joined_ids.clone(),
         retention: cfg.workspace.keep,
         services: Vec::new(),
         runner: None,
+        runners: Vec::new(),
         artifacts: Vec::new(),
     });
     vat.save()?;
     vat.log(Event::new(
         EventKind::RunStarted,
-        format!("runner: {}", runner.id),
+        format!("runner: {joined_ids}"),
     ))?;
 
-    let result = run_configured(&mut vat, &cfg, &runner, &logs_dir);
+    let result = run_configured(&mut vat, &cfg, &runners, &logs_dir);
     let code = match result {
         Ok(code) => code,
         Err(err) => {
@@ -313,7 +347,7 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
                 "code": "run_failed",
                 "message": err.to_string(),
             }))?;
-            record_runner_failure(&mut vat, &runner, &logs_dir, &err.to_string())?;
+            record_runner_failure(&mut vat, &runners[0], &logs_dir, &err.to_string())?;
             -1
         }
     };
@@ -332,16 +366,34 @@ fn exec_runner(args: RunnerArgs) -> Result<ExitCode> {
     }
 
     let kept = !should_remove;
+    let runner_results: Vec<serde_json::Value> = vat
+        .meta
+        .test_run
+        .as_ref()
+        .map(|t| {
+            t.runners
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "ok": r.exit_code == Some(0),
+                        "exit_code": r.exit_code,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     emit_jsonl(serde_json::json!({
         "type": "result",
         "id": state.id.as_str(),
-        "runner": runner.id.as_str(),
+        "runner": joined_ids.as_str(),
+        "runners": runner_results,
         "ok": code == 0,
         "exit_code": code,
         "state": if kept { "kept" } else { "removed" },
         "inspect": if kept {
             serde_json::json!({
-                "state": format!("vat state {} --json", state.id),
+                "state": format!("vat state {}", state.id),
                 "logs": format!("vat logs {} runner", state.id),
                 "diff": format!("vat diff {} --json", state.id),
             })
@@ -364,17 +416,26 @@ fn process_exit_code(code: i32) -> ExitCode {
 fn run_configured(
     vat: &mut store::Vat,
     cfg: &VatConfig,
-    runner: &RunnerConfig,
+    runners: &[RunnerConfig],
     logs_dir: &Path,
 ) -> Result<i32> {
     let rootfs = vat.rootfs();
     let cwd = rootfs.join(&vat.meta.spec.workdir);
     std::fs::create_dir_all(&cwd).with_context(|| format!("create {}", cwd.display()))?;
 
+    // Services: the UNION of every runner's requires, order-preserving and
+    // deduplicated — one shared instance set serves all concurrent runners.
+    let mut service_ids: Vec<&str> = Vec::new();
+    for runner in runners {
+        for service_id in &runner.requires {
+            if !service_ids.contains(&service_id.as_str()) {
+                service_ids.push(service_id);
+            }
+        }
+    }
     let mut service_plans = Vec::new();
     let mut run_env = vat.meta.spec.env.clone();
-    for service_id in &runner.requires {
-        let service = cfg.service(service_id)?;
+    for service in ordered_required_services(cfg, &service_ids)? {
         let plan = prepare_service(vat, cfg, service)?;
         for (key, value) in &plan.env {
             run_env.insert(key.clone(), value.clone());
@@ -391,36 +452,203 @@ fn run_configured(
 
     let mut services = Vec::new();
     for plan in &service_plans {
-        services.push(start_service(vat, plan, &cwd, logs_dir, &run_env)?);
-    }
-
-    let readiness = wait_for_services(vat, &mut services);
-    if let Err(err) = readiness {
-        stop_services(&mut services);
+        let handle = match start_service(vat, plan, &cwd, logs_dir, &run_env) {
+            Ok(handle) => handle,
+            Err(err) => {
+                stop_services(&mut services);
+                persist_services(vat, &services)?;
+                return Err(err);
+            }
+        };
+        services.push(handle);
+        let last = services.len() - 1;
+        if let Err(err) = wait_for_services(vat, &mut services[last..]) {
+            stop_services(&mut services);
+            persist_services(vat, &services)?;
+            return Err(err);
+        }
         persist_services(vat, &services)?;
-        return Err(err);
     }
     persist_services(vat, &services)?;
 
-    emit_jsonl(serde_json::json!({
-        "type": "runner",
-        "id": runner.id.as_str(),
-        "state": "started",
-    }))?;
-    let runner_record = run_runner_process(vat, runner, &cwd, logs_dir, &run_env)?;
-    let code = runner_record.exit_code.unwrap_or(-1);
+    // Spawn every runner, THEN wait — concurrency comes from the children
+    // running side by side, not from threads in vat.
+    let single = runners.len() == 1;
+    let mut procs = Vec::new();
+    for runner in runners {
+        emit_jsonl(serde_json::json!({
+            "type": "runner",
+            "id": runner.id.as_str(),
+            "state": "started",
+        }))?;
+        procs.push(spawn_runner_process(
+            runner, &cwd, logs_dir, &run_env, single,
+        )?);
+    }
+    let records = wait_runner_processes(procs)?;
+
+    // Worst-wins exit: any negative (timeout/kill) is worst, else max code.
+    let code = records
+        .iter()
+        .map(|r| r.exit_code.unwrap_or(-1))
+        .fold(0, |acc, c| if acc < 0 || c < 0 { -1 } else { acc.max(c) });
+    for record in &records {
+        emit_jsonl(serde_json::json!({
+            "type": "runner",
+            "id": record.id.as_str(),
+            "state": "exited",
+            "exit_code": record.exit_code,
+        }))?;
+    }
     if let Some(test_run) = vat.meta.test_run.as_mut() {
-        test_run.runner = Some(runner_record);
-        test_run.artifacts = collect_artifacts(&rootfs, &runner.artifacts)?;
+        test_run.runner = records.first().cloned();
+        test_run.runners = records.clone();
+        let mut artifacts = Vec::new();
+        for runner in runners {
+            artifacts.extend(collect_artifacts(&rootfs, &runner.artifacts)?);
+        }
+        test_run.artifacts = artifacts;
     }
     vat.save()?;
     stop_services(&mut services);
     persist_services(vat, &services)?;
-    vat.log(Event::new(
-        EventKind::RunFinished,
-        format!("runner {} exited {code}", runner.id),
-    ))?;
+    let summary = records
+        .iter()
+        .map(|r| format!("{} exited {}", r.id, r.exit_code.unwrap_or(-1)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    vat.log(Event::new(EventKind::RunFinished, summary))?;
     Ok(code)
+}
+
+fn ordered_required_services<'a>(
+    cfg: &'a VatConfig,
+    service_ids: &[&str],
+) -> Result<Vec<&'a ServiceConfig>> {
+    let mut ordered = Vec::new();
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    for service_id in service_ids {
+        visit_required_service(cfg, service_id, &mut visiting, &mut visited, &mut ordered)?;
+    }
+    Ok(ordered)
+}
+
+fn visit_required_service<'a>(
+    cfg: &'a VatConfig,
+    service_id: &str,
+    visiting: &mut BTreeSet<String>,
+    visited: &mut BTreeSet<String>,
+    ordered: &mut Vec<&'a ServiceConfig>,
+) -> Result<()> {
+    if visited.contains(service_id) {
+        return Ok(());
+    }
+    if !visiting.insert(service_id.to_string()) {
+        bail!("service dependency cycle includes `{service_id}`");
+    }
+    let service = cfg.service(service_id)?;
+    for required in &service.requires {
+        visit_required_service(cfg, required, visiting, visited, ordered)?;
+    }
+    visiting.remove(service_id);
+    visited.insert(service_id.to_string());
+    ordered.push(service);
+    Ok(())
+}
+
+/// One spawned (not yet reaped) runner child plus its bookkeeping.
+struct RunnerProc {
+    runner: RunnerConfig,
+    child: Child,
+    started: Instant,
+    deadline: Option<Instant>,
+    stdout_log: String,
+    stderr_log: String,
+}
+
+/// Spawn one runner child with per-runner log files. A single runner keeps
+/// the legacy `runner.{stdout,stderr}.log` names; a concurrent set
+/// disambiguates as `runner-<id>.{stdout,stderr}.log`.
+fn spawn_runner_process(
+    runner: &RunnerConfig,
+    cwd: &Path,
+    logs_dir: &Path,
+    env: &BTreeMap<String, String>,
+    single: bool,
+) -> Result<RunnerProc> {
+    let (stdout, stderr) = if single {
+        (
+            logs_dir.join("runner.stdout.log"),
+            logs_dir.join("runner.stderr.log"),
+        )
+    } else {
+        (
+            logs_dir.join(format!("runner-{}.stdout.log", runner.id)),
+            logs_dir.join(format!("runner-{}.stderr.log", runner.id)),
+        )
+    };
+    let started = Instant::now();
+    let child = command_with_logs(&runner.cmd, cwd, env, &stdout, &stderr)
+        .with_context(|| format!("spawn runner `{}`", runner.id))?;
+    Ok(RunnerProc {
+        runner: runner.clone(),
+        deadline: runner.timeout_s.map(|s| started + Duration::from_secs(s)),
+        started,
+        child,
+        stdout_log: stdout.to_string_lossy().into_owned(),
+        stderr_log: stderr.to_string_lossy().into_owned(),
+    })
+}
+
+/// Poll every child to completion, enforcing each runner's own timeout
+/// (an elapsed budget kills that child; the others keep running).
+fn wait_runner_processes(mut procs: Vec<RunnerProc>) -> Result<Vec<RunnerRunRecord>> {
+    let mut records: Vec<Option<RunnerRunRecord>> = procs.iter().map(|_| None).collect();
+    loop {
+        let mut all_done = true;
+        for (i, proc) in procs.iter_mut().enumerate() {
+            if records[i].is_some() {
+                continue;
+            }
+            if let Some(status) = proc.child.try_wait()? {
+                records[i] = Some(RunnerRunRecord {
+                    id: proc.runner.id.clone(),
+                    command: proc.runner.cmd.clone(),
+                    status: ProcessStatus::Exited,
+                    exit_code: Some(status.code().unwrap_or(-1)),
+                    duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                    stdout_log: proc.stdout_log.clone(),
+                    stderr_log: proc.stderr_log.clone(),
+                });
+                continue;
+            }
+            if let Some(deadline) = proc.deadline {
+                if Instant::now() >= deadline {
+                    kill_child(&mut proc.child);
+                    let _ = proc.child.wait();
+                    records[i] = Some(RunnerRunRecord {
+                        id: proc.runner.id.clone(),
+                        command: proc.runner.cmd.clone(),
+                        status: ProcessStatus::Exited,
+                        exit_code: Some(-1),
+                        duration_ms: Some(proc.started.elapsed().as_millis() as u64),
+                        stdout_log: proc.stdout_log.clone(),
+                        stderr_log: proc.stderr_log.clone(),
+                    });
+                    continue;
+                }
+            }
+            all_done = false;
+        }
+        if all_done {
+            return Ok(records
+                .into_iter()
+                .map(|r| r.expect("all recorded"))
+                .collect());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn run_setup_step(
@@ -878,14 +1106,6 @@ fn sorted_keys(env: &BTreeMap<String, String>) -> Vec<String> {
     env.keys().cloned().collect()
 }
 
-fn runner_selection_reason(reason: RunnerSelectionReason) -> &'static str {
-    match reason {
-        RunnerSelectionReason::Explicit => "explicit",
-        RunnerSelectionReason::DefaultRunner => "default_runner",
-        RunnerSelectionReason::SingleRunner => "single_runner",
-    }
-}
-
 fn service_preset_name(preset: ServicePreset) -> &'static str {
     match preset {
         ServicePreset::Postgres => "postgres",
@@ -995,32 +1215,6 @@ fn wait_for_services(vat: &mut store::Vat, services: &mut [ServiceHandle]) -> Re
     Ok(())
 }
 
-fn run_runner_process(
-    _vat: &store::Vat,
-    runner: &RunnerConfig,
-    cwd: &Path,
-    logs_dir: &Path,
-    env: &BTreeMap<String, String>,
-) -> Result<RunnerRunRecord> {
-    let stdout = logs_dir.join("runner.stdout.log");
-    let stderr = logs_dir.join("runner.stderr.log");
-    let started = Instant::now();
-    let mut child = command_with_logs(&runner.cmd, cwd, env, &stdout, &stderr)
-        .with_context(|| format!("spawn runner `{}`", runner.id))?;
-    let status = wait_child(&mut child, runner.timeout_s)?;
-    let duration_ms = started.elapsed().as_millis() as u64;
-    let exit_code = status;
-    Ok(RunnerRunRecord {
-        id: runner.id.clone(),
-        command: runner.cmd.clone(),
-        status: ProcessStatus::Exited,
-        exit_code: Some(exit_code),
-        duration_ms: Some(duration_ms),
-        stdout_log: stdout.to_string_lossy().into_owned(),
-        stderr_log: stderr.to_string_lossy().into_owned(),
-    })
-}
-
 fn record_runner_failure(
     vat: &mut store::Vat,
     runner: &RunnerConfig,
@@ -1056,7 +1250,7 @@ fn persist_services(vat: &mut store::Vat, services: &[ServiceHandle]) -> Result<
 }
 
 fn stop_services(services: &mut [ServiceHandle]) {
-    for service in services {
+    for service in services.iter_mut().rev() {
         if service.child.try_wait().ok().flatten().is_some() {
             continue;
         }
@@ -1066,6 +1260,127 @@ fn stop_services(services: &mut [ServiceHandle]) {
             || service.record.status == ProcessStatus::Ready
         {
             service.record.status = ProcessStatus::Exited;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_services_stops_in_reverse_start_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let order_path = temp.path().join("stop-order.txt");
+        let mut services = vec![
+            spawn_trapping_service(temp.path(), &order_path, "postgres"),
+            spawn_trapping_service(temp.path(), &order_path, "backend"),
+            spawn_trapping_service(temp.path(), &order_path, "frontend"),
+        ];
+
+        std::thread::sleep(Duration::from_millis(100));
+        stop_services(&mut services);
+
+        let order = std::fs::read_to_string(&order_path).expect("stop order");
+        assert_eq!(
+            order.lines().collect::<Vec<_>>(),
+            vec!["frontend", "backend", "postgres"]
+        );
+        assert!(services
+            .iter()
+            .all(|service| service.record.status == ProcessStatus::Exited));
+    }
+
+    #[test]
+    fn ordered_required_services_expands_dependencies_first() {
+        let cfg = VatConfig {
+            version: 1,
+            name: None,
+            default_runner: None,
+            workspace: crate::config::WorkspaceConfig::default(),
+            env: BTreeMap::new(),
+            setup: Vec::new(),
+            services: vec![
+                test_service("frontend", &["backend"]),
+                test_service("backend", &["postgres"]),
+                test_service("postgres", &[]),
+            ],
+            runners: vec![RunnerConfig {
+                id: "e2e".to_string(),
+                requires: vec!["frontend".to_string()],
+                cmd: vec!["true".to_string()],
+                timeout_s: None,
+                artifacts: Vec::new(),
+            }],
+            path: PathBuf::from("vat.toml"),
+            root: PathBuf::from("."),
+            digest: String::new(),
+        };
+
+        let ids: Vec<&str> = cfg.runners[0].requires.iter().map(|s| s.as_str()).collect();
+        let ordered = ordered_required_services(&cfg, &ids).expect("service order");
+
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|service| service.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["postgres", "backend", "frontend"]
+        );
+    }
+
+    fn test_service(id: &str, requires: &[&str]) -> ServiceConfig {
+        ServiceConfig {
+            id: id.to_string(),
+            requires: requires.iter().map(|value| value.to_string()).collect(),
+            cmd: vec!["true".to_string()],
+            preset: None,
+            version: None,
+            port: PortSpec::default(),
+            seed: Vec::new(),
+            export: BTreeMap::new(),
+            ready_http: None,
+            timeout_s: 60,
+        }
+    }
+
+    fn spawn_trapping_service(root: &Path, order_path: &Path, id: &str) -> ServiceHandle {
+        let command = vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "trap 'printf \"%s\\n\" \"$VAT_STOP_ID\" >> \"$VAT_STOP_ORDER\"; exit 0' TERM; while :; do sleep 1; done".to_string(),
+        ];
+        let mut env = BTreeMap::new();
+        env.insert("VAT_STOP_ID".to_string(), id.to_string());
+        env.insert(
+            "VAT_STOP_ORDER".to_string(),
+            order_path.to_string_lossy().into_owned(),
+        );
+        let stdout = root.join(format!("{id}.stdout.log"));
+        let stderr = root.join(format!("{id}.stderr.log"));
+        let child =
+            command_with_logs(&command, root, &env, &stdout, &stderr).expect("service child");
+        ServiceHandle {
+            record: ServiceRunRecord {
+                id: id.to_string(),
+                command,
+                status: ProcessStatus::Ready,
+                preset: None,
+                port: None,
+                prepare_mode: Some("direct_start".to_string()),
+                cache_key: None,
+                prepare_duration_ms: Some(0),
+                ready_duration_ms: Some(0),
+                exported_env: Vec::new(),
+                pid: Some(child.id()),
+                exit_code: None,
+                ready_http: None,
+                stdout_log: stdout.to_string_lossy().into_owned(),
+                stderr_log: stderr.to_string_lossy().into_owned(),
+            },
+            child,
+            timeout_s: 1,
+            ready_probe: ReadyProbe::None,
         }
     }
 }
@@ -1108,23 +1423,6 @@ fn set_process_group(command: &mut Command) {
 
 #[cfg(not(unix))]
 fn set_process_group(_command: &mut Command) {}
-
-fn wait_child(child: &mut Child, timeout_s: Option<u64>) -> Result<i32> {
-    let deadline = timeout_s.map(|s| Instant::now() + Duration::from_secs(s));
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(status.code().unwrap_or(-1));
-        }
-        if let Some(deadline) = deadline {
-            if Instant::now() >= deadline {
-                kill_child(child);
-                let _ = child.wait();
-                return Ok(-1);
-            }
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-}
 
 #[cfg(unix)]
 fn kill_child(child: &mut Child) {

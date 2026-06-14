@@ -9,11 +9,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Args)]
-/// Args for `aw td lock <project>`.
+/// Args for `aw td lock --project <project>`.
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub struct TdLockArgs {
-    /// Configured project name or alias.
-    pub project: String,
     /// Check the lock without rewriting it. Exits non-zero when missing or stale.
     #[arg(long)]
     pub check: bool,
@@ -117,9 +115,10 @@ impl TdLockProject {
 }
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
-pub fn run(args: TdLockArgs) -> Result<()> {
+pub fn run(project: Option<&str>, args: TdLockArgs) -> Result<()> {
+    let project = project.ok_or_else(|| anyhow::anyhow!("td lock requires --project <project>"))?;
     if args.check || args.show {
-        let status = check_project_td_lock(&args.project)?;
+        let status = check_project_td_lock(project)?;
         if args.json {
             println!("{}", serde_json::to_string_pretty(&status)?);
         } else {
@@ -131,7 +130,7 @@ pub fn run(args: TdLockArgs) -> Result<()> {
         return Ok(());
     }
 
-    let (status, wrote) = write_project_td_lock(&args.project)?;
+    let (status, wrote) = write_project_td_lock(project)?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
@@ -211,7 +210,10 @@ fn check_project_td_lock_at_root(project_root: &Path, project: &str) -> Result<T
             changed: Vec::new(),
             added: Vec::new(),
             removed: Vec::new(),
-            message: format!("td lock missing; run `aw td lock {}`", target.project),
+            message: format!(
+                "td lock missing; run `aw td lock --project {}`",
+                target.project
+            ),
         });
     }
 
@@ -318,7 +320,7 @@ fn stale_message(
         parts.push("digest changed".to_string());
     }
     format!(
-        "td lock stale ({}); review TD changes, then run `aw td lock {project}`",
+        "td lock stale ({}); review TD changes, then run `aw td lock --project {project}`",
         parts.join(", ")
     )
 }

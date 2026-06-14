@@ -112,8 +112,13 @@ impl WorkspaceManager {
             let pkg: serde_json::Value = serde_json::from_str(&content)
                 .with_context(|| workspace_config_parse_ctx(&pkg_path))?;
             if let Some(workspaces) = pkg.get("workspaces") {
-                let patterns: Vec<String> =
-                    serde_json::from_value(workspaces.clone()).unwrap_or_default();
+                let patterns = parse_workspaces_field(workspaces).map_err(|shape| {
+                    anyhow::anyhow!(
+                        "Invalid package.json workspaces field at {}: {}",
+                        pkg_path.display(),
+                        shape
+                    )
+                })?;
                 if !patterns.is_empty() {
                     return Ok(Some(WorkspaceConfig {
                         packages: patterns,

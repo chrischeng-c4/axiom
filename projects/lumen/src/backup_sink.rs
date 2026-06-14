@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Pluggable destination for periodic backups.
 //!
 //! README §7 specifies that backups can be uploaded to S3 / GCS with a
@@ -40,12 +42,14 @@ pub trait BackupSink: Send + Sync + 'static {
 
 /// Local-filesystem sink. Useful for dev, integration tests, and the
 /// PVC-backed durable-store cohort that doesn't want a cloud dependency.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
 pub struct LocalFsSink {
     pub root: PathBuf,
     pub prefix: String,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl LocalFsSink {
     pub fn new(root: impl Into<PathBuf>, prefix: impl Into<String>) -> Result<Self> {
         let root = root.into();
@@ -58,6 +62,7 @@ impl LocalFsSink {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl BackupSink for LocalFsSink {
     fn put(&self, timestamp: SystemTime, payload: &[u8]) -> Result<String> {
         let ts = timestamp
@@ -149,3 +154,4 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+// CODEGEN-END

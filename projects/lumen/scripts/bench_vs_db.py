@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-scripts.md#schema
+# CODEGEN-BEGIN
 """Cross-engine search latency benchmark: lumen vs PostgreSQL vs MongoDB vs OpenSearch.
 
 Goal (per the user's two criteria):
@@ -622,3 +624,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# CODEGEN-END
