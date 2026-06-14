@@ -209,6 +209,22 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
         params: &[p("r", CoreTy::Unknown), p("g", CoreTy::Unknown), p("b", CoreTy::Unknown)], enforceable: false },
     StdlibSig { module: "colorsys", qualifier: "", name: "yiq_to_rgb", kind: SigKind::ModuleFn,
         params: &[p("y", CoreTy::Unknown), p("i", CoreTy::Unknown), p("q", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: textwrap.dedent(text) — `dedent(123)` is a RUNTIME TypeError
+    // (CPython runs `_whitespace_only_re.sub` over a non-str → "expected string
+    // or bytes-like object"); the dispatcher raises it. Keep the type wall from
+    // rejecting it at compile time.
+    StdlibSig { module: "textwrap", qualifier: "", name: "dedent", kind: SigKind::ModuleFn,
+        params: &[p("text", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: textwrap.indent(text, prefix, ...) — `indent(123, "  ")` is a
+    // RUNTIME AttributeError (CPython does `text.splitlines(True)` on a non-str);
+    // the dispatcher raises it. Keep the type wall out of the way.
+    StdlibSig { module: "textwrap", qualifier: "", name: "indent", kind: SigKind::ModuleFn,
+        params: &[p("text", CoreTy::Unknown), p("prefix", CoreTy::Unknown), p("predicate", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: shlex.quote(s) — `quote(42)` is a RUNTIME TypeError (CPython's
+    // `_find_unsafe(s)` regex over a non-str → "expected string or bytes-like
+    // object"); the dispatcher raises it. Keep the type wall out of the way.
+    StdlibSig { module: "shlex", qualifier: "", name: "quote", kind: SigKind::ModuleFn,
+        params: &[p("s", CoreTy::Unknown)], enforceable: false },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for
