@@ -7639,6 +7639,22 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
             return MbValue::from_bool(r);
         }
     }
+    // Reflected fallback: `a > b` where `b` is an instance defining __lt__ and
+    // `a` did not handle __gt__ (e.g. `5 > Num(2)` with a plain int on the left)
+    // → b.__lt__(a), matching CPython's reflected-comparison rule. Without this,
+    // the `mb_lt(b, a)` tail mishandles an instance-vs-inline-primitive pair
+    // (mb_values_lt dispatches __lt__ only when both operands are heap objects)
+    // and wrongly answers False. (mb_ge needs no such arm because its mb_le(b,a)
+    // tail dispatches the instance's __le__ directly.)
+    if let Some(pb) = b.as_ptr() {
+        unsafe {
+            if let ObjData::Instance { ref class_name, .. } = (*pb).data {
+                if !super::class::lookup_method(class_name, "__lt__").is_none() {
+                    return MbValue::from_bool(dispatch_richcmp_dunder(b, a, class_name, "__lt__"));
+                }
+            }
+        }
+    }
     mb_lt(b, a)
 }
 
