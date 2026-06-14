@@ -1,16 +1,20 @@
 version = 1
 project = "cap"
 td_path = "projects/cap/tech-design"
-generated_at = "2026-06-12T10:13:24.229768+00:00"
-digest = "sha256:a425359b96ab09680fee1b745af7cee130739fe37cc01cc1fcc20e0ba09ea3ec"
+generated_at = "2026-06-14T01:34:26.211188+00:00"
+digest = "sha256:ae37e47a4e0d4a9467b97002529cdc6f7aa089c41f9298d7db19f961326eb3ab"
 
 [[files]]
 path = "logic/cap-hook-auto-command-optimizer-whitelist.md"
-digest = "sha256:4d61af8f5ec9cb75d189052067c1baf648983db070cf232bf0480febe01aeb4b"
+digest = "sha256:e95fc4ecabb7b073dc54794ce0815ca24ccd8cc1f0b81a7a7e2d01b7f8e443de"
 
 [[files]]
 path = "logic/external-contracts.md"
 digest = "sha256:599dd2dbb9e3aca539a57ab7d4dfe8023ae2b8febc57a0b0485d163703498075"
+
+[[files]]
+path = "semantic/cap-benches.md"
+digest = "sha256:4e4177698b62759b4992eb00975845389a6b1d5ca5faf4da98a969ac515e5819"
 
 [[files]]
 path = "semantic/cap-projects-cap.md"
@@ -18,7 +22,11 @@ digest = "sha256:2fec1e14f065fe4b91393c537377a408d6fa9b1bc86b8862e695ee92957c358
 
 [[files]]
 path = "semantic/cap-src.md"
-digest = "sha256:f36698b5018618019ae5f533a1b5b5f7be34b1558a3469a38511fa807f41fe88"
+digest = "sha256:721801c4b9ccffb86f1b77369db00a0b741e3e256cd9017e0726632ac26d9651"
+
+[[files]]
+path = "semantic/cap-tests.md"
+digest = "sha256:67835808e7d022e0e9f7d9f616637a5a97f8f1cb55619db6d91c5e182e945081"
 
 [[files]]
 path = "semantic/source/cli.md"
@@ -46,7 +54,7 @@ digest = "sha256:33d1908aa95f27f24fe2abc71235acf9102781c3aed18f84923389937020728
 
 [[files]]
 path = "semantic/source/lib.md"
-digest = "sha256:e5ce7480ca1a445023e7d03d8fcdfd9bb01037b5f29af3b52b3f8af090aa4a8b"
+digest = "sha256:b8b4a989151eb2c5464f1095fa478a9e96b6d10a8dad7e225954658d9056fb5b"
 
 [[files]]
 path = "semantic/source/main.md"

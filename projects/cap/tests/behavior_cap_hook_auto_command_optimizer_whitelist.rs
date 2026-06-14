@@ -5,7 +5,7 @@
 // @capability agent-hook-installation
 // @contract hook-payload-rewrite-adapters
 // @category behavior
-// @command cargo test -p cap hook -- --nocapture
+// @command env CC=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk PATH=/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin cargo test -p cap hook -- --nocapture && env CC=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk PATH=/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin cargo test -p cap command_planner -- --nocapture && env CC=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk PATH=/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin cargo test -p cap active_replacements_match_success_and_error_behavior -- --nocapture && env CC=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk PATH=/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin cargo bench -p cap --bench command_resources
 // AW-EC-END
 
 #[test]

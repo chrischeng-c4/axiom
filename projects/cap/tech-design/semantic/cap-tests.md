@@ -2,6 +2,31 @@
 id: semantic-cap-tests
 summary: Semantic coverage for "projects/cap/tests"
 fill_sections: [schema, unit-test, changes]
+capability_refs:
+  - id: agent-hook-installation
+    role: primary
+    gap: hook-payload-rewrite-adapters
+    claim: hook-payload-rewrite-adapters
+    coverage: full
+    rationale: "The cap tests validate hook installation, hook rewrite behavior, and same-name command rewrite compatibility."
+  - id: command-lease-throttling
+    role: primary
+    gap: lease-admission-and-process-supervision
+    claim: lease-admission-and-process-supervision
+    coverage: full
+    rationale: "The cap tests validate command lease behavior and command replacement parity for managed run surfaces."
+  - id: daemon-lifecycle-and-status
+    role: primary
+    gap: daemon-process-lifecycle
+    claim: daemon-process-lifecycle
+    coverage: full
+    rationale: "The cap tests validate daemon lifecycle and status behavior."
+  - id: config-logging-and-reap-policy
+    role: primary
+    gap: configuration-defaults-and-compatibility
+    claim: configuration-defaults-and-compatibility
+    coverage: full
+    rationale: "The cap tests validate configuration, logging, and reap policy behavior."
 ---
 
 # Semantic TD: cap/tests
@@ -201,11 +226,24 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/cap/tests/behavior_cap_config_logging_and_reap_policy.rs"
+    action: modify
+    section: unit-test
+    description: |
+      The behavior test is executable evidence for config, logging, and reap
+      policy semantics.
+    impl_mode: hand-written
   - path: "projects/cap/tests/behavior_cap_agent_hook_installation.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/cap/tests/behavior_cap_agent_hook_installation.rs"
+    action: modify
+    section: unit-test
+    description: |
+      The behavior test is executable evidence for hook installation semantics.
     impl_mode: hand-written
   - path: "projects/cap/tests/behavior_cap_command_lease_throttling.rs"
     action: modify
@@ -213,11 +251,25 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/cap/tests/behavior_cap_command_lease_throttling.rs"
+    action: modify
+    section: unit-test
+    description: |
+      The behavior test is executable evidence for command lease throttling
+      semantics.
+    impl_mode: hand-written
   - path: "projects/cap/tests/behavior_cap_daemon_lifecycle_and_status.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+  - path: "projects/cap/tests/behavior_cap_daemon_lifecycle_and_status.rs"
+    action: modify
+    section: unit-test
+    description: |
+      The behavior test is executable evidence for daemon lifecycle and status
+      semantics.
     impl_mode: hand-written
   - path: "projects/cap/tests/behavior_cap_hook_auto_command_optimizer_whitelist.rs"
     action: modify
@@ -225,11 +277,28 @@ changes:
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
     impl_mode: hand-written
+  - path: "projects/cap/tests/behavior_cap_hook_auto_command_optimizer_whitelist.rs"
+    action: modify
+    section: unit-test
+    description: |
+      The behavior test is executable evidence for same-name command rewrite
+      and scout-only bypass semantics.
+    impl_mode: hand-written
   - path: "projects/cap/tests/behavior_cap_command_replacement_parity.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+    impl_mode: hand-written
+    replaces:
+      - "<handwrite-tracker:projects-cap-tests-behavior-cap-command-replacement-parity-rs>"
+  - path: "projects/cap/tests/behavior_cap_command_replacement_parity.rs"
+    action: modify
+    section: unit-test
+    description: |
+      The behavior test is executable evidence that active same-name
+      replacements preserve successful output, missing-path diagnostics, and
+      quiet nonzero behavior.
     impl_mode: hand-written
     replaces:
       - "<handwrite-tracker:projects-cap-tests-behavior-cap-command-replacement-parity-rs>"

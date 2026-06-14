@@ -69,6 +69,7 @@ capability_refs:
 | Symbol | Coverage |
 |---|---|
 | `cli` | public Rust symbol in `projects/cap/src/lib.rs` |
+| `command_planner` | public Rust symbol in `projects/cap/src/lib.rs` |
 | `config` | public Rust symbol in `projects/cap/src/lib.rs` |
 | `daemon` | public Rust symbol in `projects/cap/src/lib.rs` |
 | `eventlog` | public Rust symbol in `projects/cap/src/lib.rs` |
@@ -117,6 +118,7 @@ pub use daemon::is_running;
 
 pub mod cli;
 pub mod client;
+pub mod command_planner;
 pub mod config;
 pub mod daemon;
 pub mod eventlog;

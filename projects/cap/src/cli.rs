@@ -6,6 +6,8 @@
 //!   cap init [claude|codex] [--project] [--print]   # install agent hooks
 //!   cap <cmd> [args...]           # default: wrap cmd
 //!   cap run -- <cmd> [args...]    # explicit
+//!   cap run "<bash command>"       # string command entrypoint for hooks
+//!   cap explain -- <cmd> [args...] # show command replacement decision
 //!   cap daemon start|stop|status|run
 //!   cap status                    # leases + memory pressure
 //!   cap ps                        # alias
@@ -19,6 +21,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::client::Client;
+use crate::command_planner::{self, CommandPlan, ExternalPlan};
 use crate::config::Config;
 use crate::daemon;
 use crate::hook_install;
@@ -48,6 +51,8 @@ pub struct Cli {
 pub enum Cmd {
     /// Run a command under cap (explicit form).
     Run(RunArgs),
+    /// Show how cap would execute a command.
+    Explain(ExplainArgs),
     /// Daemon lifecycle.
     Daemon {
         #[command(subcommand)]
@@ -106,7 +111,15 @@ pub struct RunArgs {
     /// Human-readable label shown in `cap status`.
     #[arg(long)]
     pub label: Option<String>,
-    /// The command to run, after `--`.
+    /// The command to run. Pass argv after `--`, or one Bash command string.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<String>,
+}
+
+/// @spec projects/cap/tech-design/semantic/cap-src.md#schema
+#[derive(Parser, Debug)]
+pub struct ExplainArgs {
+    /// The command to explain, after `--`.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub command: Vec<String>,
 }
@@ -177,6 +190,7 @@ pub async fn run() -> Result<ExitCode> {
         }) => handle_init(agents, project, print),
         Some(Cmd::Hook { action }) => handle_hook(action),
         Some(Cmd::Run(args)) => handle_run(args).await,
+        Some(Cmd::Explain(args)) => handle_explain(args),
         None => {
             if cli.passthrough.is_empty() {
                 use clap::CommandFactory;
@@ -192,6 +206,19 @@ pub async fn run() -> Result<ExitCode> {
             }
         }
     }
+}
+
+fn handle_explain(args: ExplainArgs) -> Result<ExitCode> {
+    if args.command.is_empty() {
+        anyhow::bail!("nothing to explain; usage: cap explain -- <command> [args...]");
+    }
+    let plan = if args.command.len() == 1 {
+        command_planner::plan_shell(&args.command[0], None)
+    } else {
+        command_planner::plan(&args.command, None)
+    };
+    println!("{}", plan.explain());
+    Ok(ExitCode::SUCCESS)
 }
 
 fn init_tracing() {
@@ -394,11 +421,22 @@ async fn handle_wait(timeout: Option<u64>) -> Result<ExitCode> {
 /// wrapped command even though we put it in its own pgid.
 async fn handle_run(args: RunArgs) -> Result<ExitCode> {
     if args.command.is_empty() {
-        anyhow::bail!("nothing to run; usage: cap run -- <command> [args...]");
+        anyhow::bail!(
+            "nothing to run; usage: cap run \"<command>\" or cap run -- <command> [args...]"
+        );
     }
-    let program = args.command[0].clone();
-    let rest: Vec<String> = args.command[1..].to_vec();
+    let plan = if args.command.len() == 1 {
+        command_planner::plan_shell(&args.command[0], args.label)
+    } else {
+        command_planner::plan(&args.command, args.label)
+    };
+    match plan {
+        CommandPlan::Native(native) => command_planner::run_native(&native),
+        CommandPlan::External(external) => handle_external_run(external).await,
+    }
+}
 
+async fn handle_external_run(plan: ExternalPlan) -> Result<ExitCode> {
     // The hook wraps EVERY agent Bash call in `cap`, so a broken or
     // unreachable daemon must degrade to "run it unthrottled" — never
     // to "the agent can't run anything". If we can't reach/spawn the
@@ -408,16 +446,19 @@ async fn handle_run(args: RunArgs) -> Result<ExitCode> {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("cap: daemon unavailable ({e:#}); running unthrottled");
-                return run_unmanaged(&program, &rest).await;
+                return run_unmanaged(&plan.program, &plan.args).await;
             }
         };
 
     // The lease dance (Acquire → spawn → Spawned → wait → Release) lives in
     // managed_run. If the daemon killed the child, surface the reason on stderr
     // so the agent knows it wasn't a real failure.
-    let outcome =
-        crate::managed_run::managed_run(&mut client, SpawnSpec::new(program, rest), args.label)
-            .await?;
+    let outcome = crate::managed_run::managed_run(
+        &mut client,
+        SpawnSpec::new(plan.program, plan.args),
+        plan.label,
+    )
+    .await?;
     if let Some(envelope) = &outcome.kill_envelope {
         // `human_message` is pre-formatted multi-line — `eprint!` (not
         // `eprintln!`) so we don't add a trailing blank line.

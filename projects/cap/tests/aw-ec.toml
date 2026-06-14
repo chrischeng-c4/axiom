@@ -2,7 +2,7 @@
 # CODEGEN-BEGIN
 version = 1
 project = "cap"
-generated_from_td_digest = "sha256:b7f5dbf6d5de0a80018893a496d7bce7b56b33d4985a600cc271198137fc87c2"
+generated_from_td_digest = "sha256:3523c18456b8d9b154ab11d800d940bda6505d1ac269bbf98964914a43ef2c46"
 
 [[cases]]
 id = "cap-agent-hook-installation"
@@ -67,11 +67,14 @@ contract_id = "hook-payload-rewrite-adapters"
 category = "behavior"
 td_ref = "projects/cap/tech-design/logic/cap-hook-auto-command-optimizer-whitelist.md#cap-hook-auto-command-optimizer-whitelist"
 test_path = "projects/cap/tests/behavior_cap_hook_auto_command_optimizer_whitelist.rs"
-command = "cargo test -p cap hook -- --nocapture"
+command = "env CC=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk PATH=/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin cargo test -p cap hook -- --nocapture && env CC=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk PATH=/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin cargo test -p cap command_planner -- --nocapture && env CC=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk PATH=/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin cargo test -p cap active_replacements_match_success_and_error_behavior -- --nocapture && env CC=/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/cc SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk PATH=/Users/chrischeng/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin cargo bench -p cap --bench command_resources"
 assertions = [
-    "simple whole-command grep -R/-r inputs use rg when rg is installed",
-    "missing rg, unsupported grep flags, non-recursive grep, and shell metacharacters keep the original payload",
-    "optimized payloads keep cap run --label equal to the original command",
-    "optimized payloads run the original command if the optimized command exits non-zero",
+    "the Bash hook rewrites non-recursive commands to cap run original-command-string and does not expose same-name replacement decisions",
+    "cap run command-string parsing routes shell-free active replacements to the same fast implementation family as cap <cmd>",
+    "complex shell commands keep shell semantics by falling back internally to bash -c original",
+    "simple high-entry-count ls, large single-file sort, bounded sed, recursive literal grep, find, du, cat, and uniq satisfy the dual-win cap replacement gate for both cap <cmd> and cap run command-string surfaces",
+    "active replacements match original-command success output, missing-path error behavior, and quiet nonzero behavior",
+    "true, false, pwd, basename, dirname, head, tail, mkdir, touch, awk, xargs, and shell pipes remain scout-only or compatibility-fallback candidates until they beat the dual-win gate or a material RSS-fallback gate",
+    "gated replacements fail the benchmark when their dual-win or RSS-fallback resource policy is not satisfied",
 ]
 # CODEGEN-END
