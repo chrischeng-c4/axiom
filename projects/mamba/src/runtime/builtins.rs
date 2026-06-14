@@ -6296,7 +6296,9 @@ pub fn mb_callable(obj: MbValue) -> MbValue {
         unsafe {
             match &(*ptr).data {
                 ObjData::Instance { class_name, .. } => {
-                    if class_name == "__unbound_method__" {
+                    if class_name == "__unbound_method__"
+                        || class_name == "__bound_native_method__"
+                    {
                         return MbValue::from_bool(true);
                     }
                     // A `functools.partial` (and partial-shaped bound methods,

@@ -299,24 +299,42 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
         return true;
     }
     match type_name {
+        // list: mutable + orderable + unhashable (no __hash__).
         "list" => matches!(dunder,
             "__len__" | "__getitem__" | "__setitem__" | "__delitem__"
             | "__contains__" | "__iter__" | "__reversed__" | "__add__"
-            | "__mul__" | "__eq__" | "__ne__"),
+            | "__mul__" | "__rmul__" | "__eq__" | "__ne__"
+            | "__lt__" | "__le__" | "__gt__" | "__ge__"),
+        // tuple: immutable (no __setitem__/__delitem__) + orderable + hashable.
         "tuple" => matches!(dunder,
             "__len__" | "__getitem__" | "__contains__" | "__iter__"
-            | "__add__" | "__mul__" | "__eq__" | "__ne__"),
+            | "__add__" | "__mul__" | "__rmul__" | "__eq__" | "__ne__"
+            | "__lt__" | "__le__" | "__gt__" | "__ge__"
+            | "__hash__" | "__getnewargs__"),
         "str" => matches!(dunder,
             "__len__" | "__getitem__" | "__contains__" | "__iter__"
-            | "__add__" | "__mul__" | "__eq__" | "__ne__"),
+            | "__add__" | "__mul__" | "__rmul__" | "__mod__" | "__eq__" | "__ne__"
+            | "__lt__" | "__le__" | "__gt__" | "__ge__" | "__hash__"),
         "bytes" | "bytearray" => matches!(dunder,
             "__len__" | "__getitem__" | "__contains__" | "__iter__"
-            | "__eq__" | "__ne__"),
+            | "__add__" | "__mul__" | "__rmul__" | "__eq__" | "__ne__"
+            | "__lt__" | "__le__" | "__gt__" | "__ge__"),
+        // dict: mutable + union operators (3.9) + reversed (3.8); not orderable.
         "dict" => matches!(dunder,
             "__len__" | "__getitem__" | "__setitem__" | "__delitem__"
-            | "__contains__" | "__iter__" | "__eq__" | "__ne__"),
-        "set" | "frozenset" => matches!(dunder,
-            "__len__" | "__contains__" | "__iter__" | "__eq__" | "__ne__"),
+            | "__contains__" | "__iter__" | "__reversed__"
+            | "__or__" | "__ior__" | "__eq__" | "__ne__"),
+        // set: mutable, so it carries the in-place set operators.
+        "set" => matches!(dunder,
+            "__len__" | "__contains__" | "__iter__" | "__eq__" | "__ne__"
+            | "__and__" | "__or__" | "__sub__" | "__xor__"
+            | "__iand__" | "__ior__" | "__isub__" | "__ixor__"
+            | "__le__" | "__lt__" | "__ge__" | "__gt__"),
+        // frozenset: immutable (no in-place ops) + hashable.
+        "frozenset" => matches!(dunder,
+            "__len__" | "__contains__" | "__iter__" | "__eq__" | "__ne__"
+            | "__and__" | "__or__" | "__sub__" | "__xor__"
+            | "__le__" | "__lt__" | "__ge__" | "__gt__" | "__hash__"),
         "range" => matches!(dunder,
             "__len__" | "__getitem__" | "__contains__" | "__iter__"
             | "__reversed__"),
@@ -1884,6 +1902,30 @@ fn make_unbound_method(type_name: &str, method_name: &str) -> MbValue {
         );
         guard.insert(
             "__method__".to_string(),
+            MbValue::from_ptr(MbObject::new_str(method_name.to_string())),
+        );
+    }
+    MbValue::from_ptr(inst)
+}
+
+/// Build a bound method over a builtin instance: a `__bound_native_method__`
+/// shell carrying the receiver + method name. `mb_call_spread` / `mb_call0` /
+/// `mb_call1_val` dispatch it through `mb_call_method`, which already serves the
+/// direct `recv.method(...)` form — so `f = (1,2).count; f(1)` works like
+/// `(1,2).count(1)`. The receiver is retained because the shell now owns a
+/// reference to it.
+fn make_bound_native_method(recv: MbValue, method_name: &str) -> MbValue {
+    let inst = MbObject::new_instance("__bound_native_method__".to_string());
+    if let ObjData::Instance { fields, .. } = unsafe { &(*inst).data } {
+        let mut g = fields.write().unwrap();
+        g.insert("__self__".to_string(), recv);
+        unsafe { super::rc::retain_if_ptr(recv); }
+        g.insert(
+            "__method__".to_string(),
+            MbValue::from_ptr(MbObject::new_str(method_name.to_string())),
+        );
+        g.insert(
+            "__name__".to_string(),
             MbValue::from_ptr(MbObject::new_str(method_name.to_string())),
         );
     }
@@ -3496,6 +3538,24 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             "imag" => return MbValue::from_float(0.0),
             _ => {}
         }
+    }
+
+    // Bound method on a builtin container: `(1,2).count`, `getattr([], "pop")`.
+    // After every specific arm above declined, synthesize a bound-method shell
+    // for a recognized method name so `f = x.method; f(...)` works like
+    // `x.method(...)` (both route through mb_call_method). Gated to genuine
+    // builtin containers — NOT tagged-int handles (closures/ranges/Fraction/
+    // Decimal are is_int() but not real containers), and not user Instances
+    // (handled by their own arms above).
+    let is_builtin_container = obj.as_ptr().is_some_and(|p| unsafe {
+        matches!(
+            (*p).data,
+            ObjData::List(_) | ObjData::Tuple(_) | ObjData::Dict(_)
+                | ObjData::Str(_) | ObjData::Set(_)
+        )
+    });
+    if is_builtin_container && builtin_type_method_names(&obj).contains(&attr_name.as_str()) {
+        return make_bound_native_method(obj, &attr_name);
     }
 
     MbValue::none()
