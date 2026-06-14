@@ -2933,7 +2933,7 @@ pub(crate) fn is_type_name(s: &str) -> bool {
         "int" | "str" | "float" | "bool" | "list" | "dict"
             | "set" | "frozenset" | "tuple" | "bytes"
             | "bytearray" | "complex" | "type" | "object"
-            | "NoneType" | "range"
+            | "NoneType" | "range" | "slice"
     ) || super::class::class_is_registered(s)
 }
 

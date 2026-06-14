@@ -366,6 +366,10 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
             "__add__" | "__sub__" | "__mul__" | "__truediv__" | "__pow__"
             | "__neg__" | "__pos__" | "__abs__" | "__eq__" | "__ne__"
             | "__hash__" | "__bool__" | "__complex__" | "__getnewargs__"),
+        // slice: orderable + hashable (3.12), with a small attr/method surface.
+        "slice" => matches!(dunder,
+            "__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__"
+            | "__hash__" | "__repr__"),
         _ => false,
     }
 }
@@ -3306,6 +3310,12 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                             return make_bound_native_method(obj, &attr_name);
                         }
                     }
+                    // slice.indices(length) as a bound callable
+                    // (`callable(slice(0, 5).indices)`); dispatched via
+                    // mb_call_method. start/stop/step remain plain fields.
+                    if class_name == "slice" && attr_name == "indices" {
+                        return make_bound_native_method(obj, &attr_name);
+                    }
                     // functools.lru_cache wrapper: expose cache_info / cache_clear
                     // as bound callables via a tiny helper Instance.
                     if class_name == "functools.lru_cache_wrapper"
@@ -4380,6 +4390,11 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "conjugate", "real", "imag", "__getnewargs__", "__complex__",
             "__add__", "__sub__", "__mul__", "__truediv__", "__pow__",
             "__neg__", "__abs__", "__eq__", "__hash__", "__repr__", "__str__",
+        ],
+        "slice" => vec![
+            "indices", "start", "stop", "step",
+            "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__",
+            "__hash__", "__repr__",
         ],
         "tuple" => vec![
             "count", "index",
