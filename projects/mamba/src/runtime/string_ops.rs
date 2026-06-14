@@ -319,6 +319,22 @@ pub fn mb_str_index(s: MbValue, sub: MbValue, start: MbValue, end: MbValue) -> M
     result
 }
 
+/// str.rindex — like rfind but raises ValueError when the substring is absent.
+pub fn mb_str_rindex(s: MbValue, sub: MbValue, start: MbValue, end: MbValue) -> MbValue {
+    let result = mb_str_rfind(s, sub, start, end);
+    if let Some(idx) = result.as_int() {
+        if idx < 0 {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "substring not found".to_string())),
+            );
+            return MbValue::none();
+        }
+    }
+    result
+}
+
 pub fn mb_str_rfind(s: MbValue, sub: MbValue, start: MbValue, end: MbValue) -> MbValue {
     unsafe {
         match (as_str(s), as_str(sub)) {
@@ -3127,6 +3143,12 @@ pub fn dispatch_str_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             let start = if argc() > 1 { arg(1) } else { MbValue::none() };
             let end = if argc() > 2 { arg(2) } else { MbValue::none() };
             mb_str_index(receiver, sub, start, end)
+        }
+        "rindex" => {
+            let sub = arg(0);
+            let start = if argc() > 1 { arg(1) } else { MbValue::none() };
+            let end = if argc() > 2 { arg(2) } else { MbValue::none() };
+            mb_str_rindex(receiver, sub, start, end)
         }
         "count" => {
             let sub = arg(0);

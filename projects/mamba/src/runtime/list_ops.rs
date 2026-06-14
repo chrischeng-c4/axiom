@@ -772,12 +772,21 @@ pub fn mb_list_pop_at(list: MbValue, index: MbValue) -> MbValue {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
                 if let Some(idx) = index.as_int() {
-                    let mut items = lock.write().unwrap();
-                    let len = items.len() as i64;
-                    let actual = if idx < 0 { idx + len } else { idx };
-                    if actual >= 0 && actual < len {
-                        return items.remove(actual as usize);
+                    {
+                        let mut items = lock.write().unwrap();
+                        let len = items.len() as i64;
+                        let actual = if idx < 0 { idx + len } else { idx };
+                        if actual >= 0 && actual < len {
+                            return items.remove(actual as usize);
+                        }
                     }
+                    // Out-of-range index → IndexError (CPython: "pop index out
+                    // of range"), not a silent None.
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("IndexError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str("pop index out of range".to_string())),
+                    );
+                    return MbValue::none();
                 }
             }
         }
@@ -1406,7 +1415,9 @@ pub fn mb_list_repeat(list: MbValue, n: MbValue) -> MbValue {
     unsafe {
         if let Some(ptr) = list.as_ptr() {
             if let ObjData::List(ref lock) = (*ptr).data {
-                if let Some(count) = n.as_int() {
+                // bool counts as an int (True == 1), like CPython.
+                let count = n.as_int().or_else(|| n.as_bool().map(|b| b as i64));
+                if let Some(count) = count {
                     if count <= 0 {
                         return mb_list_new();
                     }
@@ -1418,6 +1429,16 @@ pub fn mb_list_repeat(list: MbValue, n: MbValue) -> MbValue {
                     // Items borrowed from the source list — retain.
                     return MbValue::from_ptr(MbObject::new_list_borrowed(result));
                 }
+                // Sequence repetition needs an integer count (CPython:
+                // "can't multiply sequence by non-int of type 'str'").
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "can't multiply sequence by non-int of type '{}'",
+                        super::builtins::value_type_name(n)
+                    ))),
+                );
+                return MbValue::none();
             }
         }
     }

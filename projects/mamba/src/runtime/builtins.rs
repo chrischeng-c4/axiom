@@ -1708,6 +1708,13 @@ pub fn mb_complex(real: MbValue, imag: MbValue) -> MbValue {
                 if let Some((re, im)) = parse_complex_str(s) {
                     return MbValue::from_ptr(MbObject::new_complex(re, im));
                 }
+                // CPython: an unparseable string raises ValueError, not a silent None.
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "could not convert string to complex: '{s}'"
+                    ))),
+                );
                 return MbValue::none();
             }
             if let ObjData::Complex(re, im) = (*ptr).data {
@@ -2430,6 +2437,27 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
                         matches!(unsafe { &(*p).data }, ObjData::Instance { .. })
                     });
                     if !a_inst && !b_inst {
+                        // A list/tuple on the left with a non-matching right
+                        // operand gets CPython's sequence-specific message
+                        // ("can only concatenate list (not \"str\") to list")
+                        // rather than the generic operand message. list+list /
+                        // tuple+tuple already concatenate via __add__, so reaching
+                        // here means the right operand is a different type.
+                        let seq_kind = a.as_ptr().and_then(|p| match unsafe { &(*p).data } {
+                            ObjData::List(_) => Some("list"),
+                            ObjData::Tuple(_) => Some("tuple"),
+                            _ => None,
+                        });
+                        if let Some(kind) = seq_kind {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(format!(
+                                    "can only concatenate {kind} (not \"{}\") to {kind}",
+                                    value_type_name(b)
+                                ))),
+                            );
+                            return MbValue::none();
+                        }
                         super::exception::mb_raise(
                             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
                             MbValue::from_ptr(MbObject::new_str(format!(
@@ -2925,6 +2953,24 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
                     }
                     if raise_datetime_op_type_error("*", a, b) {
                         return MbValue::none();
+                    }
+                    // A sequence (list/tuple/str/bytes) times a non-integer
+                    // raises CPython's "can't multiply sequence by non-int of
+                    // type 'X'". Valid sequence*int forms are handled above, so
+                    // a sequence operand here means the other side isn't an int.
+                    let is_seq = |v: MbValue| -> bool {
+                        v.as_ptr().map_or(false, |p| matches!(unsafe { &(*p).data },
+                            ObjData::List(_) | ObjData::Tuple(_) | ObjData::Str(_) | ObjData::Bytes(_)))
+                    };
+                    let other = if is_seq(a) { Some(b) } else if is_seq(b) { Some(a) } else { None };
+                    if let Some(other) = other {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!(
+                                "can't multiply sequence by non-int of type '{}'",
+                                value_type_name(other)
+                            ))),
+                        );
                     }
                     MbValue::none()
                 }
