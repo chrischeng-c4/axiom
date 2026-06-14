@@ -225,6 +225,20 @@ pub const STDLIB_SIGS: &[StdlibSig] = &[
     // object"); the dispatcher raises it. Keep the type wall out of the way.
     StdlibSig { module: "shlex", qualifier: "", name: "quote", kind: SigKind::ModuleFn,
         params: &[p("s", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: os.umask(mask) — `umask("x")` is a RUNTIME TypeError ("'str'
+    // object cannot be interpreted as an integer"); the dispatcher raises it.
+    StdlibSig { module: "os", qualifier: "", name: "umask", kind: SigKind::ModuleFn,
+        params: &[p("mask", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: locale.setlocale(category, locale=None) — a non-int category
+    // (`setlocale("not_a_category", ...)`) is a RUNTIME TypeError ("an integer
+    // is required (got type str)"); the dispatcher raises it.
+    StdlibSig { module: "locale", qualifier: "", name: "setlocale", kind: SigKind::ModuleFn,
+        params: &[p("category", CoreTy::Unknown), p("locale", CoreTy::Unknown)], enforceable: false },
+    // NEGATIVE: signal.setitimer(which, seconds, interval=0.0) — a non-int
+    // `which` (`setitimer("not_int", 1.0)`) is a RUNTIME TypeError; the
+    // dispatcher raises it.
+    StdlibSig { module: "signal", qualifier: "", name: "setitimer", kind: SigKind::ModuleFn,
+        params: &[p("which", CoreTy::Unknown), p("seconds", CoreTy::Unknown), p("interval", CoreTy::Unknown)], enforceable: false },
 ];
 
 /// Look up a signature by `(module, qualifier, name)`. `qualifier` is `""` for
