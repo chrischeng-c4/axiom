@@ -16,8 +16,8 @@
 ## Agent Workflow
 
 - Continue: `aw run --project rig`.
-- Next managed step: `aw standardize managed next rig`.
-- Readiness: `aw health rig`.
+- Next managed step: `aw standardize managed next --project rig`.
+- Readiness: `aw health --project rig`.
 
 ## Commands
 

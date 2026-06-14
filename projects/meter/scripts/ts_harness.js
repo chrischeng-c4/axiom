@@ -1,4 +1,4 @@
-// SPEC-MANAGED: projects/meter/tech-design/semantic/source/projects-meter-scripts-ts-harness-js.md#source
+// SPEC-MANAGED: projects/meter/tech-design/semantic/source/projects-meter-scripts-ts-harness-js.md#text-source-unit
 // CODEGEN-BEGIN
 #!/usr/bin/env node
 /**

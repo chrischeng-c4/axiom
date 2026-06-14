@@ -2302,8 +2302,10 @@ fn classify_source_template(
 fn spec_declares_source_section(spec_content: &str) -> bool {
     spec_content.contains("<!-- type: source")
         || spec_content.contains("<!-- type: rust-source-unit")
+        || spec_content.contains("<!-- type: text-source-unit")
         || spec_content.contains("section: source")
         || spec_content.contains("section: rust-source-unit")
+        || spec_content.contains("section: text-source-unit")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2811,7 +2813,8 @@ mod tests {
         extract_project_root_llms_target_paths, extract_spec_managed_ref,
         extract_spec_managed_refs, format_rust_files, is_minified_asset_file,
         resolve_project_force_regen_scope, run_force_regen_specs, sample_count,
-        sample_semantic_review_units, td_public_symbol_semantic_coverage,
+        sample_semantic_review_units, spec_declares_source_section,
+        td_public_symbol_semantic_coverage,
         upsert_public_api_overview, upsert_public_api_overview_targets,
         write_project_root_llms_targets, CbCodegenOriginClass, CbCommand, CbGenArgs,
         ForceRegenConformanceReport, ForceRegenScope, PublicApiManifestSymbol,
@@ -2867,6 +2870,20 @@ mod tests {
             classify_codegen_origin_spec(artifact_replay),
             CbCodegenOriginClass::ArtifactReplay
         );
+    }
+
+    #[test]
+    fn spec_declares_text_source_unit_as_source_section() {
+        let text_source_unit = "\
+## Source
+<!-- type: text-source-unit lang: javascript -->
+
+```javascript
+console.log('ok');
+```
+";
+
+        assert!(spec_declares_source_section(text_source_unit));
     }
 
     fn init_git_repo(root: &std::path::Path) {

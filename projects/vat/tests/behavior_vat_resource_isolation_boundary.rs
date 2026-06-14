@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec vat-resource-isolation-boundary
 // @capability agent-native-gpu-native-dev-containers
+// @claim resource-isolation-boundary
 // @contract resource-isolation-boundary
 // @category behavior
+// @required_for_production true
 // @command rg -n -e sandbox -e isolation -e seatbelt projects/vat/README.md projects/vat/src/sandbox
 // AW-EC-END
 

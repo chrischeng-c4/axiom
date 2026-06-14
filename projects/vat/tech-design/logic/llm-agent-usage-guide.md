@@ -64,6 +64,7 @@ e2e_tests:
   - id: vat-llm-agent-usage-guide
     name: "vat llm agent usage guide"
     capability_id: agent-native-gpu-native-dev-containers
+    claim_id: agent-legible-state-and-diff-surface
     contract_id: agent-legible-state-and-diff-surface
     category: behavior
     command: "cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture"

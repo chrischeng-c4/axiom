@@ -1544,7 +1544,9 @@ fn run_project_test_command(
         .reopen()
         .with_context(|| format!("open stderr capture for test command `{command}`"))?;
 
-    let mut child = Command::new("sh")
+    let mut command_process = Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let mut child = command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)
@@ -2697,7 +2699,11 @@ pub(crate) fn apply_ec_to_report(report: &mut ProjectHealthReport, verify_ec: bo
                 .into_iter()
                 .find(|project| project.name == report.project);
             let mut commands = Vec::new();
-            for case in &manifest.cases {
+            for case in manifest
+                .cases
+                .iter()
+                .filter(|case| case.required_for_production)
+            {
                 commands.push(run_project_ec_command(
                     case,
                     project_model.as_ref(),
@@ -2861,6 +2867,12 @@ fn build_claim_closure_report(
     let mut claims = Vec::new();
 
     for capability in &document.capabilities {
+        if capability.status == crate::cli::capability::CapabilityStatus::Retired {
+            continue;
+        }
+        if capability.status != crate::cli::capability::CapabilityStatus::Verified {
+            continue;
+        }
         let Some(contract) = capability.verification_contract.as_ref() else {
             continue;
         };
@@ -3131,7 +3143,9 @@ fn run_project_ec_command(
         .reopen()
         .with_context(|| format!("open stderr capture for EC command `{command}`"))?;
 
-    let status = Command::new("sh")
+    let mut command_process = Command::new("sh");
+    crate::cli::shell_env::apply_default_shell_env(&mut command_process);
+    let status = command_process
         .arg("-c")
         .arg(command)
         .current_dir(project_root)

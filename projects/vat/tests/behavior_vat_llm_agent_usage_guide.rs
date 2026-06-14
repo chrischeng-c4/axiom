@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec vat-llm-agent-usage-guide
 // @capability agent-native-gpu-native-dev-containers
+// @claim agent-legible-state-and-diff-surface
 // @contract agent-legible-state-and-diff-surface
 // @category behavior
+// @required_for_production true
 // @command cargo test -p vat llm_guide_mentions_core_agent_contract -- --nocapture
 // AW-EC-END
 

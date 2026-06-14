@@ -1,12 +1,12 @@
 version = 1
 project = "lumen"
 td_path = "projects/lumen/tech-design"
-generated_at = "2026-06-13T02:45:55.136783+00:00"
-digest = "sha256:fa2c2ca2aa3b3ec6485d6d6d20bbe260e9bd7cfeb8e2f78b6a36e8da54bd2aaa"
+generated_at = "2026-06-14T08:13:44.635447+00:00"
+digest = "sha256:2966f6c55f092cb991dd781601276ebd89b73f8a70a63b9032f0c486a26996d2"
 
 [[files]]
 path = "logic/external-contracts.md"
-digest = "sha256:8e1cf5fb384316a8c0e81bb52c87f46e4d2cc2e97d176ca555a89260461e2fa2"
+digest = "sha256:55fa31a1e294e50c38d462a6dd6845d4e820f09966b1ca23cfd228bf88284286"
 
 [[files]]
 path = "semantic/lumen-benches.md"

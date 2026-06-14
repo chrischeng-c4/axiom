@@ -27,6 +27,7 @@ pub mod project;
 pub mod regenerability_policy;
 pub mod remote_push;
 pub mod run;
+pub(crate) mod shell_env;
 pub mod slug_workspace;
 pub mod standardize;
 pub mod td;
