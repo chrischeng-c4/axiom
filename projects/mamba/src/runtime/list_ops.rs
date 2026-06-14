@@ -1030,8 +1030,11 @@ pub fn mb_list_count(list: MbValue, value: MbValue) -> MbValue {
                 // Snapshot then release: mb_eq may re-enter user __eq__ that
                 // mutates this list (see mb_list_index_range).
                 let items: Vec<MbValue> = lock.read().unwrap().iter().copied().collect();
+                // Identity-first like CPython list.count (PyObject_RichCompareBool):
+                // a self-unequal element such as NaN still counts the same object.
                 let n = items.iter().filter(|v| {
-                    super::builtins::mb_eq(**v, value).as_bool() == Some(true)
+                    super::builtins::mb_is_identity(**v, value).as_bool() == Some(true)
+                        || super::builtins::mb_eq(**v, value).as_bool() == Some(true)
                 }).count();
                 return MbValue::from_int(n as i64);
             }
@@ -1071,7 +1074,12 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                     let items: Vec<MbValue> =
                         lock.read().unwrap().iter().copied().collect();
                     for item in items.iter() {
-                        if super::builtins::mb_eq(value, *item).as_bool() == Some(true) {
+                        // CPython `x in seq` is identity-first (`x is e or x == e`
+                        // via PyObject_RichCompareBool), so a self-unequal element
+                        // like NaN is still found when the SAME object is present.
+                        if super::builtins::mb_is_identity(value, *item).as_bool() == Some(true)
+                            || super::builtins::mb_eq(value, *item).as_bool() == Some(true)
+                        {
                             return MbValue::from_bool(true);
                         }
                     }
@@ -1079,7 +1087,9 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                 }
                 ObjData::Tuple(ref items) => {
                     for item in items.iter() {
-                        if super::builtins::mb_eq(value, *item).as_bool() == Some(true) {
+                        if super::builtins::mb_is_identity(value, *item).as_bool() == Some(true)
+                            || super::builtins::mb_eq(value, *item).as_bool() == Some(true)
+                        {
                             return MbValue::from_bool(true);
                         }
                     }
@@ -1102,7 +1112,9 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                 ObjData::Set(ref lock) => {
                     let items = lock.read().unwrap();
                     for item in items.iter() {
-                        if super::builtins::mb_eq(value, *item).as_bool() == Some(true) {
+                        if super::builtins::mb_is_identity(value, *item).as_bool() == Some(true)
+                            || super::builtins::mb_eq(value, *item).as_bool() == Some(true)
+                        {
                             return MbValue::from_bool(true);
                         }
                     }
@@ -1110,7 +1122,9 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                 }
                 ObjData::FrozenSet(ref items) => {
                     for item in items.iter() {
-                        if super::builtins::mb_eq(value, *item).as_bool() == Some(true) {
+                        if super::builtins::mb_is_identity(value, *item).as_bool() == Some(true)
+                            || super::builtins::mb_eq(value, *item).as_bool() == Some(true)
+                        {
                             return MbValue::from_bool(true);
                         }
                     }

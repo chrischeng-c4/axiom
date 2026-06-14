@@ -1276,6 +1276,34 @@ pub fn mb_int(val: MbValue) -> MbValue {
 }
 
 /// float(value) — convert to float.
+/// Parse the textual form of a float as CPython's `float(str)` / `float(bytes)`
+/// does: surrounding whitespace ignored, case-insensitive inf/infinity/nan,
+/// PEP 515 underscores. Returns None when the text is not a valid float literal.
+fn parse_pyfloat_text(text: &str) -> Option<f64> {
+    let trimmed = text.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower == "inf" || lower == "infinity" {
+        return Some(f64::INFINITY);
+    }
+    if lower == "-inf" || lower == "-infinity" {
+        return Some(f64::NEG_INFINITY);
+    }
+    if lower == "nan" || lower == "-nan" {
+        return Some(f64::NAN);
+    }
+    if let Ok(f) = trimmed.parse::<f64>() {
+        return Some(f);
+    }
+    // PEP 515: `1_000.5`, `2_500e-3`, etc. Validate underscore placement, then
+    // strip and re-parse.
+    if let Some(without) = strip_float_underscores(trimmed) {
+        if let Ok(f) = without.parse::<f64>() {
+            return Some(f);
+        }
+    }
+    None
+}
+
 pub fn mb_float(val: MbValue) -> MbValue {
     if is_decimal_handle_value(val) {
         return super::stdlib::decimal_mod::mb_decimal_float(val);
@@ -1293,34 +1321,34 @@ pub fn mb_float(val: MbValue) -> MbValue {
         // float("3.14") — parse string to float; raise ValueError on bad input.
         unsafe {
             if let ObjData::Str(ref s) = (*ptr).data {
-                let trimmed = s.trim();
-                // CPython recognises "inf"/"infinity"/"nan" (case-insensitive).
-                let lower = trimmed.to_ascii_lowercase();
-                if lower == "inf" || lower == "infinity" {
-                    return MbValue::from_float(f64::INFINITY);
-                }
-                if lower == "-inf" || lower == "-infinity" {
-                    return MbValue::from_float(f64::NEG_INFINITY);
-                }
-                if lower == "nan" || lower == "-nan" {
-                    return MbValue::from_float(f64::NAN);
-                }
-                if let Ok(f) = trimmed.parse::<f64>() {
+                if let Some(f) = parse_pyfloat_text(s) {
                     return MbValue::from_float(f);
-                }
-                // PEP 515: `1_000.5`, `2_500e-3`, etc. Validate the
-                // underscore placement in each digit run individually
-                // (between the integer part, fractional part, and
-                // exponent), then strip and re-parse.
-                if let Some(without) = strip_float_underscores(trimmed) {
-                    if let Ok(f) = without.parse::<f64>() {
-                        return MbValue::from_float(f);
-                    }
                 }
                 super::exception::mb_raise(
                     MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
                     MbValue::from_ptr(MbObject::new_str(format!(
                         "could not convert string to float: '{s}'"
+                    ))),
+                );
+                return MbValue::none();
+            }
+            // float(b"2.3") / float(bytearray(b"2.3")) — CPython parses ASCII
+            // bytes-like the same as a string (memoryview slices materialize as
+            // bytes in mamba, so this also covers `float(memoryview(...)[a:b])`).
+            let bytes_text: Option<Vec<u8>> = match (*ptr).data {
+                ObjData::Bytes(ref b) => Some(b.clone()),
+                ObjData::ByteArray(ref lock) => Some(lock.read().unwrap().clone()),
+                _ => None,
+            };
+            if let Some(raw) = bytes_text {
+                let text = String::from_utf8_lossy(&raw);
+                if let Some(f) = parse_pyfloat_text(&text) {
+                    return MbValue::from_float(f);
+                }
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "could not convert string to float: {text:?}"
                     ))),
                 );
                 return MbValue::none();
@@ -3213,6 +3241,16 @@ pub fn mb_eq(a: MbValue, b: MbValue) -> MbValue {
     MbValue::from_bool(mb_values_eq(a, b))
 }
 
+/// CPython `PyObject_RichCompareBool(a, b, Py_EQ)`: identity-first, then value
+/// equality. Container comparisons (list/tuple/set/dict `==`, `in`, count,
+/// subset/superset) use this so a self-unequal element such as NaN still
+/// matches when the SAME object appears on both sides — `[nan] == [nan]` is True
+/// for one shared NaN. Scalar `==` (mb_eq) deliberately does NOT add this, so
+/// `nan == nan` stays False.
+fn mb_richcmp_eq(a: MbValue, b: MbValue) -> bool {
+    mb_values_identical(a, b) || mb_values_eq(a, b)
+}
+
 /// Try the reflected __eq__ on `obj` (i.e. obj.__eq__(other)).
 /// Returns true/false if the reflected op gives a definitive answer, false if not.
 fn try_reflected_eq(obj: MbValue, other: MbValue) -> bool {
@@ -3400,7 +3438,7 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         };
         if let Some((va, vb)) = pair {
             return va.len() == vb.len()
-                && va.iter().zip(vb.iter()).all(|(x, y)| mb_values_eq(*x, *y));
+                && va.iter().zip(vb.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y));
         }
     }
 
@@ -3411,38 +3449,38 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                 (ObjData::List(la), ObjData::List(lb)) => {
                     let a = la.read().unwrap();
                     let b = lb.read().unwrap();
-                    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_values_eq(*x, *y))
+                    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
                 }
                 (ObjData::Tuple(a), ObjData::Tuple(b)) => {
-                    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_values_eq(*x, *y))
+                    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y))
                 }
                 (ObjData::Str(a), ObjData::Str(b)) => a == b,
                 (ObjData::Set(la), ObjData::Set(lb)) => {
                     let a = la.read().unwrap();
                     let b = lb.read().unwrap();
                     if a.len() != b.len() { return false; }
-                    a.iter().all(|x| b.iter().any(|y| mb_values_eq(*x, *y)))
+                    a.iter().all(|x| b.iter().any(|y| mb_richcmp_eq(*x, *y)))
                 }
                 (ObjData::FrozenSet(a_items), ObjData::FrozenSet(b_items)) => {
                     if a_items.len() != b_items.len() { return false; }
-                    a_items.iter().all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
+                    a_items.iter().all(|x| b_items.iter().any(|y| mb_richcmp_eq(*x, *y)))
                 }
                 (ObjData::Set(la), ObjData::FrozenSet(b_items)) => {
                     let a = la.read().unwrap();
                     if a.len() != b_items.len() { return false; }
-                    a.iter().all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
+                    a.iter().all(|x| b_items.iter().any(|y| mb_richcmp_eq(*x, *y)))
                 }
                 (ObjData::FrozenSet(a_items), ObjData::Set(lb)) => {
                     let b = lb.read().unwrap();
                     if a_items.len() != b.len() { return false; }
-                    a_items.iter().all(|x| b.iter().any(|y| mb_values_eq(*x, *y)))
+                    a_items.iter().all(|x| b.iter().any(|y| mb_richcmp_eq(*x, *y)))
                 }
                 (ObjData::Dict(la), ObjData::Dict(lb)) => {
                     let a = la.read().unwrap();
                     let b = lb.read().unwrap();
                     if a.len() != b.len() { return false; }
                     a.iter().all(|(k, v)| {
-                        b.get(k).map_or(false, |v2| mb_values_eq(*v, *v2))
+                        b.get(k).map_or(false, |v2| mb_richcmp_eq(*v, *v2))
                     })
                 }
                 (ObjData::Bytes(a), ObjData::Bytes(b)) => a == b,
@@ -3503,7 +3541,7 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                         (Some(xs), Some(ys)) => {
                             xs.len() == ys.len()
                                 && xs.iter().all(|x| {
-                                    ys.iter().any(|y| mb_values_eq(*x, *y))
+                                    ys.iter().any(|y| mb_richcmp_eq(*x, *y))
                                 })
                         }
                         _ => false,
@@ -3539,7 +3577,7 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                     let gb = fb.read().unwrap();
                     if ga.len() != gb.len() { return false; }
                     return ga.iter().all(|(k, v)| {
-                        gb.get(k).map_or(false, |v2| mb_values_eq(*v, *v2))
+                        gb.get(k).map_or(false, |v2| mb_richcmp_eq(*v, *v2))
                     });
                 }
                 // statistics.NormalDist value equality: two NormalDists are
@@ -3582,7 +3620,7 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
                             names.iter().map(|n| gb.get(n).copied().unwrap_or_else(MbValue::none)).collect(),
                         )
                     };
-                    return av.iter().zip(bv.iter()).all(|(x, y)| mb_values_eq(*x, *y));
+                    return av.iter().zip(bv.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y));
                 }
                 // Instance: dispatch __eq__ dunder with NotImplemented fallback
                 (ObjData::Instance { class_name, .. }, _) => {
@@ -3860,7 +3898,7 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
     // set and frozenset interchangeably for subset/superset comparisons.
     if let (Some(sa), Some(sb)) = (setlike_items(a), setlike_items(b)) {
         return sa.len() < sb.len()
-            && sa.iter().all(|x| sb.iter().any(|y| mb_values_eq(*x, *y)));
+            && sa.iter().all(|x| sb.iter().any(|y| mb_richcmp_eq(*x, *y)));
     }
     // Lexicographic comparison for sequences
     if let (Some(pa), Some(pb)) = (a.as_ptr(), b.as_ptr()) {
@@ -3899,7 +3937,7 @@ fn mb_values_lt(a: MbValue, b: MbValue) -> bool {
                     if a_items.len() >= b_items.len() {
                         return false;
                     }
-                    a_items.iter().all(|x| b_items.iter().any(|y| mb_values_eq(*x, *y)))
+                    a_items.iter().all(|x| b_items.iter().any(|y| mb_richcmp_eq(*x, *y)))
                 }
                 // PEP 557: @dataclass(order=True) — same-class instances order
                 // lexicographically by their compare=True field tuples. Only
@@ -5611,7 +5649,20 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
     if is_fraction_handle_value(val) {
         return super::stdlib::fractions_mod::mb_fraction_round(val, ndigits);
     }
-    let n = ndigits.as_int().unwrap_or(0);
+    let n = match ndigits.as_int() {
+        Some(i) => i,
+        None => {
+            // A bignum ndigits never fits i64 but is always far outside f64's
+            // ~323-place resolution, so collapse it to a large sentinel of the
+            // matching sign: positive → no-op rounding, negative → rounds the
+            // value away toward (signed) zero.
+            match unsafe { super::bigint_ops::extract_bigint(ndigits) } {
+                Some(big) if big.sign() == num_bigint::Sign::Minus => -1024,
+                Some(_) => 1024,
+                None => 0,
+            }
+        }
+    };
     if let Some(f) = val.as_float() {
         if !ndigits_given {
             // round(f) → int (banker's rounding).
@@ -5636,6 +5687,13 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
             return super::bigint_ops::int_from_f64_trunc(bankers_round(f));
         }
         if n > 0 {
+            // A finite f64 resolves at most ~323 decimal places (smallest normal
+            // ≈ 2.2e-308); rounding to more places than that cannot change the
+            // value, and Rust's float formatter panics on an out-of-range
+            // precision (e.g. `round(x, 2**31)`). Treat huge ndigits as a no-op.
+            if n > 323 {
+                return MbValue::from_float(f);
+            }
             // Use format/parse to avoid FP multiply artifacts (e.g. 2.675*100=267.5 in f64).
             // Rust's {:.N} formatting rounds the actual f64 value correctly — matching CPython.
             let s = format!("{:.prec$}", f, prec = n as usize);
@@ -5644,7 +5702,23 @@ pub fn mb_round(val: MbValue, ndigits: MbValue) -> MbValue {
         // n <= 0: multiply-based rounding; CPython keeps the float type
         // when ndigits is given, so cast back through f64.
         let factor = 10.0_f64.powi(n as i32);
+        // ndigits so negative the rounding unit (10**-n) exceeds the f64 range:
+        // every finite value rounds to (signed) zero.
+        if factor == 0.0 {
+            return MbValue::from_float(if f.is_finite() { 0.0_f64.copysign(f) } else { f });
+        }
         let rounded = bankers_round(f * factor) / factor;
+        // A finite input that rounds up past the f64 range raises OverflowError
+        // (CPython: `round(1.6e308, -308)` → "rounded value too large").
+        if rounded.is_infinite() && f.is_finite() {
+            super::exception::mb_raise(
+                MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                MbValue::from_ptr(MbObject::new_str(
+                    "rounded value too large to represent".to_string(),
+                )),
+            );
+            return MbValue::none();
+        }
         MbValue::from_float(rounded)
     } else if let Some(i) = val.as_int() {
         if n >= 0 {

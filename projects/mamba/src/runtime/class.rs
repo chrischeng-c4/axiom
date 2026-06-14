@@ -10132,12 +10132,61 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
             "real" => return MbValue::from_float(f),
             "imag" => return MbValue::from_float(0.0),
             "hex" => {
-                // Minimal `(1.0).hex()` → CPython-compatible "0x1.0000000000000p+0" form.
-                return MbValue::from_ptr(MbObject::new_str(format!("{:#x}", f.to_bits())));
+                // CPython float.hex(): "[-]0x<lead>.<13 hex digits>p<sign><exp>".
+                let s = if f.is_nan() {
+                    "nan".to_string()
+                } else if f.is_infinite() {
+                    if f < 0.0 { "-inf".to_string() } else { "inf".to_string() }
+                } else {
+                    let prefix = if f.is_sign_negative() { "-0x" } else { "0x" };
+                    if f == 0.0 {
+                        format!("{}0.0p+0", prefix)
+                    } else {
+                        let bits = f.abs().to_bits();
+                        let exp_bits = ((bits >> 52) & 0x7ff) as i64;
+                        let mantissa = bits & 0x000f_ffff_ffff_ffff;
+                        let (lead, exp) = if exp_bits == 0 {
+                            (0u64, -1022i64) // subnormal
+                        } else {
+                            (1u64, exp_bits - 1023)
+                        };
+                        let exp_sign = if exp >= 0 { "+" } else { "-" };
+                        format!(
+                            "{}{}.{:013x}p{}{}",
+                            prefix, lead, mantissa, exp_sign, exp.abs()
+                        )
+                    }
+                };
+                return MbValue::from_ptr(MbObject::new_str(s));
             }
-            "__floor__" => return MbValue::from_int(f.floor() as i64),
-            "__ceil__" => return MbValue::from_int(f.ceil() as i64),
-            "__trunc__" => return MbValue::from_int(f.trunc() as i64),
+            "__floor__" | "__ceil__" | "__trunc__" => {
+                // Non-finite floats cannot convert to int: NaN -> ValueError,
+                // +/-inf -> OverflowError (CPython float.__floor__/__ceil__/__trunc__).
+                if f.is_nan() {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "cannot convert float NaN to integer".to_string(),
+                        )),
+                    );
+                    return MbValue::none();
+                }
+                if f.is_infinite() {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("OverflowError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(
+                            "cannot convert float infinity to integer".to_string(),
+                        )),
+                    );
+                    return MbValue::none();
+                }
+                let r = match name.as_str() {
+                    "__floor__" => f.floor(),
+                    "__ceil__" => f.ceil(),
+                    _ => f.trunc(),
+                };
+                return MbValue::from_int(r as i64);
+            }
             "__round__" => {
                 // Banker's rounding (round half to even). 0-arg form returns int;
                 // 1-arg form returns float (the ndigits argument).

@@ -1416,6 +1416,47 @@ fn strip_g_trailing_zeros(s: &str, alternate: bool) -> String {
     format!("{}{}", head_stripped, tail)
 }
 
+/// Format the magnitude of a finite float in Python 'g'-family style:
+/// `precision` significant digits, switching to exponential past a threshold.
+/// `none_type=false` is the 'g'/'G' presentation type (scientific when
+/// `exp >= precision`); `none_type=true` is the empty presentation type with an
+/// explicit precision, which switches one decade earlier (`exp >= precision-1`).
+/// Returns the unsigned body only (no sign prefix). The decimal exponent is read
+/// from the rounded 'e' form so a round-up across a power of ten (e.g. 99.0 at
+/// precision 1 → "1e+02") picks the right branch, matching CPython.
+fn format_g_magnitude(
+    f_val: f64,
+    precision: Option<usize>,
+    upper: bool,
+    alternate: bool,
+    none_type: bool,
+) -> String {
+    // Python: precision 0 is treated as 1; default is 6.
+    let p = precision.unwrap_or(6).max(1);
+    let abs_v = f_val.abs();
+    let e_prec = p - 1;
+    let e_str = if upper {
+        format!("{:.prec$E}", abs_v, prec = e_prec)
+    } else {
+        format!("{:.prec$e}", abs_v, prec = e_prec)
+    };
+    // Rust prints "<mantissa>e<exp>" with no '+' and no leading zeros.
+    let exp: i32 = e_str
+        .rsplit(|c| c == 'e' || c == 'E')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let sci_threshold = if none_type { p as i32 - 1 } else { p as i32 };
+    if exp < -4 || exp >= sci_threshold {
+        let r = strip_g_trailing_zeros(&e_str, alternate);
+        pythonize_exponent(&r, upper)
+    } else {
+        let f_prec = (p as i32 - 1 - exp).max(0) as usize;
+        let r = format!("{:.prec$}", abs_v, prec = f_prec);
+        strip_g_trailing_zeros(&r, alternate)
+    }
+}
+
 /// Apply a Python format spec (e.g., ".2f", ">10", "<10", "05d") to a value.
 fn apply_format_spec(val: MbValue, spec: &str) -> String {
     if spec.is_empty() {
@@ -1558,7 +1599,28 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
         let with_sep = String::from_utf8(out).unwrap_or_else(|_| num.to_string());
         if minus { format!("-{with_sep}") } else { with_sep }
     };
-    let (sign_prefix, body) = match type_char {
+    // Non-finite floats render as canonical inf/nan, with case following the
+    // presentation letter (CPython): lowercase 'f'/'e'/'g'/'%'/None → inf/nan,
+    // uppercase 'F'/'E'/'G' → INF/NAN. Rust's own `{}` prints "NaN"/"inf", so
+    // intercept before the per-type formatting. Sign flags still apply; numeric
+    // zero-padding does not (handled at the width step below).
+    let nonfinite_float = val.as_float().filter(|fv| !fv.is_finite()).and_then(|fv| {
+        if !matches!(type_char, 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | '%' | '\0') {
+            return None;
+        }
+        let upper = matches!(type_char, 'F' | 'E' | 'G');
+        let word = if fv.is_nan() {
+            if upper { "NAN" } else { "nan" }
+        } else if upper { "INF" } else { "inf" };
+        let prefix = if fv.is_sign_negative() { "-" }
+            else if sign == '+' { "+" }
+            else if sign == ' ' { " " }
+            else { "" };
+        Some((prefix.to_string(), word.to_string()))
+    });
+    let is_nonfinite_float = nonfinite_float.is_some();
+    let (sign_prefix, body) = if let Some(nf) = nonfinite_float { nf } else {
+    match type_char {
         '%' => {
             // Percent type: multiply by 100, format as fixed-point, append '%'.
             let f_val = val.as_float()
@@ -1594,32 +1656,7 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
             let f_val = val.as_float()
                 .or_else(|| val.as_int().map(|i| i as f64))
                 .unwrap_or(0.0);
-            // Python: precision 0 is treated as 1; default is 6.
-            let p = precision.unwrap_or(6).max(1);
-            let upper = type_char == 'G';
-            let abs_v = f_val.abs();
-            // Compute decimal exponent of leading digit: floor(log10(|x|)).
-            let exp: i32 = if abs_v == 0.0 {
-                0
-            } else {
-                abs_v.log10().floor() as i32
-            };
-            let raw = if exp < -4 || exp >= p as i32 {
-                // Use e style with precision p-1.
-                let e_prec = p - 1;
-                let r = if upper {
-                    format!("{:.prec$E}", abs_v, prec = e_prec)
-                } else {
-                    format!("{:.prec$e}", abs_v, prec = e_prec)
-                };
-                let r = strip_g_trailing_zeros(&r, alternate);
-                pythonize_exponent(&r, upper)
-            } else {
-                // Use f style with precision p-1-exp.
-                let f_prec = (p as i32 - 1 - exp).max(0) as usize;
-                let r = format!("{:.prec$}", abs_v, prec = f_prec);
-                strip_g_trailing_zeros(&r, alternate)
-            };
+            let raw = format_g_magnitude(f_val, precision, type_char == 'G', alternate, false);
             let prefix = if f_val.is_sign_negative() { "-".to_string() }
                 else if sign == '+' { "+".to_string() }
                 else if sign == ' ' { " ".to_string() }
@@ -1689,6 +1726,28 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
             (format!("{sign_part}{alt_prefix}"), digits)
         }
         's' | '\0' => {
+            // None-type float with an explicit precision is 'g'-like (significant
+            // digits, exponential past the threshold) but keeps a trailing ".0"
+            // when the result would otherwise look integral (CPython's
+            // Py_DTSF_ADD_DOT_0). The `str`-style char truncation below only
+            // applies to actual strings — a float here always has type '\0'
+            // ('s' on a float already raised ValueError in the validation block).
+            if thousands.is_none()
+                && precision.is_some()
+                && val.as_float().is_some()
+                && val.as_int().is_none()
+            {
+                let f_val = val.as_float().unwrap();
+                let mut body = format_g_magnitude(f_val, precision, false, alternate, true);
+                if !body.contains(|c| c == '.' || c == 'e' || c == 'E') {
+                    body.push_str(".0");
+                }
+                let prefix = if f_val.is_sign_negative() { "-".to_string() }
+                    else if sign == '+' { "+".to_string() }
+                    else if sign == ' ' { " ".to_string() }
+                    else { String::new() };
+                (prefix, body)
+            } else
             // When no type is given but thousands was requested and the value
             // is numeric, behave like `d` / `f` so `"{:,}".format(1234567)` →
             // `"1,234,567"`.
@@ -1739,12 +1798,16 @@ fn apply_format_spec(val: MbValue, spec: &str) -> String {
             }
         }
         _ => (String::new(), value_to_string(val)),
+    }
     };
     let formatted = format!("{sign_prefix}{body}");
 
     // Apply width and alignment
     if width > formatted.len() {
         let padding = width - formatted.len();
+        // Non-finite floats use space fill even when '0' was requested
+        // (CPython: `format(inf, "010")` → `"       inf"`).
+        let zero_fill = zero_fill && !is_nonfinite_float;
         let actual_fill = if zero_fill && align == '\0' { '0' } else { fill };
         let actual_align = if align == '\0' {
             if zero_fill { '>' } else if val.as_ptr().is_some() { '<' } else { '>' }
