@@ -4001,6 +4001,19 @@ impl<'a> AstLowerer<'a> {
                                     .collect();
                             let has_star = param_info.iter().any(|(_, _, k)| *k == ast::ParamKind::Star);
                             let has_dstar = param_info.iter().any(|(_, _, k)| *k == ast::ParamKind::DoubleStar);
+                            // Positional-only param names: a keyword of the same
+                            // name does NOT bind the param (CPython) — with
+                            // **kwargs it lands in the dict. pos_only is only in
+                            // arg_bind_sigs (top-level undecorated defs); empty
+                            // elsewhere, preserving prior behavior.
+                            let posonly_names: std::collections::HashSet<String> = if has_dstar {
+                                self.arg_bind_sigs.get(fname)
+                                    .map(|sig| sig.iter().filter(|p| p.5)
+                                        .map(|p| p.0.clone()).collect())
+                                    .unwrap_or_default()
+                            } else {
+                                std::collections::HashSet::new()
+                            };
                             let mut ordered: Vec<Option<HirExpr>> = vec![None; regular_params.len()];
                             let mut excess_pos: Vec<HirExpr> = Vec::new();
                             let mut excess_kw: Vec<(String, HirExpr)> = Vec::new();
@@ -4018,13 +4031,19 @@ impl<'a> AstLowerer<'a> {
                                         }
                                     }
                                     ast::CallArg::Keyword { name: kw, value } => {
-                                        // Try to match keyword arg to a regular param name.
-                                        if let Some(idx) = regular_params.iter()
-                                            .position(|(_, (n, _, _))| n == kw)
-                                        {
+                                        // Try to match keyword arg to a regular param name —
+                                        // but never a positional-only param (it cannot be
+                                        // filled by keyword; the keyword belongs in **kwargs).
+                                        let matched = if posonly_names.contains(kw) {
+                                            None
+                                        } else {
+                                            regular_params.iter().position(|(_, (n, _, _))| n == kw)
+                                        };
+                                        if let Some(idx) = matched {
                                             ordered[idx] = self.lower_expr(value);
                                         } else if has_dstar {
-                                            // Unmatched kwargs go to **kwargs dict.
+                                            // Unmatched (or positional-only) kwargs go to the
+                                            // **kwargs dict.
                                             if let Some(expr) = self.lower_expr(value) {
                                                 excess_kw.push((kw.clone(), expr));
                                             }
