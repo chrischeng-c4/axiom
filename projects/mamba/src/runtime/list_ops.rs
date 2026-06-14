@@ -1119,6 +1119,19 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                     return MbValue::from_bool(false);
                 }
                 ObjData::Set(ref lock) => {
+                    // `x in set` hashes x; list/dict/bytearray are unhashable.
+                    // A set LHS is NOT rejected — CPython checks it as its
+                    // frozenset equivalent (`{1} in {frozenset([1])}` is True),
+                    // which mb_eq's set/frozenset value-equality already handles.
+                    if let Some(tn) = super::set_ops::unhashable_type_name(value) {
+                        if tn != "set" {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+                            );
+                            return MbValue::none();
+                        }
+                    }
                     let items = lock.read().unwrap();
                     for item in items.iter() {
                         if super::builtins::mb_is_identity(value, *item).as_bool() == Some(true)
@@ -1130,6 +1143,15 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                     return MbValue::from_bool(false);
                 }
                 ObjData::FrozenSet(ref items) => {
+                    if let Some(tn) = super::set_ops::unhashable_type_name(value) {
+                        if tn != "set" {
+                            super::exception::mb_raise(
+                                MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                                MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+                            );
+                            return MbValue::none();
+                        }
+                    }
                     for item in items.iter() {
                         if super::builtins::mb_is_identity(value, *item).as_bool() == Some(true)
                             || super::builtins::mb_eq(value, *item).as_bool() == Some(true)
@@ -1140,7 +1162,15 @@ pub fn mb_list_contains(container: MbValue, value: MbValue) -> MbValue {
                     return MbValue::from_bool(false);
                 }
                 ObjData::Dict(ref lock) => {
-                    // `key in dict` — check key membership (any key type)
+                    // `key in dict` — check key membership (any key type). A
+                    // mutable container can't be a key (CPython: unhashable type).
+                    if let Some(tn) = super::set_ops::unhashable_type_name(value) {
+                        super::exception::mb_raise(
+                            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                            MbValue::from_ptr(MbObject::new_str(format!("unhashable type: '{tn}'"))),
+                        );
+                        return MbValue::none();
+                    }
                     let key = super::dict_ops::to_dict_key(value);
                     return MbValue::from_bool(lock.read().unwrap().contains_key(&key));
                 }

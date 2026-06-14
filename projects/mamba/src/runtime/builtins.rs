@@ -2799,6 +2799,22 @@ pub fn mb_bitand(a: MbValue, b: MbValue) -> MbValue {
             {
                 return super::stdlib::collections_mod::mb_counter_and(a, b);
             }
+            // `set & <non-set>` (e.g. `{1,2} & [3]`) is unsupported — only
+            // set/frozenset operands intersect (CPython raises TypeError).
+            if (a_is_setlike || b_is_setlike)
+                && !super::stdlib::collections_mod::is_counter_instance(a)
+                && !super::stdlib::collections_mod::is_counter_instance(b)
+            {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "unsupported operand type(s) for &: '{}' and '{}'",
+                        value_type_name(a),
+                        value_type_name(b)
+                    ))),
+                );
+                return MbValue::none();
+            }
         }
     }
     match (a.as_int(), b.as_int()) {
