@@ -3884,6 +3884,23 @@ fn complex_ordering_guard(a: MbValue, b: MbValue, op: &str) -> bool {
     false
 }
 
+/// Plain `Enum` / non-int `Flag` members don't support ordering in CPython;
+/// raise the exact TypeError when either operand is one. IntEnum / IntFlag /
+/// StrEnum members compare via their raw int/str value and are NOT guarded.
+fn enum_ordering_guard(a: MbValue, b: MbValue, op: &str) -> bool {
+    if super::stdlib::enum_class::member_is_plain_unorderable(a)
+        || super::stdlib::enum_class::member_is_plain_unorderable(b)
+    {
+        raise_type_error(format!(
+            "'{op}' not supported between instances of '{}' and '{}'",
+            value_type_name(a),
+            value_type_name(b)
+        ));
+        return true;
+    }
+    false
+}
+
 /// The elements of a set-like value (`set` or `frozenset`), or None for any
 /// other value. Used so subset/superset comparisons treat the two types
 /// interchangeably, matching CPython.
@@ -3898,6 +3915,9 @@ fn setlike_items(v: MbValue) -> Option<Vec<MbValue>> {
 }
 
 pub fn mb_lt(a: MbValue, b: MbValue) -> MbValue {
+    if enum_ordering_guard(a, b, "<") {
+        return MbValue::from_bool(false);
+    }
     MbValue::from_bool(mb_values_lt(a, b))
 }
 
@@ -7169,6 +7189,9 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
     if complex_ordering_guard(a, b, ">") {
         return MbValue::from_bool(false);
     }
+    if enum_ordering_guard(a, b, ">") {
+        return MbValue::from_bool(false);
+    }
     // Try __gt__ dunder on a first
     if let Some(pa) = a.as_ptr() {
         unsafe {
@@ -7193,6 +7216,9 @@ pub fn mb_gt(a: MbValue, b: MbValue) -> MbValue {
 pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
     // complex ordering raises in CPython — guard with the '<=' op symbol.
     if complex_ordering_guard(a, b, "<=") {
+        return MbValue::from_bool(false);
+    }
+    if enum_ordering_guard(a, b, "<=") {
         return MbValue::from_bool(false);
     }
     // Try __le__ dunder on a first
@@ -7223,6 +7249,9 @@ pub fn mb_le(a: MbValue, b: MbValue) -> MbValue {
 pub fn mb_ge(a: MbValue, b: MbValue) -> MbValue {
     // complex ordering raises in CPython — guard with the '>=' op symbol.
     if complex_ordering_guard(a, b, ">=") {
+        return MbValue::from_bool(false);
+    }
+    if enum_ordering_guard(a, b, ">=") {
         return MbValue::from_bool(false);
     }
     // Try __ge__ dunder on a first

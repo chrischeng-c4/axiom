@@ -445,6 +445,14 @@ pub fn member_isinstance_builtin(v: MbValue, target: &str) -> bool {
 /// True when `v` is a singleton member of a converted class-body enum.
 /// Used by mb_values_eq: members never equal raw values or members of other
 /// classes (identity was already handled by the bits fast path).
+/// True when `v` is a member of a *plain* enum (`Enum` or non-int `Flag`),
+/// which — unlike IntEnum/IntFlag/StrEnum — does NOT support ordering
+/// comparisons; CPython raises `TypeError: '<' not supported between instances`
+/// for them. The int/str data-mixin kinds compare via their raw value instead.
+pub fn member_is_plain_unorderable(v: MbValue) -> bool {
+    matches!(member_kind(v), Some(EnumKind::Plain) | Some(EnumKind::Flag))
+}
+
 pub fn is_enum_member(v: MbValue) -> bool {
     if !have_enum_classes() {
         return false;
