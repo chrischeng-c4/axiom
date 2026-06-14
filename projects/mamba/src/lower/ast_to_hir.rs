@@ -326,20 +326,22 @@ fn ast_container_is_all_float(
 /// signature, returning the CPython-faithful `TypeError` message (or `None`
 /// when the call is valid or anything is uncertain — then the call lowers
 /// normally). `sig` entries are `(name, has_default, kw_only, is_star,
-/// is_double_star)`. The caller guarantees `args` is splat-free.
+/// is_double_star, pos_only)`. The caller guarantees `args` is splat-free.
 ///
-/// Only the three deterministically-reported contracts are checked: a keyword
-/// duplicating a positionally-bound argument, too many positional arguments,
-/// and a missing required keyword-only argument. Each fires only in cases where
-/// CPython unconditionally raises, so a correct call never trips it.
+/// Each check fires only where CPython unconditionally raises, so a correct
+/// call never trips it. Checked in CPython's surfacing order so a single-fault
+/// call yields the right message: duplicate value, positional-only-as-keyword,
+/// unexpected keyword, too many positional, missing required keyword-only.
 fn arg_bind_violation(
     fname: &str,
-    sig: &[(String, bool, bool, bool, bool)],
+    sig: &[(String, bool, bool, bool, bool, bool)],
     args: &[ast::CallArg],
 ) -> Option<String> {
     let has_star = sig.iter().any(|p| p.3);
+    let has_dstar = sig.iter().any(|p| p.4);
     // Params fillable by position, in declared order (not *,**, not kw-only).
-    let pos_params: Vec<&(String, bool, bool, bool, bool)> =
+    // Positional-only params are included — they bind by position.
+    let pos_params: Vec<&(String, bool, bool, bool, bool, bool)> =
         sig.iter().filter(|p| !p.2 && !p.3 && !p.4).collect();
     let n_pos = args.iter()
         .filter(|a| matches!(a, ast::CallArg::Positional(_)))
@@ -350,36 +352,74 @@ fn arg_bind_violation(
             _ => None,
         })
         .collect();
+    let param_named = |n: &str| sig.iter().any(|p| !p.3 && !p.4 && p.0 == n);
+    let is_pos_only = |n: &str| sig.iter().any(|p| p.5 && p.0 == n);
 
-    // (1) Duplicate value: a keyword names a positional param already bound by
-    // position. Always a TypeError in CPython.
+    // (1) Duplicate value: a keyword names a NON-positional-only param already
+    // bound by position. (A positional-only name as keyword never binds to the
+    // positional slot — it lands in **kwargs or is rejected below.)
     for (i, p) in pos_params.iter().enumerate() {
-        if i < n_pos && kw_names.contains(&p.0.as_str()) {
+        if i < n_pos && !p.5 && kw_names.contains(&p.0.as_str()) {
             return Some(format!(
                 "{fname}() got multiple values for argument '{}'", p.0
             ));
         }
     }
 
-    // (2) Too many positional. Restricted to a pure-positional overflow with no
-    // `*args` to absorb it and no positional default — that is the only shape
-    // whose message is unconditionally `takes N ... but M were given`. CPython
-    // switches wording when defaults exist ("from X to Y") or when keyword-only
-    // args are also supplied ("...but M positional arguments (and K keyword-only
-    // arguments) were given"), so leave those cases to lower normally.
-    if !has_star
-        && kw_names.is_empty()
-        && n_pos > pos_params.len()
-        && pos_params.iter().all(|p| !p.1)
-    {
-        let take = pos_params.len();
-        let word = if take == 1 { "argument" } else { "arguments" };
-        return Some(format!(
-            "{fname}() takes {take} positional {word} but {n_pos} were given"
-        ));
+    // (2) Positional-only parameters passed by keyword (only an error without
+    // `**kwargs` to absorb them). CPython lists all such names in one group.
+    if !has_dstar {
+        let posonly_kw: Vec<&str> = kw_names.iter()
+            .copied()
+            .filter(|n| is_pos_only(n))
+            .collect();
+        if !posonly_kw.is_empty() {
+            return Some(format!(
+                "{fname}() got some positional-only arguments passed as \
+                 keyword arguments: '{}'",
+                posonly_kw.join(", ")
+            ));
+        }
     }
 
-    // (3) Missing required keyword-only argument(s): kw-only, no default, not
+    // (3) Unexpected keyword: names no parameter and there is no `**kwargs`.
+    // Reports the first offending name, as CPython does.
+    if !has_dstar {
+        if let Some(bad) = kw_names.iter().find(|n| !param_named(n)) {
+            return Some(format!(
+                "{fname}() got an unexpected keyword argument '{bad}'"
+            ));
+        }
+    }
+
+    // (4) Too many positional, with no `*args` to absorb the overflow and no
+    // positional default (a default switches CPython to "from X to Y" wording).
+    // When keyword-only args are also supplied the count is reported in two
+    // segments; otherwise the plain form. Only emit when every supplied keyword
+    // binds a keyword-only param, so the two-segment count is exact.
+    if !has_star && n_pos > pos_params.len() && pos_params.iter().all(|p| !p.1) {
+        let take = pos_params.len();
+        let kwonly_supplied = kw_names.iter()
+            .filter(|n| sig.iter().any(|p| p.2 && p.0 == **n))
+            .count();
+        let take_word = if take == 1 { "argument" } else { "arguments" };
+        if kw_names.is_empty() {
+            return Some(format!(
+                "{fname}() takes {take} positional {take_word} but {n_pos} were given"
+            ));
+        } else if kwonly_supplied == kw_names.len() {
+            let pos_word = if n_pos == 1 { "argument" } else { "arguments" };
+            let k_word = if kwonly_supplied == 1 { "argument" } else { "arguments" };
+            return Some(format!(
+                "{fname}() takes {take} positional {take_word} but {n_pos} \
+                 positional {pos_word} (and {kwonly_supplied} keyword-only \
+                 {k_word}) were given"
+            ));
+        }
+        // Mixed keyword shape — leave to the normal call path.
+    }
+
+    // (5) Missing required keyword-only argument(s): kw-only, no default, not
     // supplied by name.
     let missing: Vec<&str> = sig.iter()
         .filter(|p| p.2 && !p.3 && !p.4 && !p.1)
@@ -1404,12 +1444,14 @@ struct AstLowerer<'a> {
     /// Maps function name → vec of (param_name, default_expr_option).
     func_param_info: HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
     /// Static arg-binding validation: top-level function name → param shape
-    /// `(name, has_default, kw_only, is_star, is_double_star)`, captured at the
-    /// def so the call-site validator can raise a CPython-faithful TypeError for
-    /// too-many-positional / duplicate-argument / missing-required-keyword-only
-    /// calls. Only top-level defs are recorded and only bare-Ident, splat-free
-    /// calls are checked, so a violation is unambiguous before we raise.
-    arg_bind_sigs: HashMap<String, Vec<(String, bool, bool, bool, bool)>>,
+    /// `(name, has_default, kw_only, is_star, is_double_star, pos_only)`,
+    /// captured at the def so the call-site validator can raise a
+    /// CPython-faithful TypeError for too-many-positional / duplicate-argument /
+    /// missing-required-keyword-only / unexpected-keyword / positional-only-as-
+    /// keyword calls. Only top-level defs are recorded and only bare-Ident,
+    /// splat-free calls are checked, so a violation is unambiguous before we
+    /// raise.
+    arg_bind_sigs: HashMap<String, Vec<(String, bool, bool, bool, bool, bool)>>,
     /// PEP 557: per-dataclass synthesized __init__ parameter shapes, kept
     /// separately from `func_param_info` so subclasses can prepend their base
     /// dataclass's params (Derived(Counted) accepts Counted's fields first).
@@ -1735,7 +1777,8 @@ impl<'a> AstLowerer<'a> {
                         self.arg_bind_sigs.insert(name.clone(), params.iter().map(|p| {
                             (p.name.clone(), p.default.is_some(), p.kw_only,
                              p.kind == ast::ParamKind::Star,
-                             p.kind == ast::ParamKind::DoubleStar)
+                             p.kind == ast::ParamKind::DoubleStar,
+                             p.pos_only)
                         }).collect());
                     } else {
                         // A redefinition that is decorated must not keep a stale
