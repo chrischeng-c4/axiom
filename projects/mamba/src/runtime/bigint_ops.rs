@@ -139,6 +139,102 @@ pub unsafe fn mb_int_mul(a: MbValue, b: MbValue) -> MbValue {
     normalize_bigint(ba * bb)
 }
 
+// ── Floor division / modulo / divmod / pow ──────────────────────────────────
+
+/// Floor-division quotient and remainder for big integers, with Python sign
+/// semantics: the quotient rounds toward −∞ and the remainder takes the
+/// divisor's sign. `b` must be non-zero.
+fn floor_div_mod(a: &BigInt, b: &BigInt) -> (BigInt, BigInt) {
+    let q = a / b;       // truncates toward zero
+    let r = a - &q * b;  // truncated remainder (sign of `a`)
+    // Step the quotient toward −∞ when the remainder's sign disagrees with the
+    // divisor (matches CPython `//` / `%`).
+    if r.sign() != num_bigint::Sign::NoSign && r.sign() != b.sign() {
+        (q - 1, r + b)
+    } else {
+        (q, r)
+    }
+}
+
+/// Python floor division for integer MbValues (inline or BigInt). Returns
+/// `None` when the divisor is zero — the caller raises ZeroDivisionError.
+///
+/// # Safety
+/// Both must be valid integer MbValues.
+pub unsafe fn mb_int_floordiv(a: MbValue, b: MbValue) -> Option<MbValue> {
+    let ba = to_bigint(a)?;
+    let bb = to_bigint(b)?;
+    if bb.is_zero() {
+        return None;
+    }
+    Some(normalize_bigint(floor_div_mod(&ba, &bb).0))
+}
+
+/// Python modulo for integer MbValues (result takes the divisor's sign).
+/// Returns `None` when the divisor is zero.
+///
+/// # Safety
+/// Both must be valid integer MbValues.
+pub unsafe fn mb_int_mod(a: MbValue, b: MbValue) -> Option<MbValue> {
+    let ba = to_bigint(a)?;
+    let bb = to_bigint(b)?;
+    if bb.is_zero() {
+        return None;
+    }
+    Some(normalize_bigint(floor_div_mod(&ba, &bb).1))
+}
+
+/// Python `divmod` for integer MbValues. Returns `None` when the divisor is
+/// zero.
+///
+/// # Safety
+/// Both must be valid integer MbValues.
+pub unsafe fn mb_int_divmod(a: MbValue, b: MbValue) -> Option<(MbValue, MbValue)> {
+    let ba = to_bigint(a)?;
+    let bb = to_bigint(b)?;
+    if bb.is_zero() {
+        return None;
+    }
+    let (q, r) = floor_div_mod(&ba, &bb);
+    Some((normalize_bigint(q), normalize_bigint(r)))
+}
+
+/// Integer exponentiation for non-negative exponents. Returns `None` when the
+/// exponent is negative (the caller produces a float result) or too large to
+/// materialize (> `u32::MAX`, which is astronomically unlikely in real code).
+///
+/// # Safety
+/// Both must be valid integer MbValues.
+pub unsafe fn mb_int_pow(base: MbValue, exp: MbValue) -> Option<MbValue> {
+    let be = to_bigint(exp)?;
+    if be.sign() == num_bigint::Sign::Minus {
+        return None;
+    }
+    let e = be.to_u32()?;
+    let bb = to_bigint(base)?;
+    Some(normalize_bigint(bb.pow(e)))
+}
+
+/// Convert an integer MbValue (inline or BigInt) to `f64`, saturating to ±inf
+/// for magnitudes beyond the f64 range (CPython int→float widening). Returns
+/// `None` for non-integers.
+///
+/// # Safety
+/// `val` must be a valid MbValue.
+pub unsafe fn int_as_f64(val: MbValue) -> Option<f64> {
+    if let Some(i) = val.as_int() {
+        return Some(i as f64);
+    }
+    let big = extract_bigint(val)?;
+    Some(big.to_f64().unwrap_or_else(|| {
+        if big.sign() == num_bigint::Sign::Minus {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        }
+    }))
+}
+
 /// Make an int MbValue from an i64 — inline when it fits, heap BigInt otherwise.
 pub fn int_from_i64(v: i64) -> MbValue {
     if fits_inline(v) {

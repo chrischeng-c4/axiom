@@ -2214,6 +2214,103 @@ fn fraction_as_f64(v: MbValue) -> Option<f64> {
 /// protocol when either operand is such a handle. Returns `None` when
 /// neither side is a numeric handle (caller falls through to its
 /// regular paths).
+/// True when `v` is a heap-allocated arbitrary-precision integer (BigInt) —
+/// an int value too large for the 48-bit inline NaN-box range (e.g.
+/// `sys.maxsize`, `2**70`).
+#[inline]
+fn is_bigint_value(v: MbValue) -> bool {
+    v.as_ptr()
+        .map_or(false, |p| matches!(unsafe { &(*p).data }, ObjData::BigInt(_)))
+}
+
+/// Raise `ZeroDivisionError(msg)` and return `None` (the value the arithmetic
+/// builtins yield after raising).
+fn raise_zero_div(msg: &str) -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(msg.to_string())),
+    );
+    MbValue::none()
+}
+
+/// Route a numeric binary op to arbitrary-precision arithmetic when either
+/// operand is a heap BigInt. The inline arms in `mb_add`/`mb_sub`/… use
+/// `as_int()`, which returns `None` for a heap BigInt, so a BigInt operand
+/// would otherwise skip every numeric arm and fall through to a spurious
+/// `None` (e.g. `sys.maxsize - 1`) or `unsupported operand` TypeError
+/// (`sys.maxsize + 1`).
+///
+/// Returns `None` when neither operand is a BigInt (the inline hot path is
+/// untouched) or an operand is non-numeric (so the caller's type-specific arms
+/// — str/list/set/datetime/… — keep running). For `//`/`%` by zero it raises
+/// ZeroDivisionError directly, matching the inline integer arms' messages.
+fn bigint_numeric_binop(op: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
+    if !(is_bigint_value(a) || is_bigint_value(b)) {
+        return None;
+    }
+    let num_like =
+        |v: MbValue| v.is_int() || v.is_bool() || v.is_float() || is_bigint_value(v);
+    if !(num_like(a) && num_like(b)) {
+        return None;
+    }
+    // BigInt ⊕ float → float (CPython widens the integer operand to f64,
+    // possibly to ±inf for very large magnitudes).
+    if a.is_float() || b.is_float() {
+        let as_f = |v: MbValue| -> f64 {
+            v.as_float()
+                .or_else(|| unsafe { super::bigint_ops::int_as_f64(v) })
+                .unwrap_or(f64::NAN)
+        };
+        let (af, bf) = (as_f(a), as_f(b));
+        return Some(match op {
+            "+" => MbValue::from_float(af + bf),
+            "-" => MbValue::from_float(af - bf),
+            "*" => MbValue::from_float(af * bf),
+            "**" => MbValue::from_float(af.powf(bf)),
+            "//" => {
+                if bf == 0.0 {
+                    return Some(raise_zero_div("float floor division by zero"));
+                }
+                MbValue::from_float((af / bf).floor())
+            }
+            "%" => {
+                if bf == 0.0 {
+                    return Some(raise_zero_div("float modulo"));
+                }
+                let r = af % bf;
+                MbValue::from_float(if r != 0.0 && r.signum() != bf.signum() {
+                    r + bf
+                } else {
+                    r
+                })
+            }
+            _ => return None,
+        });
+    }
+    // Pure integer (inline / bool / BigInt) arithmetic.
+    Some(unsafe {
+        match op {
+            "+" => super::bigint_ops::mb_int_add(a, b),
+            "-" => super::bigint_ops::mb_int_sub(a, b),
+            "*" => super::bigint_ops::mb_int_mul(a, b),
+            "//" => super::bigint_ops::mb_int_floordiv(a, b)
+                .unwrap_or_else(|| raise_zero_div("integer division or modulo by zero")),
+            "%" => super::bigint_ops::mb_int_mod(a, b)
+                .unwrap_or_else(|| raise_zero_div("integer modulo by zero")),
+            "**" => match super::bigint_ops::mb_int_pow(a, b) {
+                Some(r) => r,
+                None => {
+                    // Negative (or astronomically large) exponent → float.
+                    let bf = super::bigint_ops::int_as_f64(a).unwrap_or(f64::NAN);
+                    let ef = super::bigint_ops::int_as_f64(b).unwrap_or(f64::NAN);
+                    MbValue::from_float(bf.powf(ef))
+                }
+            },
+            _ => return None,
+        }
+    })
+}
+
 fn numeric_handle_binop(op: &str, a: MbValue, b: MbValue) -> Option<MbValue> {
     use super::stdlib::{decimal_mod, fractions_mod};
     if is_decimal_handle_value(a) || is_decimal_handle_value(b) {
@@ -2275,6 +2372,9 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
         return super::stdlib::array_mod::mb_array_concat(a, b);
     }
     if let Some(r) = numeric_handle_binop("+", a, b) {
+        return r;
+    }
+    if let Some(r) = bigint_numeric_binop("+", a, b) {
         return r;
     }
     // UserList / UserString concatenation: unwrap to the backing payloads,
@@ -2474,6 +2574,9 @@ pub fn mb_add(a: MbValue, b: MbValue) -> MbValue {
 
 pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("-", a, b) {
+        return r;
+    }
+    if let Some(r) = bigint_numeric_binop("-", a, b) {
         return r;
     }
     // Int fast path first — matches mb_add's ordering. fib_recursive and
@@ -2881,6 +2984,9 @@ pub fn mb_mul(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("*", a, b) {
         return r;
     }
+    if let Some(r) = bigint_numeric_binop("*", a, b) {
+        return r;
+    }
     // timedelta * int/float (either order) — exact microsecond scaling.
     if let Some(us) = super::stdlib::datetime_mod::timedelta_total_us(a) {
         if let Some(k) = b.as_int() {
@@ -3127,6 +3233,9 @@ pub fn mb_div(a: MbValue, b: MbValue) -> MbValue {
 
 pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("%", a, b) {
+        return r;
+    }
+    if let Some(r) = bigint_numeric_binop("%", a, b) {
         return r;
     }
     // complex doesn't support the numeric modulo operator (CPython TypeError).
@@ -5165,6 +5274,9 @@ pub fn mb_pow(base: MbValue, exp: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("**", base, exp) {
         return r;
     }
+    if let Some(r) = bigint_numeric_binop("**", base, exp) {
+        return r;
+    }
     // Complex base: route through complex pow so `complex(3,4) ** 2` works.
     // Either operand being `ObjData::Complex` promotes the whole op to
     // complex. (#1256 sub-priority 3 — complex arithmetic)
@@ -6031,6 +6143,37 @@ fn round_bigint_half_even(v: num_bigint::BigInt, digits: i64) -> num_bigint::Big
 pub fn mb_divmod(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("divmod", a, b) {
         return r;
+    }
+    // Arbitrary-precision (BigInt) operands — `as_int()` is None for these, so
+    // the inline integer arm below would miss them. (#sys.maxsize)
+    if is_bigint_value(a) || is_bigint_value(b) {
+        let int_like = |v: MbValue| v.is_int() || v.is_bool() || is_bigint_value(v);
+        if int_like(a) && int_like(b) {
+            return match unsafe { super::bigint_ops::mb_int_divmod(a, b) } {
+                Some((q, r)) => MbValue::from_ptr(MbObject::new_tuple(vec![q, r])),
+                None => raise_zero_div("integer division or modulo by zero"),
+            };
+        }
+        if (a.is_float() || b.is_float())
+            && (int_like(a) || a.is_float())
+            && (int_like(b) || b.is_float())
+        {
+            let as_f = |v: MbValue| -> f64 {
+                v.as_float()
+                    .or_else(|| unsafe { super::bigint_ops::int_as_f64(v) })
+                    .unwrap_or(f64::NAN)
+            };
+            let (af, bf) = (as_f(a), as_f(b));
+            if bf == 0.0 {
+                return raise_zero_div("float floor division by zero");
+            }
+            let q = (af / bf).floor();
+            let r = af - q * bf;
+            return MbValue::from_ptr(MbObject::new_tuple(vec![
+                MbValue::from_float(q),
+                MbValue::from_float(r),
+            ]));
+        }
     }
     // divmod(timedelta, timedelta) -> (int, timedelta); int divisor raises TypeError.
     if let Some(ua) = super::stdlib::datetime_mod::timedelta_total_us(a) {
@@ -7191,6 +7334,9 @@ pub fn mb_call_spread_kwargs(func: MbValue, pos_list: MbValue, kwargs_dict: MbVa
 /// floor division: a // b
 pub fn mb_floordiv(a: MbValue, b: MbValue) -> MbValue {
     if let Some(r) = numeric_handle_binop("//", a, b) {
+        return r;
+    }
+    if let Some(r) = bigint_numeric_binop("//", a, b) {
         return r;
     }
     // complex doesn't support floor division (CPython TypeError).
