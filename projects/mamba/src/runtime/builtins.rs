@@ -6094,9 +6094,11 @@ pub fn mb_divmod(a: MbValue, b: MbValue) -> MbValue {
     }
     super::exception::mb_raise(
         MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
-        MbValue::from_ptr(MbObject::new_str(
-            "unsupported operand type(s) for divmod()".to_string(),
-        )),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "unsupported operand type(s) for divmod(): '{}' and '{}'",
+            value_type_name(a),
+            value_type_name(b)
+        ))),
     );
     MbValue::none()
 }
