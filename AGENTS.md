@@ -1,9 +1,9 @@
 ---
 project:
-  name: cclab
+  name: axiom
   owner: chrischeng-c4
-  url: https://github.com/chrischeng-c4/cclab
-  ssh: git@github.com:chrischeng-c4/cclab.git
+  url: https://github.com/chrischeng-c4/axiom
+  ssh: git@github.com:chrischeng-c4/axiom.git
   default_branch: main
 ---
 

@@ -1039,9 +1039,7 @@ pub fn strip_use_client_directives(source: &str) -> String {
                 .find(|c| !matches!(**c, b' ' | b'\t' | b'\r' | b'\n'))
                 .copied()
                 .unwrap_or(b'{');
-            let body_ok = i + 12 < len
-                && &b[i + 1..i + 11] == b"use client"
-                && b[i + 11] == q;
+            let body_ok = i + 12 < len && &b[i + 1..i + 11] == b"use client" && b[i + 11] == q;
             if body_ok && matches!(prev, b'{' | b'}' | b';') {
                 // Consume the literal + an optional trailing `;`.
                 let mut j = i + 12;
@@ -1170,6 +1168,40 @@ pub fn replace_bool_literals(source: &str) -> String {
     }
 
     String::from_utf8(out).unwrap_or_else(|_| source.to_string())
+}
+
+/// Run OXC as a final AST-level minify candidate.
+///
+/// This is deliberately best-effort: parser errors, OXC-internal failures, or
+/// non-shrinking output all fall back to Jet's existing output. The caller still
+/// owns any project-specific parse/runtime guard before shipping the result.
+pub fn oxc_minify_js_candidate(source: &str) -> Option<String> {
+    let allocator = oxc_allocator::Allocator::default();
+    let source_type = oxc_span::SourceType::mjs();
+    let ret = oxc_parser::Parser::new(&allocator, source, source_type).parse();
+    if !ret.errors.is_empty() {
+        return None;
+    }
+    let mut program = ret.program;
+    let options = oxc_minifier::MinifierOptions {
+        mangle: Some(oxc_minifier::MangleOptions::default()),
+        compress: Some(oxc_minifier::CompressOptions {
+            max_iterations: Some(2),
+            ..oxc_minifier::CompressOptions::smallest()
+        }),
+    };
+    let ret = oxc_minifier::Minifier::new(options).minify(&allocator, &mut program);
+    let code = oxc_codegen::Codegen::new()
+        .with_options(oxc_codegen::CodegenOptions {
+            minify: true,
+            comments: oxc_codegen::CommentOptions::disabled(),
+            ..oxc_codegen::CodegenOptions::default()
+        })
+        .with_scoping(ret.scoping)
+        .with_private_member_mappings(ret.class_private_mappings)
+        .build(&program)
+        .code;
+    (code.len() < source.len()).then_some(code)
 }
 
 fn push_template_literal_bytes(bytes: &[u8], start: usize, out: &mut Vec<u8>) -> usize {

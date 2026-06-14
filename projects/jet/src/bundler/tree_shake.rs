@@ -217,7 +217,8 @@ pub fn analyze_used_exports_from(
         let mut changed = false;
         for (path, reexports) in &reexport_bindings {
             let path: &PathBuf = path;
-            let barrel_used: HashSet<String> = used.get(path.as_path()).cloned().unwrap_or_default();
+            let barrel_used: HashSet<String> =
+                used.get(path.as_path()).cloned().unwrap_or_default();
             for (target_path, kind) in reexports.iter().cloned() {
                 match kind {
                     ReexportKind::Star => {
@@ -593,11 +594,8 @@ mod binding_usage_tests {
         let line = "import D, { a as b } from 'm';";
         assert_eq!(local_binding_for(line, "a"), "b");
         assert_eq!(local_binding_for(line, "default"), "D");
-        let kept = filter_referenced_import_names(
-            line,
-            src,
-            vec!["a".to_string(), "default".to_string()],
-        );
+        let kept =
+            filter_referenced_import_names(line, src, vec!["a".to_string(), "default".to_string()]);
         assert_eq!(kept.len(), 2);
     }
 

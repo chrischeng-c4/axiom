@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "jet.config.toml",
-  "description": "Schema for the `jet.config.toml` file. Generated from the Rust source of truth in `projects/jet/src/wasm_build/config.rs`. Run `jet config schema --write` to regenerate.",
+  "title": "jet.toml",
+  "description": "Schema for the `jet.toml` file. Generated from the Rust source of truth in `projects/jet/src/wasm_build/config.rs`. Run `jet config schema --write` to regenerate.",
   "type": "object",
   "required": [
     "wasm"
@@ -14,7 +14,7 @@
   "additionalProperties": false,
   "definitions": {
     "RootPropValue": {
-      "description": "Prop value — numbers, booleans, strings, or homogeneous arrays. The generated factory takes `i64` / `bool` / `String` / `Vec<T>`, matching the prop interface's Rust lowering. Display impl emits valid Rust source that can be interpolated directly into the WASM-entry factory call.",
+      "description": "Prop value — numbers, booleans, strings, or homogeneous arrays. The generated factory takes `i64` / `bool` / `String` / `Vec<T>`, matching the prop interface's Rust lowering. Display impl emits valid Rust source that can be interpolated directly into the WASM-entry factory call. @spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema",
       "anyOf": [
         {
           "type": "integer",
@@ -36,8 +36,8 @@
       ]
     },
     "WasmConfig": {
-      "title": "jet.config.toml",
-      "description": "Schema for the `jet.config.toml` file. Generated from the Rust source of truth in `projects/jet/src/wasm_build/config.rs`. Run `jet config schema --write` to regenerate.",
+      "title": "jet.toml",
+      "description": "Schema for the `jet.toml` file. Generated from the Rust source of truth in `projects/jet/src/wasm_build/config.rs`. Run `jet config schema --write` to regenerate.",
       "type": "object",
       "required": [
         "entry",
@@ -47,6 +47,14 @@
         "entry": {
           "description": "Path to the TSX entry file, relative to the project root.",
           "type": "string"
+        },
+        "renderer": {
+          "description": "Renderer backend used by the generated browser entrypoint.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WasmRenderer"
+            }
+          ]
         },
         "root_component": {
           "description": "Root component name (PascalCase), must match an exported function component in `entry`.",
@@ -61,6 +69,14 @@
         }
       },
       "additionalProperties": false
+    },
+    "WasmRenderer": {
+      "description": "@spec .aw/tech-design/projects/jet/semantic/jet-wasm-build.md#schema",
+      "type": "string",
+      "enum": [
+        "dom",
+        "web-gpu"
+      ]
     }
   }
 }

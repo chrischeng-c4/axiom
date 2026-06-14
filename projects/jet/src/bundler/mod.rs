@@ -560,8 +560,7 @@ impl Bundler {
     /// static, dynamic) through the shared resolver.
     fn prefetch_one_module(&self, module_path: &Path) -> PrefetchedModule {
         let source = std::fs::read_to_string(module_path).map_err(|e| e.to_string());
-        let mut resolutions: HashMap<String, std::result::Result<PathBuf, String>> =
-            HashMap::new();
+        let mut resolutions: HashMap<String, std::result::Result<PathBuf, String>> = HashMap::new();
         let mut imports: std::result::Result<imports::ModuleImports, String> =
             Err("not a script module".to_string());
         let mut tree: Option<tree_sitter::Tree> = None;
@@ -1014,8 +1013,7 @@ impl Bundler {
                             // keeping multi-KB dev branches and their
                             // dev-only imports alive through tree shaking.
                             let after_fold = fold::fold_define_short_circuits(&after_define);
-                            let after_dce =
-                                dce::eliminate_static_conditionals_syntax(&after_fold);
+                            let after_dce = dce::eliminate_static_conditionals_syntax(&after_fold);
                             dce::eliminate_unused_side_effect_free_require_bindings(
                                 &after_dce,
                                 &side_effect_free_module_ids,
@@ -1055,7 +1053,11 @@ impl Bundler {
     /// This is Phase 3 of the bundler pipeline (after transform + define + DCE,
     /// before generate_bundle).  Modules whose exports are entirely unused and
     /// have no side effects are eliminated.
-    fn apply_tree_shaking(&self, modules: Vec<CompiledModule>, entry: &Path) -> Vec<CompiledModule> {
+    fn apply_tree_shaking(
+        &self,
+        modules: Vec<CompiledModule>,
+        entry: &Path,
+    ) -> Vec<CompiledModule> {
         // JET_NO_TREESHAKE=1 bypasses shaking entirely — the A/B knob for
         // bisecting runtime breakage to this phase (pair with
         // JET_TREESHAKE_DEBUG=<file> for per-module used-export dumps).
@@ -1807,7 +1809,11 @@ createRoot(document.getElementById("root")!).render(<App />);"##;
 
         // Pre-mangle stages must keep the entry bindings under their
         // generated names (R4/R5 must not eliminate live bindings).
-        for (stage, code) in [("raw", &raw), ("after_r4", &after_r4), ("after_r5", &after_r5)] {
+        for (stage, code) in [
+            ("raw", &raw),
+            ("after_r4", &after_r4),
+            ("after_r5", &after_r5),
+        ] {
             for name in [
                 "_m0_jsx",
                 "_m0_jsxs",

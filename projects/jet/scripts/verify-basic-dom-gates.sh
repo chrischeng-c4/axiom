@@ -144,6 +144,11 @@ fi
 if phase_enabled serve; then
   echo "[jet basic dom gate] Serve and HMR"
   cargo test -p jet --lib dev_server -- --nocapture
+  ensure_release_jet
+  node projects/jet/scripts/compare-prod-static-serve.mjs \
+    --jet-bin target/release/jet \
+    --out-dir /tmp/jet-basic-dom-gate/prod-static \
+    --evidence /tmp/jet-basic-dom-gate/prod-static-serve.json
 fi
 
 if phase_enabled workspace; then

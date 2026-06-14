@@ -941,7 +941,7 @@ async fn webgpu_renderer_reports_runtime_status_and_visual_probe_when_available(
 fn write_css_import_fixture(root: &Path) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
-        root.join("jet.config.toml"),
+        root.join("jet.toml"),
         r#"
 [wasm]
 entry = "src/App.tsx"
@@ -994,7 +994,7 @@ fn write_mui_compat_fixture(root: &Path) {
     )
     .unwrap();
     fs::write(
-        root.join("jet.config.toml"),
+        root.join("jet.toml"),
         r#"
 [wasm]
 entry = "src/main.tsx"
@@ -1046,7 +1046,7 @@ export function App() {
 fn write_antd_compat_fixture(root: &Path) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
-        root.join("jet.config.toml"),
+        root.join("jet.toml"),
         r#"
 [wasm]
 entry = "src/App.tsx"
@@ -1078,7 +1078,7 @@ export function App() {
 fn write_webgpu_fixture(root: &Path) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
-        root.join("jet.config.toml"),
+        root.join("jet.toml"),
         r#"
 [wasm]
 entry = "src/App.tsx"
@@ -1106,7 +1106,7 @@ export function App({}: AppProps) {
 fn write_webgpu_large_table_fixture(root: &Path, cell_count: usize) {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(
-        root.join("jet.config.toml"),
+        root.join("jet.toml"),
         r#"
 [wasm]
 entry = "src/App.tsx"

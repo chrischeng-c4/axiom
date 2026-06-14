@@ -143,7 +143,10 @@ fn mcp_handshake_advertises_bb_tool_surface() {
         "bb_console",
         "bb_requests",
     ] {
-        assert!(names.contains(&required), "tools/list missing {required}: {names:?}");
+        assert!(
+            names.contains(&required),
+            "tools/list missing {required}: {names:?}"
+        );
     }
     for tool in tools {
         assert_eq!(
@@ -167,7 +170,10 @@ fn tool_failures_are_mcp_tool_errors_not_protocol_errors() {
         "method": "tools/call",
         "params": { "name": "bb_eval", "arguments": { "expression": "1+1" } },
     }));
-    assert!(resp.get("error").is_none(), "tool failure leaked as protocol error: {resp}");
+    assert!(
+        resp.get("error").is_none(),
+        "tool failure leaked as protocol error: {resp}"
+    );
     assert_eq!(resp["result"]["isError"], true);
     let text = resp["result"]["content"][0]["text"]
         .as_str()

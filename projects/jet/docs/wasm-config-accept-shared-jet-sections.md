@@ -20,12 +20,12 @@ struct ConfigFile {
 …and `TOP_LEVEL_KEYS = &["wasm"]`. The non-WASM task-runner config
 in `projects/jet/src/task_runner/config.rs` already accepts a much
 larger set (`pipeline`, `dev`, `alias`, `build`, `resolve`, `test`,
-`wasm`). When a project authors a single `jet.config.toml` and runs
+`wasm`). When a project authors a single `jet.toml` and runs
 `jet build --wasm` / `jet dev --wasm`, the WASM loader rejects the
 file because of the legitimate `[dev]` / `[alias]` / `[build]`
 sections used by the non-WASM workflows.
 
-Cue's 2026-05-08 dogfood (`projects/cue/fe/jet.config.toml`) had to
+Cue's 2026-05-08 dogfood (`projects/cue/fe/jet.toml`) had to
 delete its `[dev]` / `[dev.proxy]` / `[alias]` / `[build]` blocks and
 move the values to CLI flags (`-p 3212`, `-o ../be/static`) as a
 workaround. The shape it wants to keep:

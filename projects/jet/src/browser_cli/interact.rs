@@ -510,13 +510,19 @@ pub async fn history_step(root_dir: &Path, delta: i64) -> Result<Value> {
     let target = current + delta;
     let direction = if delta < 0 { "back" } else { "forward" };
     if target < 0 || target as usize >= entries.len() {
-        bail!("no {direction} history entry (at {current} of {})", entries.len());
+        bail!(
+            "no {direction} history entry (at {current} of {})",
+            entries.len()
+        );
     }
     let entry = &entries[target as usize];
     let entry_id = entry["id"].as_i64().context("history entry missing id")?;
     arm_observe_hooks(&page).await?;
     page.session()
-        .send("Page.navigateToHistoryEntry", json!({ "entryId": entry_id }))
+        .send(
+            "Page.navigateToHistoryEntry",
+            json!({ "entryId": entry_id }),
+        )
         .await
         .context("navigating to history entry")?;
     wait_for_ready(&page, 10_000).await?;
@@ -654,7 +660,10 @@ async fn read_observe_buffer(
          return out; }})()",
         clear_stmt = if clear { "buf.length = 0;" } else { "" },
     );
-    let v = page.evaluate(&js).await.context("reading observation buffer")?;
+    let v = page
+        .evaluate(&js)
+        .await
+        .context("reading observation buffer")?;
     if !v.is_null() {
         return Ok((v, false));
     }

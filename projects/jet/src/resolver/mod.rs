@@ -48,7 +48,7 @@ pub struct ResolveOptions {
     /// insertion order and accepts the first key that is a member of this slice.
     ///
     /// Default: `["import", "browser", "default"]` (browser ESM dev mode).
-    /// Override via `jet.config.toml` `[resolve] conditions` for build mode.
+    /// Override via `jet.toml` `[resolve] conditions` for build mode.
     ///
     // @spec .aw/changes/enhancement-resolver-conditional-exports-import-require-browse/specs/enhancement-resolver-conditional-exports-import-require-browse-spec.md#R1
     // @spec .aw/changes/enhancement-resolver-conditional-exports-import-require-browse/specs/enhancement-resolver-conditional-exports-import-require-browse-spec.md#R4
@@ -175,13 +175,11 @@ impl ModuleResolver {
             return Ok(hit.clone());
         }
         let resolved = self.resolve_uncached(specifier, from)?;
-        self.resolution_cache
-            .insert(cache_key, resolved.clone());
+        self.resolution_cache.insert(cache_key, resolved.clone());
         Ok(resolved)
     }
 
     fn resolve_uncached(&self, specifier: &str, from: &Path) -> Result<ResolvedModule> {
-
         if self.is_external(specifier) {
             return Ok(ResolvedModule {
                 path: PathBuf::from(specifier),

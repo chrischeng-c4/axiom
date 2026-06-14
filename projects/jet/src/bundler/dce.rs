@@ -880,9 +880,7 @@ fn es_module_marker_body_len(source: &str) -> Option<usize> {
 }
 
 fn skip_ascii_ws(bytes: &[u8], offset: &mut usize) {
-    while *offset < bytes.len()
-        && matches!(bytes[*offset], b' ' | b'\t' | b'\r' | b'\n')
-    {
+    while *offset < bytes.len() && matches!(bytes[*offset], b' ' | b'\t' | b'\r' | b'\n') {
         *offset += 1;
     }
 }
@@ -2150,7 +2148,6 @@ Object.defineProperty(_m2.exports, "__esModule", { value: true });
         assert!(js_parses_without_errors("const value = `${name}`;"));
         assert!(!js_parses_without_errors("const value = ;"));
     }
-
 }
 // CODEGEN-END
 

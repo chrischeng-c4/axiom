@@ -72,7 +72,9 @@ pub fn inline_cross_module_constants(code: &str) -> String {
         if spans.len() != 1 {
             continue;
         }
-        let Some(stat) = stats.get(*name) else { continue };
+        let Some(stat) = stats.get(*name) else {
+            continue;
+        };
         // count >= 2 means: 1 for the declaration + at least 1 read.
         // Mutations and raw-template appearances disqualify inlining.
         if stat.count >= 2 && stat.mutations <= stat.decl_assignments && !stat.in_template {
@@ -241,10 +243,6 @@ fn count_identifier_refs_in_range(b: &[u8], ident_bytes: &[u8], start: usize, en
     count
 }
 
-
-
-
-
 // ──────────────────────────────────────────────────────────────────────────
 // R5: Unified cross-module DCE
 // ──────────────────────────────────────────────────────────────────────────
@@ -301,8 +299,7 @@ pub fn eliminate_unused_exports(code: &str) -> String {
     // sweep, per candidate) made this O(candidates x bundle size) — ~3s of
     // pure scanning on the antd corpus bundle with 2,226 candidates.
     let require_binding_re =
-        Regex::new(r"\bvar\s+(_m\d+_[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:_r|require)\s*\(")
-            .unwrap();
+        Regex::new(r"\bvar\s+(_m\d+_[a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:_r|require)\s*\(").unwrap();
     let require_bindings: std::collections::HashSet<String> = require_binding_re
         .captures_iter(&result)
         .map(|cap| cap[1].to_string())
@@ -344,6 +341,337 @@ pub fn eliminate_unused_exports(code: &str) -> String {
     result
 }
 
+#[derive(Debug, Clone)]
+struct DirectExportAssignment {
+    span: (usize, usize),
+    expr: String,
+}
+
+/// Lower direct `require(id).export` reads to local bindings.
+///
+/// Scope-hoisted production bundles still carry CommonJS-shaped export glue
+/// for modules whose exports are only read as direct properties:
+///
+/// ```js
+/// _m1.exports["default"] = makeButton();
+/// var Button = _r(1)["default"];
+/// ```
+///
+/// When a module has no bare namespace require (`_r(1)`) and every observed
+/// require read is a concrete property, this rewrites the export assignment to
+/// a local binding and points reads at that binding:
+///
+/// ```js
+/// var _m1_export_default = makeButton();
+/// var Button = _m1_export_default;
+/// ```
+///
+/// The follow-up mangle pass then compresses the generated local names, and
+/// orphan slot/alias declarations can be dropped.
+pub fn lower_direct_export_reads(code: &str) -> String {
+    let assignments = collect_direct_export_assignments(code);
+    if assignments.is_empty() {
+        return code.to_string();
+    }
+
+    let require_re = Regex::new(
+        r#"_r\(\s*(\d+)\s*\)(?:\[\s*"([A-Za-z_$][A-Za-z0-9_$]*)"\s*\]|\.([A-Za-z_$][A-Za-z0-9_$]*))?"#,
+    )
+    .unwrap();
+    let mut bare_requires: HashSet<usize> = HashSet::new();
+    let mut reads_by_module: HashMap<usize, HashMap<String, Vec<(usize, usize)>>> = HashMap::new();
+
+    for cap in require_re.captures_iter(code) {
+        let Some(id) = cap.get(1).and_then(|m| m.as_str().parse::<usize>().ok()) else {
+            continue;
+        };
+        let prop = cap
+            .get(2)
+            .or_else(|| cap.get(3))
+            .map(|m| m.as_str().to_string());
+        let Some(prop) = prop else {
+            bare_requires.insert(id);
+            continue;
+        };
+        let Some(whole) = cap.get(0) else {
+            continue;
+        };
+        reads_by_module
+            .entry(id)
+            .or_default()
+            .entry(prop)
+            .or_default()
+            .push((whole.start(), whole.end()));
+    }
+
+    if reads_by_module.is_empty() {
+        return code.to_string();
+    }
+
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    let mut lowered_modules: HashSet<usize> = HashSet::new();
+
+    for (id, prop_reads) in reads_by_module {
+        if bare_requires.contains(&id) {
+            for (prop, read_spans) in prop_reads {
+                let Some(assign) = assignments.get(&(id, prop.clone())) else {
+                    continue;
+                };
+                if !is_direct_export_alias_expr(&assign.expr) {
+                    continue;
+                }
+                for (start, end) in read_spans {
+                    replacements.push((start, end, assign.expr.clone()));
+                }
+            }
+            continue;
+        }
+        if prop_reads
+            .keys()
+            .any(|prop| !assignments.contains_key(&(id, prop.clone())))
+        {
+            continue;
+        }
+
+        lowered_modules.insert(id);
+        for (prop, read_spans) in prop_reads {
+            let Some(assign) = assignments.get(&(id, prop.clone())) else {
+                continue;
+            };
+            let local = format!("_m{id}_export_{}", sanitize_export_local_suffix(&prop));
+            for (start, end) in read_spans {
+                replacements.push((start, end, local.clone()));
+            }
+            replacements.push((
+                assign.span.0,
+                assign.span.1,
+                format!("var {local}={};", assign.expr),
+            ));
+        }
+    }
+
+    if replacements.is_empty() {
+        return code.to_string();
+    }
+
+    let mut out = apply_static_replacements(code, replacements);
+    for id in lowered_modules {
+        out = remove_orphan_module_alias_and_slot(&out, id);
+    }
+    out
+}
+
+fn is_direct_export_alias_expr(expr: &str) -> bool {
+    let mut parts = expr.split('.');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    if !is_js_identifier(first) {
+        return false;
+    }
+    parts.all(is_js_identifier)
+}
+
+fn is_js_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
+        return false;
+    }
+    chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+}
+
+fn collect_direct_export_assignments(
+    code: &str,
+) -> HashMap<(usize, String), DirectExportAssignment> {
+    let export_re = Regex::new(
+        r#"_m(\d+)\.exports(?:\[\s*"([A-Za-z_$][A-Za-z0-9_$]*)"\s*\]|\.([A-Za-z_$][A-Za-z0-9_$]*))\s*="#,
+    )
+    .unwrap();
+    let mut assignments = HashMap::new();
+    let mut duplicates = HashSet::new();
+    let b = code.as_bytes();
+
+    for cap in export_re.captures_iter(code) {
+        let Some(whole) = cap.get(0) else {
+            continue;
+        };
+        if !is_statement_boundary_before(b, whole.start()) {
+            continue;
+        }
+        let Some(id) = cap.get(1).and_then(|m| m.as_str().parse::<usize>().ok()) else {
+            continue;
+        };
+        let Some(prop) = cap
+            .get(2)
+            .or_else(|| cap.get(3))
+            .map(|m| m.as_str().to_string())
+        else {
+            continue;
+        };
+        let Some(expr_end) = find_direct_export_assignment_semicolon(b, whole.end()) else {
+            continue;
+        };
+        let key = (id, prop);
+        if assignments.contains_key(&key) {
+            duplicates.insert(key);
+            continue;
+        }
+        assignments.insert(
+            key,
+            DirectExportAssignment {
+                span: (whole.start(), expr_end + 1),
+                expr: code[whole.end()..expr_end].trim().to_string(),
+            },
+        );
+    }
+
+    for key in duplicates {
+        assignments.remove(&key);
+    }
+    assignments
+}
+
+fn is_statement_boundary_before(b: &[u8], start: usize) -> bool {
+    let mut p = start;
+    while p > 0 && b[p - 1].is_ascii_whitespace() {
+        p -= 1;
+    }
+    p == 0 || matches!(b[p - 1], b';' | b'{' | b'}')
+}
+
+fn find_direct_export_assignment_semicolon(b: &[u8], mut i: usize) -> Option<usize> {
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    let mut brace = 0usize;
+    while i < b.len() {
+        match b[i] {
+            b'"' | b'\'' => {
+                i = skip_quoted_literal(b, i);
+                continue;
+            }
+            b'`' => {
+                let (next, _) = scan_template_literal_expr_ranges(b, i, |_, _| 0);
+                i = next;
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'/' => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            b'/' if i + 1 < b.len() && b[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < b.len() && !(b[i] == b'*' && b[i + 1] == b'/') {
+                    i += 1;
+                }
+                i = (i + 2).min(b.len());
+                continue;
+            }
+            b'(' => paren += 1,
+            b')' => paren = paren.saturating_sub(1),
+            b'[' => bracket += 1,
+            b']' => bracket = bracket.saturating_sub(1),
+            b'{' => brace += 1,
+            b'}' => brace = brace.saturating_sub(1),
+            b';' if paren == 0 && bracket == 0 && brace == 0 => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn sanitize_export_local_suffix(prop: &str) -> String {
+    let mut out = String::with_capacity(prop.len());
+    for ch in prop.chars() {
+        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.is_empty() {
+        "value".to_string()
+    } else {
+        out
+    }
+}
+
+fn apply_static_replacements(code: &str, mut replacements: Vec<(usize, usize, String)>) -> String {
+    replacements.sort_by_key(|(start, end, _)| (*start, *end));
+    let mut out = String::with_capacity(code.len());
+    let mut pos = 0usize;
+    for (start, end, replacement) in replacements {
+        if start < pos || end > code.len() || start > end {
+            return code.to_string();
+        }
+        out.push_str(&code[pos..start]);
+        out.push_str(&replacement);
+        pos = end;
+    }
+    out.push_str(&code[pos..]);
+    out
+}
+
+fn remove_orphan_module_alias_and_slot(code: &str, id: usize) -> String {
+    let mut out = code.to_string();
+    let slot = format!("_m{id}");
+    let alias = format!("_m{id}e");
+    let alias_decl = format!("var {alias}={slot}.exports;");
+    if out.contains(&alias_decl) && count_identifier_refs(&out, &alias) <= 1 {
+        out = out.replace(&alias_decl, "");
+    }
+
+    if Regex::new(&format!(r#"_r\(\s*{}\s*\)"#, id))
+        .unwrap()
+        .is_match(&out)
+    {
+        return out;
+    }
+    if count_identifier_refs(&out, &slot) > 2 {
+        return out;
+    }
+
+    let slot_decl = format!("var {slot}={{exports:{{}}}};");
+    out = out.replace(&slot_decl, "");
+    replace_module_slot_entry_with_zero(&out, &slot)
+}
+
+fn replace_module_slot_entry_with_zero(code: &str, slot: &str) -> String {
+    let Some(start) = code.find("var _mods=[") else {
+        return code.to_string();
+    };
+    let body_start = start + "var _mods=[".len();
+    let Some(rel_end) = code[body_start..].find("];") else {
+        return code.to_string();
+    };
+    let body_end = body_start + rel_end;
+    let mut changed = false;
+    let entries: Vec<String> = code[body_start..body_end]
+        .split(',')
+        .map(|entry| {
+            if entry == slot {
+                changed = true;
+                "0".to_string()
+            } else {
+                entry.to_string()
+            }
+        })
+        .collect();
+    if !changed {
+        return code.to_string();
+    }
+    let mut out = String::with_capacity(code.len());
+    out.push_str(&code[..body_start]);
+    out.push_str(&entries.join(","));
+    out.push_str(&code[body_end..]);
+    out
+}
+
 /// Remove `function`/`class` declarations and `var`/`const`/`let`
 /// declarations with side-effect-free initializers whose `_mN_`-prefixed
 /// name has no remaining references beyond the declaration itself.
@@ -352,12 +680,10 @@ fn remove_orphan_prefixed_functions(code: &str) -> Option<String> {
     use std::sync::OnceLock;
     static FUNC: OnceLock<Regex> = OnceLock::new();
     static VAR: OnceLock<Regex> = OnceLock::new();
-    let func = FUNC.get_or_init(|| {
-        Regex::new(r"(function|class)\s+(_m\d+_[a-zA-Z0-9_$]+)\b").unwrap()
-    });
-    let var_decl = VAR.get_or_init(|| {
-        Regex::new(r"(?:var|const|let)\s+(_m\d+_[a-zA-Z0-9_$]+)\s*=\s*").unwrap()
-    });
+    let func =
+        FUNC.get_or_init(|| Regex::new(r"(function|class)\s+(_m\d+_[a-zA-Z0-9_$]+)\b").unwrap());
+    let var_decl = VAR
+        .get_or_init(|| Regex::new(r"(?:var|const|let)\s+(_m\d+_[a-zA-Z0-9_$]+)\s*=\s*").unwrap());
 
     let b = code.as_bytes();
     // Pass 1: collect candidate declarations (name, full span). Liveness is
@@ -971,7 +1297,10 @@ fn collect_prefixed_refs_in_range(
             prev = b'"';
             continue;
         }
-        if b[i] == b'/' && i + 1 < len && !matches!(b[i + 1], b'/' | b'*') && regex_context_byte(prev)
+        if b[i] == b'/'
+            && i + 1 < len
+            && !matches!(b[i + 1], b'/' | b'*')
+            && regex_context_byte(prev)
         {
             i = skip_regex_literal(b, i).min(len);
             prev = b'/';
@@ -1596,10 +1925,63 @@ fn find_template_expression_end(b: &[u8], start: usize) -> usize {
 /// Remove a `var _m{i}_NAME = <expr>;` or `var _m{i}_NAME;` declaration
 /// from code.
 fn remove_var_declaration(code: &str, var_name: &str) -> String {
-    // Match: var NAME = <anything up to ;>;  or  var NAME;
-    let pattern = format!(r"var\s+{}\s*(?:=[^;]*)?;", regex::escape(var_name));
-    let re = Regex::new(&pattern).unwrap();
-    re.replace_all(code, "").to_string()
+    let b = code.as_bytes();
+    let name = var_name.as_bytes();
+    let mut result = String::with_capacity(code.len());
+    let mut cursor = 0usize;
+    let mut i = 0usize;
+
+    while let Some(relative_start) = code[i..].find("var") {
+        let start = i + relative_start;
+        let after_var = start + 3;
+
+        if (start > 0 && is_id_cont_byte(b[start - 1]))
+            || after_var >= b.len()
+            || !b[after_var].is_ascii_whitespace()
+        {
+            i = after_var;
+            continue;
+        }
+
+        let mut after_ws = after_var;
+        while after_ws < b.len() && b[after_ws].is_ascii_whitespace() {
+            after_ws += 1;
+        }
+
+        let after_name = after_ws + name.len();
+        if after_name > b.len()
+            || &b[after_ws..after_name] != name
+            || (after_name < b.len() && is_id_cont_byte(b[after_name]))
+        {
+            i = after_var;
+            continue;
+        }
+
+        let mut after_binding = after_name;
+        while after_binding < b.len() && b[after_binding].is_ascii_whitespace() {
+            after_binding += 1;
+        }
+
+        let statement_end = if after_binding < b.len() && b[after_binding] == b';' {
+            Some(after_binding + 1)
+        } else if after_binding < b.len() && b[after_binding] == b'=' {
+            find_assignment_statement_end(b, after_name)
+        } else {
+            None
+        };
+
+        let Some(statement_end) = statement_end else {
+            i = after_var;
+            continue;
+        };
+
+        result.push_str(&code[cursor..start]);
+        cursor = statement_end;
+        i = statement_end;
+    }
+
+    result.push_str(&code[cursor..]);
+    result
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1622,6 +2004,9 @@ pub fn is_side_effect_free(module: &CompiledModule) -> bool {
     // Try to find the owning package's node_modules directory.
     // Walk up from the module path to find `node_modules/{package}/package.json`.
     let module_path = &module.path;
+    if is_esm_module_path(module_path) {
+        return true;
+    }
     if let Some(nm_and_pkg) = find_package_info(module_path) {
         let (node_modules_dir, package_name) = nm_and_pkg;
         let decl = read_package_side_effects(&node_modules_dir, &package_name);
@@ -1632,6 +2017,14 @@ pub fn is_side_effect_free(module: &CompiledModule) -> bool {
         // unless analysis says otherwise.
         !has_side_effects(&module.code)
     }
+}
+
+fn is_esm_module_path(module_path: &std::path::Path) -> bool {
+    let path = module_path.to_string_lossy().replace('\\', "/");
+    path.ends_with(".mjs")
+        || path.contains("/esm/")
+        || path.contains(".esm.")
+        || path.contains("/es/")
 }
 
 /// Extract the `node_modules` directory path and the package name from a
@@ -1911,9 +2304,85 @@ const _m0_className = `${_m0_prefix}-Button`;"#;
         assert!(!result.contains("_m0_emphasize"), "{result}");
         assert!(!result.contains("_m0_darken"), "{result}");
         // Function expressions are never collected (only declarations).
-        let expr =
-            "var _m0e=_m0.exports;_m0e.k = function _m0_keep(){}; var _m1_y=_m0e.k();";
+        let expr = "var _m0e=_m0.exports;_m0e.k = function _m0_keep(){}; var _m1_y=_m0e.k();";
         assert!(eliminate_unused_exports(expr).contains("_m0_keep"));
+    }
+
+    #[test]
+    fn test_lower_direct_export_reads_uses_local_binding_and_drops_slot() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _mods=[_m0,_m1];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+_m1.exports["default"]=makeButton();
+var Button=_r(1)["default"];
+Button();
+})();"#;
+
+        let result = lower_direct_export_reads(code);
+
+        assert!(
+            result.contains("var _m1_export_default=makeButton();"),
+            "export assignment should become a local binding, got: {result}"
+        );
+        assert!(
+            result.contains("var Button=_m1_export_default;"),
+            "direct require read should use local binding, got: {result}"
+        );
+        assert!(
+            !result.contains("_r(1)[\"default\"]")
+                && !result.contains("_m1.exports[\"default\"]")
+                && !result.contains("var _m1={exports:{}};")
+                && result.contains("var _mods=[_m0,0];"),
+            "lowered module slot/export glue should be removed, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_lower_direct_export_reads_keeps_bare_namespace_require() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _mods=[_m0,_m1];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+_m1.exports["default"]=makeButton();
+var ns=_r(1);
+ns["default"]();
+})();"#;
+
+        let result = lower_direct_export_reads(code);
+
+        assert_eq!(
+            result, code,
+            "bare namespace require must keep CommonJS export object semantics"
+        );
+    }
+
+    #[test]
+    fn test_lower_direct_export_reads_rewrites_alias_when_bare_fallback_remains() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _mods=[_m0,_m1];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+var Local=makeButton();
+_m1.exports["default"]=Local;
+var Button=_r(1)["default"]||_r(1);
+Button();
+})();"#;
+
+        let result = lower_direct_export_reads(code);
+
+        assert!(
+            result.contains("var Button=Local||_r(1);"),
+            "direct property read should lower while fallback remains, got: {result}"
+        );
+        assert!(
+            result.contains("_m1.exports[\"default\"]=Local;")
+                && result.contains("var _m1={exports:{}};"),
+            "namespace fallback still needs export object glue, got: {result}"
+        );
     }
 
     #[test]
@@ -1971,6 +2440,41 @@ var _m1_result = _m0e.usedFn();"#;
         assert!(
             !result.contains("return \"no\";\n};"),
             "unused function tail must not be left behind, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_eliminate_unused_exports_removes_whole_object_literal_var_initializer() {
+        // Ant Design cssinjs exposes an unused `_experimental` object whose
+        // initializer contains a nested function and semicolons. Removing only
+        // up to the first semicolon leaves an invalid object tail in the
+        // flattened bundle.
+        let code = r#"var _m800e = _m800.exports;
+var _m800__experimental = {
+  supportModernCSS: function supportModernCSS() {
+    return supportWhere() && supportLogicProps();
+  }
+};
+_m800e._experimental = _m800__experimental;
+var _m801_used = 1;
+console.log(_m801_used);"#;
+
+        let result = eliminate_unused_exports(code);
+
+        assert!(
+            !result.contains("_m800__experimental"),
+            "unused object literal export binding should be removed, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("supportModernCSS"),
+            "object literal initializer tail must not be left behind, got: {}",
+            result
+        );
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&result),
+            "result should remain valid JS, got: {}",
             result
         );
     }
@@ -2438,6 +2942,18 @@ if (_m0e.foo === "bar") { doSomething(); }"#;
     }
 
     #[test]
+    fn test_esm_distribution_module_is_flatten_eligible() {
+        let module = make_module(
+            "/project/node_modules/@emotion/cache/dist/emotion-cache.browser.esm.js",
+            "var cache = createCache();\nexports[\"default\"] = cache;",
+        );
+        assert!(
+            is_side_effect_free(&module),
+            "resolved ESM distribution modules should be eligible for flattening"
+        );
+    }
+
+    #[test]
     fn test_side_effect_free_const_only() {
         // A module with only var/const declarations is side-effect-free.
         // Note: `exports.MODE = MODE` would be treated as a side effect
@@ -2540,7 +3056,31 @@ struct ReexportWrapper {
     id: usize,
     start: usize,
     end: usize,
-    exports: HashMap<String, (usize, String)>,
+    exports: HashMap<String, ReexportTarget>,
+}
+
+#[derive(Debug, Clone)]
+struct ReexportTarget {
+    module_id: usize,
+    export_name: String,
+    default_interop: bool,
+}
+
+impl ReexportTarget {
+    fn expr(&self) -> String {
+        if self.default_interop {
+            self.default_thunk_expr()
+        } else {
+            format!("_r({})[\"{}\"]", self.module_id, self.export_name)
+        }
+    }
+
+    fn default_thunk_expr(&self) -> String {
+        format!(
+            "_r({})[\"{}\"] || _r({})",
+            self.module_id, self.export_name, self.module_id
+        )
+    }
 }
 
 /// Collapse pure re-export wrapper modules after flattening.
@@ -2556,7 +3096,7 @@ pub fn collapse_pure_reexport_wrappers(code: &str) -> String {
     let mut current = code.to_string();
     for _ in 0..4 {
         let next = collapse_pure_reexport_wrappers_once(&current);
-        if next.len() == current.len() {
+        if next == current {
             return current;
         }
         current = next;
@@ -2565,10 +3105,11 @@ pub fn collapse_pure_reexport_wrappers(code: &str) -> String {
 }
 
 fn collapse_pure_reexport_wrappers_once(code: &str) -> String {
-    let wrappers = collect_pure_reexport_wrappers(code);
+    let mut wrappers = collect_pure_reexport_wrappers(code);
     if wrappers.is_empty() {
         return code.to_string();
     }
+    resolve_reexport_wrapper_chains(&mut wrappers);
 
     let section_ranges: HashMap<usize, (usize, usize)> = wrappers
         .iter()
@@ -2581,6 +3122,14 @@ fn collapse_pure_reexport_wrappers_once(code: &str) -> String {
         let Some(mut wrapper_edits) = reexport_wrapper_read_edits(code, &wrapper) else {
             continue;
         };
+        wrapper_edits.retain(|(start, _, _)| {
+            !section_ranges
+                .values()
+                .any(|(section_start, section_end)| start >= section_start && start < section_end)
+        });
+        if wrapper_edits.is_empty() {
+            continue;
+        }
         removed.insert(wrapper.id);
         edits.append(&mut wrapper_edits);
         edits.push((wrapper.start, wrapper.end, String::new()));
@@ -2590,17 +3139,40 @@ fn collapse_pure_reexport_wrappers_once(code: &str) -> String {
         return code.to_string();
     }
 
-    // Avoid redirecting inside any wrapper section that is also removed; those
-    // edits would overlap the section deletion and are unnecessary.
-    edits.retain(|(start, _, replacement)| {
-        if replacement.is_empty() {
-            return true;
-        }
-        !section_ranges
-            .values()
-            .any(|(section_start, section_end)| start >= section_start && start < section_end)
-    });
     apply_ordered_edits(code, edits)
+}
+
+fn resolve_reexport_wrapper_chains(wrappers: &mut [ReexportWrapper]) {
+    let exports_by_id: HashMap<usize, HashMap<String, ReexportTarget>> = wrappers
+        .iter()
+        .map(|wrapper| (wrapper.id, wrapper.exports.clone()))
+        .collect();
+    for wrapper in wrappers {
+        for target in wrapper.exports.values_mut() {
+            *target = resolve_reexport_target(target.clone(), &exports_by_id);
+        }
+    }
+}
+
+fn resolve_reexport_target(
+    mut target: ReexportTarget,
+    exports_by_id: &HashMap<usize, HashMap<String, ReexportTarget>>,
+) -> ReexportTarget {
+    let mut seen = HashSet::new();
+    while seen.insert(target.module_id) {
+        let Some(exports) = exports_by_id.get(&target.module_id) else {
+            break;
+        };
+        let Some(next) = exports.get(&target.export_name) else {
+            break;
+        };
+        let default_interop = target.default_interop || next.default_interop;
+        target = ReexportTarget {
+            default_interop,
+            ..next.clone()
+        };
+    }
+    target
 }
 
 fn collect_pure_reexport_wrappers(code: &str) -> Vec<ReexportWrapper> {
@@ -2620,7 +3192,11 @@ fn collect_pure_reexport_wrappers(code: &str) -> Vec<ReexportWrapper> {
         let end = code[body_start..]
             .find("\n// Module ")
             .map(|next| body_start + next + 1)
-            .unwrap_or_else(|| code[body_start..].find("\n})();").map_or(code.len(), |r| body_start + r));
+            .unwrap_or_else(|| {
+                code[body_start..]
+                    .find("\n})();")
+                    .map_or(code.len(), |r| body_start + r)
+            });
         if id != 0 {
             if let Some(exports) = pure_reexport_exports(id, &code[body_start..end]) {
                 if !exports.is_empty() {
@@ -2644,7 +3220,8 @@ fn parse_module_id(line: &str) -> Option<usize> {
     id.parse().ok()
 }
 
-fn pure_reexport_exports(id: usize, section_body: &str) -> Option<HashMap<String, (usize, String)>> {
+fn pure_reexport_exports(id: usize, section_body: &str) -> Option<HashMap<String, ReexportTarget>> {
+    let mut aliases: HashMap<String, ReexportTarget> = HashMap::new();
     let mut exports = HashMap::new();
     for raw_line in section_body.lines() {
         let line = raw_line.trim();
@@ -2663,13 +3240,18 @@ fn pure_reexport_exports(id: usize, section_body: &str) -> Option<HashMap<String
         if is_es_module_marker_line(id, line) {
             continue;
         }
-        if let Some((export_name, target_id, target_name)) =
-            parse_reexport_assignment(id, line)
-        {
-            if target_id == id {
+        if let Some((alias, target)) = parse_reexport_alias(line) {
+            if target.module_id == id {
                 return None;
             }
-            exports.insert(export_name, (target_id, target_name));
+            aliases.insert(alias, target);
+            continue;
+        }
+        if let Some((export_name, target)) = parse_reexport_assignment(id, line, &aliases) {
+            if target.module_id == id {
+                return None;
+            }
+            exports.insert(export_name, target);
             continue;
         }
         return None;
@@ -2685,41 +3267,101 @@ fn is_es_module_marker_line(id: usize, line: &str) -> bool {
     receiver_matches && line.contains("\"__esModule\"") && line.contains("value: true")
 }
 
-fn parse_reexport_assignment(id: usize, line: &str) -> Option<(String, usize, String)> {
-    let lhs_prefixes = [
-        format!("_m{id}.exports[\""),
-        format!("_m{id}e[\""),
-    ];
+fn parse_reexport_alias(line: &str) -> Option<(String, ReexportTarget)> {
+    let rest = line.strip_prefix("var ")?;
+    let (alias, rest) = rest.split_once('=')?;
+    let alias = alias.trim();
+    if alias.is_empty()
+        || !alias
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'$')
+    {
+        return None;
+    }
+    let (target, rest) = parse_reexport_target_expr(rest.trim_start())?;
+    if rest.trim() == ";" {
+        return Some((alias.to_string(), target));
+    }
+    None
+}
+
+fn parse_reexport_assignment(
+    id: usize,
+    line: &str,
+    aliases: &HashMap<String, ReexportTarget>,
+) -> Option<(String, ReexportTarget)> {
+    let lhs_prefixes = [format!("_m{id}.exports[\""), format!("_m{id}e[\"")];
     for prefix in lhs_prefixes {
         if let Some(rest) = line.strip_prefix(&prefix) {
             let (export_name, rest) = rest.split_once("\"]")?;
             let rest = rest.trim_start();
             let rest = rest.strip_prefix('=')?.trim_start();
-            let (target_id, target_name, rest) = parse_require_property(rest)?;
+            let (target, rest) = parse_assignment_target(rest, aliases)?;
             if rest.trim() == ";" {
-                return Some((export_name.to_string(), target_id, target_name));
+                return Some((export_name.to_string(), target));
             }
         }
     }
 
-    let dotted_prefixes = [
-        format!("_m{id}.exports."),
-        format!("_m{id}e."),
-    ];
+    let dotted_prefixes = [format!("_m{id}.exports."), format!("_m{id}e.")];
     for prefix in dotted_prefixes {
         if let Some(rest) = line.strip_prefix(&prefix) {
-            let name_end = rest
-                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))?;
+            let name_end =
+                rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))?;
             let export_name = &rest[..name_end];
             let rest = rest[name_end..].trim_start();
             let rest = rest.strip_prefix('=')?.trim_start();
-            let (target_id, target_name, rest) = parse_require_property(rest)?;
+            let (target, rest) = parse_assignment_target(rest, aliases)?;
             if rest.trim() == ";" {
-                return Some((export_name.to_string(), target_id, target_name));
+                return Some((export_name.to_string(), target));
             }
         }
     }
     None
+}
+
+fn parse_assignment_target<'a>(
+    input: &'a str,
+    aliases: &HashMap<String, ReexportTarget>,
+) -> Option<(ReexportTarget, &'a str)> {
+    if let Some((target, rest)) = parse_reexport_target_expr(input) {
+        return Some((target, rest));
+    }
+    let ident_len = input
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$')
+        .count();
+    if ident_len == 0 {
+        return None;
+    }
+    let ident = &input[..ident_len];
+    aliases
+        .get(ident)
+        .cloned()
+        .map(|target| (target, &input[ident_len..]))
+}
+
+fn parse_reexport_target_expr(input: &str) -> Option<(ReexportTarget, &str)> {
+    let (module_id, export_name, mut rest) = parse_require_property(input)?;
+    let mut default_interop = false;
+    let trimmed = rest.trim_start();
+    if export_name == "default" {
+        if let Some(after_or) = trimmed.strip_prefix("||") {
+            let after_or = after_or.trim_start();
+            if let Some(after_require) = after_or.strip_prefix(&format!("_r({module_id})")) {
+                default_interop = true;
+                rest = after_require;
+            }
+        }
+    }
+    Some((
+        ReexportTarget {
+            module_id,
+            export_name,
+            default_interop,
+        },
+        rest,
+    ))
 }
 
 fn parse_require_property(input: &str) -> Option<(usize, String, &str)> {
@@ -2735,8 +3377,31 @@ fn reexport_wrapper_read_edits(
     code: &str,
     wrapper: &ReexportWrapper,
 ) -> Option<Vec<(usize, usize, String)>> {
-    let needle = format!("_r({})", wrapper.id);
     let mut edits = Vec::new();
+    collect_reexport_wrapper_read_edits_for_needle(
+        code,
+        wrapper,
+        &format!("_r({})", wrapper.id),
+        &mut edits,
+    )?;
+    collect_reexport_wrapper_read_edits_for_needle(
+        code,
+        wrapper,
+        &format!("require({})", wrapper.id),
+        &mut edits,
+    )?;
+    if edits.is_empty() {
+        return None;
+    }
+    Some(edits)
+}
+
+fn collect_reexport_wrapper_read_edits_for_needle(
+    code: &str,
+    wrapper: &ReexportWrapper,
+    needle: &str,
+    edits: &mut Vec<(usize, usize, String)>,
+) -> Option<()> {
     let mut pos = 0usize;
     while let Some(rel) = code[pos..].find(&needle) {
         let start = pos + rel;
@@ -2748,18 +3413,15 @@ fn reexport_wrapper_read_edits(
         let suffix = &code[after..];
         if let Some((export_name, prop_end_rel)) = parse_property_suffix(suffix) {
             let prop_end = after + prop_end_rel;
-            let (target_id, target_name) = wrapper.exports.get(export_name)?.clone();
+            let target = wrapper.exports.get(export_name)?;
             let (replacement, end) = if export_name == "default" {
                 if let Some(thunk_end) = default_thunk_end(code, prop_end, &needle) {
-                    (
-                        format!("_r({target_id})[\"{target_name}\"] || _r({target_id})"),
-                        thunk_end,
-                    )
+                    (target.default_thunk_expr(), thunk_end)
                 } else {
-                    (format!("_r({target_id})[\"{target_name}\"]"), prop_end)
+                    (target.expr(), prop_end)
                 }
             } else {
-                (format!("_r({target_id})[\"{target_name}\"]"), prop_end)
+                (target.expr(), prop_end)
             };
             edits.push((start, end, replacement));
             pos = end;
@@ -2767,10 +3429,7 @@ fn reexport_wrapper_read_edits(
         }
         return None;
     }
-    if edits.is_empty() {
-        return None;
-    }
-    Some(edits)
+    Some(())
 }
 
 fn parse_property_suffix(suffix: &str) -> Option<(&str, usize)> {
@@ -2868,7 +3527,10 @@ Button();
         let out = collapse_pure_reexport_wrappers(code);
 
         assert!(!out.contains("// Module 1: wrapper.js"), "{out}");
-        assert!(out.contains(r#"var Button = _r(2)["default"] || _r(2);"#), "{out}");
+        assert!(
+            out.contains(r#"var Button = _r(2)["default"] || _r(2);"#),
+            "{out}"
+        );
     }
 
     #[test]
@@ -2904,6 +3566,194 @@ var value = _r(1)["foo"];
 
         assert!(!out.contains("// Module 1: wrapper.js"), "{out}");
         assert!(out.contains(r#"var value = _r(2)["bar"];"#), "{out}");
+    }
+
+    #[test]
+    fn collapses_named_reexport_property_reads_inside_runtime_wrappers() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _m2={exports:{}};
+var _mods=[_m0,_m1,_m2];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+
+// Module 2: FastColor.js
+{
+var _m2e=_m2.exports;
+class FastColor {}
+_m2.exports["FastColor"] = FastColor;
+}
+
+// Module 1: index.js
+{
+var _m1e=_m1.exports;
+_m1.exports["FastColor"] = _r(2)["FastColor"];
+}
+
+// Module 0: generate.js
+!function(module,exports,require){
+var FastColor = require(1)["FastColor"];
+exports.default = function generate(color) { return new FastColor(color); };
+}(_m0,_m0.exports,_r);
+})();
+"#;
+
+        let out = collapse_pure_reexport_wrappers(code);
+
+        assert!(!out.contains("// Module 1: index.js"), "{out}");
+        assert!(
+            out.contains(r#"var FastColor = _r(2)["FastColor"];"#),
+            "{out}"
+        );
+        assert!(!out.contains(r#"require(1)["FastColor"]"#), "{out}");
+    }
+
+    #[test]
+    fn collapses_chained_reexport_wrappers_without_dangling_intermediate_reads() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _m2={exports:{}};
+var _m3={exports:{}};
+var _mods=[_m0,_m1,_m2,_m3];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+
+// Module 3: leaf.js
+{
+var _m3e=_m3.exports;
+_m3.exports["default"] = function Leaf(){};
+}
+
+// Module 2: default-wrapper.js
+{
+var _m2e=_m2.exports;
+_m2.exports["default"] = _r(3)["default"];
+}
+
+// Module 1: named-wrapper.js
+{
+var _m1e=_m1.exports;
+_m1.exports["usePreviousProps"] = _r(2)["default"];
+}
+
+// Module 0: entry.js
+{
+var _m0e=_m0.exports;
+var usePreviousProps = _r(1)["usePreviousProps"];
+usePreviousProps();
+}
+})();
+"#;
+
+        let out = collapse_pure_reexport_wrappers(code);
+
+        assert!(!out.contains("// Module 1: named-wrapper.js"), "{out}");
+        assert!(
+            out.contains(r#"var usePreviousProps = _r(3)["default"];"#),
+            "{out}"
+        );
+        assert!(
+            !out.contains(r#"var usePreviousProps = _r(2)["default"];"#),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn resolves_chained_reexports_when_intermediate_wrapper_also_has_direct_reads() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _m2={exports:{}};
+var _m3={exports:{}};
+var _mods=[_m0,_m1,_m2,_m3];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+
+// Module 3: leaf.js
+{
+var _m3e=_m3.exports;
+_m3.exports["default"] = function Leaf(){};
+}
+
+// Module 2: default-wrapper.js
+{
+var _m2e=_m2.exports;
+_m2.exports["default"] = _r(3)["default"];
+}
+
+// Module 1: named-wrapper.js
+{
+var _m1e=_m1.exports;
+_m1.exports["usePreviousProps"] = _r(2)["default"];
+}
+
+// Module 0: entry.js
+{
+var _m0e=_m0.exports;
+var viaNamed = _r(1)["usePreviousProps"];
+var viaIntermediate = _r(2)["default"] || _r(2);
+viaNamed();
+viaIntermediate();
+}
+})();
+"#;
+
+        let out = collapse_pure_reexport_wrappers(code);
+
+        assert!(!out.contains("// Module 1: named-wrapper.js"), "{out}");
+        assert!(!out.contains("// Module 2: default-wrapper.js"), "{out}");
+        assert!(out.contains(r#"var viaNamed = _r(3)["default"];"#), "{out}");
+        assert!(
+            out.contains(r#"var viaIntermediate = _r(3)["default"] || _r(3);"#),
+            "{out}"
+        );
+        assert!(!out.contains("_r(2)"), "{out}");
+    }
+
+    #[test]
+    fn collapses_default_interop_alias_wrapper() {
+        let code = r#"(function(){
+var _m0={exports:{}};
+var _m1={exports:{}};
+var _m2={exports:{}};
+var _mods=[_m0,_m1,_m2];
+function _r(id){var m=_mods[id];return m?m.exports:{}}
+
+// Module 2: leaf.js
+{
+var _m2e=_m2.exports;
+_m2.exports["default"] = function Leaf(){};
+}
+
+// Module 1: alias-wrapper.js
+{
+var _m1e=_m1.exports;
+var _m1_leaf = _r(2)["default"] || _r(2);
+_m1.exports["default"] = _m1_leaf;
+}
+
+// Module 0: entry.js
+{
+var _m0e=_m0.exports;
+var viaDefault = _r(1)["default"];
+var viaThunk = _r(1)["default"] || _r(1);
+viaDefault();
+viaThunk();
+}
+})();
+"#;
+
+        let out = collapse_pure_reexport_wrappers(code);
+
+        assert!(!out.contains("// Module 1: alias-wrapper.js"), "{out}");
+        assert!(
+            out.contains(r#"var viaDefault = _r(2)["default"] || _r(2);"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"var viaThunk = _r(2)["default"] || _r(2);"#),
+            "{out}"
+        );
+        assert!(!out.contains("_r(1)"), "{out}");
     }
 
     #[test]
@@ -2953,9 +3803,8 @@ var namespace = _r(1);
 pub fn hoist_default_interop_thunks(code: &str) -> String {
     use std::sync::OnceLock;
     static THUNK: OnceLock<Regex> = OnceLock::new();
-    let thunk = THUNK.get_or_init(|| {
-        Regex::new(r#"_r\((\d+)\)\["default"\]\s*\|\|\s*_r\((\d+)\)"#).unwrap()
-    });
+    let thunk = THUNK
+        .get_or_init(|| Regex::new(r#"_r\((\d+)\)\["default"\]\s*\|\|\s*_r\((\d+)\)"#).unwrap());
 
     let mut counts: HashMap<usize, usize> = HashMap::new();
     for cap in thunk.captures_iter(code) {
@@ -2983,7 +3832,9 @@ pub fn hoist_default_interop_thunks(code: &str) -> String {
     let mut insert_at: HashMap<usize, usize> = HashMap::new();
     for id in &hoistable {
         let banner = format!("// Module {id}: ");
-        let Some(pos) = code.find(&banner) else { continue };
+        let Some(pos) = code.find(&banner) else {
+            continue;
+        };
         let section_end = code[pos..]
             .find("\n// Module ")
             .map(|rel| pos + rel)

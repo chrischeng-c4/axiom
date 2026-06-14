@@ -266,10 +266,7 @@ fn dedup_content_twins(bundle: String, modules: &[CompiledModule]) -> String {
             groups.entry(k).or_default().push(m.id);
         }
     }
-    let twins: Vec<Vec<usize>> = groups
-        .into_values()
-        .filter(|ids| ids.len() > 1)
-        .collect();
+    let twins: Vec<Vec<usize>> = groups.into_values().filter(|ids| ids.len() > 1).collect();
     if twins.is_empty() {
         return bundle;
     }
@@ -1307,6 +1304,24 @@ mod tests {
         assert!(
             !is_flatten_safe(&modules),
             "dynamic arguments[ access should trigger bailout"
+        );
+    }
+
+    #[test]
+    fn test_flatten_unsafe_with_module_scope_dynamic_arguments() {
+        let modules = vec![make_module("a.js", "exports.x = arguments[0];")];
+        assert!(
+            !is_flatten_safe(&modules),
+            "module-scope arguments[ access should trigger bailout"
+        );
+    }
+
+    #[test]
+    fn test_flatten_unsafe_with_arrow_lexical_arguments() {
+        let modules = vec![make_module("a.js", "exports.x = () => arguments[0];")];
+        assert!(
+            !is_flatten_safe(&modules),
+            "top-level arrow arguments[ access captures the module wrapper arguments"
         );
     }
 

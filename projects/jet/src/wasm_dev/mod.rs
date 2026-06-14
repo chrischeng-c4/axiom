@@ -8,7 +8,7 @@
 //! 1. Run `wasm_build::build` once to populate `dist/`.
 //! 2. Start an axum HTTP server on `host:port` serving `dist/` as
 //!    static files.
-//! 3. Watch `src/**/*.tsx` (+ `jet.config.toml`). On change, debounce
+//! 3. Watch `src/**/*.tsx` (+ `jet.toml`). On change, debounce
 //!    ~150ms then rebuild. Build failures are logged; the server
 //!    keeps running with the last-good `dist/`.
 //!
@@ -292,7 +292,7 @@ fn spawn_watcher(
         })
         .context("creating file watcher")?;
 
-    // Watch only `src/` + the root `jet.config.toml`. Watching the
+    // Watch only `src/` + the root `jet.toml`. Watching the
     // whole repo would fire constantly on the rebuild output in
     // `.jet/wasm-build/` and create a feedback loop.
     let src = root_dir.join("src");
@@ -301,7 +301,7 @@ fn spawn_watcher(
             .watch(&src, RecursiveMode::Recursive)
             .with_context(|| format!("watch {}", src.display()))?;
     }
-    let cfg = root_dir.join("jet.config.toml");
+    let cfg = root_dir.join("jet.toml");
     if cfg.exists() {
         watcher
             .watch(&cfg, RecursiveMode::NonRecursive)
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn should_trigger_rebuild_covers_tsx_and_config() {
         assert!(should_trigger_rebuild(Path::new("/proj/src/App.tsx")));
-        assert!(should_trigger_rebuild(Path::new("/proj/jet.config.toml")));
+        assert!(should_trigger_rebuild(Path::new("/proj/jet.toml")));
         assert!(!should_trigger_rebuild(Path::new(
             "/proj/.jet/wasm-build/src/lib.rs"
         )));

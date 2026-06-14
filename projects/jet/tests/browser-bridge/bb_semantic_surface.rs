@@ -86,7 +86,10 @@ async fn semantic_surface_drives_a_real_page_end_to_end() {
     // 1. Snapshot mints refs and parks the map on the page.
     let snap = interact::snapshot(root.path()).await.expect("snapshot");
     let text = snap["snapshot"].as_str().expect("snapshot text");
-    assert!(snap["ref_count"].as_u64().unwrap_or(0) >= 5, "snapshot: {text}");
+    assert!(
+        snap["ref_count"].as_u64().unwrap_or(0) >= 5,
+        "snapshot: {text}"
+    );
     assert!(text.contains("heading \"Demo Form\""), "snapshot: {text}");
     assert!(text.contains("button \"Save\""), "snapshot: {text}");
     let save_ref = text
@@ -167,11 +170,15 @@ async fn semantic_surface_drives_a_real_page_end_to_end() {
 
     // 4. Navigation: goto + wait-for-text, then hooks must still work
     //    on the new document (re-armed by the navigating verb).
-    interact::goto(root.path(), &url_two).await.expect("goto page two");
+    interact::goto(root.path(), &url_two)
+        .await
+        .expect("goto page two");
     interact::wait(root.path(), None, Some("arrived"), None, 5_000)
         .await
         .expect("wait for page-two text");
-    let page = jet::browser_cli::attach(root.path()).await.expect("re-attach");
+    let page = jet::browser_cli::attach(root.path())
+        .await
+        .expect("re-attach");
     page.evaluate("console.warn('on page two') || true")
         .await
         .expect("warn on page two");

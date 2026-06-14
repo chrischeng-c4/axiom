@@ -17,6 +17,7 @@
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Arg, ArgAction, ArgMatches, Command};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -161,7 +162,7 @@ pub fn command() -> Command {
                     Arg::new("port")
                         .short('p')
                         .long("port")
-                        .help("Port to run on (default: from jet.config.toml or 3000)"),
+                        .help("Port to run on (default: from jet.toml or 3000)"),
                 )
                 .arg(
                     Arg::new("host")
@@ -170,9 +171,21 @@ pub fn command() -> Command {
                         .help("Host to bind to"),
                 )
                 .arg(
+                    Arg::new("proxy")
+                        .long("proxy")
+                        .value_name("PATH=URL")
+                        .action(ArgAction::Append)
+                        .conflicts_with("wasm")
+                        .help(
+                            "Add a dev-server proxy rule, e.g. \
+                             --proxy /api=http://localhost:3200. \
+                             Repeatable; overrides matching [dev.proxy] config entries.",
+                        ),
+                )
+                .arg(
                     // jet dev --wasm — one-command TSX→WASM dev loop.
                     // Runs wasm_build::build, serves dist/ via axum,
-                    // watches src/ + jet.config.toml and rebuilds on
+                    // watches src/ + jet.toml and rebuilds on
                     // change. Completely separate from the JS bundle
                     // dev server below.
                     Arg::new("wasm")
@@ -180,7 +193,7 @@ pub fn command() -> Command {
                         .action(ArgAction::SetTrue)
                         .help(
                             "WASM mode — build via [wasm] section of \
-                             jet.config.toml, serve dist/, and rebuild \
+                             jet.toml, serve dist/, and rebuild \
                              on src/**/*.tsx change.",
                         ),
                 )
@@ -329,7 +342,7 @@ pub fn command() -> Command {
                         .help(
                             "WASM mode — compile TSX → Rust → wasm32 and emit \
                              dist/app.wasm + dist/boot.js + dist/index.html. \
-                             Reads [wasm] section of jet.config.toml for \
+                             Reads [wasm] section of jet.toml for \
                              entry + root_component + root_props.",
                         ),
                 )
@@ -349,11 +362,11 @@ pub fn command() -> Command {
         .subcommand(Command::new("check").about("Type check TypeScript files"))
         .subcommand(
             Command::new("config")
-                .about("Inspect and lint jet.config.toml")
+                .about("Inspect and lint jet.toml")
                 .subcommand(
                     Command::new("lint")
                         .about(
-                            "Validate jet.config.toml against the typed \
+                            "Validate jet.toml against the typed \
                              schema. Reports unknown keys (with did-you-mean \
                              suggestions), invalid values, and deprecated \
                              keys (with migration hints).",
@@ -363,7 +376,7 @@ pub fn command() -> Command {
                                 .long("path")
                                 .help(
                                     "Project root directory containing \
-                                     jet.config.toml (default: current dir)",
+                                     jet.toml (default: current dir)",
                                 ),
                         )
                         .arg(
@@ -387,9 +400,9 @@ pub fn command() -> Command {
                 .subcommand(
                     Command::new("schema")
                         .about(
-                            "Generate the JSON Schema for jet.config.toml. \
+                            "Generate the JSON Schema for jet.toml. \
                              Default mode prints to stdout; --write updates \
-                             schemas/jet.config.schema.json; --check exits \
+                             schemas/jet.schema.json; --check exits \
                              non-zero on drift (CI gate).",
                         )
                         .arg(
@@ -407,7 +420,7 @@ pub fn command() -> Command {
                                 .conflicts_with("check")
                                 .help(
                                     "Write the schema to \
-                                     <root>/schemas/jet.config.schema.json.",
+                                     <root>/schemas/jet.schema.json.",
                                 ),
                         )
                         .arg(
@@ -1084,7 +1097,7 @@ fn serve_command() -> Command {
             Arg::new("port")
                 .short('p')
                 .long("port")
-                .help("Port to run on (default: from jet.config.toml or 3000; 0 asks the OS)"),
+                .help("Port to run on (default: from jet.toml or 3000; 0 asks the OS)"),
         )
         .arg(
             Arg::new("host")
@@ -1716,17 +1729,23 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 .await;
             }
 
-            // Load jet.config.toml for dev settings (port, proxy)
+            // Load jet.toml for dev settings (port, proxy)
             eprintln!(
                 "[jet] Loading config from {}",
-                root_dir.join("jet.config.toml").display()
+                root_dir.join("jet.toml").display()
             );
-            let jet_config =
-                crate::task_runner::config::JetConfig::load(&root_dir).unwrap_or_default();
+            let jet_config = crate::task_runner::config::JetConfig::load(&root_dir)?;
+            let dev_proxy = merge_dev_proxy_rules(
+                jet_config.dev.proxy.clone(),
+                m.get_many::<String>("proxy")
+                    .into_iter()
+                    .flatten()
+                    .map(String::as_str),
+            )?;
             eprintln!(
                 "[jet] Config loaded: dev.port={:?}, proxy keys={}",
                 jet_config.dev.port,
-                jet_config.dev.proxy.len()
+                dev_proxy.len()
             );
 
             let cli_port = m
@@ -1753,7 +1772,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 root_dir: root_dir.clone(),
                 public_dir: Some(root_dir.join("public")),
                 entry,
-                proxy: jet_config.dev.proxy,
+                proxy: dev_proxy,
                 aliases: jet_config.alias.clone(),
             };
             let bundle_opts = crate::bundler::BundleOptions {
@@ -1894,12 +1913,12 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 .context("Failed to read frontend sources")?;
 
             // @spec .aw/changes/enhancement-resolver-conditional-exports-import-require-browse/specs/enhancement-resolver-conditional-exports-import-require-browse-spec.md#R4
-            // Surface jet.config.toml parse errors instead of silently falling back to defaults.
+            // Surface jet.toml parse errors instead of silently falling back to defaults.
             // Mirrors the jet dev path fix (PR #2940); GH #3061.
             let build_config = match crate::task_runner::config::JetConfig::load(&root_dir) {
                 Ok(cfg) => cfg,
                 Err(e) => {
-                    eprintln!("[jet build] Failed to parse jet.config.toml: {e:#}");
+                    eprintln!("[jet build] Failed to parse jet.toml: {e:#}");
                     eprintln!(
                         "[jet build] Continuing with built-in defaults; [resolve.conditions] / [alias] from the file will NOT take effect until the parse error is fixed."
                     );
@@ -1974,8 +1993,9 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             // compares — pure define residue — and is internally gated, so
             // running it always is safe and cheap. eliminate_static_conditionals
             // then strips any statement-position `if (false) {}` the fold left.
+            let oxc_minify_enabled = std::env::var_os("JET_DISABLE_OXC_MINIFY").is_none();
             let folded = crate::bundler::fold::fold_define_short_circuits(&replaced);
-            let mut code = if folded == result.code {
+            let mut code = if folded == result.code || oxc_minify_enabled {
                 folded
             } else {
                 crate::bundler::dce::eliminate_static_conditionals_syntax(&folded)
@@ -2003,6 +2023,25 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 code = crate::bundler::minify::strip_use_client_directives(&code);
                 lap("strip_directives");
                 dump_stage("2-bool-literals", &code);
+                if std::env::var_os("JET_ENABLE_DIRECT_EXPORT_READS").is_some() {
+                    let lowered = crate::bundler::scope_hoist_opt::lower_direct_export_reads(&code);
+                    if lowered != code && crate::bundler::dce::js_parses_without_errors(&lowered) {
+                        code = lowered;
+                    }
+                }
+                lap("direct_export_reads");
+                let mut oxc_applied = false;
+                if oxc_minify_enabled {
+                    if let Some(polished) = crate::bundler::minify::oxc_minify_js_candidate(&code) {
+                        if polished.len() < code.len()
+                            && crate::bundler::dce::js_parses_without_errors(&polished)
+                        {
+                            code = polished;
+                            oxc_applied = true;
+                        }
+                    }
+                }
+                lap("oxc_minify");
                 // Optimistic guard scheme: run mangle → fold → semicolon
                 // compaction unguarded, then parse ONCE. Parsing the full
                 // bundle with tree-sitter is the third-largest build cost
@@ -2023,76 +2062,94 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                 // size order and keep the first that parses — byte-identical
                 // to the old per-stage-guard scheme, minus the re-mangle and
                 // the redundant parses.
-                let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
-                lap("mangle");
-                let folded = crate::bundler::fold::fold_constants(&mangled);
-                lap("fold");
-                let compacted =
-                    crate::bundler::minify::remove_semicolons_before_block_close_candidate(&folded);
-                lap("semicolon_compaction");
-                let candidate = if compacted.len() < folded.len() {
-                    &compacted
-                } else {
-                    &folded
-                };
-                if crate::bundler::dce::js_parses_without_errors(candidate) {
-                    code = candidate.clone();
-                    lap("single_parse_guard");
-                } else if crate::bundler::dce::js_parses_without_errors(&folded) {
-                    // semicolon-compaction is the culprit; keep folded.
-                    code = folded;
-                    lap("reuse_parse_guard");
-                } else if crate::bundler::dce::js_parses_without_errors(&mangled) {
-                    // fold broke parse; keep mangled, still try its compaction.
-                    let s = crate::bundler::minify::remove_semicolons_before_block_close_candidate(
-                        &mangled,
-                    );
-                    code = if s.len() < mangled.len()
-                        && crate::bundler::dce::js_parses_without_errors(&s)
-                    {
-                        s
+                if !oxc_applied {
+                    let mangled = crate::bundler::mangle::mangle_variables_with_root(&code);
+                    lap("mangle");
+                    let folded = crate::bundler::fold::fold_constants(&mangled);
+                    lap("fold");
+                    let compacted =
+                        crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                            &folded,
+                        );
+                    lap("semicolon_compaction");
+                    let candidate = if compacted.len() < folded.len() {
+                        &compacted
                     } else {
-                        mangled
+                        &folded
                     };
-                    tracing::warn!("Constant folding skipped: optimized bundle did not parse");
-                    lap("reuse_parse_guard");
-                } else {
-                    // Mangle itself broke parse — fall all the way back to the
-                    // pre-mangle bundle and fold/compact that.
-                    tracing::warn!("Variable mangling skipped: optimized bundle did not parse");
-                    let f = crate::bundler::fold::fold_constants(&code);
-                    let base = if crate::bundler::dce::js_parses_without_errors(&f) {
-                        f
+                    if crate::bundler::dce::js_parses_without_errors(candidate) {
+                        code = candidate.clone();
+                        lap("single_parse_guard");
+                    } else if crate::bundler::dce::js_parses_without_errors(&folded) {
+                        // semicolon-compaction is the culprit; keep folded.
+                        code = folded;
+                        lap("reuse_parse_guard");
+                    } else if crate::bundler::dce::js_parses_without_errors(&mangled) {
+                        // fold broke parse; keep mangled, still try its compaction.
+                        let s =
+                            crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                                &mangled,
+                            );
+                        code = if s.len() < mangled.len()
+                            && crate::bundler::dce::js_parses_without_errors(&s)
+                        {
+                            s
+                        } else {
+                            mangled
+                        };
+                        tracing::warn!("Constant folding skipped: optimized bundle did not parse");
+                        lap("reuse_parse_guard");
                     } else {
-                        code.clone()
-                    };
-                    let s = crate::bundler::minify::remove_semicolons_before_block_close_candidate(
-                        &base,
-                    );
-                    code = if s.len() < base.len()
-                        && crate::bundler::dce::js_parses_without_errors(&s)
-                    {
-                        s
-                    } else {
-                        base
-                    };
-                    lap("remangle_fallback");
-                }
-                dump_stage("3-mangle", &code);
-                dump_stage("4-fold", &code);
-                // Post-mangle dead `var X=Y.exports;` alias removal — safe
-                // here (name assignment is fixed; removing it pre-mangle
-                // tripped a mangler collision). Parse-guarded; reverts on the
-                // rare shape it can't handle.
-                {
-                    let pruned = crate::bundler::minify::remove_dead_exports_aliases(&code);
-                    if pruned.len() < code.len()
-                        && crate::bundler::dce::js_parses_without_errors(&pruned)
-                    {
-                        code = pruned;
+                        // Mangle itself broke parse — fall all the way back to the
+                        // pre-mangle bundle and fold/compact that.
+                        tracing::warn!("Variable mangling skipped: optimized bundle did not parse");
+                        let f = crate::bundler::fold::fold_constants(&code);
+                        let base = if crate::bundler::dce::js_parses_without_errors(&f) {
+                            f
+                        } else {
+                            code.clone()
+                        };
+                        let s =
+                            crate::bundler::minify::remove_semicolons_before_block_close_candidate(
+                                &base,
+                            );
+                        code = if s.len() < base.len()
+                            && crate::bundler::dce::js_parses_without_errors(&s)
+                        {
+                            s
+                        } else {
+                            base
+                        };
+                        lap("remangle_fallback");
                     }
+                    dump_stage("3-mangle", &code);
+                    dump_stage("4-fold", &code);
+                    // Post-mangle dead `var X=Y.exports;` alias removal — safe
+                    // here (name assignment is fixed; removing it pre-mangle
+                    // tripped a mangler collision). Parse-guarded; reverts on the
+                    // rare shape it can't handle.
+                    {
+                        let pruned = crate::bundler::minify::remove_dead_exports_aliases(&code);
+                        if pruned.len() < code.len()
+                            && crate::bundler::dce::js_parses_without_errors(&pruned)
+                        {
+                            code = pruned;
+                        }
+                    }
+                    lap("dead_exports_aliases");
+                    if oxc_minify_enabled {
+                        if let Some(polished) =
+                            crate::bundler::minify::oxc_minify_js_candidate(&code)
+                        {
+                            if polished.len() < code.len()
+                                && crate::bundler::dce::js_parses_without_errors(&polished)
+                            {
+                                code = polished;
+                            }
+                        }
+                    }
+                    lap("oxc_minify_after_legacy");
                 }
-                lap("dead_exports_aliases");
                 // Extra polish (JET_EXTRA_MINIFY=1): residual-space squeeze,
                 // block-level empty-statement removal, bracket-to-dot
                 // properties. Worth ~0.3-2KB gzip per fixture but costs two
@@ -2103,8 +2160,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     let polished = crate::bundler::minify::squeeze_residual_spaces(&code);
                     let polished =
                         crate::bundler::dce::remove_redundant_empty_statements(&polished);
-                    let polished =
-                        crate::bundler::minify::bracket_to_dot_properties(&polished);
+                    let polished = crate::bundler::minify::bracket_to_dot_properties(&polished);
                     if polished.len() < code.len()
                         && crate::bundler::dce::js_parses_without_errors(&polished)
                     {
@@ -2368,7 +2424,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
             let mut cfg = crate::test_runner::RunnerConfig::default_for_root(&root_dir)
                 .context("Failed to build test runner config")?;
 
-            // Load [test.web_server] from jet.config.toml if present.
+            // Load [test.web_server] from jet.toml if present.
             // Surface parse errors instead of silently dropping [test.web_server].
             // Mirrors the jet dev (#2940) and jet build (#3061) fixes; GH #3065.
             // @spec .aw/tech-design/projects/jet/logic/web-server.md#W2
@@ -2377,7 +2433,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     cfg.web_server = jet_cfg.test.web_server.clone();
                 }
                 Err(e) => {
-                    eprintln!("[jet test] Failed to parse jet.config.toml: {e:#}");
+                    eprintln!("[jet test] Failed to parse jet.toml: {e:#}");
                     eprintln!(
                         "[jet test] Continuing without a preamble web server; [test.web_server] from the file will NOT take effect until the parse error is fixed."
                     );
@@ -2871,8 +2927,7 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                         crate::browser_cli::interact::set_checked(&root_dir, &target, true).await?
                     }
                     _ => {
-                        crate::browser_cli::interact::set_checked(&root_dir, &target, false)
-                            .await?
+                        crate::browser_cli::interact::set_checked(&root_dir, &target, false).await?
                     }
                 };
                 println!("{}", serde_json::to_string(&v)?);
@@ -2942,9 +2997,8 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     .get_one::<String>("timeout")
                     .and_then(|s| parse_cli_numeric_flag::<u64>("--timeout", s))
                     .unwrap_or(10_000);
-                let v =
-                    crate::browser_cli::interact::wait(&root_dir, selector, text, ms, timeout)
-                        .await?;
+                let v = crate::browser_cli::interact::wait(&root_dir, selector, text, ms, timeout)
+                    .await?;
                 println!("{}", serde_json::to_string(&v)?);
                 Ok(())
             }
@@ -2969,12 +3023,9 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     .get_one::<String>("limit")
                     .and_then(|s| parse_cli_numeric_flag::<usize>("--limit", s))
                     .unwrap_or(100);
-                let v = crate::browser_cli::interact::requests(
-                    &root_dir,
-                    limit,
-                    rm.get_flag("clear"),
-                )
-                .await?;
+                let v =
+                    crate::browser_cli::interact::requests(&root_dir, limit, rm.get_flag("clear"))
+                        .await?;
                 println!("{}", serde_json::to_string_pretty(&v)?);
                 Ok(())
             }
@@ -3310,6 +3361,45 @@ where
     }
 }
 
+fn merge_dev_proxy_rules<'a>(
+    mut config_proxy: HashMap<String, String>,
+    cli_rules: impl IntoIterator<Item = &'a str>,
+) -> Result<HashMap<String, String>> {
+    for raw in cli_rules {
+        let (prefix, target) = parse_dev_proxy_rule(raw)?;
+        config_proxy.insert(prefix, target);
+    }
+    Ok(config_proxy)
+}
+
+fn parse_dev_proxy_rule(raw: &str) -> Result<(String, String)> {
+    let Some((prefix_raw, target_raw)) = raw.split_once('=') else {
+        anyhow::bail!(
+            "invalid --proxy value {raw:?}; expected PATH=URL, e.g. --proxy /api=http://localhost:3200"
+        );
+    };
+    let prefix_trimmed = prefix_raw.trim();
+    let prefix = if prefix_trimmed == "/" {
+        "/".to_string()
+    } else {
+        prefix_trimmed.trim_end_matches('/').to_string()
+    };
+    let target = target_raw.trim().trim_end_matches('/').to_string();
+
+    if prefix.is_empty() || !prefix.starts_with('/') {
+        anyhow::bail!(
+            "invalid --proxy path {prefix_raw:?}; proxy paths must start with '/', e.g. /api"
+        );
+    }
+    if target.is_empty() || !(target.starts_with("http://") || target.starts_with("https://")) {
+        anyhow::bail!(
+            "invalid --proxy target {target_raw:?}; proxy targets must start with http:// or https://"
+        );
+    }
+
+    Ok((prefix, target))
+}
+
 async fn handle_serve_command(root_dir: &PathBuf, m: &ArgMatches) -> Result<()> {
     if let Some(("shutdown", sm)) = m.subcommand() {
         if let Some(port) = sm
@@ -3580,7 +3670,7 @@ pub(crate) fn coerce_sourcemap_entry_path_or_warn(entry: &std::path::Path) -> St
     }
 }
 
-/// List all available scripts from package.json and jet.config.toml pipeline.
+/// List all available scripts from package.json and jet.toml pipeline.
 /// Equivalent to `npm run` (no arguments).
 fn list_scripts(root_dir: &PathBuf) -> Result<()> {
     // package.json scripts
@@ -3617,13 +3707,13 @@ fn list_scripts(root_dir: &PathBuf) -> Result<()> {
         }
     }
 
-    // jet.config.toml pipeline tasks
+    // jet.toml pipeline tasks
     // Surface parse errors instead of silently dropping the pipeline listing.
     // Mirrors the jet dev (#2940), jet build (#3061), jet test (#3065) fixes; GH #3069.
     match crate::task_runner::config::JetConfig::load(root_dir) {
         Ok(config) => {
             if !config.pipeline.is_empty() {
-                println!("\nPipeline tasks (jet.config.toml):\n");
+                println!("\nPipeline tasks (jet.toml):\n");
                 for (name, def) in &config.pipeline {
                     let deps = if def.depends_on.is_empty() {
                         String::new()
@@ -3635,7 +3725,7 @@ fn list_scripts(root_dir: &PathBuf) -> Result<()> {
             }
         }
         Err(e) => {
-            eprintln!("[jet run] Failed to parse jet.config.toml: {e:#}");
+            eprintln!("[jet run] Failed to parse jet.toml: {e:#}");
             eprintln!(
                 "[jet run] Pipeline tasks from the file will NOT be listed until the parse error is fixed."
             );
@@ -3679,7 +3769,7 @@ async fn handle_run(
         return Ok(());
     }
 
-    // 3. Check task runner (jet.config.toml pipeline)
+    // 3. Check task runner (jet.toml pipeline)
     match crate::task_runner::TaskRunner::new(root_dir) {
         Ok(tr) => {
             if tr.has_task(target) {
@@ -3694,7 +3784,7 @@ async fn handle_run(
                 return Ok(());
             }
         }
-        Err(err) if root_dir.join("jet.config.toml").exists() => {
+        Err(err) if root_dir.join("jet.toml").exists() => {
             return Err(err).context("Failed to load task runner");
         }
         Err(_) => {}
@@ -3702,7 +3792,7 @@ async fn handle_run(
 
     anyhow::bail!(
         "Target '{}' not found as a script, file, or task. \
-         Check package.json scripts or jet.config.toml pipeline.",
+         Check package.json scripts or jet.toml pipeline.",
         target
     )
 }
@@ -4274,6 +4364,68 @@ mod e2e_command_contract_tests {
             shutdown.get_one::<String>("port").is_none(),
             "serve shutdown should allow session-file based shutdown"
         );
+    }
+
+    #[test]
+    fn dev_help_exposes_proxy_rules() {
+        let help = help_text(&["jet", "dev", "--help"]);
+        assert!(
+            help.contains("--proxy") && help.contains("PATH=URL") && help.contains("[dev.proxy]"),
+            "dev help must expose CLI proxy rules and config override behavior: {help}"
+        );
+    }
+
+    #[test]
+    fn dev_proxy_cli_rules_merge_over_config_rules() {
+        let mut config = std::collections::HashMap::new();
+        config.insert("/api".to_string(), "http://localhost:3000".to_string());
+        config.insert("/auth".to_string(), "http://localhost:3001".to_string());
+
+        let merged = merge_dev_proxy_rules(
+            config,
+            [
+                "/api=http://localhost:4200",
+                "/events/=https://example.test/events/",
+            ],
+        )
+        .expect("valid proxy rules must merge");
+
+        assert_eq!(
+            merged.get("/api").map(String::as_str),
+            Some("http://localhost:4200"),
+            "CLI proxy rule must override the same config prefix"
+        );
+        assert_eq!(
+            merged.get("/auth").map(String::as_str),
+            Some("http://localhost:3001"),
+            "unrelated config proxy rule must be preserved"
+        );
+        assert_eq!(
+            merged.get("/events").map(String::as_str),
+            Some("https://example.test/events"),
+            "trailing slash normalization keeps segment-aware matching stable"
+        );
+    }
+
+    #[test]
+    fn dev_proxy_cli_rule_rejects_ambiguous_shapes() {
+        assert!(parse_dev_proxy_rule("api=http://localhost:3200").is_err());
+        assert!(parse_dev_proxy_rule("/api=localhost:3200").is_err());
+        assert!(parse_dev_proxy_rule("/api").is_err());
+    }
+
+    #[test]
+    fn dev_proxy_is_not_silently_accepted_in_wasm_mode() {
+        let err = command()
+            .try_get_matches_from([
+                "jet",
+                "dev",
+                "--wasm",
+                "--proxy",
+                "/api=http://localhost:3200",
+            ])
+            .expect_err("wasm dev does not currently wire proxy rules");
+        assert_eq!(err.kind(), ErrorKind::ArgumentConflict);
     }
 
     // @spec .aw/tech-design/projects/jet/specs/3941.md#unit-test
@@ -4849,14 +5001,14 @@ mod gh3509_handle_run_tests {
     //! GH #3509 — `handle_run` previously used
     //! `if let Ok(tr) = TaskRunner::new(root_dir)` and silently dropped
     //! every TaskRunner-construction error. Since `JetConfig::load`
-    //! returns Ok(default) for a missing `jet.config.toml`, the only
+    //! returns Ok(default) for a missing `jet.toml`, the only
     //! way `new` returns Err is if the file exists and contains a real
     //! config error (TOML parse, TaskGraph cycle, undefined task ref,
     //! cache-dir IO failure). The user saw a misleading "target not
     //! found" instead of the parser diagnostic.
     use tempfile::TempDir;
 
-    /// No `jet.config.toml` and no matching script/file: the function
+    /// No `jet.toml` and no matching script/file: the function
     /// must fall through to the "target not found" bail — the absence
     /// of a config is NOT a config error.
     #[tokio::test]
@@ -4873,7 +5025,7 @@ mod gh3509_handle_run_tests {
         );
     }
 
-    /// Malformed `jet.config.toml`: the function must surface the
+    /// Malformed `jet.toml`: the function must surface the
     /// TaskRunner-load error (which includes the parser-classified
     /// diagnostic) instead of silently fall-through to "target not found".
     #[tokio::test]
@@ -4882,7 +5034,7 @@ mod gh3509_handle_run_tests {
         // Unknown top-level key — `classify_jet_toml_error` produces a
         // structured "unknown field" diagnostic.
         std::fs::write(
-            dir.path().join("jet.config.toml"),
+            dir.path().join("jet.toml"),
             "[piepline.build]\ncommand = \"echo hi\"\n",
         )
         .unwrap();
@@ -4890,7 +5042,7 @@ mod gh3509_handle_run_tests {
 
         let err = super::handle_run(&root, "build", &[], false, None, false)
             .await
-            .expect_err("malformed jet.config.toml must Err");
+            .expect_err("malformed jet.toml must Err");
         let msg = format!("{:#}", err);
 
         assert!(

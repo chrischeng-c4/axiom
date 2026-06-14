@@ -148,7 +148,9 @@ fn compress_generated_prefixed_names(source: &str) -> String {
         let short = loop {
             let cand = gen_name(counter);
             counter += 1;
-            if !is_reserved(&cand) && !used_names.contains(cand.as_str()) && !assigned.contains(&cand)
+            if !is_reserved(&cand)
+                && !used_names.contains(cand.as_str())
+                && !assigned.contains(&cand)
             {
                 break cand;
             }
@@ -376,8 +378,7 @@ fn repair_generated_module_slot_local_decl_collisions(source: &str) -> String {
             if !slot_names.contains(name) {
                 continue;
             }
-            let Some(decl_scope) =
-                resolve_decl_scope(name, si.token_scope[decl_ti], &si.scopes)
+            let Some(decl_scope) = resolve_decl_scope(name, si.token_scope[decl_ti], &si.scopes)
             else {
                 continue;
             };
@@ -1566,6 +1567,28 @@ fn is_object_pattern_binding_identifier(source: &str, tokens: &[Tok], ti: usize)
     false
 }
 
+fn is_array_pattern_binding_identifier(source: &str, tokens: &[Tok], ti: usize) -> bool {
+    if tokens[ti].kind != TK::Ident {
+        return false;
+    }
+    if ti > 0 && tokens[ti - 1].kind == TK::Punct && txt(source, &tokens[ti - 1]) == "." {
+        return false;
+    }
+    let mut idx = ti;
+    while idx > 0 {
+        idx -= 1;
+        if tokens[idx].kind != TK::Punct {
+            continue;
+        }
+        match txt(source, &tokens[idx]) {
+            "=" => return false,
+            "[" | "," => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn is_function_declaration_context(source: &str, tokens: &[Tok], ti: usize) -> bool {
     if ti == 0 {
         return true;
@@ -1713,10 +1736,11 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
     let mut decl_brace_depth: i32 = 0; // track braces inside declarations (object literals)
     let mut decl_bracket_depth: i32 = 0; // track brackets inside declarations (arrays/computed keys)
     let mut decl_object_pattern_depth: i32 = 0; // track object destructuring binding patterns
-                                                // Save/restore decl state when entering/leaving function scopes.
-                                                // Without this, `var o = {f: function() { var inner = 1; }}, next = 0;`
-                                                // would lose the outer `in_decl` when the inner `var` resets it.
-    let mut decl_state_stack: Vec<(bool, bool, bool, i32, i32, i32, i32)> = Vec::new();
+    let mut decl_array_pattern_depth: i32 = 0; // track array destructuring binding patterns
+                                               // Save/restore decl state when entering/leaving function scopes.
+                                               // Without this, `var o = {f: function() { var inner = 1; }}, next = 0;`
+                                               // would lose the outer `in_decl` when the inner `var` resets it.
+    let mut decl_state_stack: Vec<(bool, bool, bool, i32, i32, i32, i32, i32)> = Vec::new();
     let mut expect_fn_params = false;
     let mut pending_class = false; // between `class` and its body `{`
     let mut expect_class_name = false; // expecting the class name ident
@@ -1766,6 +1790,7 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                     decl_brace_depth = 0;
                     decl_bracket_depth = 0;
                     decl_object_pattern_depth = 0;
+                    decl_array_pattern_depth = 0;
                     continue;
                 }
                 "class" => {
@@ -1801,6 +1826,22 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
             }
             if in_decl && decl_object_pattern_depth > 0 {
                 if is_object_pattern_binding_identifier(source, tokens, i) {
+                    if decl_is_var {
+                        let target = stack
+                            .iter()
+                            .rev()
+                            .find(|&&s| scopes[s].is_function)
+                            .copied()
+                            .unwrap_or(cur);
+                        scopes[target].decls.insert(name.to_string());
+                    } else {
+                        scopes[cur].decls.insert(name.to_string());
+                    }
+                }
+                continue;
+            }
+            if in_decl && decl_array_pattern_depth > 0 {
+                if is_array_pattern_binding_identifier(source, tokens, i) {
                     if decl_is_var {
                         let target = stack
                             .iter()
@@ -1985,6 +2026,7 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                             decl_brace_depth,
                             decl_bracket_depth,
                             decl_object_pattern_depth,
+                            decl_array_pattern_depth,
                         ));
                         in_decl = false;
                         expect_decl_name = false;
@@ -1992,6 +2034,7 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                         decl_brace_depth = 0;
                         decl_bracket_depth = 0;
                         decl_object_pattern_depth = 0;
+                        decl_array_pattern_depth = 0;
                         let new_id = scopes.len();
                         scopes.push(Scope {
                             parent: Some(cur),
@@ -2014,6 +2057,7 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                             decl_brace_depth,
                             decl_bracket_depth,
                             decl_object_pattern_depth,
+                            decl_array_pattern_depth,
                         ));
                         // Reset decl state for the new function scope
                         in_decl = false;
@@ -2022,6 +2066,7 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                         decl_brace_depth = 0;
                         decl_bracket_depth = 0;
                         decl_object_pattern_depth = 0;
+                        decl_array_pattern_depth = 0;
                         stack.push(fn_id);
                         ts[i] = fn_id;
                     } else {
@@ -2082,6 +2127,7 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                                 saved_brace,
                                 saved_bracket,
                                 saved_object_pattern,
+                                saved_array_pattern,
                             ) = decl_state_stack.pop().unwrap();
                             in_decl = saved_in_decl;
                             expect_decl_name = saved_expect;
@@ -2090,6 +2136,7 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                             decl_brace_depth = saved_brace;
                             decl_bracket_depth = saved_bracket;
                             decl_object_pattern_depth = saved_object_pattern;
+                            decl_array_pattern_depth = saved_array_pattern;
                         }
                     }
                     ts[i] = *stack.last().unwrap();
@@ -2100,6 +2147,14 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                         continue;
                     }
                     if in_decl {
+                        let starts_array_pattern = expect_decl_name
+                            || (decl_array_pattern_depth > 0
+                                && !(i > 0
+                                    && tokens[i - 1].kind == TK::Punct
+                                    && txt(source, &tokens[i - 1]) == "="));
+                        if starts_array_pattern {
+                            decl_array_pattern_depth += 1;
+                        }
                         decl_bracket_depth += 1;
                     }
                 }
@@ -2113,6 +2168,12 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                         continue;
                     }
                     if in_decl && decl_bracket_depth > 0 {
+                        if decl_array_pattern_depth > 0 {
+                            decl_array_pattern_depth -= 1;
+                            if decl_array_pattern_depth == 0 {
+                                expect_decl_name = false;
+                            }
+                        }
                         decl_bracket_depth -= 1;
                     }
                 }
@@ -2127,6 +2188,7 @@ fn build_scopes(source: &str, tokens: &[Tok]) -> ScopeInfo {
                         decl_paren_depth = 0;
                         decl_bracket_depth = 0;
                         decl_object_pattern_depth = 0;
+                        decl_array_pattern_depth = 0;
                     }
                 }
                 "," => {
@@ -2189,8 +2251,7 @@ fn compute_renames(
             scope_refs[sid] = child;
         }
     }
-    let mut scope_decl_ref_counts: Vec<HashMap<&str, usize>> =
-        vec![HashMap::new(); scope_count];
+    let mut scope_decl_ref_counts: Vec<HashMap<&str, usize>> = vec![HashMap::new(); scope_count];
     for (ti, tok) in tokens.iter().enumerate() {
         if tok.kind != TK::Ident || should_skip_identifier_rename(source, tokens, ti) {
             continue;
@@ -2203,10 +2264,6 @@ fn compute_renames(
 
     // Process scopes in order (parents before children)
     for sid in 0..scope_count {
-        let scope = &si.scopes[sid];
-        if !scope.is_function {
-            continue;
-        }
         // Skip root scope unless explicitly asked to mangle it
         // (e.g., when source is a scope-hoisted IIFE bundle).
         if sid == 0 && !mangle_root {
@@ -2484,7 +2541,10 @@ fn apply_renames(
     let mut last = std::time::Instant::now();
     let mut lap = |stage: &str| {
         if timing {
-            eprintln!("[mangle-timing]   apply_renames/{stage}: {:?}", last.elapsed());
+            eprintln!(
+                "[mangle-timing]   apply_renames/{stage}: {:?}",
+                last.elapsed()
+            );
             last = std::time::Instant::now();
         }
     };
@@ -3177,13 +3237,10 @@ const RESERVED: &[&str] = &[
     "false",
     "NaN",
     "Infinity",
-    // Module system — `require` kept reserved as it appears as a global in
-    // many environments; `module` and `exports` are intentionally NOT
-    // reserved so the mangler can rename them when they appear as function
-    // parameters inside per-module IIFE wrappers (e.g., the scope-hoisted
-    // `!function(module,exports,require){...}()` format), turning the
-    // 7-byte `exports` parameter into a 1-byte short name.
-    "require",
+    // Module system names are intentionally NOT reserved. The mangler only
+    // rewrites declared bindings, so ambient/global `require` stays intact,
+    // while per-module IIFE parameters (`module`, `exports`, `require`) can
+    // be compressed to short names.
     "arguments",
     // Common globals (safety net)
     "window",
@@ -3412,8 +3469,13 @@ mod tests {
         let tokens = tokenize(&src);
         let si = build_scopes(&src, &tokens);
         if let Ok(offsets) = std::env::var("JET_MANGLE_DEBUG_OFFSETS") {
-            for off in offsets.split(',').filter_map(|o| o.trim().parse::<usize>().ok()) {
-                let Some(ti) = tokens.iter().position(|t| t.start <= off && off < t.end + 12)
+            for off in offsets
+                .split(',')
+                .filter_map(|o| o.trim().parse::<usize>().ok())
+            {
+                let Some(ti) = tokens
+                    .iter()
+                    .position(|t| t.start <= off && off < t.end + 12)
                 else {
                     continue;
                 };
@@ -3436,7 +3498,9 @@ mod tests {
         }
         if let Ok(sid_str) = std::env::var("JET_MANGLE_DEBUG_SCOPE_LAST_TOKEN") {
             if let Ok(target) = sid_str.parse::<usize>() {
-                let last = (0..tokens.len()).rev().find(|&i| si.token_scope[i] == target);
+                let last = (0..tokens.len())
+                    .rev()
+                    .find(|&i| si.token_scope[i] == target);
                 if let Some(ti) = last {
                     let tok = &tokens[ti];
                     let lo = tok.start.saturating_sub(200);
@@ -3857,9 +3921,13 @@ function f(assign, createSyntheticEvent, event) {
             "inner var should be mangled, got: {}",
             out
         );
-        assert!(out.contains("require"), "require preserved, got: {}", out);
-        // `module` and `exports` are no longer reserved — they should be mangled
-        // to short names when used as function parameters.
+        // `require`, `module`, and `exports` are not reserved — they should be
+        // mangled to short names when used as function parameters.
+        assert!(
+            !out.contains("function(require,"),
+            "require param should be mangled, got: {}",
+            out
+        );
         // The function signature must not contain the original long names as params.
         assert!(
             !out.contains(",module,"),
@@ -3912,10 +3980,11 @@ function f(assign, createSyntheticEvent, event) {
             "function params must not be treated as object shorthand, got: {}",
             out
         );
-        // require is still reserved — must NOT be mangled
+        // require is a function parameter here, so it should be mangled too;
+        // the generated `_r` argument must remain.
         assert!(
-            out.contains("require"),
-            "require should be preserved, got: {}",
+            !out.contains("require") && out.contains("_r"),
+            "require param should be mangled while _r argument remains, got: {}",
             out
         );
         // The property access `.exports` (in the argument `_m0.exports`) must be preserved
@@ -4677,14 +4746,17 @@ function module(ReactSharedInternals, ReactDOMSharedInternals) {
         let src = r#"function wrapper(require){var combineImport=require(1)["combine"];var compatPlugin=function compatPlugin(element){return element.type;};var removeLabelPlugin=function removeLabelPlugin(element){return element.value;};var createCache=function createCache(options){var omnipresentPlugins=[compatPlugin,removeLabelPlugin];return combineImport(omnipresentPlugins,function(plugin){return plugin.name;});};return createCache;}"#;
         let out = mangle_variables(src);
         let combine_pos = out
-            .find("=require(1)[\"combine\"]")
+            .find("[\"combine\"]")
             .expect("combine import should remain");
         let combine_decl_prefix = &out[..combine_pos];
+        let combine_eq = combine_decl_prefix
+            .rfind('=')
+            .expect("combine import should have an initializer");
         let combine_name_start = combine_decl_prefix
             .rfind("var ")
             .expect("combine import should be a var")
             + 4;
-        let combine_name = combine_decl_prefix[combine_name_start..].trim();
+        let combine_name = combine_decl_prefix[combine_name_start..combine_eq].trim();
         let array_start = out
             .find("=[")
             .expect("plugin array should remain after mangling")
@@ -4908,6 +4980,23 @@ function module(ReactSharedInternals, ReactDOMSharedInternals) {
         assert!(out.contains("generate("), "got: {}", out);
         assert!(out.contains("reset("), "got: {}", out);
         assert!(out.contains(".generate("), "got: {}", out);
+    }
+
+    #[test]
+    fn test_mui_visual_block_locals_are_mangled() {
+        let src = r#"const _X=a=>{if(a.maxWidth!==undefined){const styleFromPropValue=e=>{const d=e;return d};return JN(a,a.maxWidth,styleFromPropValue)};return null};function P3(){const[c,setName]=zo("Ada");const[b,setSelectionActive]=zo(!1);let scrollContainer;if(c){scrollContainer=b}else{scrollContainer=c};const criteria=r.current;criteria.keys.push(c);return on(()=>setSelectionActive(!0))+scrollContainer.style+criteria}"#;
+        let out = mangle_variables_with_root(src);
+        for stale in [
+            "styleFromPropValue",
+            "setSelectionActive",
+            "scrollContainer",
+            "criteria",
+        ] {
+            assert!(
+                !out.contains(stale),
+                "MUI visual block local `{stale}` should be mangled, got: {out}"
+            );
+        }
     }
 
     #[test]

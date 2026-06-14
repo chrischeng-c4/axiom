@@ -1538,6 +1538,68 @@ mod tests {
     }
 
     #[test]
+    fn test_export_clause_with_comments_exports_all_names() {
+        let source = r#"export {
+Theme,
+createTheme,
+// Transformer
+legacyLogicalPropertiesTransformer,
+px2remTransformer,
+// util
+token2CSSVar,
+unit,
+genCalc
+};"#;
+        let map = HashMap::new();
+        let result = transform_modules(source, &map).unwrap();
+        for name in [
+            "Theme",
+            "createTheme",
+            "legacyLogicalPropertiesTransformer",
+            "px2remTransformer",
+            "token2CSSVar",
+            "unit",
+            "genCalc",
+        ] {
+            assert!(
+                result
+                    .code
+                    .contains(&format!("module.exports[\"{name}\"] = {name}")),
+                "missing commented export {name}: {}",
+                result.code
+            );
+        }
+    }
+
+    #[test]
+    fn test_export_var_object_literal_preserves_declaration() {
+        let source = r#"export var _experimental = {
+  supportModernCSS: function supportModernCSS() {
+    return supportWhere() && supportLogicProps();
+  }
+};"#;
+        let map = HashMap::new();
+        let result = transform_modules(source, &map).unwrap();
+        assert!(
+            result.code.contains("var _experimental = {"),
+            "exported variable declaration should be preserved: {}",
+            result.code
+        );
+        assert!(
+            result
+                .code
+                .contains("module.exports[\"_experimental\"] = _experimental"),
+            "exported variable should assign module.exports: {}",
+            result.code
+        );
+        assert!(
+            crate::bundler::dce::js_parses_without_errors(&result.code),
+            "transformed export var should parse: {}",
+            result.code
+        );
+    }
+
+    #[test]
     fn test_export_destructured_object_binding_alias() {
         let source = "export const { Consumer: ConfigConsumer } = ConfigContext;";
         let map = HashMap::new();

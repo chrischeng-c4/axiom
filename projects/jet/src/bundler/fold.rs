@@ -120,7 +120,10 @@ fn fold_literal_string_compares(source: &str) -> String {
                 m += 1;
             }
             let right_ok = m >= len
-                || matches!(b[m], b'&' | b'|' | b')' | b';' | b',' | b'?' | b':' | b'}' | b']')
+                || matches!(
+                    b[m],
+                    b'&' | b'|' | b')' | b';' | b',' | b'?' | b':' | b'}' | b']'
+                )
                 || b[m..].starts_with(b"==")
                 || b[m..].starts_with(b"!=");
             if !right_ok {
@@ -482,11 +485,7 @@ fn sweep_bare_bool_statements(source: &str) -> String {
             i = push_string(b, i, &mut out);
             continue;
         }
-        if b[i] == b'!'
-            && i + 2 < len
-            && matches!(b[i + 1], b'0' | b'1')
-            && b[i + 2] == b';'
-        {
+        if b[i] == b'!' && i + 2 < len && matches!(b[i + 1], b'0' | b'1') && b[i + 2] == b';' {
             let prev = out
                 .iter()
                 .rev()
@@ -1078,7 +1077,8 @@ mod tests {
     #[test]
     fn test_fold_define_short_circuits() {
         // `"production" !== "production" && warn(...)` dies entirely.
-        let src = r#"function f(){"production"!=="production"&&console.warn("dev only");return 1;}"#;
+        let src =
+            r#"function f(){"production"!=="production"&&console.warn("dev only");return 1;}"#;
         let out = fold_define_short_circuits(src);
         assert!(!out.contains("console.warn"), "dev guard must fold: {out}");
         assert!(out.contains("return 1"), "live code stays: {out}");
@@ -1123,7 +1123,10 @@ mod tests {
         // Optional chaining `?.` must NOT be treated as a ternary.
         let src3 = r#"var n="a"!=="a"||obj?.prop;"#;
         let out3 = fold_define_short_circuits(src3);
-        assert!(out3.contains("obj?.prop"), "optional chain preserved: {out3}");
+        assert!(
+            out3.contains("obj?.prop"),
+            "optional chain preserved: {out3}"
+        );
     }
 
     /// Regression: regex literals whose character classes contain quotes

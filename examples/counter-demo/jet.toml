@@ -1,4 +1,4 @@
-# jet.config.toml — counter-demo
+# jet.toml — counter-demo
 #
 # Minimum config. Feeding this app through `jet build --wasm` should
 # produce dist/app.wasm + dist/app.js + dist/boot.js + dist/index.html

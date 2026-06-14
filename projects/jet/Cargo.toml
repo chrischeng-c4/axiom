@@ -40,6 +40,13 @@ tree-sitter = "0.25"
 tree-sitter-javascript = "0.25"
 tree-sitter-typescript = "0.23"
 
+# Native JS minifier candidate for production polish.
+oxc_allocator = "0.135.0"
+oxc_codegen = { version = "0.135.0", default-features = false }
+oxc_minifier = "0.135.0"
+oxc_parser = { version = "0.135.0", features = ["regular_expression"] }
+oxc_span = "0.135.0"
+
 # Regex for simple transformations
 regex = { workspace = true }
 
@@ -59,6 +66,7 @@ petgraph = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
+httpdate = "1"
 
 # WebSocket
 tokio-tungstenite = { workspace = true }

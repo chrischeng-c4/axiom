@@ -433,9 +433,9 @@ async fn call_tool(root_dir: &Path, name: &str, args: &Value) -> Result<Vec<Valu
                 "element" => ("elementTree", pretty::element_tree),
                 "layout" => ("layoutTree", pretty::layout_tree),
                 "fiber" => ("fiberTree", pretty::fiber_tree),
-                other => anyhow::bail!(
-                    "unknown tree kind {other:?} — use element | layout | fiber"
-                ),
+                other => {
+                    anyhow::bail!("unknown tree kind {other:?} — use element | layout | fiber")
+                }
             };
             let v = page.evaluate(&super::expr(method, "")).await?;
             Ok(text_content(printer(&v)))
@@ -462,7 +462,10 @@ async fn call_tool(root_dir: &Path, name: &str, args: &Value) -> Result<Vec<Valu
             Ok(text_content(serde_json::to_string_pretty(&v)?))
         }
         "bb_capture" => {
-            let surface = args.get("surface").and_then(Value::as_str).unwrap_or("wasm");
+            let surface = args
+                .get("surface")
+                .and_then(Value::as_str)
+                .unwrap_or("wasm");
             let bundle = match surface {
                 "wasm" => {
                     let hook_ids: Vec<u64> = args
@@ -479,9 +482,9 @@ async fn call_tool(root_dir: &Path, name: &str, args: &Value) -> Result<Vec<Valu
                         .unwrap_or("body");
                     super::dom_observation_bundle(root_dir, root_selector).await?
                 }
-                other => anyhow::bail!(
-                    "unknown browser capture surface {other:?}; expected wasm or dom"
-                ),
+                other => {
+                    anyhow::bail!("unknown browser capture surface {other:?}; expected wasm or dom")
+                }
             };
             Ok(text_content(serde_json::to_string(&bundle)?))
         }
@@ -527,7 +530,11 @@ async fn call_tool(root_dir: &Path, name: &str, args: &Value) -> Result<Vec<Valu
             let from_y = arg_f64(args, "from_y")?;
             let to_x = arg_f64(args, "to_x")?;
             let to_y = arg_f64(args, "to_y")?;
-            let steps = args.get("steps").and_then(Value::as_u64).unwrap_or(8).max(1);
+            let steps = args
+                .get("steps")
+                .and_then(Value::as_u64)
+                .unwrap_or(8)
+                .max(1);
             let page = super::attach(root_dir).await?;
             super::dispatch_mouse_event(&page, "mouseMoved", from_x, from_y, None, Some(0), None)
                 .await?;
@@ -648,7 +655,10 @@ async fn call_tool(root_dir: &Path, name: &str, args: &Value) -> Result<Vec<Valu
         }
         "bb_click" => {
             let target = arg_target(args)?;
-            let dblclick = args.get("dblclick").and_then(Value::as_bool).unwrap_or(false);
+            let dblclick = args
+                .get("dblclick")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let v = super::interact::click(root_dir, &target, dblclick).await?;
             Ok(text_content(v.to_string()))
         }
@@ -789,7 +799,10 @@ mod tests {
             "bb_console",
             "bb_requests",
         ] {
-            assert!(names.contains(&required.to_string()), "missing tool {required}");
+            assert!(
+                names.contains(&required.to_string()),
+                "missing tool {required}"
+            );
         }
         for tool in tool_definitions() {
             assert!(tool["description"].as_str().unwrap().len() > 10);
@@ -861,7 +874,10 @@ mod tests {
         });
         let resp = handle_message(&tmp, &msg).await.unwrap();
         assert_eq!(resp["result"]["isError"], true);
-        assert!(resp.get("error").is_none(), "tool failure must not be a protocol error");
+        assert!(
+            resp.get("error").is_none(),
+            "tool failure must not be a protocol error"
+        );
     }
 }
 // </HANDWRITE>

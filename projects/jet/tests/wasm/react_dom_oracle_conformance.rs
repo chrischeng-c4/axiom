@@ -740,7 +740,7 @@ fn write_controlled_input_dom_project(root: &std::path::Path) {
     std::fs::write(src.join("ControlledInput.tsx"), CONTROLLED_INPUT_TSX)
         .expect("write controlled input TSX");
     std::fs::write(
-        root.join("jet.config.toml"),
+        root.join("jet.toml"),
         r#"[wasm]
 entry = "src/ControlledInput.tsx"
 root_component = "ControlledInput"
@@ -757,7 +757,7 @@ fn write_controlled_textarea_dom_project(root: &std::path::Path) {
     std::fs::write(src.join("ControlledTextarea.tsx"), CONTROLLED_TEXTAREA_TSX)
         .expect("write controlled textarea TSX");
     std::fs::write(
-        root.join("jet.config.toml"),
+        root.join("jet.toml"),
         r#"[wasm]
 entry = "src/ControlledTextarea.tsx"
 root_component = "ControlledTextarea"
@@ -778,7 +778,7 @@ fn write_library_dom_project(root: &std::path::Path, case: &LibraryParityCase) {
         )
     });
     std::fs::write(
-        root.join("jet.config.toml"),
+        root.join("jet.toml"),
         format!(
             r#"[wasm]
 entry = "src/{tsx_file}"
