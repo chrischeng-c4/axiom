@@ -217,6 +217,32 @@ pub fn mb_list_to_tuple(list: MbValue) -> MbValue {
     MbValue::from_ptr(MbObject::new_tuple(Vec::new()))
 }
 
+/// Materialize a packed `*args` value as the tuple Python guarantees, run once
+/// at the entry of every variadic function. Call paths pack the extra
+/// positional args inconsistently — most build a list, but some (e.g.
+/// atexit-forwarded calls) already pass a tuple — so this is idempotent: a list
+/// is converted, an existing tuple is copied (preserving its elements rather
+/// than collapsing to empty like `mb_list_to_tuple` would), and any other value
+/// passes through retained. Always yields a fresh owned value the body releases.
+pub fn mb_star_args_to_tuple(val: MbValue) -> MbValue {
+    unsafe {
+        if let Some(ptr) = val.as_ptr() {
+            match &(*ptr).data {
+                ObjData::List(ref lock) => {
+                    let items = lock.read().unwrap();
+                    return MbValue::from_ptr(MbObject::new_tuple_borrowed(items.to_vec()));
+                }
+                ObjData::Tuple(ref items) => {
+                    return MbValue::from_ptr(MbObject::new_tuple_borrowed(items.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+    unsafe { super::rc::retain_if_ptr(val); }
+    val
+}
+
 // ── Access ──
 
 /// tuple[index] → value

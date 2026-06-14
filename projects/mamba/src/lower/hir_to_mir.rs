@@ -1098,6 +1098,31 @@ impl<'a> HirToMir<'a> {
         self.in_module_scope = false;
     }
 
+    /// `*args` is a tuple in Python, but every call path packs the extra
+    /// positional arguments into a list (some paths, e.g. atexit-forwarded
+    /// calls, already pass a tuple). Emit a `mb_star_args_to_tuple` at function
+    /// entry so the body observes `type(args) is tuple` and tuple immutability,
+    /// matching CPython. The incoming param vreg keeps the ABI's value
+    /// (callers are unchanged); the body reads the converted tuple via
+    /// sym_to_vreg. `*args` is `any`-typed, so body operations already route
+    /// through polymorphic runtime dispatch and work unchanged on a tuple.
+    fn emit_star_args_to_tuple(&mut self, func: &HirFunction, any_ty: TypeId) {
+        if let Some(star_pos) = func.star_param_pos {
+            if let Some((star_sym, _)) = func.params.get(star_pos) {
+                if let Some(&packed_vreg) = self.sym_to_vreg.get(star_sym) {
+                    let tuple_vreg = self.fresh_vreg();
+                    self.current_stmts.push(MirInst::CallExtern {
+                        dest: Some(tuple_vreg),
+                        name: "mb_star_args_to_tuple".to_string(),
+                        args: vec![packed_vreg],
+                        ty: any_ty,
+                    });
+                    self.sym_to_vreg.insert(*star_sym, tuple_vreg);
+                }
+            }
+        }
+    }
+
     fn lower_function(&mut self, func: &HirFunction) -> MirBody {
         if func.is_async {
             return self.lower_async_function(func);
@@ -1166,6 +1191,8 @@ impl<'a> HirToMir<'a> {
                 (vreg, *orig_ty)
             }
         }).collect();
+
+        self.emit_star_args_to_tuple(func, any_ty);
 
         // Store parameters to global storage if they are cell variables (captured by inner
         // functions via implicit or explicit nonlocal). This ensures that when an inner
@@ -1258,6 +1285,8 @@ impl<'a> HirToMir<'a> {
                 (vreg, *ty)
             }
         }).collect();
+
+        self.emit_star_args_to_tuple(func, any_ty);
 
         // Lower the actual function body (yield becomes mb_generator_yield_value)
         for stmt in &func.body {
@@ -1380,6 +1409,9 @@ impl<'a> HirToMir<'a> {
             });
             self.sym_to_vreg.insert(*sym, arg_vreg);
         }
+
+        let any_ty = self.tcx.any();
+        self.emit_star_args_to_tuple(func, any_ty);
 
         // Track coroutine handle for return wrapping
         self.async_coro_vreg = Some(handle_vreg);
@@ -7827,6 +7859,7 @@ mod tests {
                 is_generator: false,
                 decorators: Vec::new(),
                 has_star_args: false,
+                star_param_pos: None,
                 has_kwargs: false,
             }],
             classes: Vec::new(),
@@ -7876,6 +7909,7 @@ mod tests {
                 is_generator: false,
                 decorators: Vec::new(),
                 has_star_args: false,
+                star_param_pos: None,
                 has_kwargs: false,
             }],
             classes: Vec::new(),

@@ -275,6 +275,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_tuple_getitem", tuple_ops::mb_tuple_getitem as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_tuple_contains", tuple_ops::mb_tuple_contains as fn(super::MbValue, super::MbValue) -> super::MbValue, [I64, I64], I64),
         rt_sym!("mb_list_to_tuple", tuple_ops::mb_list_to_tuple as fn(super::MbValue) -> super::MbValue, [I64], I64),
+        rt_sym!("mb_star_args_to_tuple", tuple_ops::mb_star_args_to_tuple as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_tuple_from_iterable", tuple_ops::mb_tuple_from_iterable as fn(super::MbValue) -> super::MbValue, [I64], I64),
         // ── Exception ──
         rt_sym!("mb_raise", exception::mb_raise as fn(super::MbValue, super::MbValue), [I64, I64], Void),

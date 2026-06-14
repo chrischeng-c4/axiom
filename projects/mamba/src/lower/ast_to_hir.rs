@@ -2060,7 +2060,8 @@ impl<'a> AstLowerer<'a> {
         self.outer_scope_names = saved_outer_scope;
         self.cell_override_syms = saved_cell_syms;
 
-        let has_star_args = params.iter().any(|p| p.kind == ast::ParamKind::Star);
+        let star_param_pos = params.iter().position(|p| p.kind == ast::ParamKind::Star);
+        let has_star_args = star_param_pos.is_some();
         let has_kwargs = params.iter().any(|p| p.kind == ast::ParamKind::DoubleStar);
         Some(HirFunction {
             name: name_id,
@@ -2073,6 +2074,7 @@ impl<'a> AstLowerer<'a> {
             is_generator: false,
             decorators: Vec::new(),
             has_star_args,
+            star_param_pos,
             has_kwargs,
         })
     }

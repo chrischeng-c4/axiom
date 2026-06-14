@@ -79,6 +79,10 @@ pub struct HirFunction {
     /// Whether this function has a `*args` parameter.
     /// When true, the last-but-one param (before **kwargs if present) receives a packed list.
     pub has_star_args: bool,
+    /// Index into `params` of the `*args` parameter, when present. Recorded
+    /// explicitly because keyword-only params after `*args` make the position
+    /// non-derivable from `has_star_args`/`has_kwargs` alone.
+    pub star_param_pos: Option<usize>,
     /// Whether this function has a `**kwargs` parameter.
     /// When true, the last param receives a packed dict.
     pub has_kwargs: bool,
@@ -575,6 +579,7 @@ mod tests {
             is_generator: false,
             decorators: vec![],
             has_star_args: false,
+            star_param_pos: None,
             has_kwargs: false,
         };
         assert_eq!(func.params.len(), 2);
