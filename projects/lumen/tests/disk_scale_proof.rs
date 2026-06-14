@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Stage 2 Phase 2i — THE SCALE PROOF.
 //!
 //! Phases 2f–2h built the disk engine and proved, PER FIELD, that the in-RAM
@@ -698,3 +700,4 @@ fn scale_proof_reopen_rss_is_bounded() {
     // Keep the full Measured struct shape live (documents the captured fields).
     let _ = (lex1.n, lex1.dim, lex1.with_vector, lex1.rss_full, lex1.on_disk_bytes, lex1.baseline, lex1.rss_after_reopen, lex1.rss_after_queries);
 }
+// CODEGEN-END

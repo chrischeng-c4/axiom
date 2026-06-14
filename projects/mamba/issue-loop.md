@@ -2,7 +2,7 @@
 project: mamba
 branch: project-mamba
 label: "project:mamba"
-repo: chrischeng-c4/cclab
+repo: chrischeng-c4/axiom
 pick_order: oldest-first
 build:
   debug: as-needed

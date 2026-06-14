@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-bin.md#schema
+// CODEGEN-BEGIN
 //! `lumen-operator` — the lumen K8s Operator entrypoint.
 //!
 //! - `lumen-operator` (or `run`): start the `Lumen` CRD reconcile loop. Expects
@@ -43,3 +45,4 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 }
+// CODEGEN-END

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Hash field + Hamming near-duplicate search: index 64-bit hex hashes, then
 //! retrieve every doc within a Hamming-distance threshold, ranked by
 //! similarity. Also verifies a `hamming` clause composes inside a boolean AND.
@@ -158,3 +160,4 @@ fn invalid_hex_hash_is_rejected() {
     );
     assert!(bad.is_err(), "non-hex hash value must be rejected");
 }
+// CODEGEN-END

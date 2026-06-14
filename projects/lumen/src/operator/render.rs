@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-operator.md#schema
+// CODEGEN-BEGIN
 //! Pure rendering: a [`Lumen`] spec → the set of child Kubernetes objects that
 //! realize it. No cluster, no I/O — every object is a self-contained
 //! `serde_json::Value` carrying `apiVersion`, `kind`, full `metadata` (labels +
@@ -39,6 +41,7 @@ fn namespace(lumen: &Lumen) -> String {
 
 /// The NATS client URL serving pods connect to: the managed broker's ClusterIP
 /// service, or the caller-supplied external URL.
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 pub fn nats_url(lumen: &Lumen) -> String {
     match &lumen.spec.nats.external_url {
         Some(url) => url.clone(),
@@ -95,6 +98,7 @@ fn meta(name: &str, ns: &str, labels: Value, owner: &Option<Value>) -> Value {
 
 /// Render every child object for `lumen`, in dependency order (namespace-scoped
 /// config first, then workloads).
+/// @spec projects/lumen/tech-design/semantic/lumen-operator.md#schema
 pub fn render(lumen: &Lumen) -> Vec<Value> {
     let mut out = vec![service_account(lumen), serving_configmap(lumen)];
     if lumen.spec.nats.is_managed() {
@@ -536,3 +540,4 @@ fn prometheus_rule(lumen: &Lumen) -> Value {
         },
     })
 }
+// CODEGEN-END

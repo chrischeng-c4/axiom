@@ -1,0 +1,11 @@
+[project]
+name = "arena"
+cap_path = "README.md"
+label = "project:arena"
+
+[[workspaces]]
+name = "arena"
+paths = ["**", ".github/workflows/arena-release.yml"]
+target = "rust"
+test_cmd = "cargo test -p arena"
+codegen.profile = "rust/score-crate"

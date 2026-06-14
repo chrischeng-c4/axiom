@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Write-path QPS bench. Default runs are report-only; `LUMEN_PERF_STRICT=1`
 //! (or `LUMEN_WRITE_GATE=1` for this test only) turns the NATS-vs-peer
 //! 100-worker index row into a strict competitive gate.
@@ -200,6 +202,7 @@ struct Server {
     task: tokio::task::JoinHandle<()>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl Drop for Server {
     fn drop(&mut self) {
         self.task.abort();
@@ -280,6 +283,7 @@ enum Mode {
     NatsSharded,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl Mode {
     fn label(self) -> &'static str {
         match self {
@@ -417,6 +421,7 @@ enum WriteReq {
     },
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl WriteReq {
     fn docs_per_request(&self) -> usize {
         match self {
@@ -450,6 +455,7 @@ enum PeerWriteReq {
     },
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl PeerWriteReq {
     fn docs_per_request(&self) -> usize {
         match self {
@@ -547,6 +553,7 @@ struct ErrorCounts {
     transport: u64,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
 impl ErrorCounts {
     fn add(&mut self, kind: WriteErrorKind) {
         match kind {
@@ -1508,3 +1515,4 @@ fn wal_codec_probe() {
         wal_decode.as_secs_f64() * 1_000_000.0 / iters as f64,
     );
 }
+// CODEGEN-END

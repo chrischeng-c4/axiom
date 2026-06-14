@@ -703,11 +703,30 @@ fn classify_codegen_origin_spec(spec_content: &str) -> CbCodegenOriginClass {
     if spec_content.contains("source-from-target") || spec_content.contains("<!-- source-snapshot:")
     {
         CbCodegenOriginClass::ArtifactReplay
+    } else if source_section_has_type_marker(spec_content, "type: rust-source-unit")
+        || source_section_has_type_marker(spec_content, "type: text-source-unit")
+    {
+        CbCodegenOriginClass::TdAst
     } else if spec_declares_source_section(spec_content) {
         CbCodegenOriginClass::SourceTemplate
     } else {
         CbCodegenOriginClass::TdAst
     }
+}
+
+fn source_section_has_type_marker(spec_content: &str, marker: &str) -> bool {
+    let mut in_source = false;
+    for line in spec_content.lines() {
+        if line.starts_with("## ") {
+            let heading = line.trim_start_matches('#').trim();
+            in_source = heading.eq_ignore_ascii_case("Source");
+            continue;
+        }
+        if in_source && line.trim().contains(marker) {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -1437,7 +1456,7 @@ fn is_aw_ec_generated_content(content: &str) -> bool {
 fn extract_spec_managed_ref(content: &str) -> Option<String> {
     extract_spec_managed_refs_with_sections(content)
         .into_iter()
-        .find(|(_, section)| section.as_deref() == Some("source"))
+        .find(|(_, section)| section.as_deref().is_some_and(is_source_unit_section_name))
         .map(|(spec, _)| spec)
         .or_else(|| extract_spec_managed_refs(content).into_iter().next())
 }
@@ -1494,6 +1513,10 @@ fn parse_spec_managed_path_section(spec_ref: &str) -> Option<(String, Option<Str
     })
 }
 
+fn is_source_unit_section_name(section: &str) -> bool {
+    matches!(section, "source" | "rust-source-unit" | "text-source-unit")
+}
+
 fn sync_force_regen_public_api_manifests(
     cwd: &std::path::Path,
     scope: &ForceRegenScope,
@@ -1518,7 +1541,12 @@ fn sync_force_regen_public_api_manifests(
         let source_refs = parse_codegen_blocks(&content)
             .into_iter()
             .filter_map(|block| parse_spec_ref(&block.spec_ref))
-            .filter(|spec_ref| spec_ref.section.as_deref() == Some("source"))
+            .filter(|spec_ref| {
+                spec_ref
+                    .section
+                    .as_deref()
+                    .is_some_and(is_source_unit_section_name)
+            })
             .collect::<Vec<_>>();
         for spec_ref in source_refs {
             let spec_path = cwd.join(&spec_ref.path);
@@ -2029,7 +2057,12 @@ fn verify_force_regen_conformance(
                     &rel_path,
                     &mut report,
                 );
-                if valid && block_ref.section.as_deref() == Some("source") {
+                if valid
+                    && block_ref
+                        .section
+                        .as_deref()
+                        .is_some_and(is_source_unit_section_name)
+                {
                     classify_source_template(
                         cwd,
                         &block_ref,
@@ -2267,7 +2300,10 @@ fn classify_source_template(
 }
 
 fn spec_declares_source_section(spec_content: &str) -> bool {
-    spec_content.contains("<!-- type: source") || spec_content.contains("section: source")
+    spec_content.contains("<!-- type: source")
+        || spec_content.contains("<!-- type: rust-source-unit")
+        || spec_content.contains("section: source")
+        || spec_content.contains("section: rust-source-unit")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2811,6 +2847,19 @@ mod tests {
         assert_eq!(
             classify_codegen_origin_spec(source_template),
             CbCodegenOriginClass::SourceTemplate
+        );
+
+        let rust_source_unit =
+            "## Source\n<!-- type: rust-source-unit lang: rust -->\n```rust\npub fn demo() {}\n```";
+        assert_eq!(
+            classify_codegen_origin_spec(rust_source_unit),
+            CbCodegenOriginClass::TdAst
+        );
+
+        let text_source_unit = "## Source\n<!-- type: text-source-unit lang: bash -->\n```bash\n#!/usr/bin/env bash\n```\n";
+        assert_eq!(
+            classify_codegen_origin_spec(text_source_unit),
+            CbCodegenOriginClass::TdAst
         );
 
         let artifact_replay = "## Source\n<!-- type: source lang: rust -->\n<!-- source-from-target: strip-managed-markers -->";

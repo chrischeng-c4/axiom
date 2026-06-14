@@ -1,3 +1,5 @@
+# SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-k8s-base.md#deployment
+# CODEGEN-BEGIN
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -32,3 +34,4 @@ resources:
   # overlays pull it in via components/observability; dev (kind/laptop, no
   # operator) omits it so `kubectl apply -k overlays/dev` works on a vanilla
   # cluster.
+# CODEGEN-END

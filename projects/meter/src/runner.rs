@@ -17,8 +17,6 @@ pub enum TestType {
     Unit,
     /// Performance profiling test
     Profile,
-    /// Load/stress test
-    Stress,
     /// Security/fuzzing test
     Security,
 }
@@ -29,7 +27,6 @@ impl std::fmt::Display for TestType {
         match self {
             TestType::Unit => write!(f, "unit"),
             TestType::Profile => write!(f, "profile"),
-            TestType::Stress => write!(f, "stress"),
             TestType::Security => write!(f, "security"),
         }
     }
@@ -198,28 +195,6 @@ pub struct ProfileMetrics {
     pub boundary_overhead_ms: f64,
 }
 
-/// Stress test metrics
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
-pub struct StressMetrics {
-    /// Total requests made
-    pub total_requests: u64,
-    /// Successful requests
-    pub successful: u64,
-    /// Failed requests
-    pub failed: u64,
-    /// Requests per second
-    pub rps: f64,
-    /// P50 latency (ms)
-    pub latency_p50_ms: u64,
-    /// P95 latency (ms)
-    pub latency_p95_ms: u64,
-    /// P99 latency (ms)
-    pub latency_p99_ms: u64,
-    /// Error rate (0.0 - 1.0)
-    pub error_rate: f64,
-}
-
 /// Test result after execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// @spec projects/meter/tech-design/semantic/source/projects-meter-src-runner-rs.md#source
@@ -236,8 +211,6 @@ pub struct TestResult {
     pub stack_trace: Option<String>,
     /// Profile metrics (for profile tests)
     pub profile_metrics: Option<ProfileMetrics>,
-    /// Stress metrics (for stress tests)
-    pub stress_metrics: Option<StressMetrics>,
     /// Timestamp when test started
     pub started_at: String,
 }
@@ -253,7 +226,6 @@ impl TestResult {
             error: None,
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -267,7 +239,6 @@ impl TestResult {
             error: Some(error.into()),
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -281,7 +252,6 @@ impl TestResult {
             error: Some(reason.into()),
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -295,7 +265,6 @@ impl TestResult {
             error: Some(error.into()),
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -309,12 +278,6 @@ impl TestResult {
     /// Add profile metrics
     pub fn with_profile_metrics(mut self, metrics: ProfileMetrics) -> Self {
         self.profile_metrics = Some(metrics);
-        self
-    }
-
-    /// Add stress metrics
-    pub fn with_stress_metrics(mut self, metrics: StressMetrics) -> Self {
-        self.stress_metrics = Some(metrics);
         self
     }
 

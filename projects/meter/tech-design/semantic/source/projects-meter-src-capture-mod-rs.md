@@ -29,10 +29,7 @@ Public API manifest for `projects/meter/src/capture/mod.rs` generated from AST d
 | `run` | projects/meter/src/capture/mod.rs | module | pub | 25 |  |
 | `sampler` | projects/meter/src/capture/mod.rs | module | pub | 26 |  |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
-
-<!-- source-snapshot: path=projects/meter/src/capture/mod.rs -->
+<!-- type: rust-source-unit lang: rust -->
 ````rust
 //! Capture-mode populators (擷取) — observe a workload from the outside.
 //!
@@ -46,18 +43,17 @@ Public API manifest for `projects/meter/src/capture/mod.rs` generated from AST d
 //! cargo-bench delegate + regression-baseline loader), the C1 profiling pair
 //! [`sampler`] (spawn + platform stack sampler -> folded stacks) + [`fold`]
 //! (folded stacks -> ranked `Hotspot` findings, the default stdout),
-//! [`fuzz`] (the seeded `meter fuzz` driver: built-in demo targets + real HTTP
-//! endpoint fuzzing, with byte-reproducible finding ids), and [`run`] (the
-//! composite `meter run` sweep that folds every sub-verb into ONE worst-wins
-//! report).
+//! [`vitals`] (the meter.toml measurement contract + L1 vitals capture window),
+//! and [`run`] (the composite `meter run` sweep that folds every sub-verb into
+//! ONE worst-wins report).
 
 pub mod audit;
 pub mod bench;
 pub mod delegate;
 pub mod fold;
-pub mod fuzz;
 pub mod run;
 pub mod sampler;
+pub mod vitals;
 ````
 
 ## Changes
@@ -67,7 +63,7 @@ pub mod sampler;
 changes:
   - path: projects/meter/src/capture/mod.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/capture/mod.rs` captured during meter full-codegen standardization.

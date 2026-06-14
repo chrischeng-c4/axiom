@@ -37,10 +37,8 @@ Public API manifest for `projects/meter/src/ts_runner.rs` generated from AST dur
 | `run_audit` | projects/meter/src/ts_runner.rs | function | pub | 664 | run_audit(&self) -> Result<NpmAuditResult, String> |
 | `run_tests` | projects/meter/src/ts_runner.rs | function | pub | 171 | run_tests(&self) -> Result<TsRunnerResult, String> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/ts_runner.rs -->
 ````rust
 //! TypeScript custom runner - executes TS tests with V8 metrics collection
 //!
@@ -57,6 +55,7 @@ use std::process::{Command, Stdio};
 
 /// TypeScript runner configuration
 #[derive(Debug, Clone)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 pub struct TsRunnerConfig {
     /// Path to project directory (containing package.json)
     pub project_path: PathBuf,
@@ -78,6 +77,7 @@ pub struct TsRunnerConfig {
     pub workers: usize,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 impl Default for TsRunnerConfig {
     fn default() -> Self {
         Self {
@@ -98,6 +98,7 @@ impl Default for TsRunnerConfig {
 
 /// V8 heap metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 pub struct V8Metrics {
     /// Total heap size in bytes
     pub heap_total: u64,
@@ -115,6 +116,7 @@ pub struct V8Metrics {
 
 /// Test result from TypeScript runner
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 pub struct TsTestResult {
     /// Test name
     pub name: String,
@@ -134,6 +136,7 @@ pub struct TsTestResult {
 
 /// TypeScript runner result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 pub struct TsRunnerResult {
     /// Individual test results
     pub results: Vec<TestResult>,
@@ -184,10 +187,12 @@ struct HarnessV8Metrics {
 }
 
 /// TypeScript test runner
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 pub struct TsRunner {
     config: TsRunnerConfig,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 impl TsRunner {
     /// Create a new TypeScript runner
     pub fn new(config: TsRunnerConfig) -> Self {
@@ -754,6 +759,7 @@ enum TestRunnerType {
 
 /// NPM audit result
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 pub struct NpmAuditResult {
     pub total_vulnerabilities: usize,
     pub critical: u32,
@@ -762,6 +768,7 @@ pub struct NpmAuditResult {
     pub low: u32,
 }
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 impl NpmAuditResult {
     /// Check if there are any critical vulnerabilities
     pub fn has_critical(&self) -> bool {
@@ -775,6 +782,7 @@ impl NpmAuditResult {
 }
 
 /// Detect if a directory is a TypeScript/JavaScript project
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 pub fn is_ts_project(path: &Path) -> bool {
     let package_json = path.join("package.json");
     let tsconfig = path.join("tsconfig.json");
@@ -782,6 +790,7 @@ pub fn is_ts_project(path: &Path) -> bool {
 }
 
 /// Get Node.js version
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 pub fn get_node_version() -> Option<String> {
     let output = Command::new("node").arg("--version").output().ok()?;
 
@@ -793,6 +802,7 @@ pub fn get_node_version() -> Option<String> {
 }
 
 /// Get NPM version
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-ts-runner-rs.md#source
 pub fn get_npm_version() -> Option<String> {
     let output = Command::new("npm").arg("--version").output().ok()?;
 
@@ -871,7 +881,7 @@ mod tests {
 changes:
   - path: projects/meter/src/ts_runner.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/ts_runner.rs` captured during meter full-codegen standardization.

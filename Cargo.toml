@@ -5,6 +5,12 @@ members = [
     "projects/mamba/mambalibs/pgkit/pg",
     "projects/meter",
     "projects/meter/meter-cli",
+    "projects/rig",
+    "projects/rig/rig-cli",
+    "projects/arena",
+    "projects/arena/arena-cli",
+    "projects/guard",
+    "projects/guard/guard-cli",
     "crates/cclab-core",
     "crates/cclab-kv",
     "projects/mamba/mambalibs/queuekit",
@@ -70,7 +76,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.61"
+version = "0.4.0"
 authors = ["Chris Cheng <chris.cheng.c4@gmail.com>"]
 edition = "2021"
 license = "MIT"

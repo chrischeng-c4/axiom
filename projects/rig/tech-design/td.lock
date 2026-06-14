@@ -1,0 +1,125 @@
+version = 1
+project = "rig"
+td_path = "projects/rig/tech-design"
+generated_at = "2026-06-13T02:45:55.127482+00:00"
+digest = "sha256:b98c00fac7cb91ea2faf1704f5ac02c6b7785df76392458cccb912b3cb80310d"
+
+[[files]]
+path = "semantic/rig-build-script.md"
+digest = "sha256:1318645027c455d7900815d9fc7598ebc1a994423e85f8848a714d6ca79034a1"
+
+[[files]]
+path = "semantic/rig-projects-rig.md"
+digest = "sha256:88ec1bbaa15c34240b8b847e096d9804c79a5a820707b6fcb12c1df08e91acab"
+
+[[files]]
+path = "semantic/source/projects-rig-rig-cli-src-bin-rig-rs.md"
+digest = "sha256:7253fe12757ea837164d3d7b5b8b1315a85e5ed2ae265196fa74b7c859d1bf08"
+
+[[files]]
+path = "semantic/source/projects-rig-rig-cli-src-dispatch-rs.md"
+digest = "sha256:45e4932dd6c743ff1d565e37255b44ed38db3fc9b3611d6c123414652753f4a5"
+
+[[files]]
+path = "semantic/source/projects-rig-rig-cli-src-lib-rs.md"
+digest = "sha256:d36c6d4b5150fe0ba2acf8e12a03459362cb4f795dffc3286bc2e846dfb5398b"
+
+[[files]]
+path = "semantic/source/projects-rig-src-discovery-rs.md"
+digest = "sha256:e0a1af2b958ccf46ba7ecff653d3e22e2a615b8725d435d4e835448058170b24"
+
+[[files]]
+path = "semantic/source/projects-rig-src-engine-assert-rs.md"
+digest = "sha256:fa3777ce50b283a990a2bee6c20ef379d408f5c842bc3f0dede5507946b0f920"
+
+[[files]]
+path = "semantic/source/projects-rig-src-engine-exec-rs.md"
+digest = "sha256:2bca87c314ff824a54247245b980cac81c9da5991ff9aeb2b94202de0f144a95"
+
+[[files]]
+path = "semantic/source/projects-rig-src-engine-http-rs.md"
+digest = "sha256:7004e9dc07758158a97a6cc2b538a1826e499763a136a8e7b1275e29a714309a"
+
+[[files]]
+path = "semantic/source/projects-rig-src-engine-loadgen-rs.md"
+digest = "sha256:560cdb3f4bb8d6a206bd59e904ef8aa3823bfd533a00ba2c23f4fe053a890644"
+
+[[files]]
+path = "semantic/source/projects-rig-src-engine-mod-rs.md"
+digest = "sha256:09275440ef6cd92ce7e0ee2754d0377fab6d2bd0497533c6de9147d8a287c062"
+
+[[files]]
+path = "semantic/source/projects-rig-src-engine-rss-rs.md"
+digest = "sha256:1f9f1afc8ff946445b19d8b7011cb770f123459e697ea85d4d3da83a700692e0"
+
+[[files]]
+path = "semantic/source/projects-rig-src-engine-sample-rs.md"
+digest = "sha256:b964a0572a84667980adb5e54abe942099a49a5864159f9ee8f7c5a38b3b384e"
+
+[[files]]
+path = "semantic/source/projects-rig-src-engine-timeout-rs.md"
+digest = "sha256:0607eaf533fe57574d655796f02cba823855b47ff26b8bda8fecac976717bf9f"
+
+[[files]]
+path = "semantic/source/projects-rig-src-engine-transport-rs.md"
+digest = "sha256:aa9c7e1cc92720080dc8adaed9b84f3e06604fc787ceb9ba31f2da302ae1bd81"
+
+[[files]]
+path = "semantic/source/projects-rig-src-lib-rs.md"
+digest = "sha256:6f826b2602bd2d48454a70e451452cfec28e609880cf0f14c98d7b64e2c1ee46"
+
+[[files]]
+path = "semantic/source/projects-rig-src-pins-baseline-rs.md"
+digest = "sha256:ed35a25cfcf983016341620e266ac8448fbb06f5fe0a2defe8ef2308e3d4c63f"
+
+[[files]]
+path = "semantic/source/projects-rig-src-pins-mod-rs.md"
+digest = "sha256:983dc3203bd7fbc0d6b81e8d091afcf3a93d7a9ff8ffcf5fe7edc713ad246659"
+
+[[files]]
+path = "semantic/source/projects-rig-src-report-builder-rs.md"
+digest = "sha256:4d1067720ab2b9ad6c1a7f18d57a86bbd1d0e2e70d856683b1efb9d3da09d2f4"
+
+[[files]]
+path = "semantic/source/projects-rig-src-report-envelope-rs.md"
+digest = "sha256:a1c702d52794936da041bfba3a440057487a2ecbc75b04bf4a9161e558f1a853"
+
+[[files]]
+path = "semantic/source/projects-rig-src-report-finding-rs.md"
+digest = "sha256:936aa6207db5b2f63018a3ec7c9b5ac62cab6db2215a3911a437e941ac78f7a0"
+
+[[files]]
+path = "semantic/source/projects-rig-src-report-mod-rs.md"
+digest = "sha256:26206500f0c82a3c949af12f24f83cb560df3f9ffa6b38c2ce02e30f2e06dce0"
+
+[[files]]
+path = "semantic/source/projects-rig-src-scenario-interp-rs.md"
+digest = "sha256:ffcfe1e0af1e278d18ea676d92e6486c0c06c9e14e4e705d164e490df398e745"
+
+[[files]]
+path = "semantic/source/projects-rig-src-scenario-load-rs.md"
+digest = "sha256:d41cbb8ecbdedca2eb5343a10ce3372280ff856df8f1fca9cd8dfa1937f1c651"
+
+[[files]]
+path = "semantic/source/projects-rig-src-scenario-mod-rs.md"
+digest = "sha256:a9665ab973f7537b0f61c0df9018ea8a71efbb103c6dec684adc579efbfcfa92"
+
+[[files]]
+path = "semantic/source/projects-rig-src-scenario-record-rs.md"
+digest = "sha256:fc48f4784080f334291ebe7cf93c69e201b63d4b225c5894e9bce7a50a46309b"
+
+[[files]]
+path = "semantic/source/projects-rig-src-scenario-step-rs.md"
+digest = "sha256:2911cc15fec322a0f29f811b7521aa7ad1a340558ff42788263d87a810c8ff21"
+
+[[files]]
+path = "semantic/source/projects-rig-src-vat-rs.md"
+digest = "sha256:42fe261200a3cf1017c90cad5d1b9e397a47a7029c4a4aa14524369fb2fee238"
+
+[[files]]
+path = "semantic/source/projects-rig-src-verdict-rs.md"
+digest = "sha256:452fbb62ef6078ed03fb1e40c98f106773a47e4874988714611ad0b44e6f1241"
+
+[[files]]
+path = "semantic/source/projects-rig-tests-engine_e2e-rs.md"
+digest = "sha256:02f7eed2894ec86474d96722f69145287033fe2a8ce112fe6d2aae7560d77f73"

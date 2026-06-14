@@ -23,10 +23,8 @@ Public API manifest for `projects/meter/src/report/env.rs` generated from AST du
 |------|--------|------|------------|------|-----------|
 | `detect` | projects/meter/src/report/env.rs | function | pub | 18 | detect() -> EnvBlock |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/env.rs -->
 ````rust
 //! [`EnvBlock::detect`] — side-effect-free environment detection surfaced in
 //! every report.
@@ -39,6 +37,7 @@ use std::process::Command;
 
 use super::envelope::EnvBlock;
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-env-rs.md#source
 impl EnvBlock {
     /// Detect the current environment. Read-only: probes tool presence via
     /// `--version` invocations and compile-time `cfg!` for the sampler backend.
@@ -124,7 +123,7 @@ mod tests {
 changes:
   - path: projects/meter/src/report/env.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/env.rs` captured during meter full-codegen standardization.

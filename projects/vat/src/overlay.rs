@@ -49,6 +49,10 @@ pub fn clone_tree(src: &Path, dst: &Path) -> Result<()> {
             .with_context(|| format!("create parent of {}", dst.display()))?;
     }
 
+    if destination_is_inside_source(src, dst) {
+        return copy_recursive(src, dst);
+    }
+
     #[cfg(target_os = "macos")]
     {
         clonefile_macos(src, dst)
@@ -103,7 +107,11 @@ fn clone_tree_portable(src: &Path, dst: &Path) -> Result<()> {
 /// Last-resort recursive copy (used as the universal fallback on every host).
 fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
-    for entry in WalkDir::new(src).min_depth(1) {
+    for entry in WalkDir::new(src)
+        .min_depth(1)
+        .into_iter()
+        .filter_entry(|entry| should_copy_entry(src, dst, entry.path()))
+    {
         let entry = entry?;
         let rel = entry.path().strip_prefix(src)?;
         let target = dst.join(rel);
@@ -117,6 +125,30 @@ fn copy_recursive(src: &Path, dst: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn destination_is_inside_source(src: &Path, dst: &Path) -> bool {
+    match (
+        std::fs::canonicalize(src),
+        dst.parent()
+            .and_then(|parent| std::fs::canonicalize(parent).ok()),
+    ) {
+        (Ok(src), Some(dst_parent)) => dst_parent.starts_with(src),
+        _ => false,
+    }
+}
+
+fn should_copy_entry(src: &Path, dst: &Path, path: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(src) else {
+        return true;
+    };
+    if rel
+        .components()
+        .any(|component| component.as_os_str() == ".vat")
+    {
+        return false;
+    }
+    !(path.starts_with(dst) || dst.starts_with(path))
 }
 
 /// Walk `root` and record a stat manifest of every regular file. Symlinks are
@@ -186,5 +218,32 @@ pub fn save_manifest(path: &Path, m: &Manifest) -> Result<()> {
 pub fn load_manifest(path: &Path) -> Result<Manifest> {
     let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
     serde_json::from_slice(&bytes).context("parse manifest")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repo_local_vat_store_is_not_cloned_into_rootfs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).expect("git dir");
+        std::fs::write(repo.join("source.txt"), "kept").expect("source file");
+        std::fs::create_dir_all(repo.join(".vat/vats/old/rootfs")).expect("old vat");
+        std::fs::write(repo.join(".vat/vats/old/rootfs/leak.txt"), "skip").expect("vat file");
+
+        let dst = repo.join(".vat/vats/new/rootfs");
+        clone_tree(&repo, &dst).expect("clone tree");
+
+        assert_eq!(
+            std::fs::read_to_string(dst.join("source.txt")).expect("copied file"),
+            "kept"
+        );
+        assert!(
+            !dst.join(".vat").exists(),
+            "repo-local vat state must never be copied into a vat rootfs"
+        );
+    }
 }
 // CODEGEN-END

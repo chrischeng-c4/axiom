@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Tokenizers for `text` fields.
 //!
 //! Each [`Analyzer`] variant maps to one tokenizer impl. Schemas pick
@@ -23,6 +25,7 @@ pub const DEFAULT_NGRAM_MIN: usize = 2;
 pub const DEFAULT_NGRAM_MAX: usize = 3;
 
 /// Tokenize `text` with the chosen `analyzer`.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn tokenize(text: &str, analyzer: Analyzer) -> Vec<String> {
     match analyzer {
         Analyzer::WhitespaceLower => {
@@ -35,10 +38,12 @@ pub fn tokenize(text: &str, analyzer: Analyzer) -> Vec<String> {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub(crate) fn for_whitespace_lower(text: &str, mut emit: impl FnMut(String)) -> u32 {
     for_whitespace_lower_cow(text, |tok| emit(tok.into_owned()))
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub(crate) fn for_whitespace_lower_cow<'a>(
     mut text: &'a str,
     mut emit: impl FnMut(Cow<'a, str>),
@@ -156,3 +161,4 @@ mod tests {
         assert!(tokens.len() >= 1);
     }
 }
+// CODEGEN-END

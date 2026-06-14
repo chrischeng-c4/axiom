@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1
+# Production image for lumen — downloads a PUBLISHED release binary (no source
+# tree, no Rust toolchain) into a distroless runtime. Tiny + minimal attack
+# surface (no shell/apt/curl in the final image). The sibling `Dockerfile` is
+# the from-source build for dev / CI.
+#
+#   docker build -f projects/lumen/Dockerfile.release -t lumen:0.3.62 \
+#     --build-arg LUMEN_VERSION=lumen@0.3.62 .
+#
+# The image arch (BuildKit TARGETARCH) selects the matching linux tarball:
+#   --platform linux/amd64 → x86_64-unknown-linux-gnu
+#   --platform linux/arm64 → aarch64-unknown-linux-gnu
+
+# ---- stage 1: fetch + verify the release binary (needs shell + curl) --------
+FROM debian:bookworm-slim AS fetch
+ARG LUMEN_VERSION=lumen@0.3.62
+ARG LUMEN_REPO=chrischeng-c4/axiom
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) t=x86_64-unknown-linux-gnu ;; \
+      arm64) t=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    base="https://github.com/${LUMEN_REPO}/releases/download/${LUMEN_VERSION}"; \
+    curl -fsSL "${base}/lumen-${t}.tar.gz"        -o /tmp/lumen.tgz; \
+    curl -fsSL "${base}/lumen-${t}.tar.gz.sha256" -o /tmp/lumen.sha256; \
+    echo "$(cat /tmp/lumen.sha256)  /tmp/lumen.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/lumen.tgz -C /tmp --strip-components=1 "lumen-${t}/lumen"; \
+    /tmp/lumen --version
+
+# ---- stage 2: distroless runtime — only the binary + CA certs, nonroot -------
+# cc-debian12 carries glibc + libgcc (lumen is a dynamically-linked glibc Rust
+# binary; openssl was removed so no libssl is needed). :nonroot = uid 65532.
+# A single tokio binary handles SIGTERM itself (graceful drain) and spawns no
+# children, so no tini/init shim is required.
+FROM gcr.io/distroless/cc-debian12:nonroot
+COPY --from=fetch /tmp/lumen /usr/local/bin/lumen
+# 7373 = client API. The write log lives in NATS, not in this container.
+EXPOSE 7373
+ENTRYPOINT ["/usr/local/bin/lumen"]
+CMD ["serve"]

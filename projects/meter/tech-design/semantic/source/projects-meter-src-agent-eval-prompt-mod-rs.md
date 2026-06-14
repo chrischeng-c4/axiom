@@ -25,10 +25,8 @@ Public API manifest for `projects/meter/src/agent_eval/prompt/mod.rs` generated 
 | `registry` | projects/meter/src/agent_eval/prompt/mod.rs | module | pub | 6 |  |
 | `template` | projects/meter/src/agent_eval/prompt/mod.rs | module | pub | 7 |  |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/agent_eval/prompt/mod.rs -->
 ````rust
 //! Prompt template system for agent evaluation
 
@@ -48,7 +46,7 @@ pub use template::{FewShotExample, PromptContext, PromptSection, PromptTemplate,
 changes:
   - path: projects/meter/src/agent_eval/prompt/mod.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/agent_eval/prompt/mod.rs` captured during meter full-codegen standardization.

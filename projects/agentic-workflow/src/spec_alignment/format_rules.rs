@@ -43,6 +43,7 @@ const REQUIRED_CODE_BLOCK_TYPES: &[(&str, &str)] = &[
     ("design-token", "yaml"), // was "json" — W3C DTCG as YAML
     ("runtime-image", "yaml"),
     ("deployment", "yaml"),
+    ("tool-contract", "yaml"), // AW -> native vat/rig/meter/guard/arena manifest bridge
     ("mindmap", "mermaid"),
     ("requirements", "mermaid"), // Mermaid Plus requirementDiagram (SysML v1.6)
     ("unit-test", "mermaid"),    // Mermaid Plus requirementDiagram with verifies

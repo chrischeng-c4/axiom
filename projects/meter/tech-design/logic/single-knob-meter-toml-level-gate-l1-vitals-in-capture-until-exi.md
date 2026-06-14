@@ -1,0 +1,316 @@
+---
+id: meter-capture-vitals-contract
+summary: Single-knob meter.toml (level + [gate]) measurement contract, L1 vitals in capture (getrusage cpu/RSS + wall), until-exit sampling window with opaque --drive composition seam, collapsed artifact output, and removal of dead stress/load-test residue.
+fill_sections: [logic, config, cli, unit-test]
+capability_refs:
+  - id: runtime-resource-attribution
+    role: primary
+    gap: capture-vitals-and-measurement-contract
+    claim: capture-vitals-and-measurement-contract
+    coverage: full
+    rationale: "Closes the README known-limit 'Memory/RSS are not public gates yet' via L1 vitals findings plus declarative meter.toml [gate] adjudication."
+  - id: legacy-carried-internals
+    role: contributes
+    gap: stress-residue-prune
+    claim: stress-residue-prune
+    coverage: full
+    rationale: "Removes dead load-test residue (StressMetrics, TestType::Stress, reporter RPS table, orphaned fuzz_http) so the codebase stops advertising a capability meter must not have."
+---
+
+# TD: meter capture vitals + single-knob measurement contract
+
+## Logic
+<!-- type: logic lang: mermaid -->
+
+```mermaid
+---
+id: capture-vitals-flow
+entry: start
+nodes:
+  start:           { kind: start,    label: "meter run/profile invoked" }
+  load_config:     { kind: process,  label: "Load optional meter.toml" }
+  resolve_level:   { kind: process,  label: "Resolve level: CLI flag > meter.toml > default vitals" }
+  level_off:       { kind: decision, label: "level == off?" }
+  spawn_target:    { kind: process,  label: "Spawn target child" }
+  want_stacks:     { kind: decision, label: "level >= sample?" }
+  attach_sampler:  { kind: process,  label: "Attach stack sampler to child pid" }
+  has_drive:       { kind: decision, label: "--drive command given?" }
+  exec_driver:     { kind: process,  label: "Exec opaque driver command" }
+  wait_driver:     { kind: process,  label: "Driver exit ends measurement window" }
+  wait_child:      { kind: process,  label: "Wait child exit, optional --duration-cap" }
+  sampler_on:      { kind: decision, label: "Sampler attached?" }
+  fold_stacks:     { kind: process,  label: "Fold sampled stacks into hotspot findings" }
+  write_collapsed: { kind: process,  label: "Write collapsed artifact under .meter" }
+  read_vitals:     { kind: process,  label: "Read getrusage cpu + peak RSS + wall clock" }
+  emit_vital:      { kind: process,  label: "Emit Finding kind=vital" }
+  gate_check:      { kind: decision, label: "[gate] threshold breached?" }
+  gate_finding:    { kind: process,  label: "Severity >= Medium finding + escalate agent_prompt to --level sample" }
+  build_report:    { kind: process,  label: "Fold worst-wins MeterReport" }
+  done:            { kind: terminal, label: "Exit per ladder 0-5" }
+  skip:            { kind: terminal, label: "No measurement performed" }
+edges:
+  - { from: start,           to: load_config }
+  - { from: load_config,     to: resolve_level }
+  - { from: resolve_level,   to: level_off }
+  - { from: level_off,       to: skip,            label: "yes" }
+  - { from: level_off,       to: spawn_target,    label: "no" }
+  - { from: spawn_target,    to: want_stacks }
+  - { from: want_stacks,     to: attach_sampler,  label: "yes" }
+  - { from: want_stacks,     to: has_drive,       label: "no" }
+  - { from: attach_sampler,  to: has_drive }
+  - { from: has_drive,       to: exec_driver,     label: "yes" }
+  - { from: exec_driver,     to: wait_driver }
+  - { from: has_drive,       to: wait_child,      label: "no" }
+  - { from: wait_driver,     to: sampler_on }
+  - { from: wait_child,      to: sampler_on }
+  - { from: sampler_on,      to: fold_stacks,     label: "yes" }
+  - { from: sampler_on,      to: read_vitals,     label: "no" }
+  - { from: fold_stacks,     to: write_collapsed }
+  - { from: write_collapsed, to: read_vitals }
+  - { from: read_vitals,     to: emit_vital }
+  - { from: emit_vital,      to: gate_check }
+  - { from: gate_check,      to: gate_finding,    label: "yes" }
+  - { from: gate_check,      to: build_report,    label: "no" }
+  - { from: gate_finding,    to: build_report }
+  - { from: build_report,    to: done }
+---
+flowchart TD
+    start([meter run/profile invoked]) --> load_config[Load optional meter.toml]
+    load_config --> resolve_level[Resolve level: CLI flag > meter.toml > default vitals]
+    resolve_level --> level_off{level == off?}
+    level_off -->|yes| skip([No measurement performed])
+    level_off -->|no| spawn_target[Spawn target child]
+    spawn_target --> want_stacks{level >= sample?}
+    want_stacks -->|yes| attach_sampler[Attach stack sampler to child pid]
+    want_stacks -->|no| has_drive{--drive command given?}
+    attach_sampler --> has_drive
+    has_drive -->|yes| exec_driver[Exec opaque driver command]
+    exec_driver --> wait_driver[Driver exit ends measurement window]
+    has_drive -->|no| wait_child[Wait child exit, optional --duration-cap]
+    wait_driver --> sampler_on{Sampler attached?}
+    wait_child --> sampler_on
+    sampler_on -->|yes| fold_stacks[Fold sampled stacks into hotspot findings]
+    sampler_on -->|no| read_vitals[Read getrusage cpu + peak RSS + wall clock]
+    fold_stacks --> write_collapsed[Write collapsed artifact under .meter]
+    write_collapsed --> read_vitals
+    read_vitals --> emit_vital[Emit Finding kind=vital]
+    emit_vital --> gate_check{[gate] threshold breached?}
+    gate_check -->|yes| gate_finding[Severity >= Medium finding + escalate agent_prompt to --level sample]
+    gate_check -->|no| build_report[Fold worst-wins MeterReport]
+    gate_finding --> build_report
+    build_report --> done([Exit per ladder 0-5])
+```
+## Config
+<!-- type: config lang: yaml -->
+
+```yaml
+$schema: "https://json-schema.org/draft/2020-12/schema"
+$id: "meter-toml"
+title: "meter.toml per-project measurement contract"
+type: object
+additionalProperties: false
+properties:
+  level:
+    type: string
+    enum: ["off", "vitals", "sample", "hooks", "deep"]
+    default: "vitals"
+    description: "Single instrumentation knob. Cumulative ladder; each level bundles its own defaults. off=no measurement; vitals=getrusage cpu/wall/peak-RSS, zero overhead; sample=vitals plus sampled call stacks (250Hz, until-exit window, flamegraph and collapsed artifacts); hooks and deep parse but surface a not-yet-implemented error until the L3/L4 epic lands. Precedence: CLI flags over meter.toml over level-bundled defaults."
+  gate:
+    type: object
+    additionalProperties: false
+    description: "Optional per-project resource gate. Only per-project facts not derivable from level. Absent table means report-only, no adjudication. A latency-percentile key must never be added; traffic metrics belong to external drivers."
+    properties:
+      max_peak_rss_mb:
+        type: integer
+        minimum: 0
+        default: 0
+        description: "Peak RSS ceiling in MiB for the measured child; 0 disables. Breach emits a severity>=Medium finding and a non-zero exit per the existing ladder."
+      max_cpu_time_ms:
+        type: integer
+        minimum: 0
+        default: 0
+        description: "Total cpu time ceiling in milliseconds (user+sys via getrusage); 0 disables."
+```
+## CLI
+<!-- type: cli lang: yaml -->
+
+```yaml
+commands:
+  - name: meter profile
+    forms:
+      - usage: "meter profile --bin|--example|--bench|--exec <target> [--level off|vitals|sample|hooks|deep] [--duration-cap <secs>] [--hz <rate>] [--drive <cmd>] [--fail-hot <pct>]"
+        behavior:
+          - "Resolves the effective level from CLI flag, then meter.toml, then the built-in default vitals."
+          - "Default measurement window lasts until the target child exits; --duration-cap optionally bounds it."
+          - "--drive execs an opaque driver command after spawning the target; driver exit ends the measurement window; driver argv is recorded in the report; meter never interprets or implements the driver's traffic."
+          - "At level vitals emits kind=vital findings (cpu_time_ms, wall_time_ms, peak_rss_bytes from getrusage) with no sampler attach."
+          - "At level sample additionally attaches the stack sampler, folds hotspot findings, and writes the collapsed artifact under .meter referenced from the report."
+          - "Levels hooks and deep parse but exit with a not-yet-implemented usage error naming the L3/L4 instrumentation epic."
+          - "No rps, concurrency, or connections flag exists anywhere; load generation is permanently out of charter."
+  - name: meter run
+    usage: "meter run [--target <path>] [--level off|vitals|sample|hooks|deep] [--skip-test|--skip-bench|--skip-profile] [--profile-bin|--profile-example <name>] [--drive <cmd>]"
+    behavior:
+      - "Composite worst-wins sweep honors the same level resolution and emits kind=vital findings for the profiled child."
+      - "meter.toml [gate] breaches fold as severity>=Medium findings driving the existing exit ladder."
+      - "On a gate breach the envelope agent_prompt suggests re-running with --level sample to locate the cost."
+```
+## Unit Test
+<!-- type: unit-test lang: mermaid -->
+
+```mermaid
+---
+id: capture-vitals-verification
+requirements:
+  config_precedence:
+    id: R1
+    text: "level resolves CLI flag over meter.toml over default vitals; level-only meter.toml is valid; absent file keeps today's defaults"
+    kind: functional
+    risk: high
+    verify: test
+  vitals_findings:
+    id: R2
+    text: "capture emits kind=vital findings with cpu_time_ms, wall_time_ms, peak_rss_bytes after child wait, with no sampler attach at level vitals"
+    kind: functional
+    risk: high
+    verify: test
+  gate_adjudication:
+    id: R3
+    text: "gate breach emits severity>=Medium finding, non-zero exit per ladder, and agent_prompt suggesting --level sample"
+    kind: functional
+    risk: high
+    verify: test
+  until_exit_window:
+    id: R4
+    text: "default sampling window lasts until child exit; --duration-cap bounds it; a self-terminating target is not killed mid-run; --drive lifetime ends the window and driver argv is recorded"
+    kind: functional
+    risk: medium
+    verify: test
+  collapsed_artifact:
+    id: R5
+    text: "collapsed artifact is written under .meter and referenced from the report at level>=sample"
+    kind: functional
+    risk: medium
+    verify: test
+  stress_residue_gone:
+    id: R6
+    text: "StressMetrics, TestType::Stress, with_stress_metrics, reporter RPS table, and orphaned fuzz_http are removed and the workspace still builds and tests green"
+    kind: design-constraint
+    risk: low
+    verify: inspection
+elements:
+  test_config_precedence:
+    kind: test
+    type: "rs/#[test]"
+  test_vitals_emission:
+    kind: test
+    type: "rs/#[test]"
+  test_gate_breach_exit:
+    kind: test
+    type: "rs/#[test]"
+  test_window_semantics:
+    kind: test
+    type: "rs/#[test]"
+  test_collapsed_artifact:
+    kind: test
+    type: "rs/#[test]"
+  inspect_residue_grep:
+    kind: inspection
+    type: "rs/grep"
+relations:
+  - { from: test_config_precedence,  verifies: config_precedence }
+  - { from: test_vitals_emission,    verifies: vitals_findings }
+  - { from: test_gate_breach_exit,   verifies: gate_adjudication }
+  - { from: test_window_semantics,   verifies: until_exit_window }
+  - { from: test_collapsed_artifact, verifies: collapsed_artifact }
+  - { from: inspect_residue_grep,    verifies: stress_residue_gone }
+---
+requirementDiagram
+    requirement R1 {
+      id: R1
+      text: "level precedence CLI over toml over default"
+      risk: high
+      verifymethod: test
+    }
+    requirement R2 {
+      id: R2
+      text: "kind=vital findings from getrusage after child wait"
+      risk: high
+      verifymethod: test
+    }
+    requirement R3 {
+      id: R3
+      text: "gate breach severity and exit ladder plus escalation prompt"
+      risk: high
+      verifymethod: test
+    }
+    requirement R4 {
+      id: R4
+      text: "until-exit window, duration cap, drive lifetime"
+      risk: medium
+      verifymethod: test
+    }
+    requirement R5 {
+      id: R5
+      text: "collapsed artifact written and referenced"
+      risk: medium
+      verifymethod: test
+    }
+    requirement R6 {
+      id: R6
+      text: "stress residue removed, workspace green"
+      risk: low
+      verifymethod: inspection
+    }
+    element test_config_precedence {
+      type: "rs/#[test]"
+    }
+    element test_vitals_emission {
+      type: "rs/#[test]"
+    }
+    element test_gate_breach_exit {
+      type: "rs/#[test]"
+    }
+    element test_window_semantics {
+      type: "rs/#[test]"
+    }
+    element test_collapsed_artifact {
+      type: "rs/#[test]"
+    }
+    element inspect_residue_grep {
+      type: "rs/grep"
+    }
+    test_config_precedence - verifies -> R1
+    test_vitals_emission - verifies -> R2
+    test_gate_breach_exit - verifies -> R3
+    test_window_semantics - verifies -> R4
+    test_collapsed_artifact - verifies -> R5
+    inspect_residue_grep - verifies -> R6
+```
+
+# Reviews
+
+### Review 1
+**Verdict:** needs-revision
+
+- [logic] vitals-only runs must not pass through stack folding: edges route `want_stacks --no--> has_drive` but both wait nodes feed `fold_stacks -> write_collapsed` unconditionally, so a `level=vitals` run (no sampler attached) would fold stacks and write a collapsed artifact it cannot have. Add a post-window decision (sampler attached?) so the vitals path goes straight to `read_vitals`.
+- [config] applicable and consistent with the charter (single knob plus optional gate, no traffic keys); no change required.
+- [cli] applicable; flags match the config contract and the no-load-flags constraint; no change required.
+- [unit-test] applicable; R1-R6 cover the acceptance criteria including the residue prune inspection; no change required.
+
+### Review 2
+**Verdict:** approved
+
+- [logic] revision verified: `sampler_on` post-window decision added; the vitals path now goes `wait_* -> sampler_on --no--> read_vitals`, and fold/collapsed only run when the sampler was attached. Flow matches the charter (observe one spawned process; driver opaque; no load generation).
+- [config] unchanged and correct: single `level` knob plus optional `[gate]` with only per-project ceilings; explicit prohibition on latency-percentile keys.
+- [cli] unchanged and correct: precedence, until-exit window, --drive opacity, hooks/deep not-yet-implemented error, and the no-load-flags constraint are all encoded.
+- [unit-test] unchanged and correct: R1-R6 map one verification element per acceptance criterion including the R6 residue-prune inspection.
+
+# Reviews
+
+### Review 1
+**Verdict:** approved
+
+- [logic] contract-complete: level resolution, off short-circuit, sampler attach condition, drive-vs-child window, post-window sampler_on branch, vitals emission, gate adjudication with escalation prompt, and worst-wins fold are all encoded as nodes/edges; implementable without guessing.
+- [config] contract-complete: JSON Schema pins the level enum (quoted "off"), gate ceilings with 0-disables semantics, additionalProperties: false guards against traffic-key creep, and the description encodes the永不加 latency-percentile constraint.
+- [cli] contract-complete: both verbs' usage strings and behavior lines pin precedence, window semantics, --drive opacity, hooks/deep not-yet-implemented error, and the absence of load-generation flags.
+- [unit-test] contract-complete: R1-R6 each verified by a named element; risk and verify method declared; matches WI #3 acceptance criteria one-to-one.

@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Differential test for the query planner: for randomized corpora and every
 //! specialized query shape (term / range / boolean AND / filtered ranked search
 //! / sort-by-field), the planner's result SET must equal a brute-force
@@ -159,3 +161,4 @@ proptest! {
         }
     }
 }
+// CODEGEN-END
