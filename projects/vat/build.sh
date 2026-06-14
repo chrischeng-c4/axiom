@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# <HANDWRITE gap="project-root-build-script" tracker="#4158" reason="project-specific aw:build dispatch contract">
+# SPEC-MANAGED: projects/vat/tech-design/semantic/vat-build-script.md#text-source-unit
+# CODEGEN-BEGIN
 set -euo pipefail
 
 usage() {
@@ -92,4 +93,4 @@ git tag -a "$TAG" -m "Release ${TAG}"
 
 echo ""
 echo "Build complete. vat ${TAG} installed and tagged."
-# </HANDWRITE>
+# CODEGEN-END

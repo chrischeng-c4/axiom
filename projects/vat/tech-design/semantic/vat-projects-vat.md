@@ -25,7 +25,7 @@ semantic_domain:
     source_units:
       - path: "projects/vat/build.sh"
         language: "shell"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["source_unit"]
         source_evidence_node:
           layer: "project-root"
@@ -35,7 +35,7 @@ semantic_domain:
           domain: "projects/vat"
       - path: "projects/vat/install.sh"
         language: "shell"
-        ownership_state: "handwrite"
+        ownership_state: "codegen"
         generator_primitives: ["source_unit"]
         source_evidence_node:
           layer: "project-root"
@@ -65,16 +65,16 @@ changes:
     action: modify
     section: schema
     description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+      Existing source behavior is delegated to the lossless build-script text source unit.
+    impl_mode: codegen
     replaces:
       - "<handwrite-tracker:#4158>"
   - path: "projects/vat/install.sh"
     action: modify
     section: schema
     description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+      Existing source behavior is delegated to the lossless install-script text source unit.
+    impl_mode: codegen
     replaces:
       - "<handwrite-tracker:#4158>"
   - path: "projects/vat/llms.txt"

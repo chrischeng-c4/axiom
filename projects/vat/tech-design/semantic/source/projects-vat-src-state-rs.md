@@ -133,6 +133,20 @@ pub struct ServiceRunRecord {
     pub command: Vec<String>,
     pub status: ProcessStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepare_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepare_duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ready_duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exported_env: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
@@ -189,6 +203,10 @@ pub struct TestRunEvidence {
     pub services: Vec<ServiceRunRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<RunnerRunRecord>,
+    /// Every runner of a concurrent `vat run a b ...` set; `runner` keeps the
+    /// first record for backward compatibility. Empty on legacy metadata.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runners: Vec<RunnerRunRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<ArtifactRecord>,
 }
@@ -288,7 +306,6 @@ pub struct VatState {
     pub gpu: GpuInfo,
     pub events_tail: Vec<Event>,
 }
-
 `````
 
 ## Changes

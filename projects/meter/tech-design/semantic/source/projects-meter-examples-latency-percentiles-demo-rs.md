@@ -21,12 +21,12 @@ Public API manifest for `projects/meter/examples/latency_percentiles_demo.rs` ge
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/examples/latency_percentiles_demo.rs -->
 ````rust
-use meter::baseline::{FileBaselineStore, PercentileType, RegressionDetector, RegressionThresholds};
+use meter::baseline::{
+    FileBaselineStore, PercentileType, RegressionDetector, RegressionThresholds,
+};
 use meter::benchmark::{AdaptiveBenchmarkConfig, BenchmarkEnvironment, Benchmarker};
 use std::thread;
 use std::time::Duration;
@@ -319,7 +319,7 @@ fn main() {
 changes:
   - path: projects/meter/examples/latency_percentiles_demo.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/examples/latency_percentiles_demo.rs` captured during meter full-codegen standardization.

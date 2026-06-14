@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
-# <HANDWRITE gap="project-root-install-script" tracker="#4158" reason="project-specific repository installer dispatch contract">
+# SPEC-MANAGED: projects/meter/tech-design/semantic/meter-install-script.md#text-source-unit
+# CODEGEN-BEGIN
 # meter installer — downloads the right prebuilt binary from GitHub
 # Releases and drops it on your PATH.
 #
@@ -159,4 +160,4 @@ if "${INSTALL_DIR}/meter" --version >/dev/null 2>&1; then
   ver="$("${INSTALL_DIR}/meter" --version 2>/dev/null || echo unknown)"
   say "ready: ${ver}"
 fi
-# </HANDWRITE>
+# CODEGEN-END

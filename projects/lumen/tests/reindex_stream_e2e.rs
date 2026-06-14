@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! `POST /collections/{id}/reindex/stream` — NDJSON in, NDJSON out.
 
 use std::sync::Arc;
@@ -157,3 +159,4 @@ async fn stream_requires_write_role_under_auth() {
         .await;
     resp.assert_status_forbidden();
 }
+// CODEGEN-END

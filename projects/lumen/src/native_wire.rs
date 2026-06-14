@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Native binary search wire.
 //!
 //! The public HTTP/JSON API remains lumen's integration surface. This module is
@@ -32,12 +34,14 @@ const FAST_TERM_RANGE: u8 = 3;
 const FAST_RESPONSE: u8 = 0x80;
 const FAST_OK: u8 = 0;
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NativeSearchRequest {
     pub collection_id: String,
     pub request: SearchRequest,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "status")]
 pub enum NativeSearchResponse {
@@ -46,6 +50,7 @@ pub enum NativeSearchResponse {
 }
 
 /// Serve native binary search on an already-bound listener.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub async fn serve_search(listener: TcpListener, engine: Arc<Engine>) -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await.context("native accept")?;
@@ -58,6 +63,7 @@ pub async fn serve_search(listener: TcpListener, engine: Arc<Engine>) -> Result<
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[cfg(unix)]
 pub async fn serve_unix_search(listener: UnixListener, engine: Arc<Engine>) -> Result<()> {
     loop {
@@ -74,6 +80,7 @@ pub async fn serve_unix_search(listener: UnixListener, engine: Arc<Engine>) -> R
 /// Encode a prepared search frame that can be written repeatedly on a persistent
 /// connection. This is the native analogue of pg's prepared statement path in
 /// the competitive gate.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn encode_search_frame(collection_id: &str, request: &SearchRequest) -> Result<Vec<u8>> {
     encode_frame(&NativeSearchRequest {
         collection_id: collection_id.to_string(),
@@ -81,6 +88,7 @@ pub fn encode_search_frame(collection_id: &str, request: &SearchRequest) -> Resu
     })
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn encode_term_frame(
     collection_id: &str,
     field: &str,
@@ -95,6 +103,7 @@ pub fn encode_term_frame(
     frame_payload(payload)
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn encode_range_frame(
     collection_id: &str,
     field: &str,
@@ -111,6 +120,7 @@ pub fn encode_range_frame(
     frame_payload(payload)
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn encode_term_range_frame(
     collection_id: &str,
     term_field: &str,
@@ -132,6 +142,7 @@ pub fn encode_term_range_frame(
 }
 
 /// Send one already-encoded native search request and decode its response.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub async fn search_prepared<S>(stream: &mut S, frame: &[u8]) -> Result<SearchResponse>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -524,3 +535,4 @@ mod tests {
         assert_eq!(fast.hits[0].external_id, "a");
     }
 }
+// CODEGEN-END

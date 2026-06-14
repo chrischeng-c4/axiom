@@ -28,10 +28,8 @@ Public API manifest for `projects/meter/src/report/persist.rs` generated from AS
 | `write_last_report` | projects/meter/src/report/persist.rs | function | pub | 28 | write_last_report(report: &MeterReport) -> std::io::Result<PathBuf> |
 | `write_last_report_in` | projects/meter/src/report/persist.rs | function | pub | 35 | write_last_report_in(base: impl AsRef<Path>, report: &MeterReport) -> std::io::Result<PathBuf> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/report/persist.rs -->
 ````rust
 //! Persistence of the last report to `.meter/last-report.json`.
 //!
@@ -48,6 +46,7 @@ use super::envelope::MeterReport;
 pub const LAST_REPORT_REL: &str = ".meter/last-report.json";
 
 /// Resolve the absolute cache path under `base` (typically the cwd).
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-persist-rs.md#source
 pub fn last_report_path(base: impl AsRef<Path>) -> PathBuf {
     base.as_ref().join(LAST_REPORT_REL)
 }
@@ -56,13 +55,18 @@ pub fn last_report_path(base: impl AsRef<Path>) -> PathBuf {
 ///
 /// Best-effort: a write failure is surfaced as `Err` but callers generally log
 /// it to stderr and continue — losing the cache never changes the verb's exit.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-persist-rs.md#source
 pub fn write_last_report(report: &MeterReport) -> std::io::Result<PathBuf> {
     let base = std::env::current_dir()?;
     write_last_report_in(&base, report)
 }
 
 /// Write `report` to `<base>/.meter/last-report.json`.
-pub fn write_last_report_in(base: impl AsRef<Path>, report: &MeterReport) -> std::io::Result<PathBuf> {
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-persist-rs.md#source
+pub fn write_last_report_in(
+    base: impl AsRef<Path>,
+    report: &MeterReport,
+) -> std::io::Result<PathBuf> {
     let path = last_report_path(&base);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -74,12 +78,14 @@ pub fn write_last_report_in(base: impl AsRef<Path>, report: &MeterReport) -> std
 }
 
 /// Read the persisted report from `<cwd>/.meter/last-report.json`, if present.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-persist-rs.md#source
 pub fn read_last_report() -> Option<MeterReport> {
     let base = std::env::current_dir().ok()?;
     read_last_report_in(&base)
 }
 
 /// Read the persisted report from `<base>/.meter/last-report.json`, if present.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-persist-rs.md#source
 pub fn read_last_report_in(base: impl AsRef<Path>) -> Option<MeterReport> {
     let path = last_report_path(&base);
     let data = std::fs::read_to_string(&path).ok()?;
@@ -137,7 +143,7 @@ mod tests {
 changes:
   - path: projects/meter/src/report/persist.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/report/persist.rs` captured during meter full-codegen standardization.

@@ -209,9 +209,7 @@ fn run_apply_inner(
     quiet: bool,
 ) -> crate::generate::Result<ApplyReport> {
     use crate::generate::frontmatter::extract_mermaid_plus_blocks;
-    use crate::generate::marker::{
-        insert_codegen_block, parse_codegen_blocks, replace_codegen_block,
-    };
+    use crate::generate::marker::{parse_codegen_blocks, replace_codegen_block};
     let _diagnostic_guard = ApplyDiagnosticsQuietGuard::enter(quiet);
     macro_rules! apply_diagnostic {
         ($($arg:tt)*) => {
@@ -284,8 +282,15 @@ fn run_apply_inner(
     // route a section's CODEGEN block to exactly one file rather than
     // duplicating the same block into all N. See `should_emit_section_to_entry`.
     let all_entries: Vec<ChangeEntry> = change_entries.clone();
-    let source_from_target_replays_whole_file =
-        source_from_target_directive(&spec_content).is_some();
+    // Whole-file regeneration covers both legacy source-from-target replay and
+    // the rust-source-unit (td_ast) path: in either case the `## Source` section
+    // owns the entire file, so apply must REPLACE the whole file rather than
+    // append a managed block beside pre-existing (unmanaged) content. Without
+    // this, a virgin file with no markers would be duplicated.
+    let source_from_target_replays_whole_file = source_from_target_directive(&spec_content)
+        .is_some()
+        || source_is_rust_source_unit(&spec_content)
+        || source_is_text_source_unit(&spec_content);
     let whole_file_source_targets: std::collections::BTreeSet<String> = all_entries
         .iter()
         .filter(|entry| {
@@ -604,12 +609,14 @@ fn run_apply_inner(
                 Some("e2e-test") if target_lang == crate::generate::marker::Lang::Rust => {
                     crate::generate::gen::rust::tests_gen::generate_e2e_tests(&spec_content).code
                 }
-                Some("source") => generate_source_section_code(
-                    &spec_content,
-                    &spec_path_str,
-                    Some(&entry.path),
-                    root,
-                ),
+                Some("source" | "rust-source-unit" | "text-source-unit") => {
+                    generate_source_section_code(
+                        &spec_content,
+                        &spec_path_str,
+                        Some(&entry.path),
+                        root,
+                    )
+                }
                 Some("runtime-image" | "deployment") => {
                     let section = entry.section_id.as_deref().unwrap_or("changes");
                     try_generate_operations_artifact(&spec_content, &entry, td_ast.as_ref())
@@ -654,6 +661,12 @@ fn run_apply_inner(
             } else {
                 generated_codegen_body(&generated_code, &spec_ref)
             };
+            let prepared_codegen = prepare_codegen_body_for_target(
+                &target_path,
+                entry.section_id.as_deref(),
+                &generated_body,
+            );
+            let generated_body = prepared_codegen.body.clone();
 
             if let Some(existing_block) = matching_block {
                 if is_whole_file_codegen_section(
@@ -663,8 +676,12 @@ fn run_apply_inner(
                     && entry.action == "modify"
                     && !is_whole_file_codegen_content(&file_content, &blocks)
                 {
-                    let with_block =
-                        insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    let with_block = insert_codegen_block_for_target(
+                        "",
+                        &spec_ref,
+                        &prepared_codegen,
+                        target_lang,
+                    );
                     (with_block, 1)
                 } else {
                     // CODEGEN block exists. First, if the entry has a non-empty
@@ -710,7 +727,7 @@ fn run_apply_inner(
                 && entry.action == "modify"
             {
                 let with_block =
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang);
                 (with_block, 1)
             } else if is_whole_file_codegen_section(
                 entry.section_id.as_deref(),
@@ -724,7 +741,7 @@ fn run_apply_inner(
                 // If `replaces:` is present, keep the symbol-level path below
                 // so large files can be split into multiple source fragments.
                 let with_block =
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang);
                 (with_block, 1)
             } else if entry.section_id.as_deref() == Some("source")
                 && entry.replaces.is_empty()
@@ -736,7 +753,7 @@ fn run_apply_inner(
                 // promote it to a whole-file CODEGEN block even without the
                 // source-from-target directive used for preserve-body replay.
                 let with_block =
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang);
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang);
                 (with_block, 1)
             } else if !entry.replaces.is_empty() && entry.action == "modify" {
                 // `action: modify` + explicit `replaces:` — remove the named
@@ -758,11 +775,10 @@ fn run_apply_inner(
                         // lists names that don't exist or the file was
                         // already migrated. Fall back to ordinary append so
                         // gen-code is idempotent.
-                        let with_block = insert_codegen_block(
+                        let with_block = insert_codegen_block_for_target(
                             &file_content,
                             &spec_ref,
-                            &generated_body,
-                            None,
+                            &prepared_codegen,
                             target_lang,
                         );
                         (with_block, 1)
@@ -776,11 +792,10 @@ fn run_apply_inner(
                 {
                     insert_cargo_deps_block(&file_content, &spec_ref, &generated_body)
                 } else {
-                    insert_codegen_block(
+                    insert_codegen_block_for_target(
                         &file_content,
                         &spec_ref,
-                        &generated_body,
-                        None,
+                        &prepared_codegen,
                         target_lang,
                     )
                 };
@@ -793,13 +808,18 @@ fn run_apply_inner(
                 entry.section_id.as_deref().unwrap_or("changes")
             );
             let generated_body = generated_codegen_body(&generated_code, &spec_ref);
+            let prepared_codegen = prepare_codegen_body_for_target(
+                &target_path,
+                entry.section_id.as_deref(),
+                &generated_body,
+            );
             let new_content =
                 if entry.section_id.as_deref() == Some("manifest") && is_cargo_toml(&target_path) {
                     // Seed a minimal Cargo.toml skeleton so the block has a home.
                     let skeleton = "[dependencies]\n";
-                    insert_cargo_deps_block(skeleton, &spec_ref, &generated_body)
+                    insert_cargo_deps_block(skeleton, &spec_ref, &prepared_codegen.body)
                 } else {
-                    insert_codegen_block("", &spec_ref, &generated_body, None, target_lang)
+                    insert_codegen_block_for_target("", &spec_ref, &prepared_codegen, target_lang)
                 };
             (new_content, 1)
         };
@@ -879,7 +899,11 @@ fn is_whole_file_codegen_section(
     source_from_target_replays_whole_file: bool,
 ) -> bool {
     matches!(section, Some("runtime-image" | "deployment"))
-        || (source_from_target_replays_whole_file && matches!(section, Some("source")))
+        || (source_from_target_replays_whole_file
+            && matches!(
+                section,
+                Some("source" | "rust-source-unit" | "text-source-unit")
+            ))
 }
 
 fn is_whole_file_codegen_content(
@@ -3224,6 +3248,114 @@ pub struct MermaidPlusPayload;
 
         assert_eq!(source.matches("@spec ").count(), 1);
         assert!(!source.contains("#[derive(Debug)]\n/// @spec"));
+    }
+
+    #[test]
+    fn rust_source_unit_section_regenerates_from_td_fence_via_item_tree() {
+        // A `## Source` marked rust-source-unit (td_ast) regenerates the
+        // TD-embedded fence through the structured item-tree, WITHOUT reading
+        // the live target — the TD is the source of truth. Pass a target path
+        // that does not exist to prove no target read occurs.
+        let spec = r#"
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+```rust
+//! kept module doc
+pub struct Widget {
+    pub id: u64, // kept comment
+}
+```
+"#;
+        let source = generate_source_section_code(
+            spec,
+            ".aw/tech-design/projects/lumen/widget.md",
+            Some("projects/lumen/src/does-not-exist.rs"),
+            std::path::Path::new("/nonexistent-root"),
+        );
+
+        // Code round-tripped through the IR byte-for-byte (comments preserved),
+        // proving regeneration goes through rust_source_unit::regenerate.
+        assert!(source.contains("//! kept module doc"));
+        assert!(source.contains("pub id: u64, // kept comment"));
+        assert!(source.contains("pub struct Widget {"));
+        // Rust target → per-item @spec breadcrumb is added.
+        assert!(source.contains("#source"));
+    }
+
+    #[test]
+    fn text_source_unit_section_emits_td_fence_verbatim() {
+        // A `## Source` marked text-source-unit (opaque text, e.g. a shell
+        // script) emits the TD-embedded fence VERBATIM — no parsing, no Rust
+        // annotation, no target read. The TD is the source of truth.
+        let spec = r#"
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+echo "build ${1:-debug}"   # kept exactly
+```
+"#;
+        let source = generate_source_section_code(
+            spec,
+            ".aw/tech-design/projects/lumen/build-sh.md",
+            Some("projects/lumen/build.sh"),
+            std::path::Path::new("/nonexistent-root"),
+        );
+        // Fence content is emitted verbatim, trailing newline included (the
+        // file's final newline is preserved for byte-equivalence).
+        let expected =
+            "#!/usr/bin/env bash\nset -euo pipefail\necho \"build ${1:-debug}\"   # kept exactly\n";
+        assert_eq!(source, expected);
+        // No Rust @spec breadcrumbs injected into shell.
+        assert!(!source.contains("@spec"));
+    }
+
+    #[test]
+    fn text_source_unit_apply_preserves_script_shebang_line_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let spec_path = root.join("tech-design/build.md");
+        std::fs::create_dir_all(spec_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &spec_path,
+            r#"---
+id: build-script
+fill_sections: [text-source-unit, changes]
+---
+
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+echo "build ${1:-debug}"
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: build.sh
+    action: modify
+    section: text-source-unit
+    impl_mode: codegen
+```
+"#,
+        )
+        .unwrap();
+
+        run_apply_scoped_targets(&spec_path, root, false, &[root.to_path_buf()]).unwrap();
+
+        let generated = std::fs::read_to_string(root.join("build.sh")).unwrap();
+        assert!(generated.starts_with("#!/usr/bin/env bash\n# SPEC-MANAGED:"));
+        assert_eq!(generated.matches("#!/usr/bin/env bash").count(), 1);
+        assert_eq!(generated.matches("# CODEGEN-BEGIN").count(), 1);
+        assert!(generated.contains("echo \"build ${1:-debug}\""));
     }
 
     #[test]
@@ -6612,6 +6744,25 @@ pub(crate) fn generate_code_for_entry(
         return source.trim_end().to_string();
     }
 
+    // rust-source-unit (td_ast): regenerate the whole file through the
+    // structured item-tree from the TD-embedded `## Source` fence. Mirrors the
+    // dispatch in the main apply loop so the standardize/gen-apply entry point
+    // produces correct byte-equivalent output instead of a marker-only TODO
+    // stub. The rust-source-unit path reads the TD fence, not the target, so the
+    // root argument is unused here.
+    if matches!(
+        target_section,
+        Some("source" | "rust-source-unit" | "text-source-unit")
+    ) && (source_is_rust_source_unit(spec_content) || source_is_text_source_unit(spec_content))
+    {
+        return generate_source_section_code(
+            spec_content,
+            spec_path,
+            Some(&entry.path),
+            Path::new("."),
+        );
+    }
+
     if matches!(target_section, Some("runtime-image" | "deployment")) {
         if let Some(code) = try_generate_operations_artifact(spec_content, entry, td_ast) {
             return code;
@@ -7592,6 +7743,10 @@ fn is_python_source(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("py")
 }
 
+fn is_shell_source(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("sh")
+}
+
 fn is_cargo_toml(path: &Path) -> bool {
     path.file_name().and_then(|s| s.to_str()) == Some("Cargo.toml")
 }
@@ -7619,6 +7774,9 @@ fn target_language(path: &Path, section: Option<&str>) -> Option<crate::generate
     if is_rust_source(path) {
         return Some(Lang::Rust);
     }
+    if section == Some("text-source-unit") && is_shell_source(path) {
+        return Some(Lang::Toml);
+    }
     if supports_source_backed_replay_path(path, section) {
         return Some(Lang::TypeScript);
     }
@@ -7641,6 +7799,68 @@ fn target_language(path: &Path, section: Option<&str>) -> Option<crate::generate
         return Some(Lang::Toml);
     }
     None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreparedCodegenBody {
+    shebang: Option<String>,
+    body: String,
+}
+
+fn prepare_codegen_body_for_target(
+    path: &Path,
+    section: Option<&str>,
+    generated_body: &str,
+) -> PreparedCodegenBody {
+    if section == Some("text-source-unit") && is_shell_source(path) {
+        if let Some((shebang, body)) = split_shebang(generated_body) {
+            return PreparedCodegenBody {
+                shebang: Some(shebang.to_string()),
+                body: body.to_string(),
+            };
+        }
+    }
+    PreparedCodegenBody {
+        shebang: None,
+        body: generated_body.to_string(),
+    }
+}
+
+fn split_shebang(body: &str) -> Option<(&str, &str)> {
+    if !body.starts_with("#!") {
+        return None;
+    }
+    match body.find('\n') {
+        Some(idx) => Some((&body[..idx], &body[idx + 1..])),
+        None => Some((body, "")),
+    }
+}
+
+fn insert_codegen_block_for_target(
+    file_content: &str,
+    spec_ref: &str,
+    prepared: &PreparedCodegenBody,
+    lang: crate::generate::marker::Lang,
+) -> String {
+    if let Some(shebang) = prepared.shebang.as_deref() {
+        if file_content.trim().is_empty() {
+            let block = crate::generate::marker::insert_codegen_block(
+                "",
+                spec_ref,
+                &prepared.body,
+                None,
+                lang,
+            );
+            return format!("{shebang}\n{block}");
+        }
+    }
+    crate::generate::marker::insert_codegen_block(
+        file_content,
+        spec_ref,
+        &prepared.body,
+        None,
+        lang,
+    )
 }
 
 /// Insert a CODEGEN block for a Cargo `[dependencies]` manifest fragment.
@@ -7825,6 +8045,14 @@ fn is_semantic_spec_path(spec_rel_path: &str) -> bool {
 fn supports_source_backed_replay_path(path: &Path, section: Option<&str>) -> bool {
     if section.is_none() {
         return false;
+    }
+    if matches!(section, Some("schema"))
+        && path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == "llms.txt")
+    {
+        return true;
     }
     if matches!(section, Some("unit-test" | "e2e-test" | "tests")) && is_rust_source(path) {
         return true;
@@ -8128,6 +8356,15 @@ mod source_backed_replay_tests {
             "projects/jet/tools/manifest/src/lib.rs",
             Some("schema"),
             ".aw/tech-design/projects/jet/specs/jet-tools-manifest-src.md",
+        ));
+    }
+
+    #[test]
+    fn project_root_llms_txt_schema_uses_source_backed_replay() {
+        assert!(supports_source_backed_replay_for_spec(
+            "projects/lumen/llms.txt",
+            Some("schema"),
+            "projects/lumen/tech-design/semantic/lumen-projects-lumen.md",
         ));
     }
 
@@ -8548,6 +8785,33 @@ pub(crate) fn generate_source_section_code(
 ) -> String {
     let spec_ref = format!("{spec_path}#source");
     let embedded_source = extract_section_fence(spec_content, "Source").unwrap_or_default();
+
+    // rust-source-unit (td_ast): regenerate the file by routing the TD-embedded
+    // source through the structured lossless item-tree, NOT by replaying a
+    // stored snapshot or re-reading the live target. The TD fence is the source
+    // of truth: for unedited input this is byte-identical; for an edited TD the
+    // structured edit regenerates. A parse failure means the TD fence is not
+    // clean Rust — fall back to the raw embedded source so apply still writes
+    // something inspectable rather than silently dropping the section.
+    if source_is_rust_source_unit(spec_content) {
+        let regenerated = crate::generate::rust_source_unit::regenerate(&embedded_source)
+            .unwrap_or_else(|_| embedded_source.clone());
+        return if target_rel_path.is_some_and(is_rust_path_str) {
+            annotate_rust_source_items(&regenerated, &spec_ref)
+        } else {
+            regenerated
+        };
+    }
+
+    // text-source-unit (td_ast): the language-agnostic sibling of rust-source-unit
+    // for opaque text with no structured AST (shell, dockerfile, plain config).
+    // The TD-embedded fence is the source of truth and is emitted VERBATIM — TD
+    // edits regenerate, which is exactly what source-replay snapshots fail to do.
+    // No parsing, no per-item annotation; byte-equivalent by construction.
+    if source_is_text_source_unit(spec_content) {
+        return embedded_source;
+    }
+
     let source = if let Some(directive) = source_from_target_directive(spec_content) {
         target_rel_path
             .and_then(|path| std::fs::read_to_string(root.join(path)).ok())
@@ -8563,6 +8827,43 @@ pub(crate) fn generate_source_section_code(
     } else {
         source
     }
+}
+
+/// True when the `## Source` section opts into rust-source-unit (td_ast)
+/// regeneration via a `<!-- type: rust-source-unit ... -->` marker. Such a
+/// section carries no `source-snapshot:`/`source-from-target:` directive — the
+/// TD-embedded fence is the source of truth and is regenerated through the
+/// structured item-tree instead of replayed.
+fn source_is_rust_source_unit(spec_content: &str) -> bool {
+    source_section_has_type_marker(spec_content, "type: rust-source-unit")
+}
+
+/// True when the `## Source` section opts into text-source-unit (td_ast)
+/// verbatim regeneration via a `<!-- type: text-source-unit ... -->` marker —
+/// the opaque-text counterpart of rust-source-unit (shell, dockerfile, etc.).
+fn source_is_text_source_unit(spec_content: &str) -> bool {
+    source_section_has_type_marker(spec_content, "type: text-source-unit")
+}
+
+/// Scan the `## Source` section for a `<!-- type: <marker> ... -->` annotation.
+/// `marker` must be the full `type: <kind>` token so `rust-source-unit` does not
+/// accidentally match `text-source-unit` or the legacy `source` probe.
+fn source_section_has_type_marker(spec_content: &str, marker: &str) -> bool {
+    let mut in_source = false;
+    for line in spec_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("## ") {
+            in_source = trimmed
+                .trim_start_matches('#')
+                .trim()
+                .eq_ignore_ascii_case("Source");
+            continue;
+        }
+        if in_source && trimmed.starts_with("<!--") && trimmed.contains(marker) {
+            return true;
+        }
+    }
+    false
 }
 
 enum SourceFromTargetDirective {

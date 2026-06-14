@@ -1,86 +1,91 @@
-# Local 3-pod lumen cluster for development.
+# Local verification stack: NATS log-replication + OTLP observability.
 #
 #   docker compose -f projects/lumen/compose.yaml up --build
 #
-# Three containers on an internal bridge network. The headless-DNS
-# style hostnames `lumen-0` / `lumen-1` / `lumen-2` resolve to each
-# other via Docker's embedded DNS, so the production raft.rs peer
-# discovery code works unmodified — no `LUMEN_PEERS` env override
-# needed here. Client API is exposed on the host as :8080.
+# Proves two things end-to-end on one machine:
+#   1. NATS JetStream log-replication — write to lumen-0, search hits on lumen-1
+#      (both tail the same NATS write-log; no per-node state).
+#   2. OTLP — both replicas PUSH traces+metrics to otel-collector, which fans out
+#      to Prometheus (metrics) and Jaeger (traces). In production you point
+#      LUMEN_OTLP_ENDPOINT at your GKE otlp-gateway instead of this collector;
+#      lumen ships no collector of its own.
 #
-# Persistence: each pod gets its own named volume mounted at
-# /var/lib/lumen/data. The LSM backend writes there when configured;
-# in-memory engine ignores it. Volumes survive `docker compose down`
-# but are cleaned by `docker compose down -v`.
+# UIs:  lumen-0 http://localhost:7373/docs · Prometheus :9090 · Jaeger :16686 · Grafana :3000
 
 services:
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-m", "8222"] # JetStream + monitoring
+    ports: ["4222:4222", "8222:8222"]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.119.0
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC (what lumen pushes to)
+      - "8889:8889" # Prometheus exporter (what Prometheus scrapes)
+    depends_on: [jaeger]
+
+  # Serving replica A. Builds the distroless download image from the published 0.4.0 release
+  # 0.4.0 release (which is built --features otel), then runs it against NATS.
   lumen-0:
     build:
-      context: ../..
-      dockerfile: projects/lumen/Dockerfile
-    image: lumen:dev
+      context: .
+      dockerfile: Dockerfile.release
+      args:
+        LUMEN_VERSION: lumen@0.4.0
+    image: lumen:0.4.0
     hostname: lumen-0
+    depends_on: [nats, otel-collector]
     environment:
-      POD_NAME: lumen-0
-      SHARD_COUNT: "1"
-      REPLICAS_PER_SHARD: "3"
-      VOTER_COUNT: "3"
-      LUMEN_HEADLESS_SERVICE: lumen.local
-      LUMEN_PORT: "8080"
-      LUMEN_RAFT_PORT: "8082"
+      LUMEN_HOST: "0.0.0.0"
+      LUMEN_WAL: nats
+      LUMEN_NATS_URL: nats://nats:4222
+      LUMEN_OTLP_ENDPOINT: http://otel-collector:4317
       LUMEN_AUTH: "off"
-      LUMEN_LOG: pretty
-      RUST_LOG: "info,lumen=debug"
-    ports:
-      - "8080:8080"
-    volumes:
-      - lumen-0-data:/var/lib/lumen/data
+      LUMEN_LOG_FORMAT: json
+    ports: ["7373:7373"]
 
+  # Serving replica B. Same image; tails the same NATS log → same index.
   lumen-1:
-    image: lumen:dev
+    image: lumen:0.4.0
     hostname: lumen-1
-    depends_on: [lumen-0]
+    depends_on: [nats, otel-collector, lumen-0]
     environment:
-      POD_NAME: lumen-1
-      SHARD_COUNT: "1"
-      REPLICAS_PER_SHARD: "3"
-      VOTER_COUNT: "3"
-      LUMEN_HEADLESS_SERVICE: lumen.local
-      LUMEN_PORT: "8080"
-      LUMEN_RAFT_PORT: "8082"
+      LUMEN_HOST: "0.0.0.0"
+      LUMEN_WAL: nats
+      LUMEN_NATS_URL: nats://nats:4222
+      LUMEN_OTLP_ENDPOINT: http://otel-collector:4317
       LUMEN_AUTH: "off"
-      LUMEN_LOG: pretty
-      RUST_LOG: "info,lumen=debug"
-    ports:
-      - "8081:8080"
-    volumes:
-      - lumen-1-data:/var/lib/lumen/data
+      LUMEN_LOG_FORMAT: json
+    ports: ["7374:7373"]
 
-  lumen-2:
-    image: lumen:dev
-    hostname: lumen-2
-    depends_on: [lumen-0]
-    environment:
-      POD_NAME: lumen-2
-      SHARD_COUNT: "1"
-      REPLICAS_PER_SHARD: "3"
-      VOTER_COUNT: "3"
-      LUMEN_HEADLESS_SERVICE: lumen.local
-      LUMEN_PORT: "8080"
-      LUMEN_RAFT_PORT: "8082"
-      LUMEN_AUTH: "off"
-      LUMEN_LOG: pretty
-      RUST_LOG: "info,lumen=debug"
-    ports:
-      - "8082:8080"
+  prometheus:
+    image: prom/prometheus:v3.1.0
     volumes:
-      - lumen-2-data:/var/lib/lumen/data
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    depends_on: [otel-collector]
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["16686:16686"] # Jaeger UI
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+    volumes:
+      - ./observability/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/ds.yaml:ro
+    ports: ["3000:3000"]
+    depends_on: [prometheus, jaeger]
 
 networks:
   default:
-    name: lumen.local
-
-volumes:
-  lumen-0-data:
-  lumen-1-data:
-  lumen-2-data:
+    name: lumen-otlp

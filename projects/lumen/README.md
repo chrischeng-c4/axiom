@@ -57,6 +57,28 @@ gate-inventory paths point at the real tests/scripts/manifests that prove them.
 Statuses are deliberately conservative — `auditing` means "built and gated, not
 yet formally `--verify`-proven"; `candidate` means "promised, partially shipped".
 
+## Capability Index
+
+| Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
+|---|---:|---|---|---|---|---|
+| search | - | implemented | auditing | conformance | not_ready | broad search evidence still mixes local gates with external perf/service gates |
+| search-lexical | - | partial | auditing | conformance | not_ready | WAND/block-max remains an open follow-up |
+| search-exact | - | implemented | auditing | conformance | not_ready | release proof remains tied to competitive perf evidence |
+| search-vector | 4141 | implemented | auditing | conformance | not_ready | DiskANN-class HNSW-on-disk remains future work |
+| search-hybrid | 4139 | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| search-duplicates | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| search-nested | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| elastic-scale | - | implemented | auditing | conformance | not_ready | scale proof includes heavier/release evidence outside the default gate |
+| resilience | - | implemented | auditing | dogfood | not_ready | live NATS/kind dogfood gates are external-service dependent |
+| k8s-deployment | - | implemented | auditing | conformance | not_ready | live operator e2e recency remains release-run dependent |
+| rest-integration | - | implemented | auditing | conformance | not_ready | runtime API proof remains outside the selected production scope |
+| agentic-integration | 4143 | implemented | passing | conformance | ready | offline spec and llm CLI contract is covered by local spec_cli tests |
+| security-auth | - | partial | auditing | conformance | not_ready | TLS binding is partial and not e2e-gated |
+| backup-restore | - | implemented | auditing | conformance | not_ready | periodic snapshotter proof remains source-level |
+| observability | - | implemented | auditing | conformance | not_ready | OTLP service proof depends on the compose collector stack |
+| schema-ops | - | implemented | auditing | conformance | not_ready | local conformance passes; production scope not selected |
+| ops-operability | - | implemented | auditing | conformance | not_ready | operational proof remains tied to kind/perf/service evidence |
+
 **Honest scope (do not over-claim):**
 
 - **Ingestion is the caller's own pub/sub** into `POST /index` (CDC / logical
@@ -153,15 +175,16 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| search-vector | - | auditing | Semantic kNN (`vector`; CPU HNSW + exact flat brute-force) and perceptual/structural `hash` (pHash / SimHash / b-bit MinHash) queried by Hamming distance. The caller owns all embeddings and hashes; lumen indexes the bits. kNN composes with filters **without recall collapse** (filter-correct kNN). | smoke, conformance | projects/lumen/tests/vector_e2e.rs; projects/lumen/tests/hash_hamming.rs; projects/lumen/scripts/bench_vs_db.py (knn) |
+| search-vector | - | auditing | Semantic kNN (`vector`; CPU HNSW + exact flat brute-force) and perceptual/structural `hash` (pHash / SimHash / b-bit MinHash) queried by Hamming distance. The caller owns all embeddings and hashes; lumen indexes the bits. kNN composes with filters **without recall collapse** (filter-correct kNN). | smoke, conformance | projects/lumen/tests/vector_e2e.rs; projects/lumen/tests/hash_hamming.rs; projects/lumen/tests/perf_gate_vs_db.rs (knn, filtered_knn vs pgvector); projects/lumen/scripts/bench_vs_db.py (knn) |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | HNSW vector kNN (CPU) | subepic | - | implemented | passing | conformance | projects/lumen/tests/vector_e2e.rs |
 | Filtered kNN — allow-list primitive (`search_knn_filtered`) | subepic | 4141 | implemented | passing | conformance | projects/lumen/src/vector_index.rs (filtered_knn_returns_nearest_within_allowlist_not_global_topk) |
 | Filtered kNN — planner wiring (`knn AND filter`) + recall gate | subepic | 4142 | implemented | passing | conformance | projects/lumen/tests/vector_e2e.rs (filtered_knn_returns_nearest_within_filter_no_recall_collapse) |
+| Competitive perf gate: `knn` + `filtered_knn` vs pgvector (opt-in `LUMEN_GATE_VECTOR=1`; OS host has no k-NN plugin) — `knn` is a TARGET (over-the-wire/real-corpus can lose), `filtered_knn` is a WIN (pgvector post-filters and collapses recall) | subepic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs (competitive_perf_gate: knn, filtered_knn); projects/lumen/tests/perf-baseline.json |
 | flat-cpu vectors RAM-bounded on the disk tier (base rows demand-paged off the mmap, not re-materialized on reopen) | subepic | - | implemented | passing | conformance | projects/lumen/src/vector_index.rs (reopen_base_seg_plus_tail_plus_tombstone_equals_inram_oracle); projects/lumen/tests/disk_scale_proof.rs |
-| HNSW graph on disk (DiskANN-class) — vectors stay in RAM in the graph; only flat-cpu is disk-RAM-bounded | subepic | - | planned | none | none | future GPU-native vector chapter (`hnsw_rs` owns the vectors internally) |
+| HNSW graph on disk (DiskANN-class) — vectors stay in RAM in the graph; only flat-cpu is disk-RAM-bounded | subepic | - | planned | none | none | future GPU-native vector chapter (hnsw_rs owns the vectors internally) |
 | Hash / Hamming search (`hash` field + `hamming` query) | subepic | - | implemented | passing | conformance | projects/lumen/tests/hash_hamming.rs |
 
 #### Hybrid (lexical + semantic fusion)
@@ -188,13 +211,14 @@ bitmaps. The flavors of "find" are **sub-capabilities** of this one capability.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| search-nested | - | auditing | Search Airtable-style data tables including nested `group` fields: group→child collection, a first-class `has_child` boolean clause, collapse-on-search, enum cascading paths (子母選單), and CJK substring. Correlation-correct (no cross-element false match). | smoke, conformance | projects/lumen/tests/collapse_nested.rs; projects/lumen/scripts/bench_vs_db.py (group_nested) |
+| search-nested | - | auditing | Search Airtable-style data tables including nested `group` fields: group→child collection, a first-class `has_child` boolean clause, collapse-on-search, enum cascading paths (子母選單), and CJK substring. Correlation-correct (no cross-element false match). Plus `exists` (non-blank) and `duplicated` (collision) leaves that compose arbitrary presence/duplicate filters from the same boolean tree. | smoke, conformance | projects/lumen/tests/collapse_nested.rs; projects/lumen/scripts/bench_vs_db.py (group_nested) |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | group→child mapping + collapse-on-search | subepic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs |
 | has_child boolean clause | subepic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs (has_child_composes_in_boolean_tree) |
 | enum level_match + CJK substring | subepic | - | implemented | passing | conformance | projects/lumen/tests/collapse_nested.rs (enum_path_and_level_match, ngram_cjk_substring) |
+| `exists` / `duplicated` composite filter nodes (keyword/number/set; text/vector/hash rejected) | subepic | - | implemented | passing | conformance | projects/lumen/src/storage.rs (exists_filters_missing_field, exists_composes_with_boolean, duplicated_as_query_leaf, duplicated_composes_with_boolean, duplicated_min_group_size_floor_is_two) |
 
 ### Elastic Scale (columnar mmap disk tier — RAM=hot / disk=all)
 
@@ -365,19 +389,19 @@ self-onboards an agent with no docs site and no running server.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| agentic-integration | - | auditing | An installed `lumen` binary self-onboards an agent **offline** (no server, no network): `lumen spec` emits the machine schema (OpenAPI / JSON-schema, query-shape cookbook, field/analyzer catalog), and `lumen llm *` emits the agent integration playbook (mental model, ingest→search→hydrate workflow, flavor-decision guide, recipes, non-goals). | smoke, conformance | projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs |
+| agentic-integration | - | verified | An installed `lumen` binary self-onboards an agent **offline** (no server, no network): `lumen spec` emits the machine schema (OpenAPI / JSON-schema, query-shape cookbook, field/analyzer catalog), and `lumen llm *` emits the agent integration playbook (mental model, ingest→search→hydrate workflow, flavor-decision guide, recipes, non-goals). | smoke, conformance | projects/lumen/tests/spec_cli.rs; projects/lumen/src/spec.rs |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | `lumen spec` schema (OpenAPI + JSON-schema, offline) | epic | - | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 | Query-shape cookbook + field/analyzer catalog | epic | - | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
-| `lumen llm *` agent integration playbook (guide / quickstart / recipes) | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs (llm_guide / llm_quickstart / llm_recipes) |
+| `lumen llm *` agent integration playbook (guide / quickstart / recipes) | epic | 4143 | implemented | passing | conformance | projects/lumen/tests/spec_cli.rs |
 
 ### Security & Auth
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| security-auth | - | auditing | Optional bearer-token auth (`LUMEN_AUTH=off\|required`) with per-token role-based authorization enforced on every API route; tokens supplied out-of-band via env/Secret. TLS (rustls) binding available. | smoke, conformance | projects/lumen/tests/auth_e2e.rs; projects/lumen/tests/authz_matrix_e2e.rs |
+| security-auth | - | auditing | Optional bearer-token auth (`LUMEN_AUTH=off` or `LUMEN_AUTH=required`) with per-token role-based authorization enforced on every API route; tokens supplied out-of-band via env/Secret. TLS (rustls) binding available. | smoke, conformance | projects/lumen/tests/auth_e2e.rs; projects/lumen/tests/authz_matrix_e2e.rs |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
@@ -400,12 +424,14 @@ self-onboards an agent with no docs site and no running server.
 
 | ID | Root WI | Status | Promise | Required Verification | Gate Inventory |
 |---|---:|---|---|---|---|
-| observability | - | auditing | Prometheus text-format `/metrics` on the API port, a kustomize ServiceMonitor + PrometheusRule SLO alert bundle, and structured json/pretty logs. | smoke | projects/lumen/tests/api_e2e.rs (/metrics); projects/lumen/k8s/components/observability |
+| observability | - | auditing | Prometheus text-format `/metrics` on the API port, a kustomize ServiceMonitor + PrometheusRule SLO alert bundle, structured json/pretty logs, and **opt-in OTLP export** (traces + metrics PUSHED to an OpenTelemetry collector via `LUMEN_OTLP_ENDPOINT`; the collector fans out to Prometheus/Jaeger, so a stateless replica fleet reports without per-pod scraping). `/metrics` pull stays for direct debug. | smoke, conformance | projects/lumen/tests/api_e2e.rs (/metrics); projects/lumen/k8s/components/observability; projects/lumen/compose.yaml (OTLP stack) |
 
 | Work Root | Kind | WI | Impl | Verification | Maturity | Gate / Evidence |
 |---|---|---:|---|---|---|---|
 | Prometheus `/metrics` endpoint | epic | - | implemented | passing | smoke | projects/lumen/tests/api_e2e.rs |
 | ServiceMonitor + PrometheusRule | epic | - | implemented | passing | smoke | projects/lumen/k8s/components/observability |
+| OTLP trace export (tower-http TraceLayer → tracing-opentelemetry → batch OTLP, opt-in; `otel` feature on in release builds) | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs (build_otel_tracer); projects/lumen/compose.yaml (Jaeger e2e: 13 request spans) |
+| OTLP metrics push (observable instruments bridge the engine's atomic counters → PeriodicReader, no hot-path cost) | epic | - | implemented | passing | conformance | projects/lumen/src/bin/lumen.rs (init_otel_meter); projects/lumen/compose.yaml (Prometheus e2e: 11 metrics/replica) |
 
 ### Schema & Ops Lifecycle
 
@@ -437,7 +463,7 @@ than left as an adjective.
 |---|---|---:|---|---|---|---|
 | Stateless serving + rebuild-from-log (no PVC) | epic | - | implemented | passing | dogfood | projects/lumen/scripts/kind-e2e.sh |
 | Perf-gate envelope (absolute latency + throughput floors) | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate.rs |
-| Competitive regression gate (beat pg + OS per-cell, ratcheting) | epic | - | implemented | passing — all OS search cells and pg non-home-turf/native cells are WIN-gated | conformance | projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json |
+| Competitive regression gate (beat pg + OS per-cell, ratcheting) | epic | - | implemented | passing | conformance | projects/lumen/tests/perf_gate_vs_db.rs; projects/lumen/tests/perf-baseline.json; all OS search cells and pg non-home-turf/native cells are WIN-gated |
 | RAM=hot/disk=all columnar mmap segment tier + embedded single-node log | epic | - | implemented | passing | conformance | projects/lumen/tests/disk_scale_proof.rs; projects/lumen/src/storage.rs (checkpoint_engine_tests) |
 
 **Stability (穩)** is the **Resilience & Log Replication** capability above: a
@@ -680,6 +706,17 @@ POST /collections/{id}/search
 Search responses **only carry `external_id` + `score`** — never field
 values. There is no `_source`.
 
+**Pagination is keyset (search-after), depth-invariant.** The `cursor` is an
+opaque token bound to the query that produced it: echo it back unchanged to
+get the next page. For sorted (single number field) and score-ranked results
+the token carries the LAST hit's position, so every page **seeks** —
+O(log n) on the sorted index — instead of skipping; deep pages cost the same
+as page 1 (measured at depth 50k over 100k docs: 86µs vs 28.7ms offset
+skip). Stop when `cursor` is null. Legacy `{"offset":N}` tokens keep working
+(O(offset) skip). Note: when continuing from a keyset cursor with
+`track_total: true`, `total` counts the REMAINING matches from the cursor,
+not the full set — read the full total off the first page.
+
 ### Duplicates
 
 ```
@@ -696,6 +733,38 @@ POST /collections/{id}/duplicates
 ```
 
 `text` / `vector` fields do not support duplicates (semantics undefined).
+
+### Exists / Duplicated (presence & collision filters)
+
+Two query nodes for presence and collision. Both compose inside `and` / `or` /
+`not` like any other leaf, so arbitrary combinations ("non-blank email **and**
+duplicate phone") need no bespoke endpoint.
+
+```
+POST /collections/{id}/search
+{
+  "query": {
+    "and": [
+      { "exists":     { "field": "email" } },                      // email is non-blank
+      { "duplicated": { "field": "phone", "min_group_size": 2 } }  // phone collides with another doc
+    ]
+  }
+}
+```
+
+| Node | Matches |
+|------|---------|
+| `exists` | docs holding any value for `field`; `not exists` = "is empty" |
+| `duplicated` | docs whose `field` value is shared by ≥ `min_group_size` docs (`min_group_size` defaults to / floors at 2) |
+
+Both cover `keyword` / `number` / `set` fields. `text` / `vector` / `hash` are
+rejected (presence/equality is undefined there — declare a `keyword` companion
+field for a text "is empty" / duplicate filter).
+
+`duplicated` vs the `/duplicates` endpoint: the endpoint returns *grouped*
+results (`value → external_ids`) for an audit view; the `duplicated` query node
+returns a *flat, composable* doc set you can intersect with other predicates in
+one search.
 
 ### kNN (vector search)
 
@@ -779,20 +848,28 @@ monitoring, `/metrics` carries the same numbers as gauges.
 ## HTTP & clients
 
 The client API speaks **HTTP/1.1 and HTTP/2 cleartext (h2c) on the same
-port** (`auto`). For a REST/JSON API, **HTTP/1.1 needs nothing special**
-— `requests`, `httpx` (default), `fetch`, `curl`, the Rust client all
-just work. HTTP/2 is an opt-in throughput optimization:
+port** (`auto`) — the server accepts both, no flag needed. **HTTP/2 is the
+recommended connection for serving**: one connection multiplexes many concurrent
+streams, which is how lumen sustains its high-QPS search/index throughput. The
+three setups, in order of preference:
 
-| Client | HTTP/1.1 (default) | h2c (cleartext) opt-in | h2 over TLS (prod) |
-|--------|--------------------|------------------------|--------------------|
+- **Production (behind TLS) — HTTP/2 by default, for free.** An ingress / mesh
+  terminating TLS negotiates h2 via ALPN, so every client gets it transparently.
+  This is the recommended deployment.
+- **Cleartext (dev / in-cluster) — h2c is opt-in.** h2c can't auto-negotiate (no
+  ALPN), so a client must enable prior-knowledge (see table). A lumen connection
+  *pool* over h2c is what the benchmark throughput numbers use.
+- **Zero-driver fallback — plain HTTP/1.1 always works**, no special client:
+  `requests`, `httpx`, `fetch`, `curl`, any REST client (lumen ships no client
+  SDK — it's pure REST/OpenAPI; see `lumen llm`).
+
+| Client | HTTP/1.1 | h2c (cleartext) opt-in | h2 over TLS (prod) |
+|--------|----------|------------------------|--------------------|
 | Python `requests` | ✅ | ✗ (no h2 support) | ✗ |
 | Python `httpx` | ✅ | `pip install "httpx[http2]"` + `Client(http2=True)` | ✅ ALPN |
 | `curl` | ✅ | `--http2-prior-knowledge` | `--http2` |
 | Go `net/http` | ✅ | needs `x/net/http2` h2c transport | ✅ ALPN |
 | browser (Swagger `/docs`) | ✅ | ✗ (browsers require TLS) | ✅ ALPN |
-
-In production behind TLS (ingress / mesh terminating TLS), HTTP/2 is
-negotiated transparently via ALPN — every client gets it for free.
 
 ## OpenAPI
 

@@ -23,7 +23,7 @@
 
 pub mod dispatch;
 
-pub use dispatch::{dispatch, print_report, Dispatched, OutputOpts, MeterCommand, Verb};
+pub use dispatch::{dispatch, print_report, Dispatched, MeterCommand, OutputOpts, Verb};
 
 use cclab_cli_registry::{CliModule, CLI_MODULES};
 use clap::{ArgMatches, CommandFactory, FromArgMatches};

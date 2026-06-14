@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Online field deletion.
 
 use std::sync::Arc;
@@ -80,3 +82,4 @@ async fn drop_field_on_missing_collection_404() {
     let r = s.delete("/collections/missing/fields/x").await;
     r.assert_status(axum::http::StatusCode::NOT_FOUND);
 }
+// CODEGEN-END

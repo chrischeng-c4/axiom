@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! Backup → restore round-trip.
 
 use std::sync::Arc;
@@ -113,3 +115,4 @@ async fn restore_rejects_wrong_version() {
         .await;
     resp.assert_status_bad_request();
 }
+// CODEGEN-END

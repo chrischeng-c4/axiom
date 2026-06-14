@@ -13,6 +13,9 @@ use crate::cli::project::{self, ProjectHealthReport};
 #[derive(Debug, Args)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/generator.md#source
 pub struct GeneratorArgs {
+    /// Project name from .aw/config.toml.
+    #[arg(long, global = true)]
+    pub project: Option<String>,
     #[command(subcommand)]
     pub command: GeneratorCommand,
 }
@@ -48,8 +51,6 @@ pub enum GeneratorCommand {
 }"#)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/generator.md#source
 pub struct GeneratorCheckArgs {
-    /// Project name from .aw/config.toml.
-    pub project: String,
     /// DEPRECATED compatibility no-op. Generator emits JSON by default.
     #[arg(long, hide = true)]
     pub json: bool,
@@ -73,9 +74,7 @@ pub struct GeneratorCheckArgs {
 }"#)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/generator.md#source
 pub struct GeneratorRequestArgs {
-    /// Project name from .aw/config.toml.
-    pub project: String,
-    /// Gap id from `aw generator check <project>`.
+    /// Gap id from `aw generator check --project <project>`.
     pub gap_id: String,
     /// DEPRECATED compatibility no-op. Generator emits JSON by default.
     #[arg(long, hide = true)]
@@ -140,24 +139,27 @@ pub struct GeneratorRequestReport {
 
 /// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/generator.md#source
 pub async fn run(args: GeneratorArgs) -> Result<()> {
+    let project = args
+        .project
+        .ok_or_else(|| anyhow::anyhow!("generator requires --project <project>"))?;
     match args.command {
-        GeneratorCommand::Check(args) => run_check(args).await,
-        GeneratorCommand::Request(args) => run_request(args).await,
+        GeneratorCommand::Check(args) => run_check(&project, args).await,
+        GeneratorCommand::Request(args) => run_request(&project, args).await,
     }
 }
 
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/generator.md#source
-async fn run_check(args: GeneratorCheckArgs) -> Result<()> {
-    let health = generator_health_report(&args.project).await?;
-    let report = build_check_report(&args.project, &health);
+async fn run_check(project: &str, args: GeneratorCheckArgs) -> Result<()> {
+    let health = generator_health_report(project).await?;
+    let report = build_check_report(project, &health);
     print_json(&report, args.pretty || args.json)?;
     Ok(())
 }
 
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/generator.md#source
-async fn run_request(args: GeneratorRequestArgs) -> Result<()> {
-    let health = generator_health_report(&args.project).await?;
-    let (report, should_fail) = build_request_report(&args.project, &args.gap_id, &health)?;
+async fn run_request(project: &str, args: GeneratorRequestArgs) -> Result<()> {
+    let health = generator_health_report(project).await?;
+    let (report, should_fail) = build_request_report(project, &args.gap_id, &health)?;
     print_json(&report, args.pretty || args.json)?;
     if should_fail {
         std::process::exit(1);
@@ -167,7 +169,8 @@ async fn run_request(args: GeneratorRequestArgs) -> Result<()> {
 
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/generator.md#source
 async fn generator_health_report(project: &str) -> Result<ProjectHealthReport> {
-    let mut report = project::build_health_report_with_options(project, true, false, false, false)?;
+    let mut report =
+        project::build_health_report_with_options(project, true, false, false, false, false)?;
     project::apply_workflow_locks_to_report(&mut report).await?;
     Ok(report)
 }
@@ -184,7 +187,11 @@ fn build_check_report(project: &str, health: &ProjectHealthReport) -> GeneratorC
     let next_action = if health.generator_request_ready {
         if let Some(gap) = gaps.first() {
             GeneratorNextAction {
-                command: format!("aw generator request {} {}", project, shell_quote(&gap.id)),
+                command: format!(
+                    "aw generator request --project {} {}",
+                    project,
+                    shell_quote(&gap.id)
+                ),
                 reason: "request the next generator gap through WI/TD/CB".to_string(),
             }
         } else {
@@ -195,12 +202,12 @@ fn build_check_report(project: &str, health: &ProjectHealthReport) -> GeneratorC
         }
     } else {
         GeneratorNextAction {
-            command: format!("aw health {} --verify-traceability", project),
+            command: format!("aw health --project {} --verify-traceability", project),
             reason: "takeover readiness is required before generator gap requests".to_string(),
         }
     };
     GeneratorCheckReport {
-        command: format!("aw generator check {project}"),
+        command: format!("aw generator check --project {project}"),
         project: project.to_string(),
         status,
         health: GeneratorHealthSummary::from(health),
@@ -221,7 +228,11 @@ fn build_request_report(
     if !health.generator_request_ready {
         return Ok((
             GeneratorRequestReport {
-                command: format!("aw generator request {} {}", project, shell_quote(gap_id)),
+                command: format!(
+                    "aw generator request --project {} {}",
+                    project,
+                    shell_quote(gap_id)
+                ),
                 project: project.to_string(),
                 gap_id: gap_id.to_string(),
                 status: "blocked".to_string(),
@@ -230,7 +241,7 @@ fn build_request_report(
                 blockers: takeover_blockers(health),
                 payload_path: None,
                 next_action: GeneratorNextAction {
-                    command: format!("aw health {} --verify-traceability", project),
+                    command: format!("aw health --project {} --verify-traceability", project),
                     reason: "resolve takeover blockers before requesting generator work"
                         .to_string(),
                 },
@@ -242,18 +253,22 @@ fn build_request_report(
     let Some(gap) = gap else {
         return Ok((
             GeneratorRequestReport {
-                command: format!("aw generator request {} {}", project, shell_quote(gap_id)),
+                command: format!(
+                    "aw generator request --project {} {}",
+                    project,
+                    shell_quote(gap_id)
+                ),
                 project: project.to_string(),
                 gap_id: gap_id.to_string(),
                 status: "not_found".to_string(),
                 health: GeneratorHealthSummary::from(health),
                 gap: None,
                 blockers: vec![format!(
-                    "generator gap `{gap_id}` was not found; run `aw generator check {project}`"
+                    "generator gap `{gap_id}` was not found; run `aw generator check --project {project}`"
                 )],
                 payload_path: None,
                 next_action: GeneratorNextAction {
-                    command: format!("aw generator check {project}"),
+                    command: format!("aw generator check --project {project}"),
                     reason: "refresh generator gap inventory".to_string(),
                 },
             },
@@ -266,7 +281,11 @@ fn build_request_report(
     let payload = payload_path.to_string_lossy().replace('\\', "/");
     Ok((
         GeneratorRequestReport {
-            command: format!("aw generator request {} {}", project, shell_quote(gap_id)),
+            command: format!(
+                "aw generator request --project {} {}",
+                project,
+                shell_quote(gap_id)
+            ),
             project: project.to_string(),
             gap_id: gap_id.to_string(),
             status: "created".to_string(),
@@ -501,6 +520,7 @@ mod tests {
                 unmarked_files: 0,
                 unsupported_codegen_files: Vec::new(),
                 non_replayable_codegen_files: Vec::new(),
+                snapshot_codegen_files: Vec::new(),
                 codegen_drift_evaluated: false,
                 codegen_drift_files: Vec::new(),
                 percent: 0.0,

@@ -160,6 +160,10 @@ pub struct TestRunEvidence {
     pub services: Vec<ServiceRunRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<RunnerRunRecord>,
+    /// Every runner of a concurrent `vat run a b ...` set; `runner` keeps the
+    /// first record for backward compatibility. Empty on legacy metadata.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runners: Vec<RunnerRunRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub artifacts: Vec<ArtifactRecord>,
 }

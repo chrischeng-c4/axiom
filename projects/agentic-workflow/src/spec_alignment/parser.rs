@@ -179,16 +179,18 @@ fn extract_code_blocks(section_lines: &[&str], offset: usize) -> Vec<CodeBlock> 
     let mut i = 0;
 
     while i < section_lines.len() {
-        if let Some(line) = markdown_fence_payload(section_lines[i]) {
-            // Opening fence: ```lang
-            let lang = line[3..].trim().to_string();
+        if let Some(fence) = markdown_fence(section_lines[i]) {
+            // Opening fence: ```lang, ````lang, etc.
+            let lang = fence.payload.trim().to_string();
             let fence_line = offset + i + 1; // 1-based
             let mut content_lines = Vec::new();
             i += 1;
 
             // Collect content until closing fence
             while i < section_lines.len() {
-                if markdown_fence_payload(section_lines[i]) == Some("```") {
+                if markdown_fence(section_lines[i])
+                    .is_some_and(|close| close.is_closing_for(&fence))
+                {
                     break;
                 }
                 content_lines.push(section_lines[i]);
@@ -220,18 +222,40 @@ fn extract_code_blocks(section_lines: &[&str], offset: usize) -> Vec<CodeBlock> 
 }
 
 fn is_markdown_fence(line: &str) -> bool {
-    markdown_fence_payload(line).is_some()
+    markdown_fence(line).is_some()
 }
 
-fn markdown_fence_payload(line: &str) -> Option<&str> {
+#[derive(Debug, Clone, Copy)]
+struct MarkdownFence<'a> {
+    marker: char,
+    len: usize,
+    payload: &'a str,
+}
+
+impl MarkdownFence<'_> {
+    fn is_closing_for(self, opener: &MarkdownFence<'_>) -> bool {
+        self.marker == opener.marker && self.len >= opener.len && self.payload.trim().is_empty()
+    }
+}
+
+fn markdown_fence(line: &str) -> Option<MarkdownFence<'_>> {
     let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
     if leading_spaces > 3 {
         return None;
     }
-    line.get(leading_spaces..)?.strip_prefix("```").map(|_| {
-        // Return from the fence marker so existing lang extraction can keep
-        // slicing at index 3.
-        &line[leading_spaces..]
+    let trimmed = line.get(leading_spaces..)?;
+    let marker = trimmed.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+    let len = trimmed.chars().take_while(|c| *c == marker).count();
+    if len < 3 {
+        return None;
+    }
+    Some(MarkdownFence {
+        marker,
+        len,
+        payload: trimmed.get(len..).unwrap_or(""),
     })
 }
 
@@ -302,6 +326,28 @@ mod tests {
         assert_eq!(headings, vec!["E2E Test", "Changes"]);
         assert_eq!(doc.sections[0].code_blocks.len(), 1);
         assert_eq!(doc.sections[0].code_blocks[0].lang, "yaml");
+    }
+
+    #[test]
+    fn parse_supports_long_markdown_fences() {
+        let doc = parse(
+            "test.md",
+            "## Source\n\
+             <!-- type: rust-source-unit lang: rust -->\n\
+             ````rust\n\
+             /// ```ignore\n\
+             /// inner fence\n\
+             /// ```\n\
+             pub fn demo() {}\n\
+             ````\n",
+        );
+
+        assert_eq!(doc.sections.len(), 1);
+        assert_eq!(doc.sections[0].code_blocks.len(), 1);
+        assert_eq!(doc.sections[0].code_blocks[0].lang, "rust");
+        assert!(doc.sections[0].code_blocks[0]
+            .content
+            .contains("pub fn demo() {}"));
     }
 
     #[test]

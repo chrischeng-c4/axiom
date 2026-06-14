@@ -30,10 +30,8 @@ Public API manifest for `projects/meter/src/agent_eval/mod.rs` generated from AS
 | `result` | projects/meter/src/agent_eval/mod.rs | module | pub | 53 |  |
 | `test_case` | projects/meter/src/agent_eval/mod.rs | module | pub | 54 |  |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/agent_eval/mod.rs -->
 ````rust
 //! Agent Evaluation Framework - Integration with cclab-probe
 //!
@@ -116,7 +114,7 @@ pub use test_case::{AgentTestCase, ExpectedToolCall, QualityCriterion};
 changes:
   - path: projects/meter/src/agent_eval/mod.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/agent_eval/mod.rs` captured during meter full-codegen standardization.

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# <HANDWRITE gap="project-root-build-script" tracker="#4158" reason="project-specific aw:build dispatch contract">
+# SPEC-MANAGED: projects/meter/tech-design/semantic/meter-build-script.md#text-source-unit
+# CODEGEN-BEGIN
 set -euo pipefail
 
 usage() {
@@ -92,4 +93,4 @@ git tag -a "$TAG" -m "Release ${TAG}"
 
 echo ""
 echo "Build complete. meter ${TAG} installed and tagged."
-# </HANDWRITE>
+# CODEGEN-END
