@@ -6675,6 +6675,7 @@ fn mb_inplace(
     a: MbValue,
     b: MbValue,
     idunder: &str,
+    op_code: i64,
     fallback: fn(MbValue, MbValue) -> MbValue,
 ) -> MbValue {
     if a.as_ptr().is_some() {
@@ -6685,27 +6686,44 @@ fn mb_inplace(
                 }
             }
         }
+        // A user-defined instance whose in-place dunder is absent (or returned
+        // NotImplemented) falls back to the binary operator dispatch
+        // (`__op__` / `__rop__`), exactly like `a op b`. This lets a class that
+        // defines only the binary dunder (e.g. `__add__` but no `__iadd__`)
+        // still support `a op= b`, and an `__ipow__` returning NotImplemented
+        // defer to `__pow__` / `__rpow__`. Non-instances (list/str/dict/…) keep
+        // the primitive fallback so their `+=` extend/concat semantics are
+        // unchanged.
+        if a
+            .as_ptr()
+            .map_or(false, |p| matches!(unsafe { &(*p).data }, ObjData::Instance { .. }))
+        {
+            return mb_dispatch_binop(op_code, a, b);
+        }
     }
     fallback(a, b)
 }
 
 pub fn mb_iadd(a: MbValue, b: MbValue) -> MbValue {
-    mb_inplace(a, b, "__iadd__", super::builtins::mb_add)
+    mb_inplace(a, b, "__iadd__", 0, super::builtins::mb_add)
 }
 pub fn mb_isub(a: MbValue, b: MbValue) -> MbValue {
-    mb_inplace(a, b, "__isub__", super::builtins::mb_sub)
+    mb_inplace(a, b, "__isub__", 1, super::builtins::mb_sub)
 }
 pub fn mb_imul(a: MbValue, b: MbValue) -> MbValue {
-    mb_inplace(a, b, "__imul__", super::builtins::mb_mul)
+    mb_inplace(a, b, "__imul__", 2, super::builtins::mb_mul)
+}
+pub fn mb_ipow(a: MbValue, b: MbValue) -> MbValue {
+    mb_inplace(a, b, "__ipow__", 6, super::builtins::mb_pow)
 }
 pub fn mb_iand(a: MbValue, b: MbValue) -> MbValue {
-    mb_inplace(a, b, "__iand__", super::builtins::mb_bitand)
+    mb_inplace(a, b, "__iand__", 15, super::builtins::mb_bitand)
 }
 pub fn mb_ior(a: MbValue, b: MbValue) -> MbValue {
-    mb_inplace(a, b, "__ior__", super::builtins::mb_bitor)
+    mb_inplace(a, b, "__ior__", 16, super::builtins::mb_bitor)
 }
 pub fn mb_ixor(a: MbValue, b: MbValue) -> MbValue {
-    mb_inplace(a, b, "__ixor__", super::builtins::mb_bitxor)
+    mb_inplace(a, b, "__ixor__", 17, super::builtins::mb_bitxor)
 }
 
 /// Invoke a 2-arg method value with (self, arg). Handles both TAG_FUNC direct
