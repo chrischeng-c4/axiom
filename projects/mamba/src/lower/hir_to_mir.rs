@@ -2462,6 +2462,29 @@ impl<'a> HirToMir<'a> {
                             self.try_handler_stack = saved_try;
                         }
                     }
+                    // A `return` inside a `with` must still run each context
+                    // manager's __exit__ before leaving the function (CPython:
+                    // files closed / locks released on early return). Emit the
+                    // exits inline in reverse (LIFO). Conservatively scoped to
+                    // the no-enclosing-try/finally case so the __exit__/finally
+                    // ordering can't be gotten wrong; the exception path already
+                    // routes raises to the with's exit block.
+                    if !self.with_ctx_stack.is_empty()
+                        && self.finally_body_stack.is_empty()
+                        && self.try_handler_stack.is_empty()
+                    {
+                        let none_vreg = self.emit_none();
+                        let ctxs: Vec<VReg> =
+                            self.with_ctx_stack.iter().rev().copied().collect();
+                        for ctx in ctxs {
+                            self.current_stmts.push(MirInst::CallExtern {
+                                dest: None,
+                                name: "mb_context_exit".to_string(),
+                                args: vec![ctx, none_vreg],
+                                ty: self.tcx.any(),
+                            });
+                        }
+                    }
                     self.finish_block(Terminator::Return(ret_vreg));
                 }
                 // Start a dead block for any unreachable code after return
