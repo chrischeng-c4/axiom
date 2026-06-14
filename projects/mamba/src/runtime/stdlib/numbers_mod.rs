@@ -17,19 +17,37 @@ dispatch_nullary!(dispatch_Real, mb_numbers_Real);
 dispatch_nullary!(dispatch_Rational, mb_numbers_Rational);
 dispatch_nullary!(dispatch_Integral, mb_numbers_Integral);
 
+thread_local! {
+    /// Function-pointer address → numeric-tower rank for the five numbers ABCs.
+    /// Rank widens from Integral (4, narrowest) to Number (0, widest): a value
+    /// satisfies `isinstance(v, ABC)` when its own rank is ≥ the ABC's rank.
+    static NUMBERS_ABC_RANKS: std::cell::RefCell<std::collections::HashMap<u64, u8>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Numeric-tower rank for a numbers ABC function pointer, if `addr` names one
+/// of `numbers.{Number,Complex,Real,Rational,Integral}`.
+pub fn numbers_abc_rank(addr: u64) -> Option<u8> {
+    NUMBERS_ABC_RANKS.with(|m| m.borrow().get(&addr).copied())
+}
+
 pub fn register() {
     let mut attrs = HashMap::new();
-    let dispatchers: Vec<(&str, usize)> = vec![
-        ("Number", dispatch_Number as usize),
-        ("Complex", dispatch_Complex as usize),
-        ("Real", dispatch_Real as usize),
-        ("Rational", dispatch_Rational as usize),
-        ("Integral", dispatch_Integral as usize),
+    // (name, dispatcher, tower rank): Integral is narrowest (4), Number widest (0).
+    let dispatchers: Vec<(&str, usize, u8)> = vec![
+        ("Number", dispatch_Number as usize, 0),
+        ("Complex", dispatch_Complex as usize, 1),
+        ("Real", dispatch_Real as usize, 2),
+        ("Rational", dispatch_Rational as usize, 3),
+        ("Integral", dispatch_Integral as usize, 4),
     ];
-    for (name, addr) in dispatchers {
+    for (name, addr, rank) in dispatchers {
         attrs.insert(name.to_string(), MbValue::from_func(addr));
         super::super::module::NATIVE_FUNC_ADDRS.with(|s| {
             s.borrow_mut().insert(addr as u64);
+        });
+        NUMBERS_ABC_RANKS.with(|m| {
+            m.borrow_mut().insert(addr as u64, rank);
         });
     }
     super::register_module("numbers", attrs);

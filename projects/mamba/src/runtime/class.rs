@@ -5684,6 +5684,36 @@ pub fn mb_lookup_dunder(obj: MbValue, name: MbValue) -> MbValue {
 }
 
 /// isinstance(obj, class_name) → bool
+/// Narrowest `numbers` tower rank a value occupies: Integral=4 for
+/// int/bool/BigInt, Rational=3 for Fraction, Real=2 for float, Complex=1 for
+/// complex, Number=0 for Decimal. `None` for non-numbers. A value satisfies
+/// `isinstance(v, ABC)` when its rank is ≥ the ABC's rank.
+fn numbers_value_rank(obj: MbValue) -> Option<u8> {
+    // Fraction / Decimal are tagged-int handles — test before is_int().
+    if super::builtins::is_fraction_handle_value(obj) {
+        return Some(3);
+    }
+    if super::builtins::is_decimal_handle_value(obj) {
+        return Some(0);
+    }
+    if obj.is_bool() || obj.is_int() {
+        return Some(4);
+    }
+    if obj.is_float() {
+        return Some(2);
+    }
+    if let Some(ptr) = obj.as_ptr() {
+        unsafe {
+            match &(*ptr).data {
+                ObjData::Complex(..) => return Some(1),
+                ObjData::BigInt(_) => return Some(4),
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
     // typing.Union[...] aliases: any member matching counts (#22).
     if let Some(hit) = super::stdlib::typing_mod::typing_union_isinstance(obj, class_name) {
@@ -5722,6 +5752,17 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
             "isinstance() arg 2 must be a type, a tuple of types, or a union".to_string(),
         );
         return MbValue::none();
+    }
+    // numbers ABC numeric tower: isinstance(x, numbers.Integral/Real/Complex/
+    // Rational/Number). These ABCs are native dispatcher functions (not classes),
+    // so match by function pointer and compare the value's tower rank — a value
+    // is an instance of an ABC at or above its own rung.
+    if let Some(addr) = class_name.as_func() {
+        if let Some(abc_rank) = super::stdlib::numbers_mod::numbers_abc_rank(addr as u64) {
+            return MbValue::from_bool(
+                numbers_value_rank(obj).is_some_and(|vr| vr >= abc_rank),
+            );
+        }
     }
     // Handle type objects (returned by type()): Instance with class_name="type"
     // and __name__ field containing the actual type name.
