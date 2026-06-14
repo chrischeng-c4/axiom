@@ -2615,6 +2615,27 @@ pub fn mb_sub(a: MbValue, b: MbValue) -> MbValue {
             if a_is_setlike && b_is_setlike {
                 return super::set_ops::mb_set_difference(a, b);
             }
+            // `set - <non-set>` is unsupported (operator needs set operands;
+            // `.difference()` accepts any iterable). Skip Instance RHS so the
+            // Counter/datetime/WeakSet arms below still run. Mirror mb_bitand.
+            {
+                let other_is_instance = if a_is_setlike {
+                    matches!(&(*pb).data, ObjData::Instance { .. })
+                } else {
+                    matches!(&(*pa).data, ObjData::Instance { .. })
+                };
+                if (a_is_setlike || b_is_setlike) && !other_is_instance {
+                    super::exception::mb_raise(
+                        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                        MbValue::from_ptr(MbObject::new_str(format!(
+                            "unsupported operand type(s) for -: '{}' and '{}'",
+                            value_type_name(a),
+                            value_type_name(b)
+                        ))),
+                    );
+                    return MbValue::none();
+                }
+            }
             // Counter - Counter — CPython multiset diff (drops <=0). (#1636)
             if let (ObjData::Instance { class_name: ca, .. },
                     ObjData::Instance { class_name: cb, .. }) =
@@ -2688,6 +2709,29 @@ pub fn mb_bitor(a: MbValue, b: MbValue) -> MbValue {
                 && super::stdlib::collections_mod::is_counter_instance(b)
             {
                 return super::stdlib::collections_mod::mb_counter_or(a, b);
+            }
+            // `set | <non-set>` is unsupported — the operator form requires set
+            // operands, while `.union()` accepts any iterable (mirror mb_bitand).
+            // Skip set-like Instances (weakref.WeakSet __or__/__ror__) and Counter.
+            let other_is_instance = if a_is_setlike {
+                matches!(&(*pb).data, ObjData::Instance { .. })
+            } else {
+                matches!(&(*pa).data, ObjData::Instance { .. })
+            };
+            if (a_is_setlike || b_is_setlike)
+                && !other_is_instance
+                && !super::stdlib::collections_mod::is_counter_instance(a)
+                && !super::stdlib::collections_mod::is_counter_instance(b)
+            {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "unsupported operand type(s) for |: '{}' and '{}'",
+                        value_type_name(a),
+                        value_type_name(b)
+                    ))),
+                );
+                return MbValue::none();
             }
         }
     }
@@ -2962,6 +3006,24 @@ pub fn mb_bitxor(a: MbValue, b: MbValue) -> MbValue {
             let b_is_setlike = matches!((*pb).data, ObjData::Set(_) | ObjData::FrozenSet(_));
             if a_is_setlike && b_is_setlike {
                 return super::set_ops::mb_set_symmetric_difference(a, b);
+            }
+            // `set ^ <non-set>` is unsupported (operator needs set operands;
+            // `.symmetric_difference()` accepts any iterable). Mirror mb_bitand.
+            let other_is_instance = if a_is_setlike {
+                matches!(&(*pb).data, ObjData::Instance { .. })
+            } else {
+                matches!(&(*pa).data, ObjData::Instance { .. })
+            };
+            if (a_is_setlike || b_is_setlike) && !other_is_instance {
+                super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "unsupported operand type(s) for ^: '{}' and '{}'",
+                        value_type_name(a),
+                        value_type_name(b)
+                    ))),
+                );
+                return MbValue::none();
             }
         }
     }

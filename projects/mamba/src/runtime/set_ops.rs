@@ -461,6 +461,18 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
             MbValue::none()
         }
     };
+    // Number of positional args — union/intersection/difference are variadic
+    // (`s.union(a, b, c)` folds over every iterable).
+    let args_len = || -> usize {
+        unsafe {
+            args.as_ptr()
+                .and_then(|ptr| match &(*ptr).data {
+                    ObjData::List(lock) => Some(lock.read().unwrap().len()),
+                    _ => None,
+                })
+                .unwrap_or(0)
+        }
+    };
     // REQ: R7 — frozenset immutability: reject mutation methods
     if let Some(ptr) = receiver.as_ptr() {
         if unsafe { matches!((*ptr).data, ObjData::FrozenSet(_)) } {
@@ -486,9 +498,28 @@ pub fn dispatch_set_method(name: &str, receiver: MbValue, args: MbValue) -> MbVa
         "discard" => { mb_set_discard(receiver, arg(0)); MbValue::none() }
         "clear" => { mb_set_clear(receiver); MbValue::none() }
         "copy" => mb_set_copy(receiver),
-        "union" => mb_set_union(receiver, arg(0)),
-        "intersection" => mb_set_intersection(receiver, arg(0)),
-        "difference" => mb_set_difference(receiver, arg(0)),
+        // Variadic: `s.union(a, b, ...)` folds every iterable (n==0 → copy).
+        "union" => {
+            let n = args_len();
+            if n == 0 { return mb_set_copy(receiver); }
+            let mut acc = mb_set_union(receiver, arg(0));
+            for i in 1..n { acc = mb_set_union(acc, arg(i)); }
+            acc
+        }
+        "intersection" => {
+            let n = args_len();
+            if n == 0 { return mb_set_copy(receiver); }
+            let mut acc = mb_set_intersection(receiver, arg(0));
+            for i in 1..n { acc = mb_set_intersection(acc, arg(i)); }
+            acc
+        }
+        "difference" => {
+            let n = args_len();
+            if n == 0 { return mb_set_copy(receiver); }
+            let mut acc = mb_set_difference(receiver, arg(0));
+            for i in 1..n { acc = mb_set_difference(acc, arg(i)); }
+            acc
+        }
         "symmetric_difference" => mb_set_symmetric_difference(receiver, arg(0)),
         "pop" => mb_set_pop(receiver),
         "update" => mb_set_update(receiver, arg(0)),
