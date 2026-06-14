@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-scenario-load-rs
+capability_refs:
+  - id: load-pins
+    role: primary
+    claim: open-loop-load-generator
+    coverage: partial
+    rationale: "This source unit implements rig open-loop load profile execution for the load-pins capability."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,15 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/scenario/load.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/scenario/load.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ACHIEVED_QPS_HONESTY_RATIO` | projects/rig/src/scenario/load.rs | constant | pub | 19 |  |
+| `LOAD_METRICS` | projects/rig/src/scenario/load.rs | constant | pub | 37 |  |
+| `LoadProfile` | projects/rig/src/scenario/load.rs | struct | pub | 23 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
