@@ -3555,7 +3555,13 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
                 | ObjData::Bytes(_) | ObjData::ByteArray(_) | ObjData::FrozenSet(_)
         )
     });
-    if is_builtin_container && builtin_type_method_names(&obj).contains(&attr_name.as_str()) {
+    // float is also eligible (`getattr(0.5, "__ceil__")()`): it is a direct
+    // f64, never a tagged-int handle, so there is no handle ambiguity. int/bool
+    // are excluded — their tag space is shared with closure/range/Fraction/
+    // Decimal handles, which must not masquerade as ints here.
+    if (is_builtin_container || obj.is_float())
+        && builtin_type_method_names(&obj).contains(&attr_name.as_str())
+    {
         return make_bound_native_method(obj, &attr_name);
     }
 
@@ -4422,6 +4428,8 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
     } else if obj.is_int() || obj.is_float() {
         vec![
             "bit_length", "to_bytes", "from_bytes",
+            "is_integer", "as_integer_ratio", "conjugate",
+            "__ceil__", "__floor__", "__trunc__", "__round__",
             "__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
             "__mod__", "__pow__", "__neg__", "__abs__", "__eq__", "__lt__",
             "__le__", "__gt__", "__ge__", "__hash__", "__repr__", "__str__",
