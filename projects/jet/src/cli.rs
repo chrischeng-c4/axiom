@@ -43,8 +43,15 @@ pub fn command() -> Command {
                 .arg(
                     Arg::new("frozen-lockfile")
                         .long("frozen-lockfile")
+                        .conflicts_with("no-frozen-lockfile")
                         .action(ArgAction::SetTrue)
                         .help("Fail if lockfile drift detected (auto in CI)"),
+                )
+                .arg(
+                    Arg::new("no-frozen-lockfile")
+                        .long("no-frozen-lockfile")
+                        .action(ArgAction::SetTrue)
+                        .help("Disable CI auto-frozen lockfile for explicit bootstrap installs"),
                 )
                 .arg(
                     Arg::new("no-cache")
@@ -63,6 +70,12 @@ pub fn command() -> Command {
                             "Resolve dependency graph and update jet-lock.yaml \
                              without downloading or extracting tarballs",
                         ),
+                )
+                .arg(
+                    Arg::new("no-prebundle")
+                        .long("no-prebundle")
+                        .action(ArgAction::SetTrue)
+                        .help("Skip dev-server prebundle after dependency installation"),
                 )
                 .arg(
                     Arg::new("nx")
@@ -1540,8 +1553,10 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
 
         Some(("install", m)) => {
             let frozen = m.get_flag("frozen-lockfile");
+            let auto_ci_frozen = !m.get_flag("no-frozen-lockfile");
             let no_cache = m.get_flag("no-cache");
             let no_install = m.get_flag("no-install");
+            let prebundle = !m.get_flag("no-prebundle");
             let force_nx = m.get_flag("nx");
 
             // Detect workspace mode (Nx > Jet > Single).
@@ -1568,8 +1583,11 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     if no_install {
                         pm.install_lockfile_only().await
                     } else {
-                        pm.install_with_options(frozen).await?;
-                        prebundle_after_install(nx_mgr.root).await
+                        pm.install_with_ci_policy(frozen, auto_ci_frozen).await?;
+                        if prebundle {
+                            prebundle_after_install(nx_mgr.root).await?;
+                        }
+                        Ok(())
                     }
                 }
                 _ => {
@@ -1579,8 +1597,11 @@ async fn execute_async(matches: &ArgMatches) -> Result<()> {
                     if no_install {
                         pm.install_lockfile_only().await
                     } else {
-                        pm.install_with_options(frozen).await?;
-                        prebundle_after_install(install_root).await
+                        pm.install_with_ci_policy(frozen, auto_ci_frozen).await?;
+                        if prebundle {
+                            prebundle_after_install(install_root).await?;
+                        }
+                        Ok(())
                     }
                 }
             }

@@ -291,6 +291,24 @@ impl PackageManager {
     /// Install with frozen lockfile support.
     /// In CI (CI=true, GITHUB_ACTIONS, etc.) frozen lockfile is auto-enabled.
     pub async fn install_with_options(&self, frozen_lockfile: bool) -> Result<()> {
+        self.install_with_ci_policy(frozen_lockfile, true).await
+    }
+
+    /// Install after an explicit package graph mutation.
+    ///
+    /// `jet add` and `jet remove` are mutating commands: they must be able to
+    /// resolve, hydrate, and rewrite `jet-lock.yaml` even when CI variables are
+    /// present. Plain `jet install` keeps the CI auto-frozen guard.
+    pub async fn install_after_mutation(&self) -> Result<()> {
+        self.install_with_ci_policy(false, false).await
+    }
+
+    /// Install with optional CI auto-frozen policy.
+    pub(crate) async fn install_with_ci_policy(
+        &self,
+        frozen_lockfile: bool,
+        auto_ci_frozen: bool,
+    ) -> Result<()> {
         tracing::info!("Installing dependencies...");
 
         // Detect workspace mode first. Jet workspaces use a separate install
@@ -299,11 +317,11 @@ impl PackageManager {
         if let workspace::WorkspaceMode::Jet(mut ws_mgr) =
             workspace::WorkspaceMode::detect(&self.root_dir)?
         {
-            let frozen = frozen_lockfile || Self::is_ci_env();
+            let frozen = frozen_lockfile || (auto_ci_frozen && Self::is_ci_env());
             return self.workspace_install_all(&mut ws_mgr, frozen).await;
         }
 
-        let frozen = frozen_lockfile || Self::is_ci_env();
+        let frozen = frozen_lockfile || (auto_ci_frozen && Self::is_ci_env());
         let package_json = self.read_package_json()?;
         let mut all_deps = package_json.dependencies.clone();
         all_deps.extend(package_json.dev_dependencies.clone());
@@ -685,7 +703,7 @@ impl PackageManager {
         }
         self.write_package_json_raw(&doc, &indent, trailing_newline)?;
 
-        self.install().await?;
+        self.install_after_mutation().await?;
         Ok(())
     }
 
@@ -714,7 +732,7 @@ impl PackageManager {
         let changed = remove_dep_entry(&mut doc, package);
         if changed {
             self.write_package_json_raw(&doc, &indent, trailing_newline)?;
-            self.install().await?;
+            self.install_after_mutation().await?;
             let lockfile_path = self.root_dir.join("jet-lock.yaml");
             if lockfile_path.exists() {
                 let lockfile = Lockfile::read(&lockfile_path)?;
