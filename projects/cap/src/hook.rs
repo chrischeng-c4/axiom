@@ -6,14 +6,9 @@
 //! `Bash` command should be wrapped with `cap`, and writes a
 //! agent-specific `hookSpecificOutput` JSON to stdout.
 //!
-//! Strategy: **wrap every external Bash command** so the daemon
-//! always sees the process group and can pause / kill it under
-//! memory pressure. Rewrite form is
-//! `cap run --label='<orig>' -- bash -c '<escaped>'`, which lets bash
-//! handle shell builtins (`cd`, `export`), pipes, redirections, `&&`
-//! chains, and heredocs — cap just sees one bash process group — while
-//! `--label` keeps the original command in the run log (otherwise every
-//! entry would read `bash -c …`).
+//! Strategy: keep the hook thin. It forwards the original Bash command string
+//! to `cap run '<command>'`; cap owns same-name replacement planning and falls
+//! back to `bash -c` internally when shell semantics are needed.
 //!
 //! Per-invocation overhead: ~10 ms cap startup + ~5 ms extra
 //! bash layer. Imperceptible for any non-trivial command.
@@ -25,8 +20,8 @@
 //!   3. Effective first token (after stripping `env`, `time`,
 //!      `nice`, `nohup`, `exec`, and leading `VAR=val`) is
 //!      already `cap` → allow (avoid recursive wrapping).
-//!   4. Anything else → allow + input rewrite command
-//!      `"cap run --label='<orig>' -- bash -c '<escaped original>'"`.
+//!   4. Bash command → allow + input rewrite command
+//!      `"<cap> run '<escaped original>'"`.
 //!
 //! Always exits 0 — a hook crash must never wedge the agent.
 
@@ -114,10 +109,12 @@ pub fn run_bash_hook(agent: HookAgent) -> anyhow::Result<()> {
     // we don't control — a bare `cap` would become "command not found"
     // and the agent's command would silently never run. Falls back to
     // `cap` only if the exe path can't be resolved.
-    let cap_bin = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.to_str().map(str::to_string))
-        .unwrap_or_else(|| "cap".to_string());
+    let cap_bin = std::env::var("CAP_PUBLIC_EXE").unwrap_or_else(|_| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.to_str().map(str::to_string))
+            .unwrap_or_else(|| "cap".to_string())
+    });
 
     let Some(rewritten) = maybe_rewrite(command, &cap_bin) else {
         return Ok(());
@@ -172,17 +169,10 @@ fn maybe_rewrite(command: &str, cap_bin: &str) -> Option<String> {
     if first_program_is_cap(trimmed) {
         return None;
     }
-    // `cap run --label=<orig> -- bash -c <orig>`:
-    //   * the `bash -c` layer is what actually runs (so cap sees one
-    //     process group for the whole shell line — pipes, &&, builtins),
-    //   * `--label` carries the original command verbatim so the run log
-    //     records `ls -la | wc -l`, not `bash -c ls -la | wc -l`.
-    // `--label=` (attached form) sidesteps clap treating a command that
-    // starts with `-` as a flag.
-    let quoted = shell_single_quote(command);
     Some(format!(
-        "{} run --label={quoted} -- bash -c {quoted}",
+        "{} run {}",
         shell_quote_arg(cap_bin),
+        shell_single_quote(command),
     ))
 }
 
@@ -346,7 +336,7 @@ mod tests {
             hook_specific_output: hook_specific_for_rewrite(
                 HookAgent::Codex,
                 ModifiedInput {
-                    command: "cap run -- bash -c pwd".to_string(),
+                    command: "cap run 'pwd'".to_string(),
                 },
             ),
         };
@@ -363,7 +353,7 @@ mod tests {
             hook_specific_output: hook_specific_for_rewrite(
                 HookAgent::Claude,
                 ModifiedInput {
-                    command: "cap run -- bash -c pwd".to_string(),
+                    command: "cap run 'pwd'".to_string(),
                 },
             ),
         };
@@ -385,49 +375,84 @@ mod tests {
     fn wraps_plain_command() {
         assert_eq!(
             rewrite("cargo test -p cap").unwrap(),
-            "cap run --label='cargo test -p cap' -- bash -c 'cargo test -p cap'"
+            "cap run 'cargo test -p cap'"
         );
     }
 
     #[test]
     fn wraps_lightweight_command_too() {
-        // The whole point — every external command goes through cap
-        // so the daemon sees uniform process groups.
+        assert_eq!(rewrite("ls -a").unwrap(), "cap run 'ls -a'");
+        assert_eq!(rewrite("git status").unwrap(), "cap run 'git status'");
+    }
+
+    #[test]
+    fn scout_only_tiny_commands_are_forwarded_to_cap_run() {
+        for command in [
+            "true",
+            "false",
+            "pwd",
+            "basename /tmp/file.txt",
+            "dirname /tmp/file.txt",
+            "head -c 1024 file.bin",
+            "tail -n 10 file.log",
+            "mkdir -p target/tmp",
+            "touch target/tmp/file",
+            "awk '{print $1}' file.txt",
+            "xargs echo",
+        ] {
+            assert_eq!(
+                rewrite(command),
+                Some(format!("cap run {}", shell_single_quote(command))),
+                "{command} should be forwarded as a cap-owned command string"
+            );
+        }
+    }
+
+    #[test]
+    fn scout_only_pipe_still_uses_bash_payload() {
         assert_eq!(
-            rewrite("ls -la").unwrap(),
-            "cap run --label='ls -la' -- bash -c 'ls -la'"
-        );
-        assert_eq!(
-            rewrite("git status").unwrap(),
-            "cap run --label='git status' -- bash -c 'git status'"
+            rewrite("awk '{print $1}' file.txt | xargs echo").unwrap(),
+            "cap run 'awk '\\''{print $1}'\\'' file.txt | xargs echo'"
         );
     }
 
     #[test]
-    fn wraps_shell_pipeline() {
+    fn complex_shell_still_uses_bash_payload() {
         assert_eq!(
             rewrite("ls -la | wc -l").unwrap(),
-            "cap run --label='ls -la | wc -l' -- bash -c 'ls -la | wc -l'"
+            "cap run 'ls -la | wc -l'"
         );
         assert_eq!(
             rewrite("cd projects/cap && cargo test").unwrap(),
-            "cap run --label='cd projects/cap && cargo test' -- bash -c 'cd projects/cap && cargo test'"
+            "cap run 'cd projects/cap && cargo test'"
         );
     }
 
     #[test]
-    fn label_carries_the_clean_command_for_the_run_log() {
-        // The `--label=` segment must be the verbatim original command
-        // (this is what the run log records as `command`).
-        let got = rewrite("pytest -k foo").unwrap();
-        assert!(
-            got.contains("--label='pytest -k foo'"),
-            "label must carry the clean original command, got {got}"
+    fn shell_only_commands_keep_original_payload() {
+        let got = rewrite("cd app && pytest -k foo").unwrap();
+        assert_eq!(got, "cap run 'cd app && pytest -k foo'");
+    }
+
+    #[test]
+    fn recursive_grep_is_routed_to_cap_not_optimized_in_hook() {
+        assert_eq!(
+            rewrite("grep -R TODO .").unwrap(),
+            "cap run 'grep -R TODO .'"
         );
-        assert!(
-            got.ends_with("-- bash -c 'pytest -k foo'"),
-            "the bash -c payload is still the original command, got {got}"
+        assert_eq!(
+            rewrite("grep -inR TODO projects/cap").unwrap(),
+            "cap run 'grep -inR TODO projects/cap'"
         );
+    }
+
+    #[test]
+    fn glob_and_unsupported_shell_expansion_stay_in_bash() {
+        assert_eq!(
+            rewrite("grep -R TODO . | head").unwrap(),
+            "cap run 'grep -R TODO . | head'"
+        );
+        assert_eq!(rewrite("ls *.rs").unwrap(), "cap run 'ls *.rs'");
     }
 
     #[test]
@@ -436,7 +461,7 @@ mod tests {
         // verbatim so the rewrite stays readable.
         assert_eq!(
             maybe_rewrite("cargo test", "/home/u/.local/bin/cap").unwrap(),
-            "/home/u/.local/bin/cap run --label='cargo test' -- bash -c 'cargo test'"
+            "/home/u/.local/bin/cap run 'cargo test'"
         );
     }
 
@@ -446,7 +471,7 @@ mod tests {
         // the shell would split it into two words.
         assert_eq!(
             maybe_rewrite("cargo test", "/Users/My Name/.local/bin/cap").unwrap(),
-            "'/Users/My Name/.local/bin/cap' run --label='cargo test' -- bash -c 'cargo test'"
+            "'/Users/My Name/.local/bin/cap' run 'cargo test'"
         );
     }
 
@@ -472,9 +497,7 @@ mod tests {
     #[test]
     fn single_quote_in_command_escaped() {
         let got = rewrite("echo 'hello world'").unwrap();
-        // Both the label and the bash -c payload are escaped the same way.
-        let q = "'echo '\\''hello world'\\'''";
-        assert_eq!(got, format!("cap run --label={q} -- bash -c {q}"));
+        assert_eq!(got, "cap run 'echo '\\''hello world'\\'''");
     }
 
     #[test]
@@ -482,7 +505,7 @@ mod tests {
         let got = rewrite("for i in 1 2 3\ndo echo $i\ndone").unwrap();
         // Single-quoted multi-line literal — bash handles it natively.
         let q = "'for i in 1 2 3\ndo echo $i\ndone'";
-        assert_eq!(got, format!("cap run --label={q} -- bash -c {q}"));
+        assert_eq!(got, format!("cap run {q}"));
     }
 
     #[test]

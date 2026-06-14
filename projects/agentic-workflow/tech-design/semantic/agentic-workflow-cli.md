@@ -27,6 +27,12 @@ capability_refs:
     claim: managed-and-semantic-production-gates
     coverage: full
     rationale: "The CLI semantic domain includes standardize and health command surfaces used for brownfield takeover."
+  - id: project-local-td-and-ec-gates
+    role: primary
+    gap: ec-evidence-documentation
+    claim: ec-evidence-documentation
+    coverage: full
+    rationale: "The CLI semantic domain includes aw ec doc commands that turn project-local EC evidence into generated product documentation."
 ---
 
 # Semantic TD: agentic-workflow/cli
