@@ -35,8 +35,8 @@
 //! `JET_SNAPSHOT_UPDATE=1` to overwrite when changes are intentional.
 
 use jet::bundler::tree_shake::{
-    analyze_used_exports, has_side_effects, module_has_side_effects, shake_module, SideEffectsDecl,
-    TreeShakeResult,
+    analyze_used_exports, analyze_used_exports_from, has_side_effects, module_has_side_effects,
+    shake_module, SideEffectsDecl, TreeShakeResult,
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -362,16 +362,15 @@ fn reexport_chain_partial_usage_baseline() {
     );
 }
 
-/// **Pattern 4b — `export * from './y'` (star re-export, full
-/// retention).**
+/// **Pattern 4b — `export * from './y'` (star re-export, used-name
+/// propagation).**
 ///
 /// `export * from '...'` is the namespace-passthrough form of a
 /// barrel: every named export of the leaf becomes a named export of
 /// the barrel, except for `default` (which the spec excludes from
-/// `export *`). Because the analyzer can't tell which barrel export
-/// a downstream consumer actually used (the names flow through
-/// transparently), a star re-export must conservatively keep every
-/// leaf export alive.
+/// `export *`). Demand-driven analysis can still thread the specific
+/// name selected by a downstream consumer, so a named import of `a`
+/// keeps `a` alive without retaining unrelated sibling exports.
 ///
 /// Setup:
 ///
@@ -382,14 +381,16 @@ fn reexport_chain_partial_usage_baseline() {
 ///
 /// Expected:
 ///
-/// - `leaf.js`'s `a` AND `b` are both in `used_exports` (the star
-///   forwards every non-default name regardless of downstream usage).
-/// - `leaf.js`'s `default` is NOT in `used_exports` (excluded by
-///   `export *` spec; consumers must use `export { default } from`
-///   explicitly).
+/// - `leaf.js`'s `a` is in `used_exports` because it flows through
+///   the star barrel to the entry import.
+/// - `leaf.js`'s `b` is NOT in `used_exports` because nothing consumes
+///   that exported name.
+/// - `leaf.js`'s `default` is NOT in `used_exports` because
+///   `export *` excludes default; consumers must use
+///   `export { default } from` explicitly.
 /// - `leaf.js` is NOT in `eliminated_modules`.
 #[test]
-fn reexport_star_marks_all_leaf_exports_used() {
+fn reexport_star_marks_used_leaf_exports() {
     let modules = fixture(&[
         (
             "/fixture/entry.js",
@@ -411,8 +412,8 @@ fn reexport_star_marks_all_leaf_exports_used() {
         "leaf.js's `a` must be marked used via `export *`; got {leaf_used:?}",
     );
     assert!(
-        leaf_used.contains("b"),
-        "leaf.js's `b` must be marked used via `export *` (star forwards every name); got {leaf_used:?}",
+        !leaf_used.contains("b"),
+        "leaf.js's `b` must not be marked used when only `a` is consumed through `export *`; got {leaf_used:?}",
     );
     assert!(
         !leaf_used.contains("default"),
@@ -425,7 +426,7 @@ fn reexport_star_marks_all_leaf_exports_used() {
     );
 
     snapshot_eq(
-        "tree_shaking__reexport_star_full__analysis",
+        "tree_shaking__reexport_star_used_name__analysis",
         &result_to_value(&result),
     );
 }
@@ -853,10 +854,9 @@ fn post_shake_size(
 ///    number, and the snapshot diff fails CI. `JET_SNAPSHOT_UPDATE=1`
 ///    accepts intentional changes.
 ///
-/// The fixture inherits #1342's gap (re-export chains under-shake)
-/// and #1344's gap (dynamic imports — not exercised here): when
-/// either fix lands the size baseline shrinks and the snapshot
-/// updates in the same PR that flips the analyzer behavior.
+/// The fixture exercises the fixed #1342 path: the app imports from a
+/// local barrel, and that used signal must thread back to the leaf
+/// export while unrelated exports remain removable.
 #[test]
 fn mini_react_e2e_baseline() {
     let modules = fixture(&[
@@ -874,12 +874,9 @@ fn mini_react_e2e_baseline() {
              export const unmountComponentAtNode = (container) => { container.x = null; };\n",
         ),
         // Re-export barrel — only `useState` flows through to app.
-        // (See #1342 — re-export chains today don't thread the
-        // "used" signal back to leaf modules. Analyzer marks
-        // hooks.js's `useState` as used; react/index.js's exports
-        // appear unused which lands react/index.js in
-        // `eliminated_modules`. The bundle-size baseline captures
-        // this under-shaken state.)
+        // Re-export barrel — the used signal should thread back to
+        // react/index.js's `useState` without keeping `useEffect` or
+        // `unstable_DebugTracing`.
         (
             "/fixture/app/hooks.js",
             "export { useState } from '../react/index';\n",
@@ -900,7 +897,8 @@ fn mini_react_e2e_baseline() {
         ),
     ]);
 
-    let result = analyze_used_exports(&modules).expect("analyze_used_exports");
+    let result = analyze_used_exports_from(&modules, Path::new("/fixture/app/main.js"), None)
+        .expect("analyze_used_exports_from");
 
     // Sanity asserts — pin the analyzer-observable contract that
     // the bundle-size number depends on, so when the snapshot
@@ -918,6 +916,22 @@ fn mini_react_e2e_baseline() {
     assert!(
         hooks_used.contains("useState"),
         "hooks.js's `useState` re-export must be marked used; got {hooks_used:?}",
+    );
+    let react = PathBuf::from("/fixture/react/index.js");
+    let react_used = result.used_exports.get(&react).cloned().unwrap_or_default();
+    assert!(
+        react_used.contains("useState"),
+        "react/index.js's `useState` export must be threaded through hooks.js; got {react_used:?}",
+    );
+    let react_dom = PathBuf::from("/fixture/react-dom/index.js");
+    let react_dom_used = result
+        .used_exports
+        .get(&react_dom)
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        react_dom_used.contains("render"),
+        "react-dom/index.js's `render` export must be marked used by app/main.js; got {react_dom_used:?}",
     );
 
     snapshot_eq(
