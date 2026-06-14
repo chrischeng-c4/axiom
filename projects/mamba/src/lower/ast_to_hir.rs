@@ -717,12 +717,14 @@ fn infer_return_type_from_ast(
                         // Consult the float-hint analysis for non-literal returns.
                         // Only force `float` when provably float; otherwise fall
                         // through (None → int_ty) to preserve integer fast paths.
-                        if ast_expr_float_hint(&expr.node, env, func_ret_float)
-                            == FloatHint::Float
-                        {
-                            Some(tc.tcx.float())
-                        } else {
-                            None
+                        match ast_expr_float_hint(&expr.node, env, func_ret_float) {
+                            FloatHint::Float => Some(tc.tcx.float()),
+                            // Returning a NaN-boxed (`any`) value — e.g. an
+                            // unannotated param that mixed-typed call sites
+                            // boxed. Widen to Any so the caller treats the
+                            // result as a boxed MbValue, not raw i64.
+                            FloatHint::Boxed => Some(tc.tcx.any()),
+                            _ => None,
                         }
                     }
                 };
@@ -2146,6 +2148,11 @@ impl<'a> AstLowerer<'a> {
                         FloatHint::Float
                     } else if pty == int_ty {
                         FloatHint::Int
+                    } else if pty == any_ty {
+                        // A NaN-boxed param (e.g. mixed float/non-float call
+                        // sites): returning it directly yields an `any` result,
+                        // not raw int.
+                        FloatHint::Boxed
                     } else {
                         FloatHint::Unknown
                     };
