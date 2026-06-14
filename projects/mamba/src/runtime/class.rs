@@ -3553,6 +3553,7 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             ObjData::List(_) | ObjData::Tuple(_) | ObjData::Dict(_)
                 | ObjData::Str(_) | ObjData::Set(_)
                 | ObjData::Bytes(_) | ObjData::ByteArray(_) | ObjData::FrozenSet(_)
+                | ObjData::Complex(..)
         )
     });
     // float is also eligible (`getattr(0.5, "__ceil__")()`): it is a direct
@@ -4324,7 +4325,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "__iter__", "__len__", "__contains__",
         ],
         "complex" => vec![
-            "conjugate", "real", "imag",
+            "conjugate", "real", "imag", "__getnewargs__", "__complex__",
             "__add__", "__sub__", "__mul__", "__truediv__", "__pow__",
             "__neg__", "__abs__", "__eq__", "__hash__", "__repr__", "__str__",
         ],
@@ -4422,6 +4423,7 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
                 ObjData::Bytes(_) => builtin_type_method_names_by_name("bytes"),
                 ObjData::ByteArray(_) => builtin_type_method_names_by_name("bytearray"),
                 ObjData::FrozenSet(_) => builtin_type_method_names_by_name("frozenset"),
+                ObjData::Complex(..) => builtin_type_method_names_by_name("complex"),
                 _ => Vec::new(),
             }
         }
@@ -11382,6 +11384,14 @@ pub fn mb_call_method(receiver: MbValue, method_name: MbValue, args: MbValue) ->
                         }
                         "__complex__" => {
                             return MbValue::from_ptr(MbObject::new_complex(*re, *im));
+                        }
+                        // CPython: complex(3,4).__getnewargs__() == (3.0, 4.0)
+                        // (used by copy/pickle to reconstruct the value).
+                        "__getnewargs__" => {
+                            return MbValue::from_ptr(MbObject::new_tuple(vec![
+                                MbValue::from_float(*re),
+                                MbValue::from_float(*im),
+                            ]));
                         }
                         _ => {}
                     }
