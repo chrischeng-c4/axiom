@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! The full-stack proof: two independent lumen serving nodes backed by
 //! the SAME NATS write log. Write through node A's HTTP API; read it
 //! back through node B's HTTP API. This exercises the entire data plane
@@ -148,3 +150,4 @@ async fn delete_on_one_node_propagates_to_the_other() {
         "delete on B did not propagate to A"
     );
 }
+// CODEGEN-END

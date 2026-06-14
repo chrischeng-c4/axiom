@@ -25,7 +25,7 @@ pub mod schema;
 pub use builder::ReportBuilder;
 pub use emit::{diag, emit, render};
 pub use envelope::{
-    Completion, EnvBlock, FindingsSummary, OverallStatus, MeterReport, RunnerRecord, SCHEMA_VERSION,
+    Completion, EnvBlock, FindingsSummary, MeterReport, OverallStatus, RunnerRecord, SCHEMA_VERSION,
 };
 pub use finding::{finding_id, Finding, Invoke, Kind, Location, Severity};
 pub use persist::{read_last_report, write_last_report};

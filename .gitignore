@@ -10,6 +10,13 @@
 # meter verb runs in (often the repo root); process output, never source.
 .meter/
 
+# guard per-run report cache (.guard/last-report.json); process output, never
+# source.
+.guard/
+
+# vat copy-on-write workspaces and run state; process output, never source.
+.vat/
+
 # ctx_inf_db autonomous loop runtime state (transitional — not versioned)
 .ctx_inf_db.state
 .ctx_inf_db/
@@ -112,3 +119,6 @@ projects/mamba/tests/cpython/.cache/
 # cargo-mutants output
 mutants.out
 mutants.out.old
+.rig/
+# arena per-run report cache + baseline store written under the cwd
+.arena/

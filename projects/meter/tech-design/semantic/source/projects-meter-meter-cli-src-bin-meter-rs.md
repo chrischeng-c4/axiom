@@ -21,10 +21,8 @@ Public API manifest for `projects/meter/meter-cli/src/bin/meter.rs` generated fr
 
 No public AST symbols.
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/meter-cli/src/bin/meter.rs -->
 ````rust
 //! Standalone `meter` binary.
 //!
@@ -37,7 +35,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use meter_cli::dispatch::{dispatch, print_report, OutputOpts, MeterCommand};
+use meter_cli::dispatch::{dispatch, print_report, MeterCommand, OutputOpts};
 
 fn main() -> ExitCode {
     // Parse the verb tree; the global `--human`/`--compact` flags are flattened
@@ -70,7 +68,7 @@ fn main() -> ExitCode {
 changes:
   - path: projects/meter/meter-cli/src/bin/meter.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/meter-cli/src/bin/meter.rs` captured during meter full-codegen standardization.

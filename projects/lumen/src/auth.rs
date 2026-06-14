@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! Bearer-token auth + per-collection RBAC.
 //!
 //! v1 keeps the verifier behind a trait so the static config-driven
@@ -36,6 +38,7 @@ use crate::types::ApiError;
 
 const WILDCARD_COLLECTION: &str = "*";
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -44,12 +47,14 @@ pub enum Role {
     Admin,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Role {
     pub fn covers(self, needed: Role) -> bool {
         self >= needed
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenClaims {
     pub subject: String,
@@ -58,12 +63,14 @@ pub struct TokenClaims {
     pub roles: HashMap<String, Role>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
     pub required: bool,
     pub tokens: HashMap<String, TokenClaims>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl AuthConfig {
     pub fn open() -> Self {
         Self {
@@ -91,6 +98,7 @@ impl AuthConfig {
 }
 
 /// Resolved auth state attached to every request as an axum extension.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
 pub enum AuthContext {
     /// `LUMEN_AUTH=off` and no token was presented. Treated as full
@@ -99,6 +107,7 @@ pub enum AuthContext {
     Token(TokenClaims),
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl AuthContext {
     pub fn ensure(&self, collection_id: &str, needed: Role) -> Result<(), AuthErr> {
         match self {
@@ -133,6 +142,7 @@ impl AuthContext {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub async fn auth_middleware(
     State(cfg): State<Arc<AuthConfig>>,
     mut req: Request,
@@ -163,6 +173,7 @@ pub async fn auth_middleware(
     next.run(req).await
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug)]
 pub enum AuthErr {
     Unauthenticated,
@@ -173,6 +184,7 @@ pub enum AuthErr {
     },
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl IntoResponse for AuthErr {
     fn into_response(self) -> Response {
         match self {
@@ -340,3 +352,4 @@ mod tests {
         }
     }
 }
+// CODEGEN-END

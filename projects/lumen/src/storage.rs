@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-src.md#schema
+// CODEGEN-BEGIN
 //! In-memory storage and query execution.
 //!
 //! The engine is `BTreeMap`-backed inverted indexes per field,
@@ -51,6 +53,7 @@ type FastHashMap<K, V> = FxHashMap<K, V>;
 /// Maximum items in a single `POST /index` request (README §1 v1 limit).
 pub const MAX_INDEX_ITEMS: usize = 10_000;
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DropOutcome {
     /// The collection did not exist.
@@ -63,6 +66,7 @@ pub enum DropOutcome {
     Physical,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("collection not found: {0}")]
@@ -93,11 +97,13 @@ pub enum StorageError {
 
 /// Total-ordered, bit-monotone wrapper around `f64`. NaN is rejected at
 /// construction (the API layer must validate before reaching here).
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SortableF64(u64);
 
 const MISSING_SORTABLE_F64_BITS: u64 = 0xfff8_0000_0000_0000;
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl SortableF64 {
     pub fn new(x: f64) -> Result<Self> {
         if x.is_nan() {
@@ -232,6 +238,7 @@ enum InternerBucket {
     Many(Vec<u32>),
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Interner {
     fn intern(&mut self, eid: &str) -> u32 {
         self.intern_with_status(eid).0
@@ -299,12 +306,14 @@ fn hash_external_id(eid: &str) -> u64 {
 /// The BM25 scan reads `docids`/`tfs` sequentially (cache-friendly), and `df` is
 /// exactly `docids.len()`. Replaces the old `BTreeMap<u32,u32>` whose per-doc
 /// access chased heap-scattered tree nodes.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Postings {
     docids: Vec<u32>,
     tfs: Vec<u32>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Postings {
     /// Build a posting list from ascending `(docid, tf)` pairs. Crate-internal,
     /// used by the Text segment writer round-trip test to fabricate postings
@@ -506,6 +515,7 @@ struct TextIndex {
     tombstones: RoaringBitmap,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl TextIndex {
     fn clear_match_rank_cache(&self) {
         if let Ok(mut cache) = self.match_rank_cache.write() {
@@ -826,6 +836,11 @@ struct KeywordIndex {
     /// term → docs (RoaringBitmap so AND/OR is compressed-SIMD, not random
     /// per-doc forward lookups — the difference at 1M-doc filter intersection).
     terms: BTreeMap<String, RoaringBitmap>,
+    /// Side-index of LIVE-tail terms whose posting holds >= 2 docs, maintained
+    /// O(log n) at index/delete time so `duplicates` iterates only candidate
+    /// groups instead of scanning every distinct term. Tail-only state: cleared
+    /// at seal (the sealed path enumerates the segment dict instead).
+    dup_values: BTreeSet<String>,
     /// Dense live-tail forward cache for hot per-doc predicates and snapshots.
     /// `forward` remains a sparse compatibility/fallback map for restored older
     /// snapshots, while new writes avoid a per-doc HashMap insert.
@@ -863,6 +878,7 @@ struct KeywordIndex {
     tombstones: RoaringBitmap,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl KeywordIndex {
     /// The doc's keyword for a per-doc PREDICATE point lookup. When a sealed
     /// segment is attached it serves ids in its covered range `[0..n_docs)`
@@ -1031,9 +1047,88 @@ impl KeywordIndex {
     }
 }
 
+/// Values whose live posting holds >= 2 docs — seeds the duplicates side-index
+/// (`dup_values`) when an inverted map is rebuilt wholesale (snapshot restore);
+/// the write/delete paths maintain it incrementally afterwards.
+fn dup_values_of<K: Ord + Clone>(map: &BTreeMap<K, RoaringBitmap>) -> BTreeSet<K> {
+    map.iter()
+        .filter(|(_, set)| set.len() >= 2)
+        .map(|(k, _)| k.clone())
+        .collect()
+}
+
+/// Order-statistic snapshot of the live `values` tree: distinct value bits
+/// ascending plus cumulative doc counts. Built lazily the first time a range
+/// ESTIMATE walks past [`RANGE_STATS_BUILD_THRESHOLD`] distinct keys; dropped
+/// with the keyword range caches on any write batch, delete, or seal. Both
+/// `range_df` and `range_distinct_count` answer from two binary searches —
+/// O(log distinct) instead of an O(distinct-in-range) tree walk per query.
+/// Estimation-only state: it never feeds result evaluation, so a rebuild race
+/// can at worst pick a different (still correct) plan.
+#[derive(Debug)]
+struct NumberRangeStats {
+    /// Distinct live values (sortable bits), ascending.
+    keys: Vec<u64>,
+    /// `cum_df[i]` = total docs across `keys[..i]`; `len = keys.len() + 1`.
+    cum_df: Vec<u64>,
+}
+
+/// Distinct-key walk budget for a single range estimate before the walk is
+/// abandoned and [`NumberRangeStats`] is built instead. Narrow ranges stay on
+/// the exact walk and never pay the build; one wide estimate pays roughly two
+/// walks (the abandoned prefix + the build) and every later estimate on the
+/// unchanged tree is O(log distinct).
+const RANGE_STATS_BUILD_THRESHOLD: u64 = 1024;
+
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
+impl NumberRangeStats {
+    fn build(values: &BTreeMap<SortableF64, RoaringBitmap>) -> Self {
+        let mut keys = Vec::with_capacity(values.len());
+        let mut cum_df = Vec::with_capacity(values.len() + 1);
+        cum_df.push(0);
+        let mut running = 0u64;
+        for (k, set) in values {
+            keys.push(k.bits());
+            running += set.len();
+            cum_df.push(running);
+        }
+        Self { keys, cum_df }
+    }
+
+    /// `(distinct, df)` over the half-open index window the bounds select.
+    fn range(
+        &self,
+        low: std::ops::Bound<SortableF64>,
+        high: std::ops::Bound<SortableF64>,
+    ) -> (u64, u64) {
+        use std::ops::Bound;
+        let lo_ix = match low {
+            Bound::Unbounded => 0,
+            Bound::Included(x) => self.keys.partition_point(|&k| k < x.bits()),
+            Bound::Excluded(x) => self.keys.partition_point(|&k| k <= x.bits()),
+        };
+        let hi_ix = match high {
+            Bound::Unbounded => self.keys.len(),
+            Bound::Included(x) => self.keys.partition_point(|&k| k <= x.bits()),
+            Bound::Excluded(x) => self.keys.partition_point(|&k| k < x.bits()),
+        };
+        if hi_ix <= lo_ix {
+            return (0, 0);
+        }
+        (
+            (hi_ix - lo_ix) as u64,
+            self.cum_df[hi_ix] - self.cum_df[lo_ix],
+        )
+    }
+}
+
 #[derive(Debug, Default)]
 struct NumberIndex {
     values: BTreeMap<SortableF64, RoaringBitmap>,
+    /// Side-index of LIVE-tail values whose posting holds >= 2 docs (see
+    /// `KeywordIndex::dup_values`); drives `duplicates` without a full
+    /// `values` scan. Cleared at seal.
+    dup_values: BTreeSet<SortableF64>,
     forward: FastHashMap<u32, SortableF64>,
     /// Dense live-tail forward cache for hot per-doc predicates. `forward`
     /// remains the sparse ownership/snapshot map; this avoids HashMap lookup in
@@ -1050,6 +1145,10 @@ struct NumberIndex {
     /// `Match(text) ∩ Term(keyword) ∩ Range(number)` shapes. This is query-only
     /// derived state, invalidated with `keyword_range_cache`.
     keyword_range_bitmap_cache: RwLock<FastHashMap<String, std::sync::Arc<RoaringBitmap>>>,
+    /// Lazy [`NumberRangeStats`] over the live `values` tree for planner range
+    /// ESTIMATES (`range_df` / `range_distinct_count`). Query-only derived
+    /// state, invalidated with `keyword_range_cache`.
+    range_stats: RwLock<Option<std::sync::Arc<NumberRangeStats>>>,
     bytes: u64,
     /// Stage 2 disk-tier (Phase 2c): a sealed columnar mmap segment covering
     /// doc ids `[0..n_docs)`. When present, per-doc Number PREDICATE point
@@ -1082,6 +1181,7 @@ struct NumberIndex {
     tombstones: RoaringBitmap,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl NumberIndex {
     /// The doc's value for a per-doc PREDICATE point lookup. When a sealed
     /// segment is attached it serves ids in its covered range `[0..n_docs)`
@@ -1174,6 +1274,48 @@ impl NumberIndex {
         if let Ok(cache) = self.keyword_range_bitmap_cache.get_mut() {
             cache.clear();
         }
+        if let Ok(stats) = self.range_stats.get_mut() {
+            *stats = None;
+        }
+    }
+
+    /// `(distinct, df)` of the LIVE `values` tree in `[low, high]` for planner
+    /// estimates. Walks the tree exactly for narrow ranges; a walk that passes
+    /// [`RANGE_STATS_BUILD_THRESHOLD`] distinct keys abandons and answers from
+    /// the (built-on-demand) [`NumberRangeStats`] snapshot instead.
+    fn live_range_estimate(
+        &self,
+        low: std::ops::Bound<SortableF64>,
+        high: std::ops::Bound<SortableF64>,
+    ) -> (u64, u64) {
+        if let Some(stats) = self
+            .range_stats
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+        {
+            return stats.range(low, high);
+        }
+        let mut distinct = 0u64;
+        let mut df = 0u64;
+        for (_, set) in self.values.range((low, high)) {
+            distinct += 1;
+            if distinct > RANGE_STATS_BUILD_THRESHOLD {
+                return self.build_range_stats().range(low, high);
+            }
+            df += set.len();
+        }
+        (distinct, df)
+    }
+
+    fn build_range_stats(&self) -> std::sync::Arc<NumberRangeStats> {
+        let built = std::sync::Arc::new(NumberRangeStats::build(&self.values));
+        if let Ok(mut guard) = self.range_stats.write() {
+            // A concurrent estimate may have built it first; either snapshot is
+            // valid for the same (read-locked, unmutated) tree — keep ours.
+            *guard = Some(built.clone());
+        }
+        built
     }
 
     fn forward_len(&self) -> usize {
@@ -1396,14 +1538,14 @@ impl NumberIndex {
         if range_is_empty(low, high) {
             return 0;
         }
+        let (_, tail) = self.live_range_estimate(low, high);
         if let Some(seg) = &self.segment {
             let base = seg
                 .number_range_df(bound_to_bits(low), bound_to_bits(high))
                 .unwrap_or(0);
-            let tail: u64 = self.values.range((low, high)).map(|(_, s)| s.len()).sum();
             return base + tail;
         }
-        self.values.range((low, high)).map(|(_, s)| s.len()).sum()
+        tail
     }
 
     #[inline]
@@ -1415,7 +1557,7 @@ impl NumberIndex {
         if range_is_empty(low, high) {
             return 0;
         }
-        let tail = self.values.range((low, high)).count() as u64;
+        let (tail, _) = self.live_range_estimate(low, high);
         if let Some(seg) = &self.segment {
             return seg
                 .number_range_distinct_count(bound_to_bits(low), bound_to_bits(high))
@@ -1517,6 +1659,7 @@ impl NumberIndex {
         &self,
         seg: &crate::segment::SegmentReader,
         descending: bool,
+        after: Option<u64>,
         mut visit: F,
     ) -> Result<()>
     where
@@ -1527,6 +1670,22 @@ impl NumberIndex {
         // tail in lockstep, emitting the smaller (asc) / larger (desc) key first so
         // the merged order is monotone and each value is visited once.
         let tail_keys: Vec<SortableF64> = self.values.keys().copied().collect();
+
+        // Keyset seek (Phase 2p): start both cursors AT the cursor key (the
+        // caller's visitor still drops the equal-key docids at or before the
+        // cursor docid). Binary search over the index-addressable sorted
+        // column — O(log distinct) probes, no posting decode.
+        let seek_seg = |want_bits: u64| -> u64 {
+            let (mut lo, mut hi) = (0u64, distinct);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                match seg.number_sorted_bits_at(mid as u32) {
+                    Some(bits) if bits < want_bits => lo = mid + 1,
+                    _ => hi = mid,
+                }
+            }
+            lo
+        };
 
         // One unit of work for a single distinct VALUE: compose its segment posting
         // (minus tombstones) with the live-tail posting, then emit each docid in
@@ -1573,6 +1732,10 @@ impl NumberIndex {
             // ----- ASCENDING: two ascending cursors (segment index 0.., tail 0..).
             let mut si: u64 = 0;
             let mut ti: usize = 0;
+            if let Some(bits) = after {
+                si = seek_seg(bits);
+                ti = tail_keys.partition_point(|k| k.bits() < bits);
+            }
             loop {
                 let seg_bits = if si < distinct {
                     seg.number_sorted_bits_at(si as u32)
@@ -1629,6 +1792,19 @@ impl NumberIndex {
             // `values.iter().rev()` then ascending-bitmap iteration).
             let mut si: i64 = distinct as i64 - 1;
             let mut ti: i64 = tail_keys.len() as i64 - 1;
+            if let Some(bits) = after {
+                // Last index with bits <= cursor (first strictly-greater minus 1).
+                let (mut lo, mut hi) = (0u64, distinct);
+                while lo < hi {
+                    let mid = (lo + hi) / 2;
+                    match seg.number_sorted_bits_at(mid as u32) {
+                        Some(b) if b <= bits => lo = mid + 1,
+                        _ => hi = mid,
+                    }
+                }
+                si = lo as i64 - 1;
+                ti = tail_keys.partition_point(|k| k.bits() <= bits) as i64 - 1;
+            }
             loop {
                 let seg_bits = if si >= 0 {
                     seg.number_sorted_bits_at(si as u32)
@@ -1818,6 +1994,10 @@ impl NumberIndex {
 #[derive(Debug, Default)]
 struct SetIndex {
     elements: BTreeMap<String, RoaringBitmap>,
+    /// Side-index of LIVE-tail elements whose posting holds >= 2 docs (see
+    /// `KeywordIndex::dup_values`); drives `duplicates` without a full
+    /// `elements` scan. Cleared at seal.
+    dup_values: BTreeSet<String>,
     forward: FastHashMap<u32, BTreeSet<String>>,
     bytes: u64,
     /// Stage 2 disk-tier (Phase 2e-A): a sealed columnar mmap segment covering
@@ -1849,6 +2029,7 @@ struct SetIndex {
     tombstones: RoaringBitmap,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl SetIndex {
     /// Does doc `id`'s set contain `el`, for a per-doc PREDICATE point lookup?
     /// When a sealed segment is attached it serves ids in its covered range
@@ -2059,6 +2240,7 @@ struct HashIndex {
     segment: Option<std::sync::Arc<crate::segment::SegmentReader>>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl HashIndex {
     /// The doc's 64-bit hash for the per-doc Hamming read. When a sealed segment
     /// is attached it serves ids in its covered range `[0..n_docs)` (the live
@@ -2083,6 +2265,7 @@ impl HashIndex {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl std::fmt::Debug for FieldIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -2115,6 +2298,7 @@ fn parse_hash(s: &str) -> Result<u64> {
         .map_err(|e| anyhow!("hash field expects a 64-bit hex string (got `{s}`): {e}"))
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl FieldIndex {
     fn from_spec(spec: &FieldSpec) -> Result<Self> {
         Ok(match spec.field_type {
@@ -2325,6 +2509,9 @@ impl FieldIndex {
                     if set.remove(id) {
                         freed = (value.len() + eid.len()) as u64;
                     }
+                    if set.len() < 2 {
+                        k.dup_values.remove(&value);
+                    }
                     if set.is_empty() {
                         k.terms.remove(&value);
                     }
@@ -2373,6 +2560,9 @@ impl FieldIndex {
                     if set.remove(id) {
                         freed = (8 + eid.len()) as u64;
                     }
+                    if set.len() < 2 {
+                        n.dup_values.remove(&key);
+                    }
                     if set.is_empty() {
                         n.values.remove(&key);
                     }
@@ -2420,6 +2610,9 @@ impl FieldIndex {
                     if let Some(set) = s.elements.get_mut(el) {
                         if set.remove(id) {
                             freed += (el.len() + eid.len()) as u64;
+                        }
+                        if set.len() < 2 {
+                            s.dup_values.remove(el);
                         }
                         if set.is_empty() {
                             s.elements.remove(el);
@@ -2480,6 +2673,7 @@ struct FieldCoverage {
     names: Vec<String>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl FieldCoverage {
     fn insert(&mut self, field: String) -> bool {
         if self.contains(&field) {
@@ -2530,6 +2724,7 @@ struct TokenSet {
     tokens: SmallVec<[String; 8]>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl TokenSet {
     fn insert_str(&mut self, token: &str) -> bool {
         if self.tokens.iter().any(|seen| seen == token) {
@@ -2603,6 +2798,7 @@ struct Collection {
     search_cache: RwLock<FastHashMap<String, SearchResponse>>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Collection {
     fn new(schema: BTreeMap<String, FieldSpec>) -> Result<Self> {
         let mut fields = FastHashMap::default();
@@ -2702,6 +2898,7 @@ impl Collection {
 // Engine
 // ---------------------------------------------------------------------------
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Default)]
 pub struct Engine {
     state: RwLock<EngineState>,
@@ -2709,6 +2906,7 @@ pub struct Engine {
     draining: AtomicBool,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Engine")
@@ -2722,6 +2920,7 @@ struct EngineState {
     collections: BTreeMap<String, Collection>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Engine {
     pub fn new() -> Self {
         Self::default()
@@ -3193,7 +3392,34 @@ impl Engine {
         coll.check_live(collection_id)?;
 
         let interner = &coll.interner;
-        let offset = req.cursor.as_deref().and_then(parse_cursor).unwrap_or(0) as usize;
+        let parsed_cursor = req.cursor.as_deref().and_then(parse_page_cursor);
+        let offset = match &parsed_cursor {
+            Some(PageCursor::Offset(n)) => *n as usize,
+            _ => 0,
+        };
+        // A sort keyset only continues the single-number-field sorted planner;
+        // a score keyset only continues score-ranked pages. A cursor that does
+        // not match the request shape degrades to first-page semantics (caller
+        // error — cursors are bound to the query that produced them).
+        let single_number_sort = req.sort.as_deref().and_then(|sort| match sort {
+            [s] => match coll.fields.get(&s.field) {
+                Some(FieldIndex::Number(_)) => Some(s.field.clone()),
+                _ => None,
+            },
+            _ => None,
+        });
+        let sort_after: Option<(u64, u32)> = match &parsed_cursor {
+            Some(PageCursor::SortKeyset { bits, docid }) if single_number_sort.is_some() => {
+                Some((*bits, *docid))
+            }
+            _ => None,
+        };
+        let score_after: Option<(f32, String)> = match &parsed_cursor {
+            Some(PageCursor::ScoreKeyset { score_bits, eid }) if req.sort.is_none() => {
+                Some((f32::from_bits(*score_bits), eid.clone()))
+            }
+            _ => None,
+        };
         let limit = req.limit as usize;
         let cache_key = search_cache_key(&req)?;
         if let Some(mut cached) = coll.cached_search_response(&cache_key) {
@@ -3341,9 +3567,16 @@ impl Engine {
         // early-terminate / avoid materializing a wide clause, returning the
         // final page directly. Everything else falls through to the
         // materialize-and-rank path below (identical result to before).
-        let planned = try_plan(coll, &req, offset)?;
+        // A score keyset bypasses the planner and the bounded top-k fast paths
+        // (they collect top-(k) of the WHOLE set; the keyset page is the top of
+        // the strictly-after-cursor subset).
+        let planned = if score_after.is_some() {
+            None
+        } else {
+            try_plan(coll, &req, offset, sort_after)?
+        };
 
-        let (page, total): (Vec<(u32, f32)>, u64) = match planned {
+        let (page, total, plan_kind): (Vec<(u32, f32)>, u64, PlanKind) = match planned {
             Some(pt) => pt,
             None => {
                 // Single-term (and multi-token AND) `match` fast path: score
@@ -3356,7 +3589,25 @@ impl Engine {
                 // through to the general `eval_query` map path unchanged.
                 let mut ranked: Vec<(u32, f32)>;
                 let total: u64;
-                if let QueryNode::Match(m) = &req.query {
+                if score_after.is_some() {
+                    // Keyset continuation: rank the strictly-after-cursor subset.
+                    let universe: BTreeSet<u32> = if query_needs_universe(&req.query) {
+                        coll.eid_fields.keys().copied().collect()
+                    } else {
+                        BTreeSet::new()
+                    };
+                    let scored = eval_query(coll, collection_id, &req.query, &universe, &state)?;
+                    total = scored.len() as u64;
+                    let (after_score, after_eid) = score_after.as_ref().unwrap();
+                    ranked = scored
+                        .into_iter()
+                        .filter(|(id, s)| {
+                            *s < *after_score
+                                || (*s == *after_score
+                                    && interner.resolve(*id) > after_eid.as_str())
+                        })
+                        .collect();
+                } else if let QueryNode::Match(m) = &req.query {
                     if let Some((top, exact_total)) =
                         eval_match_topk(coll, m, interner, offset.saturating_add(limit))?
                     {
@@ -3404,7 +3655,7 @@ impl Engine {
                 }
                 ranked.sort_by(cmp);
                 let page = ranked.into_iter().skip(offset).take(limit).collect();
-                (page, total)
+                (page, total, PlanKind::ScoreRanked)
             }
         };
 
@@ -3417,13 +3668,46 @@ impl Engine {
             })
             .collect();
 
-        // `total` is the full match count, so the "more results?" check holds
-        // even when the page was truncated to the top-k.
-        let next_offset = offset + hits.len();
-        let cursor = if (next_offset as u64) < total {
-            Some(make_cursor(next_offset))
-        } else {
+        // Next-page cursor. Keyset-capable pages (sorted-field walks and
+        // score-ranked pages) hand out a v2 keyset bound to the LAST hit, so
+        // the next page SEEKS instead of skipping — deep pagination cost does
+        // not grow with depth. Posting-order planner pages and requests that
+        // arrived with a legacy offset cursor keep the offset scheme.
+        let used_offset_cursor = matches!(parsed_cursor, Some(PageCursor::Offset(_)));
+        let cursor = if hits.is_empty() {
             None
+        } else if used_offset_cursor {
+            let next_offset = offset + hits.len();
+            if (next_offset as u64) < total {
+                Some(make_cursor(next_offset))
+            } else {
+                None
+            }
+        } else {
+            match plan_kind {
+                PlanKind::SortedField if hits.len() == limit => {
+                    let field = single_number_sort.as_deref().expect("sorted plan has field");
+                    let Some(FieldIndex::Number(n)) = coll.fields.get(field) else {
+                        unreachable!("sorted plan field is a number index");
+                    };
+                    let (last_id, _) = *page.last().expect("non-empty page");
+                    n.number_bits_at(last_id)
+                        .map(|bits| make_sort_cursor(bits, last_id))
+                }
+                PlanKind::ScoreRanked if hits.len() == limit => {
+                    let last = hits.last().expect("non-empty hits");
+                    Some(make_score_cursor(last.score, &last.external_id))
+                }
+                PlanKind::Posting => {
+                    let next_offset = offset + hits.len();
+                    if (next_offset as u64) < total {
+                        Some(make_cursor(next_offset))
+                    } else {
+                        None
+                    }
+                }
+                _ => None, // keyset page shorter than the limit → exhausted
+            }
         };
 
         let el = start.elapsed();
@@ -3521,7 +3805,12 @@ impl Engine {
 
         let min = req.min_group_size.max(2) as usize;
         let interner = &coll.interner;
-        let mut groups: Vec<DuplicateGroup> = match fi {
+        // Phase 1: collect candidate groups as (value, posting) WITHOUT
+        // materializing external ids. At high duplicate density the id strings
+        // dominate the cost, and only one `limit` page of them is returned —
+        // so resolution is deferred until after sort + paging (phase 2).
+        use std::borrow::Cow;
+        let mut cands: Vec<(serde_json::Value, Cow<'_, RoaringBitmap>)> = match fi {
             FieldIndex::Text { .. } => {
                 return Err(StorageError::DuplicatesOnText(req.field.clone()).into());
             }
@@ -3542,84 +3831,101 @@ impl Engine {
                 // `terms` driver, so iterating it directly would miss every
                 // on-disk term (and report deleted docs for the tail-only
                 // case). Drive from the segment-aware `live_terms` — segment
-                // dict minus tombstones + live tail. Segment OFF: `live_terms`
-                // returns the live `terms` clone, so the groups are identical
-                // to the old direct iteration (default build unchanged).
-                let live = k.live_terms();
-                let source = &live;
-                source
-                    .iter()
-                    .filter(|(_, set)| (set.len() as usize) >= min)
-                    .map(|(v, set)| DuplicateGroup {
-                        value: serde_json::Value::String(v.clone()),
-                        external_ids: set
-                            .iter()
-                            .map(|id| interner.resolve(id).to_string())
-                            .collect(),
-                    })
-                    .collect()
+                // dict minus tombstones + live tail. Segment OFF: the
+                // `dup_values` side-index already names every term with >= 2
+                // docs, so only candidate groups are visited — not every
+                // distinct term, and no whole-index clone.
+                if k.segment.is_some() {
+                    k.live_terms()
+                        .into_iter()
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| (serde_json::Value::String(v), Cow::Owned(set)))
+                        .collect()
+                } else {
+                    k.dup_values
+                        .iter()
+                        .filter_map(|v| k.terms.get(v).map(|set| (v, set)))
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| {
+                            (serde_json::Value::String(v.clone()), Cow::Borrowed(set))
+                        })
+                        .collect()
+                }
             }
             FieldIndex::Number(n) => {
                 // Phase 2h-3 FIX: a SEALED Number field dropped its in-RAM
                 // `values` driver, so iterating it directly would miss every
                 // on-disk value (and report deleted docs for the tail-only
                 // case). Drive from the segment-aware `live_values` — segment
-                // sorted-value column minus tombstones + live tail. Segment OFF:
-                // `live_values` returns the live `values` clone, so the groups
-                // are identical to the old direct iteration (default build
-                // unchanged).
-                let live = n.live_values();
-                let source = &live;
-                source
-                    .iter()
-                    .filter(|(_, set)| (set.len() as usize) >= min)
-                    .map(|(v, set)| DuplicateGroup {
-                        value: serde_json::Value::Number(
-                            serde_json::Number::from_f64(v.to_f64())
-                                .unwrap_or_else(|| serde_json::Number::from(0)),
-                        ),
-                        external_ids: set
-                            .iter()
-                            .map(|id| interner.resolve(id).to_string())
-                            .collect(),
-                    })
-                    .collect()
+                // sorted-value column minus tombstones + live tail. Segment
+                // OFF: the `dup_values` side-index names every value with
+                // >= 2 docs — no full scan, no whole-index clone.
+                let num = |v: SortableF64| {
+                    serde_json::Value::Number(
+                        serde_json::Number::from_f64(v.to_f64())
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    )
+                };
+                if n.segment.is_some() {
+                    n.live_values()
+                        .into_iter()
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| (num(v), Cow::Owned(set)))
+                        .collect()
+                } else {
+                    n.dup_values
+                        .iter()
+                        .filter_map(|v| n.values.get(v).map(|set| (*v, set)))
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| (num(v), Cow::Borrowed(set)))
+                        .collect()
+                }
             }
             FieldIndex::Set(s) => {
                 // Phase 2h-2 FIX: a SEALED Set field dropped its in-RAM `elements`
                 // driver, so iterating it directly would miss every on-disk element
                 // (and report deleted docs for the tail-only case). Drive from the
                 // segment-aware `live_elements` — segment dict minus tombstones +
-                // live tail. Segment OFF: `live_elements` returns the live `elements`
-                // clone, so the groups are identical to the old direct iteration
-                // (default build unchanged).
-                let live = s.live_elements();
-                let source = &live;
-                source
-                    .iter()
-                    .filter(|(_, set)| (set.len() as usize) >= min)
-                    .map(|(v, set)| DuplicateGroup {
-                        value: serde_json::Value::String(v.clone()),
-                        external_ids: set
-                            .iter()
-                            .map(|id| interner.resolve(id).to_string())
-                            .collect(),
-                    })
-                    .collect()
+                // live tail. Segment OFF: the `dup_values` side-index names every
+                // element with >= 2 docs — no full scan, no whole-index clone.
+                if s.segment.is_some() {
+                    s.live_elements()
+                        .into_iter()
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| (serde_json::Value::String(v), Cow::Owned(set)))
+                        .collect()
+                } else {
+                    s.dup_values
+                        .iter()
+                        .filter_map(|v| s.elements.get(v).map(|set| (v, set)))
+                        .filter(|(_, set)| (set.len() as usize) >= min)
+                        .map(|(v, set)| {
+                            (serde_json::Value::String(v.clone()), Cow::Borrowed(set))
+                        })
+                        .collect()
+                }
             }
         };
-        // Stable: largest groups first, ties broken by value.
-        groups.sort_by(|a, b| {
-            b.external_ids
-                .len()
-                .cmp(&a.external_ids.len())
-                .then_with(|| a.value.to_string().cmp(&b.value.to_string()))
-        });
+        // Stable: largest groups first, ties broken by value (JSON form) — the
+        // same order the materialized sort produced before paging moved here.
+        cands.sort_by_cached_key(|(v, set)| (std::cmp::Reverse(set.len()), v.to_string()));
 
         let offset = req.offset as usize;
         let limit = req.limit.max(1) as usize;
-        let total = groups.len();
-        let page: Vec<DuplicateGroup> = groups.into_iter().skip(offset).take(limit).collect();
+        let total = cands.len();
+        // Phase 2: resolve external ids for the requested page ONLY.
+        let page: Vec<DuplicateGroup> = cands
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|(value, set)| DuplicateGroup {
+                value,
+                external_ids: set
+                    .iter()
+                    .map(|id| interner.resolve(id).to_string())
+                    .collect(),
+            })
+            .collect();
         let truncated = offset + page.len() < total;
 
         self.metrics.incr_duplicates();
@@ -3763,6 +4069,7 @@ impl Engine {
 /// Result of applying one mutation — routed from the apply loop back to
 /// the waiting write handler (by sequence) so the HTTP response keeps
 /// its rich shape even though apply happens in the subscribe layer.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Clone)]
 pub enum ApplyOutcome {
     Created(CreateCollectionResponse),
@@ -3865,6 +4172,9 @@ fn apply_value(
             let bytes = (s.len() + eid.len()) as u64;
             if let Some(posting) = k.terms.get_mut(s) {
                 posting.insert(id);
+                if posting.len() == 2 {
+                    k.dup_values.insert(s.clone());
+                }
             } else {
                 let mut posting = RoaringBitmap::new();
                 posting.insert(id);
@@ -3878,7 +4188,11 @@ fn apply_value(
             let key =
                 SortableF64::new(*x).map_err(|e| StorageError::InvalidNumber(e.to_string()))?;
             let bytes = (8 + eid.len()) as u64;
-            n.values.entry(key).or_default().insert(id);
+            let posting = n.values.entry(key).or_default();
+            posting.insert(id);
+            if posting.len() == 2 {
+                n.dup_values.insert(key);
+            }
             n.set_number(id, key);
             n.bytes += bytes;
             Ok(bytes)
@@ -3891,6 +4205,9 @@ fn apply_value(
                     bytes += (el.len() + eid.len()) as u64;
                     if let Some(posting) = s.elements.get_mut(el) {
                         posting.insert(id);
+                        if posting.len() == 2 {
+                            s.dup_values.insert(el.clone());
+                        }
                     } else {
                         let mut posting = RoaringBitmap::new();
                         posting.insert(id);
@@ -3974,6 +4291,7 @@ const MAX_KNN_K: u32 = 10_000;
 /// Reject pathological queries with a clear error. Traversal is **iterative**
 /// (explicit stack) so validating a deeply-nested tree cannot itself overflow
 /// the stack. Bounds: nesting depth, total node count, `terms` fan-out, `knn` k.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 pub fn validate_query(root: &QueryNode) -> std::result::Result<(), StorageError> {
     let mut stack: Vec<(&QueryNode, usize)> = vec![(root, 1)];
     let mut nodes = 0usize;
@@ -4064,6 +4382,10 @@ fn eval_query(
         QueryNode::Range(r) => constant_score(eval_range(coll, r)?),
         QueryNode::Knn(k) => eval_knn(coll, k)?,
         QueryNode::Hamming(hq) => eval_hamming(coll, hq)?,
+        QueryNode::Exists(e) => constant_score(eval_field_doc_union(coll, &e.field, 1)?),
+        QueryNode::Duplicated(d) => {
+            constant_score(eval_field_doc_union(coll, &d.field, d.min_group_size.max(2) as u64)?)
+        }
         QueryNode::Rrf(r) => eval_rrf(coll, collection_id, r, universe, state)?,
         QueryNode::And(children) => {
             // A `Not` conjunct is a filter: `A AND NOT B = A \ B`.
@@ -4762,6 +5084,7 @@ struct TopRankedHit {
     external_id: String,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl PartialEq for TopRankedHit {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
@@ -4770,8 +5093,10 @@ impl PartialEq for TopRankedHit {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Eq for TopRankedHit {}
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Ord for TopRankedHit {
     fn cmp(&self, other: &Self) -> CmpOrdering {
         match self.score.total_cmp(&other.score) {
@@ -4782,6 +5107,7 @@ impl Ord for TopRankedHit {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl PartialOrd for TopRankedHit {
     fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
         Some(self.cmp(other))
@@ -5176,6 +5502,101 @@ fn eval_match_topk(
     Ok(Some((ranked.iter().take(k).copied().collect(), total)))
 }
 
+/// Shared engine for `Exists` and `Duplicated`: the union of doc-ids that have a
+/// value in `field` whose posting size ≥ `min_count`.
+///   - `min_count = 1` → `Exists` (doc has any value in the field).
+///   - `min_count = N` → `Duplicated` (the value is shared by ≥ N docs).
+/// Segment ON: drive from the segment-aware `live_*` accessors (segment
+/// dict/column minus tombstones + live tail), identical to `duplicates`.
+/// Segment OFF: borrow the in-RAM map directly (the `live_*` accessors clone the
+/// whole map in that case), and for `min_count ≥ 2` visit only the `dup_values`
+/// side-index candidates instead of every distinct value — the high-cardinality
+/// (email/phone) duplicated path stays O(|colliding values|). text / vector /
+/// hash are not supported here (declare a keyword companion field for a text
+/// "is empty" filter; use knn / hamming for vector / hash).
+fn eval_field_doc_union(coll: &Collection, field: &str, min_count: u64) -> Result<RoaringBitmap> {
+    let fi = coll
+        .fields
+        .get(field)
+        .ok_or_else(|| StorageError::UnknownField {
+            collection: "<>".into(),
+            field: field.to_string(),
+        })?;
+    // Union postings of size >= min_count: owned sets (segment path) or borrowed
+    // in-RAM sets (tail-only path) without cloning the map.
+    fn union_owned<K>(map: BTreeMap<K, RoaringBitmap>, min_count: u64) -> RoaringBitmap {
+        let mut acc = RoaringBitmap::new();
+        for set in map.values() {
+            if set.len() >= min_count {
+                acc |= set;
+            }
+        }
+        acc
+    }
+    let mut acc = RoaringBitmap::new();
+    match fi {
+        FieldIndex::Keyword(k) => {
+            if k.segment.is_some() {
+                acc = union_owned(k.live_terms(), min_count);
+            } else if min_count >= 2 {
+                for set in k.dup_values.iter().filter_map(|v| k.terms.get(v)) {
+                    if set.len() >= min_count {
+                        acc |= set;
+                    }
+                }
+            } else {
+                for set in k.terms.values() {
+                    acc |= set;
+                }
+            }
+        }
+        FieldIndex::Number(n) => {
+            if n.segment.is_some() {
+                acc = union_owned(n.live_values(), min_count);
+            } else if min_count >= 2 {
+                for set in n.dup_values.iter().filter_map(|v| n.values.get(v)) {
+                    if set.len() >= min_count {
+                        acc |= set;
+                    }
+                }
+            } else {
+                for set in n.values.values() {
+                    acc |= set;
+                }
+            }
+        }
+        FieldIndex::Set(s) => {
+            if s.segment.is_some() {
+                acc = union_owned(s.live_elements(), min_count);
+            } else if min_count >= 2 {
+                for set in s.dup_values.iter().filter_map(|v| s.elements.get(v)) {
+                    if set.len() >= min_count {
+                        acc |= set;
+                    }
+                }
+            } else {
+                for set in s.elements.values() {
+                    acc |= set;
+                }
+            }
+        }
+        FieldIndex::Text { .. } => bail!(
+            "exists/duplicated is not supported on text field `{}` — declare a \
+             keyword companion field for an \"is empty\"/duplicate filter",
+            field
+        ),
+        FieldIndex::Vector { .. } => bail!(
+            "exists/duplicated is not supported on vector field `{}` — use knn",
+            field
+        ),
+        FieldIndex::Hash(_) => bail!(
+            "exists/duplicated is not supported on hash field `{}` — use hamming",
+            field
+        ),
+    }
+    Ok(acc)
+}
+
 fn eval_term(coll: &Collection, t: &TermQuery) -> Result<RoaringBitmap> {
     let fi = coll
         .fields
@@ -5445,7 +5866,12 @@ fn eval_range(coll: &Collection, r: &RangeQuery) -> Result<RoaringBitmap> {
 fn is_predicable(node: &QueryNode) -> bool {
     matches!(
         node,
-        QueryNode::Term(_) | QueryNode::Terms(_) | QueryNode::Range(_) | QueryNode::Match(_)
+        QueryNode::Term(_)
+            | QueryNode::Terms(_)
+            | QueryNode::Range(_)
+            | QueryNode::Match(_)
+            | QueryNode::Exists(_)
+            | QueryNode::Duplicated(_)
     )
 }
 
@@ -5510,6 +5936,7 @@ struct SortableBitsBounds {
     high: Option<(u64, bool)>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl SortableBitsBounds {
     #[inline]
     fn new(lo: &std::ops::Bound<SortableF64>, hi: &std::ops::Bound<SortableF64>) -> Self {
@@ -5678,14 +6105,18 @@ fn estimate_selectivity(coll: &Collection, node: &QueryNode) -> u64 {
             }
             _ => u64::MAX,
         },
-        // Don't drive an AND from these.
+        // Don't drive an AND from these. Exists/Duplicated would need a full
+        // value-union scan to size, so they're not chosen as the cheap driver
+        // either — a cheaper sibling clause (term/range) drives, then they filter.
         QueryNode::Knn(_)
         | QueryNode::And(_)
         | QueryNode::Or(_)
         | QueryNode::Not(_)
         | QueryNode::HasChild(_)
         | QueryNode::Hamming(_)
-        | QueryNode::Rrf(_) => u64::MAX,
+        | QueryNode::Rrf(_)
+        | QueryNode::Exists(_)
+        | QueryNode::Duplicated(_) => u64::MAX,
     }
 }
 
@@ -5937,6 +6368,10 @@ fn eval_filter_bitmap(coll: &Collection, node: &QueryNode) -> Result<RoaringBitm
         QueryNode::Term(t) => eval_term(coll, t),
         QueryNode::Terms(t) => eval_terms(coll, t),
         QueryNode::Range(r) => eval_range(coll, r),
+        QueryNode::Exists(e) => eval_field_doc_union(coll, &e.field, 1),
+        QueryNode::Duplicated(d) => {
+            eval_field_doc_union(coll, &d.field, d.min_group_size.max(2) as u64)
+        }
         _ => bail!("eval_filter_bitmap called on a non-filter node"),
     }
 }
@@ -6644,6 +7079,12 @@ fn query_predicate(coll: &Collection, node: &QueryNode, id: u32) -> Result<bool>
         QueryNode::Rrf(_) => bail!("rrf cannot be evaluated as a per-doc predicate"),
         QueryNode::HasChild(_) => bail!("has_child cannot be evaluated as a per-doc predicate"),
         QueryNode::Hamming(_) => bail!("hamming cannot be evaluated as a per-doc predicate"),
+        // Exists/Duplicated test membership in the field's doc-union; the sort-walk
+        // runs over a bounded candidate set so the recompute stays cheap.
+        QueryNode::Exists(e) => eval_field_doc_union(coll, &e.field, 1)?.contains(id),
+        QueryNode::Duplicated(d) => {
+            eval_field_doc_union(coll, &d.field, d.min_group_size.max(2) as u64)?.contains(id)
+        }
     })
 }
 
@@ -6761,11 +7202,23 @@ fn collapse_driver<'a>(
 /// number-index order (standalone range) — NOT the score/eid order of the
 /// fallback. For a constant-score filter the order is unspecified anyway, and
 /// sort queries define their own order, so this is a correct page.
+/// Which planner produced the page — decides the next-cursor encoding:
+/// `SortedField` pages continue via keyset (sort-value bits + docid),
+/// `Posting` pages keep the legacy offset cursor (posting/docid order has no
+/// resumable sort key).
+enum PlanKind {
+    SortedField,
+    Posting,
+    /// The general evaluator's score-desc + external_id-asc ranking.
+    ScoreRanked,
+}
+
 fn try_plan(
     coll: &Collection,
     req: &SearchRequest,
     offset: usize,
-) -> Result<Option<(Vec<(u32, f32)>, u64)>> {
+    sort_after: Option<(u64, u32)>,
+) -> Result<Option<(Vec<(u32, f32)>, u64, PlanKind)>> {
     if offset != 0 {
         return Ok(None);
     }
@@ -6783,11 +7236,33 @@ fn try_plan(
             return Ok(None);
         }
         let descending = matches!(s.order, SortOrder::Desc);
+        // Keyset continuation: a (v, id) pair is on the page iff it sits
+        // strictly AFTER the cursor in walk order. Within an equal key the
+        // walk emits docids ascending in BOTH directions, so the equal-key
+        // remainder is `id > cursor_docid`.
+        let after_bits = sort_after.map(|(bits, _)| bits);
+        let past_cursor = |v_bits: u64, id: u32| -> bool {
+            match sort_after {
+                None => true,
+                Some((k, d)) => {
+                    if v_bits == k {
+                        id > d
+                    } else if descending {
+                        v_bits < k
+                    } else {
+                        v_bits > k
+                    }
+                }
+            }
+        };
         if is_unbounded_range_on_field(&req.query, &s.field) {
             let mut page: Vec<(u32, f32)> = Vec::with_capacity(want.min(1024));
             let mut total: u64 = 0;
             if let Some(seg) = n.segment_ref() {
-                n.sorted_walk_segment(seg.as_ref(), descending, |v, id| {
+                n.sorted_walk_segment(seg.as_ref(), descending, after_bits, |v, id| {
+                    if !past_cursor(SortableF64::new(v).map(|s| s.bits()).unwrap_or(0), id) {
+                        return Ok(true);
+                    }
                     total += 1;
                     if page.len() < want {
                         page.push((id, v as f32));
@@ -6798,10 +7273,19 @@ fn try_plan(
                 })?;
             } else {
                 let values = n.sorted_values();
+                let after_key = sort_after.map(|(bits, _)| SortableF64::from_bits(bits));
                 match s.order {
                     SortOrder::Asc => {
-                        'asc: for (v, docs) in values.iter() {
+                        let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
+                            match after_key {
+                                Some(k) => Box::new(values.range(k..)),
+                                None => Box::new(values.iter()),
+                            };
+                        'asc: for (v, docs) in range {
                             for id in docs {
+                                if !past_cursor(v.bits(), id) {
+                                    continue;
+                                }
                                 total += 1;
                                 if page.len() < want {
                                     page.push((id, v.to_f64() as f32));
@@ -6812,8 +7296,16 @@ fn try_plan(
                         }
                     }
                     SortOrder::Desc => {
-                        'desc: for (v, docs) in values.iter().rev() {
+                        let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
+                            match after_key {
+                                Some(k) => Box::new(values.range(..=k).rev()),
+                                None => Box::new(values.iter().rev()),
+                            };
+                        'desc: for (v, docs) in range {
                             for id in docs {
+                                if !past_cursor(v.bits(), id) {
+                                    continue;
+                                }
                                 total += 1;
                                 if page.len() < want {
                                     page.push((id, v.to_f64() as f32));
@@ -6828,17 +7320,19 @@ fn try_plan(
             if !req.track_total {
                 total = total.max(page.len() as u64);
             }
-            return Ok(Some((page, total)));
+            return Ok(Some((page, total, PlanKind::SortedField)));
         }
-        if let Some(out) = eval_number_sort_keyword_term_page(
-            coll,
-            &req.query,
-            n,
-            descending,
-            want,
-            req.track_total,
-        )? {
-            return Ok(Some(out));
+        if sort_after.is_none() {
+            if let Some(out) = eval_number_sort_keyword_term_page(
+                coll,
+                &req.query,
+                n,
+                descending,
+                want,
+                req.track_total,
+            )? {
+                return Ok(Some((out.0, out.1, PlanKind::SortedField)));
+            }
         }
         let mut page: Vec<(u32, f32)> = Vec::with_capacity(want.min(1024));
         let mut total: u64 = 0;
@@ -6855,7 +7349,10 @@ fn try_plan(
         if let Some(seg) = n.segment_ref() {
             let q = &req.query;
             let track_total = req.track_total;
-            n.sorted_walk_segment(seg.as_ref(), descending, |v, id| {
+            n.sorted_walk_segment(seg.as_ref(), descending, after_bits, |v, id| {
+                if !past_cursor(SortableF64::new(v).map(|s| s.bits()).unwrap_or(0), id) {
+                    return Ok(true);
+                }
                 if query_predicate(coll, q, id)? {
                     total += 1;
                     if page.len() < want {
@@ -6869,7 +7366,7 @@ fn try_plan(
             if !req.track_total {
                 total = total.max(page.len() as u64);
             }
-            return Ok(Some((page, total)));
+            return Ok(Some((page, total, PlanKind::SortedField)));
         }
 
         // SEGMENT OFF (no segment attached): byte-for-byte the original
@@ -6879,10 +7376,19 @@ fn try_plan(
         // Score is the sort value (informational; ranking IS the walk order).
         // `track_total=false` lets us stop as soon as the page is full.
         let values = n.sorted_values();
+        let after_key = sort_after.map(|(bits, _)| SortableF64::from_bits(bits));
         match s.order {
             SortOrder::Asc => {
-                'asc: for (v, docs) in values.iter() {
+                let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
+                    match after_key {
+                        Some(k) => Box::new(values.range(k..)),
+                        None => Box::new(values.iter()),
+                    };
+                'asc: for (v, docs) in range {
                     for id in docs {
+                        if !past_cursor(v.bits(), id) {
+                            continue;
+                        }
                         if query_predicate(coll, &req.query, id)? {
                             total += 1;
                             if page.len() < want {
@@ -6895,8 +7401,16 @@ fn try_plan(
                 }
             }
             SortOrder::Desc => {
-                'desc: for (v, docs) in values.iter().rev() {
+                let range: Box<dyn Iterator<Item = (&SortableF64, &RoaringBitmap)>> =
+                    match after_key {
+                        Some(k) => Box::new(values.range(..=k).rev()),
+                        None => Box::new(values.iter().rev()),
+                    };
+                'desc: for (v, docs) in range {
                     for id in docs {
+                        if !past_cursor(v.bits(), id) {
+                            continue;
+                        }
                         if query_predicate(coll, &req.query, id)? {
                             total += 1;
                             if page.len() < want {
@@ -6912,7 +7426,7 @@ fn try_plan(
         if !req.track_total {
             total = total.max(page.len() as u64);
         }
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::SortedField)));
     }
 
     // ---- no sort: standalone term — page = first `limit` of the posting,
@@ -6943,7 +7457,7 @@ fn try_plan(
             .map(|id| (id, 1.0))
             .collect();
         let total = posting.as_deref().map(|p| p.len()).unwrap_or(0);
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::Posting)));
     }
 
     // ---- no sort: standalone range early-termination ----
@@ -6955,18 +7469,14 @@ fn try_plan(
         // An empty/inverted range yields an empty page (and avoids the
         // `BTreeMap::range` panic on such bounds).
         if range_is_empty(lo, hi) {
-            return Ok(Some((Vec::new(), 0)));
+            return Ok(Some((Vec::new(), 0, PlanKind::Posting)));
         }
         let mut page: Vec<(u32, f32)> = Vec::with_capacity(want.min(1024));
         let mut total: u64 = 0;
         if let Some(seg) = n.segment_ref() {
-            return Ok(Some(n.range_page_segment(
-                seg.as_ref(),
-                lo,
-                hi,
-                want,
-                req.track_total,
-            )?));
+            let (page, total) =
+                n.range_page_segment(seg.as_ref(), lo, hi, want, req.track_total)?;
+            return Ok(Some((page, total, PlanKind::Posting)));
         }
 
         // Segment OFF: zero-clone range walk over the in-RAM `values` BTreeMap.
@@ -6985,7 +7495,7 @@ fn try_plan(
                 break;
             }
         }
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::Posting)));
     }
 
     // ---- no sort: filter-only AND/NOT-AND with exact total + first page ----
@@ -6996,7 +7506,7 @@ fn try_plan(
     // range planners above), so the bitmap is already the answer set: return its
     // first page while preserving the exact total.
     if let Some((page, total)) = eval_filter_only_page(coll, &req.query, want)? {
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::Posting)));
     }
     if let Some((bitmap, score)) = eval_filter_only_bitmap(coll, &req.query)? {
         let total = bitmap.len();
@@ -7005,26 +7515,72 @@ fn try_plan(
             .take(want)
             .map(|id| (id, score))
             .collect();
-        return Ok(Some((page, total)));
+        return Ok(Some((page, total, PlanKind::Posting)));
     }
 
     Ok(None)
 }
 
 // ---------------------------------------------------------------------------
-// Cursor helpers (slice 1: opaque base64 of an offset)
+// Cursor helpers — opaque base64 tokens in two generations:
+//   v1 (legacy)  {"offset": N}                    — offset skip, O(offset) deep
+//   v2 keyset    {"v":2,"m":"sort","k":bits,"d":docid}
+//                {"v":2,"m":"score","k":score_bits,"t":external_id}
+// Keyset cursors carry the LAST hit's position so the next page SEEKS to it
+// (sorted walks: O(log n) range/binary-search start; score ranking: filter +
+// top-`limit` heap instead of top-(offset+limit)) — deep pagination cost no
+// longer grows with depth. v1 cursors keep working (legacy skip path).
 // ---------------------------------------------------------------------------
 
-fn make_cursor(offset: usize) -> String {
-    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
-    STANDARD_NO_PAD.encode(format!("{{\"offset\":{offset}}}"))
+/// A parsed pagination cursor.
+enum PageCursor {
+    /// Legacy offset skip.
+    Offset(u64),
+    /// Continue a single-number-field sorted walk after (sort-value bits, docid).
+    SortKeyset { bits: u64, docid: u32 },
+    /// Continue a score-ranked page after (score bits, external_id).
+    ScoreKeyset { score_bits: u32, eid: String },
 }
 
-fn parse_cursor(s: &str) -> Option<u64> {
+fn encode_cursor(json: String) -> String {
+    use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+    STANDARD_NO_PAD.encode(json)
+}
+
+fn make_cursor(offset: usize) -> String {
+    encode_cursor(format!("{{\"offset\":{offset}}}"))
+}
+
+fn make_sort_cursor(bits: u64, docid: u32) -> String {
+    encode_cursor(format!("{{\"v\":2,\"m\":\"sort\",\"k\":{bits},\"d\":{docid}}}"))
+}
+
+fn make_score_cursor(score: f32, eid: &str) -> String {
+    let payload = serde_json::json!({"v": 2, "m": "score", "k": score.to_bits(), "t": eid});
+    encode_cursor(payload.to_string())
+}
+
+fn parse_page_cursor(s: &str) -> Option<PageCursor> {
     use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
     let raw = STANDARD_NO_PAD.decode(s).ok()?;
     let v: serde_json::Value = serde_json::from_slice(&raw).ok()?;
-    v.get("offset")?.as_u64()
+    if let Some(offset) = v.get("offset").and_then(|o| o.as_u64()) {
+        return Some(PageCursor::Offset(offset));
+    }
+    if v.get("v")?.as_u64()? != 2 {
+        return None;
+    }
+    match v.get("m")?.as_str()? {
+        "sort" => Some(PageCursor::SortKeyset {
+            bits: v.get("k")?.as_u64()?,
+            docid: v.get("d")?.as_u64()? as u32,
+        }),
+        "score" => Some(PageCursor::ScoreKeyset {
+            score_bits: v.get("k")?.as_u64()? as u32,
+            eid: v.get("t")?.as_str()?.to_string(),
+        }),
+        _ => None,
+    }
 }
 
 fn search_cache_key(req: &SearchRequest) -> Result<String> {
@@ -7038,6 +7594,7 @@ fn search_cache_key(req: &SearchRequest) -> Result<String> {
 const SNAPSHOT_VERSION: u32 = 1;
 
 /// Top-level snapshot document. JSON-serialisable.
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SnapshotV1 {
     /// Format version. Bump when the wire layout changes
@@ -7046,6 +7603,7 @@ pub struct SnapshotV1 {
     pub collections: BTreeMap<String, CollectionSnapshot>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CollectionSnapshot {
     pub schema: BTreeMap<String, FieldSpec>,
@@ -7054,6 +7612,7 @@ pub struct CollectionSnapshot {
     pub fields: BTreeMap<String, FieldIndexSnapshot>,
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum FieldIndexSnapshot {
@@ -7102,6 +7661,7 @@ pub enum FieldIndexSnapshot {
     },
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Collection {
     fn to_snapshot(&self) -> Result<CollectionSnapshot> {
         let mut fields: BTreeMap<String, FieldIndexSnapshot> = BTreeMap::new();
@@ -7124,6 +7684,7 @@ impl Collection {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl FieldIndex {
     fn to_snapshot(&self, interner: &Interner) -> Result<FieldIndexSnapshot> {
         let eid = |id: u32| interner.resolve(id).to_string();
@@ -7244,6 +7805,7 @@ impl FieldIndex {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Collection {
     fn from_snapshot(snap: CollectionSnapshot) -> Result<Self> {
         // Re-intern every external_id (eid_fields covers all indexed docs) so
@@ -7272,6 +7834,7 @@ impl Collection {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl FieldIndex {
     fn from_snapshot(snap: FieldIndexSnapshot, interner: &mut Interner) -> Result<Self> {
         Ok(match snap {
@@ -7344,6 +7907,7 @@ impl FieldIndex {
                     fwd.insert(interner.intern(&eid), v);
                 }
                 FieldIndex::Keyword(KeywordIndex {
+                    dup_values: dup_values_of(&t),
                     terms: t,
                     dense_forward: Vec::new(),
                     forward: fwd,
@@ -7365,6 +7929,7 @@ impl FieldIndex {
                     idx.values.entry(key).or_default().insert(id);
                     idx.set_number(id, key);
                 }
+                idx.dup_values = dup_values_of(&idx.values);
                 FieldIndex::Number(idx)
             }
             FieldIndexSnapshot::Set {
@@ -7381,6 +7946,7 @@ impl FieldIndex {
                     fwd.insert(interner.intern(&eid), set);
                 }
                 FieldIndex::Set(SetIndex {
+                    dup_values: dup_values_of(&e),
                     elements: e,
                     forward: fwd,
                     bytes,
@@ -7464,6 +8030,7 @@ impl FieldIndex {
 #[cfg_attr(not(test), allow(dead_code))]
 const EID_META_FILE: &str = "_collection.lmeta.lseg";
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[cfg_attr(not(test), allow(dead_code))]
 impl FieldIndex {
     /// Seal this field's forward payload into `<field>.lseg` under `dir`, attach
@@ -7521,6 +8088,7 @@ impl FieldIndex {
                 n.forward = FastHashMap::default();
                 n.dense_forward = Vec::new();
                 n.values = BTreeMap::new();
+                n.dup_values = BTreeSet::new();
                 n.clear_keyword_range_cache();
                 // The new segment's live(id) gather already EXCLUDED every
                 // tombstoned base docid (deleted-since-last-seal), so the deletions
@@ -7575,6 +8143,7 @@ impl FieldIndex {
                 k.forward = FastHashMap::default();
                 k.dense_forward = Vec::new();
                 k.terms = BTreeMap::new();
+                k.dup_values = BTreeSet::new();
                 // The new segment's live(id) gather already EXCLUDED every
                 // tombstoned base docid (deleted-since-last-seal), so the
                 // deletions are now baked in as absent — reset the query-time
@@ -7621,6 +8190,7 @@ impl FieldIndex {
                 s.segment = Some(std::sync::Arc::new(reader));
                 s.forward = FastHashMap::default();
                 s.elements = BTreeMap::new();
+                s.dup_values = BTreeSet::new();
                 // The new segment's live(id) gather already EXCLUDED every
                 // tombstoned base docid, so deletions are baked in — reset the
                 // query-time tombstone to empty (Phase 2h-2).
@@ -7716,10 +8286,12 @@ impl FieldIndex {
                 // on the mmap for per-doc predicate reads (`number_at`).
                 Ok(FieldIndex::Number(NumberIndex {
                     values: BTreeMap::new(),
+                    dup_values: BTreeSet::new(),
                     forward: FastHashMap::default(), // payload stays on the mmap
                     dense_forward: Vec::new(),
                     keyword_range_cache: RwLock::new(FastHashMap::default()),
                     keyword_range_bitmap_cache: RwLock::new(FastHashMap::default()),
+                    range_stats: RwLock::new(None),
                     bytes: 0,
                     segment: Some(reader),
                     // Reopen starts with NO pending deletes — the on-disk segment
@@ -7742,6 +8314,7 @@ impl FieldIndex {
                 // stays demand-paged on the mmap for per-doc predicate reads.
                 Ok(FieldIndex::Keyword(KeywordIndex {
                     terms: BTreeMap::new(),
+                    dup_values: BTreeSet::new(),
                     dense_forward: Vec::new(),
                     forward: FastHashMap::default(),
                     bytes: 0,
@@ -7761,6 +8334,7 @@ impl FieldIndex {
                 // columns stay demand-paged on the mmap for per-doc predicate reads.
                 Ok(FieldIndex::Set(SetIndex {
                     elements: BTreeMap::new(),
+                    dup_values: BTreeSet::new(),
                     forward: FastHashMap::default(),
                     bytes: 0,
                     segment: Some(reader),
@@ -7823,6 +8397,7 @@ impl FieldIndex {
     }
 }
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[cfg_attr(not(test), allow(dead_code))]
 impl Collection {
     /// PRODUCTION seal (Phase 2f-1): seal EVERY field into a columnar mmap
@@ -8046,6 +8621,7 @@ struct CheckpointSchema {
 
 const CHECKPOINT_SCHEMA_FILE: &str = "_schema.json";
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 impl Engine {
     /// PRODUCTION checkpoint (Phase 2f-2): seal EVERY live collection into a
     /// segment checkpoint under `dir` — one subdir `dir/<collection>/` per
@@ -8198,6 +8774,7 @@ fn collection_name_from_dir(dir: &std::path::Path) -> Option<String> {
 // Test seam: seal a Number field to a disk segment (disk tier)
 // ---------------------------------------------------------------------------
 
+/// @spec projects/lumen/tech-design/semantic/lumen-src.md#schema
 #[cfg(test)]
 impl Engine {
     /// TEST SEAM (Stage 2 Phase 2c): seal the current in-RAM state of a Number
@@ -8250,6 +8827,7 @@ impl Engine {
         n.forward = FastHashMap::default();
         n.dense_forward = Vec::new();
         n.values = BTreeMap::new();
+        n.dup_values = BTreeSet::new();
         n.clear_keyword_range_cache();
         // First-time seal from the live `forward`: no prior tombstone exists, but
         // reset for symmetry with the production re-seal path (Phase 2h-3).
@@ -8314,6 +8892,7 @@ impl Engine {
         k.forward = FastHashMap::default();
         k.dense_forward = Vec::new();
         k.terms = BTreeMap::new();
+        k.dup_values = BTreeSet::new();
         // First-time seal from the live `forward`: no prior tombstone exists, but
         // reset for symmetry with the production re-seal path (Phase 2h-1 FIX).
         k.tombstones = RoaringBitmap::new();
@@ -8384,6 +8963,7 @@ impl Engine {
         // disk now (Phase 2h-2). Queries drive from the mmap segment.
         s.forward = FastHashMap::default();
         s.elements = BTreeMap::new();
+        s.dup_values = BTreeSet::new();
         // First-time seal from the live `forward`: no prior tombstone exists, but
         // reset for symmetry with the production re-seal path (Phase 2h-2).
         s.tombstones = RoaringBitmap::new();
@@ -12261,6 +12841,7 @@ mod segment_vector_diff_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{DuplicatedQuery, ExistsQuery};
 
     fn build_users_schema() -> CreateCollectionRequest {
         let mut fields = BTreeMap::new();
@@ -12321,6 +12902,491 @@ mod tests {
             field: field.into(),
             value,
         }
+    }
+
+    /// Walk every page through the returned cursors; assert the
+    /// concatenation equals one exhaustive query (order included), with no
+    /// duplicates or gaps — the keyset-pagination contract.
+    fn walk_pages(e: &Engine, base: &SearchRequest) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..1000 {
+            let mut req = base.clone();
+            req.cursor = cursor.clone();
+            let resp = e.search("users", req).unwrap();
+            let n = resp.hits.len();
+            out.extend(resp.hits.into_iter().map(|h| h.external_id));
+            match resp.cursor {
+                Some(c) => cursor = Some(c),
+                None => return out,
+            }
+            if n == 0 {
+                return out;
+            }
+        }
+        panic!("cursor never exhausted");
+    }
+
+    #[test]
+    fn sorted_keyset_pagination_walks_exhaustively_with_ties() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        // 97 docs, age = i % 10 → heavy duplicate sort keys exercise the
+        // (value, docid) tie-break across page boundaries.
+        let items: Vec<_> = (0..97)
+            .flat_map(|i| {
+                vec![item(
+                    &format!("u{i:03}"),
+                    "age",
+                    FieldValue::Number((i % 10) as f64),
+                )]
+            })
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        for order in [SortOrder::Asc, SortOrder::Desc] {
+            let base = SearchRequest {
+                query: QueryNode::Range(crate::types::RangeQuery {
+                    field: "age".into(),
+                    gt: None,
+                    gte: None,
+                    lt: None,
+                    lte: None,
+                }),
+                limit: 7,
+                cursor: None,
+                sort: Some(vec![crate::types::SortSpec {
+                    field: "age".into(),
+                    order,
+                }]),
+                track_total: true,
+                collapse: None,
+            };
+            // One exhaustive page as the oracle.
+            let mut oracle_req = base.clone();
+            oracle_req.limit = 1000;
+            let oracle: Vec<String> = e
+                .search("users", oracle_req)
+                .unwrap()
+                .hits
+                .into_iter()
+                .map(|h| h.external_id)
+                .collect();
+            assert_eq!(oracle.len(), 97);
+
+            let paged = walk_pages(&e, &base);
+            assert_eq!(paged, oracle, "order {order:?}");
+        }
+    }
+
+    #[test]
+    fn sorted_keyset_cursor_is_v2_and_filtered_walks_match() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let mut items = Vec::new();
+        for i in 0..60 {
+            items.push(item(&format!("u{i:03}"), "age", FieldValue::Number(i as f64)));
+            items.push(item(
+                &format!("u{i:03}"),
+                "email",
+                FieldValue::String(format!("{}@x.com", if i % 2 == 0 { "even" } else { "odd" })),
+            ));
+        }
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        // Filtered (query predicate) + sorted + paged.
+        let base = SearchRequest {
+            query: QueryNode::Term(crate::types::TermQuery {
+                field: "email".into(),
+                value: FieldValue::String("even@x.com".into()),
+            }),
+            limit: 4,
+            cursor: None,
+            sort: Some(vec![crate::types::SortSpec {
+                field: "age".into(),
+                order: SortOrder::Desc,
+            }]),
+            track_total: true,
+            collapse: None,
+        };
+        let first = e.search("users", base.clone()).unwrap();
+        // The first page of a sorted query hands out a v2 keyset cursor.
+        let cursor = first.cursor.clone().expect("more pages");
+        match parse_page_cursor(&cursor).expect("parseable") {
+            PageCursor::SortKeyset { .. } => {}
+            _ => panic!("expected a sort keyset cursor"),
+        }
+
+        let paged = walk_pages(&e, &base);
+        let expected: Vec<String> = (0..60)
+            .rev()
+            .filter(|i| i % 2 == 0)
+            .map(|i| format!("u{i:03}"))
+            .collect();
+        assert_eq!(paged, expected);
+    }
+
+    #[test]
+    fn score_keyset_pagination_matches_full_ranking() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let items: Vec<_> = (0..45)
+            .map(|i| {
+                item(
+                    &format!("u{i:03}"),
+                    "bio",
+                    FieldValue::String(format!(
+                        "engineer {}",
+                        if i % 3 == 0 { "rust rust" } else { "rust" }
+                    )),
+                )
+            })
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        let base = SearchRequest {
+            query: QueryNode::Match(crate::types::MatchQuery {
+                field: "bio".into(),
+                text: "rust".into(),
+                op: MatchOp::And,
+            }),
+            limit: 6,
+            cursor: None,
+            sort: None,
+            track_total: true,
+            collapse: None,
+        };
+        let mut oracle_req = base.clone();
+        oracle_req.limit = 1000;
+        let oracle: Vec<String> = e
+            .search("users", oracle_req)
+            .unwrap()
+            .hits
+            .into_iter()
+            .map(|h| h.external_id)
+            .collect();
+        assert_eq!(oracle.len(), 45);
+
+        let first = e.search("users", base.clone()).unwrap();
+        match parse_page_cursor(&first.cursor.clone().unwrap()).unwrap() {
+            PageCursor::ScoreKeyset { .. } => {}
+            _ => panic!("expected a score keyset cursor"),
+        }
+        let paged = walk_pages(&e, &base);
+        assert_eq!(paged, oracle);
+    }
+
+    #[test]
+    fn legacy_offset_cursor_still_pages() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let items: Vec<_> = (0..30)
+            .map(|i| item(&format!("u{i:03}"), "age", FieldValue::Number(i as f64)))
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+        let req = SearchRequest {
+            query: QueryNode::Range(crate::types::RangeQuery {
+                field: "age".into(),
+                gt: None,
+                gte: Some(0.0),
+                lt: None,
+                lte: None,
+            }),
+            limit: 10,
+            cursor: Some(make_cursor(25)),
+            sort: None,
+            track_total: true,
+            collapse: None,
+        };
+        let resp = e.search("users", req).unwrap();
+        assert_eq!(resp.hits.len(), 5);
+        assert_eq!(resp.total, 30);
+        assert!(resp.cursor.is_none());
+    }
+
+    #[test]
+    fn sorted_keyset_pagination_over_sealed_segment_plus_tail() {
+        let dir = tempfile::tempdir().unwrap();
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        // 50 sealed docs with duplicate keys, then a live tail of 13 more —
+        // the keyset walk must seek correctly across BOTH sources.
+        let items: Vec<_> = (0..50)
+            .map(|i| item(&format!("u{i:03}"), "age", FieldValue::Number((i % 7) as f64)))
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items,
+                request_id: None,
+            },
+        )
+        .unwrap();
+        e.__seal_number_field_to_segment("users", "age", dir.path())
+            .unwrap();
+        let tail: Vec<_> = (50..63)
+            .map(|i| item(&format!("u{i:03}"), "age", FieldValue::Number((i % 7) as f64)))
+            .collect();
+        e.index(
+            "users",
+            IndexRequest {
+                items: tail,
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        for order in [SortOrder::Asc, SortOrder::Desc] {
+            let base = SearchRequest {
+                query: QueryNode::Range(crate::types::RangeQuery {
+                    field: "age".into(),
+                    gt: None,
+                    gte: None,
+                    lt: None,
+                    lte: None,
+                }),
+                limit: 5,
+                cursor: None,
+                sort: Some(vec![crate::types::SortSpec {
+                    field: "age".into(),
+                    order,
+                }]),
+                track_total: true,
+                collapse: None,
+            };
+            let mut oracle_req = base.clone();
+            oracle_req.limit = 1000;
+            let oracle: Vec<String> = e
+                .search("users", oracle_req)
+                .unwrap()
+                .hits
+                .into_iter()
+                .map(|h| h.external_id)
+                .collect();
+            assert_eq!(oracle.len(), 63);
+            let paged = walk_pages(&e, &base);
+            assert_eq!(paged, oracle, "order {order:?}");
+        }
+    }
+
+    /// Deep-pagination latency proof (run explicitly, release):
+    /// `cargo test -p lumen --release --lib deep_pagination_depth_invariance -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn deep_pagination_depth_invariance() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let n = 100_000;
+        for chunk in (0..n).collect::<Vec<_>>().chunks(5000) {
+            let items: Vec<_> = chunk
+                .iter()
+                .map(|i| item(&format!("u{i:06}"), "age", FieldValue::Number(*i as f64)))
+                .collect();
+            e.index(
+                "users",
+                IndexRequest {
+                    items,
+                    request_id: None,
+                },
+            )
+            .unwrap();
+        }
+        let base = SearchRequest {
+            query: QueryNode::Range(crate::types::RangeQuery {
+                field: "age".into(),
+                gt: None,
+                gte: None,
+                lt: None,
+                lte: None,
+            }),
+            limit: 10,
+            cursor: None,
+            sort: Some(vec![crate::types::SortSpec {
+                field: "age".into(),
+                order: SortOrder::Asc,
+            }]),
+            track_total: false,
+            collapse: None,
+        };
+
+        // Page 1, then jump a keyset cursor to depth ~50_000 and time a page.
+        let t0 = std::time::Instant::now();
+        let first = e.search("users", base.clone()).unwrap();
+        let first_us = t0.elapsed().as_micros();
+        assert_eq!(first.hits.len(), 10);
+
+        let deep_cursor = make_sort_cursor(
+            SortableF64::new(50_000.0).unwrap().bits(),
+            0, // before any docid at that key
+        );
+        let mut deep_req = base.clone();
+        deep_req.cursor = Some(deep_cursor);
+        let t1 = std::time::Instant::now();
+        let deep = e.search("users", deep_req).unwrap();
+        let deep_us = t1.elapsed().as_micros();
+        assert_eq!(deep.hits.len(), 10);
+        assert_eq!(deep.hits[0].external_id, "u050000");
+
+        // Legacy offset to the same depth for contrast.
+        let mut offset_req = base.clone();
+        offset_req.cursor = Some(make_cursor(50_000));
+        let t2 = std::time::Instant::now();
+        let via_offset = e.search("users", offset_req).unwrap();
+        let offset_us = t2.elapsed().as_micros();
+
+        eprintln!(
+            "page#1 {first_us}us | keyset@50k {deep_us}us | offset@50k {offset_us}us (hits {})",
+            via_offset.hits.len()
+        );
+        // The keyset deep page must be the same order of magnitude as page 1 —
+        // depth invariance. (Loose 20x bound to survive CI jitter.)
+        assert!(
+            deep_us < first_us.max(1) * 20,
+            "keyset deep page degraded: first={first_us}us deep={deep_us}us"
+        );
+    }
+
+    #[test]
+    fn duplicates_side_index_tracks_inserts_and_deletes() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u2", "email", FieldValue::String("a@x.com".into())),
+                    item("u3", "email", FieldValue::String("b@y.com".into())),
+                    item("u4", "email", FieldValue::String("b@y.com".into())),
+                    item("u5", "email", FieldValue::String("solo@z.com".into())),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        let groups = |min: u32| {
+            e.duplicates(
+                "users",
+                DuplicatesRequest {
+                    field: "email".into(),
+                    min_group_size: min,
+                    limit: 10,
+                    offset: 0,
+                },
+            )
+            .unwrap()
+            .groups
+        };
+        let g = groups(2);
+        assert_eq!(g.len(), 2);
+        // Delete one of the `a@x.com` pair — the group must drop out, and the
+        // side-index must not leak a stale candidate.
+        e.delete("users", "u2", None).unwrap();
+        let g = groups(2);
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].value, serde_json::Value::String("b@y.com".into()));
+        // Re-index the deleted doc back into the pair — group returns.
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![item("u2", "email", FieldValue::String("a@x.com".into()))],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(groups(2).len(), 2);
+    }
+
+    #[test]
+    fn number_range_stats_matches_walk_on_all_bound_shapes() {
+        use std::ops::Bound;
+        let mut idx = NumberIndex::default();
+        // Values 0.0, 1.0, ..., 99.0; value k carries k+1 docs so df != distinct.
+        let mut id = 0u32;
+        for k in 0..100u32 {
+            let key = SortableF64::new(k as f64).unwrap();
+            for _ in 0..=k {
+                idx.values.entry(key).or_default().insert(id);
+                id += 1;
+            }
+        }
+        let stats = NumberRangeStats::build(&idx.values);
+        let s = |x: f64| SortableF64::new(x).unwrap();
+        let cases: Vec<(Bound<SortableF64>, Bound<SortableF64>)> = vec![
+            (Bound::Unbounded, Bound::Unbounded),
+            (Bound::Included(s(10.0)), Bound::Excluded(s(20.0))),
+            (Bound::Excluded(s(10.0)), Bound::Included(s(20.0))),
+            (Bound::Included(s(10.5)), Bound::Excluded(s(10.6))), // empty window
+            (Bound::Unbounded, Bound::Excluded(s(0.0))),          // before first
+            (Bound::Excluded(s(99.0)), Bound::Unbounded),         // after last
+            (Bound::Included(s(99.0)), Bound::Included(s(99.0))), // single key
+        ];
+        for (lo, hi) in cases {
+            let walk_distinct = idx.values.range((lo, hi)).count() as u64;
+            let walk_df: u64 = idx.values.range((lo, hi)).map(|(_, s)| s.len()).sum();
+            assert_eq!(
+                stats.range(lo, hi),
+                (walk_distinct, walk_df),
+                "bounds {lo:?}..{hi:?}"
+            );
+            // The public estimate entry points agree with the walk too.
+            assert_eq!(idx.range_df(lo, hi), walk_df, "range_df {lo:?}..{hi:?}");
+            assert_eq!(
+                idx.range_distinct_count(lo, hi),
+                walk_distinct,
+                "distinct {lo:?}..{hi:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn number_range_stats_invalidated_by_cache_clear() {
+        use std::ops::Bound;
+        let mut idx = NumberIndex::default();
+        for k in 0..10u32 {
+            let key = SortableF64::new(k as f64).unwrap();
+            idx.values.entry(key).or_default().insert(k);
+        }
+        let all = (Bound::Unbounded, Bound::Unbounded);
+        idx.build_range_stats();
+        assert_eq!(idx.range_df(all.0, all.1), 10);
+        // Mutate the tree the way the write path does, then clear caches —
+        // the next estimate must see the new value, not the stale snapshot.
+        idx.values
+            .entry(SortableF64::new(100.0).unwrap())
+            .or_default()
+            .insert(10);
+        idx.clear_keyword_range_cache();
+        assert_eq!(idx.range_df(all.0, all.1), 11);
+        assert_eq!(idx.range_distinct_count(all.0, all.1), 11);
     }
 
     #[test]
@@ -12678,6 +13744,335 @@ mod tests {
         assert!(err.to_string().contains("duplicates not supported on text"));
     }
 
+    // ----- Exists / Duplicated query primitives (DataTable composite search) -----
+
+    fn search_ids(e: &Engine, coll: &str, query: QueryNode) -> (u64, Vec<String>) {
+        let resp = e
+            .search(
+                coll,
+                SearchRequest {
+                    query,
+                    limit: 100,
+                    cursor: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap();
+        let mut ids: Vec<String> = resp.hits.iter().map(|h| h.external_id.clone()).collect();
+        ids.sort();
+        (resp.total, ids)
+    }
+
+    #[test]
+    fn exists_filters_missing_field() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u1", "age", FieldValue::Number(30.0)),
+                    // u2 carries no email — only age. Exists("email") must skip it.
+                    item("u2", "age", FieldValue::Number(40.0)),
+                    item("u3", "email", FieldValue::String("c@z.com".into())),
+                    // u4 multi-valued set; Exists must see it via element_postings.
+                    item(
+                        "u4",
+                        "tags",
+                        FieldValue::StringList(vec!["a".into(), "b".into()]),
+                    ),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        // Keyword field: only docs that actually hold an email value.
+        let (total, ids) =
+            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "email".into() }));
+        assert_eq!(total, 2);
+        assert_eq!(ids, vec!["u1", "u3"]);
+
+        // Set field: presence via element postings.
+        let (total, ids) =
+            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "tags".into() }));
+        assert_eq!(total, 1);
+        assert_eq!(ids, vec!["u4"]);
+
+        // Number field.
+        let (total, ids) =
+            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "age".into() }));
+        assert_eq!(total, 2);
+        assert_eq!(ids, vec!["u1", "u2"]);
+    }
+
+    #[test]
+    fn exists_composes_with_boolean() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u1", "age", FieldValue::Number(30.0)),
+                    item("u2", "email", FieldValue::String("b@y.com".into())),
+                    item("u2", "age", FieldValue::Number(50.0)),
+                    item("u3", "age", FieldValue::Number(30.0)), // no email
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        // has-email AND age in [25,40): u1 only (u2 too old, u3 no email).
+        let q = QueryNode::And(vec![
+            QueryNode::Exists(ExistsQuery { field: "email".into() }),
+            QueryNode::Range(RangeQuery {
+                field: "age".into(),
+                gte: Some(25.0),
+                lt: Some(40.0),
+                gt: None,
+                lte: None,
+            }),
+        ]);
+        let (total, ids) = search_ids(&e, "users", q);
+        assert_eq!(total, 1);
+        assert_eq!(ids, vec!["u1"]);
+
+        // Inverse: missing email (NOT Exists) → u3.
+        let q = QueryNode::Not(Box::new(QueryNode::Exists(ExistsQuery {
+            field: "email".into(),
+        })));
+        let (total, ids) = search_ids(&e, "users", q);
+        assert_eq!(total, 1);
+        assert_eq!(ids, vec!["u3"]);
+    }
+
+    #[test]
+    fn duplicated_as_query_leaf() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u2", "email", FieldValue::String("a@x.com".into())),
+                    item("u3", "email", FieldValue::String("a@x.com".into())),
+                    item("u4", "email", FieldValue::String("b@y.com".into())),
+                    item("u5", "email", FieldValue::String("b@y.com".into())),
+                    item("u6", "email", FieldValue::String("c@z.com".into())), // unique
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        // min_group_size defaults to >=2: every doc whose email collides.
+        let (total, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Duplicated(DuplicatedQuery {
+                field: "email".into(),
+                min_group_size: 2,
+            }),
+        );
+        assert_eq!(total, 5);
+        assert_eq!(ids, vec!["u1", "u2", "u3", "u4", "u5"]);
+
+        // Raise the threshold: only the 3-way group survives.
+        let (total, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Duplicated(DuplicatedQuery {
+                field: "email".into(),
+                min_group_size: 3,
+            }),
+        );
+        assert_eq!(total, 3);
+        assert_eq!(ids, vec!["u1", "u2", "u3"]);
+    }
+
+    #[test]
+    fn duplicated_composes_with_boolean() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u1", "age", FieldValue::Number(30.0)),
+                    item("u2", "email", FieldValue::String("a@x.com".into())),
+                    item("u2", "age", FieldValue::Number(60.0)),
+                    item("u3", "email", FieldValue::String("a@x.com".into())),
+                    item("u3", "age", FieldValue::Number(35.0)),
+                    item("u4", "email", FieldValue::String("u@u.com".into())), // unique email
+                    item("u4", "age", FieldValue::Number(30.0)),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        // duplicate-email AND age<40: u1, u3 (u2 too old, u4 not a duplicate).
+        let q = QueryNode::And(vec![
+            QueryNode::Duplicated(DuplicatedQuery {
+                field: "email".into(),
+                min_group_size: 2,
+            }),
+            QueryNode::Range(RangeQuery {
+                field: "age".into(),
+                gte: None,
+                lt: Some(40.0),
+                gt: None,
+                lte: None,
+            }),
+        ]);
+        let (total, ids) = search_ids(&e, "users", q);
+        assert_eq!(total, 2);
+        assert_eq!(ids, vec!["u1", "u3"]);
+    }
+
+    #[test]
+    fn duplicated_min_group_size_floor_is_two() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u2", "email", FieldValue::String("a@x.com".into())),
+                    item("u3", "email", FieldValue::String("solo@x.com".into())),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+        // min_group_size 0/1 would make every doc a "duplicate"; the leaf floors it
+        // at 2 so a singleton never matches.
+        let (total, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Duplicated(DuplicatedQuery {
+                field: "email".into(),
+                min_group_size: 0,
+            }),
+        );
+        assert_eq!(total, 2);
+        assert_eq!(ids, vec!["u1", "u2"]);
+    }
+
+    #[test]
+    fn exists_duplicated_segment_paths_equal_tail_paths() {
+        // Guards the eval_field_doc_union asymmetry: segment OFF answers from the
+        // in-RAM map (+ dup_values candidates for min>=2), segment ON from the
+        // segment-aware live_* accessors. Seal must not change any answer, a
+        // checkpoint reopen must agree, and a post-seal delete must obey the
+        // group-size semantics on the sealed path (a 2-group losing a member
+        // drops BOTH docs from `duplicated`).
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        e.index(
+            "users",
+            IndexRequest {
+                items: vec![
+                    item("u1", "email", FieldValue::String("a@x.com".into())),
+                    item("u2", "email", FieldValue::String("a@x.com".into())),
+                    item("u3", "email", FieldValue::String("a@x.com".into())),
+                    item("u4", "email", FieldValue::String("b@y.com".into())),
+                    item("u5", "email", FieldValue::String("b@y.com".into())),
+                    item("u6", "email", FieldValue::String("solo@z.com".into())),
+                    item("u1", "age", FieldValue::Number(30.0)),
+                    item("u2", "age", FieldValue::Number(30.0)),
+                    item("u7", "tags", FieldValue::StringList(vec!["x".into(), "y".into()])),
+                    item("u8", "tags", FieldValue::StringList(vec!["x".into()])),
+                ],
+                request_id: None,
+            },
+        )
+        .unwrap();
+
+        let queries: Vec<(&str, QueryNode)> = vec![
+            ("exists email", QueryNode::Exists(ExistsQuery { field: "email".into() })),
+            ("exists age", QueryNode::Exists(ExistsQuery { field: "age".into() })),
+            ("exists tags", QueryNode::Exists(ExistsQuery { field: "tags".into() })),
+            (
+                "dup email >=2",
+                QueryNode::Duplicated(DuplicatedQuery { field: "email".into(), min_group_size: 2 }),
+            ),
+            (
+                "dup email >=3",
+                QueryNode::Duplicated(DuplicatedQuery { field: "email".into(), min_group_size: 3 }),
+            ),
+            (
+                "dup age >=2",
+                QueryNode::Duplicated(DuplicatedQuery { field: "age".into(), min_group_size: 2 }),
+            ),
+            (
+                "dup tags >=2",
+                QueryNode::Duplicated(DuplicatedQuery { field: "tags".into(), min_group_size: 2 }),
+            ),
+        ];
+        let tail: Vec<_> = queries
+            .iter()
+            .map(|(_, q)| search_ids(&e, "users", q.clone()))
+            .collect();
+
+        // Seal in place → the same queries now answer off the segment path.
+        let dir = tempfile::tempdir().unwrap();
+        e.flush_to_segments(dir.path(), 1).unwrap();
+        for ((label, q), want) in queries.iter().zip(&tail) {
+            let got = search_ids(&e, "users", q.clone());
+            assert_eq!(&got, want, "sealed path diverged from tail path: {label}");
+        }
+
+        // Checkpoint reopen must agree too.
+        let reopened = Engine::new();
+        reopened.reopen_from_segment_dir(dir.path()).unwrap();
+        for ((label, q), want) in queries.iter().zip(&tail) {
+            let got = search_ids(&reopened, "users", q.clone());
+            assert_eq!(&got, want, "reopened path diverged from tail path: {label}");
+        }
+
+        // Post-seal delete: u5 leaves → b@y.com group shrinks 2→1, so u4 must
+        // ALSO leave `duplicated`; exists drops u5 only.
+        e.delete("users", "u5", None).unwrap();
+        let (_, ids) = search_ids(
+            &e,
+            "users",
+            QueryNode::Duplicated(DuplicatedQuery { field: "email".into(), min_group_size: 2 }),
+        );
+        assert_eq!(ids, vec!["u1", "u2", "u3"], "2-group survivor must exit duplicated");
+        let (_, ids) =
+            search_ids(&e, "users", QueryNode::Exists(ExistsQuery { field: "email".into() }));
+        assert_eq!(ids, vec!["u1", "u2", "u3", "u4", "u6"], "exists must drop only the deleted doc");
+    }
+
+    #[test]
+    fn exists_on_text_field_rejected() {
+        let e = Engine::new();
+        e.create_collection("users", build_users_schema()).unwrap();
+        let err = e
+            .search(
+                "users",
+                SearchRequest {
+                    query: QueryNode::Exists(ExistsQuery { field: "bio".into() }),
+                    limit: 10,
+                    cursor: None,
+                    sort: None,
+                    track_total: true,
+                    collapse: None,
+                },
+            )
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("text"), "unexpected error: {msg}");
+    }
+
     #[test]
     fn reindex_replaces_field_value() {
         let e = Engine::new();
@@ -12812,7 +14207,23 @@ mod tests {
     #[test]
     fn cursor_round_trip() {
         let c = make_cursor(42);
-        assert_eq!(parse_cursor(&c), Some(42));
+        assert!(matches!(
+            parse_page_cursor(&c),
+            Some(PageCursor::Offset(42))
+        ));
+        let c = make_sort_cursor(0x8000_0000_0000_0000, 7);
+        assert!(matches!(
+            parse_page_cursor(&c),
+            Some(PageCursor::SortKeyset { bits: 0x8000_0000_0000_0000, docid: 7 })
+        ));
+        let c = make_score_cursor(1.5, "u042");
+        match parse_page_cursor(&c) {
+            Some(PageCursor::ScoreKeyset { score_bits, eid }) => {
+                assert_eq!(f32::from_bits(score_bits), 1.5);
+                assert_eq!(eid, "u042");
+            }
+            _ => panic!("expected score keyset"),
+        }
     }
 
     // -----------------------------------------------------------------
@@ -14384,3 +15795,4 @@ mod checkpoint_engine_tests {
         }
     }
 }
+// CODEGEN-END

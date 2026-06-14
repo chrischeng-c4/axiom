@@ -138,6 +138,51 @@ codegen.profile = "rust/score-crate"
 
 
 [[projects]]
+name = "arena"
+path = "projects/arena"
+cap_path = "projects/arena/README.md"
+label = "project:arena"
+
+[[projects.workspaces]]
+name = "arena"
+paths = ["projects/arena/**", ".github/workflows/arena-release.yml"]
+target = "rust"
+test_cmd = "cargo test -p arena"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+
+[[projects]]
+name = "guard"
+path = "projects/guard"
+cap_path = "projects/guard/README.md"
+label = "project:guard"
+
+[[projects.workspaces]]
+name = "guard"
+paths = ["projects/guard/**"]
+target = "rust"
+test_cmd = 'CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -p guard-cli'
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+
+[[projects]]
+name = "rig"
+path = "projects/rig"
+cap_path = "projects/rig/README.md"
+label = "project:rig"
+
+[[projects.workspaces]]
+name = "rig"
+paths = ["projects/rig/**"]
+target = "rust"
+test_cmd = "cargo test -p rig"
+verify_cold = true
+codegen.profile = "rust/score-crate"
+
+
+[[projects]]
 name = "mamba"
 path = "projects/mamba"
 td_path = ".aw/tech-design/projects/mamba"
@@ -148,6 +193,32 @@ name = "mamba"
 paths = ["projects/mamba/**"]
 target = "rust"
 test_cmd = "cargo test -p mamba"
+
+
+[[projects]]
+name = "lumen"
+path = "projects/lumen"
+cap_path = "projects/lumen/README.md"
+label = "project:lumen"
+# EC tool bindings (contract before implementation). `aw health --verify-ec`
+# dispatches each bound dimension to its external tool; unbound categories
+# (e.g. behavior, security) fall back to the manifest command. One spec, two
+# surfaces: the same workload is driven both as a vat runner (self-provisioning)
+# and as the verify-ec command (host-provisioned).
+#   benchmark (效能) -> arena: lumen vs pg AND OpenSearch search-latency, one
+#                        3-target run, ratcheting gate (lumen must beat both).
+#   stability (穩定性) -> rig: resilience scenarios (partition recovery + 5%
+#                        packet-loss p99 budget) over toxiproxy.
+# behavior (功能) and security (安全) stay cargo gates per the EC-gatekeeper map.
+ec.benchmark = { tool = "arena", spec = "projects/arena/examples/lumen-vs-pg-and-opensearch.toml" }
+ec.stability = { tool = "rig", dir = "projects/lumen/tests/rig/scenarios/resilience" }
+
+[[projects.workspaces]]
+name = "lumen"
+paths = ["projects/lumen/**"]
+target = "rust"
+test_cmd = "cargo test -p lumen"
+verify_cold = true
 
 
 [[projects]]

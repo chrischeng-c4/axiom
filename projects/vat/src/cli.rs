@@ -33,8 +33,10 @@ struct Cli {
 enum Cmd {
     /// Create a fresh vat and run a command inside it.
     Run {
-        /// Named runner from vat.toml. Omit to use default_runner or the only runner.
-        runner: Option<String>,
+        /// Named runner(s) from vat.toml. Omit to use default_runner or the
+        /// only runner; pass several to run them CONCURRENTLY against one
+        /// shared workspace + service set (worst exit code wins).
+        runners: Vec<String>,
         /// Clone from this host directory (default: current directory).
         #[arg(long)]
         base: Option<PathBuf>,
@@ -107,7 +109,7 @@ pub fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Run {
-            runner,
+            runners,
             base,
             from,
             name,
@@ -122,12 +124,10 @@ pub fn run() -> Result<ExitCode> {
                     program,
                     program_args: cmd,
                 }
-            } else if let Some(runner_id) = runner {
-                commands::run::Target::Runner {
-                    runner_id: Some(runner_id),
-                }
             } else {
-                commands::run::Target::Runner { runner_id: None }
+                commands::run::Target::Runner {
+                    runner_ids: runners,
+                }
             };
             commands::run::exec(commands::run::Args {
                 target,

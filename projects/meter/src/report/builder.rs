@@ -7,7 +7,7 @@
 //! so the exit-code contract has exactly one source of truth.
 
 use super::envelope::{
-    Completion, EnvBlock, FindingsSummary, OverallStatus, MeterReport, RunnerRecord, SCHEMA_VERSION,
+    Completion, EnvBlock, FindingsSummary, MeterReport, OverallStatus, RunnerRecord, SCHEMA_VERSION,
 };
 use super::finding::{Finding, Kind, Severity};
 

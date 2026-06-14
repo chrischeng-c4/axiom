@@ -147,6 +147,10 @@ pub enum Kind {
     Injection,
     /// `meter test` — `{name,stdout_tail}` (delegated, informational).
     TestFailure,
+    /// `meter profile`/`run` capture vitals — `{cpu_time_ms,wall_time_ms,peak_rss_bytes}`
+    /// (Info), or `{gate,limit,observed,unit}` for a breached meter.toml `[gate]`
+    /// ceiling (High => exit 1).
+    Vital,
 }
 
 /// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-finding-rs.md#source
@@ -162,6 +166,7 @@ impl Kind {
             Kind::FuzzCrash => "fuzz_crash",
             Kind::Injection => "injection",
             Kind::TestFailure => "test_failure",
+            Kind::Vital => "vital",
         }
     }
 
@@ -176,18 +181,20 @@ impl Kind {
             Kind::FuzzCrash => "fuzz_crash",
             Kind::Injection => "injection",
             Kind::TestFailure => "test_failure",
+            Kind::Vital => "vital",
         }
     }
 
     /// Public meter kinds, in declaration order. Legacy carried variants remain
     /// serializable for internal modules but are intentionally absent from the
     /// public `meter spec` schema/catalog.
-    pub fn all() -> [Kind; 4] {
+    pub fn all() -> [Kind; 5] {
         [
             Kind::Hotspot,
             Kind::BoundaryCost,
             Kind::Regression,
             Kind::TestFailure,
+            Kind::Vital,
         ]
     }
 }

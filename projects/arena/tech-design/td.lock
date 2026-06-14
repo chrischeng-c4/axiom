@@ -1,0 +1,57 @@
+version = 1
+project = "arena"
+td_path = "projects/arena/tech-design"
+generated_at = "2026-06-13T02:45:55.121858+00:00"
+digest = "sha256:506d378ea618afcb387268cdac5335aa7e78666ec27be6e25276b5cec19f2b01"
+
+[[files]]
+path = "semantic/arena-build-script.md"
+digest = "sha256:bd0bdc1b341c22f3daf1b51f8db446e7fd3c382a515a5c92d089993dc6fe4338"
+
+[[files]]
+path = "semantic/arena-install-script.md"
+digest = "sha256:297f00741227841f4d06578224e29cebc6cfe3819c1c8092bd975eb4ce5eb622"
+
+[[files]]
+path = "semantic/arena-projects-arena.md"
+digest = "sha256:a6f7f19fe4da3f61b82e199083ad9b36e439ba3b63444b1b0676750f368434ca"
+
+[[files]]
+path = "semantic/source/projects-arena-arena-cli-src-bin-arena-rs.md"
+digest = "sha256:fd9b17d11188a56af395b5f51c8124df3bf00eef831c02cb38018152ce239c5c"
+
+[[files]]
+path = "semantic/source/projects-arena-arena-cli-src-dispatch-rs.md"
+digest = "sha256:b1149de4ae04e874b5cf046f1787aae83d8b85de31d4ccc470abe369dde59338"
+
+[[files]]
+path = "semantic/source/projects-arena-arena-cli-src-lib-rs.md"
+digest = "sha256:81ef55c459346ec4cfd3e4f2a35fee78b6f3e4ca55268f19566a651bca92776c"
+
+[[files]]
+path = "semantic/source/projects-arena-src-compare-rs.md"
+digest = "sha256:c163d0a47187ffa9b1b865fbfc7d6ed09fb441ece5ac9f8b3c3e515b585297bb"
+
+[[files]]
+path = "semantic/source/projects-arena-src-engine-rs.md"
+digest = "sha256:fd1c1ecbdaf6a817718a29e158b7a50bd28bbac916cb6d77b3541d5c69c7e588"
+
+[[files]]
+path = "semantic/source/projects-arena-src-lib-rs.md"
+digest = "sha256:d8936b32164078a1f4bd96de49972738f4d2111b184e4fa6a34fac5114678589"
+
+[[files]]
+path = "semantic/source/projects-arena-src-measure-rs.md"
+digest = "sha256:b51f1d023edab6cc65407122cf073905de981a6973a8c4c573f855adc8a1e561"
+
+[[files]]
+path = "semantic/source/projects-arena-src-report-rs.md"
+digest = "sha256:59ea1762ab70069053eff119da1f9931e229e0cb6981a83cb025c02fac4cb815"
+
+[[files]]
+path = "semantic/source/projects-arena-src-spec-rs.md"
+digest = "sha256:9dfc98ec4f8a756ffec8377b23989961a6ed60574e8ab0e5cd4759f66083939b"
+
+[[files]]
+path = "semantic/source/projects-arena-tests-pipeline_e2e-rs.md"
+digest = "sha256:11fc0d08f5884c5a0d7e912faaa3785dd82f9e12c452626b8da03efb1cb43dd8"

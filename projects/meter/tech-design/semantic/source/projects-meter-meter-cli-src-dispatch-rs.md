@@ -35,10 +35,8 @@ Public API manifest for `projects/meter/meter-cli/src/dispatch.rs` generated fro
 | `dispatch` | projects/meter/meter-cli/src/dispatch.rs | function | pub | 273 | dispatch(cmd: MeterCommand, out: &OutputOpts) -> Dispatched |
 | `print_report` | projects/meter/meter-cli/src/dispatch.rs | function | pub | 909 | print_report(report: &MeterReport, out: &OutputOpts) |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/meter-cli/src/dispatch.rs -->
 ````rust
 //! Shared verb parse + dispatch for the `meter` agent-first CLI.
 //!
@@ -60,9 +58,11 @@ use meter::report::{persist, schema};
 #[derive(Parser, Debug)]
 #[command(
     name = "meter",
+    version,
     about = "meter — local runtime resource measurement for agents (JSON on stdout by default)",
     disable_help_subcommand = true
 )]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct MeterCommand {
     #[command(subcommand)]
     pub verb: Verb,
@@ -74,6 +74,7 @@ pub struct MeterCommand {
 /// Output-format opt-ins shared by every verb. JSON-on-stdout is the default;
 /// these only switch the rendering, never the channel.
 #[derive(Args, Debug, Clone, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct OutputOpts {
     /// Render a human-readable summary to stderr in addition to the JSON report.
     #[arg(long, global = true)]
@@ -86,6 +87,7 @@ pub struct OutputOpts {
 /// The verb set. Every public verb does real work: `test`/`report`/`state`/
 /// `spec`/`llm`/`profile`/`bench` plus the composite `run` sweep.
 #[derive(Subcommand, Debug)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub enum Verb {
     /// Delegate to cargo nextest/test and FORWARD the child exit code.
     Test {
@@ -112,6 +114,7 @@ pub enum Verb {
 
 /// `meter spec` flags.
 #[derive(Args, Debug, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct SpecArgs {
     /// Emit the MeterReport JSON-Schema (this is the default).
     #[arg(long)]
@@ -123,6 +126,7 @@ pub struct SpecArgs {
 
 /// `meter llm` flags.
 #[derive(Args, Debug)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct LlmArgs {
     /// Topic: `guide` (markdown playbook) or `recipes` (machine recipes).
     #[arg(default_value = "guide")]
@@ -134,6 +138,7 @@ pub struct LlmArgs {
 
 /// `meter bench` flags.
 #[derive(Args, Debug, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct BenchArgs {
     /// Crate path (or `Cargo.toml`) to benchmark via `cargo bench` (default `.`).
     #[arg(long, default_value = ".")]
@@ -153,6 +158,7 @@ pub struct BenchArgs {
 /// path: it reads a serialized `PhaseBreakdown` and emits `BoundaryCost`
 /// findings without spawning anything.
 #[derive(Args, Debug, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct ProfileArgs {
     /// Sample `cargo run --bin <name>`.
     #[arg(long, group = "profile_target")]
@@ -170,9 +176,20 @@ pub struct ProfileArgs {
     /// (no child spawn, no sampler). Mutually exclusive with a sampler target.
     #[arg(long, group = "profile_target")]
     pub phases: Option<String>,
-    /// Sampling duration in seconds (default 3).
-    #[arg(long, default_value_t = 3)]
-    pub duration: u64,
+    /// Instrumentation level: `off | vitals | sample | hooks | deep`.
+    /// Precedence: this flag > meter.toml `level` > built-in default `vitals`.
+    #[arg(long)]
+    pub level: Option<String>,
+    /// Optional cap (seconds) on the measurement window. Default: the window
+    /// lasts until the target child exits (a self-terminating target is never
+    /// killed mid-run).
+    #[arg(long)]
+    pub duration_cap: Option<u64>,
+    /// Opaque driver command (spawned via `sh -c` after the target); its exit
+    /// ends the measurement window. meter records the command but never
+    /// interprets or implements its traffic.
+    #[arg(long)]
+    pub drive: Option<String>,
     /// Sampling rate in Hz (overrides the default interval).
     #[arg(long)]
     pub hz: Option<u64>,
@@ -194,6 +211,7 @@ pub struct ProfileArgs {
 /// sub-finding (`ToolError > Regression > Findings > Clean`); a delegated test
 /// failure NEVER overrides a meter-native regression.
 #[derive(Args, Debug, Default)]
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct RunArgs {
     /// The crate path the delegated/resource sub-verbs operate on.
     #[arg(long, default_value = ".")]
@@ -216,12 +234,22 @@ pub struct RunArgs {
     /// Run `profile` by sampling `cargo run --example <name>`.
     #[arg(long)]
     pub profile_example: Option<String>,
-    /// Sampling duration (seconds) for the `profile` sub-verb (default 3).
-    #[arg(long, default_value_t = 3)]
-    pub profile_duration: u64,
+    /// Instrumentation level for the `profile` sub-verb: `off | vitals |
+    /// sample | hooks | deep` (CLI > meter.toml in --target > default vitals).
+    #[arg(long)]
+    pub level: Option<String>,
+    /// Opaque driver command bounding the `profile` window (`sh -c`; its exit
+    /// ends the window; never interpreted).
+    #[arg(long)]
+    pub drive: Option<String>,
+    /// Optional cap (seconds) on the `profile` window. Default: until the
+    /// profiled child exits.
+    #[arg(long)]
+    pub profile_duration_cap: Option<u64>,
 }
 
 /// Outcome of dispatching a verb.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub struct Dispatched {
     /// The report carrying the process exit code (and, for non-offline verbs,
     /// the document printed to stdout).
@@ -238,6 +266,7 @@ pub struct Dispatched {
 /// emit; offline verbs (`spec`, `llm`) print their own raw payload and set
 /// `stdout_written = true` so stdout stays exactly one JSON/markdown document.
 /// The returned report's `exit_code` is the process exit code the caller yields.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub fn dispatch(cmd: MeterCommand, out: &OutputOpts) -> Dispatched {
     let (report, stdout_written) = match cmd.verb {
         Verb::Test { args } => (run_test(args), false),
@@ -331,15 +360,17 @@ fn run_bench(args: BenchArgs, _out: &OutputOpts) -> MeterReport {
 
     // 2) Fold a baseline regression report, if one was supplied.
     match args.baseline {
-        Some(baseline_path) => match meter::capture::bench::load_regression_report(&baseline_path) {
-            Ok(report) => {
-                // Medium-or-worse regressions elevate to exit 2 in finalize().
-                builder.add_findings(report.into_findings());
+        Some(baseline_path) => {
+            match meter::capture::bench::load_regression_report(&baseline_path) {
+                Ok(report) => {
+                    // Medium-or-worse regressions elevate to exit 2 in finalize().
+                    builder.add_findings(report.into_findings());
+                }
+                Err(e) => {
+                    builder.tool_error(5, format!("baseline error: {e}"));
+                }
             }
-            Err(e) => {
-                builder.tool_error(5, format!("baseline error: {e}"));
-            }
-        },
+        }
         None => {
             // No baseline => no regression detection possible this wave.
         }
@@ -357,25 +388,35 @@ fn run_bench(args: BenchArgs, _out: &OutputOpts) -> MeterReport {
     report
 }
 
-/// `meter profile` — the C1 capture-mode hot-spot profiler.
+/// `meter profile` — capture-mode measurement under the single-knob contract.
 ///
-/// Two paths, mutually exclusive (clap group `profile_target`):
-/// - DEFAULT (capture): a `--bin`/`--example`/`--bench`/`--exec` target is
-///   spawned under the platform stack sampler for `--duration` (at `--hz` if
-///   given); the folded stacks are ranked into `Hotspot` findings, PRE-SORTED by
-///   `self_ns` desc. This is JSON-ONLY: the report carries NO `flamegraph_svg`
-///   key. `--human` ALSO writes a `<target>.svg` (path surfaced in `agent_prompt`
-///   /stderr) but never embeds SVG bytes in the JSON.
-/// - EMBED (`--phases <file>`): reads a serialized
-///   [`PhaseBreakdown`](meter::performance::profiler::PhaseBreakdown) and folds it
-///   into `BoundaryCost` findings — no child spawn, no sampler. Deterministic.
+/// Effective level = CLI `--level` > meter.toml `level` > built-in `vitals`:
+/// - `off` => no measurement (Clean report saying so).
+/// - `vitals` (default) => spawn + wait the target and emit `Vital` findings
+///   (cpu_time_ms / wall_time_ms / peak_rss_bytes via `wait4`+`rusage`) with no
+///   sampler attach (~zero overhead). meter.toml `[gate]` ceilings adjudicate.
+/// - `sample` => vitals PLUS the platform stack sampler: ranked `Hotspot`
+///   findings (sorted self_ns desc) and a `.meter/<target>.collapsed` artifact
+///   whose path rides the agent_prompt. `--human` ALSO writes an SVG side file.
+/// - `hooks`/`deep` => usage error: they land with the L3/L4 instrumentation
+///   epic (axiom WI #4).
 ///
-/// Exit codes: 0 ran clean (hot spots are Info by default); 1 if any hot spot's
-/// `pct` exceeds `--fail-hot`; 4 sampler backend unavailable (NEVER fake-clean);
-/// 5 child spawn/build io error.
+/// The measurement window defaults to UNTIL CHILD EXIT; `--duration-cap`
+/// bounds it; `--drive <cmd>` runs an opaque driver whose exit ends the window
+/// (server-shaped targets compose with an external driver — meter never
+/// generates load).
+///
+/// `--phases <file>` is the EMBED path (unchanged): a serialized
+/// [`PhaseBreakdown`](meter::performance::profiler::PhaseBreakdown) folds into
+/// `BoundaryCost` findings with no spawn.
+///
+/// Exit codes: 0 ran clean; 1 a `[gate]` ceiling or `--fail-hot` was breached
+/// (or measurement quality escalated); 3 usage (bad level / unimplemented
+/// level / bad meter.toml); 4 sampler backend unavailable; 5 spawn/build io.
 fn run_profile(args: ProfileArgs, out: &OutputOpts) -> MeterReport {
     use meter::capture::fold;
-    use meter::capture::sampler::{self, SampleError, Target};
+    use meter::capture::sampler::{SampleError, Target};
+    use meter::capture::vitals::{self, Level};
 
     // --- EMBED path: --phases reads a recorded breakdown, no spawn. ---
     if let Some(phases_path) = args.phases.clone() {
@@ -405,60 +446,155 @@ fn run_profile(args: ProfileArgs, out: &OutputOpts) -> MeterReport {
     let label = target.label();
     let mut builder = ReportBuilder::new("profile", label.clone());
     builder.with_environment(EnvBlock::detect());
-    builder.add_criterion("a dominant hot spot was located and ranked");
+
+    // Resolve the measurement contract (meter.toml in the cwd) and the level.
+    let config = match vitals::MeterConfig::load(std::path::Path::new(".")) {
+        Ok(c) => c,
+        Err(e) => {
+            builder.tool_error(3, e);
+            let report = builder.finalize();
+            persist_quietly(&report);
+            return report;
+        }
+    };
+    let cli_level = match args.level.as_deref().map(Level::parse).transpose() {
+        Ok(l) => l,
+        Err(e) => {
+            builder.tool_error(3, e);
+            let report = builder.finalize();
+            persist_quietly(&report);
+            return report;
+        }
+    };
+    let level = vitals::resolve_level(cli_level, config.as_ref());
+
+    match level {
+        Level::Off => {
+            builder.add_criterion("level off: no measurement requested");
+            let mut report = builder.finalize();
+            report.agent_prompt = format!(
+                "meter profile did not measure `{label}`: the effective level is `off` \
+                 (precedence: --level > meter.toml > default `vitals`). Raise the level to measure."
+            );
+            persist_quietly(&report);
+            return report;
+        }
+        Level::Hooks | Level::Deep => {
+            builder.tool_error(
+                3,
+                format!(
+                    "level `{}` is not implemented yet: runtime injection (hooks) and deep \
+                     profiling land with the meter L3/L4 instrumentation epic (axiom WI #4). \
+                     Use `--level vitals` or `--level sample`.",
+                    level.as_str()
+                ),
+            );
+            let report = builder.finalize();
+            persist_quietly(&report);
+            return report;
+        }
+        Level::Vitals | Level::Sample => {}
+    }
+
+    builder.add_criterion("process vitals captured (cpu/wall/peak RSS) and gates honored");
+    if level >= Level::Sample {
+        builder.add_criterion("a dominant hot spot was located and ranked");
+    }
+    let gate = config.map(|c| c.gate).unwrap_or_default();
+
+    let wopts = vitals::WindowOpts {
+        attach_sampler: level >= Level::Sample,
+        duration_cap_secs: args.duration_cap,
+        drive: args.drive.clone(),
+        hz: args.hz,
+    };
 
     let started_at = chrono::Utc::now();
     diag(format!(
-        "meter profile: sampling `{label}` for {}s (this builds + runs the target)...",
-        args.duration
+        "meter profile: measuring `{label}` at level `{}` ({}; this builds + runs the target)...",
+        level.as_str(),
+        match (args.duration_cap, &args.drive) {
+            (_, Some(_)) => "window = driver lifetime".to_string(),
+            (Some(s), None) => format!("window capped at {s}s"),
+            (None, None) => "window = until child exit".to_string(),
+        }
     ));
-    let run = sampler::sample_target(&target, &args.target_args, args.duration, args.hz);
 
-    match run {
-        Ok(run) => {
+    match vitals::capture_window(&target, &args.target_args, &wopts) {
+        Ok(outcome) => {
             let finished_at = chrono::Utc::now();
+            let command = outcome
+                .sample
+                .as_ref()
+                .map(|s| s.command.clone())
+                .unwrap_or_else(|| vec![label.clone()]);
             builder.with_last_run(RunnerRecord {
-                command: run.command.clone(),
-                kind: "sampler".into(),
+                command,
+                kind: "capture".into(),
                 started_at,
                 finished_at: Some(finished_at),
-                exit_code: None,
-                duration_ms: Some(args.duration * 1000),
+                exit_code: outcome.child_exit,
+                duration_ms: Some(outcome.vitals.wall_time_ms),
                 delegated: true,
             });
 
-            // Fold -> ranked Hotspot findings (the default stdout, JSON-only).
-            let findings = fold::fold_hotspots(&run.stacks, run.effective_hz, args.fail_hot);
-            let n = findings.len();
-            // A hot spot that breached `--fail-hot` is marked High by the fold
-            // step. Hot spots are INFORMATIONAL by default: locating where time
-            // goes is success, not failure. So the profile run is exit 0 (clean)
-            // UNLESS a `--fail-hot` threshold was breached, in which case it is
-            // exit 1. Forwarding the exit keeps the full ranked findings in the
-            // report while honoring the contract (0 ran clean / 1 fail-hot).
-            let breached = findings
+            let escalate = escalate_command(&args);
+            let mut findings = vitals::vitals_findings(&outcome.vitals, &label, &gate, &escalate);
+            let gate_breached = findings
                 .iter()
-                .any(|f| f.severity == meter::report::Severity::High);
+                .any(|f| matches!(f.severity, meter::report::Severity::High));
+
+            let mut sample_note = String::new();
+            if let Some(run) = &outcome.sample {
+                let hot = fold::fold_hotspots(&run.stacks, run.effective_hz, args.fail_hot);
+                sample_note = format!(
+                    " Ranked {} hot spot(s) from {} samples via {} (kind `hotspot`, sorted self_ns desc).",
+                    hot.len(),
+                    run.stacks.iter().map(|s| s.count).sum::<u64>(),
+                    run.backend,
+                );
+                match vitals::write_collapsed(&run.stacks, &label) {
+                    Ok(p) => sample_note.push_str(&format!(" Collapsed stacks: {}.", p.display())),
+                    Err(e) => diag(format!(
+                        "meter profile: could not write collapsed artifact: {e}"
+                    )),
+                }
+                if out.human {
+                    if let Some(p) = write_human_svg(&run.stacks, &label) {
+                        sample_note.push_str(&format!(" Flamegraph SVG: {p}."));
+                    }
+                }
+                findings.extend(hot);
+            }
+
+            let breached = findings.iter().any(|f| {
+                matches!(
+                    f.severity,
+                    meter::report::Severity::High | meter::report::Severity::Medium
+                )
+            });
             builder.informational_findings_are_clean();
             builder.add_findings(findings);
             builder.forward_exit(if breached { 1 } else { 0 });
 
-            // --human: ALSO write the SVG side artifact (never in the JSON).
-            let svg_note = if out.human {
-                write_human_svg(&run.stacks, &label)
-            } else {
-                None
-            };
-
             let mut report = builder.finalize();
-            report.agent_prompt =
-                format!(
-                "meter profile sampled `{label}` ({} samples via {}) and ranked {n} hot spot(s) by \
-                 self time. Inspect `findings[]` (kind `hotspot`, sorted self_ns desc); the top \
-                 entry is the dominant leaf.{}",
-                run.stacks.iter().map(|s| s.count).sum::<u64>(),
-                run.backend,
-                svg_note.map(|p| format!(" Flamegraph SVG: {p}")).unwrap_or_default(),
+            let v = &outcome.vitals;
+            report.agent_prompt = format!(
+                "meter profile measured `{label}` at level `{}`: cpu_time {} ms, wall {} ms, \
+                 peak RSS {} bytes (kind `vital`).{}{}",
+                level.as_str(),
+                v.cpu_time_ms,
+                v.wall_time_ms,
+                v.peak_rss_bytes,
+                sample_note,
+                if gate_breached && level == Level::Vitals {
+                    format!(" A [gate] ceiling was breached — locate the cost one level deeper: `{escalate}`.")
+                } else if gate_breached {
+                    " A [gate] ceiling was breached — inspect the ranked hotspot findings."
+                        .to_string()
+                } else {
+                    String::new()
+                },
             );
             persist_quietly(&report);
             report
@@ -478,8 +614,8 @@ fn run_profile(args: ProfileArgs, out: &OutputOpts) -> MeterReport {
                 ),
                 SampleError::Sampler(_) => (
                     4,
-                    "the sampler ran but produced no usable stacks; try a longer --duration or a \
-                     longer-running target",
+                    "the sampler ran but produced no usable stacks; try `--duration-cap` with a \
+                     longer window or a longer-running target",
                 ),
             };
             builder.tool_error(code, format!("{e} ({hint})"));
@@ -488,6 +624,23 @@ fn run_profile(args: ProfileArgs, out: &OutputOpts) -> MeterReport {
             report
         }
     }
+}
+
+/// The literal escalation command for a gate breach: the same profile target
+/// re-run one level deeper (`--level sample`).
+fn escalate_command(args: &ProfileArgs) -> String {
+    let selector = if let Some(b) = &args.bin {
+        format!("--bin {b}")
+    } else if let Some(e) = &args.example {
+        format!("--example {e}")
+    } else if let Some(b) = &args.bench {
+        format!("--bench {b}")
+    } else if let Some(p) = &args.exec {
+        format!("--exec {p}")
+    } else {
+        String::from("--bin <target>")
+    };
+    format!("meter profile {selector} --level sample")
 }
 
 /// `meter profile --phases <file>` — the EMBED path. Reads a serialized
@@ -563,7 +716,9 @@ fn write_human_svg(stacks: &[meter::capture::sampler::FoldedStack], label: &str)
             Some(path_str)
         }
         Err(e) => {
-            diag(format!("meter profile: could not write flamegraph SVG: {e}"));
+            diag(format!(
+                "meter profile: could not write flamegraph SVG: {e}"
+            ));
             None
         }
     }
@@ -665,7 +820,9 @@ fn run_run(args: RunArgs) -> MeterReport {
         baseline: args.baseline,
         profile_bin: args.profile_bin,
         profile_example: args.profile_example,
-        profile_duration: args.profile_duration,
+        level: args.level,
+        drive: args.drive,
+        profile_duration_cap: args.profile_duration_cap,
         nextest_present,
     };
     let report = meter::capture::run::run_sweep(&opts);
@@ -684,6 +841,7 @@ fn persist_quietly(report: &MeterReport) {
 
 /// Emit the report as the single stdout JSON document, plus an optional
 /// human-readable stderr summary.
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-meter-cli-src-dispatch-rs.md#source
 pub fn print_report(report: &MeterReport, out: &OutputOpts) {
     emit(report, out.compact);
     if out.human {
@@ -733,6 +891,11 @@ delegated test failures.
   stderr.
 - `--human` adds a stderr summary; `--compact` emits dense single-line JSON.
 - Pin on `schema_version == "meter.report/1"`.
+- Per-project contract: `meter.toml` declares `level = "off|vitals|sample|hooks|deep"`
+  plus an optional `[gate]` table (`max_peak_rss_mb`, `max_cpu_time_ms`; 0 = no
+  gate). Precedence: CLI flags > meter.toml > the built-in default `vitals`. A
+  breached gate is a High `vital` finding (exit 1) whose prompt suggests
+  escalating with `--level sample`.
 
 ## Verbs
 - `meter test [-- <runner args>]` — delegate + forward exit. Failures =>
@@ -740,12 +903,18 @@ delegated test failures.
 - `meter bench [--target <path>] [--baseline <file>]` — delegate `cargo bench`;
   with a baseline, medium-or-worse regressions => `findings[].kind ==
   regression` and exit 2. No baseline => Clean after delegation.
-- `meter profile [--bin|--example|--bench|--exec <t>] [--duration <s>] [--hz <r>] [--fail-hot <pct>]` —
-  capture-mode CPU stack sampler; ranked `findings[].kind == hotspot` (sorted
-  self_ns desc), JSON-only. `--phases <file>` reads a recorded PhaseBreakdown =>
-  `boundary_cost`. `--human` also writes an SVG side artifact.
+- `meter profile [--bin|--example|--bench|--exec <t>] [--level off|vitals|sample|hooks|deep]
+  [--duration-cap <s>] [--drive <cmd>] [--hz <r>] [--fail-hot <pct>]` — capture-mode
+  measurement. Level `vitals` (the default) emits `findings[].kind == vital`
+  (cpu_time_ms / wall_time_ms / peak_rss_bytes, zero overhead); `sample` adds
+  ranked `hotspot` findings (sorted self_ns desc) plus a `.meter/*.collapsed`
+  artifact. The window lasts until the child exits (`--duration-cap` bounds it;
+  `--drive` runs an opaque driver whose exit ends the window — meter never
+  generates load). `hooks`/`deep` land with the L3/L4 epic. `--phases <file>`
+  reads a recorded PhaseBreakdown => `boundary_cost`. `--human` also writes an
+  SVG side artifact.
 - `meter run [--target <path>] [--skip-test|--skip-bench|--skip-profile]
-  [--baseline <f>] [--profile-bin|--profile-example <n>]` — composite sweep:
+  [--baseline <f>] [--profile-bin|--profile-example <n>] [--level <l>] [--drive <cmd>]` — composite sweep:
   delegated test by default; bench/profile are opt-in. Folds every sub-verb into
   ONE worst-wins report (`ToolError > Regression > Findings > Clean`); a
   delegated test failure never overrides a regression. Un-run sub-verbs are
@@ -810,8 +979,13 @@ fn recipes_json() -> serde_json::Value {
                 "read": ".status.state, .exit_code, .findings[] | select(.kind==\"regression\")"
             },
             {
+                "goal": "measure one run's cpu/wall/peak-RSS vitals (zero overhead, gate-aware)",
+                "command": "meter profile --bin my-cli --level vitals",
+                "read": ".findings[] | select(.kind==\"vital\") | .evidence"
+            },
+            {
                 "goal": "find where a binary spends its time (ranked hot spots)",
-                "command": "meter profile --example profile_target --duration 3",
+                "command": "meter profile --example profile_target --level sample",
                 "read": ".environment.sampler_backend, .findings[] | select(.kind==\"hotspot\") | .evidence"
             },
             {
@@ -992,8 +1166,12 @@ mod tests {
             "profile",
             "--example",
             "profile_target",
-            "--duration",
+            "--level",
+            "sample",
+            "--duration-cap",
             "2",
+            "--drive",
+            "scripts/drive.sh --n 100",
             "--hz",
             "250",
             "--fail-hot",
@@ -1002,12 +1180,126 @@ mod tests {
         match cmd.verb {
             Verb::Profile(a) => {
                 assert_eq!(a.example.as_deref(), Some("profile_target"));
-                assert_eq!(a.duration, 2);
+                assert_eq!(a.level.as_deref(), Some("sample"));
+                assert_eq!(a.duration_cap, Some(2));
+                assert_eq!(a.drive.as_deref(), Some("scripts/drive.sh --n 100"));
                 assert_eq!(a.hz, Some(250));
                 assert_eq!(a.fail_hot, Some(40.0));
             }
             _ => panic!("expected profile verb"),
         }
+    }
+
+    #[test]
+    fn profile_window_defaults_to_until_exit() {
+        // No --duration-cap => None => the window lasts until child exit.
+        let cmd = parse(&["meter", "profile", "--exec", "/bin/ls"]);
+        match cmd.verb {
+            Verb::Profile(a) => {
+                assert_eq!(a.duration_cap, None);
+                assert_eq!(a.level, None);
+                assert_eq!(a.drive, None);
+            }
+            _ => panic!("expected profile verb"),
+        }
+    }
+
+    #[test]
+    fn profile_help_exposes_no_load_generation_flags() {
+        // Charter: meter never grows load-generation knobs.
+        use clap::CommandFactory;
+        let mut help = Vec::new();
+        MeterCommand::command().write_long_help(&mut help).unwrap();
+        let help = String::from_utf8(help).unwrap();
+        for forbidden in ["--rps", "--concurrency", "--connections", "--qps"] {
+            assert!(
+                !help.contains(forbidden),
+                "load-generation flag `{forbidden}` must not exist"
+            );
+        }
+    }
+
+    #[test]
+    fn profile_bad_level_is_usage_error() {
+        let cmd = parse(&["meter", "profile", "--exec", "/bin/ls", "--level", "turbo"]);
+        let report = dispatch(cmd, &OutputOpts::default()).report;
+        assert_eq!(report.exit_code, 3);
+    }
+
+    #[test]
+    fn profile_level_hooks_is_unimplemented_usage_error_naming_the_epic() {
+        // hooks/deep parse but error BEFORE any spawn, pointing at the L3/L4 epic.
+        for lvl in ["hooks", "deep"] {
+            let cmd = parse(&["meter", "profile", "--exec", "/bin/ls", "--level", lvl]);
+            let report = dispatch(cmd, &OutputOpts::default()).report;
+            assert_eq!(report.exit_code, 3, "level {lvl} must be a usage error");
+            let msg = serde_json::to_string(&report).unwrap();
+            assert!(msg.contains("L3/L4"), "error must name the epic: {msg}");
+        }
+    }
+
+    #[test]
+    fn profile_level_off_measures_nothing_and_is_clean() {
+        let dir = test_subdir("level-off");
+        let _g = ChdirGuard::enter(&dir);
+        let cmd = parse(&["meter", "profile", "--exec", "/bin/ls", "--level", "off"]);
+        let report = dispatch(cmd, &OutputOpts::default()).report;
+        assert_eq!(report.exit_code, 0);
+        assert!(report.clean);
+        assert!(report.findings.is_empty());
+        assert!(report.agent_prompt.contains("off"));
+    }
+
+    #[test]
+    fn profile_vitals_level_emits_vital_findings_without_sampler() {
+        // Default level (no flag, no meter.toml) = vitals: a real child runs to
+        // completion and yields kind=vital evidence; no hotspot findings.
+        let dir = test_subdir("vitals-default");
+        let _g = ChdirGuard::enter(&dir);
+        let cmd = parse(&["meter", "profile", "--exec", "/bin/ls"]);
+        let report = dispatch(cmd, &OutputOpts::default()).report;
+        assert_eq!(report.exit_code, 0, "prompt: {}", report.agent_prompt);
+        assert!(report.clean, "vital findings are informational");
+        let vitals: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| f.kind == meter::report::Kind::Vital)
+            .collect();
+        assert_eq!(vitals.len(), 1);
+        assert!(vitals[0].evidence.get("peak_rss_bytes").is_some());
+        assert!(report
+            .findings
+            .iter()
+            .all(|f| f.kind != meter::report::Kind::Hotspot));
+        // The child's exit rode into last_run.
+        assert_eq!(report.last_run.as_ref().unwrap().exit_code, Some(0));
+    }
+
+    #[test]
+    fn profile_gate_breach_exits_nonzero_and_suggests_escalation() {
+        // meter.toml with a 1 MiB RSS ceiling: any real process breaches it =>
+        // High vital finding, exit 1, and an agent_prompt escalation to
+        // `--level sample`.
+        let dir = test_subdir("gate-breach");
+        std::fs::write(
+            dir.join("meter.toml"),
+            "level = \"vitals\"\n[gate]\nmax_peak_rss_mb = 1\n",
+        )
+        .unwrap();
+        let _g = ChdirGuard::enter(&dir);
+        let cmd = parse(&["meter", "profile", "--exec", "/bin/ls"]);
+        let report = dispatch(cmd, &OutputOpts::default()).report;
+        std::fs::remove_file(dir.join("meter.toml")).ok();
+        assert_eq!(report.exit_code, 1, "gate breach must be non-zero");
+        assert!(!report.clean);
+        let breach = report
+            .findings
+            .iter()
+            .find(|f| f.severity == meter::report::Severity::High)
+            .expect("a High gate-breach finding");
+        assert_eq!(breach.kind, meter::report::Kind::Vital);
+        assert!(breach.invoke.command.contains("--level sample"));
+        assert!(report.agent_prompt.contains("--level sample"));
     }
 
     #[test]
@@ -1104,14 +1396,26 @@ mod tests {
         p
     }
 
+    /// A per-test scratch dir so chdir-based tests cannot contaminate each
+    /// other's meter.toml / .meter cache.
+    fn test_subdir(tag: &str) -> std::path::PathBuf {
+        let p = tempfile_dir().join(tag);
+        let _ = std::fs::create_dir_all(&p);
+        p
+    }
+
     struct ChdirGuard {
         prev: std::path::PathBuf,
+        _lock: std::sync::MutexGuard<'static, ()>,
     }
     impl ChdirGuard {
         fn enter(dir: &std::path::Path) -> Self {
+            // cwd is process-global: serialize every chdir-based test.
+            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let prev = std::env::current_dir().unwrap();
             std::env::set_current_dir(dir).unwrap();
-            Self { prev }
+            Self { prev, _lock: lock }
         }
     }
     impl Drop for ChdirGuard {
@@ -1129,7 +1433,7 @@ mod tests {
 changes:
   - path: projects/meter/meter-cli/src/dispatch.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/meter-cli/src/dispatch.rs` captured during meter full-codegen standardization.

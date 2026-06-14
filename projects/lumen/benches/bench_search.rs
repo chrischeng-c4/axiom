@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-benches.md#schema
+// CODEGEN-BEGIN
 //! Search-latency benches on a 100k-document corpus.
 //!
 //! Three scenarios from the README §9 perf-regression suite:
@@ -23,6 +25,7 @@ const N: usize = 100_000;
 
 struct Lcg(u64);
 
+/// @spec projects/lumen/tech-design/semantic/lumen-benches.md#schema
 impl Lcg {
     fn new(seed: u64) -> Self {
         Self(seed)
@@ -224,6 +227,9 @@ fn bench_search(c: &mut Criterion) {
                 }),
                 limit: 20,
                 cursor: None,
+                sort: None,
+                track_total: false,
+                collapse: None,
             },
             |req| {
                 engine.search("c", req).expect("search");
@@ -242,6 +248,9 @@ fn bench_search(c: &mut Criterion) {
                 }),
                 limit: 20,
                 cursor: None,
+                sort: None,
+                track_total: false,
+                collapse: None,
             },
             |req| {
                 engine.search("c", req).expect("search");
@@ -259,6 +268,9 @@ fn bench_search(c: &mut Criterion) {
                 }),
                 limit: 20,
                 cursor: None,
+                sort: None,
+                track_total: false,
+                collapse: None,
             },
             |req| {
                 engine.search("c", req).expect("search");
@@ -272,3 +284,4 @@ fn bench_search(c: &mut Criterion) {
 
 criterion_group!(benches, bench_search);
 criterion_main!(benches);
+// CODEGEN-END

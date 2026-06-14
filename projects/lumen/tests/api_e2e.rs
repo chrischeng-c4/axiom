@@ -1,3 +1,5 @@
+// SPEC-MANAGED: projects/lumen/tech-design/semantic/lumen-tests.md#unit-test
+// CODEGEN-BEGIN
 //! End-to-end HTTP integration tests.
 //!
 //! Drives the real axum router via `axum-test::TestServer`. These tests
@@ -594,3 +596,4 @@ async fn openapi_spec_served() {
     assert!(body["paths"]["/collections/{collection_id}/search"].is_object());
     assert!(body["paths"]["/collections/{collection_id}/duplicates"].is_object());
 }
+// CODEGEN-END

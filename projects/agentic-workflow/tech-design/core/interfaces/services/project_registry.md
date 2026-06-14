@@ -50,14 +50,18 @@ Public API manifest for `projects/agentic-workflow/src/services/project_registry
 //! `toml_edit` is used for lossless round-trips so that non-generated sections
 //! (comments, formatting, sdd.* tables) are preserved byte-identical on each sync.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::models::project::Project;
+use crate::models::project::{EcBinding, Project, Workspace};
 use crate::services::project_discovery::discover_projects;
 use crate::shared::workspace::{config_path, workspace_path, SYNC_BEGIN_MARKER, SYNC_END_MARKER};
+
+pub const ROOT_AW_CONFIG_FILE: &str = "aw.toml";
+pub const PROJECT_AW_CONFIG_FILE: &str = "aw.toml";
 
 // @spec projects/agentic-workflow/tech-design/surface/specs/sync-command.md#R1
 // @spec projects/agentic-workflow/tech-design/surface/specs/sync-command.md#R4
@@ -68,6 +72,7 @@ use crate::shared::workspace::{config_path, workspace_path, SYNC_BEGIN_MARKER, S
 /// - If the markers are absent, the block (with markers) is appended at EOF.
 /// - After a successful write, `.aw/projects.toml` is deleted if it exists (R10 migration).
 /// - Non-generated content in `config.toml` is preserved byte-identical via `toml_edit`.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn write_projects_config(root: &Path, projects: &[Project]) -> Result<()> {
     let config_file = config_path(root);
     std::fs::create_dir_all(config_file.parent().unwrap())?;
@@ -104,14 +109,9 @@ pub fn write_projects_config(root: &Path, projects: &[Project]) -> Result<()> {
 ///
 /// Reads `[[projects]]` entries directly from `config.toml` — the marker block
 /// is written there by `write_projects_config`. No projects.toml overlay.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
-    let config_file = config_path(root);
-    if !config_file.exists() {
-        return Ok(vec![]);
-    }
-
-    let content = std::fs::read_to_string(&config_file)
-        .with_context(|| format!("reading {}", config_file.display()))?;
+    let mut projects = Vec::new();
 
     #[derive(serde::Deserialize, Default)]
     struct ConfigWithProjects {
@@ -119,10 +119,98 @@ pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
         projects: Vec<Project>,
     }
 
-    let parsed: ConfigWithProjects = toml::from_str(&content)
-        .with_context(|| format!("parsing projects from {}", config_file.display()))?;
+    let config_file = config_path(root);
+    if config_file.exists() {
+        let content = std::fs::read_to_string(&config_file)
+            .with_context(|| format!("reading {}", config_file.display()))?;
+        let parsed: ConfigWithProjects = toml::from_str(&content)
+            .with_context(|| format!("parsing projects from {}", config_file.display()))?;
+        upsert_projects(&mut projects, parsed.projects);
+    }
 
-    Ok(parsed.projects)
+    let root_aw = root_aw_config_path(root);
+    if root_aw.exists() {
+        let content = std::fs::read_to_string(&root_aw)
+            .with_context(|| format!("reading {}", root_aw.display()))?;
+        let parsed: ConfigWithProjects = toml::from_str(&content)
+            .with_context(|| format!("parsing projects from {}", root_aw.display()))?;
+        upsert_projects(&mut projects, parsed.projects);
+    }
+
+    let project_aw = load_project_aw_projects(root)?;
+    upsert_projects(&mut projects, project_aw);
+
+    Ok(projects)
+}
+
+/// Root-level AW config path: `{repo}/aw.toml`.
+/// This is the new durable config surface; `.aw/config.toml` remains a
+/// compatibility source for existing checkouts and non-project state.
+pub fn root_aw_config_path(root: &Path) -> PathBuf {
+    root.join(ROOT_AW_CONFIG_FILE)
+}
+
+/// Public row projection used by commands that need project identity fields
+/// (`aliases`, tracker label, capability path) without depending on the full
+/// `Project` model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectConfigRow {
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub path: String,
+    pub td_path: Option<String>,
+    pub cap_path: Option<String>,
+    pub label: Option<String>,
+}
+
+impl ProjectConfigRow {
+    pub fn matches(&self, requested: &str) -> bool {
+        self.name == requested || self.aliases.iter().any(|alias| alias == requested)
+    }
+
+    pub fn label_or_default(&self) -> String {
+        self.label
+            .clone()
+            .unwrap_or_else(|| format!("project:{}", self.name))
+    }
+}
+
+/// Load project identity rows from legacy `.aw/config.toml`, root `aw.toml`,
+/// and discovered project-local `aw.toml` files. Later sources override earlier
+/// ones by project name, matching `load_projects`.
+pub fn load_project_config_rows(root: &Path) -> Result<Vec<ProjectConfigRow>> {
+    let mut rows = Vec::new();
+
+    let legacy = config_path(root);
+    if legacy.exists() {
+        rows.extend(load_project_config_rows_from_file(&legacy, None)?);
+    }
+
+    let root_aw = root_aw_config_path(root);
+    if root_aw.exists() {
+        rows.extend(load_project_config_rows_from_file(&root_aw, None)?);
+    }
+
+    for path in discover_project_aw_paths(root)? {
+        let project_rel = path
+            .parent()
+            .and_then(|parent| parent.strip_prefix(root).ok())
+            .map(path_to_string)
+            .unwrap_or_default();
+        rows.extend(load_project_config_rows_from_file(
+            &path,
+            Some(&project_rel),
+        )?);
+    }
+
+    Ok(dedupe_project_rows(rows))
+}
+
+pub fn resolve_project_config_row(root: &Path, requested: &str) -> Result<ProjectConfigRow> {
+    load_project_config_rows(root)?
+        .into_iter()
+        .find(|row| row.matches(requested))
+        .ok_or_else(|| anyhow::anyhow!("project `{requested}` has no AW project config row"))
 }
 
 // @spec projects/agentic-workflow/tech-design/surface/specs/sync-command.md#R11
@@ -130,6 +218,7 @@ pub fn load_projects(root: &Path) -> Result<Vec<Project>> {
 /// and a freshly discovered set of projects.
 ///
 /// Returns `Some(unified_diff)` if different, `None` if identical.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn check_drift(root: &Path) -> Result<Option<String>> {
     // Generate fresh block content (without writing)
     let discovered = discover_projects(root)?;
@@ -164,8 +253,318 @@ pub fn check_drift(root: &Path) -> Result<Option<String>> {
 // Private helpers
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Deserialize, Default)]
+struct ProjectAwToml {
+    #[serde(default)]
+    project: ProjectAwIdentity,
+    #[serde(default)]
+    workspaces: Vec<Workspace>,
+    #[serde(default)]
+    ec: BTreeMap<String, EcBinding>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ProjectAwIdentity {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default, alias = "tech_design_dir")]
+    td_path: Option<String>,
+    #[serde(default)]
+    cap_path: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RootAwProjectDiscovery {
+    #[serde(default)]
+    discover: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RootAwAgenticWorkflow {
+    #[serde(default)]
+    projects: Option<RootAwProjectDiscovery>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RootAwDiscoveryConfig {
+    #[serde(default)]
+    agentic_workflow: RootAwAgenticWorkflow,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ProjectRowDocument {
+    #[serde(default)]
+    projects: Vec<ProjectRowToml>,
+    #[serde(default)]
+    project: Option<ProjectAwIdentity>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ProjectRowToml {
+    name: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+    path: String,
+    #[serde(default, alias = "tech_design_dir")]
+    td_path: Option<String>,
+    #[serde(default)]
+    cap_path: Option<String>,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+fn upsert_projects(projects: &mut Vec<Project>, incoming: Vec<Project>) {
+    for project in incoming {
+        if let Some(idx) = projects
+            .iter()
+            .position(|existing| existing.name == project.name)
+        {
+            projects[idx] = merge_project(projects[idx].clone(), project);
+        } else {
+            projects.push(project);
+        }
+    }
+}
+
+fn merge_project(mut existing: Project, incoming: Project) -> Project {
+    existing.name = incoming.name;
+    existing.path = incoming.path;
+    if incoming.tech_design_dir.is_some() {
+        existing.tech_design_dir = incoming.tech_design_dir;
+    }
+    if !incoming.ec.is_empty() {
+        existing.ec = incoming.ec;
+    }
+    if !incoming.workspaces.is_empty() {
+        existing.workspaces = incoming.workspaces;
+    }
+    existing
+}
+
+fn dedupe_project_rows(rows: Vec<ProjectConfigRow>) -> Vec<ProjectConfigRow> {
+    let mut out = Vec::new();
+    for row in rows {
+        if let Some(idx) = out.iter().position(|existing: &ProjectConfigRow| {
+            existing.name == row.name
+                || existing.aliases.iter().any(|alias| alias == &row.name)
+                || row.aliases.iter().any(|alias| alias == &existing.name)
+        }) {
+            out[idx] = merge_project_config_row(out[idx].clone(), row);
+        } else {
+            out.push(row);
+        }
+    }
+    out
+}
+
+fn merge_project_config_row(
+    mut existing: ProjectConfigRow,
+    incoming: ProjectConfigRow,
+) -> ProjectConfigRow {
+    existing.name = incoming.name;
+    for alias in incoming.aliases {
+        if !existing.aliases.contains(&alias) {
+            existing.aliases.push(alias);
+        }
+    }
+    if !incoming.path.is_empty() {
+        existing.path = incoming.path;
+    }
+    if incoming.td_path.is_some() {
+        existing.td_path = incoming.td_path;
+    }
+    if incoming.cap_path.is_some() {
+        existing.cap_path = incoming.cap_path;
+    }
+    if incoming.label.is_some() {
+        existing.label = incoming.label;
+    }
+    existing
+}
+
+fn load_project_aw_projects(root: &Path) -> Result<Vec<Project>> {
+    let mut projects = Vec::new();
+    for path in discover_project_aw_paths(root)? {
+        let project = parse_project_aw_project(root, &path)?;
+        projects.push(project);
+    }
+    Ok(projects)
+}
+
+fn discover_project_aw_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut patterns = Vec::new();
+    let root_aw = root_aw_config_path(root);
+    if root_aw.is_file() {
+        let content = std::fs::read_to_string(&root_aw)
+            .with_context(|| format!("reading {}", root_aw.display()))?;
+        let config: RootAwDiscoveryConfig =
+            toml::from_str(&content).with_context(|| format!("parsing {}", root_aw.display()))?;
+        if let Some(projects) = config.agentic_workflow.projects {
+            patterns.extend(projects.discover);
+        }
+    }
+    if patterns.is_empty() {
+        patterns.push("projects/*/aw.toml".to_string());
+    }
+
+    let mut paths = Vec::new();
+    for pattern in patterns {
+        if pattern == "projects/*/aw.toml" {
+            let projects_dir = root.join("projects");
+            let Ok(entries) = std::fs::read_dir(&projects_dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let candidate = entry.path().join(PROJECT_AW_CONFIG_FILE);
+                if candidate.is_file() {
+                    paths.push(candidate);
+                }
+            }
+        } else {
+            let candidate = root.join(&pattern);
+            if candidate.is_file() {
+                paths.push(candidate);
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn parse_project_aw_project(root: &Path, path: &Path) -> Result<Project> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let manifest: ProjectAwToml =
+        toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
+    let project_dir = path
+        .parent()
+        .context("project aw.toml must have a parent directory")?;
+    let project_rel = project_dir
+        .strip_prefix(root)
+        .map(path_to_string)
+        .unwrap_or_else(|_| path_to_string(project_dir));
+    let name = manifest.project.name.unwrap_or_else(|| {
+        project_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("project")
+            .to_string()
+    });
+    let source_path = manifest.project.path.unwrap_or_else(|| project_rel.clone());
+    let tech_design_dir = manifest
+        .project
+        .td_path
+        .as_deref()
+        .map(|value| normalize_project_local_path(&source_path, value));
+    let workspaces = manifest
+        .workspaces
+        .into_iter()
+        .map(|workspace| normalize_project_aw_workspace(&source_path, workspace))
+        .collect::<Vec<_>>();
+
+    Ok(Project {
+        name,
+        path: PathBuf::from(source_path),
+        tech_design_dir,
+        ec: manifest.ec,
+        workspaces,
+    })
+}
+
+fn normalize_project_aw_workspace(project_path: &str, mut workspace: Workspace) -> Workspace {
+    workspace.paths = workspace
+        .paths
+        .into_iter()
+        .map(|path| normalize_project_local_glob(project_path, &path))
+        .collect();
+    workspace
+}
+
+fn load_project_config_rows_from_file(
+    path: &Path,
+    project_rel: Option<&str>,
+) -> Result<Vec<ProjectConfigRow>> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let parsed: ProjectRowDocument =
+        toml::from_str(&content).with_context(|| format!("parsing {}", path.display()))?;
+    let mut rows = parsed
+        .projects
+        .into_iter()
+        .map(|row| ProjectConfigRow {
+            name: row.name,
+            aliases: row.aliases,
+            path: row.path,
+            td_path: row.td_path,
+            cap_path: row.cap_path,
+            label: row.label,
+        })
+        .collect::<Vec<_>>();
+    if let (Some(project), Some(project_rel)) = (parsed.project, project_rel) {
+        let inferred_name = Path::new(project_rel)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("project")
+            .to_string();
+        let name = project.name.unwrap_or(inferred_name);
+        let source_path = project.path.unwrap_or_else(|| project_rel.to_string());
+        rows.push(ProjectConfigRow {
+            name,
+            aliases: project.aliases,
+            path: source_path.clone(),
+            td_path: project
+                .td_path
+                .as_deref()
+                .map(|value| normalize_project_local_path(&source_path, value)),
+            cap_path: project
+                .cap_path
+                .as_deref()
+                .map(|value| normalize_project_local_path(&source_path, value)),
+            label: project.label,
+        });
+    }
+    Ok(rows)
+}
+
+fn normalize_project_local_path(project_path: &str, value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with("projects/")
+        || trimmed.starts_with("crates/")
+        || trimmed.starts_with("packages/")
+        || trimmed.starts_with(".aw/")
+        || trimmed.starts_with(".github/")
+        || trimmed == "."
+    {
+        trimmed.to_string()
+    } else {
+        format!("{}/{}", project_path.trim_end_matches('/'), trimmed)
+    }
+}
+
+fn normalize_project_local_glob(project_path: &str, value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed == "**" {
+        return format!("{}/**", project_path.trim_end_matches('/'));
+    }
+    normalize_project_local_path(project_path, trimmed)
+}
+
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
 /// Serialize a list of projects into the `[[projects]]` TOML block string
 /// (without markers).
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn serialize_projects_block(projects: &[Project]) -> Result<String> {
     #[derive(serde::Serialize)]
     struct ProjectsOnly<'a> {
@@ -180,6 +579,7 @@ fn serialize_projects_block(projects: &[Project]) -> Result<String> {
 /// markers. Otherwise append the block at EOF with a blank-line separator.
 ///
 /// The result preserves all content outside the delimited region byte-identical.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn splice_or_append(existing: &str, block: &str) -> String {
     let begin = SYNC_BEGIN_MARKER;
     let end = SYNC_END_MARKER;
@@ -233,6 +633,7 @@ fn splice_or_append(existing: &str, block: &str) -> String {
 
 /// Extract only the content between BEGIN and END AW SYNC markers (exclusive
 /// of the marker lines themselves).
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn extract_sync_block(content: &str) -> Option<String> {
     let begin = SYNC_BEGIN_MARKER;
     let end = SYNC_END_MARKER;
@@ -246,6 +647,7 @@ fn extract_sync_block(content: &str) -> Option<String> {
 }
 
 /// Build a simple unified-style diff between two strings.
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn build_diff(old: &str, new: &str, label: &str) -> String {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
@@ -290,6 +692,7 @@ fn build_diff(old: &str, new: &str, label: &str) -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 mod tests {
     use super::*;
     use crate::models::project::{Project, Workspace};
@@ -317,6 +720,7 @@ mod tests {
             name: name.to_string(),
             path: PathBuf::from(format!("crates/{}", name)),
             tech_design_dir: None,
+            ec: Default::default(),
             workspaces: vec![Workspace {
                 name: Some(name.to_string()),
                 paths: vec![format!("crates/{}/**", name)],
@@ -334,7 +738,10 @@ mod tests {
         let tmp = make_score_root();
 
         // config.toml exists but has no markers
-        write_config_file(tmp.path(), "[agentic_workflow.test.scope]\nroots = [\"crates\"]\n");
+        write_config_file(
+            tmp.path(),
+            "[agentic_workflow.test.scope]\nroots = [\"crates\"]\n",
+        );
 
         let projects = vec![make_project(
             "proj-a",
@@ -399,13 +806,11 @@ mod tests {
 
         // First sync
         write_projects_config(tmp.path(), &projects).unwrap();
-        let after_first =
-            fs::read_to_string(tmp.path().join(".aw").join("config.toml")).unwrap();
+        let after_first = fs::read_to_string(tmp.path().join(".aw").join("config.toml")).unwrap();
 
         // Second sync with identical input (idempotency check, R5)
         write_projects_config(tmp.path(), &projects).unwrap();
-        let after_second =
-            fs::read_to_string(tmp.path().join(".aw").join("config.toml")).unwrap();
+        let after_second = fs::read_to_string(tmp.path().join(".aw").join("config.toml")).unwrap();
 
         assert_eq!(
             after_first, after_second,
@@ -478,6 +883,56 @@ mod tests {
         let loaded = load_projects(tmp.path()).unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].name, "my-crate");
+    }
+
+    #[test]
+    fn duplicate_project_rows_preserve_existing_td_path_when_override_omits_it() {
+        let tmp = make_score_root();
+        write_config_file(
+            tmp.path(),
+            r#"
+[[projects]]
+name = "jet"
+path = "projects/jet"
+td_path = ".aw/tech-design/projects/jet"
+label = "project:jet"
+
+[[projects.workspaces]]
+name = "jet-full"
+paths = ["projects/jet/**"]
+target = "rust"
+test_cmd = "cargo test -p jet -p jet-wasm"
+
+[[projects]]
+name = "jet"
+path = "projects/jet"
+
+[[projects.workspaces]]
+name = "jet"
+paths = ["projects/jet/**"]
+target = "rust"
+test_cmd = "cargo test -p jet"
+"#,
+        );
+
+        let rows = load_project_config_rows(tmp.path()).unwrap();
+        let jet = rows.iter().find(|row| row.name == "jet").unwrap();
+        assert_eq!(jet.td_path.as_deref(), Some(".aw/tech-design/projects/jet"));
+        assert_eq!(jet.label.as_deref(), Some("project:jet"));
+
+        let projects = load_projects(tmp.path()).unwrap();
+        let jet = projects
+            .iter()
+            .find(|project| project.name == "jet")
+            .unwrap();
+        assert_eq!(
+            jet.tech_design_dir.as_deref(),
+            Some(".aw/tech-design/projects/jet")
+        );
+        assert_eq!(
+            jet.workspaces[0].test_cmd.as_deref(),
+            Some("cargo test -p jet")
+        );
     }
 
     // REQ: REQ-005 (R5: check_drift detects changes)
@@ -570,6 +1025,7 @@ mod tests {
 /// Materialised from `[[projects]]` table rows in `.aw/config.toml`.
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub struct TdRootInput {
     /// Project name (matches `[[projects]].name`).
     pub name: String,
@@ -586,6 +1042,7 @@ pub struct TdRootInput {
 /// Output of `resolve_td_root`.
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub struct TdRootResult {
     /// Absolute filesystem path to the project's TD spec root.
     pub root: String,
@@ -597,6 +1054,7 @@ pub struct TdRootResult {
 /// Failure modes of `resolve_td_root`.
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#schema
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub struct TdResolveError {
     /// - unknown_project: project name not in `[[projects]]` table.
     /// - td_path_escapes_repo_root: `td_path` resolves outside the repo
@@ -606,6 +1064,7 @@ pub struct TdResolveError {
     pub message: String,
 }
 
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 fn lex_normalize(path: &std::path::Path) -> std::path::PathBuf {
     let mut out = std::path::PathBuf::new();
     for c in path.components() {
@@ -635,9 +1094,9 @@ impl TdResolveError {
             message: format!("td_path '{td_path}' resolves outside the repository root"),
         }
     }
-
 }
 
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn default_project_td_path(source_path: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(source_path).join("tech-design")
 }
@@ -655,6 +1114,7 @@ pub fn default_project_td_path(source_path: &str) -> std::path::PathBuf {
 /// the resolver runs during `aw td init` before the spec dir is created.
 ///
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#logic
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn resolve_td_root(
     input: &TdRootInput,
     _global_base: Option<&str>,
@@ -703,38 +1163,13 @@ pub fn resolve_td_root(
 /// `Project` schema.
 ///
 /// @spec projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md#logic
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 pub fn resolve_td_root_from_config(
     repo_root: &std::path::Path,
     project_name: &str,
 ) -> std::result::Result<TdRootResult, TdResolveError> {
-    #[derive(serde::Deserialize, Default)]
-    struct Config {
-        #[serde(default)]
-        projects: Vec<ProjectRow>,
-    }
-    #[derive(serde::Deserialize)]
-    struct ProjectRow {
-        name: String,
-        #[serde(default)]
-        aliases: Vec<String>,
-        path: String,
-        #[serde(default)]
-        td_path: Option<String>,
-    }
-
-    let config_file = repo_root.join(".aw").join("config.toml");
-    let content = std::fs::read_to_string(&config_file)
+    let row = resolve_project_config_row(repo_root, project_name)
         .map_err(|_| TdResolveError::unknown_project(project_name))?;
-    let parsed: Config = toml::from_str(&content).map_err(|e| TdResolveError {
-        kind: "config_parse_error".into(),
-        message: format!("parsing {}: {}", config_file.display(), e),
-    })?;
-
-    let row = parsed
-        .projects
-        .into_iter()
-        .find(|r| r.name == project_name || r.aliases.iter().any(|alias| alias == project_name))
-        .ok_or_else(|| TdResolveError::unknown_project(project_name))?;
 
     let input = TdRootInput {
         name: row.name,
@@ -746,6 +1181,7 @@ pub fn resolve_td_root_from_config(
 }
 
 #[cfg(test)]
+/// @spec projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md#source
 mod resolver_tests {
     use super::*;
     use std::path::PathBuf;
@@ -811,6 +1247,7 @@ mod resolver_tests {
         assert_eq!(err.kind, "td_path_escapes_repo_root");
     }
 }
+
 ```
 
 ## Changes

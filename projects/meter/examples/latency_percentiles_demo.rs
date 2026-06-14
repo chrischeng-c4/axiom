@@ -1,6 +1,8 @@
 // SPEC-MANAGED: projects/meter/tech-design/semantic/source/projects-meter-examples-latency-percentiles-demo-rs.md#source
 // CODEGEN-BEGIN
-use meter::baseline::{FileBaselineStore, PercentileType, RegressionDetector, RegressionThresholds};
+use meter::baseline::{
+    FileBaselineStore, PercentileType, RegressionDetector, RegressionThresholds,
+};
 use meter::benchmark::{AdaptiveBenchmarkConfig, BenchmarkEnvironment, Benchmarker};
 use std::thread;
 use std::time::Duration;

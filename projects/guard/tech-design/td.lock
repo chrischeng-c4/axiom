@@ -1,0 +1,61 @@
+version = 1
+project = "guard"
+td_path = "projects/guard/tech-design"
+generated_at = "2026-06-13T04:08:16.456155+00:00"
+digest = "sha256:8cb8a856d2dc44b0570381c8229ae7f533b21580382668f9f5d078bfd232badc"
+
+[[files]]
+path = "semantic/guard-build-script.md"
+digest = "sha256:aa666bd92ef8f43bda01ae450bf7d0201aee35a45b3fe7a70998f2cc085f1de8"
+
+[[files]]
+path = "semantic/guard-ec-static-security-smoke.md"
+digest = "sha256:95b494eb5a96cfaaf3a5219c0f365e63b52013c60ea61e7c7c3299784ef30051"
+
+[[files]]
+path = "semantic/guard-guard-cli-src-bin.md"
+digest = "sha256:f5f74e1df591aaf0e66c848840a994331a5cd5041df405d87887a2b60edd3726"
+
+[[files]]
+path = "semantic/guard-guard-cli-src.md"
+digest = "sha256:242b56df92a40c36564d604aee0dcbb9fb1383566ed9a3e2499e0e7df47d2189"
+
+[[files]]
+path = "semantic/guard-install-script.md"
+digest = "sha256:8120ba4c665ffe7f4d9ce3b45321a5378975422e1f81a84b1a9288027bb40b00"
+
+[[files]]
+path = "semantic/guard-projects-guard.md"
+digest = "sha256:12c7c0f674f261b14bdcd2f41af78573860d554b1eb7159a1af0a479d1d6f3b7"
+
+[[files]]
+path = "semantic/guard-src.md"
+digest = "sha256:e6400608d444046fbef0b76a39705a61a71906e9fb0bb950bdb5df36506e737d"
+
+[[files]]
+path = "semantic/source/projects-guard-guard-cli-src-bin-guard-rs.md"
+digest = "sha256:bb62565f6bf42a7bd6163024e3b14c88000065d53dcc1b7fdf54a689212952fb"
+
+[[files]]
+path = "semantic/source/projects-guard-guard-cli-src-dispatch-rs.md"
+digest = "sha256:44912b1c65c39d2a108023f1237c022dcbb9182789fe91142fab9effb422284e"
+
+[[files]]
+path = "semantic/source/projects-guard-guard-cli-src-lib-rs.md"
+digest = "sha256:3590a975e86582ac1047fe816df4c02ae2f0672795e21159e6386526b99aace1"
+
+[[files]]
+path = "semantic/source/projects-guard-src-evidence-rs.md"
+digest = "sha256:28edc3248d97e0967f22361d9cd22b1cfd7d0d3aae7dda9c3c7da7286539fb73"
+
+[[files]]
+path = "semantic/source/projects-guard-src-lib-rs.md"
+digest = "sha256:8d6c49e626e1500f825d459982527e8d32c3b5a923f2b7bee0aa4f31df16ef3d"
+
+[[files]]
+path = "semantic/source/projects-guard-src-report-rs.md"
+digest = "sha256:5613a2b99105e44c37214a16869cdcfc6b543e565e50bc9284e28d76656333a3"
+
+[[files]]
+path = "semantic/source/projects-guard-src-scan-rs.md"
+digest = "sha256:b7ada3d31de925be0acda23a7f988a7d22f0de65c64b7caae7ed838e62e0a066"

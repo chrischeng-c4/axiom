@@ -395,6 +395,7 @@ fn section_type_from_str(s: &str) -> Option<SectionType> {
         "design-token" => SectionType::DesignToken,
         "doc" => SectionType::Doc,
         "manifest" => SectionType::Manifest,
+        "tool-contract" => SectionType::ToolContract,
         "tests" => SectionType::UnitTest,
         _ => return None,
     })

@@ -1,6 +1,6 @@
 // SPEC-MANAGED: projects/meter/tech-design/semantic/source/projects-meter-tests-async-fuzzing-test-rs.md#source
 // CODEGEN-BEGIN
-use meter::{AsyncFuzzConfig, AsyncFuzzer, TestServer};
+use meter::{AsyncFuzzConfig, AsyncFuzzer};
 use tokio::time::Duration;
 
 #[tokio::test]
@@ -60,63 +60,6 @@ async fn test_async_fuzzing_crash_detection() {
 
     assert_eq!(result.iterations, 100);
     // Some mutations should trigger validation errors
-}
-
-#[tokio::test]
-async fn test_http_endpoint_fuzzing() {
-    // Start test server
-    let server = TestServer::new()
-        .post_echo("/api/test")
-        .start()
-        .await
-        .unwrap();
-
-    let config = AsyncFuzzConfig::new()
-        .with_iterations(20)
-        .with_timeout_ms(500)
-        .with_seed(42);
-
-    let mut fuzzer = AsyncFuzzer::new(config);
-
-    let url = format!("{}/api/test", server.url());
-    let result = fuzzer.fuzz_http_endpoint(&url, "POST").await;
-
-    println!(
-        "HTTP fuzzing: {} iterations, {} crashes",
-        result.iterations,
-        result.crashes.len()
-    );
-
-    assert_eq!(result.iterations, 20);
-    // Echo endpoint should accept most inputs
-}
-
-#[tokio::test]
-async fn test_http_endpoint_fuzzing_get() {
-    // Start test server with GET endpoint
-    let server = TestServer::new()
-        .get("/api/test", serde_json::json!({"status": "ok"}))
-        .start()
-        .await
-        .unwrap();
-
-    let config = AsyncFuzzConfig::new()
-        .with_iterations(15)
-        .with_timeout_ms(500)
-        .with_seed(42);
-
-    let mut fuzzer = AsyncFuzzer::new(config);
-
-    let url = format!("{}/api/test", server.url());
-    let result = fuzzer.fuzz_http_endpoint(&url, "GET").await;
-
-    println!(
-        "HTTP GET fuzzing: {} iterations, {} crashes",
-        result.iterations,
-        result.crashes.len()
-    );
-
-    assert_eq!(result.iterations, 15);
 }
 
 #[tokio::test]

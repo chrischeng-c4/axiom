@@ -25,10 +25,8 @@ Public API manifest for `projects/meter/src/agent_eval/prompt/engine.rs` generat
 | `render` | projects/meter/src/agent_eval/prompt/engine.rs | function | pub | 15 | render(template: &PromptTemplate, context: &PromptContext) -> Result<String, String> |
 | `render_with` | projects/meter/src/agent_eval/prompt/engine.rs | function | pub | 85 | render_with(template: &PromptTemplate, builder: F) -> Result<String, String> |
 ## Source
-<!-- type: source lang: rust -->
-<!-- source-from-target: strip-managed-markers -->
+<!-- type: rust-source-unit lang: rust -->
 
-<!-- source-snapshot: path=projects/meter/src/agent_eval/prompt/engine.rs -->
 ````rust
 //! Prompt template rendering engine
 
@@ -36,8 +34,10 @@ use super::template::{PromptContext, PromptTemplate};
 use regex::Regex;
 
 /// Prompt rendering engine
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-engine-rs.md#source
 pub struct PromptEngine;
 
+/// @spec projects/meter/tech-design/semantic/source/projects-meter-src-agent-eval-prompt-engine-rs.md#source
 impl PromptEngine {
     /// Render a template with context
     pub fn render(template: &PromptTemplate, context: &PromptContext) -> Result<String, String> {
@@ -238,7 +238,7 @@ mod tests {
 changes:
   - path: projects/meter/src/agent_eval/prompt/engine.rs
     action: modify
-    section: source
+    section: rust-source-unit
     impl_mode: codegen
     description: |
       Source template for `projects/meter/src/agent_eval/prompt/engine.rs` captured during meter full-codegen standardization.

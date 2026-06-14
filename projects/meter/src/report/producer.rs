@@ -449,11 +449,10 @@ pub fn injection_finding(target: &str, hit: &InjectionHit) -> Finding {
 
 /// Map an engine [`FuzzResult`](crate::security::FuzzResult) into `FuzzCrash`
 /// findings. The bare `FuzzResult` carries no target/seed/strategy context (those
-/// live on the capture-layer invocation), so this convenience impl stamps a
-/// generic `target = "fuzz"`, `seed = 0`, `strategy = "unknown"`. The CLI path in
-/// `capture::fuzz` calls [`fuzz_crash_finding`] DIRECTLY with the real
-/// target/seed so its ids are byte-reproducible per invocation; this impl exists
-/// so `FuzzResult` satisfies the `IntoFindings` boundary trait uniformly.
+/// lived on the removed capture-layer fuzz invocation), so this convenience impl
+/// stamps a generic `target = "fuzz"`, `seed = 0`, `strategy = "unknown"`; it
+/// exists so the carried-legacy `FuzzResult` satisfies the `IntoFindings`
+/// boundary trait uniformly.
 #[cfg(feature = "capture")]
 /// @spec projects/meter/tech-design/semantic/source/projects-meter-src-report-producer-rs.md#source
 impl IntoFindings for crate::security::FuzzResult {
@@ -586,7 +585,6 @@ mod tests {
             error: Some("assertion failed".into()),
             stack_trace: None,
             profile_metrics: None,
-            stress_metrics: None,
             started_at: String::new(),
         }
     }

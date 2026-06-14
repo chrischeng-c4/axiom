@@ -48,7 +48,9 @@ Application frameworks. Build servers, agents, pipelines. Opinionated but genera
 | `cclab-api` | HTTP server framework (Rust server + ASGI compat) |
 | `cclab-queue` | Background job engine |
 | `cclab-agent` | LLM agent framework (providers, tools, agentic loop) |
-| `qc` (projects/) | Profiling + security issue finder — embed as a library or run as a capture tool; delegates test execution |
+| `meter` (projects/) | Runtime/resource measurement and profiling — delegates test execution |
+| `guard` (projects/) | Security posture gate — owns security policy, findings, and EC/security health integration |
+| `compass` (libs/) | Code intelligence engine — AST, symbol, search, and data-flow primitives consumed by guard |
 | `cclab-server` | MCP server |
 | `cclab-cmd` | Command execution |
 | `cclab-typer` | CLI builder |
