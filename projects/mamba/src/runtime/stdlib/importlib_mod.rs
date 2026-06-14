@@ -77,6 +77,17 @@ pub fn mb_importlib_import_module(name: MbValue) -> MbValue {
                 );
                 return MbValue::none();
             }
+            // A relative name ('.mod') needs the `package` argument, which this
+            // 1-arg form doesn't supply (CPython raises TypeError).
+            if s.starts_with('.') {
+                super::super::exception::mb_raise(
+                    MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+                    MbValue::from_ptr(MbObject::new_str(format!(
+                        "the 'package' argument is required to perform a relative import for '{s}'"
+                    ))),
+                );
+                return MbValue::none();
+            }
         }
     }
     // Delegate to the runtime's mb_import
