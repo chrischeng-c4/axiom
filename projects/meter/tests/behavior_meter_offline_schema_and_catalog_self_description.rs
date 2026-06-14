@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec meter-offline-schema-and-catalog-self-description
 // @capability agent-use-first-cli
+// @claim offline-schema-and-catalog-self-description
 // @contract offline-schema-and-catalog-self-description
 // @category behavior
+// @required_for_production true
 // @command cargo run -p meter-cli --bin meter -- spec --catalog --compact
 // AW-EC-END
 

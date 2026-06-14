@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec lumen-security-auth-bearer-rbac
 // @capability security-auth
-// @contract security-auth-bearer-rbac-enforced
+// @claim bearer-token-auth-lumen-auth
+// @contract bearer-token-auth-lumen-auth
 // @category security
+// @required_for_production false
 // @command cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture
 // AW-EC-END
 

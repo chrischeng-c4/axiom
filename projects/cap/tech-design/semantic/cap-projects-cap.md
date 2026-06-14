@@ -23,26 +23,6 @@ semantic_domain:
   coverage_kind: semantic
   evidence:
     source_units:
-      - path: "projects/cap/build.sh"
-        language: "shell"
-        ownership_state: "handwrite"
-        generator_primitives: ["source_unit"]
-        source_evidence_node:
-          layer: "project-root"
-          ecosystem: "shell"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/cap"
-      - path: "projects/cap/install.sh"
-        language: "shell"
-        ownership_state: "handwrite"
-        generator_primitives: ["source_unit"]
-        source_evidence_node:
-          layer: "project-root"
-          ecosystem: "shell"
-          role: "source"
-          section_type: "schema"
-          domain: "projects/cap"
       - path: "projects/cap/llms.txt"
         language: "llms"
         ownership_state: "codegen"
@@ -61,22 +41,6 @@ semantic_domain:
 ```yaml
 coverage_kind: semantic
 changes:
-  - path: "projects/cap/build.sh"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:#4158>"
-  - path: "projects/cap/install.sh"
-    action: modify
-    section: schema
-    description: |
-      Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-    replaces:
-      - "<handwrite-tracker:#4158>"
   - path: "projects/cap/llms.txt"
     action: modify
     section: schema

@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec lumen-agentic-integration-offline-cli
 // @capability agentic-integration
+// @claim lumen-spec-schema-openapi-json-schema-offline
 // @contract offline-cli-agent-onboarding
 // @category behavior
+// @required_for_production true
 // @command cargo test -p lumen --test spec_cli -- --nocapture
 // AW-EC-END
 

@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec vat-agent-state-and-diff-surface
 // @capability agent-native-gpu-native-dev-containers
+// @claim agent-legible-state-and-diff-surface
 // @contract agent-legible-state-and-diff-surface
 // @category behavior
+// @required_for_production true
 // @command rg -n -e 'vat state' -e 'vat diff' -e '--json' -e structured projects/vat/README.md
 // AW-EC-END
 
