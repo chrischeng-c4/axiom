@@ -168,15 +168,6 @@ changes:
       replacement commands and dispatch them to the same fast implementation
       family as cap <cmd>.
 
-  - path: projects/cap/src/main.rs
-    action: modify
-    section: logic
-    impl_mode: hand-written
-    description: >
-      Keep the Rust development launcher aligned with the installed C
-      launcher by parsing shell-free cap run command strings for the active
-      replacement subset it supports and falling back to cap-full otherwise.
-
   - path: projects/cap/Cargo.toml
     action: modify
     section: e2e-test
