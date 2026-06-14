@@ -342,8 +342,30 @@ pub(crate) fn builtin_type_has_dunder(type_name: &str, dunder: &str) -> bool {
         // (its member types) plus the union-combining operators.
         "UnionType" => matches!(dunder,
             "__args__" | "__or__" | "__ror__" | "__parameters__"),
-        // int / float / bool / NoneType expose no container dunders relevant
-        // to ABC structural membership (notably no __len__).
+        // Numbers: arithmetic/comparison/hash dunders so type-level
+        // `hasattr(int, "__add__")` / `hasattr(complex, "__eq__")` report True.
+        // Deliberately NO container dunders (__len__/__iter__/__contains__) so
+        // ABC structural negatives (isinstance(5, Sized) is False) stay correct.
+        "int" | "bool" => matches!(dunder,
+            "__add__" | "__sub__" | "__mul__" | "__truediv__" | "__floordiv__"
+            | "__mod__" | "__divmod__" | "__pow__" | "__neg__" | "__pos__"
+            | "__abs__" | "__invert__" | "__and__" | "__or__" | "__xor__"
+            | "__lshift__" | "__rshift__" | "__eq__" | "__ne__" | "__lt__"
+            | "__le__" | "__gt__" | "__ge__" | "__hash__" | "__bool__"
+            | "__index__" | "__int__" | "__float__" | "__round__" | "__ceil__"
+            | "__floor__" | "__trunc__" | "__getnewargs__"),
+        "float" => matches!(dunder,
+            "__add__" | "__sub__" | "__mul__" | "__truediv__" | "__floordiv__"
+            | "__mod__" | "__divmod__" | "__pow__" | "__neg__" | "__pos__"
+            | "__abs__" | "__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__"
+            | "__ge__" | "__hash__" | "__bool__" | "__int__" | "__float__"
+            | "__round__" | "__ceil__" | "__floor__" | "__trunc__"
+            | "__getnewargs__"),
+        // complex is NOT orderable — no __lt__/__le__/__gt__/__ge__.
+        "complex" => matches!(dunder,
+            "__add__" | "__sub__" | "__mul__" | "__truediv__" | "__pow__"
+            | "__neg__" | "__pos__" | "__abs__" | "__eq__" | "__ne__"
+            | "__hash__" | "__bool__" | "__complex__" | "__getnewargs__"),
         _ => false,
     }
 }
