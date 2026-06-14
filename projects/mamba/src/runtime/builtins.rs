@@ -3622,7 +3622,13 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
     // by value so `HTTPStatus.OK == 200` mirrors CPython's IntEnum semantics.
     let instance_value = |v: MbValue| -> Option<i64> {
         v.as_ptr().and_then(|p| unsafe {
-            if let ObjData::Instance { ref fields, .. } = (*p).data {
+            if let ObjData::Instance { ref class_name, ref fields } = (*p).data {
+                // A user-defined __eq__ takes precedence over the int-value
+                // shortcut (e.g. an int subclass whose __eq__ always returns
+                // True must NOT be compared by its raw value).
+                if !super::class::lookup_method(class_name, "__eq__").is_none() {
+                    return None;
+                }
                 fields.read().unwrap().get("value").and_then(|fv| fv.as_int())
             } else { None }
         })
@@ -3710,6 +3716,57 @@ fn mb_values_eq(a: MbValue, b: MbValue) -> bool {
         if let Some((va, vb)) = pair {
             return va.len() == vb.len()
                 && va.iter().zip(vb.iter()).all(|(x, y)| mb_richcmp_eq(*x, *y));
+        }
+    }
+
+    // Instance with a user __eq__ vs a primitive (non-pointer int/float/bool/
+    // None): dispatch the instance's __eq__, matching CPython `x == y`. The
+    // both-ptr match below requires BOTH operands to be heap pointers, so
+    // without this `MyClass() == 1` and `obj in [1, 2, 3]` (via mb_eq) wrongly
+    // returned False even when __eq__ would match. (The `==` operator path
+    // dispatches via invoke_binop_method and already worked; this aligns the
+    // value-equality path used by contains / dict / set.)
+    {
+        let dispatch_inst_eq = |inst: MbValue, other: MbValue| -> Option<bool> {
+            // None / bool are matched by identity, not __eq__, in the contexts
+            // that reach value-equality (notably `case None` / `case True`
+            // pattern matching, which must NOT consult a custom __eq__). The
+            // `==` operator keeps full __eq__ semantics via invoke_binop_method.
+            if other.is_none() || other.is_bool() {
+                return None;
+            }
+            let cn = inst.as_ptr().and_then(|p| unsafe {
+                if let ObjData::Instance { ref class_name, .. } = (*p).data {
+                    Some(class_name.clone())
+                } else {
+                    None
+                }
+            })?;
+            if super::class::lookup_method(&cn, "__eq__").is_none() {
+                return None;
+            }
+            let eq_name = MbValue::from_ptr(MbObject::new_str("__eq__".to_string()));
+            let args = MbValue::from_ptr(MbObject::new_list(vec![other]));
+            let result = super::class::mb_call_method(inst, eq_name, args);
+            if result.is_not_implemented() {
+                return Some(false);
+            }
+            if let Some(bv) = result.as_bool() {
+                return Some(bv);
+            }
+            if let Some(iv) = result.as_int() {
+                return Some(iv != 0);
+            }
+            Some(false)
+        };
+        if a.as_ptr().is_some() && b.as_ptr().is_none() {
+            if let Some(r) = dispatch_inst_eq(a, b) {
+                return r;
+            }
+        } else if b.as_ptr().is_some() && a.as_ptr().is_none() {
+            if let Some(r) = dispatch_inst_eq(b, a) {
+                return r;
+            }
         }
     }
 
