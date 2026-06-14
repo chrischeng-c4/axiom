@@ -308,10 +308,14 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
                 unsafe {
                     if let ObjData::List(ref lock) = (*ptr).data {
                         let items = lock.read().unwrap();
-                        for &it in &items[iter.index..] {
+                        // The list may have shrunk below the iterator's cursor
+                        // after it was advanced (CPython then drains to empty);
+                        // clamp so the slice cannot panic on an out-of-range start.
+                        let start = iter.index.min(items.len());
+                        for &it in &items[start..] {
                             super::rc::retain_if_ptr(it);
                         }
-                        items[iter.index..].to_vec()
+                        items[start..].to_vec()
                     } else {
                         vec![]
                     }
@@ -326,10 +330,11 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
             let out = if let Some(ptr) = val.as_ptr() {
                 unsafe {
                     if let ObjData::Tuple(ref items) = (*ptr).data {
-                        for &it in &items[iter.index..] {
+                        let start = iter.index.min(items.len());
+                        for &it in &items[start..] {
                             super::rc::retain_if_ptr(it);
                         }
-                        items[iter.index..].to_vec()
+                        items[start..].to_vec()
                     } else {
                         vec![]
                     }
@@ -342,16 +347,19 @@ pub fn drain_iter_to_vec(handle: MbValue) -> Option<Vec<MbValue>> {
         }
         IterKind::Reversed { items, index } => {
             // Remaining items from the reversed iterator.
-            Some(items[index..].to_vec())
+            let start = index.min(items.len());
+            Some(items[start..].to_vec())
         }
         IterKind::DictKeys(ref keys) => {
             // Dict-key iterators (dict / Counter / defaultdict views) drain to
             // the original key values.
-            Some(keys[iter.index..].iter().map(dict_key_to_mbvalue).collect())
+            let start = iter.index.min(keys.len());
+            Some(keys[start..].iter().map(dict_key_to_mbvalue).collect())
         }
         IterKind::Str(ref chars) => {
+            let start = iter.index.min(chars.len());
             Some(
-                chars[iter.index..]
+                chars[start..]
                     .iter()
                     .map(|c| MbValue::from_ptr(MbObject::new_str(c.to_string())))
                     .collect(),

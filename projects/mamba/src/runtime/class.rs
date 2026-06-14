@@ -533,6 +533,19 @@ fn invalidate_method_cache() {
 /// Minimal implementation covering bytes / bytearray input with a string
 /// byteorder ("big" or "little") and an optional signed flag. Bytes
 /// beyond i64 range are silently truncated to the low 64 bits.
+/// int.from_bytes requires a bytes-like or iterable-of-ints argument; anything
+/// else raises CPython's "cannot convert '<type>' object to bytes" TypeError.
+fn int_from_bytes_type_error(val: MbValue) -> MbValue {
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(format!(
+            "cannot convert '{}' object to bytes",
+            super::builtins::value_type_name(val)
+        ))),
+    );
+    MbValue::none()
+}
+
 pub fn mb_int_from_bytes(
     bytes_val: MbValue,
     byteorder_val: MbValue,
@@ -568,11 +581,12 @@ pub fn mb_int_from_bytes(
                 ObjData::Tuple(items) => items.iter()
                     .filter_map(|v| v.as_int().map(|i| i as u8))
                     .collect(),
-                _ => return MbValue::from_int(0),
+                _ => return int_from_bytes_type_error(bytes_val),
             }
         }
     } else {
-        return MbValue::from_int(0);
+        // Inline non-bytes-like (int, bool, None, float).
+        return int_from_bytes_type_error(bytes_val);
     };
     if bytes.is_empty() {
         return MbValue::from_int(0);

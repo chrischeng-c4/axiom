@@ -3080,10 +3080,11 @@ pub fn mb_mod(a: MbValue, b: MbValue) -> MbValue {
             let result = if r != 0 && (r ^ bi) < 0 { r + bi } else { r };
             return MbValue::from_int(result);
         }
-        // ZeroDivisionError: integer modulo by zero
+        // ZeroDivisionError: CPython's `%` message differs from `//`
+        // ("integer modulo by zero" vs "integer division or modulo by zero").
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("ZeroDivisionError".to_string())),
-            MbValue::from_ptr(MbObject::new_str("integer division or modulo by zero".to_string())),
+            MbValue::from_ptr(MbObject::new_str("integer modulo by zero".to_string())),
         );
         return MbValue::none();
     }
@@ -5218,13 +5219,27 @@ pub fn mb_pow_mod(base: MbValue, exp: MbValue, modulus: MbValue) -> MbValue {
 
 /// int(value, base) — convert string to integer with given base; raises ValueError on bad input.
 pub fn mb_int_base(val: MbValue, base: MbValue) -> MbValue {
-    let Some(base_int) = base.as_int() else {
+    // base accepts any SupportsIndex (int / bool / object with __index__),
+    // e.g. `int("ff", Indexable(16))`.
+    let Some(base_int) = resolve_index_value(base) else {
         super::exception::mb_raise(
             MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
             MbValue::from_ptr(MbObject::new_str("int() base must be an integer".to_string())),
         );
         return MbValue::none();
     };
+    // CPython: base is 0 (prefix auto-detect) or 2..=36; anything else raises
+    // ValueError. Rust's from_str_radix panics on a radix outside 2..=36, and a
+    // negative base would wrap when cast to u32 — so reject up front.
+    if base_int != 0 && !(2..=36).contains(&base_int) {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "int() base must be >= 2 and <= 36, or 0".to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     let base_num = base_int as u32;
     if let Some(ptr) = val.as_ptr() {
         unsafe {
@@ -5318,7 +5333,31 @@ pub fn mb_int_base(val: MbValue, base: MbValue) -> MbValue {
             }
         }
     }
-    MbValue::from_int(0)
+    // base given but the value is bytes-like: parse its ASCII like a string
+    // (`int(b"ff", 16) == 255`).
+    if let Some(ptr) = val.as_ptr() {
+        let bytes_text: Option<Vec<u8>> = unsafe {
+            match &(*ptr).data {
+                ObjData::Bytes(b) => Some(b.clone()),
+                ObjData::ByteArray(lock) => Some(lock.read().unwrap().clone()),
+                _ => None,
+            }
+        };
+        if let Some(raw) = bytes_text {
+            let text = String::from_utf8_lossy(&raw).into_owned();
+            let s_obj = MbValue::from_ptr(MbObject::new_str(text));
+            return mb_int_base(s_obj, base);
+        }
+    }
+    // An explicit base requires a string/bytes value (CPython: `int(123, 10)`
+    // raises TypeError, not a silent 0).
+    super::exception::mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        MbValue::from_ptr(MbObject::new_str(
+            "int() can't convert non-string with explicit base".to_string(),
+        )),
+    );
+    MbValue::none()
 }
 
 /// print(*args, sep=' ', end='\n') — print with kwargs.
