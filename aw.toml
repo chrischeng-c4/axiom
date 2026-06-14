@@ -1,0 +1,4 @@
+version = "1"
+
+[agentic_workflow.projects]
+discover = ["projects/*/aw.toml"]

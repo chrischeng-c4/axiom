@@ -34,6 +34,7 @@ use clap::Subcommand;
 
 use crate::cli::capability;
 use crate::cli::chat;
+use crate::cli::ec;
 use crate::cli::generator;
 use crate::cli::init;
 use crate::cli::issues;
@@ -61,10 +62,16 @@ pub enum Commands {
         force: bool,
     },
 
+    /// Create a greenfield project directory and bootstrap Agentic Workflow.
+    // @spec projects/agentic-workflow/tech-design/logic/manage-aw-init-templates-as-greenfield-ready-artifacts.md#CLI
+    New(init::NewArgs),
+
     /// Aggregate project readiness, production gates, and blocker status.
+    #[command(alias = "hc")]
     Health(project::ProjectHealthArgs),
 
     /// Product capability completion loop: report/next/run/check.
+    #[command(alias = "caps")]
     Capability(capability::CapabilityArgs),
 
     /// Generator gap request surface after takeover readiness.
@@ -88,9 +95,11 @@ pub enum Commands {
     // @spec projects/agentic-workflow/tech-design/surface/specs/score-namespaces.md#changes
     Cb(crate::cli::cb::CbArgs),
 
+    /// External-contract lifecycle: generate tests/tool configs and verify EC gates.
+    Ec(ec::EcArgs),
+
     /// Existing-project workflow guidance and bounded remediation.
     Standardize(standardize::StandardizeArgs),
-
 }
 
 /// Run an Agentic Workflow CLI command
@@ -103,6 +112,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         // @spec projects/agentic-workflow/tech-design/surface/specs/init-command.md#R2
         Commands::Init { name, force } => {
             init::run(name.as_deref(), force, None).await?;
+        }
+        Commands::New(args) => {
+            init::run_new(args).await?;
         }
 
         Commands::Health(args) => {
@@ -129,6 +141,9 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
         Commands::Cb(args) => {
             crate::cli::cb::run(args).await?;
         }
+        Commands::Ec(args) => {
+            ec::run(args)?;
+        }
         Commands::Standardize(args) => {
             standardize::run(args).await?;
         }
@@ -136,6 +151,7 @@ pub async fn run_command(cmd: Commands) -> Result<()> {
 
     Ok(())
 }
+
 ```
 
 ## Changes

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# <HANDWRITE gap="project-root-build-script" tracker="aw-arena" reason="project-specific aw:build dispatch contract (mirrors projects/meter/build.sh)">
+# SPEC-MANAGED: projects/arena/tech-design/semantic/arena-build-script.md#text-source-unit
+# CODEGEN-BEGIN
 set -euo pipefail
 
 usage() {
@@ -92,4 +93,4 @@ git tag -a "$TAG" -m "Release ${TAG}"
 
 echo ""
 echo "Build complete. arena ${TAG} installed and tagged."
-# </HANDWRITE>
+# CODEGEN-END

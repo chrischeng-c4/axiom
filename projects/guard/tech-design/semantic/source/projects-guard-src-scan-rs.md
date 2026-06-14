@@ -8,6 +8,12 @@ capability_refs:
     claim: compass-backed-diagnostic-scan
     coverage: full
     rationale: "The source unit implements guard's compass-backed static security scan capability."
+  - id: security-policy-profile
+    role: primary
+    gap: security-lint-policy
+    claim: security-lint-policy
+    coverage: full
+    rationale: "The scan source unit owns the security-lint and strict policy profile filtering and severity mapping."
 fill_sections: [overview, source, changes]
 ---
 

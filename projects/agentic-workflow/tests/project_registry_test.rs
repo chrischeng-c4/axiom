@@ -14,7 +14,8 @@ use tempfile::TempDir;
 use agentic_workflow::models::project::{Project, Workspace};
 use agentic_workflow::models::tech_stack::Language;
 use agentic_workflow::services::project_registry::{
-    check_drift, load_projects, write_projects_config,
+    check_drift, load_project_config_rows, load_projects, resolve_td_root_from_config,
+    write_projects_config,
 };
 use agentic_workflow::shared::workspace::{SYNC_BEGIN_MARKER, SYNC_END_MARKER};
 
@@ -215,6 +216,90 @@ codegen.profile = "rust/score-crate"
     assert_eq!(codegen.profile.as_deref(), Some("rust/score-crate"));
     assert_eq!(codegen.target, None);
     assert_eq!(workspace.target, Language::Rust);
+}
+
+#[test]
+fn load_projects_overlays_project_aw_toml() {
+    let tmp = make_score_root();
+    write_config(
+        tmp.path(),
+        r#"
+[[projects]]
+name = "demo"
+path = "projects/demo-legacy"
+td_path = ".aw/tech-design/projects/demo"
+label = "project:demo"
+
+[[projects.workspaces]]
+name = "demo"
+paths = ["projects/demo-legacy/**"]
+target = "rust"
+test_cmd = "cargo test -p demo-legacy"
+"#,
+    );
+    fs::write(
+        tmp.path().join("aw.toml"),
+        r#"
+[agentic_workflow.projects]
+discover = ["projects/*/aw.toml"]
+"#,
+    )
+    .unwrap();
+    fs::create_dir_all(tmp.path().join("projects/demo")).unwrap();
+    fs::write(
+        tmp.path().join("projects/demo/aw.toml"),
+        r#"
+[project]
+name = "demo"
+aliases = ["d"]
+td_path = "tech-design"
+cap_path = "README.md"
+label = "project:demo-local"
+
+[ec.security]
+tool = "guard"
+dir = "projects/demo"
+
+[[workspaces]]
+name = "demo"
+paths = ["**"]
+target = "rust"
+test_cmd = "cargo test -p demo"
+codegen.profile = "rust/score-crate"
+"#,
+    )
+    .unwrap();
+
+    let loaded = load_projects(tmp.path()).unwrap();
+    let demo = loaded
+        .iter()
+        .find(|project| project.name == "demo")
+        .expect("demo project");
+
+    assert_eq!(demo.path, PathBuf::from("projects/demo"));
+    assert_eq!(
+        demo.tech_design_dir.as_deref(),
+        Some("projects/demo/tech-design")
+    );
+    assert_eq!(
+        demo.workspaces[0].paths,
+        vec!["projects/demo/**".to_string()]
+    );
+    assert_eq!(
+        demo.ec["security"].command().unwrap(),
+        "guard scan projects/demo --compact --no-persist"
+    );
+
+    let rows = load_project_config_rows(tmp.path()).unwrap();
+    let row = rows
+        .iter()
+        .find(|row| row.matches("d"))
+        .expect("alias resolves");
+    assert_eq!(row.label_or_default(), "project:demo-local");
+    assert_eq!(row.cap_path.as_deref(), Some("projects/demo/README.md"));
+
+    let td = resolve_td_root_from_config(tmp.path(), "d").unwrap();
+    assert!(td.root.ends_with("projects/demo/tech-design"));
 }
 
 // ---------------------------------------------------------------------------

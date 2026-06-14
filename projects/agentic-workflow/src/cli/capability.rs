@@ -20,6 +20,9 @@ use super::project::{project_test_gate_report, ProjectTestGateReport, ProjectTes
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args)]
 pub struct CapabilityArgs {
+    /// Configured project name from [[projects]] in .aw/config.toml.
+    #[arg(long, global = true)]
+    pub project: Option<String>,
     #[command(subcommand)]
     pub command: CapabilityCommand,
 }
@@ -40,8 +43,6 @@ pub enum CapabilityCommand {
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args, Clone)]
 pub struct CapabilityReportArgs {
-    /// Configured project name from [[projects]] in .aw/config.toml.
-    pub project: String,
     /// Capability map path. Defaults to [[projects]].cap_path or [[projects]].path/README.md.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
@@ -75,8 +76,6 @@ pub struct CapabilityReportArgs {
 }"#)]
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub struct CapabilityNextArgs {
-    /// Configured project name from [[projects]] in .aw/config.toml.
-    pub project: String,
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
@@ -98,8 +97,6 @@ Capability run emits the same aw.cli.v1 summary as `aw capability next`, with ru
 "#)]
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub struct CapabilityRunArgs {
-    /// Configured project name from [[projects]] in .aw/config.toml.
-    pub project: String,
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
@@ -123,8 +120,6 @@ pub struct CapabilityRunArgs {
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 #[derive(Debug, Args, Clone)]
 pub struct CapabilityCheckArgs {
-    /// Configured project name from [[projects]] in .aw/config.toml.
-    pub project: String,
     /// Capability map path override.
     #[arg(long = "cap-path")]
     pub cap_path: Option<PathBuf>,
@@ -699,8 +694,6 @@ struct CapabilityConfig {
 struct CapabilityProjectRow {
     name: String,
     #[serde(default)]
-    aliases: Vec<String>,
-    #[serde(default)]
     path: Option<String>,
     #[serde(default)]
     td_path: Option<String>,
@@ -710,18 +703,20 @@ struct CapabilityProjectRow {
 
 /// @spec projects/agentic-workflow/tech-design/semantic/agentic-workflow-cli.md#schema
 pub async fn run(args: CapabilityArgs) -> Result<()> {
+    let project = args
+        .project
+        .ok_or_else(|| anyhow::anyhow!("capability requires --project <project>"))?;
     match args.command {
         CapabilityCommand::Report(args) => {
             let report =
-                build_capability_report(&args.project, args.cap_path.as_deref(), args.verify, true)
+                build_capability_report(&project, args.cap_path.as_deref(), args.verify, true)
                     .await?;
             print_report(&report, args.human, args.pretty || args.json)?;
             Ok(())
         }
         CapabilityCommand::Next(args) => {
             let report =
-                build_capability_report(&args.project, args.cap_path.as_deref(), false, true)
-                    .await?;
+                build_capability_report(&project, args.cap_path.as_deref(), false, true).await?;
             if args.human {
                 print_next_action(&report.next_action);
             } else if args.pretty || args.json {
@@ -737,15 +732,11 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
             }
             Ok(())
         }
-        CapabilityCommand::Run(args) => run_capability_tick(args).await,
+        CapabilityCommand::Run(args) => run_capability_tick(&project, args).await,
         CapabilityCommand::Check(args) => {
-            let mut report = build_capability_report(
-                &args.project,
-                args.cap_path.as_deref(),
-                args.verify,
-                false,
-            )
-            .await?;
+            let mut report =
+                build_capability_report(&project, args.cap_path.as_deref(), args.verify, false)
+                    .await?;
             let check_failed = !report.blockers.is_empty()
                 || matches!(report.test_gates.status, ProjectTestGateStatus::Failed)
                 || report.next_action.kind == CapabilityActionKind::FormatMigrationRequired;
@@ -772,7 +763,7 @@ pub async fn run(args: CapabilityArgs) -> Result<()> {
     }
 }
 
-async fn run_capability_tick(args: CapabilityRunArgs) -> Result<()> {
+async fn run_capability_tick(project: &str, args: CapabilityRunArgs) -> Result<()> {
     if !args.non_interactive {
         anyhow::bail!("aw capability run requires --non-interactive");
     }
@@ -782,7 +773,7 @@ async fn run_capability_tick(args: CapabilityRunArgs) -> Result<()> {
 
     let project_root = crate::find_project_root()?;
     let mut last_report =
-        build_capability_report(&args.project, args.cap_path.as_deref(), false, true).await?;
+        build_capability_report(project, args.cap_path.as_deref(), false, true).await?;
     let mut run_results = Vec::new();
     for tick in 1..=args.max_ticks {
         let action = last_report.next_action.clone();
@@ -804,8 +795,7 @@ async fn run_capability_tick(args: CapabilityRunArgs) -> Result<()> {
                     hitl_question: None,
                 });
                 last_report =
-                    build_capability_report(&args.project, args.cap_path.as_deref(), true, true)
-                        .await?;
+                    build_capability_report(project, args.cap_path.as_deref(), true, true).await?;
                 if result.status != "pass" {
                     break;
                 }
@@ -814,7 +804,7 @@ async fn run_capability_tick(args: CapabilityRunArgs) -> Result<()> {
                 let result = apply_capability_format_migration_tick(
                     tick,
                     &project_root,
-                    &args.project,
+                    project,
                     args.cap_path.as_deref(),
                     &action,
                 );
@@ -827,8 +817,7 @@ async fn run_capability_tick(args: CapabilityRunArgs) -> Result<()> {
                 let status = result.status.clone();
                 run_results.push(result);
                 last_report =
-                    build_capability_report(&args.project, args.cap_path.as_deref(), false, true)
-                        .await?;
+                    build_capability_report(project, args.cap_path.as_deref(), false, true).await?;
                 if status != "pass" {
                     break;
                 }
@@ -861,8 +850,7 @@ async fn run_capability_tick(args: CapabilityRunArgs) -> Result<()> {
                 let status = result.status.clone();
                 run_results.push(result);
                 last_report =
-                    build_capability_report(&args.project, args.cap_path.as_deref(), false, true)
-                        .await?;
+                    build_capability_report(project, args.cap_path.as_deref(), false, true).await?;
                 if status != "pass"
                     || last_report.next_action.kind == prior_kind
                         && last_report.next_action.command == prior_command
@@ -932,6 +920,9 @@ async fn build_capability_report_inner(
     production_capability_scope: Option<&str>,
 ) -> Result<CapabilityReport> {
     let project_root = crate::find_project_root()?;
+    if verify {
+        eprintln!("aw capability verify: running configured project test gates for `{project}`");
+    }
     let test_gates = project_test_gate_report(project, &project_root, verify)?;
     let cap_path = resolve_capability_path(&project_root, project, cap_path_override)?;
     let cap_body = std::fs::read_to_string(&cap_path)
@@ -1404,6 +1395,7 @@ impl VerificationCommandCache {
         if let Some(result) = self.results.get(command) {
             return result.clone();
         }
+        eprintln!("aw capability verify: running `{command}`");
         let result = run_verification_command(project_root, command);
         self.results.insert(command.to_string(), result.clone());
         result
@@ -1496,7 +1488,7 @@ fn choose_next_action(
             claim_id: None,
             target: report.cap_path.display().to_string(),
             command: format!(
-                "aw capability run {} --non-interactive --max-ticks 1",
+                "aw capability run --project {} --non-interactive --max-ticks 1",
                 report.project
             ),
             reason: "README capability map needs Markdown-table migration".to_string(),
@@ -1515,7 +1507,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: report.cap_path.display().to_string(),
-                command: format!("aw capability report {}", report.project),
+                command: format!("aw capability report --project {}", report.project),
                 reason: reason.clone(),
                 requires_hitl: true,
                 hitl_question: Some(candidate_capability_hitl_question(report, item, &reason)),
@@ -1538,7 +1530,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: report.cap_path.display().to_string(),
-                command: format!("aw capability check {}", report.project),
+                command: format!("aw capability check --project {}", report.project),
                 reason: "non-candidate capability is missing verification_contract".to_string(),
                 requires_hitl: true,
                 hitl_question: Some(verification_contract_hitl_question(report, capability)),
@@ -1569,7 +1561,7 @@ fn choose_next_action(
                         if has_non_epic_wi_evidence(report) {
                             (
                                 CapabilityActionKind::HumanConfirmRequired,
-                                format!("aw capability report {} --verify", report.project),
+                                format!("aw capability report --project {} --verify", report.project),
                                 "active WI is an epic and all known bounded child WIs are closed; aggregate readiness requires verification review before closing the top-level gap".to_string(),
                             )
                         } else {
@@ -1648,7 +1640,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: item.title.clone(),
-                command: format!("aw capability report {} --verify", report.project),
+                command: format!("aw capability report --project {} --verify", report.project),
                 reason: "capability status is a catalog claim; runtime verification must be rerun for the current code".to_string(),
                 requires_hitl: false,
                 hitl_question: None,
@@ -1673,7 +1665,7 @@ fn choose_next_action(
                     gap_id: Some(gate.id.clone()),
                     claim_id: None,
                     target: item.title.clone(),
-                    command: format!("aw capability report {}", report.project),
+                    command: format!("aw capability report --project {}", report.project),
                     reason: "capability still has open gaps".to_string(),
                     requires_hitl: false,
                     hitl_question: None,
@@ -1703,7 +1695,7 @@ fn choose_next_action(
                 gap_id: None,
                 claim_id: None,
                 target: report.cap_path.display().to_string(),
-                command: format!("aw capability report {} --verify", report.project),
+                command: format!("aw capability report --project {} --verify", report.project),
                 reason: reason.clone(),
                 requires_hitl: true,
                 hitl_question: Some(update_capability_status_hitl_question(
@@ -1763,7 +1755,9 @@ fn capability_hitl_question(
         id,
         question,
         target,
-        resume_command: format!("aw capability run {project} --non-interactive --max-ticks 1"),
+        resume_command: format!(
+            "aw capability run --project {project} --non-interactive --max-ticks 1"
+        ),
         tool_hint: "ask_user_question".to_string(),
         choices,
         default_choice: Some(default_choice.to_string()),
@@ -3336,16 +3330,13 @@ fn resolve_td_path(project_root: &Path, project: &str) -> Result<PathBuf> {
 }
 
 fn resolve_project_row(project_root: &Path, project: &str) -> Result<CapabilityProjectRow> {
-    let config_file = project_root.join(".aw").join("config.toml");
-    let content = std::fs::read_to_string(&config_file)
-        .with_context(|| format!("reading {}", config_file.display()))?;
-    let parsed: CapabilityConfig =
-        toml::from_str(&content).with_context(|| format!("parsing {}", config_file.display()))?;
-    parsed
-        .projects
-        .into_iter()
-        .find(|row| row.name == project || row.aliases.iter().any(|alias| alias == project))
-        .ok_or_else(|| anyhow::anyhow!("project '{}' has no [[projects]] entry", project))
+    let row = crate::services::project_registry::resolve_project_config_row(project_root, project)?;
+    Ok(CapabilityProjectRow {
+        name: row.name,
+        path: Some(row.path),
+        td_path: row.td_path,
+        cap_path: row.cap_path,
+    })
 }
 
 async fn load_project_issues(project_root: &Path, project: &str) -> Result<Vec<Issue>> {
@@ -4271,7 +4262,7 @@ mod tests {
     fn capability_summary_marks_hitl_as_blocked() {
         let report = sample_report(sample_action(
             CapabilityActionKind::HumanConfirmRequired,
-            "aw capability report jet --verify",
+            "aw capability report --project jet --verify",
             true,
         ));
 
@@ -4282,7 +4273,7 @@ mod tests {
         assert_eq!(summary["next"]["kind"].as_str(), Some("hitl"));
         assert_eq!(
             summary["next"]["command"].as_str(),
-            Some("aw capability report jet --verify")
+            Some("aw capability report --project jet --verify")
         );
     }
 
@@ -5147,7 +5138,10 @@ capability_refs:
 
         assert_eq!(action.kind, CapabilityActionKind::RunVerify);
         assert_eq!(action.capability_id.as_deref(), Some("package-manager"));
-        assert_eq!(action.command, "aw capability report jet --verify");
+        assert_eq!(
+            action.command,
+            "aw capability report --project jet --verify"
+        );
         assert!(action.reason.contains("runtime verification"));
     }
 
@@ -5564,7 +5558,10 @@ capability_refs:
             action.gap_id.as_deref(),
             Some("production-replacement-readiness")
         );
-        assert_eq!(action.command, "aw capability report jet --verify");
+        assert_eq!(
+            action.command,
+            "aw capability report --project jet --verify"
+        );
         assert!(action.requires_hitl);
         let question = action.hitl_question.expect("epic rollup asks human");
         assert_eq!(question.tool_hint, "ask_user_question");

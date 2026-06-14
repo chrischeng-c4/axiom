@@ -304,6 +304,9 @@ semantic_domain:
           - name: "EcCheckArgs"
             kind: "struct"
             public: true
+          - name: "EcVerifyArgs"
+            kind: "struct"
+            public: true
           - name: "EcManifest"
             kind: "struct"
             public: true
@@ -313,16 +316,22 @@ semantic_domain:
           - name: "EcCheckSummary"
             kind: "struct"
             public: true
+          - name: "EcVerifySummary"
+            kind: "struct"
+            public: true
+          - name: "EcVerifyCommandResult"
+            kind: "struct"
+            public: true
           - name: "EcProjectContext"
             kind: "struct"
             public: true
-          - name: "EcConfigFile"
+          - name: "ExternalContractDocument"
             kind: "struct"
             public: false
-          - name: "EcProjectConfig"
+          - name: "ExternalContractToml"
             kind: "struct"
             public: false
-          - name: "EcWorkspaceConfig"
+          - name: "ExternalToolManifestToml"
             kind: "struct"
             public: false
           - name: "E2eYaml"
@@ -2829,6 +2838,9 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      EC now treats `external-contracts/{behavior,efficiency,security,stability}`
+      as the primary External Contracts source, generates tests and tool
+      manifests for rig/meter/arena/guard/vat, and exposes `aw ec verify`.
     impl_mode: hand-written
   - path: "projects/agentic-workflow/src/cli/tasks.rs"
     action: modify
@@ -3023,6 +3035,8 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
+      Capability subcommands inherit the global `--project` selector and long-running
+      verification emits stderr progress before each configured gate command.
     impl_mode: hand-written
   - action: annotate
     section: unit-test

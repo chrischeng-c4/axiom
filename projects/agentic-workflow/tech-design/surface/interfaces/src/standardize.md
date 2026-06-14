@@ -121,6 +121,8 @@ mod standardize_audit;
 const SOURCE_EXTS: &[&str] = &[
     "rs", "py", "js", "jsx", "mjs", "cjs", "ts", "tsx", "go", "json", "css", "scss",
 ];
+const PROJECT_CONTEXT_ARTIFACTS: &[&str] = &["llms.txt"];
+const RUST_BINARY_ARTIFACTS: &[&str] = &["build.sh", "install.sh"];
 const EXCLUDED_DIRS: &[&str] = &[
     ".git",
     ".aw",
@@ -147,6 +149,7 @@ const DELETED_COMMAND_PATHS: &[&str] = &[
     "aw handoff",
     "aw takeoff",
 ];
+const AW_EC_BEGIN_MARKER: &str = "AW-EC-BEGIN";
 
 #[derive(Parser)]
 #[command(name = "aw")]
@@ -158,8 +161,9 @@ struct TraceabilityCli {
 #[derive(Debug, Args)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub struct StandardizeArgs {
-    /// Positional project shorthand. `aw standardize cap` runs the project standardization parent workflow for `cap`.
-    pub project_arg: Option<String>,
+    /// Project name from .aw/config.toml.
+    #[arg(long, global = true)]
+    pub project: Option<String>,
     #[command(subcommand)]
     pub command: Option<StandardizeCommand>,
 }
@@ -202,8 +206,6 @@ pub enum StandardizeAuditCommand {
 }"#)]
 // @spec projects/agentic-workflow/tech-design/surface/specs/aw-standardize-audit-first-quality.md#schema
 pub struct StandardizeAuditCheckArgs {
-    /// Project name from .aw/config.toml.
-    pub project: String,
     /// Override workspace scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
     #[arg(long = "scope")]
     pub scopes: Vec<String>,
@@ -229,8 +231,6 @@ pub struct StandardizeAuditCheckArgs {
 }"#)]
 // @spec projects/agentic-workflow/tech-design/surface/specs/aw-standardize-audit-first-quality.md#schema
 pub struct StandardizeAuditRecordArgs {
-    /// Project name from .aw/config.toml.
-    pub project: String,
     /// Override workspace scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
     #[arg(long = "scope")]
     pub scopes: Vec<String>,
@@ -289,8 +289,6 @@ semantic report -> SemanticCoverage:
 }"#)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub struct StandardizeReportArgs {
-    /// Project name from .aw/config.toml, e.g. `sdd`.
-    pub project: Option<String>,
     /// Run every configured project. Required when multiple projects exist and PROJECT is omitted.
     #[arg(long)]
     pub all: bool,
@@ -339,8 +337,6 @@ semantic next -> aw.cli.v1 summary:
 }"#)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub struct StandardizeNextArgs {
-    /// Project name from .aw/config.toml, e.g. `sdd`.
-    pub project: Option<String>,
     /// Run every configured project. Required when multiple projects exist and PROJECT is omitted.
     #[arg(long)]
     pub all: bool,
@@ -370,8 +366,6 @@ Successful mutation ticks emit:
 }"#)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub struct StandardizeRunArgs {
-    /// Project name from .aw/config.toml, e.g. `sdd`.
-    pub project: Option<String>,
     /// Run every configured project. Required when multiple projects exist and PROJECT is omitted.
     #[arg(long)]
     pub all: bool,
@@ -443,8 +437,6 @@ traceability next -> compact summary:
 }"#)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub struct StandardizeTraceabilityReportArgs {
-    /// Project name from .aw/config.toml.
-    pub project: String,
     /// Override source scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
     #[arg(long = "scope")]
     pub scopes: Vec<String>,
@@ -466,8 +458,6 @@ If classification work is required, it exits non-zero with `next`, `next_action`
 "#)]
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub struct StandardizeTraceabilityRunArgs {
-    /// Project name from .aw/config.toml.
-    pub project: String,
     /// Override source scopes. Repeatable; supports simple glob prefixes like `projects/app/**`.
     #[arg(long = "scope")]
     pub scopes: Vec<String>,
@@ -531,6 +521,8 @@ pub struct RegenerabilityCoverage {
     pub handwrite_files: usize,
     pub unmarked_files: usize,
     pub unsupported_codegen_files: Vec<String>,
+    pub non_replayable_codegen_files: Vec<String>,
+    pub snapshot_codegen_files: Vec<String>,
     pub codegen_drift_evaluated: bool,
     pub codegen_drift_files: Vec<String>,
     pub percent: f64,
@@ -908,6 +900,7 @@ pub struct StandardizeAction {
 pub enum StandardizeActionKind {
     AuditRequired,
     RegenDrift,
+    ProjectRootArtifact,
     PromoteHandwrite,
     SemanticGap,
     GeneratorPrimitiveGap,
@@ -978,6 +971,7 @@ struct Inventory {
     coverage: StandardizationCoverage,
     files: Vec<SourceFile>,
     rust_findings: Vec<RustAuditFinding>,
+    project_root_artifact_findings: Vec<ProjectRootArtifactFinding>,
     spec_violation: Option<SpecViolation>,
 }
 
@@ -1019,6 +1013,13 @@ struct RustAuditFinding {
 }
 
 #[derive(Debug, Clone)]
+struct ProjectRootArtifactFinding {
+    target: String,
+    project: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone)]
 struct SpecViolation {
     target: String,
     reason: String,
@@ -1032,15 +1033,18 @@ struct ActionOutcome {
 
 // @spec projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md#source
 pub async fn run(args: StandardizeArgs) -> Result<()> {
+    let project = args.project;
     match args.command {
-        Some(StandardizeCommand::Audit(a)) => run_audit_stage(a).await,
-        Some(StandardizeCommand::Managed(a)) => run_managed_stage(a).await,
-        Some(StandardizeCommand::Semantic(a)) => run_semantic_stage(a).await,
-        Some(StandardizeCommand::Traceability(a)) => run_traceability_stage(a).await,
+        Some(StandardizeCommand::Audit(a)) => run_audit_stage(project.as_deref(), a).await,
+        Some(StandardizeCommand::Managed(a)) => run_managed_stage(project.as_deref(), a).await,
+        Some(StandardizeCommand::Semantic(a)) => run_semantic_stage(project.as_deref(), a).await,
+        Some(StandardizeCommand::Traceability(a)) => {
+            run_traceability_stage(project.as_deref(), a).await
+        }
         None => {
-            let project = args.project_arg.as_deref().ok_or_else(|| {
+            let project = project.as_deref().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "use `aw standardize <project>` or `aw standardize <layer> <command>`"
+                    "use `aw standardize --project <project>` or `aw standardize <layer> <command> --project <project>`"
                 )
             })?;
             run_project_standardize_parent(project).await
@@ -1111,8 +1115,9 @@ fn write_traceability_payload<T: Serialize>(
 async fn run_project_standardize_parent(project: &str) -> Result<()> {
     let project_root = crate::find_project_root()?;
     let project = resolve_standardize_project_name(&project_root, project)?;
-    let report =
-        crate::cli::project::build_health_report_with_options(&project, true, false, false, false)?;
+    let report = crate::cli::project::build_health_report_with_options(
+        &project, true, false, false, false, false,
+    )?;
     if project_standardize_layers_ready(&report) {
         return run_project_standardize_health_gate(&project).await;
     }
@@ -1127,8 +1132,9 @@ async fn run_project_standardize_parent(project: &str) -> Result<()> {
 }
 
 async fn run_project_standardize_health_gate(project: &str) -> Result<()> {
-    let report =
-        crate::cli::project::build_health_report_with_options(project, true, true, true, true)?;
+    let report = crate::cli::project::build_health_report_with_options(
+        project, true, true, true, true, true,
+    )?;
     let payload_path = write_traceability_payload(project, "project-health", &report)?;
     let health =
         crate::cli::project::project_health_summary_with_payload_path(&report, &payload_path);
@@ -1177,8 +1183,14 @@ fn project_standardize_parent_summary(
     if let Some(command) = command {
         next.insert("command".to_string(), serde_json::Value::String(command));
     }
-    next.insert("reason".to_string(), serde_json::Value::String(reason.clone()));
-    next.insert("layer".to_string(), serde_json::Value::String(layer.to_string()));
+    next.insert(
+        "reason".to_string(),
+        serde_json::Value::String(reason.clone()),
+    );
+    next.insert(
+        "layer".to_string(),
+        serde_json::Value::String(layer.to_string()),
+    );
     next.insert(
         "payload_path".to_string(),
         serde_json::Value::String(payload_path.to_string()),
@@ -1219,7 +1231,9 @@ fn project_standardize_parent_step(
             .iter()
             .find(|blocker| blocker.starts_with("workflow lock:"))
             .cloned()
-            .unwrap_or_else(|| "workflow lock requires current owner or HITL resolution".to_string());
+            .unwrap_or_else(|| {
+                "workflow lock requires current owner or HITL resolution".to_string()
+            });
         return ("workflow_lock", "hitl", true, None, reason);
     }
     if !report.capability_ready {
@@ -1236,11 +1250,15 @@ fn project_standardize_parent_step(
             None
         } else {
             Some(format!(
-                "aw capability run {} --non-interactive --max-ticks 1",
+                "aw capability run --project {} --non-interactive --max-ticks 1",
                 report.project
             ))
         };
-        let status = if command.is_some() { "continue" } else { "blocked" };
+        let status = if command.is_some() {
+            "continue"
+        } else {
+            "blocked"
+        };
         return ("capability", status, false, command, reason);
     }
     if !report.managed_ready {
@@ -1249,7 +1267,7 @@ fn project_standardize_parent_step(
             "continue",
             false,
             Some(format!(
-                "aw standardize managed run {} --non-interactive --max-ticks 1",
+                "aw standardize managed run --project {} --non-interactive --max-ticks 1",
                 report.project
             )),
             "source ownership is incomplete; advance managed takeover".to_string(),
@@ -1265,7 +1283,7 @@ fn project_standardize_parent_step(
             "continue",
             false,
             Some(format!(
-                "aw standardize semantic run {} --non-interactive --max-ticks 1",
+                "aw standardize semantic run --project {} --non-interactive --max-ticks 1",
                 report.project
             )),
             "semantic coverage or stack migration is incomplete; advance semantic takeover"
@@ -1278,7 +1296,7 @@ fn project_standardize_parent_step(
             "continue",
             false,
             Some(format!(
-                "aw standardize traceability run {} --non-interactive --max-ticks 1",
+                "aw standardize traceability run --project {} --non-interactive --max-ticks 1",
                 report.project
             )),
             "TD/source/command traceability is incomplete; advance traceability closure"
@@ -1289,7 +1307,7 @@ fn project_standardize_parent_step(
         "health",
         "continue",
         false,
-        Some(format!("aw health {}", report.project)),
+        Some(format!("aw health --project {}", report.project)),
         "standardization layers are ready; run full project health production gates".to_string(),
     )
 }
@@ -1526,16 +1544,21 @@ fn standardize_next_kind(action: &StandardizeAction, has_command: bool) -> &'sta
     }
 }
 
-async fn run_audit_stage(args: StandardizeAuditArgs) -> Result<()> {
+fn require_standardize_project<'a>(project: Option<&'a str>) -> Result<&'a str> {
+    project.ok_or_else(|| anyhow::anyhow!("standardize requires --project <project>"))
+}
+
+async fn run_audit_stage(project: Option<&str>, args: StandardizeAuditArgs) -> Result<()> {
     match args.command {
-        StandardizeAuditCommand::Check(a) => run_audit_check(a).await,
-        StandardizeAuditCommand::Record(a) => run_audit_record(a).await,
+        StandardizeAuditCommand::Check(a) => run_audit_check(project, a).await,
+        StandardizeAuditCommand::Record(a) => run_audit_record(project, a).await,
     }
 }
 
-async fn run_audit_check(args: StandardizeAuditCheckArgs) -> Result<()> {
+async fn run_audit_check(project: Option<&str>, args: StandardizeAuditCheckArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project = resolve_standardize_project_name(&project_root, &args.project)?;
+    let project =
+        resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
     let decision = standardize_audit::evaluate_audit_decision(
         &project_root,
         &project,
@@ -1553,9 +1576,10 @@ async fn run_audit_check(args: StandardizeAuditCheckArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_audit_record(args: StandardizeAuditRecordArgs) -> Result<()> {
+async fn run_audit_record(project: Option<&str>, args: StandardizeAuditRecordArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project = resolve_standardize_project_name(&project_root, &args.project)?;
+    let project =
+        resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
     let audit = standardize_audit::fixture_audit(&project, &args.scopes);
     let path = standardize_audit::audit_path(&project_root, &project);
     if let Some(parent) = path.parent() {
@@ -1604,7 +1628,7 @@ fn apply_audit_first_action(
         kind: StandardizeActionKind::AuditRequired,
         target: decision.audit_path,
         executor: "mainthread".to_string(),
-        command: format!("aw standardize audit record {project_key}{scope_args}"),
+        command: format!("aw standardize audit record --project {project_key}{scope_args}"),
         reason: format!(
             "record preservation audit before quality-changing standardization; preserve {}",
             decision.surfaces_to_preserve.join(", ")
@@ -1623,33 +1647,40 @@ fn audit_project_key(project: Option<&str>, scopes: &[String]) -> String {
     })
 }
 
-async fn run_managed_stage(args: StandardizeStageArgs) -> Result<()> {
+async fn run_managed_stage(project: Option<&str>, args: StandardizeStageArgs) -> Result<()> {
     match args.command {
-        StandardizeStageCommand::Report(a) => run_report(a),
-        StandardizeStageCommand::Next(a) => run_next(a),
-        StandardizeStageCommand::Run(a) => run_loop(a).await,
+        StandardizeStageCommand::Report(a) => run_report(project, a),
+        StandardizeStageCommand::Next(a) => run_next(project, a),
+        StandardizeStageCommand::Run(a) => run_loop(project, a).await,
     }
 }
 
-async fn run_semantic_stage(args: StandardizeStageArgs) -> Result<()> {
+async fn run_semantic_stage(project: Option<&str>, args: StandardizeStageArgs) -> Result<()> {
     match args.command {
-        StandardizeStageCommand::Report(a) => run_semantic_report(a),
-        StandardizeStageCommand::Next(a) => run_semantic_next(a),
-        StandardizeStageCommand::Run(a) => run_semantic_loop(a).await,
+        StandardizeStageCommand::Report(a) => run_semantic_report(project, a),
+        StandardizeStageCommand::Next(a) => run_semantic_next(project, a),
+        StandardizeStageCommand::Run(a) => run_semantic_loop(project, a).await,
     }
 }
 
-async fn run_traceability_stage(args: StandardizeTraceabilityArgs) -> Result<()> {
+async fn run_traceability_stage(
+    project: Option<&str>,
+    args: StandardizeTraceabilityArgs,
+) -> Result<()> {
     match args.command {
-        StandardizeTraceabilityCommand::Report(a) => run_traceability_report(a),
-        StandardizeTraceabilityCommand::Next(a) => run_traceability_next(a),
-        StandardizeTraceabilityCommand::Run(a) => run_traceability_loop(a).await,
+        StandardizeTraceabilityCommand::Report(a) => run_traceability_report(project, a),
+        StandardizeTraceabilityCommand::Next(a) => run_traceability_next(project, a),
+        StandardizeTraceabilityCommand::Run(a) => run_traceability_loop(project, a).await,
     }
 }
 
-fn run_traceability_report(args: StandardizeTraceabilityReportArgs) -> Result<()> {
+fn run_traceability_report(
+    project: Option<&str>,
+    args: StandardizeTraceabilityReportArgs,
+) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project = resolve_standardize_project_name(&project_root, &args.project)?;
+    let project =
+        resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
     let coverage = project_traceability_coverage_with_scopes(&project, &args.scopes)?;
     if !args.human {
         let payload_path =
@@ -1662,9 +1693,13 @@ fn run_traceability_report(args: StandardizeTraceabilityReportArgs) -> Result<()
     Ok(())
 }
 
-fn run_traceability_next(args: StandardizeTraceabilityReportArgs) -> Result<()> {
+fn run_traceability_next(
+    project: Option<&str>,
+    args: StandardizeTraceabilityReportArgs,
+) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project = resolve_standardize_project_name(&project_root, &args.project)?;
+    let project =
+        resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
     let coverage = project_traceability_coverage_with_scopes(&project, &args.scopes)?;
     let envelope = traceability_envelope("standardize", coverage);
     if !args.human {
@@ -1678,12 +1713,16 @@ fn run_traceability_next(args: StandardizeTraceabilityReportArgs) -> Result<()> 
     Ok(())
 }
 
-async fn run_traceability_loop(args: StandardizeTraceabilityRunArgs) -> Result<()> {
+async fn run_traceability_loop(
+    project: Option<&str>,
+    args: StandardizeTraceabilityRunArgs,
+) -> Result<()> {
     if args.max_ticks == Some(0) {
         anyhow::bail!("--max-ticks must be greater than zero");
     }
     let project_root = crate::find_project_root()?;
-    let project = resolve_standardize_project_name(&project_root, &args.project)?;
+    let project =
+        resolve_standardize_project_name(&project_root, require_standardize_project(project)?)?;
     let coverage = project_traceability_coverage_with_scopes(&project, &args.scopes)?;
     let envelope = traceability_envelope("standardize", coverage);
     if envelope.next_action.kind == StandardizeActionKind::None {
@@ -1730,10 +1769,9 @@ fn traceability_envelope(
     }
 }
 
-fn run_semantic_report(args: StandardizeReportArgs) -> Result<()> {
+fn run_semantic_report(project: Option<&str>, args: StandardizeReportArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project =
-        resolve_optional_standardize_project_name(&project_root, args.project.as_deref())?;
+    let project = resolve_optional_standardize_project_name(&project_root, project)?;
     let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
     let coverage = build_semantic_coverage(&project_root, &inventory)?;
     if !args.human {
@@ -1744,10 +1782,9 @@ fn run_semantic_report(args: StandardizeReportArgs) -> Result<()> {
     Ok(())
 }
 
-fn run_semantic_next(args: StandardizeNextArgs) -> Result<()> {
+fn run_semantic_next(project: Option<&str>, args: StandardizeNextArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project =
-        resolve_optional_standardize_project_name(&project_root, args.project.as_deref())?;
+    let project = resolve_optional_standardize_project_name(&project_root, project)?;
     let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
     let coverage = build_semantic_coverage(&project_root, &inventory)?;
     let project_key = audit_project_key(project.as_deref(), &args.scopes);
@@ -1773,10 +1810,9 @@ fn run_semantic_next(args: StandardizeNextArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_semantic_loop(args: StandardizeRunArgs) -> Result<()> {
+async fn run_semantic_loop(project: Option<&str>, args: StandardizeRunArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project =
-        resolve_optional_standardize_project_name(&project_root, args.project.as_deref())?;
+    let project = resolve_optional_standardize_project_name(&project_root, project)?;
     let mut ticks = 0usize;
 
     loop {
@@ -1865,10 +1901,9 @@ async fn run_semantic_loop(args: StandardizeRunArgs) -> Result<()> {
     }
 }
 
-fn run_report(args: StandardizeReportArgs) -> Result<()> {
+fn run_report(project: Option<&str>, args: StandardizeReportArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project =
-        resolve_optional_standardize_project_name(&project_root, args.project.as_deref())?;
+    let project = resolve_optional_standardize_project_name(&project_root, project)?;
     let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
     if !args.human {
         print_json(&inventory.coverage, args.pretty || args.json)?;
@@ -1995,10 +2030,9 @@ pub(crate) fn project_health_standardize_coverage(
     })
 }
 
-fn run_next(args: StandardizeNextArgs) -> Result<()> {
+fn run_next(project: Option<&str>, args: StandardizeNextArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project =
-        resolve_optional_standardize_project_name(&project_root, args.project.as_deref())?;
+    let project = resolve_optional_standardize_project_name(&project_root, project)?;
     let inventory = build_inventory(&project_root, &args.scopes, project.as_deref(), args.all)?;
     let action = apply_audit_first_action(
         &project_root,
@@ -2021,10 +2055,9 @@ fn run_next(args: StandardizeNextArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_loop(args: StandardizeRunArgs) -> Result<()> {
+async fn run_loop(project: Option<&str>, args: StandardizeRunArgs) -> Result<()> {
     let project_root = crate::find_project_root()?;
-    let project =
-        resolve_optional_standardize_project_name(&project_root, args.project.as_deref())?;
+    let project = resolve_optional_standardize_project_name(&project_root, project)?;
     let mut ticks = 0usize;
 
     loop {
@@ -2109,9 +2142,31 @@ fn build_inventory(
     all: bool,
 ) -> Result<Inventory> {
     let scope = resolve_scopes(project_root, explicit_scopes, project, all)?;
-    let files = collect_source_files(project_root, &scope)?;
+    let mut files = collect_source_files(project_root, &scope)?;
+    if let Some(project_name) = project {
+        extend_project_root_artifact_files(project_root, project_name, &mut files)?;
+    }
     let rust_findings = collect_rust_audit_findings(project_root, &files);
     let spec_violation = find_spec_violation(project_root, &scope)?;
+    let root_artifact_gaps = if project.is_some() && explicit_scopes.is_empty() && !all {
+        project
+            .map(|project_name| missing_project_root_artifacts(project_root, project_name))
+            .transpose()?
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let project_root_artifact_findings =
+        if let Some(project_name) = project.filter(|_| explicit_scopes.is_empty() && !all) {
+            collect_project_root_artifact_findings(
+                project_root,
+                project_name,
+                &files,
+                &root_artifact_gaps,
+            )?
+        } else {
+            Vec::new()
+        };
 
     let mut by_language = BTreeMap::new();
     let mut by_marker = MarkerCounts::default();
@@ -2132,8 +2187,12 @@ fn build_inventory(
             uncovered_files.push(file.rel.clone());
         }
     }
+    for rel in &root_artifact_gaps {
+        *by_language.entry("root-artifact".to_string()).or_insert(0) += 1;
+        uncovered_files.push(rel.clone());
+    }
 
-    let total_files = files.len();
+    let total_files = files.len() + root_artifact_gaps.len();
     let percent = if total_files == 0 {
         100.0
     } else {
@@ -2152,18 +2211,21 @@ fn build_inventory(
         },
         files,
         rust_findings,
+        project_root_artifact_findings,
         spec_violation,
     })
 }
 
 fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result<SemanticCoverage> {
     let td_index = collect_td_index(project_root, &inventory.coverage.scope)?;
-    let source_ir = build_source_ir(inventory);
+    let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
+    let semantic_source_files = semantic_source_files(inventory);
+    let source_ir = build_source_ir_for_files(&semantic_source_files);
     let source_evidence_graph = build_source_evidence_graph(&source_ir);
     let frontend_ecosystem = build_frontend_ecosystem_ast(inventory);
     let source_symbols = source_ir.iter().map(|unit| unit.symbols.len()).sum();
     let claim_files = td_index.values().filter(|td| td.is_claim).count();
-    let semantic_files = td_index.values().filter(|td| !td.is_claim).count();
+    let semantic_td_files = td_index.values().filter(|td| !td.is_claim).count();
     let semantic_paths: BTreeSet<_> = td_index
         .values()
         .filter(|td| !td.is_claim)
@@ -2174,14 +2236,13 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
     let mut generator_primitive_gaps = Vec::new();
     let mut uncovered_files = Vec::new();
     let mut semantically_covered_files = 0usize;
-    let inventory_paths: BTreeSet<_> = inventory
-        .files
+    let inventory_paths: BTreeSet<_> = semantic_source_files
         .iter()
         .map(|file| file.rel.clone())
         .collect();
 
     for td in td_index.values() {
-        if td.is_claim || !td.needs_migration {
+        if td.is_claim {
             continue;
         }
         let Some(target) = td
@@ -2191,6 +2252,18 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
         else {
             continue;
         };
+        let td_content = fs::read_to_string(project_root.join(&td.path)).unwrap_or_default();
+        let needs_migration = td.needs_migration
+            || semantic_td_needs_generated_capability_ref_migration(
+                project_root,
+                &configured,
+                target,
+                &td_content,
+            )
+            || semantic_td_needs_traceability_metadata_migration(&td_content);
+        if !needs_migration {
+            continue;
+        }
         generator_primitive_gaps.push(GeneratorPrimitiveGap {
             target: target.clone(),
             primitive: "semantic_td_legacy".to_string(),
@@ -2202,7 +2275,7 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
         });
     }
 
-    for file in &inventory.files {
+    for file in semantic_source_files.iter().copied() {
         let source_refs = source_spec_refs(&file.abs, project_root);
         let td_section = if semantic_paths.contains(&file.rel) {
             td_index
@@ -2232,7 +2305,7 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
             .find(|unit| unit.path == file.rel)
             .map(|unit| unit.generator_primitives.clone())
             .unwrap_or_default();
-        if covered && file.markers.handwrite {
+        if covered && file.markers.handwrite && has_executable_generator_promotion(file) {
             let primitive = primitives
                 .first()
                 .cloned()
@@ -2280,19 +2353,20 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
         .filter(|gap| gap.human_decision_required)
         .count();
     let human_decision_required_count = blocked_gap_count;
-    let percent = if inventory.files.is_empty() {
+    let total_semantic_source_files = semantic_source_files.len();
+    let percent = if total_semantic_source_files == 0 {
         100.0
     } else {
-        (semantically_covered_files as f64 / inventory.files.len() as f64) * 100.0
+        (semantically_covered_files as f64 / total_semantic_source_files as f64) * 100.0
     };
 
     Ok(SemanticCoverage {
         scope: inventory.coverage.scope.clone(),
-        total_files: inventory.files.len(),
+        total_files: total_semantic_source_files,
         source_units: source_ir.len(),
         source_symbols,
         claim_files,
-        semantic_files,
+        semantic_files: semantic_td_files,
         semantically_covered_files,
         percent,
         source_ir,
@@ -2305,6 +2379,20 @@ fn build_semantic_coverage(project_root: &Path, inventory: &Inventory) -> Result
         blocked_gap_count,
         human_decision_required_count,
     })
+}
+
+fn semantic_source_files(inventory: &Inventory) -> Vec<&SourceFile> {
+    inventory
+        .files
+        .iter()
+        .filter(|file| !is_aw_ec_generated_wrapper(file))
+        .collect()
+}
+
+fn is_aw_ec_generated_wrapper(file: &SourceFile) -> bool {
+    fs::read_to_string(&file.abs)
+        .map(|content| content.contains(AW_EC_BEGIN_MARKER))
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone)]
@@ -2837,7 +2925,7 @@ fn traceability_authored_sections(content: &str) -> BTreeSet<String> {
 fn traceability_requires_implementation_edge(section: &str) -> bool {
     !matches!(
         section,
-        "changes" | "overview" | "doc" | "reference-context" | "review" | "changelog"
+        "changes" | "overview" | "doc" | "reference-context" | "review" | "changelog" | "e2e-test"
     )
 }
 
@@ -3483,6 +3571,11 @@ fn build_regenerability_coverage_with_options(
         Vec::new()
     };
     let codegen_drift_set = codegen_drift_files.iter().collect::<BTreeSet<_>>();
+    let non_replayable_codegen_files =
+        collect_non_replayable_codegen_files(project_root, inventory)?;
+    let non_replayable_codegen_set = non_replayable_codegen_files.iter().collect::<BTreeSet<_>>();
+    let snapshot_codegen_files = collect_snapshot_codegen_files(project_root, inventory)?;
+    let snapshot_codegen_set = snapshot_codegen_files.iter().collect::<BTreeSet<_>>();
     let semantic_by_source: BTreeMap<_, _> = semantic
         .coverage_map
         .iter()
@@ -3505,14 +3598,23 @@ fn build_regenerability_coverage_with_options(
         let unsupported_codegen =
             file.markers.codegen && !file.markers.handwrite && !codegen_replay_supported(file);
         let codegen_drift = codegen_drift_set.contains(&file.rel);
+        let non_replayable_codegen = non_replayable_codegen_set.contains(&file.rel);
+        let snapshot_codegen = snapshot_codegen_set.contains(&file.rel);
         let fully_codegen = file.markers.codegen
             && !file.markers.handwrite
             && !unsupported_codegen
+            && !non_replayable_codegen
+            && !snapshot_codegen
             && !codegen_drift;
         if fully_codegen {
             fully_codegen_files += 1;
         }
-        if file.markers.handwrite || !file.markers.managed() || unsupported_codegen || codegen_drift
+        if file.markers.handwrite
+            || !file.markers.managed()
+            || unsupported_codegen
+            || non_replayable_codegen
+            || snapshot_codegen
+            || codegen_drift
         {
             gap_files.push(file.rel.clone());
         }
@@ -3570,6 +3672,8 @@ fn build_regenerability_coverage_with_options(
             })
             .map(|file| file.rel.clone())
             .collect(),
+        non_replayable_codegen_files,
+        snapshot_codegen_files,
         codegen_drift_evaluated: verify_codegen_drift,
         codegen_drift_files,
         percent,
@@ -3585,6 +3689,131 @@ fn build_regenerability_coverage_with_options(
         required_for_production: authority.required_for_production(),
         authority_reason: authority.reason,
     })
+}
+
+fn collect_snapshot_codegen_files(
+    project_root: &Path,
+    inventory: &Inventory,
+) -> Result<Vec<String>> {
+    let mut gap_files = BTreeSet::new();
+    for file in &inventory.files {
+        if !file.markers.codegen || file.markers.handwrite {
+            continue;
+        }
+        if codegen_file_uses_snapshot_or_source_template(project_root, file)? {
+            gap_files.insert(file.rel.clone());
+        }
+    }
+    Ok(gap_files.into_iter().collect())
+}
+
+fn codegen_file_uses_snapshot_or_source_template(
+    project_root: &Path,
+    file: &SourceFile,
+) -> Result<bool> {
+    for source_ref in source_spec_refs_with_sections(&file.abs, project_root) {
+        let spec_path = project_root.join(&source_ref.path);
+        if !spec_path.exists() {
+            continue;
+        }
+        let spec_content = fs::read_to_string(&spec_path)
+            .with_context(|| format!("failed to read {}", spec_path.display()))?;
+
+        if source_snapshot_mentions_path(&spec_content, &file.rel) {
+            return Ok(true);
+        }
+        if source_ref
+            .section
+            .as_deref()
+            .is_some_and(is_source_section_ref)
+            && !source_section_has_type_marker(&spec_content, "type: rust-source-unit")
+            && !source_section_has_type_marker(&spec_content, "type: text-source-unit")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn is_source_section_ref(section: &str) -> bool {
+    matches!(section, "source" | "rust-source-unit" | "text-source-unit")
+}
+
+fn source_snapshot_mentions_path(spec_content: &str, target_rel: &str) -> bool {
+    spec_content
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("<!-- source-snapshot:"))
+        .filter_map(|tail| tail.strip_suffix("-->"))
+        .flat_map(|body| body.split_whitespace())
+        .filter_map(|part| part.strip_prefix("path="))
+        .any(|path| path.trim_matches('"') == target_rel)
+}
+
+fn source_section_has_type_marker(spec_content: &str, marker: &str) -> bool {
+    let mut in_source = false;
+    for line in spec_content.lines() {
+        if line.starts_with("## ") {
+            let heading = line.trim_start_matches('#').trim();
+            in_source = heading.eq_ignore_ascii_case("Source");
+            continue;
+        }
+        if in_source && line.trim().contains(marker) {
+            return true;
+        }
+    }
+    false
+}
+
+fn collect_non_replayable_codegen_files(
+    project_root: &Path,
+    inventory: &Inventory,
+) -> Result<Vec<String>> {
+    let mut gap_files = BTreeSet::new();
+    for file in &inventory.files {
+        if !file.markers.codegen || file.markers.handwrite {
+            continue;
+        }
+        if codegen_file_has_hand_written_td_entry(project_root, file)? {
+            gap_files.insert(file.rel.clone());
+        }
+    }
+    Ok(gap_files.into_iter().collect())
+}
+
+fn codegen_file_has_hand_written_td_entry(project_root: &Path, file: &SourceFile) -> Result<bool> {
+    for source_ref in source_spec_refs_with_sections(&file.abs, project_root) {
+        let spec_path = project_root.join(&source_ref.path);
+        if !spec_path.exists() {
+            continue;
+        }
+        let spec_content = fs::read_to_string(&spec_path)
+            .with_context(|| format!("failed to read {}", spec_path.display()))?;
+        if crate::generate::apply::extract_change_entries(&spec_content)
+            .into_iter()
+            .any(|entry| {
+                entry.path == file.rel
+                    && change_entry_matches_source_ref_section(
+                        entry.section_id.as_deref(),
+                        source_ref.section.as_deref(),
+                    )
+                    && entry.impl_mode == crate::generate::apply::ImplMode::HandWritten
+            })
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn change_entry_matches_source_ref_section(
+    entry_section: Option<&str>,
+    source_ref_section: Option<&str>,
+) -> bool {
+    match (entry_section, source_ref_section) {
+        (Some(entry), Some(source_ref)) => entry == source_ref,
+        (None, Some(_)) => true,
+        (_, None) => true,
+    }
 }
 
 fn collect_codegen_gap_files(
@@ -3815,7 +4044,40 @@ fn semantic_td_needs_impl_mode_migration(content: &str) -> bool {
         && !content.contains("impl_mode:")
 }
 
+fn semantic_td_needs_generated_capability_ref_migration(
+    project_root: &Path,
+    configured: &[ConfiguredScope],
+    target: &str,
+    content: &str,
+) -> bool {
+    content.contains("coverage_kind: semantic")
+        && !content.contains("capability_refs:")
+        && !content.contains("capability_scope:")
+        && semantic_capability_ref_for_group(project_root, configured, &semantic_group_key(target))
+            .is_some()
+}
+
+fn semantic_td_needs_traceability_metadata_migration(content: &str) -> bool {
+    content.contains("coverage_kind: semantic")
+        && traceability_td_section_blockers("<semantic-td>", content)
+            .iter()
+            .any(|blocker| blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge)
+}
+
 fn source_spec_refs(abs: &Path, project_root: &Path) -> Vec<String> {
+    source_spec_refs_with_sections(abs, project_root)
+        .into_iter()
+        .map(|source_ref| source_ref.path)
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct SourceSpecRef {
+    path: String,
+    section: Option<String>,
+}
+
+fn source_spec_refs_with_sections(abs: &Path, project_root: &Path) -> Vec<SourceSpecRef> {
     let Ok(content) = fs::read_to_string(abs) else {
         return Vec::new();
     };
@@ -3824,34 +4086,57 @@ fn source_spec_refs(abs: &Path, project_root: &Path) -> Vec<String> {
         let Some((_, rest)) = line.split_once("SPEC-MANAGED:") else {
             continue;
         };
-        let spec = rest
-            .trim()
-            .split('#')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .trim_matches('"')
-            .trim_matches('\'');
-        if spec.is_empty() {
-            continue;
+        if let Some(source_ref) = parse_source_spec_ref(rest, project_root) {
+            refs.push(source_ref);
         }
-        let normalized =
-            if let Some(stripped) = spec.strip_prefix(project_root.to_string_lossy().as_ref()) {
-                stripped.trim_start_matches('/').to_string()
-            } else {
-                spec.to_string()
-            };
-        refs.push(normalized);
     }
     refs.sort();
     refs.dedup();
     refs
 }
 
+fn parse_source_spec_ref(raw: &str, project_root: &Path) -> Option<SourceSpecRef> {
+    let value = raw
+        .trim()
+        .trim_end_matches("-->")
+        .trim()
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_matches('"')
+        .trim_matches('\'');
+    if value.is_empty() {
+        return None;
+    }
+    let (path, section) = match value.split_once('#') {
+        Some((path, section)) => (path, Some(section.trim().to_string())),
+        None => (value, None),
+    };
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    let normalized =
+        if let Some(stripped) = path.strip_prefix(project_root.to_string_lossy().as_ref()) {
+            stripped.trim_start_matches('/').to_string()
+        } else {
+            path.to_string()
+        };
+    Some(SourceSpecRef {
+        path: normalized,
+        section: section.filter(|value| !value.is_empty()),
+    })
+}
+
 fn build_source_ir(inventory: &Inventory) -> Vec<SourceUnit> {
+    let files: Vec<_> = inventory.files.iter().collect();
+    build_source_ir_for_files(&files)
+}
+
+fn build_source_ir_for_files(files: &[&SourceFile]) -> Vec<SourceUnit> {
     let mut analyzer = crate::fillback::AstAnalyzer::new().ok();
     let mut units = Vec::new();
-    for file in &inventory.files {
+    for file in files.iter().copied() {
         let mut symbols = Vec::new();
         let mut imports = Vec::new();
         let content = fs::read_to_string(&file.abs).ok();
@@ -4017,7 +4302,17 @@ fn build_source_evidence_node(
         });
     }
 
-    None
+    Some(SourceEvidenceNode {
+        path: file.rel.clone(),
+        layer: "source".to_string(),
+        ecosystem: file.language.clone(),
+        role: "source".to_string(),
+        section_type: "schema".to_string(),
+        domain: semantic_group_key(&file.rel),
+        workspace_root: None,
+        route: None,
+        component: None,
+    })
 }
 
 fn frontend_ecosystem_label(file: &SourceFile) -> &'static str {
@@ -4573,7 +4868,7 @@ fn resolve_scopes(
             }
         } else if project_names.len() > 1 {
             bail!(
-                "standardize requires PROJECT in multi-project repos (for example: aw standardize managed run sdd), or use --all/--scope. Available projects: {}",
+                "standardize requires --project <project> in multi-project repos (for example: aw standardize managed run --project sdd), or use --all/--scope. Available projects: {}",
                 project_names.into_iter().collect::<Vec<_>>().join(", ")
             );
         }
@@ -4720,6 +5015,7 @@ struct ConfiguredScope {
     project_path: Option<String>,
     scope: String,
     td_path: Option<String>,
+    cap_path: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4728,6 +5024,7 @@ struct ConfiguredWorkspace {
     name: Option<String>,
     paths: Vec<String>,
     target: Option<String>,
+    test_cmd: Option<String>,
 }
 
 fn read_config_workspace_scopes(project_root: &Path) -> Result<Vec<ConfiguredScope>> {
@@ -4766,6 +5063,10 @@ fn read_config_workspace_scopes(project_root: &Path) -> Result<Vec<ConfiguredSco
             .get("td_path")
             .and_then(|v| v.as_str())
             .map(str::to_string);
+        let cap_path = project
+            .get("cap_path")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let Some(workspaces) = project.get("workspaces").and_then(|v| v.as_array()) else {
             continue;
         };
@@ -4781,6 +5082,7 @@ fn read_config_workspace_scopes(project_root: &Path) -> Result<Vec<ConfiguredSco
                         project_path: project_path.clone(),
                         scope: s.to_string(),
                         td_path: td_path.clone(),
+                        cap_path: cap_path.clone(),
                     });
                 }
             }
@@ -4844,6 +5146,10 @@ fn read_config_workspaces(project_root: &Path) -> Result<Vec<ConfiguredWorkspace
                 paths,
                 target: workspace
                     .get("target")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                test_cmd: workspace
+                    .get("test_cmd")
                     .and_then(|v| v.as_str())
                     .map(str::to_string),
             });
@@ -5286,6 +5592,12 @@ fn deployment_facet_rule(kind: &str, content_lower: &str) -> Option<DeploymentFa
             classification: "composition",
             action: "generate_kustomization",
             reason: "Kustomize resource composition and overlay wiring",
+        },
+        "Component" => DeploymentFacetRule {
+            facet: "kustomize_component",
+            classification: "composition",
+            action: "generate_kustomize_component",
+            reason: "Kustomize component resource composition and optional wiring",
         },
         "PrefixTransformer" => DeploymentFacetRule {
             facet: "kustomize_name_transformer",
@@ -5782,6 +6094,432 @@ fn collect_source_files(project_root: &Path, scopes: &[String]) -> Result<Vec<So
     Ok(out)
 }
 
+fn extend_project_root_artifact_files(
+    project_root: &Path,
+    project: &str,
+    files: &mut Vec<SourceFile>,
+) -> Result<()> {
+    let Some(project_rel) = configured_project_path(project_root, project)? else {
+        return Ok(());
+    };
+    let mut rels = files
+        .iter()
+        .map(|file| file.rel.clone())
+        .collect::<BTreeSet<_>>();
+    for name in required_project_root_artifact_names(project_root, project, &project_rel)? {
+        let rel = format!("{}/{}", project_rel.trim_end_matches('/'), name);
+        if !rels.insert(rel.clone()) {
+            continue;
+        }
+        let abs = project_root.join(&rel);
+        if !abs.is_file() {
+            continue;
+        }
+        let content = fs::read_to_string(&abs).unwrap_or_default();
+        files.push(SourceFile {
+            rel,
+            abs,
+            language: project_root_artifact_language(name).to_string(),
+            markers: detect_markers(&content),
+            handwrite_gaps: detect_handwrite_gaps(&content),
+        });
+    }
+    Ok(())
+}
+
+fn missing_project_root_artifacts(project_root: &Path, project: &str) -> Result<Vec<String>> {
+    let Some(project_rel) = configured_project_path(project_root, project)? else {
+        return Ok(Vec::new());
+    };
+    Ok(
+        required_project_root_artifact_names(project_root, project, &project_rel)?
+            .into_iter()
+            .map(|name| format!("{}/{}", project_rel.trim_end_matches('/'), name))
+            .filter(|rel| !project_root.join(rel).is_file())
+            .collect(),
+    )
+}
+
+fn collect_project_root_artifact_findings(
+    project_root: &Path,
+    project: &str,
+    files: &[SourceFile],
+    root_artifact_gaps: &[String],
+) -> Result<Vec<ProjectRootArtifactFinding>> {
+    let project = resolve_standardize_project_name(project_root, project)?;
+    let Some(project_rel) = configured_project_path(project_root, &project)? else {
+        return Ok(Vec::new());
+    };
+    if !required_project_root_artifact_names(project_root, &project, &project_rel)?
+        .contains(&"llms.txt")
+    {
+        return Ok(Vec::new());
+    }
+
+    let target = format!("{}/llms.txt", project_rel.trim_end_matches('/'));
+    if root_artifact_gaps.iter().any(|gap| gap == &target) {
+        return Ok(vec![ProjectRootArtifactFinding {
+            target,
+            project,
+            reason: "project root artifact `llms.txt` is missing; AW can generate the TD-first agent context map"
+                .to_string(),
+        }]);
+    }
+
+    let abs = project_root.join(&target);
+    if !abs.is_file() {
+        return Ok(vec![ProjectRootArtifactFinding {
+            target,
+            project,
+            reason: "project root artifact `llms.txt` is missing; AW can generate the TD-first agent context map"
+                .to_string(),
+        }]);
+    }
+
+    let content = fs::read_to_string(&abs).unwrap_or_default();
+    let expected = render_project_llms_txt(project_root, &project)?;
+    let markers = files
+        .iter()
+        .find(|file| file.rel == target)
+        .map(|file| file.markers.clone())
+        .unwrap_or_else(|| detect_markers(&content));
+    if !markers.codegen {
+        return Ok(vec![ProjectRootArtifactFinding {
+            target,
+            project,
+            reason:
+                "project root artifact `llms.txt` must be CODEGEN from TD-first project context"
+                    .to_string(),
+        }]);
+    }
+    if content != expected {
+        return Ok(vec![ProjectRootArtifactFinding {
+            target,
+            project,
+            reason:
+                "project root artifact `llms.txt` is stale versus the TD-first generator output"
+                    .to_string(),
+        }]);
+    }
+
+    Ok(Vec::new())
+}
+
+/// Return production blockers for the project-root artifacts that AW itself
+/// expects agents and build skills to consume.
+/// @spec .aw/tech-design/projects/agentic-workflow/logic/manage-project-root-llms-and-build-install-artifacts.md#logic
+pub(crate) fn project_root_artifact_blockers(project: &str) -> Result<Vec<String>> {
+    let project_root = crate::find_project_root()?;
+    project_root_artifact_blockers_at(&project_root, project)
+}
+
+fn project_root_artifact_blockers_at(project_root: &Path, project: &str) -> Result<Vec<String>> {
+    let project = resolve_standardize_project_name(project_root, project)?;
+    let Some(project_rel) = configured_project_path(project_root, &project)? else {
+        return Ok(Vec::new());
+    };
+    let mut blockers = Vec::new();
+    for name in required_project_root_artifact_names(project_root, &project, &project_rel)? {
+        let rel = format!("{}/{}", project_rel.trim_end_matches('/'), name);
+        let abs = project_root.join(&rel);
+        if !abs.is_file() {
+            blockers.push(format!("missing project root artifact `{rel}`"));
+            continue;
+        }
+        if name == "llms.txt" {
+            let content = fs::read_to_string(&abs).unwrap_or_default();
+            let expected = render_project_llms_txt(project_root, &project)?;
+            let markers = detect_markers(&content);
+            if !markers.codegen {
+                blockers.push(format!(
+                    "project root artifact `{rel}` must be generated by AW from TD-first project context"
+                ));
+            } else if content != expected {
+                blockers.push(format!(
+                    "project root artifact `{rel}` is stale; run `aw standardize managed run --project {} --non-interactive --max-ticks 1`",
+                    shell_quote(&project)
+                ));
+            }
+        }
+        if matches!(name, "build.sh" | "install.sh") && !is_executable_file(&abs) {
+            blockers.push(format!("project root artifact `{rel}` is not executable"));
+        }
+        if name == "build.sh" {
+            let content = fs::read_to_string(&abs).unwrap_or_default();
+            if !content.contains("debug") || !content.contains("release") {
+                blockers.push(format!(
+                    "project root artifact `{rel}` must expose debug and release build modes"
+                ));
+            }
+            if project_has_rust_binary(project_root, &project, &project_rel)?
+                && !content.contains("--release")
+                && !content.contains("target/release")
+            {
+                blockers.push(format!(
+                    "project root artifact `{rel}` release mode must build or install the release profile"
+                ));
+            }
+        }
+    }
+    Ok(blockers)
+}
+
+fn required_project_root_artifact_names(
+    project_root: &Path,
+    project: &str,
+    project_rel: &str,
+) -> Result<Vec<&'static str>> {
+    let mut names = PROJECT_CONTEXT_ARTIFACTS.to_vec();
+    if project_has_rust_binary(project_root, project, project_rel)? {
+        names.extend(RUST_BINARY_ARTIFACTS.iter().copied());
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn configured_project_path(project_root: &Path, project: &str) -> Result<Option<String>> {
+    let configured = read_config_workspace_scopes(project_root)?;
+    Ok(configured
+        .iter()
+        .find(|scope| configured_scope_matches_project(scope, project))
+        .and_then(|scope| scope.project_path.clone()))
+}
+
+fn configured_project_scope(project_root: &Path, project: &str) -> Result<Option<ConfiguredScope>> {
+    let configured = read_config_workspace_scopes(project_root)?;
+    Ok(configured
+        .into_iter()
+        .find(|scope| configured_scope_matches_project(scope, project)))
+}
+
+pub(crate) fn configured_project_name_for_path(
+    project_root: &Path,
+    target: &str,
+) -> Result<Option<String>> {
+    let configured = read_config_workspace_scopes(project_root)?;
+    let target = target.replace('\\', "/");
+    Ok(configured
+        .into_iter()
+        .filter_map(|scope| {
+            let project_name = scope.project_name?;
+            let project_path = scope.project_path?;
+            if path_prefix_of(&project_path, &target) {
+                Some((project_name, project_path.len()))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|(_, len)| *len)
+        .map(|(project_name, _)| project_name))
+}
+
+pub(crate) fn render_project_llms_txt(project_root: &Path, project: &str) -> Result<String> {
+    let project = resolve_standardize_project_name(project_root, project)?;
+    let scope = configured_project_scope(project_root, &project)?
+        .with_context(|| format!("project `{project}` is not configured"))?;
+    let project_rel = scope
+        .project_path
+        .clone()
+        .with_context(|| format!("project `{project}` has no configured path"))?;
+    let td_path = configured_td_path(&scope).unwrap_or_else(|| {
+        crate::services::project_registry::default_project_td_path(&project_rel)
+            .to_string_lossy()
+            .into_owned()
+    });
+    let cap_path = scope
+        .cap_path
+        .clone()
+        .unwrap_or_else(|| format!("{}/README.md", project_rel.trim_end_matches('/')));
+    let spec_ref = project_llms_semantic_spec_ref(&project, &project_rel, &td_path);
+    let title = project_agent_context_title(&project);
+    let required_artifacts =
+        required_project_root_artifact_names(project_root, &project, &project_rel)?;
+    let has_build = required_artifacts.contains(&"build.sh");
+    let has_install = required_artifacts.contains(&"install.sh");
+    let mut test_cmds = read_config_workspaces(project_root)?
+        .into_iter()
+        .filter(|workspace| workspace.project_name.as_deref() == Some(project.as_str()))
+        .filter_map(|workspace| workspace.test_cmd)
+        .filter(|cmd| cmd != "true")
+        .collect::<Vec<_>>();
+    test_cmds.sort();
+    test_cmds.dedup();
+
+    let mut out = String::new();
+    out.push_str(&format!("<!-- SPEC-MANAGED: {spec_ref}#schema -->\n"));
+    out.push_str("<!-- CODEGEN-BEGIN -->\n");
+    out.push_str(&format!("# {title} Agent Context\n\n"));
+    out.push_str(
+        "> TD-first map for agents. Start from tech design and capability intent before implementation files.\n\n",
+    );
+    out.push_str("## Tech Design\n\n");
+    out.push_str(&format!(
+        "- [Tech Design]({}): implementation source of truth.\n",
+        project_relative_link(&project_rel, &td_path)
+    ));
+    out.push_str(&format!("- Validate: `aw td check {td_path}`.\n\n"));
+    out.push_str("## Capability Map\n\n");
+    out.push_str(&format!(
+        "- [README]({}): capability source of truth and product contract.\n\n",
+        project_relative_link(&project_rel, &cap_path)
+    ));
+    out.push_str("## Agent Workflow\n\n");
+    out.push_str(&format!(
+        "- Continue: `aw run --project {}`.\n",
+        shell_quote(&project)
+    ));
+    out.push_str(&format!(
+        "- Next managed step: `aw standardize managed next --project {}`.\n",
+        shell_quote(&project)
+    ));
+    out.push_str(&format!(
+        "- Readiness: `aw health --project {}`.\n\n",
+        shell_quote(&project)
+    ));
+    out.push_str("## Commands\n\n");
+    if has_build {
+        out.push_str("- Build debug: `./build.sh debug`.\n");
+        out.push_str("- Build release: `./build.sh release`.\n");
+    }
+    if has_install {
+        out.push_str(&format!(
+            "- Install: repo root `install.sh --project={}` dispatches to `./install.sh`.\n",
+            project
+        ));
+    }
+    for cmd in &test_cmds {
+        out.push_str(&format!("- Test: `{cmd}`.\n"));
+    }
+    out.push('\n');
+    out.push_str("## Root Artifacts\n\n");
+    out.push_str("- [llms.txt](llms.txt): generated by `aw standardize managed run`.\n");
+    if has_build {
+        out.push_str("- [build.sh](build.sh): debug/release build entrypoint.\n");
+    }
+    if has_install {
+        out.push_str("- [install.sh](install.sh): project-local install entrypoint.\n");
+    }
+    out.push_str("<!-- CODEGEN-END -->\n");
+    Ok(out)
+}
+
+fn project_llms_semantic_spec_ref(project: &str, project_rel: &str, td_path: &str) -> String {
+    format!(
+        "{}/semantic/{}-{}.md",
+        td_path.trim_end_matches('/'),
+        slug_for_path(project),
+        slug_for_path(project_rel)
+    )
+}
+
+fn project_agent_context_title(project: &str) -> String {
+    if project.contains('-') {
+        project
+            .split('-')
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                let mut chars = part.chars();
+                match chars.next() {
+                    Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                    None => String::new(),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        project.to_string()
+    }
+}
+
+fn project_relative_link(project_rel: &str, target_rel: &str) -> String {
+    let project_rel = project_rel.trim_matches('/');
+    let target_rel = target_rel.trim_start_matches("./").trim_matches('/');
+    if target_rel.is_empty() || target_rel == project_rel {
+        return ".".to_string();
+    }
+    let prefix = format!("{project_rel}/");
+    if let Some(stripped) = target_rel.strip_prefix(&prefix) {
+        return stripped.to_string();
+    }
+    let upward = project_rel
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .map(|_| "..")
+        .collect::<Vec<_>>()
+        .join("/");
+    if upward.is_empty() {
+        target_rel.to_string()
+    } else {
+        format!("{upward}/{target_rel}")
+    }
+}
+
+fn project_has_rust_binary(project_root: &Path, project: &str, project_rel: &str) -> Result<bool> {
+    let has_rust_workspace = read_config_workspaces(project_root)?
+        .into_iter()
+        .any(|workspace| {
+            workspace.project_name.as_deref() == Some(project)
+                && workspace.target.as_deref() == Some("rust")
+        });
+    if !has_rust_workspace {
+        return Ok(false);
+    }
+    let root = project_root.join(project_rel);
+    if !root.is_dir() {
+        return Ok(false);
+    }
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        if is_excluded_path(&dir) {
+            continue;
+        }
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.file_name().and_then(|name| name.to_str()) == Some("Cargo.toml") {
+                let manifest = fs::read_to_string(&path).unwrap_or_default();
+                if manifest.contains("[[bin]]")
+                    || path
+                        .parent()
+                        .is_some_and(|p| p.join("src/main.rs").is_file())
+                {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn project_root_artifact_language(name: &str) -> &'static str {
+    match name {
+        "build.sh" | "install.sh" => "shell",
+        "llms.txt" => "llms",
+        _ => "root-artifact",
+    }
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path)
+        .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
 fn build_scope_matcher(scopes: &[String]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for scope in scopes {
@@ -6229,6 +6967,10 @@ fn scope_static_prefix(scope: &str) -> String {
 }
 
 fn choose_action(inventory: &Inventory) -> StandardizeAction {
+    if let Some(finding) = inventory.project_root_artifact_findings.first() {
+        return project_root_artifact_action(finding);
+    }
+
     if let Some(file) = inventory
         .files
         .iter()
@@ -6353,6 +7095,20 @@ fn choose_action(inventory: &Inventory) -> StandardizeAction {
     )
 }
 
+fn project_root_artifact_action(finding: &ProjectRootArtifactFinding) -> StandardizeAction {
+    action(
+        StandardizeActionKind::ProjectRootArtifact,
+        &finding.target,
+        "cli",
+        &format!(
+            "aw standardize managed run --project {} --non-interactive --max-ticks 1",
+            shell_quote(&finding.project)
+        ),
+        &finding.reason,
+        false,
+    )
+}
+
 #[allow(dead_code)]
 fn choose_codegen_action(inventory: &Inventory) -> StandardizeAction {
     if let Some(file) = inventory.files.iter().find(|f| !f.markers.managed()) {
@@ -6426,9 +7182,9 @@ fn choose_semantic_action_with_project(
                 "mainthread"
             },
             &project
-                .map(|project| format!("aw generator check {project}"))
+                .map(|project| format!("aw generator check --project {project}"))
                 .unwrap_or_else(|| {
-                    "mainthread: identify configured project, then run aw generator check <project>"
+                    "mainthread: identify configured project, then run aw generator check --project <project>"
                         .to_string()
                 }),
             &gap.reason,
@@ -6471,7 +7227,10 @@ fn choose_traceability_action(coverage: &TraceabilityCoverage) -> StandardizeAct
             kind: StandardizeActionKind::Blocked,
             target: blocker.target.clone(),
             executor: "mainthread".to_string(),
-            command: format!("aw standardize traceability report {}", coverage.project),
+            command: format!(
+                "aw standardize traceability report --project {}",
+                coverage.project
+            ),
             reason: blocker.reason.clone(),
             requires_hitl: true,
         };
@@ -6490,8 +7249,8 @@ fn traceability_mainthread_task(
     project: &str,
     blocker: &TraceabilityBlocker,
 ) -> TraceabilityMainthreadTask {
-    let report_command = format!("aw standardize traceability report {project}");
-    let resume_command = format!("aw standardize traceability next {project}");
+    let report_command = format!("aw standardize traceability report --project {project}");
+    let resume_command = format!("aw standardize traceability next --project {project}");
     let blocker_kind = traceability_kind_name(blocker.kind).to_string();
     let (decision_required, question, decision_options, required_evidence, success_criteria) =
         match blocker.kind {
@@ -6973,9 +7732,9 @@ fn choose_regenerable_action_with_project(
                 || is_rust_source_promotable_file(file)
             {
                 let command = replay_project
-                    .map(|project| format!("aw generator check {project}"))
+                    .map(|project| format!("aw generator check --project {project}"))
                     .unwrap_or_else(|| {
-                        "mainthread: identify configured project, then run aw generator check <project>"
+                        "mainthread: identify configured project, then run aw generator check --project <project>"
                             .to_string()
                     });
                 return action(
@@ -7046,12 +7805,36 @@ fn action(
     }
 }
 
+fn write_project_root_artifact(
+    project_root: &Path,
+    action: &StandardizeAction,
+) -> Result<ActionOutcome> {
+    if !action.target.ends_with("/llms.txt") {
+        bail!(
+            "project root artifact action only supports llms.txt, got `{}`",
+            action.target
+        );
+    }
+    let project = configured_project_name_for_path(project_root, &action.target)?
+        .with_context(|| format!("no configured project owns `{}`", action.target))?;
+    let content = render_project_llms_txt(project_root, &project)?;
+    let path = project_root.join(&action.target);
+    fs::write(&path, content).with_context(|| format!("failed to write {}", path.display()))?;
+    Ok(ActionOutcome {
+        changed_paths: vec![path],
+        message: format!("generated TD-first project root artifact {}", action.target),
+    })
+}
+
 fn execute_action(
     project_root: &Path,
     action: &StandardizeAction,
     inventory: &Inventory,
 ) -> Result<ActionOutcome> {
     match action.kind {
+        StandardizeActionKind::ProjectRootArtifact => {
+            write_project_root_artifact(project_root, action)
+        }
         StandardizeActionKind::ClaimCode => {
             let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
             claim_code(project_root, action, &configured)
@@ -7436,9 +8219,29 @@ fn render_semantic_td_content(
     let id = format!("semantic-{}", semantic_spec_slug(group_key, configured));
     let fill_sections = semantic_fill_sections(kind, source_ir);
     let mut content = format!(
-        "---\nid: {id}\nsummary: Semantic coverage for {group_summary}\nfill_sections: [{fill_sections}]\n---\n\n# Semantic TD: {group_label}\n\n",
+        "---\nid: {id}\nsummary: Semantic coverage for {group_summary}\n",
         group_summary = yaml_safe(group_key)
     );
+    if let Some(capability_ref) =
+        semantic_capability_ref_for_group(project_root, configured, group_key)
+    {
+        content.push_str("capability_refs:\n");
+        content.push_str(&format!("  - id: {}\n", yaml_safe(&capability_ref.id)));
+        content.push_str("    role: primary\n");
+        if let Some(claim) = &capability_ref.claim {
+            content.push_str(&format!("    claim: {}\n", yaml_safe(claim)));
+        }
+        content.push_str("    coverage: partial\n");
+        content.push_str(&format!(
+            "    rationale: {}\n",
+            yaml_safe(&format!(
+                "Semantic takeover coverage for existing source group `{group_key}`."
+            ))
+        ));
+    }
+    content.push_str(&format!(
+        "fill_sections: [{fill_sections}]\n---\n\n# Semantic TD: {group_label}\n\n"
+    ));
 
     match kind {
         SemanticTdKind::Schema => {
@@ -7449,7 +8252,9 @@ fn render_semantic_td_content(
                 source_ir,
                 group_files,
             )?;
-            render_tests_semantic_section(&mut content, source_ir);
+            if has_source_tests(source_ir) {
+                render_tests_semantic_section(&mut content, source_ir);
+            }
         }
         SemanticTdKind::Config
         | SemanticTdKind::Manifest
@@ -7508,6 +8313,116 @@ fn render_semantic_td_content(
     Ok(content)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SemanticCapabilityRef {
+    id: String,
+    claim: Option<String>,
+}
+
+fn semantic_capability_ref_for_group(
+    project_root: &Path,
+    configured: &[ConfiguredScope],
+    group_key: &str,
+) -> Option<SemanticCapabilityRef> {
+    let document = semantic_capability_document_for_group(project_root, configured, group_key)?;
+    let capability_ids = document.capability_ids();
+    let mut candidates = semantic_capability_candidates(group_key)
+        .into_iter()
+        .filter(|id| capability_ids.contains(*id))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    for capability in &document.capabilities {
+        if !candidates.contains(&capability.id) {
+            candidates.push(capability.id.clone());
+        }
+    }
+
+    for id in candidates {
+        let Some(capability) = document
+            .capabilities
+            .iter()
+            .find(|capability| capability.id == id)
+        else {
+            continue;
+        };
+        if capability.status == crate::cli::capability::CapabilityStatus::Retired {
+            continue;
+        }
+        let claim = match &capability.verification_contract {
+            Some(contract) => Some(contract.claims.first()?.id.clone()),
+            None => None,
+        };
+        return Some(SemanticCapabilityRef {
+            id: capability.id.clone(),
+            claim,
+        });
+    }
+    None
+}
+
+fn semantic_capability_document_for_group(
+    project_root: &Path,
+    configured: &[ConfiguredScope],
+    group_key: &str,
+) -> Option<crate::cli::capability::CapabilityDocument> {
+    let scope = configured_scope_for_path(configured, group_key)?;
+    let cap_abs = if let Some(cap_path) = &scope.cap_path {
+        let path = Path::new(cap_path);
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            project_root.join(path)
+        }
+    } else {
+        let project = scope.project_name.as_deref()?;
+        crate::cli::capability::resolve_capability_path(project_root, project, None).ok()?
+    };
+    let body = fs::read_to_string(&cap_abs).ok()?;
+    crate::cli::capability::parse_capability_document(&body, &cap_abs).ok()
+}
+
+fn configured_scope_for_path<'a>(
+    configured: &'a [ConfiguredScope],
+    rel: &str,
+) -> Option<&'a ConfiguredScope> {
+    configured
+        .iter()
+        .filter_map(|scope| {
+            let prefix = scope_static_prefix(&scope.scope);
+            if prefix.is_empty() || !path_prefix_of(&prefix, rel) {
+                return None;
+            }
+            Some((prefix.len(), scope))
+        })
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, scope)| scope)
+}
+
+fn semantic_capability_candidates(group_key: &str) -> Vec<&'static str> {
+    let lower = group_key.to_ascii_lowercase();
+    let mut candidates = Vec::new();
+    if lower.contains("/k8s") || lower.contains("/operator") {
+        candidates.push("k8s-deployment");
+    }
+    if lower.contains("llm") || lower.contains("spec") {
+        candidates.push("agentic-integration");
+    }
+    if lower.contains("auth") || lower.contains("tls") {
+        candidates.push("security-auth");
+    }
+    if lower.contains("backup") || lower.contains("rdb") {
+        candidates.push("backup-restore");
+    }
+    if lower.contains("metrics") || lower.contains("observability") {
+        candidates.push("observability");
+    }
+    if lower.contains("bench") || lower.contains("perf") {
+        candidates.push("ops-operability");
+    }
+    candidates.push("search");
+    candidates
+}
+
 fn semantic_fill_sections(kind: SemanticTdKind, source_ir: &[SourceUnit]) -> String {
     let mut sections = if is_frontend_semantic_kind(kind) {
         frontend_section_kinds_for_source_ir(source_ir)
@@ -7528,9 +8443,6 @@ fn semantic_fill_sections(kind: SemanticTdKind, source_ir: &[SourceUnit]) -> Str
         )
         && has_source_tests(source_ir)
     {
-        sections.push("unit-test");
-    }
-    if !frontend_kind && kind == SemanticTdKind::Schema && !has_source_tests(source_ir) {
         sections.push("unit-test");
     }
     sections.push("changes");
@@ -7714,21 +8626,9 @@ fn render_schema_semantic_section(
 
 fn render_tests_semantic_section(content: &mut String, source_ir: &[SourceUnit]) {
     content.push_str("## Unit Test\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n---\nid: unit-test\ncoverage_kind: semantic\nstrategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives\nevidence:\n");
-    let test_units: Vec<_> = source_ir
-        .iter()
-        .filter(|unit| {
-            unit.path.split('/').any(|segment| {
-                segment == "tests" || segment == "test" || segment.starts_with("test_")
-            })
-        })
-        .collect();
-    if test_units.is_empty() {
-        content.push_str("  source_tests: []\n");
-    } else {
-        content.push_str("  source_tests:\n");
-        for unit in test_units {
-            content.push_str(&format!("    - path: {}\n", yaml_safe(&unit.path)));
-        }
+    content.push_str("  source_tests:\n");
+    for unit in source_test_units(source_ir) {
+        content.push_str(&format!("    - path: {}\n", yaml_safe(&unit.path)));
     }
     content.push_str("---\nrequirementDiagram\n\n");
     content.push_str("element UT_SOURCE_TESTS {\n  type: \"TestEvidence\"\n}\n");
@@ -7736,14 +8636,21 @@ fn render_tests_semantic_section(content: &mut String, source_ir: &[SourceUnit])
 }
 
 fn has_source_tests(source_ir: &[SourceUnit]) -> bool {
-    source_ir.iter().any(|unit| {
-        unit.frontend_node
-            .as_ref()
-            .is_some_and(|node| matches!(node.section_type.as_str(), "unit-test" | "tests"))
-            || unit.path.split('/').any(|segment| {
-                segment == "tests" || segment == "test" || segment.starts_with("test_")
-            })
-    })
+    !source_test_units(source_ir).is_empty()
+}
+
+fn source_test_units(source_ir: &[SourceUnit]) -> Vec<&SourceUnit> {
+    source_ir
+        .iter()
+        .filter(|unit| {
+            unit.frontend_node
+                .as_ref()
+                .is_some_and(|node| matches!(node.section_type.as_str(), "unit-test" | "tests"))
+                || unit.path.split('/').any(|segment| {
+                    segment == "tests" || segment == "test" || segment.starts_with("test_")
+                })
+        })
+        .collect()
 }
 
 fn render_frontend_semantic_section(
@@ -8119,11 +9026,17 @@ fn promote_generator_primitive(
     if is_frontend_promotable_file(target) {
         return promote_frontend_generator_primitive(project_root, inventory);
     }
+    if target.language == "python" {
+        return promote_python_generator_primitive(project_root, target, inventory);
+    }
     if target.language != "python" && !is_operations_language(&target.language) {
-        bail!(
-            "generator primitive promotion for '{}' is not executable yet; only Python and operations artifacts are supported by the current emitters",
-            action.target
-        );
+        return Ok(ActionOutcome {
+            changed_paths: Vec::new(),
+            message: format!(
+                "kept {} HANDWRITE; no deterministic generator primitive emitter exists yet",
+                action.target
+            ),
+        });
     }
 
     let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
@@ -8184,6 +9097,66 @@ fn promote_generator_primitive(
             "promoted {} source unit(s) in semantic group {} to CODEGEN",
             allowed_targets.len(),
             group_key
+        ),
+    })
+}
+
+fn promote_python_generator_primitive(
+    project_root: &Path,
+    target: &SourceFile,
+    inventory: &Inventory,
+) -> Result<ActionOutcome> {
+    let configured = read_config_workspace_scopes(project_root).unwrap_or_default();
+    let group_key = semantic_group_key(&target.rel);
+    let group_action = action(
+        StandardizeActionKind::SemanticGap,
+        &target.rel,
+        "cli",
+        "",
+        "refresh semantic TD before Python preserve-body promotion",
+        false,
+    );
+    let semantic_outcome =
+        create_semantic_td_for_gap(project_root, &group_action, inventory, &configured)?;
+    let mut changed_paths = semantic_outcome.changed_paths;
+    let mut promoted = 0usize;
+
+    for file in inventory
+        .files
+        .iter()
+        .filter(|file| file.markers.handwrite)
+        .filter(|file| file.language == "python")
+        .filter(|file| semantic_group_key(&file.rel) == group_key)
+    {
+        let content = fs::read_to_string(&file.abs)
+            .with_context(|| format!("failed to read {}", file.abs.display()))?;
+        let spec_rel = semantic_spec_rel_with_config(&file.rel, &configured);
+        let section =
+            if file.rel.split('/').any(|segment| {
+                segment == "tests" || segment == "test" || segment.starts_with("test_")
+            }) {
+                "unit-test"
+            } else {
+                "schema"
+            };
+        let spec_ref = format!("{spec_rel}#{section}");
+        let updated = render_codegen_owned_source(&file.abs, &content, &spec_ref);
+        if updated != content {
+            fs::write(&file.abs, updated)
+                .with_context(|| format!("failed to write {}", file.abs.display()))?;
+            changed_paths.push(PathBuf::from(&file.rel));
+            promoted += 1;
+        }
+    }
+
+    changed_paths.sort();
+    changed_paths.dedup();
+
+    Ok(ActionOutcome {
+        changed_paths,
+        message: format!(
+            "promoted {} Python source unit(s) in semantic group {} to CODEGEN-owned preserve-body output",
+            promoted, group_key
         ),
     })
 }
@@ -8381,14 +9354,25 @@ fn is_rust_mixed_source_promotable_file(file: &SourceFile) -> bool {
         && !is_rust_test_promotable_file(file)
 }
 
+fn has_executable_generator_promotion(file: &SourceFile) -> bool {
+    file.language == "python"
+        || is_operations_language(&file.language)
+        || is_frontend_promotable_file(file)
+        || is_rust_test_promotable_file(file)
+        || is_rust_mixed_source_promotable_file(file)
+        || is_rust_source_promotable_file(file)
+}
+
 fn codegen_replay_supported(file: &SourceFile) -> bool {
     if matches!(
         file.language.as_str(),
         "dockerfile"
             | "javascript"
             | "json"
+            | "llms"
             | "python"
             | "rust"
+            | "shell"
             | "stylesheet"
             | "toml"
             | "typescript"
@@ -8408,6 +9392,7 @@ fn codegen_replay_supported(file: &SourceFile) -> bool {
                 | "mjs"
                 | "py"
                 | "scss"
+                | "sh"
                 | "toml"
                 | "ts"
                 | "tsx"
@@ -8417,7 +9402,7 @@ fn codegen_replay_supported(file: &SourceFile) -> bool {
     ) || path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| matches!(name, ".dockerignore" | "Dockerfile"))
+        .is_some_and(|name| matches!(name, ".dockerignore" | "Dockerfile" | "llms.txt"))
 }
 
 fn render_codegen_owned_source(path: &Path, content: &str, spec_ref: &str) -> String {
@@ -9786,6 +10771,18 @@ mod tests {
         fs::write(path, content).unwrap();
     }
 
+    #[cfg(unix)]
+    fn make_executable(root: &Path, rel: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let path = root.join(rel);
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).unwrap();
+    }
+
+    #[cfg(not(unix))]
+    fn make_executable(_root: &Path, _rel: &str) {}
+
     fn write_traceability_config(root: &Path, workspace_scope: &str) {
         write(
             root,
@@ -10097,6 +11094,283 @@ changes:
     }
 
     #[test]
+    fn managed_inventory_includes_project_root_artifacts() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/Cargo.toml",
+            "[package]\nname = \"tool\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/src/main.rs",
+            "// <HANDWRITE gap=\"g\" tracker=\"#4158\" reason=\"fixture\">\nfn main() {}\n// </HANDWRITE>\n",
+        );
+        let llms = render_project_llms_txt(tmp.path(), "tool").unwrap();
+        write(tmp.path(), "projects/tool/llms.txt", &llms);
+        write(
+            tmp.path(),
+            "projects/tool/build.sh",
+            "# <HANDWRITE gap=\"project-root-build\" tracker=\"#4158\" reason=\"fixture\">\ncase \"${1:-}\" in debug) cargo build -p tool ;; release) cargo build --release -p tool ;; esac\n# </HANDWRITE>\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/install.sh",
+            "# <HANDWRITE gap=\"project-root-install\" tracker=\"#4158\" reason=\"fixture\">\ninstall -m 755 target/release/tool \"$HOME/.cargo/bin/tool\"\n# </HANDWRITE>\n",
+        );
+        make_executable(tmp.path(), "projects/tool/build.sh");
+        make_executable(tmp.path(), "projects/tool/install.sh");
+
+        let inventory = build_inventory(tmp.path(), &[], Some("tool"), false).unwrap();
+        let rels = inventory
+            .files
+            .iter()
+            .map(|file| file.rel.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(rels.contains("projects/tool/llms.txt"));
+        assert!(rels.contains("projects/tool/build.sh"));
+        assert!(rels.contains("projects/tool/install.sh"));
+        assert!(inventory.coverage.uncovered_files.is_empty());
+        assert_eq!(inventory.coverage.percent, 100.0);
+        assert!(project_root_artifact_blockers_at(tmp.path(), "tool")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn project_root_llms_generator_is_td_first() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+td_path = "projects/tool/tech-design"
+cap_path = "projects/tool/README.md"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+test_cmd = "cargo test -p tool"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/Cargo.toml",
+            "[package]\nname = \"tool\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n",
+        );
+
+        let llms = render_project_llms_txt(tmp.path(), "tool").unwrap();
+
+        let td_pos = llms.find("## Tech Design").unwrap();
+        let cap_pos = llms.find("## Capability Map").unwrap();
+        assert!(td_pos < cap_pos);
+        assert!(llms.contains("<!-- CODEGEN-BEGIN -->"));
+        assert!(llms.contains("[Tech Design](tech-design)"));
+        assert!(llms.contains("`aw td check projects/tool/tech-design`"));
+        assert!(llms.contains("`aw run --project tool`"));
+        assert!(llms.contains("`aw health --project tool`"));
+        assert!(llms.contains("`./build.sh debug`"));
+        assert!(llms.contains("`./build.sh release`"));
+        assert!(llms.contains("`cargo test -p tool`"));
+        assert!(!llms.contains("src/"));
+        assert!(!llms.contains("managed_percent"));
+        assert!(!llms.contains("open WI"));
+        assert!(!llms.contains("CB"));
+        assert!(!llms.contains("HANDWRITE"));
+
+        let llms_file = SourceFile {
+            rel: "projects/tool/llms.txt".into(),
+            abs: tmp.path().join("projects/tool/llms.txt"),
+            language: "llms".into(),
+            markers: FileMarkers {
+                codegen: true,
+                handwrite: false,
+            },
+            handwrite_gaps: vec![],
+        };
+        assert!(codegen_replay_supported(&llms_file));
+    }
+
+    #[test]
+    fn project_root_llms_action_generates_missing_artifact() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+test_cmd = "cargo test -p tool"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/Cargo.toml",
+            "[package]\nname = \"tool\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/src/main.rs",
+            "// <HANDWRITE gap=\"g\" tracker=\"#4158\" reason=\"fixture\">\nfn main() {}\n// </HANDWRITE>\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/build.sh",
+            "# <HANDWRITE gap=\"project-root-build\" tracker=\"#4158\" reason=\"fixture\">\ncase \"${1:-}\" in debug) cargo build -p tool ;; release) cargo build --release -p tool ;; esac\n# </HANDWRITE>\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/install.sh",
+            "# <HANDWRITE gap=\"project-root-install\" tracker=\"#4158\" reason=\"fixture\">\ninstall -m 755 target/release/tool \"$HOME/.cargo/bin/tool\"\n# </HANDWRITE>\n",
+        );
+        make_executable(tmp.path(), "projects/tool/build.sh");
+        make_executable(tmp.path(), "projects/tool/install.sh");
+
+        let inventory = build_inventory(tmp.path(), &[], Some("tool"), false).unwrap();
+        let action = choose_action(&inventory);
+
+        assert_eq!(action.kind, StandardizeActionKind::ProjectRootArtifact);
+        assert_eq!(action.target, "projects/tool/llms.txt");
+        assert_eq!(
+            action.command,
+            "aw standardize managed run --project tool --non-interactive --max-ticks 1"
+        );
+
+        let outcome = execute_action(tmp.path(), &action, &inventory).unwrap();
+        assert_eq!(outcome.changed_paths.len(), 1);
+        let generated = fs::read_to_string(tmp.path().join("projects/tool/llms.txt")).unwrap();
+        assert!(generated.contains("<!-- CODEGEN-BEGIN -->"));
+        assert!(generated.contains("## Tech Design"));
+        assert!(project_root_artifact_blockers_at(tmp.path(), "tool")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn project_root_llms_blocker_rejects_handwrite_and_stale_content() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "python"
+test_cmd = "true"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/llms.txt",
+            "<!-- <HANDWRITE gap=\"project-root-llms\" tracker=\"#4158\" reason=\"fixture\"> -->\n# tool\n<!-- </HANDWRITE> -->\n",
+        );
+
+        let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
+        assert!(blockers
+            .iter()
+            .any(|blocker| blocker.contains("must be generated")));
+
+        let mut generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
+        generated.push_str("\n");
+        write(tmp.path(), "projects/tool/llms.txt", &generated);
+        let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
+        assert!(blockers.iter().any(|blocker| blocker.contains("is stale")));
+
+        let generated = render_project_llms_txt(tmp.path(), "tool").unwrap();
+        write(tmp.path(), "projects/tool/llms.txt", &generated);
+        assert!(project_root_artifact_blockers_at(tmp.path(), "tool")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn rust_binary_project_missing_root_artifacts_blocks_managed_coverage() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "tool"
+path = "projects/tool"
+label = "project:tool"
+
+[[projects.workspaces]]
+name = "tool"
+paths = ["projects/tool/**"]
+target = "rust"
+"#,
+        );
+        write(
+            tmp.path(),
+            "projects/tool/Cargo.toml",
+            "[package]\nname = \"tool\"\n\n[[bin]]\nname = \"tool\"\npath = \"src/main.rs\"\n",
+        );
+        write(
+            tmp.path(),
+            "projects/tool/src/main.rs",
+            "// <HANDWRITE gap=\"g\" tracker=\"#4158\" reason=\"fixture\">\nfn main() {}\n// </HANDWRITE>\n",
+        );
+
+        let inventory = build_inventory(tmp.path(), &[], Some("tool"), false).unwrap();
+
+        assert_eq!(inventory.coverage.total_files, 4);
+        assert_eq!(inventory.coverage.managed_files, 1);
+        assert_eq!(
+            inventory.coverage.uncovered_files,
+            vec![
+                "projects/tool/build.sh".to_string(),
+                "projects/tool/install.sh".to_string(),
+                "projects/tool/llms.txt".to_string(),
+            ]
+        );
+        let blockers = project_root_artifact_blockers_at(tmp.path(), "tool").unwrap();
+        assert!(blockers
+            .iter()
+            .any(|blocker| blocker.contains("projects/tool/build.sh")));
+        assert!(blockers
+            .iter()
+            .any(|blocker| blocker.contains("projects/tool/install.sh")));
+        assert!(blockers
+            .iter()
+            .any(|blocker| blocker.contains("projects/tool/llms.txt")));
+    }
+
+    #[test]
     fn deployment_facet_detection_classifies_kustomize_and_ml_constraints() {
         let mut facets = BTreeSet::new();
         let mut unsupported = BTreeSet::new();
@@ -10118,6 +11392,12 @@ changes:
             &mut facets,
             &mut unsupported,
         );
+        detect_deployment_facets(
+            "backend/kustomize/components/observability/kustomization.yaml",
+            "apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nmetadata:\n  name: observability\n",
+            &mut facets,
+            &mut unsupported,
+        );
 
         let facet_names: BTreeSet<_> = facets
             .iter()
@@ -10127,6 +11407,7 @@ changes:
         assert!(facet_names.contains("deployment_unit"));
         assert!(facet_names.contains("gpu_scheduling"));
         assert!(facet_names.contains("kustomize_name_transformer"));
+        assert!(facet_names.contains("kustomize_component"));
         assert!(unsupported.is_empty());
     }
 
@@ -10192,7 +11473,7 @@ paths = ["projects/jet/**"]
 
         let err = resolve_scopes(tmp.path(), &[], None, false).unwrap_err();
 
-        assert!(err.to_string().contains("requires PROJECT"));
+        assert!(err.to_string().contains("requires --project <project>"));
         assert!(err.to_string().contains("agentic-workflow"));
         assert!(err.to_string().contains("jet"));
     }
@@ -10293,6 +11574,7 @@ paths = ["projects/cap/**"]
             project_path: Some("projects/cap".into()),
             scope: "projects/cap/**".into(),
             td_path: None,
+            cap_path: None,
         }];
 
         let spec_rel = semantic_spec_rel_with_config("projects/cap/src/cli.rs", &configured);
@@ -10397,6 +11679,7 @@ test_cmd = "cargo test -p jet"
                 handwrite_gaps: vec![],
             }],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
 
@@ -10436,6 +11719,7 @@ test_cmd = "cargo test -p jet"
                 target: "src/generated.rs".into(),
                 reason: "CODEGEN block differs after replay".into(),
             }],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
 
@@ -10482,6 +11766,7 @@ test_cmd = "cargo test -p jet"
                 },
             ],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
         let action = choose_action(&inv);
@@ -10540,6 +11825,7 @@ test_cmd = "cargo test -p jet"
                 },
             ],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
 
@@ -10554,6 +11840,314 @@ test_cmd = "cargo test -p jet"
 
         let action = choose_regenerable_action(Path::new("."), &inv, &semantic);
         assert_eq!(action.kind, StandardizeActionKind::PromoteHandwrite);
+    }
+
+    #[test]
+    fn regenerability_rejects_codegen_marker_backed_by_hand_written_td_change() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "src/lib.rs",
+            "// SPEC-MANAGED: .aw/tech-design/projects/demo/semantic/demo-src.md#schema\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
+        );
+        write(
+            tmp.path(),
+            ".aw/tech-design/projects/demo/semantic/demo-src.md",
+            r#"---
+id: demo-src
+---
+
+# Demo Source
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: src/lib.rs
+    action: modify
+    section: schema
+    impl_mode: hand-written
+```
+"#,
+        );
+        let inv = Inventory {
+            coverage: StandardizationCoverage {
+                scope: vec!["src/**".into()],
+                total_files: 1,
+                managed_files: 1,
+                percent: 100.0,
+                by_language: BTreeMap::new(),
+                by_marker: MarkerCounts {
+                    codegen: 1,
+                    handwrite: 0,
+                },
+                uncovered_files: vec![],
+            },
+            files: vec![SourceFile {
+                rel: "src/lib.rs".into(),
+                abs: tmp.path().join("src/lib.rs"),
+                language: "rust".into(),
+                markers: FileMarkers {
+                    codegen: true,
+                    ..Default::default()
+                },
+                handwrite_gaps: vec![],
+            }],
+            rust_findings: vec![],
+            project_root_artifact_findings: vec![],
+            spec_violation: None,
+        };
+
+        let semantic = empty_semantic(inv.coverage.scope.clone());
+        let coverage =
+            build_regenerability_coverage_with_options(tmp.path(), &inv, &semantic, None, false)
+                .unwrap();
+
+        assert_eq!(coverage.codegen_files, 1);
+        assert_eq!(coverage.fully_codegen_files, 0);
+        assert_eq!(
+            coverage.non_replayable_codegen_files,
+            vec!["src/lib.rs".to_string()]
+        );
+        assert_eq!(coverage.gap_files, vec!["src/lib.rs"]);
+        assert_eq!(coverage.percent, 0.0);
+    }
+
+    #[test]
+    fn regenerability_rejects_source_template_snapshot_codegen() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "src/lib.rs",
+            "// SPEC-MANAGED: .aw/tech-design/projects/demo/semantic/demo-src.md#source\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
+        );
+        write(
+            tmp.path(),
+            ".aw/tech-design/projects/demo/semantic/demo-src.md",
+            r#"---
+id: demo-src
+---
+
+# Demo Source
+
+## Source
+<!-- type: source lang: rust -->
+
+```rust
+pub fn demo() {}
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: src/lib.rs
+    action: modify
+    section: source
+    impl_mode: codegen
+```
+"#,
+        );
+        let inv = Inventory {
+            coverage: StandardizationCoverage {
+                scope: vec!["src/**".into()],
+                total_files: 1,
+                managed_files: 1,
+                percent: 100.0,
+                by_language: BTreeMap::new(),
+                by_marker: MarkerCounts {
+                    codegen: 1,
+                    handwrite: 0,
+                },
+                uncovered_files: vec![],
+            },
+            files: vec![SourceFile {
+                rel: "src/lib.rs".into(),
+                abs: tmp.path().join("src/lib.rs"),
+                language: "rust".into(),
+                markers: FileMarkers {
+                    codegen: true,
+                    ..Default::default()
+                },
+                handwrite_gaps: vec![],
+            }],
+            rust_findings: vec![],
+            project_root_artifact_findings: vec![],
+            spec_violation: None,
+        };
+
+        let semantic = empty_semantic(inv.coverage.scope.clone());
+        let coverage =
+            build_regenerability_coverage_with_options(tmp.path(), &inv, &semantic, None, false)
+                .unwrap();
+
+        assert_eq!(coverage.codegen_files, 1);
+        assert_eq!(coverage.fully_codegen_files, 0);
+        assert_eq!(
+            coverage.snapshot_codegen_files,
+            vec!["src/lib.rs".to_string()]
+        );
+        assert_eq!(coverage.gap_files, vec!["src/lib.rs"]);
+        assert_eq!(coverage.percent, 0.0);
+    }
+
+    #[test]
+    fn regenerability_counts_rust_source_unit_as_lossless_regenerable_codegen() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "src/lib.rs",
+            "// SPEC-MANAGED: .aw/tech-design/projects/demo/semantic/demo-src.md#source\n// CODEGEN-BEGIN\npub fn demo() {}\n// CODEGEN-END\n",
+        );
+        write(
+            tmp.path(),
+            ".aw/tech-design/projects/demo/semantic/demo-src.md",
+            r#"---
+id: demo-src
+---
+
+# Demo Source
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+```rust
+pub fn demo() {}
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: src/lib.rs
+    action: modify
+    section: source
+    impl_mode: codegen
+```
+"#,
+        );
+        let inv = Inventory {
+            coverage: StandardizationCoverage {
+                scope: vec!["src/**".into()],
+                total_files: 1,
+                managed_files: 1,
+                percent: 100.0,
+                by_language: BTreeMap::new(),
+                by_marker: MarkerCounts {
+                    codegen: 1,
+                    handwrite: 0,
+                },
+                uncovered_files: vec![],
+            },
+            files: vec![SourceFile {
+                rel: "src/lib.rs".into(),
+                abs: tmp.path().join("src/lib.rs"),
+                language: "rust".into(),
+                markers: FileMarkers {
+                    codegen: true,
+                    ..Default::default()
+                },
+                handwrite_gaps: vec![],
+            }],
+            rust_findings: vec![],
+            project_root_artifact_findings: vec![],
+            spec_violation: None,
+        };
+
+        let semantic = empty_semantic(inv.coverage.scope.clone());
+        let coverage =
+            build_regenerability_coverage_with_options(tmp.path(), &inv, &semantic, None, false)
+                .unwrap();
+
+        assert_eq!(coverage.codegen_files, 1);
+        assert_eq!(coverage.fully_codegen_files, 1);
+        assert!(coverage.snapshot_codegen_files.is_empty());
+        assert!(coverage.gap_files.is_empty());
+        assert_eq!(coverage.percent, 100.0);
+    }
+
+    #[test]
+    fn regenerability_counts_text_source_unit_as_td_owned_codegen() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "build.sh",
+            "# SPEC-MANAGED: .aw/tech-design/projects/demo/semantic/demo-build.md#text-source-unit\n# CODEGEN-BEGIN\n#!/usr/bin/env bash\nset -euo pipefail\n# CODEGEN-END\n",
+        );
+        write(
+            tmp.path(),
+            ".aw/tech-design/projects/demo/semantic/demo-build.md",
+            r#"---
+id: demo-build
+---
+
+# Demo Build
+
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+coverage_kind: semantic
+changes:
+  - path: build.sh
+    action: modify
+    section: text-source-unit
+    impl_mode: codegen
+```
+"#,
+        );
+        let inv = Inventory {
+            coverage: StandardizationCoverage {
+                scope: vec!["**".into()],
+                total_files: 1,
+                managed_files: 1,
+                percent: 100.0,
+                by_language: BTreeMap::new(),
+                by_marker: MarkerCounts {
+                    codegen: 1,
+                    handwrite: 0,
+                },
+                uncovered_files: vec![],
+            },
+            files: vec![SourceFile {
+                rel: "build.sh".into(),
+                abs: tmp.path().join("build.sh"),
+                language: "shell".into(),
+                markers: FileMarkers {
+                    codegen: true,
+                    ..Default::default()
+                },
+                handwrite_gaps: vec![],
+            }],
+            rust_findings: vec![],
+            project_root_artifact_findings: vec![],
+            spec_violation: None,
+        };
+
+        let semantic = empty_semantic(inv.coverage.scope.clone());
+        let coverage =
+            build_regenerability_coverage_with_options(tmp.path(), &inv, &semantic, None, false)
+                .unwrap();
+
+        assert_eq!(coverage.codegen_files, 1);
+        assert_eq!(coverage.fully_codegen_files, 1);
+        assert!(coverage.snapshot_codegen_files.is_empty());
+        assert!(coverage.gap_files.is_empty());
+        assert_eq!(coverage.percent, 100.0);
     }
 
     #[test]
@@ -10582,6 +12176,7 @@ test_cmd = "cargo test -p jet"
                 handwrite_gaps: vec![],
             }],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
 
@@ -10623,6 +12218,7 @@ test_cmd = "cargo test -p jet"
                 handwrite_gaps: vec![],
             }],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
         let mut semantic = empty_semantic(inv.coverage.scope.clone());
@@ -10731,6 +12327,45 @@ test_cmd = "cargo test -p jet"
     }
 
     #[test]
+    fn semantic_coverage_excludes_aw_ec_generated_wrappers() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "src/app.rs",
+            "// SPEC-MANAGED: .aw/tech-design/features/app-api.md#changes\n// CODEGEN-BEGIN\npub fn handle() -> i32 { 1 }\n// CODEGEN-END\n",
+        );
+        write(
+            tmp.path(),
+            "tests/behavior_app_contract.rs",
+            "// SPEC-MANAGED: .aw/tech-design/features/external-contracts.md#app-contract\n// CODEGEN-BEGIN\n// AW-EC-BEGIN\n// @ec app-contract\n#[test]\n#[ignore = \"generated EC wrapper\"]\nfn app_contract() {}\n// AW-EC-END\n// CODEGEN-END\n",
+        );
+        write(
+            tmp.path(),
+            ".aw/tech-design/features/app-api.md",
+            "---\nid: app-api\nfill_sections: [changes]\n---\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\ncoverage_kind: semantic\nchanges:\n  - path: src/app.rs\n    action: modify\n    impl_mode: generated\n```\n",
+        );
+
+        let inventory = build_inventory(tmp.path(), &["**".into()], None, false).unwrap();
+        assert_eq!(inventory.files.len(), 2);
+
+        let coverage = build_semantic_coverage(tmp.path(), &inventory).unwrap();
+
+        assert_eq!(coverage.total_files, 1);
+        assert_eq!(coverage.source_units, 1);
+        assert_eq!(coverage.semantically_covered_files, 1);
+        assert_eq!(coverage.percent, 100.0);
+        assert!(coverage.uncovered_files.is_empty());
+        assert!(coverage
+            .coverage_map
+            .iter()
+            .all(|entry| entry.source_unit != "tests/behavior_app_contract.rs"));
+        assert!(coverage
+            .source_ir
+            .iter()
+            .all(|unit| unit.path != "tests/behavior_app_contract.rs"));
+    }
+
+    #[test]
     fn semantic_coverage_prioritizes_missing_td_before_generator_gap() {
         let tmp = TempDir::new().unwrap();
         write(
@@ -10826,17 +12461,22 @@ test_cmd = "cargo test -p jet"
         let tmp = TempDir::new().unwrap();
         write_traceability_config(tmp.path(), "src/**");
         write(tmp.path(), "src/app.py", "def handle():\n    return 1\n");
-        write(tmp.path(), "README.md", "# demo\n\nGeneral product docs only.\n");
+        write(
+            tmp.path(),
+            "README.md",
+            "# demo\n\nGeneral product docs only.\n",
+        );
 
         let coverage = traceability_coverage_for(tmp.path());
 
         let blocker = coverage.next_gap.as_ref().unwrap();
         assert_eq!(coverage.blocker_count, 1);
         assert_eq!(coverage.traceability_percent, 0.0);
-        assert_eq!(blocker.kind, TraceabilityBlockerKind::TdInvalidCapabilityRef);
-        assert!(blocker
-            .reason
-            .contains("capability document parse failed"));
+        assert_eq!(
+            blocker.kind,
+            TraceabilityBlockerKind::TdInvalidCapabilityRef
+        );
+        assert!(blocker.reason.contains("capability document parse failed"));
         assert!(blocker.reason.contains("no capability sections found"));
     }
 
@@ -11019,7 +12659,7 @@ command_refs:
             .any(|option| option.id == "delete_command"));
         assert_eq!(
             envelope.invoke.unwrap().command,
-            "aw standardize traceability next demo"
+            "aw standardize traceability next --project demo"
         );
         assert!(envelope
             .agent_prompt
@@ -11055,7 +12695,7 @@ command_refs:
         assert!(summary.get("agent_prompt").is_none());
         assert_eq!(
             summary["next_action"]["command"].as_str(),
-            Some("aw standardize traceability report demo")
+            Some("aw standardize traceability report --project demo")
         );
         assert_eq!(summary["schema_version"].as_str(), Some("aw.cli.v1"));
         assert_eq!(summary["status"].as_str(), Some("blocked"));
@@ -11063,11 +12703,11 @@ command_refs:
         assert_eq!(summary["next"]["kind"].as_str(), Some("hitl"));
         assert_eq!(
             summary["next"]["command"].as_str(),
-            Some("aw standardize traceability next demo")
+            Some("aw standardize traceability next --project demo")
         );
         assert_eq!(
             summary["invoke"]["command"].as_str(),
-            Some("aw standardize traceability next demo")
+            Some("aw standardize traceability next --project demo")
         );
     }
 
@@ -11102,7 +12742,7 @@ command_refs:
         write(
             tmp.path(),
             "AGENTS.md",
-            "Use `aw capability report demo` for capability checks.\n",
+            "Use `aw capability report --project demo` for capability checks.\n",
         );
         write(tmp.path(), "src/app.py", source_referencing_demo_td());
         write(
@@ -11269,6 +12909,46 @@ changes: []
     }
 
     #[test]
+    fn traceability_e2e_test_section_is_owned_by_ec_gate() {
+        let tmp = TempDir::new().unwrap();
+        write_traceability_config(tmp.path(), "docs/**");
+        write_traceability_readme(tmp.path());
+        write(tmp.path(), "docs/note.txt", "not a source file\n");
+        write(
+            tmp.path(),
+            ".aw/tech-design/demo/external-contracts.md",
+            r#"---
+id: demo-external-contracts
+capability_refs:
+  - id: demo-capability
+    role: primary
+    gap: demo-closure
+    claim: demo-closure
+    coverage: full
+---
+
+# Demo EC TD
+
+## Demo Contract
+<!-- type: e2e-test lang: yaml -->
+
+```yaml
+e2e_tests:
+  - id: demo-contract
+    command: cargo test -p demo demo_contract
+```
+"#,
+        );
+
+        let coverage = traceability_coverage_for(tmp.path());
+
+        assert!(!coverage.blockers.iter().any(|blocker| {
+            blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge
+                && blocker.source.as_deref() == Some("section:e2e-test")
+        }));
+    }
+
+    #[test]
     fn traceability_change_missing_impl_mode_fails() {
         let tmp = TempDir::new().unwrap();
         write_traceability_config(tmp.path(), "docs/**");
@@ -11366,6 +13046,112 @@ changes:
         assert!(!coverage.blockers.iter().any(|blocker| {
             blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge
                 && blocker.source.as_deref() == Some("section:source")
+        }));
+    }
+
+    #[test]
+    fn traceability_accepts_rust_source_unit_change_edge() {
+        let tmp = TempDir::new().unwrap();
+        write_traceability_config(tmp.path(), "docs/**");
+        write_traceability_readme(tmp.path());
+        write(tmp.path(), "docs/note.txt", "not a source file\n");
+        write(
+            tmp.path(),
+            ".aw/tech-design/demo/app.md",
+            r#"---
+id: demo-td
+capability_refs:
+  - id: demo-capability
+    role: primary
+    gap: demo-closure
+    claim: demo-closure
+    coverage: full
+---
+
+# Demo TD
+
+## Source
+<!-- type: rust-source-unit lang: rust -->
+
+```rust
+pub fn demo() {}
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: src/app.rs
+    action: modify
+    section: rust-source-unit
+    impl_mode: codegen
+```
+"#,
+        );
+
+        let coverage = traceability_coverage_for(tmp.path());
+
+        assert!(!coverage.blockers.iter().any(|blocker| {
+            blocker.kind == TraceabilityBlockerKind::TdChangeInvalidSection
+                && blocker.source.as_deref() == Some("changes[0]:src/app.rs")
+        }));
+        assert!(!coverage.blockers.iter().any(|blocker| {
+            blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge
+                && blocker.source.as_deref() == Some("section:rust-source-unit")
+        }));
+    }
+
+    #[test]
+    fn traceability_accepts_text_source_unit_change_edge() {
+        let tmp = TempDir::new().unwrap();
+        write_traceability_config(tmp.path(), "docs/**");
+        write_traceability_readme(tmp.path());
+        write(tmp.path(), "docs/note.txt", "not a source file\n");
+        write(
+            tmp.path(),
+            ".aw/tech-design/demo/app.md",
+            r#"---
+id: demo-td
+capability_refs:
+  - id: demo-capability
+    role: primary
+    gap: demo-closure
+    claim: demo-closure
+    coverage: full
+---
+
+# Demo TD
+
+## Source
+<!-- type: text-source-unit lang: bash -->
+
+```bash
+#!/usr/bin/env bash
+```
+
+## Changes
+<!-- type: changes lang: yaml -->
+
+```yaml
+changes:
+  - path: build.sh
+    action: modify
+    section: text-source-unit
+    impl_mode: codegen
+```
+"#,
+        );
+
+        let coverage = traceability_coverage_for(tmp.path());
+
+        assert!(!coverage.blockers.iter().any(|blocker| {
+            blocker.kind == TraceabilityBlockerKind::TdChangeInvalidSection
+                && blocker.source.as_deref() == Some("changes[0]:build.sh")
+        }));
+        assert!(!coverage.blockers.iter().any(|blocker| {
+            blocker.kind == TraceabilityBlockerKind::TdSectionNoImplementationEdge
+                && blocker.source.as_deref() == Some("section:text-source-unit")
         }));
     }
 
@@ -11770,6 +13556,7 @@ target = "python"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/backend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -11799,9 +13586,9 @@ target = "python"
         let content = fs::read_to_string(spec).unwrap();
         assert!(content.contains("summary: Semantic coverage"));
         assert!(content.contains("## Schema"));
-        assert!(content.contains("## Unit Test"));
+        assert!(!content.contains("## Unit Test"));
         assert!(!content.contains("## Source IR"));
-        assert!(content.contains("fill_sections: [schema, unit-test, changes]"));
+        assert!(content.contains("fill_sections: [schema, changes]"));
         assert!(content.contains("api_models.py"));
         assert!(content.contains("services.py"));
         assert!(content.contains("source_evidence_node:"));
@@ -11840,6 +13627,237 @@ target = "python"
             "semantic TD changes should be intent-only for existing source, even when the file is CODEGEN-owned:\n{}",
             content
         );
+    }
+
+    #[test]
+    fn semantic_changes_do_not_include_unit_test_metadata_edge_for_schema_tds() {
+        let file = SourceFile {
+            rel: "projects/lumen/build.sh".into(),
+            abs: PathBuf::from("projects/lumen/build.sh"),
+            language: "shell".into(),
+            markers: FileMarkers {
+                codegen: false,
+                handwrite: true,
+            },
+            handwrite_gaps: Vec::new(),
+        };
+
+        let mut content = String::new();
+        render_changes_section(&mut content, SemanticTdKind::Schema, &[&file]);
+
+        assert!(content.contains("section: schema"));
+        assert!(!content.contains("section: unit-test"));
+        assert!(!content.contains("Traceability metadata edge for the unit-test section."));
+    }
+
+    #[test]
+    fn semantic_td_renderer_attaches_project_capability_ref() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "fixture_platform"
+path = "examples/fixture_platform"
+td_path = "examples/fixture_platform/tech_design"
+cap_path = "README.md"
+
+[[projects.workspaces]]
+name = "backend"
+paths = ["examples/fixture_platform/backend/**"]
+target = "python"
+"#,
+        );
+        write_traceability_readme(tmp.path());
+        write(
+            tmp.path(),
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "print('load')\n",
+        );
+        let configured = read_config_workspace_scopes(tmp.path()).unwrap();
+        let inventory = build_inventory(
+            tmp.path(),
+            &["examples/fixture_platform/backend/**".into()],
+            None,
+            false,
+        )
+        .unwrap();
+        let action = action(
+            StandardizeActionKind::SemanticGap,
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "cli",
+            "",
+            "",
+            false,
+        );
+
+        create_semantic_td_for_gap(tmp.path(), &action, &inventory, &configured).unwrap();
+
+        let spec_rel = semantic_spec_rel_with_config(
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            &configured,
+        );
+        let content = fs::read_to_string(tmp.path().join(spec_rel)).unwrap();
+        assert!(content.contains("capability_refs:"));
+        assert!(content.contains("id: \"demo-capability\""));
+        assert!(content.contains("role: primary"));
+        assert!(content.contains("coverage: partial"));
+
+        let cap_path = tmp.path().join("README.md");
+        let cap_body = fs::read_to_string(&cap_path).unwrap();
+        let document =
+            crate::cli::capability::parse_capability_document(&cap_body, &cap_path).unwrap();
+        let (_, refs, findings) =
+            crate::cli::capability::validate_td_capability_refs_for_content(&content, &document)
+                .unwrap();
+        assert_eq!(refs.len(), 1);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn semantic_coverage_flags_missing_generated_capability_ref_for_refresh() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "fixture_platform"
+path = "examples/fixture_platform"
+td_path = "examples/fixture_platform/tech_design"
+cap_path = "README.md"
+
+[[projects.workspaces]]
+name = "backend"
+paths = ["examples/fixture_platform/backend/**"]
+target = "python"
+"#,
+        );
+        write_traceability_readme(tmp.path());
+        write(
+            tmp.path(),
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "print('load')\n",
+        );
+        write(
+            tmp.path(),
+            "examples/fixture_platform/tech_design/semantic/backend-scripts.md",
+            "---\nid: semantic-backend-scripts\nfill_sections: [schema, unit-test, changes]\n---\n\n## Schema\n<!-- type: schema lang: yaml -->\n\n```yaml\nsemantic_domain:\n  coverage_kind: semantic\n  evidence:\n    source_units:\n      - path: \"examples/fixture_platform/backend/scripts/load_fixture.py\"\n        language: python\n        source_evidence_node:\n          layer: backend\n          ecosystem: python\n          role: source\n          section_type: schema\n          domain: examples/fixture_platform/backend/scripts\n```\n\n## Unit Test\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n---\nid: unit-test\n---\nrequirementDiagram\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\ncoverage_kind: semantic\nchanges:\n  - path: \"examples/fixture_platform/backend/scripts/load_fixture.py\"\n    action: modify\n    section: schema\n    impl_mode: hand-written\n  - action: annotate\n    section: unit-test\n    impl_mode: hand-written\n```\n",
+        );
+        let inventory = build_inventory(
+            tmp.path(),
+            &["examples/fixture_platform/backend/**".into()],
+            None,
+            false,
+        )
+        .unwrap();
+
+        let coverage = build_semantic_coverage(tmp.path(), &inventory).unwrap();
+
+        assert!(coverage.generator_primitive_gaps.iter().any(|gap| {
+            gap.target == "examples/fixture_platform/backend/scripts/load_fixture.py"
+                && gap.primitive == "semantic_td_legacy"
+        }));
+    }
+
+    #[test]
+    fn source_evidence_node_falls_back_for_unclassified_source_languages() {
+        let file = SourceFile {
+            rel: "projects/lumen/build.sh".into(),
+            abs: PathBuf::from("projects/lumen/build.sh"),
+            language: "shell".into(),
+            markers: FileMarkers::default(),
+            handwrite_gaps: Vec::new(),
+        };
+
+        let node = build_source_evidence_node(&file, &[], &["source_unit".to_string()], None)
+            .expect("all in-scope source units should have evidence nodes");
+
+        assert_eq!(node.path, "projects/lumen/build.sh");
+        assert_eq!(node.layer, "source");
+        assert_eq!(node.ecosystem, "shell");
+        assert_eq!(node.section_type, "schema");
+    }
+
+    #[test]
+    fn semantic_coverage_does_not_queue_unsupported_handwrite_promotion() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            "projects/lumen/build.sh",
+            "# <HANDWRITE gap=\"standardize:shell\" tracker=\"shell\" reason=\"r\">\n#!/usr/bin/env bash\ncargo build -p lumen\n# </HANDWRITE>\n",
+        );
+        write(
+            tmp.path(),
+            "projects/lumen/tech-design/semantic/lumen-projects-lumen.md",
+            "---\nid: semantic-lumen-projects-lumen\nfill_sections: [schema, unit-test, changes]\n---\n\n## Schema\n<!-- type: schema lang: yaml -->\n\n```yaml\nsemantic_domain:\n  coverage_kind: semantic\n  evidence:\n    source_units:\n      - path: \"projects/lumen/build.sh\"\n        language: shell\n        source_evidence_node:\n          layer: source\n          ecosystem: shell\n          role: source\n          section_type: schema\n          domain: projects/lumen\n```\n\n## Unit Test\n<!-- type: unit-test lang: mermaid -->\n\n```mermaid\n---\nid: unit-test\n---\nrequirementDiagram\n```\n\n## Changes\n<!-- type: changes lang: yaml -->\n\n```yaml\ncoverage_kind: semantic\nchanges:\n  - path: \"projects/lumen/build.sh\"\n    action: modify\n    section: schema\n    impl_mode: hand-written\n  - action: annotate\n    section: unit-test\n    impl_mode: hand-written\n```\n",
+        );
+
+        let inventory = build_inventory(tmp.path(), &["projects/lumen/**".into()], None, false)
+            .expect("inventory should build");
+        let coverage =
+            build_semantic_coverage(tmp.path(), &inventory).expect("semantic coverage builds");
+
+        assert_eq!(coverage.percent, 100.0);
+        assert!(coverage
+            .generator_primitive_gaps
+            .iter()
+            .all(|gap| { gap.target != "projects/lumen/build.sh" }));
+    }
+
+    #[test]
+    fn regenerable_promotes_python_source_to_codegen_preserve_body() {
+        let tmp = TempDir::new().unwrap();
+        write(
+            tmp.path(),
+            ".aw/config.toml",
+            r#"
+[[projects]]
+name = "fixture_platform"
+path = "examples/fixture_platform"
+td_path = "examples/fixture_platform/tech_design"
+"#,
+        );
+        write(
+            tmp.path(),
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "# <HANDWRITE gap=\"standardize:python\" tracker=\"py\" reason=\"r\">\n#!/usr/bin/env python3\nprint('load')\n# </HANDWRITE>\n",
+        );
+        let inventory = build_inventory(
+            tmp.path(),
+            &["examples/fixture_platform/backend/**".into()],
+            None,
+            false,
+        )
+        .unwrap();
+        let action = action(
+            StandardizeActionKind::GeneratorPrimitiveGap,
+            "examples/fixture_platform/backend/scripts/load_fixture.py",
+            "cli",
+            "",
+            "",
+            false,
+        );
+
+        let outcome = promote_generator_primitive(tmp.path(), &action, &inventory)
+            .expect("Python source should promote");
+
+        assert!(outcome.changed_paths.iter().any(|path| {
+            path == Path::new("examples/fixture_platform/backend/scripts/load_fixture.py")
+        }));
+        let source = fs::read_to_string(
+            tmp.path()
+                .join("examples/fixture_platform/backend/scripts/load_fixture.py"),
+        )
+        .unwrap();
+        assert!(source.contains("# SPEC-MANAGED: "));
+        assert!(source.contains("/semantic/"));
+        assert!(source.contains("#schema"));
+        assert!(source.contains("# CODEGEN-BEGIN"));
+        assert!(source.contains("#!/usr/bin/env python3"));
+        assert!(source.contains("print('load')"));
+        assert!(!source.contains("HANDWRITE"));
     }
 
     #[test]
@@ -11903,6 +13921,7 @@ target = "typescript"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/frontend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -12120,6 +14139,7 @@ target = "typescript"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/frontend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -12443,6 +14463,7 @@ target = "rust"
                 handwrite_gaps: vec![],
             }],
             rust_findings: vec![],
+            project_root_artifact_findings: vec![],
             spec_violation: None,
         };
         let mut semantic = empty_semantic(inv.coverage.scope.clone());
@@ -12463,7 +14484,7 @@ target = "rust"
         assert_eq!(action.kind, StandardizeActionKind::GeneratorPrimitiveGap);
         assert_eq!(action.executor, "cli");
         assert!(!action.requires_hitl);
-        assert!(action.command.contains("aw generator check demo"));
+        assert!(action.command.contains("aw generator check --project demo"));
     }
 
     #[test]
@@ -12635,6 +14656,7 @@ target = "rust"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/backend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -12703,6 +14725,7 @@ target = "python"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/backend/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let inventory = build_inventory(
             tmp.path(),
@@ -12732,9 +14755,9 @@ target = "python"
             .path()
             .join("examples/fixture_platform/tech_design/semantic/backend-workspace-folder.md");
         let content = fs::read_to_string(&spec).unwrap();
-        assert!(content.contains("fill_sections: [schema, unit-test, changes]"));
+        assert!(content.contains("fill_sections: [schema, changes]"));
         assert!(content.contains("## Schema"));
-        assert!(content.contains("## Unit Test"));
+        assert!(!content.contains("## Unit Test"));
         assert!(!content.contains("type: semantic"));
         assert!(!content.contains("## Source IR"));
     }
@@ -12795,6 +14818,7 @@ target = "python"
             project_path: Some("examples/fixture_platform".into()),
             scope: "examples/fixture_platform/**".into(),
             td_path: Some("examples/fixture_platform/tech_design".into()),
+            cap_path: None,
         }];
         let action = action(
             StandardizeActionKind::ClaimCode,

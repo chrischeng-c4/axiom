@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPEC-MANAGED: projects/rig/tech-design/semantic/rig-build-script.md#text-source-unit
+# CODEGEN-BEGIN
 # Project-root build dispatch contract (aw:build): debug installs the local
 # binary; release bumps the patch version, installs, commits, and tags.
 set -euo pipefail
@@ -93,3 +95,4 @@ git tag -a "$TAG" -m "Release ${TAG}"
 
 echo ""
 echo "Build complete. rig ${TAG} installed and tagged."
+# CODEGEN-END

@@ -1,7 +1,20 @@
 ---
 id: semantic-guard-guard-cli-src
 summary: Semantic coverage for "projects/guard/guard-cli/src"
-fill_sections: [schema, unit-test, changes]
+capability_refs:
+  - id: static-security-scan
+    role: primary
+    gap: json-report-envelope
+    claim: json-report-envelope
+    coverage: full
+    rationale: "The CLI dispatch layer emits the guard report envelope for scan/report/spec/llm verbs."
+  - id: security-policy-profile
+    role: contributes
+    gap: cli-module-registration
+    claim: cli-module-registration
+    coverage: full
+    rationale: "The CLI module registration exposes guard policy commands to the cclab CLI registry."
+fill_sections: [schema, changes]
 ---
 
 # Semantic TD: guard/guard-cli/src
@@ -76,23 +89,6 @@ semantic_domain:
           domain: "projects/guard/guard-cli/src"
 ```
 
-## Unit Test
-<!-- type: unit-test lang: mermaid -->
-
-```mermaid
----
-id: unit-test
-coverage_kind: semantic
-strategy: preserve observed source behavior while semantic coverage is promoted toward generator primitives
-evidence:
-  source_tests: []
----
-requirementDiagram
-
-element UT_SOURCE_TESTS {
-  type: "TestEvidence"
-}
-```
 
 ## Changes
 <!-- type: changes lang: yaml -->
@@ -105,15 +101,11 @@ changes:
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
+    impl_mode: codegen
   - path: "projects/guard/guard-cli/src/lib.rs"
     action: modify
     section: schema
     description: |
       Existing source behavior is covered by this feature/domain semantic TD.
-    impl_mode: hand-written
-  - action: annotate
-    section: unit-test
-    impl_mode: hand-written
-    description: "Traceability metadata edge for the unit-test section."
+    impl_mode: codegen
 ```

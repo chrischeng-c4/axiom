@@ -4079,6 +4079,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be136d9dacc2a13cc70bb6c8f902b414fb2641f8db1314637c6b7933411a8f82"
 
 [[package]]
+name = "guard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cclab-compass",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "guard-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cclab-cli-registry",
+ "clap",
+ "guard",
+ "linkme",
+ "serde_json",
+]
+
+[[package]]
 name = "h2"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"

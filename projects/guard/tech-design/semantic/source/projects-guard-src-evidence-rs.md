@@ -8,6 +8,24 @@ capability_refs:
     claim: vat-isolated-security-runner
     coverage: full
     rationale: "The source unit implements guard's external vat/rig/meter/arena evidence adapter surface."
+  - id: dynamic-security-evidence
+    role: primary
+    gap: rig-exploit-journey-bridge
+    claim: rig-exploit-journey-bridge
+    coverage: full
+    rationale: "The evidence adapter normalizes rig exploit/e2e journey reports into guard findings and completion state."
+  - id: dynamic-security-evidence
+    role: primary
+    gap: meter-dos-resource-evidence-bridge
+    claim: meter-dos-resource-evidence-bridge
+    coverage: full
+    rationale: "The evidence adapter normalizes meter resource and DoS evidence into guard findings and completion state."
+  - id: dynamic-security-evidence
+    role: primary
+    gap: arena-security-budget-bridge
+    claim: arena-security-budget-bridge
+    coverage: full
+    rationale: "The evidence adapter normalizes arena security budget reports into guard findings and completion state."
 fill_sections: [overview, source, changes]
 ---
 

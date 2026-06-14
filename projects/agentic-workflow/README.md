@@ -43,16 +43,79 @@ work. Agents must re-run the same root command after each child command
 completes and stop only when the envelope reports workflow completion, HITL,
 blocker, or error.
 
+## Lifecycle Surface
+
+AW uses short agent-facing command names for the main lifecycle:
+
+| CLI | Long name | Role |
+|---|---|---|
+| `aw caps` | `aw capability` | Define the project capability tree, claims, maturity, release scope, and required external contracts. |
+| `aw ec` | External Contracts | Define behavior, efficiency, security, and stability contracts; generate tests and tool configs. |
+| `aw td` | Tech Design | Describe implementation design, source mapping, APIs, data, and control flow. |
+| `aw cb` | Code artifact lifecycle | Generate, check, and fill source artifacts from TD. |
+| `aw hc` | `aw health` | Aggregate caps, EC, TD, CB, tests, claim closure, locks, and blocker status. |
+
+The canonical flow for greenfield projects is:
+
+```text
+aw caps -> aw ec -> aw ec gen -> aw td -> aw cb -> aw hc
+```
+
+Greenfield starts by defining capabilities and required external contracts. EC
+contracts may begin red: `aw ec gen` materializes the tests, runner stubs, and
+tool manifests first, then TD/CB/code work drives those contracts green.
+
+The canonical flow for brownfield projects is:
+
+```text
+aw caps check -> aw ec check/gen -> aw td claim -> aw cb claim/gen/fill -> aw hc
+```
+
+Brownfield starts by adding capabilities around existing behavior, then
+externalizes the missing behavior/efficiency/security/stability contracts before
+TD and CB claim the source. Missing EC is a normal adoption gap until production
+readiness is requested.
+
+Capability claim closure is the deterministic production link between caps, EC,
+TD, and generated artifacts. Agents make the semantic judgment, but they must
+write it down as explicit metadata: capability claims name `claim_id`, EC cases
+name the same `capability_id` and `claim_id`, and TD frontmatter names the same
+claim in a primary `capability_refs` entry. `aw hc claims --project <name>`
+checks those typed edges, EC command results, and existing artifact health; it
+does not infer semantic coverage from prose. Production-required EC cases may
+not remain `unmapped`.
+
+EC source of truth lives under `projects/<name>/external-contracts/`:
+
+```text
+external-contracts/
+  behavior/
+  efficiency/
+  security/
+  stability/
+```
+
+`aw ec gen --project <name>` reads those contracts and generates project-local
+tests plus integrated tool configuration for `rig`, `meter`, `arena`, `guard`,
+and `vat`. Legacy TD `e2e-test` and `tool-contract` sections remain a
+compatibility import source only when `external-contracts/` has no contracts.
+
+TD section types and EC contracts are artifact-producing inputs. A typed TD
+section must drive source, tests, config, manifests, deployment artifacts, or a
+verification/tool artifact; EC contracts must generate tests or native tool
+configs. Pure product explanation, semantic notes, and non-generating evidence
+belong in README capability text or ordinary docs, not in TD/EC typed sections.
+
 ## Capability Index
 
 | Capability | Root WI | Impl | Verification | Maturity | Production | Notes |
 |---|---:|---|---|---|---|---|
 | AW Core Client Model | #3893 | implemented | verified | smoke | ready | verified; shared AW Core nouns, WorkItem-first artifact admission, and client boundaries |
 | Workflow Root Runner | - | implemented | verified | smoke | ready | verified; CLI workflow chain and root-to-child rollup contract |
-| Capability Control Plane | - | implemented | verified | smoke | ready | verified; README capability map and verification summaries |
+| Capability Control Plane | - | implemented | verified | smoke | ready | verified; README capability map, `aw caps`, and verification summaries |
 | Work Item Planning | - | implemented | verified | smoke | ready | verified; epic/change split and bounded planning artifacts |
 | TD/CB Lifecycle Automation | - | implemented | verified | smoke | ready | verified; WI to TD to CB to merge workflow |
-| Project-Local TD and EC Gates | - | implemented | verified | smoke | ready | verified; TD roots default to `<project.path>/tech-design`, with lock and EC gates resolved from the same project root |
+| Project-Local TD and EC Gates | - | implemented | verified | smoke | ready | verified; TD roots default to `<project.path>/tech-design`, EC contracts default to `<project.path>/external-contracts`, and generated tests/tool configs stay project-local |
 | Existing Project Standardization | - | implemented | verified | smoke | ready | verified; takeover readiness, managed/semantic/traceability gates, and generator gap requests |
 
 ## AW Core Client Model
@@ -96,7 +159,7 @@ blocker, or error.
 | ID | capability-control-plane |
 | Root WI | - |
 | Status | verified |
-| Promise | Project READMEs can describe capabilities as readable Markdown headings and tables while detailed proof lives in validation inventories and TD evidence. |
+| Promise | Project READMEs can describe capabilities as readable Markdown headings and tables while detailed proof lives in validation inventories and external contracts. |
 | Required Verification | smoke |
 | Gate Inventory | projects/agentic-workflow/tech-design/surface/specs/aw-capability-alignment-wi-planning.md |
 
@@ -144,7 +207,7 @@ blocker, or error.
 | ID | project-local-td-and-ec-gates |
 | Root WI | - |
 | Status | verified |
-| Promise | AW-managed projects keep their README, tech designs, external contracts, source, and tests under the project tree by default: `td_path` is only an override, and the resolver otherwise uses `<project.path>/tech-design`. |
+| Promise | AW-managed projects keep their README, external contracts, tech designs, source, tests, and generated tool configs under the project tree by default: `td_path` is only an override, and EC contracts otherwise use `<project.path>/external-contracts`. |
 | Required Verification | smoke |
 | Gate Inventory | `cargo test -p agentic-workflow --lib`; `cargo test -p agentic-workflow ec_doc`; `aw td check projects/agentic-workflow/tech-design/core/specs/td-root-resolver.md`; `aw td check projects/agentic-workflow/tech-design/core/interfaces/services/project_registry.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/cb.md`; `aw td check projects/agentic-workflow/tech-design/surface/interfaces/src/standardize.md` |
 
@@ -155,7 +218,7 @@ blocker, or error.
 | CB generation and standardize scan defaults | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | Project dirty-scope protection | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow --lib` |
 | EC evidence documentation | epic | - | implemented | verified | smoke | `cargo test -p agentic-workflow ec_doc` |
-| EC tool binding dispatch | change | #13 | planned | none | none | per-project `ec.<category>` config routes verify-ec to an external tool (arena/rig/meter) command, with the EC manifest command as the cargo-test fallback |
+| EC external-contract source | change | #13 | implemented | verified | smoke | `aw ec gen` reads `external-contracts/{behavior,efficiency,security,stability}` and generates tests plus rig/meter/arena/guard/vat tool configs |
 
 ## Existing Project Standardization
 

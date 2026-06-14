@@ -21,6 +21,9 @@ use super::remote_push::maybe_push_remote;
 #[derive(Debug, Args)]
 /// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub struct TdArgs {
+    /// Project name for project-scoped TD utility commands such as `td lock`.
+    #[arg(long, global = true)]
+    pub project: Option<String>,
     #[command(subcommand)]
     pub command: TdCommand,
 }
@@ -445,6 +448,7 @@ pub(crate) fn td_activate_inplace_if_present(
     Ok(())
 }
 
+/// @spec projects/agentic-workflow/tech-design/surface/interfaces/src/td.md#source
 pub(crate) fn td_activate_inplace_allowing_dirty_lifecycle_paths(
     project_root: &std::path::Path,
     slug: &str,
@@ -1818,6 +1822,11 @@ fn section_type_brief_hint(st: crate::models::spec_rules::SectionType) -> &'stat
         SectionType::Deployment => "Deployment manifests (Kubernetes/Kustomize/runtime ops)",
         SectionType::Doc => "User-facing documentation (markdown)",
         SectionType::Manifest => "Package manifest deps (Cargo.toml / pyproject / package.json)",
+        SectionType::ToolContract => {
+            "AW tool-contract bridge to native vat/rig/meter/guard/arena manifests"
+        }
+        SectionType::RustSourceUnit => "Lossless Rust source unit (CST-backed regen)",
+        SectionType::TextSourceUnit => "Lossless shell/text source unit (TD-owned regen)",
         SectionType::Changes => "File change list (path + action)",
     }
 }
@@ -2304,7 +2313,7 @@ pub async fn run(args: TdArgs) -> Result<()> {
         TdCommand::Check(a) => run_check(a),
         TdCommand::Ast(a) => run_ast(a),
         TdCommand::MigrateMermaid(a) => super::td_migrate::run(a).await,
-        TdCommand::Lock(a) => super::td_lock::run(a),
+        TdCommand::Lock(a) => super::td_lock::run(args.project.as_deref(), a),
         TdCommand::Claim(a) => run_claim(a).await,
     }
 }

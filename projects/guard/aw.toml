@@ -1,0 +1,38 @@
+[project]
+name = "guard"
+cap_path = "README.md"
+label = "project:guard"
+
+[ec.security]
+tool = "guard"
+dir = "projects/guard"
+command = 'target/debug/guard scan projects/guard --profile security-lint --compact --no-persist --vat-runner guard-security-smoke --rig-scenario projects/guard/tests/rig/scenarios/security/guard_self_scan.toml --meter-target projects/guard --arena-command "target/debug/arena spec --compact"'
+
+[[workspaces]]
+name = "guard"
+paths = ["**"]
+target = "rust"
+test_cmd = 'CC=/usr/bin/cc PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.cargo/bin" cargo test -p guard -p guard-cli'
+codegen.profile = "rust/score-crate"
+
+# AW-EC-BEGIN
+[aw.ec.generated]
+version = 1
+project = "guard"
+generated_from_td_digest = "sha256:ae4c54312de217c63d9746808304d83ff5f28405b0cab417a664c2b15b0e39c2"
+
+[[aw.ec.generated.cases]]
+id = "guard-static-scan-clean-report"
+capability_id = "static-security-scan"
+contract_id = "guard-report-clean-static-scan"
+category = "security"
+td_ref = "projects/guard/tech-design/semantic/guard-ec-static-security-smoke.md#guard-static-scan-clean-report"
+test_path = "projects/guard/tests/security_guard_static_scan_clean_report.rs"
+command = "target/debug/guard scan projects/guard --compact --no-persist"
+assertions = [
+    "command exits zero",
+    "stdout is a guard.report/1 JSON envelope",
+    "summary.security_findings is zero for the guard source tree",
+    "integrations.static_engine is compass",
+]
+# AW-EC-END
