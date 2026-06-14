@@ -5424,9 +5424,20 @@ fn compute_mro(name: &str, bases: &[String]) -> Vec<String> {
         match c3_merge(&mut lists) {
             Ok(merged) => mro.extend(merged),
             Err(msg) => {
-                // Inconsistent MRO — equivalent to Python's TypeError.
-                // Panic mirrors Python's behavior of refusing to create the class.
-                panic!("TypeError: Cannot create a consistent method resolution order (MRO) for '{name}': {msg}");
+                // Inconsistent MRO — CPython raises a *catchable* TypeError when
+                // the class statement runs. Set the pending exception (instead of
+                // panicking and aborting the process) and fall back to a trivial
+                // MRO so registration completes; the pending exception aborts the
+                // class statement at the next runtime check. Only reached on a
+                // genuinely inconsistent hierarchy, which previously crashed, so
+                // no passing path observes the placeholder MRO.
+                super::exception::set_current_exception(super::exception::MbException::new(
+                    "TypeError",
+                    &format!(
+                        "Cannot create a consistent method resolution order (MRO) for bases {msg}"
+                    ),
+                ));
+                mro.extend(bases.iter().cloned());
             }
         }
     }
