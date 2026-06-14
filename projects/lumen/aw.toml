@@ -23,16 +23,33 @@ codegen.profile = "rust/score-crate"
 [aw.ec.generated]
 version = 1
 project = "lumen"
-generated_from_td_digest = "sha256:832c7cbd7893e8cfd4d8c9d924f8e0120a994f9a669f1c5552ed0486dee694da"
+generated_from_td_digest = "sha256:57b8568187d3f787dd23e9f5679e4ad9c44e0af0930e159cfe95a762b7263928"
+
+[[aw.ec.generated.cases]]
+id = "lumen-agentic-integration-llm-playbook"
+capability_id = "agentic-integration"
+claim_id = "lumen-llm-agent-integration-playbook-guide-quickstart-recipes"
+contract_id = "lumen-llm-agent-integration-playbook-guide-quickstart-recipes"
+category = "behavior"
+td_ref = "projects/lumen/tech-design/logic/external-contracts.md#lumen-agentic-integration-llm-playbook"
+test_path = "projects/lumen/tests/behavior_lumen_agentic_integration_llm_playbook.rs"
+command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
+assertions = [
+    "lumen llm guide, quickstart, and recipes preserve the ingest-search-hydrate agent workflow.",
+    "agent-facing playbook output remains deterministic and offline.",
+]
 
 [[aw.ec.generated.cases]]
 id = "lumen-agentic-integration-offline-cli"
 capability_id = "agentic-integration"
+claim_id = "lumen-spec-schema-openapi-json-schema-offline"
 contract_id = "offline-cli-agent-onboarding"
 category = "behavior"
 td_ref = "projects/lumen/tech-design/logic/external-contracts.md#lumen-agentic-integration-offline-cli"
 test_path = "projects/lumen/tests/behavior_lumen_agentic_integration_offline_cli.rs"
 command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
 assertions = [
     "lumen spec emits valid OpenAPI and JSON-schema output offline.",
     "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.",
@@ -40,13 +57,30 @@ assertions = [
 ]
 
 [[aw.ec.generated.cases]]
+id = "lumen-agentic-integration-query-catalog"
+capability_id = "agentic-integration"
+claim_id = "query-shape-cookbook-field-analyzer-catalog"
+contract_id = "query-shape-cookbook-field-analyzer-catalog"
+category = "behavior"
+td_ref = "projects/lumen/tech-design/logic/external-contracts.md#lumen-agentic-integration-query-catalog"
+test_path = "projects/lumen/tests/behavior_lumen_agentic_integration_query_catalog.rs"
+command = "cargo test -p lumen --test spec_cli -- --nocapture"
+required_for_production = true
+assertions = [
+    "lumen spec exposes query-shape, field, analyzer, and vector-metric catalogs.",
+    "agent-facing query catalog output remains deterministic and offline.",
+]
+
+[[aw.ec.generated.cases]]
 id = "lumen-ops-speed-benchmark-vs-db"
-capability_id = "ops-speed"
-contract_id = "ops-speed-competitive-benchmark-vs-db"
+capability_id = "ops-operability"
+claim_id = "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
+contract_id = "competitive-regression-gate-beat-pg-os-per-cell-ratcheting"
 category = "benchmark"
 td_ref = "projects/lumen/tech-design/logic/external-contracts.md#lumen-ops-speed-benchmark-vs-db"
 test_path = "projects/lumen/tests/benchmark_lumen_ops_speed_benchmark_vs_db.rs"
 command = "cargo test -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1"
+required_for_production = false
 assertions = [
     "lumen wins the contracted search-latency cells against Postgres (text_bm25 WIN; ratcheted floor holds).",
     "floor-dominated cells (pg btree point-lookup) stay EXEMPT, not gated.",
@@ -55,11 +89,13 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "lumen-security-auth-bearer-rbac"
 capability_id = "security-auth"
-contract_id = "security-auth-bearer-rbac-enforced"
+claim_id = "bearer-token-auth-lumen-auth"
+contract_id = "bearer-token-auth-lumen-auth"
 category = "security"
 td_ref = "projects/lumen/tech-design/logic/external-contracts.md#lumen-security-auth-bearer-rbac"
 test_path = "projects/lumen/tests/security_lumen_security_auth_bearer_rbac.rs"
 command = "cargo test -p lumen --test auth_e2e --test authz_matrix_e2e -- --nocapture"
+required_for_production = false
 assertions = [
     "Bearer-token auth rejects missing and invalid tokens when LUMEN_AUTH=required; accepts valid tokens.",
     "Per-route RBAC authz matrix enforces each token's role permissions on every API route (read vs write vs admin).",
@@ -68,11 +104,13 @@ assertions = [
 [[aw.ec.generated.cases]]
 id = "lumen-stability-resilience-survival"
 capability_id = "resilience"
-contract_id = "resilience-survival-under-fault"
+claim_id = "broker-kill-pod-kill-survival"
+contract_id = "broker-kill-pod-kill-survival"
 category = "stability"
 td_ref = "projects/lumen/tech-design/logic/external-contracts.md#lumen-stability-resilience-survival"
 test_path = "projects/lumen/tests/stability_lumen_stability_resilience_survival.rs"
 command = "cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture"
+required_for_production = false
 assertions = [
     "Search p99 stays within 2x baseline under 5% packet loss (toxiproxy timeout toxic; rig resilience scenario).",
     "Search survives a full network partition and recovers within budget; post-recovery p99 stays within 2x baseline.",

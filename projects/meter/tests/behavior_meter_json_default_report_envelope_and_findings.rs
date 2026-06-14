@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec meter-json-default-report-envelope-and-findings
 // @capability agent-use-first-cli
+// @claim json-default-report-envelope-and-findings
 // @contract json-default-report-envelope-and-findings
 // @category behavior
+// @required_for_production true
 // @command cargo test -p meter report::
 // AW-EC-END
 

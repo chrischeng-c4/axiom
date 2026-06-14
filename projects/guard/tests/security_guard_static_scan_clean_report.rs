@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec guard-static-scan-clean-report
 // @capability static-security-scan
+// @claim json-report-envelope
 // @contract guard-report-clean-static-scan
 // @category security
+// @required_for_production true
 // @command target/debug/guard scan projects/guard --compact --no-persist
 // AW-EC-END
 

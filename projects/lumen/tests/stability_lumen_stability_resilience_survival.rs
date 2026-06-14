@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec lumen-stability-resilience-survival
 // @capability resilience
-// @contract resilience-survival-under-fault
+// @claim broker-kill-pod-kill-survival
+// @contract broker-kill-pod-kill-survival
 // @category stability
+// @required_for_production false
 // @command cargo test -p lumen --test drop_drain_e2e --test reindex_stream_e2e -- --nocapture
 // AW-EC-END
 

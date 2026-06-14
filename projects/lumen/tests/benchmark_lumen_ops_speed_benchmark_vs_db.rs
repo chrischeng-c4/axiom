@@ -2,9 +2,11 @@
 // CODEGEN-BEGIN
 // AW-EC-BEGIN
 // @ec lumen-ops-speed-benchmark-vs-db
-// @capability ops-speed
-// @contract ops-speed-competitive-benchmark-vs-db
+// @capability ops-operability
+// @claim competitive-regression-gate-beat-pg-os-per-cell-ratcheting
+// @contract competitive-regression-gate-beat-pg-os-per-cell-ratcheting
 // @category benchmark
+// @required_for_production false
 // @command cargo test -p lumen --release --test perf_gate_vs_db -- --ignored --test-threads=1
 // AW-EC-END
 

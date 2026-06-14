@@ -3,8 +3,10 @@
 // AW-EC-BEGIN
 // @ec vat-copy-on-write-lifecycle
 // @capability agent-native-gpu-native-dev-containers
+// @claim copy-on-write-fork-and-snapshot-lifecycle
 // @contract copy-on-write-fork-and-snapshot-lifecycle
 // @category behavior
+// @required_for_production true
 // @command rg -n -e copy-on-write -e fork -e snapshot -e clonefile -e APFS projects/vat/README.md
 // AW-EC-END
 
