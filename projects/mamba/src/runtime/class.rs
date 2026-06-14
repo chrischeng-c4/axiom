@@ -3552,6 +3552,7 @@ pub fn mb_getattr(obj: MbValue, attr: MbValue) -> MbValue {
             (*p).data,
             ObjData::List(_) | ObjData::Tuple(_) | ObjData::Dict(_)
                 | ObjData::Str(_) | ObjData::Set(_)
+                | ObjData::Bytes(_) | ObjData::ByteArray(_) | ObjData::FrozenSet(_)
         )
     });
     if is_builtin_container && builtin_type_method_names(&obj).contains(&attr_name.as_str()) {
@@ -4348,6 +4349,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "removeprefix", "removesuffix", "upper", "lower", "title",
             "capitalize", "swapcase", "join", "center", "ljust", "rjust",
             "zfill", "translate", "maketrans", "partition", "rpartition",
+            "expandtabs",
             "isalnum", "isalpha", "isascii", "isdigit", "islower", "isspace",
             "istitle", "isupper",
             "__iter__", "__len__", "__contains__", "__getitem__",
@@ -4360,6 +4362,7 @@ fn builtin_type_method_names_by_name(name: &str) -> Vec<&'static str> {
             "removeprefix", "removesuffix", "upper", "lower", "title",
             "capitalize", "swapcase", "join", "center", "ljust", "rjust",
             "zfill", "translate", "maketrans", "partition", "rpartition",
+            "expandtabs",
             "isalnum", "isalpha", "isascii", "isdigit", "islower", "isspace",
             "istitle", "isupper",
             "append", "extend", "insert", "pop", "remove", "clear",
@@ -4408,6 +4411,11 @@ fn builtin_type_method_names(obj: &MbValue) -> Vec<&'static str> {
                     "count", "index",
                     "__iter__", "__len__", "__contains__", "__getitem__",
                 ],
+                // Delegate to the by-name tables so the bound-method surface
+                // stays in sync with hasattr for these immutable/byte types.
+                ObjData::Bytes(_) => builtin_type_method_names_by_name("bytes"),
+                ObjData::ByteArray(_) => builtin_type_method_names_by_name("bytearray"),
+                ObjData::FrozenSet(_) => builtin_type_method_names_by_name("frozenset"),
                 _ => Vec::new(),
             }
         }
