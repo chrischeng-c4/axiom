@@ -5526,19 +5526,26 @@ impl<'a> HirToMir<'a> {
                 ) || !matches!(rt,
                     crate::types::Ty::Int | crate::types::Ty::Float | crate::types::Ty::Bool
                 );
-                // Float-Float ordering comparisons must go through runtime
-                // because the JIT path stores Float vregs as I64 bit patterns
-                // (NaN-boxed carrier), so the MirInst::BinOp primitive path
-                // would compare IEEE 754 bits with signed icmp and invert
-                // ordering for negative values (`-2.0 < -1.0` → False).
-                // Routing through mb_lt/mb_gt/mb_le/mb_ge gives IEEE-aware
-                // comparison via `as_float()` in mb_values_lt.
+                // Float-Float comparisons must go through runtime because the
+                // JIT path stores Float vregs as I64 bit patterns (NaN-boxed
+                // carrier), so the MirInst::BinOp primitive path would compare
+                // IEEE 754 bits with native i-compares:
+                //   - ordering (`<`/`>`/`<=`/`>=`) under signed icmp inverts
+                //     negatives (`-2.0 < -1.0` → False);
+                //   - equality (`==`/`!=`) under bitwise icmp mis-handles the
+                //     two IEEE values whose numeric and bit equality disagree:
+                //     `0.0 == -0.0` is True numerically but bits differ (False),
+                //     and `nan == nan` is False numerically but identical bits
+                //     compare equal (True).
+                // Routing through mb_lt/mb_gt/mb_le/mb_ge/mb_eq/mb_ne gives
+                // IEEE-aware comparison via `as_float()` in the runtime.
                 let is_float_float_cmp = matches!(
                     (lt, rt),
                     (crate::types::Ty::Float, crate::types::Ty::Float)
                 ) && matches!(
                     op,
                     HirBinOp::Lt | HirBinOp::Gt | HirBinOp::LtEq | HirBinOp::GtEq
+                        | HirBinOp::Eq | HirBinOp::NotEq
                 );
 
                 if matches!(op, HirBinOp::Is | HirBinOp::IsNot) {
