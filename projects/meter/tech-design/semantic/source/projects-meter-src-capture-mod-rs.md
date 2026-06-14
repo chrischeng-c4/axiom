@@ -21,13 +21,13 @@ Public API manifest for `projects/meter/src/capture/mod.rs` generated from AST d
 
 | Name | Target | Kind | Visibility | Line | Signature |
 |------|--------|------|------------|------|-----------|
-| `audit` | projects/meter/src/capture/mod.rs | module | pub | 20 |  |
-| `bench` | projects/meter/src/capture/mod.rs | module | pub | 21 |  |
-| `delegate` | projects/meter/src/capture/mod.rs | module | pub | 22 |  |
-| `fold` | projects/meter/src/capture/mod.rs | module | pub | 23 |  |
-| `fuzz` | projects/meter/src/capture/mod.rs | module | pub | 24 |  |
-| `run` | projects/meter/src/capture/mod.rs | module | pub | 25 |  |
-| `sampler` | projects/meter/src/capture/mod.rs | module | pub | 26 |  |
+| `audit` | projects/meter/src/capture/mod.rs | module | pub | 19 |  |
+| `bench` | projects/meter/src/capture/mod.rs | module | pub | 20 |  |
+| `delegate` | projects/meter/src/capture/mod.rs | module | pub | 21 |  |
+| `fold` | projects/meter/src/capture/mod.rs | module | pub | 22 |  |
+| `run` | projects/meter/src/capture/mod.rs | module | pub | 23 |  |
+| `sampler` | projects/meter/src/capture/mod.rs | module | pub | 24 |  |
+| `vitals` | projects/meter/src/capture/mod.rs | module | pub | 25 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 ````rust
