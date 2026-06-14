@@ -5750,6 +5750,24 @@ pub fn mb_isinstance(obj: MbValue, class_name: MbValue) -> MbValue {
     } else {
         extract_str(class_name).unwrap_or_default()
     };
+    // A `typing.Protocol` that is NOT `@runtime_checkable` can't be used with
+    // isinstance (CPython: TypeError "Instance and class checks can only be used
+    // with @runtime_checkable protocols").
+    if !target.is_empty()
+        && !is_runtime_checkable_protocol(&target)
+        && class_mro_list(&target)
+            .iter()
+            .any(|b| b == "Protocol" || b == "typing.Protocol")
+    {
+        super::exception::mb_raise(
+            MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+            MbValue::from_ptr(MbObject::new_str(
+                "Instance and class checks can only be used with @runtime_checkable protocols"
+                    .to_string(),
+            )),
+        );
+        return MbValue::none();
+    }
     // Metaclass __instancecheck__: isinstance(x, C) defers to
     // type(C).__instancecheck__(C, x) when the metaclass defines it.
     let meta_check = CLASS_REGISTRY.with(|reg| {
