@@ -322,6 +322,85 @@ fn ast_container_is_all_float(
         })
 }
 
+/// Detect an unambiguous static call-binding violation of a known function's
+/// signature, returning the CPython-faithful `TypeError` message (or `None`
+/// when the call is valid or anything is uncertain — then the call lowers
+/// normally). `sig` entries are `(name, has_default, kw_only, is_star,
+/// is_double_star)`. The caller guarantees `args` is splat-free.
+///
+/// Only the three deterministically-reported contracts are checked: a keyword
+/// duplicating a positionally-bound argument, too many positional arguments,
+/// and a missing required keyword-only argument. Each fires only in cases where
+/// CPython unconditionally raises, so a correct call never trips it.
+fn arg_bind_violation(
+    fname: &str,
+    sig: &[(String, bool, bool, bool, bool)],
+    args: &[ast::CallArg],
+) -> Option<String> {
+    let has_star = sig.iter().any(|p| p.3);
+    // Params fillable by position, in declared order (not *,**, not kw-only).
+    let pos_params: Vec<&(String, bool, bool, bool, bool)> =
+        sig.iter().filter(|p| !p.2 && !p.3 && !p.4).collect();
+    let n_pos = args.iter()
+        .filter(|a| matches!(a, ast::CallArg::Positional(_)))
+        .count();
+    let kw_names: Vec<&str> = args.iter()
+        .filter_map(|a| match a {
+            ast::CallArg::Keyword { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    // (1) Duplicate value: a keyword names a positional param already bound by
+    // position. Always a TypeError in CPython.
+    for (i, p) in pos_params.iter().enumerate() {
+        if i < n_pos && kw_names.contains(&p.0.as_str()) {
+            return Some(format!(
+                "{fname}() got multiple values for argument '{}'", p.0
+            ));
+        }
+    }
+
+    // (2) Too many positional. Restricted to a pure-positional overflow with no
+    // `*args` to absorb it and no positional default — that is the only shape
+    // whose message is unconditionally `takes N ... but M were given`. CPython
+    // switches wording when defaults exist ("from X to Y") or when keyword-only
+    // args are also supplied ("...but M positional arguments (and K keyword-only
+    // arguments) were given"), so leave those cases to lower normally.
+    if !has_star
+        && kw_names.is_empty()
+        && n_pos > pos_params.len()
+        && pos_params.iter().all(|p| !p.1)
+    {
+        let take = pos_params.len();
+        let word = if take == 1 { "argument" } else { "arguments" };
+        return Some(format!(
+            "{fname}() takes {take} positional {word} but {n_pos} were given"
+        ));
+    }
+
+    // (3) Missing required keyword-only argument(s): kw-only, no default, not
+    // supplied by name.
+    let missing: Vec<&str> = sig.iter()
+        .filter(|p| p.2 && !p.3 && !p.4 && !p.1)
+        .map(|p| p.0.as_str())
+        .filter(|n| !kw_names.contains(n))
+        .collect();
+    if !missing.is_empty() {
+        let n = missing.len();
+        let word = if n == 1 { "argument" } else { "arguments" };
+        let names = missing.iter()
+            .map(|m| format!("'{m}'"))
+            .collect::<Vec<_>>()
+            .join(if n == 2 { " and " } else { ", " });
+        return Some(format!(
+            "{fname}() missing {n} required keyword-only {word}: {names}"
+        ));
+    }
+
+    None
+}
+
 /// Walk a function body collecting a name→FloatHint environment for locals that
 /// are assigned a provably-float (or provably-int) value. Seeded with parameter
 /// hints. Lets `total = a / b; return total` infer a float return.
@@ -1324,6 +1403,13 @@ struct AstLowerer<'a> {
     /// Function parameter info for kwargs resolution at call sites.
     /// Maps function name → vec of (param_name, default_expr_option).
     func_param_info: HashMap<String, Vec<(String, Option<Spanned<ast::Expr>>, ast::ParamKind)>>,
+    /// Static arg-binding validation: top-level function name → param shape
+    /// `(name, has_default, kw_only, is_star, is_double_star)`, captured at the
+    /// def so the call-site validator can raise a CPython-faithful TypeError for
+    /// too-many-positional / duplicate-argument / missing-required-keyword-only
+    /// calls. Only top-level defs are recorded and only bare-Ident, splat-free
+    /// calls are checked, so a violation is unambiguous before we raise.
+    arg_bind_sigs: HashMap<String, Vec<(String, bool, bool, bool, bool)>>,
     /// PEP 557: per-dataclass synthesized __init__ parameter shapes, kept
     /// separately from `func_param_info` so subclasses can prepend their base
     /// dataclass's params (Derived(Counted) accepts Counted's fields first).
@@ -1396,6 +1482,7 @@ impl<'a> AstLowerer<'a> {
             outer_scope_names: HashMap::new(),
             cell_override_syms: std::collections::HashSet::new(),
             func_param_info: HashMap::new(),
+            arg_bind_sigs: HashMap::new(),
             dataclass_init_params: HashMap::new(),
             dataclasses_kwarg_idents: std::collections::HashSet::new(),
             func_return_tys: HashMap::new(),
@@ -1641,6 +1728,20 @@ impl<'a> AstLowerer<'a> {
                     self.func_param_info.insert(name.clone(), params.iter().map(|p| {
                         (p.name.clone(), p.default.clone(), p.kind)
                     }).collect());
+                    // Param shape for static call-site arg-binding validation.
+                    // Only undecorated defs: a decorator can replace the callable
+                    // with an arbitrary wrapper whose signature differs.
+                    if decorators.is_empty() {
+                        self.arg_bind_sigs.insert(name.clone(), params.iter().map(|p| {
+                            (p.name.clone(), p.default.is_some(), p.kw_only,
+                             p.kind == ast::ParamKind::Star,
+                             p.kind == ast::ParamKind::DoubleStar)
+                        }).collect());
+                    } else {
+                        // A redefinition that is decorated must not keep a stale
+                        // bare-signature entry from an earlier plain def.
+                        self.arg_bind_sigs.remove(name);
+                    }
                     let is_decorated = !decorators.is_empty();
                     // PEP 695: make this def's type-param names visible to the
                     // param/return type lowering (TypeVar-annotated values are
@@ -3232,6 +3333,30 @@ impl<'a> AstLowerer<'a> {
             ast::Expr::Call { func, args } => {
                 let any_ty = self.checker.tcx.any();
                 let str_ty = self.checker.tcx.str();
+                // Static arg-binding validation: a bare-Ident call to a known
+                // top-level function, with no *args/**kwargs splat, whose
+                // argument shape unambiguously violates the callee's signature,
+                // lowers to a runtime TypeError matching CPython (the would-be
+                // call is replaced). Conservative: skips on any splat or unknown
+                // callee, so a valid call is never rejected.
+                if let ast::Expr::Ident(fname) = &func.node {
+                    if let Some(sig) = self.arg_bind_sigs.get(fname).cloned() {
+                        let splat_free = args.iter().all(|a| matches!(
+                            a,
+                            ast::CallArg::Positional(_) | ast::CallArg::Keyword { .. }
+                        ));
+                        if splat_free {
+                            if let Some(msg) = arg_bind_violation(fname, &sig, args) {
+                                return Some(HirExpr::Call {
+                                    func: Box::new(HirExpr::StrLit(
+                                        "mb_arg_bind_error".to_string(), any_ty)),
+                                    args: vec![HirExpr::StrLit(msg, str_ty)],
+                                    ty: any_ty,
+                                });
+                            }
+                        }
+                    }
+                }
                 // all(x for x in it) / any(x for x in it) must preserve
                 // generator-expression laziness so the builtin can short-circuit.
                 if let ast::Expr::Ident(name) = &func.node {

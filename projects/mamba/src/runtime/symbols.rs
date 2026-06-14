@@ -279,6 +279,7 @@ pub fn runtime_symbols() -> Vec<RuntimeSymbol> {
         rt_sym!("mb_tuple_from_iterable", tuple_ops::mb_tuple_from_iterable as fn(super::MbValue) -> super::MbValue, [I64], I64),
         // ── Exception ──
         rt_sym!("mb_raise", exception::mb_raise as fn(super::MbValue, super::MbValue), [I64, I64], Void),
+        rt_sym!("mb_arg_bind_error", exception::mb_arg_bind_error as fn(super::MbValue) -> super::MbValue, [I64], I64),
         rt_sym!("mb_reraise", exception::mb_reraise as fn(super::MbValue), [I64], Void),
         rt_sym!("mb_has_exception", exception::mb_has_exception as fn() -> super::MbValue, [], I64),
         rt_sym!("mb_catch_exception", exception::mb_catch_exception as fn() -> super::MbValue, [], I64),

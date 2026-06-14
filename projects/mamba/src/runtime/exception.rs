@@ -689,6 +689,19 @@ pub fn mb_type_error(msg: &str) -> MbValue {
     )
 }
 
+/// Raise `TypeError(msg)` for a statically-detected call-binding violation
+/// (too many positional args / duplicate argument / missing required
+/// keyword-only argument) and return None. Emitted directly at the call site
+/// by the ast_to_hir arg-binding validator, replacing the would-be call so the
+/// enclosing `try` sees a genuine runtime exception.
+pub fn mb_arg_bind_error(msg: MbValue) -> MbValue {
+    mb_raise(
+        MbValue::from_ptr(MbObject::new_str("TypeError".to_string())),
+        msg,
+    );
+    MbValue::none()
+}
+
 pub fn mb_value_error(msg: &str) -> MbValue {
     mb_exception_new(
         MbValue::from_ptr(MbObject::new_str("ValueError".to_string())),
