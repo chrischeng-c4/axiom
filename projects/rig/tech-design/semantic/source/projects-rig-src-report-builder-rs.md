@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-report-builder-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,23 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/report/builder.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/report/builder.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `ReportBuilder` | projects/rig/src/report/builder.rs | struct | pub | 18 |  |
+| `add_criterion` | projects/rig/src/report/builder.rs | function | pub | 54 | add_criterion(&mut self, c: impl Into<String>) -> &mut Self |
+| `add_finding` | projects/rig/src/report/builder.rs | function | pub | 44 | add_finding(&mut self, f: Finding) -> &mut Self |
+| `add_findings` | projects/rig/src/report/builder.rs | function | pub | 49 | add_findings(&mut self, fs: impl IntoIterator<Item = Finding>) -> &mut Self |
+| `add_missing` | projects/rig/src/report/builder.rs | function | pub | 59 | add_missing(&mut self, m: impl Into<String>) -> &mut Self |
+| `agent_prompt` | projects/rig/src/report/builder.rs | function | pub | 75 | agent_prompt(&mut self, p: impl Into<String>) -> &mut Self |
+| `finalize` | projects/rig/src/report/builder.rs | function | pub | 80 | finalize(self) -> RigReport |
+| `new` | projects/rig/src/report/builder.rs | function | pub | 31 | new(verb: impl Into<String>, target: impl Into<String>) -> Self |
+| `persist` | projects/rig/src/report/builder.rs | function | pub | 156 | persist(report: &RigReport, dir: &std::path::Path) |
+| `scenarios_mut` | projects/rig/src/report/builder.rs | function | pub | 64 | scenarios_mut(&mut self) -> &mut ScenarioCounts |
+| `tool_error` | projects/rig/src/report/builder.rs | function | pub | 70 | tool_error(&mut self, code: u8, message: impl Into<String>) -> &mut Self |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

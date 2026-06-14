@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-scenario-mod-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,20 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/scenario/mod.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/scenario/mod.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `Limits` | projects/rig/src/scenario/mod.rs | struct | pub | 35 |  |
+| `Scenario` | projects/rig/src/scenario/mod.rs | struct | pub | 56 |  |
+| `VatNeeds` | projects/rig/src/scenario/mod.rs | struct | pub | 24 |  |
+| `interp` | projects/rig/src/scenario/mod.rs | module | pub | 6 |  |
+| `load` | projects/rig/src/scenario/mod.rs | module | pub | 7 |  |
+| `parse_scenario` | projects/rig/src/scenario/mod.rs | function | pub | 73 | parse_scenario(path: &Path, text: &str) -> Result<Scenario, Vec<LintViolation>> |
+| `record` | projects/rig/src/scenario/mod.rs | module | pub | 8 |  |
+| `step` | projects/rig/src/scenario/mod.rs | module | pub | 9 |  |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 

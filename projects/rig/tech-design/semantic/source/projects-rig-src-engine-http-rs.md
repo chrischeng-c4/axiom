@@ -1,5 +1,11 @@
 ---
 id: projects-rig-src-engine-http-rs
+capability_refs:
+  - id: scenario-engine
+    role: primary
+    claim: scenario-step-dsl-execution
+    coverage: partial
+    rationale: "This source unit implements rig scenario discovery, execution, verdict, or report behavior used by the scenario engine."
 fill_sections: [overview, source, changes]
 ---
 
@@ -8,9 +14,16 @@ fill_sections: [overview, source, changes]
 ## Overview
 <!-- type: overview lang: markdown -->
 
-Public API manifest for `projects/rig/src/engine/http.rs`, captured as a rust-source-unit (td_ast) item-tree
-during rig standardization onto the codegen ladder.
+Public API manifest for `projects/rig/src/engine/http.rs` generated from AST during Score force-regeneration standardization.
 
+### Symbols
+
+| Name | Target | Kind | Visibility | Line | Signature |
+|------|--------|------|------------|------|-----------|
+| `HttpOutcome` | projects/rig/src/engine/http.rs | struct | pub | 20 |  |
+| `capture_value` | projects/rig/src/engine/http.rs | function | pub | 120 | capture_value(outcome: &HttpOutcome, key: &str) -> Option<Value> |
+| `execute` | projects/rig/src/engine/http.rs | function | pub | 32 | execute(request: &HttpRequest, vars: &VarStore) -> Result<HttpOutcome, String> |
+| `json_path` | projects/rig/src/engine/http.rs | function | pub | 131 | json_path(root: &Value, path: &str) -> Option<Value> |
 ## Source
 <!-- type: rust-source-unit lang: rust -->
 
