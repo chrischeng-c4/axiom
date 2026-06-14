@@ -68,6 +68,7 @@ async fn main() -> anyhow::Result<()> {
             ..Default::default()
         },
         asset_options: AssetOptions::default(),
+        css_bundle: false,
         externals: HashSet::new(),
         externalize_all_packages: false,
         defines: std::collections::HashMap::new(),
